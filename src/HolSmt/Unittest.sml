@@ -803,18 +803,138 @@ let
   val metadata = SmtLib_Logics.metadata_of_logic "QF_BV"
   val bvult_symbol = find_symbol_metadata "Fixed_Size_BitVectors" "term"
     "bvult" metadata
-  val bvule_symbol = find_symbol_metadata_source "Fixed_Size_BitVectors" "term"
-    "bvule" metadata_is_extension metadata
-  val rotate_left_symbol = find_symbol_metadata_source "Fixed_Size_BitVectors"
-    "term" "rotate_left" metadata_is_extension metadata
+  val bvule_symbol = find_symbol_metadata "Fixed_Size_BitVectors" "term"
+    "bvule" metadata
+  val rotate_left_symbol = find_symbol_metadata "Fixed_Size_BitVectors"
+    "term" "rotate_left" metadata
+  val bvudiv_symbol = find_symbol_metadata "Fixed_Size_BitVectors" "term"
+    "bvudiv" metadata
+  val bvudiv_alias = find_symbol_metadata_source "Fixed_Size_BitVectors" "term"
+    "bvudiv_i" metadata_is_extension metadata
   val rotate_left_attrs = #attributes rotate_left_symbol
+  val bvudiv_attrs = #attributes bvudiv_symbol
 in
   assert (metadata_is_official bvult_symbol,
     "official bit-vector metadata was not preserved");
-  assert (metadata_is_extension bvule_symbol,
-    "Z3 bit-vector extension metadata was not preserved");
+  assert (metadata_is_official bvule_symbol,
+    "official promoted bit-vector metadata was not preserved");
   assert (#indexed rotate_left_attrs,
-    "indexed bit-vector extension metadata was not preserved")
+    "indexed bit-vector metadata was not preserved");
+  assert (#soundness_audit bvudiv_attrs,
+    "bit-vector division was not marked for soundness audit");
+  assert (metadata_is_extension bvudiv_alias,
+    "Z3 bit-vector alias metadata was not preserved")
+end
+
+fun smtlib_core_arith_array_bv_symbol_coverage_success () =
+let
+  val lia_metadata = SmtLib_Logics.metadata_of_logic "QF_LIA"
+  val bv_metadata = SmtLib_Logics.metadata_of_logic "QF_BV"
+  val ax_metadata = SmtLib_Logics.metadata_of_logic "QF_AX"
+  val int_symbols = ["**", "divisible"]
+  val array_symbols = ["select", "store"]
+  val bv_symbols = [
+    "_", "concat", "extract", "bvnot", "bvneg", "bvand", "bvor",
+    "bvxor", "bvxnor", "bvadd", "bvmul", "bvudiv", "bvurem",
+    "bvsub", "bvnand", "bvnor", "bvcomp", "bvsdiv", "bvsrem",
+    "bvsmod", "bvshl", "bvlshr", "bvashr", "repeat", "zero_extend",
+    "sign_extend", "rotate_left", "rotate_right", "bvult", "bvule",
+    "bvugt", "bvuge", "bvslt", "bvsle", "bvsgt", "bvsge",
+    "ubv_to_int", "sbv_to_int", "int_to_bv", "bvnego", "bvuaddo",
+    "bvsaddo", "bvumulo", "bvsmulo", "bvusubo", "bvssubo",
+    "bvsdivo"
+  ]
+  fun require_official metadata theory name =
+    assert (metadata_is_official
+      (find_symbol_metadata theory "term" name metadata),
+      "missing official metadata for " ^ theory ^ "." ^ name)
+in
+  List.app (require_official lia_metadata "Ints") int_symbols;
+  List.app (require_official ax_metadata "ArraysEx") array_symbols;
+  List.app (require_official bv_metadata "Fixed_Size_BitVectors") bv_symbols
+end
+
+fun smtlib_arith_array_parse_signatures_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_ALIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(declare-const a (Array Int Int))\n" ^
+       "(assert (and ((_ divisible 3) (** x 2)) " ^
+       "(= (select (store a x 7) x) 7)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "arithmetic/array signature script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "arithmetic/array signature assertion did not parse as Bool")
+end
+
+fun smtlib_bitvector_parse_signatures_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_BV)\n" ^
+       "(declare-const a (_ BitVec 8))\n" ^
+       "(declare-const b (_ BitVec 8))\n" ^
+       "(assert (and " ^
+       "(= (_ bv3 8) #x03) " ^
+       "(= (concat #b1010 #b0101) a) " ^
+       "(= ((_ extract 3 0) a) #b0011) " ^
+       "(= (bvnot a) b) (= (bvneg a) b) " ^
+       "(= (bvand a b) a) (= (bvor a b) a) " ^
+       "(= (bvxor a b) a) (= (bvxnor a b) a) " ^
+       "(= (bvadd a b) a) (= (bvmul a b) a) " ^
+       "(= (bvudiv a b) a) (= (bvurem a b) a) " ^
+       "(= (bvsub a b) a) (= (bvnand a b) a) " ^
+       "(= (bvnor a b) a) (= (bvcomp a b) #b1) " ^
+       "(= (bvsdiv a b) a) (= (bvsrem a b) a) " ^
+       "(= (bvsmod a b) a) (= (bvshl a b) a) " ^
+       "(= (bvlshr a b) a) (= (bvashr a b) a) " ^
+       "(= ((_ repeat 2) #b10) #b1010) " ^
+       "(= ((_ zero_extend 2) #b10) #b0010) " ^
+       "(= ((_ sign_extend 2) #b10) #b1110) " ^
+       "(= ((_ rotate_left 1) a) b) " ^
+       "(= ((_ rotate_right 1) a) b) " ^
+       "(bvult a b) (bvule a b) (bvugt a b) (bvuge a b) " ^
+       "(bvslt a b) (bvsle a b) (bvsgt a b) (bvsge a b) " ^
+       "(= (ubv_to_int a) 0) (= (sbv_to_int a) 0) " ^
+       "(= ((_ int_to_bv 8) 3) a) " ^
+       "(bvnego a) (bvuaddo a b) (bvsaddo a b) " ^
+       "(bvumulo a b) (bvsmulo a b) (bvusubo a b) " ^
+       "(bvssubo a b) (bvsdivo a b)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "bit-vector signature script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "bit-vector signature assertion did not parse as Bool")
+end
+
+fun smtlib_scoped_logic_dictionary_success () =
+let
+  val logics = [
+    "ALIA", "ALIRA", "ANIA", "ANIRA", "AUFLIA", "AUFLIRA",
+    "AUFNIRA", "BV", "LIA", "LRA", "NIA", "NRA", "UF",
+    "UFBV", "UFIDL", "UFLIA", "UFLRA", "UFNIA", "UFNRA",
+    "QF_ABV", "QF_ALIA", "QF_ALRA", "QF_ANIA", "QF_ANRA",
+    "QF_AUFBV", "QF_AUFLIA", "QF_AUFLIRA", "QF_AUFNIA",
+    "QF_AUFNIRA", "QF_AX", "QF_BV", "QF_IDL", "QF_LIA",
+    "QF_LIRA", "QF_LRA", "QF_NIA", "QF_NIRA", "QF_NRA",
+    "QF_RDL", "QF_UF", "QF_UFBV", "QF_UFIDL", "QF_UFLIA",
+    "QF_UFLIRA", "QF_UFLRA", "QF_UFNIRA", "QF_UFNRA"
+  ]
+  fun require_logic logic =
+    let
+      val _ = SmtLib_Logics.parsedicts_of_logic logic
+      val metadata = SmtLib_Logics.metadata_of_logic logic
+    in
+      assert (not (List.null metadata),
+        "logic metadata was empty for " ^ logic)
+    end
+in
+  List.app require_logic logics
 end
 
 (*****************************************************************************)
@@ -866,7 +986,15 @@ let
     ("smtlib_core_symbol_metadata_success",
       smtlib_core_symbol_metadata_success),
     ("smtlib_logic_metadata_extension_split_success",
-      smtlib_logic_metadata_extension_split_success)
+      smtlib_logic_metadata_extension_split_success),
+    ("smtlib_core_arith_array_bv_symbol_coverage_success",
+      smtlib_core_arith_array_bv_symbol_coverage_success),
+    ("smtlib_arith_array_parse_signatures_success",
+      smtlib_arith_array_parse_signatures_success),
+    ("smtlib_bitvector_parse_signatures_success",
+      smtlib_bitvector_parse_signatures_success),
+    ("smtlib_scoped_logic_dictionary_success",
+      smtlib_scoped_logic_dictionary_success)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

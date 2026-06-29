@@ -24,6 +24,7 @@ in
     pairwise: bool,
     left_associative: bool,
     right_associative: bool,
+    soundness_audit: bool,
     parametric_sorts: string list
   }
 
@@ -51,12 +52,13 @@ in
     pairwise = false,
     left_associative = false,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = []
   }
 
   fun mk_attributes {
       overloaded, indexed, chainable, pairwise, left_associative,
-      right_associative, parametric_sorts} =
+      right_associative, soundness_audit, parametric_sorts} =
     {
       overloaded = overloaded,
       indexed = indexed,
@@ -64,6 +66,7 @@ in
       pairwise = pairwise,
       left_associative = left_associative,
       right_associative = right_associative,
+      soundness_audit = soundness_audit,
       parametric_sorts = parametric_sorts
     }
 
@@ -108,6 +111,7 @@ in
     pairwise = false,
     left_associative = true,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = []
   }
 
@@ -118,6 +122,7 @@ in
     pairwise = false,
     left_associative = false,
     right_associative = true,
+    soundness_audit = false,
     parametric_sorts = []
   }
 
@@ -128,6 +133,7 @@ in
     pairwise = false,
     left_associative = false,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = []
   }
 
@@ -138,6 +144,7 @@ in
     pairwise = true,
     left_associative = false,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = []
   }
 
@@ -148,6 +155,7 @@ in
     pairwise = false,
     left_associative = false,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = params
   }
 
@@ -158,6 +166,7 @@ in
     pairwise = false,
     left_associative = false,
     right_associative = false,
+    soundness_audit = false,
     parametric_sorts = params
   }
 
@@ -168,6 +177,18 @@ in
     pairwise = #pairwise attrs,
     left_associative = #left_associative attrs,
     right_associative = #right_associative attrs,
+    soundness_audit = #soundness_audit attrs,
+    parametric_sorts = #parametric_sorts attrs
+  }
+
+  fun soundness_audit_attributes attrs = {
+    overloaded = #overloaded attrs,
+    indexed = #indexed attrs,
+    chainable = #chainable attrs,
+    pairwise = #pairwise attrs,
+    left_associative = #left_associative attrs,
+    right_associative = #right_associative attrs,
+    soundness_audit = true,
     parametric_sorts = #parametric_sorts attrs
   }
 
@@ -289,6 +310,82 @@ in
   handle Feedback.HOL_ERR _ =>
     raise ERR "real_of_decimal" "not a decimal"
 
+  fun natural_of_index n_tm =
+    Arbint.toNat (intSyntax.int_of_term n_tm)
+
+  fun word_index_type n_tm =
+    fcpLib.index_type (natural_of_index n_tm)
+
+  fun bv_decimal_constant token n_tm =
+    if String.isPrefix "bv" token then
+      let
+        val decimal = String.extract (token, 2, NONE)
+        val value = Library.parse_arbnum decimal
+        val n = natural_of_index n_tm
+      in
+        wordsSyntax.mk_word (value, n)
+      end
+    else
+      raise ERR "bv_decimal_constant" "not a decimal bit-vector constant"
+
+  fun mk_word_size_add n_tm t =
+    fcpLib.index_type
+      (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t),
+        natural_of_index n_tm))
+
+  fun mk_bool_ne (t1, t2) =
+    boolSyntax.mk_neg (boolSyntax.mk_eq (t1, t2))
+
+  fun mk_bvnego t =
+    boolSyntax.mk_eq (t, wordsSyntax.mk_word_L (wordsSyntax.dim_of t))
+
+  fun mk_bvuaddo (t1, t2) =
+    wordsSyntax.mk_word_lo (wordsSyntax.mk_word_add (t1, t2), t1)
+
+  fun mk_bvusubo (t1, t2) =
+    wordsSyntax.mk_word_lo (t1, t2)
+
+  fun mk_bvsaddo (t1, t2) =
+    let
+      val msb1 = wordsSyntax.mk_word_msb t1
+      val msb2 = wordsSyntax.mk_word_msb t2
+      val sum_msb = wordsSyntax.mk_word_msb (wordsSyntax.mk_word_add (t1, t2))
+    in
+      boolSyntax.mk_conj (boolSyntax.mk_eq (msb1, msb2),
+        mk_bool_ne (sum_msb, msb1))
+    end
+
+  fun mk_bvssubo (t1, t2) =
+    let
+      val msb1 = wordsSyntax.mk_word_msb t1
+      val msb2 = wordsSyntax.mk_word_msb t2
+      val diff_msb = wordsSyntax.mk_word_msb (wordsSyntax.mk_word_sub (t1, t2))
+    in
+      boolSyntax.mk_conj (mk_bool_ne (msb1, msb2),
+        mk_bool_ne (diff_msb, msb1))
+    end
+
+  fun mk_bvumulo (t1, t2) =
+    numSyntax.mk_geq (numSyntax.mk_mult
+      (wordsSyntax.mk_w2n t1, wordsSyntax.mk_w2n t2),
+      wordsSyntax.mk_dimword (wordsSyntax.dim_of t1))
+
+  fun mk_bvsmulo (t1, t2) =
+    let
+      val product = intSyntax.mk_mult
+        (integer_wordSyntax.mk_w2i t1, integer_wordSyntax.mk_w2i t2)
+      val ty = wordsSyntax.dim_of t1
+    in
+      boolSyntax.mk_disj
+        (intSyntax.mk_less (product, integer_wordSyntax.mk_int_min ty),
+         intSyntax.mk_greater (product, integer_wordSyntax.mk_int_max ty))
+    end
+
+  fun mk_bvsdivo (t1, t2) =
+    boolSyntax.mk_conj
+      (boolSyntax.mk_eq (t1, wordsSyntax.mk_word_L (wordsSyntax.dim_of t1)),
+       boolSyntax.mk_eq (t2, wordsSyntax.mk_word_T (wordsSyntax.dim_of t2)))
+
   (* ArraysEx *)
 
   structure ArraysEx =
@@ -356,6 +453,9 @@ in
         else
           raise ERR "<Fixed_Size_BitVectors.tmdict._>"
             "not a bit-vector constant")),
+      official_entry "_" (indexed_attributes ["m"])
+        ["((_ bv<numeral> m) (_ BitVec m))"]
+        (one_zero bv_decimal_constant),
       official_entry "concat" no_attributes
         ["(par (m n) (concat (_ BitVec m) (_ BitVec n) (_ BitVec (+ m n))))"]
         (K_zero_two wordsSyntax.mk_word_concat),
@@ -374,42 +474,140 @@ in
         (K_zero_one wordsSyntax.mk_word_1comp),
       official_entry "bvneg" no_attributes ["(bvneg (_ BitVec m) (_ BitVec m))"]
         (K_zero_one wordsSyntax.mk_word_2comp),
-      official_entry "bvand" no_attributes
-        ["(bvand (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
-        (K_zero_two wordsSyntax.mk_word_and),
-      official_entry "bvor" no_attributes
-        ["(bvor (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
-        (K_zero_two wordsSyntax.mk_word_or),
-      official_entry "bvxor" no_attributes
-        ["(bvxor (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
-        (K_zero_two wordsSyntax.mk_word_xor),
+      official_entry "bvand" left_assoc_attributes
+        ["(bvand (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)"]
+        (leftassoc wordsSyntax.mk_word_and),
+      official_entry "bvor" left_assoc_attributes
+        ["(bvor (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)"]
+        (leftassoc wordsSyntax.mk_word_or),
+      official_entry "bvxor" left_assoc_attributes
+        ["(bvxor (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)"]
+        (leftassoc wordsSyntax.mk_word_xor),
       official_entry "bvxnor" no_attributes
         ["(bvxnor (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
         (K_zero_two wordsSyntax.mk_word_xnor),
-      official_entry "bvadd" no_attributes
-        ["(bvadd (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
-        (K_zero_two wordsSyntax.mk_word_add),
-      official_entry "bvmul" no_attributes
-        ["(bvmul (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
-        (K_zero_two wordsSyntax.mk_word_mul),
-      (* SMT-LIB states that division by 0w is unspecified. Thus, any
-         proof (of unsatisfiability) should also be valid in HOL,
-         regardless of how division by 0w is defined in HOL. *)
-      official_entry "bvudiv" no_attributes
-        ["(bvudiv (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+      official_entry "bvadd" left_assoc_attributes
+        ["(bvadd (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)"]
+        (leftassoc wordsSyntax.mk_word_add),
+      official_entry "bvmul" left_assoc_attributes
+        ["(bvmul (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)"]
+        (leftassoc wordsSyntax.mk_word_mul),
+      official_entry "bvudiv" (soundness_audit_attributes no_attributes)
+        ["(bvudiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
         (K_zero_two wordsSyntax.mk_word_div),
-      official_entry "bvurem" no_attributes
-        ["(bvurem (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+      official_entry "bvurem" (soundness_audit_attributes no_attributes)
+        ["(bvurem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
         (K_zero_two wordsSyntax.mk_word_mod),
+      official_entry "bvsub" no_attributes
+        ["(bvsub (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+        (K_zero_two wordsSyntax.mk_word_sub),
+      official_entry "bvnand" no_attributes
+        ["(bvnand (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+        (K_zero_two wordsSyntax.mk_word_nand),
+      official_entry "bvnor" no_attributes
+        ["(bvnor (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+        (K_zero_two wordsSyntax.mk_word_nor),
+      official_entry "bvcomp" no_attributes
+        ["(bvcomp (_ BitVec m) (_ BitVec m) (_ BitVec 1))"]
+        (K_zero_two wordsSyntax.mk_word_compare),
+      official_entry "bvsdiv" (soundness_audit_attributes no_attributes)
+        ["(bvsdiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
+        (K_zero_two wordsSyntax.mk_word_quot),
+      official_entry "bvsrem" (soundness_audit_attributes no_attributes)
+        ["(bvsrem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
+        (K_zero_two wordsSyntax.mk_word_rem),
+      official_entry "bvsmod" (soundness_audit_attributes no_attributes)
+        ["(bvsmod (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit"]
+        (K_zero_two integer_wordSyntax.mk_word_smod),
       official_entry "bvshl" no_attributes
         ["(bvshl (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
         (K_zero_two wordsSyntax.mk_word_lsl_bv),
       official_entry "bvlshr" no_attributes
         ["(bvlshr (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
         (K_zero_two wordsSyntax.mk_word_lsr_bv),
+      official_entry "bvashr" no_attributes
+        ["(bvashr (_ BitVec m) (_ BitVec m) (_ BitVec m))"]
+        (K_zero_two wordsSyntax.mk_word_asr_bv),
+      official_entry "repeat" (indexed_attributes ["i"])
+        ["((_ repeat i) (_ BitVec m) (_ BitVec (* i m)))"]
+        (K_one_one
+          (Lib.curry wordsSyntax.mk_word_replicate o numSyntax.mk_numeral o
+            natural_of_index)),
+      official_entry "zero_extend" (indexed_attributes ["i"])
+        ["((_ zero_extend i) (_ BitVec m) (_ BitVec (+ m i)))"]
+        (K_one_one (fn n => fn t =>
+          wordsSyntax.mk_w2w (t, mk_word_size_add n t))),
+      official_entry "sign_extend" (indexed_attributes ["i"])
+        ["((_ sign_extend i) (_ BitVec m) (_ BitVec (+ m i)))"]
+        (K_one_one (fn n => fn t =>
+          wordsSyntax.mk_sw2sw (t, mk_word_size_add n t))),
+      official_entry "rotate_left" (indexed_attributes ["i"])
+        ["((_ rotate_left i) (_ BitVec m) (_ BitVec m))"]
+        (K_one_one
+          (Lib.C (Lib.curry wordsSyntax.mk_word_rol) o
+            numSyntax.mk_numeral o natural_of_index)),
+      official_entry "rotate_right" (indexed_attributes ["i"])
+        ["((_ rotate_right i) (_ BitVec m) (_ BitVec m))"]
+        (K_one_one
+          (Lib.C (Lib.curry wordsSyntax.mk_word_ror) o
+            numSyntax.mk_numeral o natural_of_index)),
       official_entry "bvult" no_attributes
         ["(bvult (_ BitVec m) (_ BitVec m) Bool)"]
-        (K_zero_two wordsSyntax.mk_word_lo)
+        (K_zero_two wordsSyntax.mk_word_lo),
+      official_entry "bvule" no_attributes
+        ["(bvule (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_ls),
+      official_entry "bvugt" no_attributes
+        ["(bvugt (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_hi),
+      official_entry "bvuge" no_attributes
+        ["(bvuge (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_hs),
+      official_entry "bvslt" no_attributes
+        ["(bvslt (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_lt),
+      official_entry "bvsle" no_attributes
+        ["(bvsle (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_le),
+      official_entry "bvsgt" no_attributes
+        ["(bvsgt (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_gt),
+      official_entry "bvsge" no_attributes
+        ["(bvsge (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two wordsSyntax.mk_word_ge),
+      official_entry "ubv_to_int" no_attributes
+        ["(ubv_to_int (_ BitVec m) Int)"]
+        (K_zero_one (intSyntax.mk_injected o wordsSyntax.mk_w2n)),
+      official_entry "sbv_to_int" no_attributes
+        ["(sbv_to_int (_ BitVec m) Int)"]
+        (K_zero_one integer_wordSyntax.mk_w2i),
+      official_entry "int_to_bv" (indexed_attributes ["m"])
+        ["((_ int_to_bv m) Int (_ BitVec m))"]
+        (K_one_one (fn n => fn t =>
+          integer_wordSyntax.mk_i2w (t, word_index_type n))),
+      official_entry "bvnego" no_attributes
+        ["(bvnego (_ BitVec m) Bool)"] (K_zero_one mk_bvnego),
+      official_entry "bvuaddo" no_attributes
+        ["(bvuaddo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvuaddo),
+      official_entry "bvsaddo" no_attributes
+        ["(bvsaddo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvsaddo),
+      official_entry "bvumulo" no_attributes
+        ["(bvumulo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvumulo),
+      official_entry "bvsmulo" no_attributes
+        ["(bvsmulo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvsmulo),
+      official_entry "bvusubo" no_attributes
+        ["(bvusubo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvusubo),
+      official_entry "bvssubo" no_attributes
+        ["(bvssubo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvssubo),
+      official_entry "bvsdivo" no_attributes
+        ["(bvsdivo (_ BitVec m) (_ BitVec m) Bool)"]
+        (K_zero_two mk_bvsdivo)
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -503,6 +701,9 @@ in
         (leftassoc intSyntax.mk_plus),
       official_entry "*" left_assoc_attributes ["(* Int Int Int :left-assoc)"]
         (leftassoc intSyntax.mk_mult),
+      official_entry "**" no_attributes ["(** Int Int Int)"]
+        (K_zero_two (fn (base, exponent) =>
+          intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
       official_entry "div" left_assoc_attributes ["(div Int Int Int :left-assoc)"]
         (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
           (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
@@ -511,6 +712,9 @@ in
           (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2))),
       official_entry "abs" no_attributes ["(abs Int Int)"]
         (K_zero_one intSyntax.mk_absval),
+      official_entry "divisible" (indexed_attributes ["n"])
+        ["((_ divisible n) Int Bool)"]
+        (K_one_one (fn n => fn t => intSyntax.mk_divides (n, t))),
       official_entry "<=" chainable_attributes ["(<= Int Int Bool :chainable)"]
         (chainable intSyntax.mk_leq),
       official_entry "<" chainable_attributes ["(< Int Int Bool :chainable)"]
@@ -598,6 +802,8 @@ in
       ("-", leftassoc intSyntax.mk_minus),
       ("+", leftassoc intSyntax.mk_plus),
       ("*", leftassoc intSyntax.mk_mult),
+      ("**", K_zero_two (fn (base, exponent) =>
+        intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
       ("div", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
         (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
       ("div0", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
@@ -607,6 +813,7 @@ in
       ("mod0", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
         (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2))),
       ("abs", K_zero_one intSyntax.mk_absval),
+      ("divisible", K_one_one (fn n => fn t => intSyntax.mk_divides (n, t))),
       ("<=", chainable intSyntax.mk_leq),
       ("<", chainable intSyntax.mk_less),
       (">=", chainable intSyntax.mk_geq),

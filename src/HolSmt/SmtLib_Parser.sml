@@ -1083,11 +1083,15 @@ local
     let
       val token = get_token ()
       val get_token' = Library.undo_look_ahead [token] get_token
+      fun parse_index () =
+        intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
+        handle Feedback.HOL_ERR _ =>
+          parse_term_with_cfg cfg get_token' (tydict, tmdict)
     in
       if token = ")" then
         List.rev acc
       else
-        get_indices (parse_term_with_cfg cfg get_token' (tydict, tmdict) :: acc)
+        get_indices (parse_index () :: acc)
     end
   in
     t_with_args tmdict head (get_indices [])

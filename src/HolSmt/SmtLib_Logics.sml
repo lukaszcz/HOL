@@ -36,87 +36,18 @@ local
   open SmtLib_Theories
 
   val BV_extension_tmentries = [
-    (* bit-vector constants *)
-    extension_entry "Z3" "_" (indexed_attributes ["m"])
-      ["((_ bv<numeral> m) (_ BitVec m))"] (one_zero (fn token => fn n_tm =>
-      if String.isPrefix "bv" token then
-        let
-          val decimal = String.extract (token, 2, NONE)
-          val value = Library.parse_arbnum decimal
-          val n = Arbint.toNat (intSyntax.int_of_term n_tm)
-        in
-          Lib.curry wordsSyntax.mk_word value n
-        end
-     else
-        raise ERR "<BV_extension_dict._>" "not a bit-vector constant")),
-    extension_entry "Z3" "bvand" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_and),
-    extension_entry "Z3" "bvor" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_or),
-    extension_entry "Z3" "bvadd" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_add),
-    extension_entry "Z3" "bvmul" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_mul),
-    extension_entry "Z3" "bvnand" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_nand),
-    extension_entry "Z3" "bvnor" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_nor),
-    extension_entry "Z3" "bvxor" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_xor),
-    extension_entry "Z3" "bvxnor" left_assoc_attributes []
-      (leftassoc wordsSyntax.mk_word_xnor),
-    extension_entry "Z3" "bvcomp" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_compare),
-    extension_entry "Z3" "bvsub" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_sub),
-    extension_entry "Z3" "bvsdiv" no_attributes []
+    extension_entry "Z3" "bvudiv_i" (soundness_audit_attributes no_attributes)
+      ["Z3 proof alias for bvudiv"]
+      (K_zero_two wordsSyntax.mk_word_div),
+    extension_entry "Z3" "bvurem_i" (soundness_audit_attributes no_attributes)
+      ["Z3 proof alias for bvurem"]
+      (K_zero_two wordsSyntax.mk_word_mod),
+    extension_entry "Z3" "bvsdiv_i" (soundness_audit_attributes no_attributes)
+      ["Z3 proof alias for bvsdiv"]
       (K_zero_two wordsSyntax.mk_word_quot),
-    extension_entry "Z3" "bvsdiv_i" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_quot),
-    extension_entry "Z3" "bvsrem" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_rem),
-    extension_entry "Z3" "bvsrem_i" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_rem),
-    extension_entry "Z3" "bvsmod" no_attributes []
-      (K_zero_two integer_wordSyntax.mk_word_smod),
-    extension_entry "Z3" "bvashr" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_asr_bv),
-    extension_entry "Z3" "repeat" (indexed_attributes ["n"]) []
-      (K_one_one
-      (Lib.curry wordsSyntax.mk_word_replicate o numSyntax.mk_numeral o
-      Arbint.toNat o intSyntax.int_of_term)),
-    extension_entry "Z3" "zero_extend" (indexed_attributes ["n"]) []
-      (K_one_one (fn n => fn t => wordsSyntax.mk_w2w (t,
-      fcpLib.index_type
-        (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t),
-          Arbint.toNat (intSyntax.int_of_term n)))))),
-    extension_entry "Z3" "sign_extend" (indexed_attributes ["n"]) []
-      (K_one_one (fn n => fn t => wordsSyntax.mk_sw2sw (t,
-      fcpLib.index_type
-        (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t),
-          Arbint.toNat (intSyntax.int_of_term n)))))),
-    extension_entry "Z3" "rotate_left" (indexed_attributes ["n"]) []
-      (K_one_one
-      (Lib.C (Lib.curry wordsSyntax.mk_word_rol) o numSyntax.mk_numeral o
-        Arbint.toNat o intSyntax.int_of_term)),
-    extension_entry "Z3" "rotate_right" (indexed_attributes ["n"]) []
-      (K_one_one
-      (Lib.C (Lib.curry wordsSyntax.mk_word_ror) o numSyntax.mk_numeral o
-        Arbint.toNat o intSyntax.int_of_term)),
-    extension_entry "Z3" "bvule" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_ls),
-    extension_entry "Z3" "bvugt" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_hi),
-    extension_entry "Z3" "bvuge" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_hs),
-    extension_entry "Z3" "bvslt" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_lt),
-    extension_entry "Z3" "bvsle" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_le),
-    extension_entry "Z3" "bvsgt" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_gt),
-    extension_entry "Z3" "bvsge" no_attributes []
-      (K_zero_two wordsSyntax.mk_word_ge)
+    extension_entry "Z3" "bvsrem_i" (soundness_audit_attributes no_attributes)
+      ["Z3 proof alias for bvsrem"]
+      (K_zero_two wordsSyntax.mk_word_rem)
   ]
 
   val BV_extension_tmdict = dictionary_of_entries BV_extension_tmentries
@@ -193,12 +124,12 @@ in
 
   structure QF_ABV =
   struct
-    val tydict = union_dicts [Core.tydict, Fixed_Size_BitVectors.tydict,
-      ArraysEx.tydict]
-    val tmdict = union_dicts [Core.tmdict, Fixed_Size_BitVectors.tmdict,
-      ArraysEx.tmdict, BV_extension_tmdict]
-    val metadata = union_metadata [Core.metadata, Fixed_Size_BitVectors.metadata,
-      ArraysEx.metadata, BV_extension_metadata]
+    val tydict = union_dicts [Core.tydict, Ints.tydict,
+      Fixed_Size_BitVectors.tydict, ArraysEx.tydict]
+    val tmdict = union_dicts [Core.tmdict, Ints.tmdict,
+      Fixed_Size_BitVectors.tmdict, ArraysEx.tmdict, BV_extension_tmdict]
+    val metadata = union_metadata [Core.metadata, Ints.metadata,
+      Fixed_Size_BitVectors.metadata, ArraysEx.metadata, BV_extension_metadata]
   end
 
   structure QF_AUFBV =
@@ -224,10 +155,11 @@ in
 
   structure QF_BV =
   struct
-    val tydict = union_dicts [Core.tydict, Fixed_Size_BitVectors.tydict]
-    val tmdict = union_dicts [Core.tmdict, Fixed_Size_BitVectors.tmdict,
-      BV_extension_tmdict]
-    val metadata = union_metadata [Core.metadata,
+    val tydict = union_dicts [Core.tydict, Ints.tydict,
+      Fixed_Size_BitVectors.tydict]
+    val tmdict = union_dicts [Core.tmdict, Ints.tmdict,
+      Fixed_Size_BitVectors.tmdict, BV_extension_tmdict]
+    val metadata = union_metadata [Core.metadata, Ints.metadata,
       Fixed_Size_BitVectors.metadata, BV_extension_metadata]
   end
 
@@ -329,24 +261,94 @@ in
     val metadata = QF_IDL.metadata
   end
 
+  structure ALIA = AUFLIA
+  structure ANIA = AUFLIA
+  structure ALIRA = AUFLIRA
+  structure ANIRA = AUFNIRA
+  structure BV = QF_BV
+  structure LIA = QF_IDL
+  structure NIA = QF_IDL
+  structure NRA = LRA
+  structure UF = QF_UF
+  structure UFBV = QF_UFBV
+  structure UFIDL = QF_UFIDL
+  structure UFLIA = QF_UFLIA
+  structure UFNRA = QF_UFNRA
+  structure QF_ALIA = QF_AUFLIA
+  structure QF_ANIA = QF_AUFLIA
+  structure QF_AUFNIA = QF_AUFLIA
+  structure QF_ALRA = AUFLIRA
+  structure QF_ANRA = AUFNIRA
+  structure QF_AUFLIRA = AUFLIRA
+  structure QF_AUFNIRA = AUFNIRA
+
+  structure QF_LIRA =
+  struct
+    val tydict = union_dicts [Core.tydict, Reals_Ints.tydict]
+    val tmdict = union_dicts [Core.tmdict, Reals_Ints.tmdict]
+    val metadata = union_metadata [Core.metadata, Reals_Ints.metadata]
+  end
+
+  structure QF_NIRA = QF_LIRA
+  structure QF_UFLIRA = QF_LIRA
+  structure QF_UFNIRA = QF_LIRA
+
   (* returns a type dictionary and a term dictionary that can be used
      to parse types/terms of the given SMT-LIB 2 logic *)
   fun parsedicts_of_logic (logic : string) =
     case logic of
-      "AUFLIA" =>
+      "ALIA" =>
+      (ALIA.tydict, ALIA.tmdict)
+    | "ALIRA" =>
+      (ALIRA.tydict, ALIRA.tmdict)
+    | "ANIA" =>
+      (ANIA.tydict, ANIA.tmdict)
+    | "ANIRA" =>
+      (ANIRA.tydict, ANIRA.tmdict)
+    | "AUFLIA" =>
       (AUFLIA.tydict, AUFLIA.tmdict)
     | "AUFLIRA" =>
       (AUFLIRA.tydict, AUFLIRA.tmdict)
     | "AUFNIRA" =>
       (AUFNIRA.tydict, AUFNIRA.tmdict)
+    | "BV" =>
+      (BV.tydict, BV.tmdict)
+    | "LIA" =>
+      (LIA.tydict, LIA.tmdict)
     | "LRA" =>
       (LRA.tydict, LRA.tmdict)
+    | "NIA" =>
+      (NIA.tydict, NIA.tmdict)
+    | "NRA" =>
+      (NRA.tydict, NRA.tmdict)
+    | "UF" =>
+      (UF.tydict, UF.tmdict)
+    | "UFBV" =>
+      (UFBV.tydict, UFBV.tmdict)
+    | "UFIDL" =>
+      (UFIDL.tydict, UFIDL.tmdict)
+    | "UFLIA" =>
+      (UFLIA.tydict, UFLIA.tmdict)
     | "QF_ABV" =>
       (QF_ABV.tydict, QF_ABV.tmdict)
+    | "QF_ALIA" =>
+      (QF_ALIA.tydict, QF_ALIA.tmdict)
+    | "QF_ALRA" =>
+      (QF_ALRA.tydict, QF_ALRA.tmdict)
+    | "QF_ANIA" =>
+      (QF_ANIA.tydict, QF_ANIA.tmdict)
+    | "QF_ANRA" =>
+      (QF_ANRA.tydict, QF_ANRA.tmdict)
     | "QF_AUFBV" =>
       (QF_AUFBV.tydict, QF_AUFBV.tmdict)
     | "QF_AUFLIA" =>
       (QF_AUFLIA.tydict, QF_AUFLIA.tmdict)
+    | "QF_AUFLIRA" =>
+      (QF_AUFLIRA.tydict, QF_AUFLIRA.tmdict)
+    | "QF_AUFNIA" =>
+      (QF_AUFNIA.tydict, QF_AUFNIA.tmdict)
+    | "QF_AUFNIRA" =>
+      (QF_AUFNIRA.tydict, QF_AUFNIRA.tmdict)
     | "QF_AX" =>
       (QF_AX.tydict, QF_AX.tmdict)
     | "QF_BV" =>
@@ -355,10 +357,14 @@ in
       (QF_IDL.tydict, QF_IDL.tmdict)
     | "QF_LIA" =>
       (QF_LIA.tydict, QF_LIA.tmdict)
+    | "QF_LIRA" =>
+      (QF_LIRA.tydict, QF_LIRA.tmdict)
     | "QF_LRA" =>
       (QF_LRA.tydict, QF_LRA.tmdict)
     | "QF_NIA" =>
       (QF_NIA.tydict, QF_NIA.tmdict)
+    | "QF_NIRA" =>
+      (QF_NIRA.tydict, QF_NIRA.tmdict)
     | "QF_NRA" =>
       (QF_NRA.tydict, QF_NRA.tmdict)
     | "QF_RDL" =>
@@ -371,14 +377,20 @@ in
       (QF_UFIDL.tydict, QF_UFIDL.tmdict)
     | "QF_UFLIA" =>
       (QF_UFLIA.tydict, QF_UFLIA.tmdict)
+    | "QF_UFLIRA" =>
+      (QF_UFLIRA.tydict, QF_UFLIRA.tmdict)
     | "QF_UFLRA" =>
       (QF_UFLRA.tydict, QF_UFLRA.tmdict)
+    | "QF_UFNIRA" =>
+      (QF_UFNIRA.tydict, QF_UFNIRA.tmdict)
     | "QF_UFNRA" =>
       (QF_UFNRA.tydict, QF_UFNRA.tmdict)
     | "UFLRA" =>
       (UFLRA.tydict, UFLRA.tmdict)
     | "UFNIA" =>
       (UFNIA.tydict, UFNIA.tmdict)
+    | "UFNRA" =>
+      (UFNRA.tydict, UFNRA.tmdict)
     | _ =>
       raise ERR "parsedicts_of_logic" ("unknown logic '" ^ logic ^ "'")
 
@@ -386,29 +398,53 @@ in
      the given SMT-LIB 2 logic *)
   fun metadata_of_logic (logic : string) =
     case logic of
-      "AUFLIA" => AUFLIA.metadata
+      "ALIA" => ALIA.metadata
+    | "ALIRA" => ALIRA.metadata
+    | "ANIA" => ANIA.metadata
+    | "ANIRA" => ANIRA.metadata
+    | "AUFLIA" => AUFLIA.metadata
     | "AUFLIRA" => AUFLIRA.metadata
     | "AUFNIRA" => AUFNIRA.metadata
+    | "BV" => BV.metadata
+    | "LIA" => LIA.metadata
     | "LRA" => LRA.metadata
+    | "NIA" => NIA.metadata
+    | "NRA" => NRA.metadata
+    | "UF" => UF.metadata
+    | "UFBV" => UFBV.metadata
+    | "UFIDL" => UFIDL.metadata
+    | "UFLIA" => UFLIA.metadata
     | "QF_ABV" => QF_ABV.metadata
+    | "QF_ALIA" => QF_ALIA.metadata
+    | "QF_ALRA" => QF_ALRA.metadata
+    | "QF_ANIA" => QF_ANIA.metadata
+    | "QF_ANRA" => QF_ANRA.metadata
     | "QF_AUFBV" => QF_AUFBV.metadata
     | "QF_AUFLIA" => QF_AUFLIA.metadata
+    | "QF_AUFLIRA" => QF_AUFLIRA.metadata
+    | "QF_AUFNIA" => QF_AUFNIA.metadata
+    | "QF_AUFNIRA" => QF_AUFNIRA.metadata
     | "QF_AX" => QF_AX.metadata
     | "QF_BV" => QF_BV.metadata
     | "QF_IDL" => QF_IDL.metadata
     | "QF_LIA" => QF_LIA.metadata
+    | "QF_LIRA" => QF_LIRA.metadata
     | "QF_LRA" => QF_LRA.metadata
     | "QF_NIA" => QF_NIA.metadata
+    | "QF_NIRA" => QF_NIRA.metadata
     | "QF_NRA" => QF_NRA.metadata
     | "QF_RDL" => QF_RDL.metadata
     | "QF_UF" => QF_UF.metadata
     | "QF_UFBV" => QF_UFBV.metadata
     | "QF_UFIDL" => QF_UFIDL.metadata
     | "QF_UFLIA" => QF_UFLIA.metadata
+    | "QF_UFLIRA" => QF_UFLIRA.metadata
     | "QF_UFLRA" => QF_UFLRA.metadata
+    | "QF_UFNIRA" => QF_UFNIRA.metadata
     | "QF_UFNRA" => QF_UFNRA.metadata
     | "UFLRA" => UFLRA.metadata
     | "UFNIA" => UFNIA.metadata
+    | "UFNRA" => UFNRA.metadata
     | _ =>
       raise ERR "metadata_of_logic" ("unknown logic '" ^ logic ^ "'")
 
