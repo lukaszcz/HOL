@@ -7,6 +7,9 @@ import unittest
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from record_z3_proof_corpus import (
+    PARSE_ONLY_RULES,
+    REPLAY_SUPPORTED_RULES,
+    RULE_PREMISE_KIND,
     build_rule_gate_report,
     build_summary,
     expected_rules_for_version,
@@ -23,6 +26,24 @@ def entry(path, version, proof):
 
 
 class ProofRuleExtractionTests(unittest.TestCase):
+    def proof_fragment_for_rule(self, rule):
+        if rule.startswith("th-lemma-"):
+            theory = rule.removeprefix("th-lemma-")
+            return f"((_ th-lemma {theory}) (asserted a) false)"
+        if rule == "rewrite":
+            return "((_ rewrite) false)"
+
+        premise_kind = RULE_PREMISE_KIND[rule]
+        if premise_kind == "zero":
+            return f"({rule} false)"
+        if premise_kind == "one":
+            return f"({rule} (asserted a) false)"
+        if premise_kind == "two":
+            return f"({rule} (asserted a) (asserted b) false)"
+        if premise_kind == "list":
+            return f"({rule} (asserted a) (asserted b) false)"
+        self.fail(f"unsupported synthetic premise kind for {rule}: {premise_kind}")
+
     def test_extracts_histogram_from_z3_v4_wrapper(self):
         proof = """((set-logic QF_UF)
 (proof
@@ -37,6 +58,48 @@ class ProofRuleExtractionTests(unittest.TestCase):
         self.assertEqual(sorted(report["rule_contexts"]), ["asserted", "unit-resolution"])
         self.assertEqual(report["unknown_rules"], [])
         self.assertEqual(report["malformed_fragments"], [])
+
+    def test_all_core_replay_rules_have_raw_proof_extraction_coverage(self):
+        core_rules = sorted(
+            rule for rule in REPLAY_SUPPORTED_RULES if not rule.startswith("th-lemma-")
+        )
+        proof = "(proof\n  " + "\n  ".join(
+            self.proof_fragment_for_rule(rule) for rule in core_rules
+        ) + "\n)"
+
+        report = extract_rule_report(proof)
+
+        for rule in core_rules:
+            self.assertIn(rule, report["rule_histogram"])
+        self.assertEqual(report["unknown_rules"], [])
+        self.assertEqual(report["malformed_fragments"], [])
+
+    def test_parse_only_rule_is_recorded_but_not_replay_unknown(self):
+        proof = "(proof (proof-bind (asserted false)))"
+        report = extract_rule_report(proof)
+        gate = build_rule_gate_report(
+            [entry("proof-bind.smt2", "4.12.4", report)],
+            {"default": ["asserted", "proof-bind"]},
+        )
+
+        self.assertEqual(PARSE_ONLY_RULES, {"proof-bind"})
+        self.assertEqual(report["rule_histogram"]["proof-bind"], 1)
+        self.assertEqual(report["unknown_rules"], [])
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["replay_unknown_rules"], [])
+        self.assertEqual(gate["parse_only_rules"][0]["rule"], "proof-bind")
+
+    def test_parse_only_rule_is_reported_without_expected_manifest(self):
+        proof = extract_rule_report("(proof (proof-bind (asserted false)))")
+        gate = build_rule_gate_report(
+            [entry("proof-bind.smt2", "4.12.4", proof)],
+            None,
+        )
+
+        self.assertTrue(gate["passed"])
+        self.assertEqual(gate["unseen_rules"], [])
+        self.assertEqual(gate["replay_unknown_rules"], [])
+        self.assertEqual(gate["parse_only_rules"][0]["rule"], "proof-bind")
 
     def test_unknown_rule_is_reported_with_context(self):
         proof = """(proof
@@ -70,6 +133,7 @@ class ProofRuleExtractionTests(unittest.TestCase):
             ]
         )
         self.assertEqual(summary["discovered_rules"], ["asserted", "unit-resolution"])
+        self.assertEqual(summary["proof_rule_support"]["parse_only"], ["proof-bind"])
         self.assertEqual(
             summary["rules_by_version"],
             [

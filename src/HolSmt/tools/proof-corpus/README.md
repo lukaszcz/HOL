@@ -16,8 +16,9 @@ The tool writes:
 - `entries.jsonl`: one `holsmt-z3-proof-corpus-v1` JSON object per input.
 - `summary.json`: aggregate rule histogram and unknown-rule coverage, intended
   as input for the support-matrix task. The summary includes `discovered_rules`,
-  `z3_versions`, and `rules_by_version` so proof-format drift is visible per
-  solver version.
+  `z3_versions`, `rules_by_version`, and `proof_rule_support` so proof-format
+  drift is visible per solver version and parse-only proof wrappers are
+  explicit.
 - `rule-gate.json`: when `--expected-rules` or `--fail-on-unknown-rules` is
   used, a regression-gate report for unseen or replay-unknown proof rules.
 - `raw/*.stdout` and `raw/*.stderr`: exact solver process output.
@@ -31,7 +32,10 @@ corpus schema.
 The proof-rule histogram is extracted directly from raw proof S-expressions.
 Each rule keeps up to three local proof contexts. Rules not supported by the
 current `Z3_ProofParser`/`Z3_ProofReplay` proofterm table are emitted under
-`unknown_rules` with local proof context.
+`unknown_rules` with local proof context. Transparent parser-only wrappers such
+as `proof-bind` are listed under the summary's
+`proof_rule_support.parse_only` and under `rule-gate.json` `parse_only_rules`
+when they are discovered.
 Malformed proof syntax is emitted under `malformed_fragments` with line,
 column, and context so the fragment can be minimized later.
 

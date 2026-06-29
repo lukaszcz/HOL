@@ -57,6 +57,15 @@ REPLAY_SUPPORTED_RULES = {
     "unit-resolution",
 }
 
+PARSE_ONLY_RULES = {
+    # Z3 can wrap local proof terms in proof-bind annotations.  HolSmt's
+    # parser treats the wrapper as transparent, so there is deliberately no
+    # replay step for this rule.
+    "proof-bind",
+}
+
+KNOWN_RULES = REPLAY_SUPPORTED_RULES | PARSE_ONLY_RULES
+
 RULE_PREMISE_KIND = {
     "and-elim": "one",
     "asserted": "zero",
@@ -405,7 +414,7 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
 
         histogram[head_name] += 1
         record_rule_context(head_name, node)
-        if head_name not in REPLAY_SUPPORTED_RULES:
+        if head_name not in KNOWN_RULES:
             record_unknown(head_name, node)
 
         premise_kind = RULE_PREMISE_KIND.get(head_name, "unknown")
@@ -685,6 +694,10 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
             }
             for rule, items in sorted(unknown.items())
         ],
+        "proof_rule_support": {
+            "replay_supported": sorted(REPLAY_SUPPORTED_RULES),
+            "parse_only": sorted(PARSE_ONLY_RULES),
+        },
         "malformed_fragment_count": malformed_count,
         "entries": [entry["input"]["path"] for entry in entries],  # type: ignore[index]
     }
@@ -731,6 +744,7 @@ def build_rule_gate_report(
 ) -> dict[str, object]:
     unseen: list[dict[str, object]] = []
     replay_unknown: list[dict[str, object]] = []
+    parse_only: list[dict[str, object]] = []
     malformed: list[dict[str, object]] = []
 
     for entry in entries:
@@ -743,6 +757,18 @@ def build_rule_gate_report(
             else None
         )
         contexts = proof.get("rule_contexts", {})  # type: ignore[union-attr]
+
+        for rule, count in sorted(proof["rule_histogram"].items()):  # type: ignore[index, union-attr]
+            if rule in PARSE_ONLY_RULES:
+                parse_only.append(
+                    {
+                        "z3_version": version,
+                        "input": input_path,
+                        "rule": rule,
+                        "count": count,
+                        "contexts": contexts.get(rule, []),  # type: ignore[union-attr]
+                    }
+                )
 
         if expected is not None:
             for rule, count in sorted(proof["rule_histogram"].items()):  # type: ignore[index, union-attr]
@@ -784,6 +810,7 @@ def build_rule_gate_report(
         "passed": not unseen and not replay_unknown and not malformed,
         "unseen_rules": unseen,
         "replay_unknown_rules": replay_unknown,
+        "parse_only_rules": parse_only,
         "malformed_fragments": malformed,
     }
 

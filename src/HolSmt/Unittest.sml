@@ -1418,6 +1418,17 @@ in
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
 end
 
+fun z3_proof_parser_erases_proof_bind_success () =
+let
+  val proof = parse_z3_proof_string "4.12.4"
+    "((proof (proof-bind (asserted false))))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.ASSERTED _) => ()
+  | SOME _ => die "FAIL: proof-bind parsed to unexpected constructor"
+  | NONE => die "FAIL: proof-bind proof did not define root proof step"
+end
+
 fun z3_proof_parser_unknown_rule_diagnostic () =
   (ignore (parse_z3_proof_string "4.12.4"
     "((proof (new-z3-rule false)))");
@@ -1524,6 +1535,8 @@ let
       z3_proof_registry_metadata_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_erases_proof_bind_success",
+      z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic)
   ]
