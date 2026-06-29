@@ -793,6 +793,67 @@ in
     "check-sat-assuming assumptions were not preserved")
 end
 
+fun smtlib_typecheck_invalid_assertion_diagnostic () =
+  let
+    val _ =
+      parse_smtlib_state
+        ("(set-logic QF_LIA)\n" ^
+         "(assert 1)\n" ^
+         "(exit)\n")
+  in
+    die "typechecker accepted a non-Bool assertion"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains "invalid SMT-LIB input" msg,
+        "invalid assertion diagnostic did not identify invalid input: " ^ msg);
+      assert (contains "line 2, column 9" msg,
+        "invalid assertion diagnostic did not include source location: " ^ msg);
+      assert (contains "command 'assert'" msg,
+        "invalid assertion diagnostic did not include command context: " ^ msg);
+      assert (contains "expected sort :bool" msg andalso
+              contains "actual sort :int" msg,
+        "invalid assertion diagnostic did not include expected/actual sorts: " ^
+        msg)
+    end
+
+fun smtlib_typecheck_declared_function_mismatch_diagnostic () =
+  let
+    val _ =
+      parse_smtlib_state
+        ("(set-logic ALL)\n" ^
+         "(declare-fun f (Bool) Bool)\n" ^
+         "(assert (f 0))\n" ^
+         "(exit)\n")
+  in
+    die "typechecker accepted an ill-sorted declared-function application"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains "command 'assert'" msg,
+        "function mismatch diagnostic lacked command context: " ^ msg);
+      assert (contains "expected sort :bool" msg andalso
+              contains "actual sort :int" msg,
+        "function mismatch diagnostic lacked expected/actual sorts: " ^ msg)
+    end
+
+fun smtlib_typecheck_overloaded_and_indexed_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic ALL)\n" ^
+       "(assert (and (= 1 1) (= true true) " ^
+       "(= ((_ extract 1 0) #b101) #b01)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "overloaded/indexed typecheck script produced wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "overloaded/indexed typecheck assertion did not parse as Bool")
+end
+
 fun smtlib_core_symbol_metadata_success () =
 let
   val metadata = SmtLib_Logics.metadata_of_logic "QF_UF"
@@ -1123,6 +1184,12 @@ let
     ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
     ("parse_file_reset_state", parse_file_reset_state),
     ("parse_file_query_commands_success", parse_file_query_commands_success),
+    ("smtlib_typecheck_invalid_assertion_diagnostic",
+      smtlib_typecheck_invalid_assertion_diagnostic),
+    ("smtlib_typecheck_declared_function_mismatch_diagnostic",
+      smtlib_typecheck_declared_function_mismatch_diagnostic),
+    ("smtlib_typecheck_overloaded_and_indexed_success",
+      smtlib_typecheck_overloaded_and_indexed_success),
     ("smtlib_core_symbol_metadata_success",
       smtlib_core_symbol_metadata_success),
     ("smtlib_logic_metadata_extension_split_success",

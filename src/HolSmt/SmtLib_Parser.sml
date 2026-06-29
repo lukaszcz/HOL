@@ -127,6 +127,8 @@ struct
     queries: query_command list
   }
 
+  type checked_script = command_state_snapshot
+
 local
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Parser"
@@ -2044,6 +2046,919 @@ local
   fun parse_benchmark get_token =
     legacy_result_of_state (parse_benchmark_state get_token)
 
+  (***************************************************************************)
+  (* source-located typechecking and HOL term construction                    *)
+  (***************************************************************************)
+
+  type function_signature = {
+    tm: Term.term,
+    domain: Type.hol_type list,
+    range: Type.hol_type
+  }
+
+  type function_signature_dict =
+    (string, function_signature list) Redblackmap.dict
+
+  type typecheck_frame = {
+    tydict: Type.hol_type dict,
+    tmdict: Term.term dict,
+    sigdict: function_signature_dict,
+    assertions: Term.term list,
+    named_assertions: (string * Term.term) list,
+    local_definitions: Term.term list
+  }
+
+  type typecheck_state = {
+    logic: string,
+    frames: typecheck_frame list,
+    queries: query_command list
+  }
+
+  datatype checked_term =
+    CheckedTerm of {term: Term.term, sort: Type.hol_type}
+
+  fun checked_term_of t = CheckedTerm {term = t, sort = Term.type_of t}
+  fun checked_term (CheckedTerm {term, ...}) = term
+  fun checked_sort (CheckedTerm {sort, ...}) = sort
+
+  fun type_to_string ty = Hol_pp.type_to_string ty
+
+  fun sort_list_to_string tys =
+    "[" ^ String.concatWith ", " (List.map type_to_string tys) ^ "]"
+
+  fun command_context command =
+    "command '" ^ command ^ "'"
+
+  fun type_error fn_name context loc expected actual detail =
+    let
+      val expected_s =
+        case expected of NONE => "" | SOME ty => ", expected sort " ^
+          type_to_string ty
+      val actual_s =
+        case actual of NONE => "" | SOME ty => ", actual sort " ^
+          type_to_string ty
+    in
+      raise ERR fn_name
+        ("invalid SMT-LIB input at " ^ source_span_to_string loc ^
+         " in " ^ context ^ expected_s ^ actual_s ^ ": " ^ detail)
+    end
+
+  fun expect_checked_sort fn_name context loc expected checked =
+    if checked_sort checked = expected then
+      checked_term checked
+    else
+      type_error fn_name context loc (SOME expected) (SOME (checked_sort checked))
+        "sort mismatch"
+
+  fun located_string_node x = node_of x
+
+  fun typecheck_frame_tydict ({tydict, ...}: typecheck_frame) = tydict
+  fun typecheck_frame_tmdict ({tmdict, ...}: typecheck_frame) = tmdict
+  fun typecheck_frame_sigdict ({sigdict, ...}: typecheck_frame) = sigdict
+  fun typecheck_frame_assertions ({assertions, ...}: typecheck_frame) = assertions
+  fun typecheck_frame_named_assertions ({named_assertions, ...}: typecheck_frame) =
+    named_assertions
+  fun typecheck_frame_local_definitions ({local_definitions, ...}: typecheck_frame) =
+    local_definitions
+
+  fun empty_sigdict () : function_signature_dict =
+    Redblackmap.mkDict String.compare
+
+  fun mk_typecheck_frame tydict tmdict sigdict = {
+    tydict = tydict,
+    tmdict = tmdict,
+    sigdict = sigdict,
+    assertions = [],
+    named_assertions = [],
+    local_definitions = []
+  }
+
+  fun current_typecheck_frame ({frames, ...}: typecheck_state) =
+    case frames of
+      frame :: _ => frame
+    | [] => raise ERR "current_typecheck_frame" "empty assertion stack"
+
+  fun current_typecheck_dicts state =
+    let val frame = current_typecheck_frame state
+    in
+      (typecheck_frame_tydict frame, typecheck_frame_tmdict frame,
+       typecheck_frame_sigdict frame)
+    end
+
+  fun update_current_typecheck_frame f
+      ({logic, frames, queries}: typecheck_state) =
+    case frames of
+      frame :: rest => {logic = logic, frames = f frame :: rest, queries = queries}
+    | [] => raise ERR "update_current_typecheck_frame" "empty assertion stack"
+
+  fun update_current_typecheck_dicts (tydict, tmdict, sigdict) state =
+    update_current_typecheck_frame
+      (fn frame => {
+        tydict = tydict,
+        tmdict = tmdict,
+        sigdict = sigdict,
+        assertions = typecheck_frame_assertions frame,
+        named_assertions = typecheck_frame_named_assertions frame,
+        local_definitions = typecheck_frame_local_definitions frame
+      }) state
+
+  fun add_typechecked_assertion assertion name state =
+    update_current_typecheck_frame
+      (fn frame => {
+        tydict = typecheck_frame_tydict frame,
+        tmdict = typecheck_frame_tmdict frame,
+        sigdict = typecheck_frame_sigdict frame,
+        assertions = assertion :: typecheck_frame_assertions frame,
+        named_assertions =
+          (case name of
+             NONE => typecheck_frame_named_assertions frame
+           | SOME n => (n, assertion) :: typecheck_frame_named_assertions frame),
+        local_definitions = typecheck_frame_local_definitions frame
+      }) state
+
+  fun add_typechecked_definition assertion state =
+    update_current_typecheck_frame
+      (fn frame => {
+        tydict = typecheck_frame_tydict frame,
+        tmdict = typecheck_frame_tmdict frame,
+        sigdict = typecheck_frame_sigdict frame,
+        assertions = assertion :: typecheck_frame_assertions frame,
+        named_assertions = typecheck_frame_named_assertions frame,
+        local_definitions = assertion :: typecheck_frame_local_definitions frame
+      }) state
+
+  fun add_typechecked_query query ({logic, frames, queries}: typecheck_state) =
+    {logic = logic, frames = frames, queries = query :: queries}
+
+  fun active_typechecked_assertions ({frames, ...}: typecheck_state) =
+    List.concat
+      (List.map (List.rev o typecheck_frame_assertions) (List.rev frames))
+
+  fun active_typechecked_named_assertions ({frames, ...}: typecheck_state) =
+    List.concat
+      (List.map (List.rev o typecheck_frame_named_assertions) (List.rev frames))
+
+  fun active_typechecked_local_definitions ({frames, ...}: typecheck_state) =
+    List.concat
+      (List.map (List.rev o typecheck_frame_local_definitions) (List.rev frames))
+
+  fun new_typecheck_state logic tydict tmdict =
+    {logic = logic,
+     frames = [mk_typecheck_frame tydict tmdict (empty_sigdict ())],
+     queries = []}
+
+  fun dest_typecheck_state cmd (SOME x) = x
+    | dest_typecheck_state cmd NONE =
+        raise ERR "typecheck_script" ("received " ^ cmd ^ " before set-logic")
+
+  fun finalize_typecheck_state cmd state : command_state_snapshot =
+  let
+    val command_state as {logic, queries, ...} =
+      dest_typecheck_state cmd state
+    val (tydict, tmdict, _) = current_typecheck_dicts command_state
+  in
+    {logic = logic,
+     tydict = tydict,
+     tmdict = tmdict,
+     assertions = active_typechecked_assertions command_state,
+     named_assertions = active_typechecked_named_assertions command_state,
+     local_definitions = active_typechecked_local_definitions command_state,
+     queries = List.rev queries}
+  end
+
+  fun push_typecheck_frames 0 state = state
+    | push_typecheck_frames n ({logic, frames, queries}: typecheck_state) =
+        let
+          val top = current_typecheck_frame
+            {logic = logic, frames = frames, queries = queries}
+          val frame = mk_typecheck_frame
+            (typecheck_frame_tydict top)
+            (typecheck_frame_tmdict top)
+            (typecheck_frame_sigdict top)
+        in
+          push_typecheck_frames (n - 1)
+            {logic = logic, frames = frame :: frames, queries = queries}
+        end
+
+  fun pop_typecheck_frames 0 state = state
+    | pop_typecheck_frames n ({logic, frames, queries}: typecheck_state) =
+        (case frames of
+           _ :: rest =>
+             if List.null rest then
+               raise ERR "pop" "cannot pop the base assertion scope"
+             else
+               pop_typecheck_frames (n - 1)
+                 {logic = logic, frames = rest, queries = queries}
+         | [] => raise ERR "pop" "empty assertion stack")
+
+  fun reset_typecheck_assertions
+      ({logic, frames, queries}: typecheck_state) =
+    let
+      val frame = current_typecheck_frame
+        {logic = logic, frames = frames, queries = queries}
+    in
+      {logic = logic,
+       frames = [mk_typecheck_frame
+         (typecheck_frame_tydict frame)
+         (typecheck_frame_tmdict frame)
+         (typecheck_frame_sigdict frame)],
+       queries = queries}
+    end
+
+  fun add_signature name sig_entry sigdict =
+    Library.extend_dict ((name, sig_entry), sigdict)
+
+  fun peek_signatures (sigdict, name) =
+    SOME (Redblackmap.find (sigdict, name))
+    handle Redblackmap.NotFound => NONE
+
+  fun make_decl_parsefn name tm args_count token indices args =
+    if List.null indices andalso List.length args = args_count then
+      Term.list_mk_comb (tm, args)
+    else
+      raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+
+  fun add_value_signature name domain range (tmdict, sigdict) =
+    let
+      val tm = Term.mk_var (name, boolSyntax.list_mk_fun (domain, range))
+      val parsefn = make_decl_parsefn name tm (List.length domain)
+      val tmdict = Library.extend_dict ((name, parsefn), tmdict)
+      val sigdict = add_signature name
+        {tm = tm, domain = domain, range = range} sigdict
+    in
+      (tm, tmdict, sigdict)
+    end
+
+  fun add_value_term_signature name tm domain range (tmdict, sigdict) =
+    let
+      val parsefn = make_decl_parsefn name tm (List.length domain)
+      val tmdict = Library.extend_dict ((name, parsefn), tmdict)
+      val sigdict = add_signature name
+        {tm = tm, domain = domain, range = range} sigdict
+    in
+      (tmdict, sigdict)
+    end
+
+  fun index_term_from_ast context (tydict, tmdict, sigdict) term_ast =
+    let
+      fun parse_numeral token =
+        intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
+    in
+      case node_of term_ast of
+        TermIdentifier token =>
+          (parse_numeral token
+           handle Feedback.HOL_ERR _ =>
+             ((checked_term o typecheck_term context (tydict, tmdict, sigdict))
+                term_ast
+              handle Feedback.HOL_ERR _ =>
+                Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
+      | _ => checked_term (typecheck_term context (tydict, tmdict, sigdict) term_ast)
+    end
+
+  and typecheck_sort context tydict sort_ast =
+    let
+      fun arg_sorts args = List.map (typecheck_sort context tydict) args
+      fun parse_index name_loc indices args =
+        let
+          val token = located_string_node name_loc
+          val idx_terms = List.map
+            (fn idx =>
+              numSyntax.mk_numeral
+                (Library.parse_arbnum (located_string_node idx))
+              handle Feedback.HOL_ERR _ =>
+                type_error "typecheck_sort" context (loc_of idx) NONE NONE
+                  ("invalid sort index '" ^ located_string_node idx ^ "'"))
+            indices
+        in
+          t_with_args tydict token idx_terms args
+          handle Feedback.HOL_ERR holerr =>
+            type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
+              (Feedback.message_of holerr)
+        end
+    in
+      case node_of sort_ast of
+        SortIdentifier name =>
+          (t_with_args tydict name [] []
+           handle Feedback.HOL_ERR holerr =>
+             type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
+               (Feedback.message_of holerr))
+      | SortIndexed (name, indices) =>
+          parse_index name indices []
+      | SortApply (head, args) =>
+          (t_with_args tydict (located_string_node head) []
+             (arg_sorts args)
+           handle Feedback.HOL_ERR holerr =>
+             type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
+               (Feedback.message_of holerr))
+    end
+
+  and typecheck_sorted_var context tydict sorted_var =
+    case node_of sorted_var of
+      SortedVar (name, sort) =>
+        (located_string_node name, typecheck_sort context tydict sort)
+
+  and function_signature_mismatch_detail name arg_sorts signatures =
+    let
+      val arity_matches =
+        List.filter
+          (fn {domain, ...}: function_signature =>
+            List.length domain = List.length arg_sorts)
+          signatures
+    in
+      case arity_matches of
+        [] =>
+          "wrong number of arguments for '" ^ name ^ "': actual sorts " ^
+          sort_list_to_string arg_sorts
+      | {domain, ...} :: _ =>
+          "argument sort mismatch for '" ^ name ^ "': expected sorts " ^
+          sort_list_to_string domain ^ ", actual sorts " ^
+          sort_list_to_string arg_sorts
+    end
+
+  and signature_applies arg_sorts ({domain, ...}: function_signature) =
+    List.length domain = List.length arg_sorts andalso
+    List.all (fn (expected, actual) => expected = actual)
+      (ListPair.zip (domain, arg_sorts))
+
+  and apply_user_signature fn_name context loc name args signatures =
+    let
+      val arg_terms = List.map checked_term args
+      val arg_sorts = List.map checked_sort args
+    in
+      case List.find (signature_applies arg_sorts) signatures of
+        SOME {tm, range, ...} =>
+          CheckedTerm {term = Term.list_mk_comb (tm, arg_terms), sort = range}
+      | NONE =>
+          let
+            val actual =
+              case arg_sorts of [] => NONE | ty :: _ => SOME ty
+            val expected =
+              case signatures of
+                {domain = ty :: _, ...} :: _ => SOME ty
+              | {range, domain = [], ...} :: _ => SOME range
+              | _ => NONE
+          in
+            type_error fn_name context loc expected actual
+              (function_signature_mismatch_detail name arg_sorts signatures)
+          end
+    end
+
+  and apply_symbol fn_name context loc (tydict, tmdict, sigdict)
+      name indices args =
+    if List.null indices then
+      (case peek_signatures (sigdict, name) of
+         SOME signatures =>
+           apply_user_signature fn_name context loc name args signatures
+       | NONE =>
+         let
+           val arg_terms = List.map checked_term args
+           val arg_sorts = List.map checked_sort args
+           val t =
+             t_with_args tmdict name [] arg_terms
+             handle Feedback.HOL_ERR holerr =>
+               type_error fn_name context loc NONE NONE
+                 ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
+                  sort_list_to_string arg_sorts ^ ": " ^
+                  Feedback.message_of holerr)
+         in
+           checked_term_of t
+         end)
+    else
+      let
+        val arg_terms = List.map checked_term args
+        val arg_sorts = List.map checked_sort args
+        val t =
+          t_with_args tmdict name indices arg_terms
+          handle Feedback.HOL_ERR holerr =>
+            type_error fn_name context loc NONE NONE
+              ("could not resolve indexed symbol '" ^ name ^
+               "' for actual sorts " ^ sort_list_to_string arg_sorts ^
+               ": " ^ Feedback.message_of holerr)
+      in
+        checked_term_of t
+      end
+
+  and typecheck_term context env term_ast =
+    let
+      val (tydict, tmdict, sigdict) = env
+      fun check t = typecheck_term context env t
+      fun check_index t = index_term_from_ast context env t
+      fun apply_head loc head args =
+        case node_of head of
+          TermIdentifier name =>
+            apply_symbol "typecheck_term" context loc env name []
+              (List.map check args)
+        | TermIndexed (name, indices) =>
+            apply_symbol "typecheck_term" context loc env
+              (located_string_node name) (List.map check_index indices)
+              (List.map check args)
+        | _ =>
+            let
+              val head_checked = check head
+              val arg_terms = List.map (checked_term o check) args
+              val t =
+                Term.list_mk_comb (checked_term head_checked, arg_terms)
+                handle Feedback.HOL_ERR holerr =>
+                  type_error "typecheck_term" context loc NONE
+                    (SOME (checked_sort head_checked))
+                    ("invalid higher-order application: " ^
+                     Feedback.message_of holerr)
+            in
+              checked_term_of t
+            end
+    in
+      case node_of term_ast of
+        TermIdentifier name =>
+          apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
+      | TermIndexed (name, indices) =>
+          apply_symbol "typecheck_term" context (loc_of term_ast) env
+            (located_string_node name) (List.map check_index indices) []
+      | TermApply (head, args) =>
+          apply_head (loc_of term_ast) head args
+      | TermLet (bindings, body) =>
+          let
+            val checked_bindings =
+              List.map (fn (name, body) =>
+                let val checked = check body
+                in
+                  (located_string_node name,
+                   Term.mk_var (located_string_node name, checked_sort checked),
+                   checked_term checked)
+                end) bindings
+            val (tmdict, sigdict) =
+              List.foldl
+                (fn ((name, var, _), (tmdict, sigdict)) =>
+                  add_value_term_signature name var [] (Term.type_of var)
+                    (tmdict, sigdict))
+                (tmdict, sigdict) checked_bindings
+            val body_checked =
+              typecheck_term context (tydict, tmdict, sigdict) body
+            val t = (#mk_let smtlib_cfg) (checked_bindings,
+              checked_term body_checked)
+          in
+            checked_term_of t
+          end
+      | TermForall (vars, body) =>
+          typecheck_binder context env term_ast vars body boolSyntax.list_mk_forall
+      | TermExists (vars, body) =>
+          typecheck_binder context env term_ast vars body boolSyntax.list_mk_exists
+      | TermAnnotated (term, _) =>
+          check term
+    end
+
+  and typecheck_binder context (tydict, tmdict, sigdict) term_ast vars body
+      mk_binder =
+    let
+      val vars = List.map (typecheck_sorted_var context tydict) vars
+      val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+      val (tmdict, sigdict) =
+        List.foldl
+          (fn ((name, var), (tmdict, sigdict)) =>
+            add_value_term_signature name var [] (Term.type_of var)
+              (tmdict, sigdict))
+          (tmdict, sigdict) vars
+      val body_checked =
+        typecheck_term context (tydict, tmdict, sigdict) body
+      val body = expect_checked_sort "typecheck_binder" context (loc_of body)
+        Type.bool body_checked
+    in
+      checked_term_of (mk_binder (List.map Lib.snd vars, body))
+    end
+
+  fun typecheck_define_sort context tydict name params body =
+    let
+      fun add_param (param, tydict) =
+        let
+          val pname = located_string_node param
+          val ty = Type.mk_vartype ("'" ^ pname)
+          fun parsefn token indices args =
+            if List.null indices andalso List.null args then ty
+            else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
+        in
+          Library.extend_dict ((pname, parsefn), tydict)
+        end
+      val temp_tydict = List.foldl add_param tydict params
+      val _ = typecheck_sort context temp_tydict body
+    in
+      tydict
+    end
+
+  fun typecheck_declare_sort context name arity tydict =
+    let
+      val sort_name = located_string_node name
+      val arity_text = located_string_node arity
+      val _ =
+        if arity_text = "0" then ()
+        else type_error "typecheck_declare_sort" context (loc_of arity)
+          NONE NONE
+          ("unsupported sort arity for '" ^ sort_name ^
+           "': expected 0, actual " ^ arity_text)
+      val ty = Type.mk_vartype ("'" ^ sort_name)
+      fun parsefn token indices args =
+        if List.null indices andalso List.null args then ty
+        else raise ERR ("<" ^ sort_name ^ ">") "wrong number of arguments"
+    in
+      Library.extend_dict ((sort_name, parsefn), tydict)
+    end
+
+  fun typecheck_declare_datatype context name decl (tydict, tmdict, sigdict) =
+    let
+      val datatype_name = located_string_node name
+      val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
+      fun parse_ty token indices args =
+        if List.null indices andalso List.null args then datatype_ty
+        else raise ERR ("<" ^ datatype_name ^ ">") "wrong number of arguments"
+      val tydict = Library.extend_dict ((datatype_name, parse_ty), tydict)
+
+      fun add_constructor (ctor, (tmdict, sigdict)) =
+        case node_of ctor of
+          DatatypeConstructor (ctor_name, _, selectors) =>
+            let
+              val ctor_name_s = located_string_node ctor_name
+              fun selector_info selector =
+                case node_of selector of
+                  DatatypeSelector (selector_name, selector_sort) =>
+                    (located_string_node selector_name,
+                     typecheck_sort context tydict selector_sort)
+              val selectors = List.map selector_info selectors
+              val arg_tys = List.map Lib.snd selectors
+              val ctor_tm = Term.mk_var (ctor_name_s,
+                boolSyntax.list_mk_fun (arg_tys, datatype_ty))
+              val (tmdict, sigdict) =
+                add_value_term_signature ctor_name_s ctor_tm arg_tys datatype_ty
+                  (tmdict, sigdict)
+
+              fun add_selector ((selector_name, selector_ty), (tmdict, sigdict)) =
+                let
+                  val selector_tm = Term.mk_var (selector_name,
+                    Type.--> (datatype_ty, selector_ty))
+                in
+                  add_value_term_signature selector_name selector_tm
+                    [datatype_ty] selector_ty (tmdict, sigdict)
+                end
+
+              fun tester_parse token indices args =
+                case (indices, args) of
+                  ([index], [arg]) =>
+                    let
+                      val index_name = Lib.fst (Term.dest_var index)
+                    in
+                      if index_name = ctor_name_s then
+                        Term.list_mk_comb
+                          (Term.mk_var ("is_" ^ ctor_name_s,
+                             Type.--> (datatype_ty, Type.bool)),
+                           [arg])
+                      else
+                        raise ERR ("<is " ^ ctor_name_s ^ ">")
+                          "tester constructor mismatch"
+                    end
+                | _ => raise ERR ("<is " ^ ctor_name_s ^ ">")
+                    "one constructor index and one argument expected"
+              val tmdict = Library.extend_dict (("is", tester_parse), tmdict)
+            in
+              List.foldl add_selector (tmdict, sigdict) selectors
+            end
+    in
+      case node_of decl of
+        DatatypeDecl ([], constructors) =>
+          let
+            val (tmdict, sigdict) =
+              List.foldl add_constructor (tmdict, sigdict) constructors
+          in
+            (tydict, tmdict, sigdict)
+          end
+      | DatatypeDecl _ =>
+          type_error "typecheck_declare_datatype" context (loc_of decl)
+            NONE NONE
+            "unsupported parametric datatype declaration"
+    end
+
+  fun define_typechecked_fun name vars range_type definiens (tmdict, sigdict) =
+    let
+      val domain_types = List.map (Term.type_of o Lib.snd) vars
+      val (tm, tmdict, sigdict) =
+        add_value_signature name domain_types range_type (tmdict, sigdict)
+      val vars = List.map Lib.snd vars
+      val definition = boolSyntax.list_mk_forall (vars,
+        boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
+    in
+      (tmdict, sigdict, definition)
+    end
+
+  fun typecheck_define_const context name sort body (tydict, tmdict, sigdict) =
+    let
+      val name = located_string_node name
+      val range_type = typecheck_sort context tydict sort
+      val body_checked = typecheck_term context (tydict, tmdict, sigdict) body
+      val body_term = expect_checked_sort "typecheck_define_const" context
+        (loc_of body) range_type body_checked
+      val (tmdict, sigdict, definition) =
+        define_typechecked_fun name [] range_type body_term (tmdict, sigdict)
+    in
+      (tmdict, sigdict, definition)
+    end
+
+  fun typecheck_define_fun context name sorted_vars range body
+      (tydict, tmdict, sigdict) =
+    let
+      val name = located_string_node name
+      val range_type = typecheck_sort context tydict range
+      val vars = List.map (typecheck_sorted_var context tydict) sorted_vars
+      val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+      val (body_tmdict, body_sigdict) =
+        List.foldl
+          (fn ((vname, var), (tmdict, sigdict)) =>
+            add_value_term_signature vname var [] (Term.type_of var)
+              (tmdict, sigdict))
+          (tmdict, sigdict) vars
+      val body_checked =
+        typecheck_term context (tydict, body_tmdict, body_sigdict) body
+      val body_term = expect_checked_sort "typecheck_define_fun" context
+        (loc_of body) range_type body_checked
+      val (tmdict, sigdict, definition) =
+        define_typechecked_fun name vars range_type body_term (tmdict, sigdict)
+    in
+      (tmdict, sigdict, definition)
+    end
+
+  fun named_attribute attrs =
+    let
+      fun sexp_atom sexp =
+        case node_of sexp of
+          SexpAtom atom => SOME atom
+        | _ => NONE
+      fun scan [] = NONE
+        | scan (x :: y :: rest) =
+            if sexp_atom x = SOME ":named" then sexp_atom y
+            else scan (y :: rest)
+        | scan _ = NONE
+    in
+      scan attrs
+    end
+
+  fun split_assertion_term term =
+    case node_of term of
+      TermAnnotated (body, attrs) => (body, named_attribute attrs)
+    | _ => (term, NONE)
+
+  fun typecheck_bool_terms context env fn_name terms =
+    List.map (fn term =>
+      let
+        val checked = typecheck_term context env term
+      in
+        expect_checked_sort fn_name context (loc_of term) Type.bool checked
+      end) terms
+
+  fun typecheck_command command state =
+    let
+      val context = command_context
+      fun finish state = SOME state
+    in
+      case node_of command of
+        CmdSetInfo _ => state
+      | CmdSetOption _ => state
+      | CmdSetLogic logic =>
+          let
+            val _ = not (Option.isSome state) orelse
+              raise ERR "typecheck_script" "set-logic issued more than once"
+            val logic_name = located_string_node logic
+            val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic_name
+          in
+            finish (new_typecheck_state logic_name tydict tmdict)
+          end
+      | CmdGetInfo _ => state
+      | CmdGetOption _ => state
+      | CmdDeclareSort (name, arity) =>
+          let
+            val command_state =
+              dest_typecheck_state "declare-sort" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val tydict = typecheck_declare_sort (context "declare-sort")
+              name arity tydict
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
+      | CmdDefineSort (name, params, body) =>
+          let
+            val command_state =
+              dest_typecheck_state "define-sort" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val tydict = typecheck_define_sort (context "define-sort")
+              tydict name params body
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
+      | CmdDeclareConst (name, sort) =>
+          let
+            val command_state =
+              dest_typecheck_state "declare-const" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val range = typecheck_sort (context "declare-const") tydict sort
+            val (_, tmdict, sigdict) =
+              add_value_signature (located_string_node name) [] range
+                (tmdict, sigdict)
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
+      | CmdDeclareFun (name, domain, range) =>
+          let
+            val command_state =
+              dest_typecheck_state "declare-fun" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val domain = List.map
+              (typecheck_sort (context "declare-fun") tydict) domain
+            val range = typecheck_sort (context "declare-fun") tydict range
+            val (_, tmdict, sigdict) =
+              add_value_signature (located_string_node name) domain range
+                (tmdict, sigdict)
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
+      | CmdDefineConst (name, sort, body) =>
+          let
+            val command_state =
+              dest_typecheck_state "define-const" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tmdict, sigdict, def) =
+              typecheck_define_const (context "define-const") name sort body
+                (tydict, tmdict, sigdict)
+            val command_state = update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state
+          in
+            finish (add_typechecked_definition def command_state)
+          end
+      | CmdDefineFun (name, vars, range, body) =>
+          let
+            val command_state =
+              dest_typecheck_state "define-fun" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tmdict, sigdict, def) =
+              typecheck_define_fun (context "define-fun") name vars range body
+                (tydict, tmdict, sigdict)
+            val command_state = update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state
+          in
+            finish (add_typechecked_definition def command_state)
+          end
+      | CmdDefineFunRec _ =>
+          raise ERR "typecheck_script"
+            "unsupported command 'define-fun-rec': recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+      | CmdDefineFunsRec _ =>
+          raise ERR "typecheck_script"
+            "unsupported command 'define-funs-rec': mutually recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+      | CmdDeclareDatatype (name, decl) =>
+          let
+            val command_state =
+              dest_typecheck_state "declare-datatype" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tydict, tmdict, sigdict) =
+              typecheck_declare_datatype (context "declare-datatype")
+                name decl (tydict, tmdict, sigdict)
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
+      | CmdDeclareDatatypes _ =>
+          raise ERR "typecheck_script"
+            "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      | CmdAssert term =>
+          let
+            val command_state = dest_typecheck_state "assert" state
+            val env = current_typecheck_dicts command_state
+            val (term, name) = split_assertion_term term
+            val checked = typecheck_term (context "assert") env term
+            val assertion = expect_checked_sort "typecheck_assert"
+              (context "assert") (loc_of term) Type.bool checked
+          in
+            finish (add_typechecked_assertion assertion name command_state)
+          end
+      | CmdPush count =>
+          let
+            val command_state = dest_typecheck_state "push" state
+            val count = parse_stack_count "push"
+              (Option.map located_string_node count)
+          in
+            finish (push_typecheck_frames count command_state)
+          end
+      | CmdPop count =>
+          let
+            val command_state = dest_typecheck_state "pop" state
+            val count = parse_stack_count "pop"
+              (Option.map located_string_node count)
+          in
+            finish (pop_typecheck_frames count command_state)
+          end
+      | CmdReset => NONE
+      | CmdResetAssertions =>
+          let
+            val command_state =
+              dest_typecheck_state "reset-assertions" state
+          in
+            finish (reset_typecheck_assertions command_state)
+          end
+      | CmdCheckSat =>
+          let val command_state = dest_typecheck_state "check-sat" state
+          in finish (add_typechecked_query (QueryCheckSat []) command_state) end
+      | CmdCheckSatAssuming assumptions =>
+          let
+            val command_state =
+              dest_typecheck_state "check-sat-assuming" state
+            val assumptions = typecheck_bool_terms
+              (context "check-sat-assuming")
+              (current_typecheck_dicts command_state)
+              "typecheck_check_sat_assuming" assumptions
+            val _ = query_warning "check-sat-assuming"
+              "assumptions are recorded but not replayed by Z3_TAC"
+          in
+            finish (add_typechecked_query (QueryCheckSat assumptions)
+              command_state)
+          end
+      | CmdGetProof =>
+          let val command_state = dest_typecheck_state "get-proof" state
+          in finish (add_typechecked_query QueryGetProof command_state) end
+      | CmdGetUnsatAssumptions =>
+          let
+            val command_state =
+              dest_typecheck_state "get-unsat-assumptions" state
+            val _ = query_warning "get-unsat-assumptions"
+              "unsat-assumption extraction is not implemented"
+          in
+            finish (add_typechecked_query QueryGetUnsatAssumptions command_state)
+          end
+      | CmdGetUnsatCore =>
+          let
+            val command_state = dest_typecheck_state "get-unsat-core" state
+            val _ = query_warning "get-unsat-core"
+              "unsat-core extraction is not implemented"
+          in
+            finish (add_typechecked_query QueryGetUnsatCore command_state)
+          end
+      | CmdGetModel =>
+          let
+            val command_state = dest_typecheck_state "get-model" state
+            val _ = query_warning "get-model" "models are not produced by Z3_TAC"
+          in
+            finish (add_typechecked_query QueryGetModel command_state)
+          end
+      | CmdGetValue terms =>
+          let
+            val command_state = dest_typecheck_state "get-value" state
+            val terms = List.map (checked_term o
+              typecheck_term (context "get-value")
+                (current_typecheck_dicts command_state)) terms
+            val _ = query_warning "get-value"
+              "term values are not produced by Z3_TAC"
+          in
+            finish (add_typechecked_query (QueryGetValue terms) command_state)
+          end
+      | CmdGetAssignment =>
+          let
+            val command_state = dest_typecheck_state "get-assignment" state
+            val _ = query_warning "get-assignment"
+              "assignments are not produced by Z3_TAC"
+          in
+            finish (add_typechecked_query QueryGetAssignment command_state)
+          end
+      | CmdGetAssertions =>
+          let
+            val command_state = dest_typecheck_state "get-assertions" state
+            val _ = query_warning "get-assertions"
+              "assertion output is not produced by Z3_TAC"
+          in
+            finish (add_typechecked_query QueryGetAssertions command_state)
+          end
+      | CmdEcho _ => state
+      | CmdExit => state
+      | CmdUnknown (name, _) =>
+          raise ERR "typecheck_script"
+            ("unknown command '" ^ located_string_node name ^ "'")
+    end
+
+  fun typecheck_script script : checked_script =
+    let
+      fun loop [] state = finalize_typecheck_state "(end-of-stream)" state
+        | loop (command :: rest) state =
+            (case node_of command of
+               CmdExit => finalize_typecheck_state "exit" state
+             | _ => loop rest (typecheck_command command state))
+    in
+      loop script NONE
+    end
+
+  fun typecheck_script_string text =
+    typecheck_script (parse_script_string text)
+
 in
 
   val loc_of = loc_of
@@ -2052,6 +2967,8 @@ in
   val source_span_to_string = source_span_to_string
   val parse_script_string = parse_script_string
   val parse_script_file = parse_script_file
+  val typecheck_script = typecheck_script
+  val typecheck_script_string = typecheck_script_string
 
   val smtlib_mk_let_bindings = smtlib_mk_let_bindings
   val smtlib_mk_let = smtlib_mk_let
@@ -2091,14 +3008,9 @@ in
           ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^ "'")
       else ()
     val instream = TextIO.openIn path
-    val get_token = Library.get_token (Library.get_buffered_char instream)
-    val result = parse_benchmark_state get_token
-    val _ = if !Library.trace > 0 then
-        WARNING "parse_file" ("ignoring token '" ^ get_token () ^
-          "' (and perhaps others) after benchmark")
-          handle Feedback.HOL_ERR _ => ()  (* end of file, as expected *)
-      else ()
+    val text = TextIO.inputAll instream
     val _ = TextIO.closeIn instream
+    val result = typecheck_script_string text
   in
     result
   end
