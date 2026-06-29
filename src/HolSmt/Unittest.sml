@@ -876,6 +876,57 @@ in
     "check-sat-assuming assumptions were not preserved")
 end
 
+fun smtlib_soundness_audit_scope_success () =
+let
+  val {assertions, local_definitions, ...} =
+    parse_smtlib_state
+      ("(set-logic ALL)\n" ^
+       "(declare-const |quoted symbol| Bool)\n" ^
+       "(declare-const x Int)\n" ^
+       "(define-const c Bool |quoted symbol|)\n" ^
+       "(define-fun same ((x Bool)) Bool x)\n" ^
+       "(assert (and (and " ^
+       "(forall ((x Bool)) x) " ^
+       "(let ((x true)) x)) " ^
+       "(and (same |quoted symbol|) " ^
+       "(= (div 7 0) (div 7 0)))))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 3,
+    "soundness-audit script should retain two local definitions and one assert");
+  assert (List.length local_definitions = 2,
+    "define-const/define-fun local definitions were not tracked");
+  assert (Term.type_of (List.last assertions) = Type.bool,
+    "binder/let/quoted/division audit assertion did not parse as Bool")
+end
+
+fun smtlib_indexed_parametric_sort_reconstruction_success () =
+let
+  val {assertions = array_assertions, ...} =
+    parse_smtlib_state
+      ("(set-logic ALL)\n" ^
+       "(define-sort WordPair (T) (Array T (_ BitVec 8)))\n" ^
+       "(declare-const a (Array Int (_ BitVec 8)))\n" ^
+       "(assert (= (select a 0) #x00))\n" ^
+       "(exit)\n")
+  val {assertions = fp_assertions, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_FP)\n" ^
+       "(declare-const b Float32)\n" ^
+       "(declare-const rm RoundingMode)\n" ^
+       "(assert (= (fp.add rm b b) b))\n" ^
+       "(exit)\n")
+in
+  assert (List.length array_assertions = 1,
+    "indexed/parametric sort audit script produced the wrong assertion count");
+  assert (Term.type_of (List.hd array_assertions) = Type.bool,
+    "Array/BitVec sort audit assertion did not parse as Bool");
+  assert (List.length fp_assertions = 1,
+    "indexed floating-point sort audit script produced wrong assertion count");
+  assert (Term.type_of (List.hd fp_assertions) = Type.bool,
+    "FloatingPoint sort audit assertion did not parse as Bool")
+end
+
 fun smtlib_typecheck_invalid_assertion_diagnostic () =
   let
     val _ =
@@ -1697,6 +1748,37 @@ fun z3_proof_replay_failure_diagnostic () =
         "replay diagnostic did not include parsed conclusion: " ^ msg)
     end
 
+fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
+  (Library.check_oracle_tags "Z3_SMT_Prover"
+     (Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T));
+   die "FAIL: oracle-tagged theorem passed the Z3_TAC oracle gate")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "unexpected oracle/axiom tags" msg,
+        "oracle gate diagnostic did not mention unexpected tags: " ^ msg)
+    end
+
+fun holsmt_solver_result_negative_diagnostics () =
+let
+  fun expect_error label expected solver =
+    (ignore (Tactical.TAC_PROOF (([], boolSyntax.T),
+       HolSmtLib.GENERIC_SMT_TAC solver));
+     die ("FAIL: " ^ label ^ " solver result was accepted"))
+    handle Feedback.HOL_ERR holerr =>
+      let val msg = Feedback.message_of holerr
+      in
+        assert (Feedback.top_structure_of holerr = "HolSmtLib" andalso
+                Feedback.top_function_of holerr = "GENERIC_SMT_TAC",
+          label ^ " diagnostic came from the wrong function: " ^ msg);
+        assert (String.isSubstring expected msg,
+          label ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
+      end
+in
+  expect_error "sat" "satisfiable" (fn _ => SolverSpec.SAT NONE);
+  expect_error "unknown" "unknown" (fn _ => SolverSpec.UNKNOWN (SOME "audit"))
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -1745,6 +1827,10 @@ let
     ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
     ("parse_file_reset_state", parse_file_reset_state),
     ("parse_file_query_commands_success", parse_file_query_commands_success),
+    ("smtlib_soundness_audit_scope_success",
+      smtlib_soundness_audit_scope_success),
+    ("smtlib_indexed_parametric_sort_reconstruction_success",
+      smtlib_indexed_parametric_sort_reconstruction_success),
     ("smtlib_typecheck_invalid_assertion_diagnostic",
       smtlib_typecheck_invalid_assertion_diagnostic),
     ("smtlib_typecheck_declared_function_mismatch_diagnostic",
@@ -1804,7 +1890,11 @@ let
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
-      z3_proof_replay_failure_diagnostic)
+      z3_proof_replay_failure_diagnostic),
+    ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
+      z3_tac_oracle_tag_gate_rejects_oracle_thm),
+    ("holsmt_solver_result_negative_diagnostics",
+      holsmt_solver_result_negative_diagnostics)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

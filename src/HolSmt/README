@@ -11,6 +11,8 @@ HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
 HolSmtScript.sml        Various theorems for HolSmtLib.
 Library.sml             Common auxiliary functions, tracing.
 README                  This file.
+TRUSTED_CODE_BASE.md    Checked Z3_TAC boundary, no-oracle gate, and semantic
+                        mismatch audit.
 selftest.sml            HolSmtLib tests.
 SmtLib_Logics.sml       SMT-LIB 2 logics.
 SmtLib_Parser.sml       Parsing of SMT-LIB 2 benchmarks.
@@ -45,6 +47,15 @@ theories.  These rows distinguish native SMT-LIB encodings from conservative
 parser/typechecker embeddings and record proof obligations for the soundness
 audit.  Replay is not claimed merely because parsing, typechecking or HOL
 translation succeeds.
+
+Trusted-code-base boundary and soundness audit:
+
+`TRUSTED_CODE_BASE.md` documents the checked `Z3_TAC` path, the code that is
+inside the audit boundary, and the code that remains outside it, including
+`Z3_ORACLE_TAC`.  The generated `.agent-files/SMTLIB_COVERAGE.md` report
+contains the cross-referenced "Soundness Audit and Semantic Mismatches" matrix.
+Every intentional mismatch must have a checked replay path, a preprocessing
+theorem or an explicit unsupported diagnostic.
 
 The current native HOL string translation covers the string sort, STRCAT,
 isPREFIX, string_lt and string_le.  It emits SMT-LIB UnicodeStrings symbols;
@@ -130,6 +141,11 @@ equivalent local hook is:
     --build-arg CSDP_VERSION=1 \
     --build-arg 'BUILDOPTS=--no-cache --expk -j4 -t' \
     -f developers/docker-ci/Dockerfile .
+
+The HolSmt selftest is part of that build.  `Z3_SMT_Prover` and selftest
+theorem checks reject unexpected oracle/axiom tags on `Z3_TAC` outputs; `sat`
+and `unknown` solver results are negative outcomes and must not produce HOL
+theorems.
 
 Further documentation can be found in the HOL Description (in
 HOL/Manual/Description).
