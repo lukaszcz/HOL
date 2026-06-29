@@ -49,6 +49,34 @@ fun term_is_var_named name tm =
   in var_name = name end
   handle HOL_ERR _ => false
 
+fun find_symbol_metadata theory kind name metadata =
+  case List.find
+      (fn ({theory = t, kind = k, name = n, ...}
+             : SmtLib_Theories.symbol_metadata) =>
+        t = theory andalso k = kind andalso n = name)
+      metadata of
+    SOME item => item
+  | NONE => die ("missing symbol metadata for " ^ theory ^ "." ^ name)
+
+fun find_symbol_metadata_source theory kind name source_pred metadata =
+  case List.find
+      (fn (item as {theory = t, kind = k, name = n, ...}
+             : SmtLib_Theories.symbol_metadata) =>
+        t = theory andalso k = kind andalso n = name andalso source_pred item)
+      metadata of
+    SOME item => item
+  | NONE => die ("missing symbol metadata for " ^ theory ^ "." ^ name)
+
+fun metadata_is_official
+    ({source = SmtLib_Theories.Official, ...}
+       : SmtLib_Theories.symbol_metadata) = true
+  | metadata_is_official _ = false
+
+fun metadata_is_extension
+    ({source = SmtLib_Theories.Extension _, ...}
+       : SmtLib_Theories.symbol_metadata) = true
+  | metadata_is_extension _ = false
+
 (* Make sure two theorems are identical *)
 fun compare_thms thm_pair =
 let
@@ -747,6 +775,48 @@ in
     "check-sat-assuming assumptions were not preserved")
 end
 
+fun smtlib_core_symbol_metadata_success () =
+let
+  val metadata = SmtLib_Logics.metadata_of_logic "QF_UF"
+  val eq_symbol = find_symbol_metadata "Core" "term" "=" metadata
+  val distinct_symbol = find_symbol_metadata "Core" "term" "distinct" metadata
+  val and_symbol = find_symbol_metadata "Core" "term" "and" metadata
+  val bool_symbol = find_symbol_metadata "Core" "sort" "Bool" metadata
+  val eq_attrs = #attributes eq_symbol
+  val distinct_attrs = #attributes distinct_symbol
+  val and_attrs = #attributes and_symbol
+in
+  assert (metadata_is_official bool_symbol,
+    "Bool sort metadata is not marked official");
+  assert (#overloaded eq_attrs andalso #chainable eq_attrs,
+    "equality metadata did not preserve overloaded/chainable attributes");
+  assert (metadata_is_official eq_symbol,
+    "equality metadata is not marked official");
+  assert (#overloaded distinct_attrs andalso #pairwise distinct_attrs,
+    "distinct metadata did not preserve overloaded/pairwise attributes");
+  assert (#left_associative and_attrs,
+    "and metadata did not record its official left-associative attribute")
+end
+
+fun smtlib_logic_metadata_extension_split_success () =
+let
+  val metadata = SmtLib_Logics.metadata_of_logic "QF_BV"
+  val bvult_symbol = find_symbol_metadata "Fixed_Size_BitVectors" "term"
+    "bvult" metadata
+  val bvule_symbol = find_symbol_metadata_source "Fixed_Size_BitVectors" "term"
+    "bvule" metadata_is_extension metadata
+  val rotate_left_symbol = find_symbol_metadata_source "Fixed_Size_BitVectors"
+    "term" "rotate_left" metadata_is_extension metadata
+  val rotate_left_attrs = #attributes rotate_left_symbol
+in
+  assert (metadata_is_official bvult_symbol,
+    "official bit-vector metadata was not preserved");
+  assert (metadata_is_extension bvule_symbol,
+    "Z3 bit-vector extension metadata was not preserved");
+  assert (#indexed rotate_left_attrs,
+    "indexed bit-vector extension metadata was not preserved")
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -792,7 +862,11 @@ let
       parse_file_push_pop_declaration_scoping),
     ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
     ("parse_file_reset_state", parse_file_reset_state),
-    ("parse_file_query_commands_success", parse_file_query_commands_success)
+    ("parse_file_query_commands_success", parse_file_query_commands_success),
+    ("smtlib_core_symbol_metadata_success",
+      smtlib_core_symbol_metadata_success),
+    ("smtlib_logic_metadata_extension_split_success",
+      smtlib_logic_metadata_extension_split_success)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"
