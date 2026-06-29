@@ -636,17 +636,35 @@ fun parse_file_datatype_unsupported_diagnostic () =
     val _ =
       parse_smtlib_assertions
         ("(set-logic QF_UF)\n" ^
-         "(declare-datatype Color ((red) (green)))\n" ^
+         "(declare-datatypes ((Tree 1) (Forest 1)) " ^
+         "((par (T) ((leaf (value T)))) (par (T) ((empty)))))\n" ^
          "(exit)\n")
   in
-    die "legacy benchmark parser accepted datatype declarations"
+    die "legacy benchmark parser accepted mutual datatype declarations"
   end
   handle Feedback.HOL_ERR holerr =>
     let val msg = Feedback.message_of holerr
     in
-      assert (contains "unsupported command 'declare-datatype'" msg,
+      assert (contains "unsupported command 'declare-datatypes'" msg,
         "datatype diagnostic was not explicit: " ^ msg)
     end
+
+fun parse_file_datatype_dictionary_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype Pair ((mk-pair (left Int) (right Bool))))\n" ^
+       "(declare-const p Pair)\n" ^
+       "(assert (and ((_ is mk-pair) p) " ^
+       "(= (left (mk-pair 3 true)) 3) (right p)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "datatype dictionary script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "datatype dictionary assertion did not parse as Bool")
+end
 
 fun parse_file_echo_success () =
 let
@@ -854,6 +872,53 @@ in
   List.app (require_official bv_metadata "Fixed_Size_BitVectors") bv_symbols
 end
 
+fun smtlib_advanced_symbol_coverage_success () =
+let
+  val all_metadata = SmtLib_Logics.metadata_of_logic "ALL"
+  val fp_metadata = SmtLib_Logics.metadata_of_logic "QF_FP"
+  val string_metadata = SmtLib_Logics.metadata_of_logic "QF_SLIA"
+  val rm_sort = find_symbol_metadata "FloatingPoint" "sort" "RoundingMode"
+    fp_metadata
+  val fp_sort = find_symbol_metadata "FloatingPoint" "sort" "FloatingPoint"
+    fp_metadata
+  val to_fp = find_symbol_metadata "FloatingPoint" "term" "to_fp"
+    fp_metadata
+  val fp_to_ubv = find_symbol_metadata "FloatingPoint" "term" "fp.to_ubv"
+    fp_metadata
+  val string_sort = find_symbol_metadata "UnicodeStrings" "sort" "String"
+    string_metadata
+  val reglan_sort = find_symbol_metadata "UnicodeStrings" "sort" "RegLan"
+    string_metadata
+  val concat_symbol = find_symbol_metadata "UnicodeStrings" "term" "str.++"
+    string_metadata
+  val re_loop = find_symbol_metadata "UnicodeStrings" "term" "re.loop"
+    string_metadata
+  val seq_sort = find_symbol_metadata "Z3_Extensions" "sort" "Seq"
+    all_metadata
+  val set_member = find_symbol_metadata "Z3_Extensions" "term" "set.member"
+    all_metadata
+  val bag_count = find_symbol_metadata "Z3_Extensions" "term" "bag.count"
+    all_metadata
+in
+  assert (metadata_is_official rm_sort,
+    "RoundingMode sort metadata is not marked official");
+  assert (#indexed (#attributes fp_sort),
+    "FloatingPoint sort metadata did not preserve indexed attributes");
+  assert (#indexed (#attributes to_fp) andalso #indexed (#attributes fp_to_ubv),
+    "indexed floating-point conversion metadata was not preserved");
+  assert (metadata_is_official string_sort,
+    "String sort metadata is not marked official");
+  assert (not (List.null (#parametric_sorts (#attributes reglan_sort))),
+    "RegLan metadata did not preserve its parameter");
+  assert (#left_associative (#attributes concat_symbol),
+    "str.++ metadata did not record left associativity");
+  assert (#indexed (#attributes re_loop),
+    "regex loop metadata did not preserve indexed attributes");
+  assert (metadata_is_extension seq_sort andalso
+    metadata_is_extension set_member andalso metadata_is_extension bag_count,
+    "Z3 sequence/set/bag metadata was not marked as extension")
+end
+
 fun smtlib_arith_array_parse_signatures_success () =
 let
   val assertions =
@@ -912,10 +977,81 @@ in
     "bit-vector signature assertion did not parse as Bool")
 end
 
+fun smtlib_floatingpoint_parse_signatures_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_FP)\n" ^
+       "(declare-const a Float32)\n" ^
+       "(declare-const b Float32)\n" ^
+       "(assert (and " ^
+       "(= (fp.add RNE a b) a) " ^
+       "(= (fp.sub RTZ a b) b) " ^
+       "(= (fp.sqrt RTP a) b) " ^
+       "(fp.eq (_ +zero 8 24) (_ -zero 8 24)) " ^
+       "(fp.isNaN (_ NaN 8 24)) " ^
+       "(= ((_ fp.to_ubv 8) a) #x00)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "floating-point signature script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "floating-point signature assertion did not parse as Bool")
+end
+
+fun smtlib_string_regex_parse_signatures_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_SLIA)\n" ^
+       "(declare-const s String)\n" ^
+       "(declare-const t String)\n" ^
+       "(assert (and " ^
+       "(= (str.++ s t) s) " ^
+       "(= (str.len s) 0) " ^
+       "(str.< s t) (str.<= s t) " ^
+       "(= (str.at s 0) t) " ^
+       "(= (str.substr s 0 1) t) " ^
+       "(str.prefixof s t) (str.suffixof s t) (str.contains s t) " ^
+       "(= (str.indexof s t 0) 0) " ^
+       "(= (str.replace s t (str.from_code 65)) s) " ^
+       "(str.in_re s (re.* (str.to_re t))) " ^
+       "(str.in_re s ((_ re.loop 1 3) (re.union (str.to_re s) re.allchar)))))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "string/regex signature script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "string/regex signature assertion did not parse as Bool")
+end
+
+fun smtlib_z3_extension_parse_signatures_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic ALL)\n" ^
+       "(declare-const xs (Seq Int))\n" ^
+       "(declare-const ys (Seq Int))\n" ^
+       "(declare-const s (Set Int))\n" ^
+       "(declare-const b (Bag Int))\n" ^
+       "(assert (and " ^
+       "(= (seq.++ xs ys) xs) (= (seq.len xs) 0) " ^
+       "(seq.contains xs ys) " ^
+       "(set.member 1 (set.insert 1 s)) " ^
+       "(set.subset (set.union s s) (set.intersect s s)) " ^
+       "(= (bag.count 1 (bag.union_disjoint b b)) 0)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "Z3 extension signature script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "Z3 extension signature assertion did not parse as Bool")
+end
+
 fun smtlib_scoped_logic_dictionary_success () =
 let
   val logics = [
-    "ALIA", "ALIRA", "ANIA", "ANIRA", "AUFLIA", "AUFLIRA",
+    "ALL", "ALIA", "ALIRA", "ANIA", "ANIRA", "AUFLIA", "AUFLIRA",
     "AUFNIRA", "BV", "LIA", "LRA", "NIA", "NRA", "UF",
     "UFBV", "UFIDL", "UFLIA", "UFLRA", "UFNIA", "UFNRA",
     "QF_ABV", "QF_ALIA", "QF_ALRA", "QF_ANIA", "QF_ANRA",
@@ -923,7 +1059,9 @@ let
     "QF_AUFNIRA", "QF_AX", "QF_BV", "QF_IDL", "QF_LIA",
     "QF_LIRA", "QF_LRA", "QF_NIA", "QF_NIRA", "QF_NRA",
     "QF_RDL", "QF_UF", "QF_UFBV", "QF_UFIDL", "QF_UFLIA",
-    "QF_UFLIRA", "QF_UFLRA", "QF_UFNIRA", "QF_UFNRA"
+    "QF_UFLIRA", "QF_UFLRA", "QF_UFNIRA", "QF_UFNRA",
+    "QF_S", "QF_SLIA", "QF_SNIA", "QF_FP", "QF_FPBV",
+    "QF_BVFP", "QF_UFFP", "QF_UFBVFP"
   ]
   fun require_logic logic =
     let
@@ -975,6 +1113,8 @@ let
       script_ast_datatype_recursive_remaining_success),
     ("parse_file_datatype_unsupported_diagnostic",
       parse_file_datatype_unsupported_diagnostic),
+    ("parse_file_datatype_dictionary_success",
+      parse_file_datatype_dictionary_success),
     ("parse_file_echo_success", parse_file_echo_success),
     ("parse_file_push_pop_assertion_scoping",
       parse_file_push_pop_assertion_scoping),
@@ -989,10 +1129,18 @@ let
       smtlib_logic_metadata_extension_split_success),
     ("smtlib_core_arith_array_bv_symbol_coverage_success",
       smtlib_core_arith_array_bv_symbol_coverage_success),
+    ("smtlib_advanced_symbol_coverage_success",
+      smtlib_advanced_symbol_coverage_success),
     ("smtlib_arith_array_parse_signatures_success",
       smtlib_arith_array_parse_signatures_success),
     ("smtlib_bitvector_parse_signatures_success",
       smtlib_bitvector_parse_signatures_success),
+    ("smtlib_floatingpoint_parse_signatures_success",
+      smtlib_floatingpoint_parse_signatures_success),
+    ("smtlib_string_regex_parse_signatures_success",
+      smtlib_string_regex_parse_signatures_success),
+    ("smtlib_z3_extension_parse_signatures_success",
+      smtlib_z3_extension_parse_signatures_success),
     ("smtlib_scoped_logic_dictionary_success",
       smtlib_scoped_logic_dictionary_success)
   ]

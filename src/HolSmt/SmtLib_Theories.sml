@@ -386,6 +386,455 @@ in
       (boolSyntax.mk_eq (t1, wordsSyntax.mk_word_L (wordsSyntax.dim_of t1)),
        boolSyntax.mk_eq (t2, wordsSyntax.mk_word_T (wordsSyntax.dim_of t2)))
 
+  fun sanitize_name name =
+    String.translate
+      (fn c => if Char.isAlphaNum c then String.str c else "_") name
+
+  fun abstract_type name =
+    Type.mk_vartype ("'smtlib_" ^ sanitize_name name)
+
+  fun abstract_const name ret_ty args =
+    Term.list_mk_comb
+      (Term.mk_var ("smtlib_" ^ sanitize_name name,
+         boolSyntax.list_mk_fun (List.map Term.type_of args, ret_ty)),
+       args)
+
+  fun abstract_const_arity name n ret_ty args =
+    if List.length args = n then
+      abstract_const name ret_ty args
+    else
+      raise ERR ("<" ^ name ^ ">")
+        (Int.toString n ^ " argument(s) expected")
+
+  fun abstract_bool name args = abstract_const name Type.bool args
+
+  fun abstract_same name args =
+    case args of
+      [] => raise ERR ("<" ^ name ^ ">") "at least one argument expected"
+    | x :: _ => abstract_const name (Term.type_of x) args
+
+  fun abstract_indexed_const name indices ret_ty args =
+    abstract_const
+      (name ^ "_" ^
+       String.concatWith "_" (List.map (sanitize_name o Hol_pp.term_to_string)
+         indices))
+      ret_ty args
+
+  fun abstract_sort_entry sort_name =
+    official_entry sort_name no_attributes ["(" ^ sort_name ^ " 0)"]
+      (K_zero_zero (abstract_type sort_name))
+
+  fun fp_type_from_indices [eb, sb] =
+        abstract_type
+          ("FloatingPoint_" ^ Arbnum.toString (natural_of_index eb) ^ "_" ^
+           Arbnum.toString (natural_of_index sb))
+    | fp_type_from_indices _ =
+        raise ERR "fp_type_from_indices"
+          "FloatingPoint forms expect exponent and significand indices"
+
+  val rounding_mode_ty = abstract_type "RoundingMode"
+  val reglan_ty = abstract_type "RegLan"
+
+  fun sequence_ty elem_ty =
+    Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [elem_ty]}
+
+  fun set_ty elem_ty = Type.--> (elem_ty, Type.bool)
+  fun bag_ty elem_ty = Type.--> (elem_ty, numSyntax.num)
+
+  fun unary_decl name dom rng =
+    "(" ^ name ^ " " ^ dom ^ " " ^ rng ^ ")"
+
+  (* FloatingPoint *)
+
+  structure FloatingPoint =
+  struct
+
+    val tyentries = [
+      official_entry "RoundingMode" no_attributes ["(RoundingMode 0)"]
+        (K_zero_zero rounding_mode_ty),
+      official_entry "FloatingPoint" (indexed_attributes ["eb", "sb"])
+        ["((_ FloatingPoint eb sb) 0)"]
+        (fn _ => fn indices => fn args =>
+          if List.null args then fp_type_from_indices indices
+          else raise ERR "<FloatingPoint>" "no arguments expected"),
+      official_entry "Float16" no_attributes ["(Float16 0)"]
+        (K_zero_zero (abstract_type "FloatingPoint_5_11")),
+      official_entry "Float32" no_attributes ["(Float32 0)"]
+        (K_zero_zero (abstract_type "FloatingPoint_8_24")),
+      official_entry "Float64" no_attributes ["(Float64 0)"]
+        (K_zero_zero (abstract_type "FloatingPoint_11_53")),
+      official_entry "Float128" no_attributes ["(Float128 0)"]
+        (K_zero_zero (abstract_type "FloatingPoint_15_113"))
+    ]
+
+    val rounding_modes = [
+      "roundNearestTiesToEven", "RNE",
+      "roundNearestTiesToAway", "RNA",
+      "roundTowardPositive", "RTP",
+      "roundTowardNegative", "RTN",
+      "roundTowardZero", "RTZ"
+    ]
+
+    fun rounding_entry name =
+      official_entry name no_attributes ["(" ^ name ^ " RoundingMode)"]
+        (K_zero_zero (Term.mk_var (name, rounding_mode_ty)))
+
+    fun indexed_fp_constant name =
+      official_entry name (indexed_attributes ["eb", "sb"])
+        ["((_ " ^ name ^ " eb sb) (_ FloatingPoint eb sb))"]
+        (fn _ => fn indices => fn args =>
+          if List.null args then
+            abstract_indexed_const ("fp." ^ name) indices
+              (fp_type_from_indices indices) []
+          else
+            raise ERR ("<" ^ name ^ ">") "no arguments expected")
+
+    fun fp_unary name =
+      official_entry name no_attributes
+        [unary_decl name "(_ FloatingPoint eb sb)" "(_ FloatingPoint eb sb)"]
+        (K_zero_one (fn x => abstract_const name (Term.type_of x) [x]))
+
+    fun fp_binary name =
+      official_entry name no_attributes
+        ["(" ^ name ^ " (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+         "(_ FloatingPoint eb sb))"]
+        (K_zero_two (fn (x, y) => abstract_const name (Term.type_of x) [x, y]))
+
+    fun fp_rounding_binary name =
+      official_entry name no_attributes
+        ["(" ^ name ^ " RoundingMode (_ FloatingPoint eb sb) " ^
+         "(_ FloatingPoint eb sb))"]
+        (K_zero_two (fn (rm, x) => abstract_const name (Term.type_of x) [rm, x]))
+
+    fun fp_rounding_ternary name =
+      official_entry name no_attributes
+        ["(" ^ name ^ " RoundingMode (_ FloatingPoint eb sb) " ^
+         "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
+        (K_zero_three (fn (rm, x, y) =>
+          abstract_const name (Term.type_of x) [rm, x, y]))
+
+    fun fp_pred name =
+      official_entry name no_attributes [unary_decl name "(_ FloatingPoint eb sb)" "Bool"]
+        (K_zero_one (fn x => abstract_bool name [x]))
+
+    val tmentries =
+      List.map rounding_entry rounding_modes @
+      List.map indexed_fp_constant ["+zero", "-zero", "+oo", "-oo", "NaN"] @
+      [
+        official_entry "fp" no_attributes
+          ["(fp (_ BitVec 1) (_ BitVec eb) (_ BitVec (- sb 1)) " ^
+           "(_ FloatingPoint eb sb))"]
+          (K_zero_three (fn (sign, exponent, significand) =>
+            let
+              val eb = fcpLib.index_to_num (wordsSyntax.dim_of exponent)
+              val sb = Arbnum.plus1
+                (fcpLib.index_to_num (wordsSyntax.dim_of significand))
+            in
+              abstract_const "fp"
+                (abstract_type ("FloatingPoint_" ^ Arbnum.toString eb ^ "_" ^
+                  Arbnum.toString sb))
+                [sign, exponent, significand]
+            end)),
+        official_entry "fp.add" no_attributes
+          ["(fp.add RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
+          (K_zero_three (fn (rm, x, y) =>
+            abstract_const "fp.add" (Term.type_of x) [rm, x, y])),
+        official_entry "fp.sub" no_attributes
+          ["(fp.sub RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
+          (K_zero_three (fn (rm, x, y) =>
+            abstract_const "fp.sub" (Term.type_of x) [rm, x, y])),
+        official_entry "fp.mul" no_attributes
+          ["(fp.mul RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
+          (K_zero_three (fn (rm, x, y) =>
+            abstract_const "fp.mul" (Term.type_of x) [rm, x, y])),
+        official_entry "fp.div" no_attributes
+          ["(fp.div RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
+          (K_zero_three (fn (rm, x, y) =>
+            abstract_const "fp.div" (Term.type_of x) [rm, x, y])),
+        official_entry "fp.fma" no_attributes
+          ["(fp.fma RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+           "(_ FloatingPoint eb sb))"]
+          (Lib.K (zero_args (fn args =>
+            case args of
+              [rm, x, y, z] => abstract_const "fp.fma" (Term.type_of x)
+                [rm, x, y, z]
+            | _ => raise ERR "<fp.fma>" "four arguments expected"))),
+        fp_rounding_binary "fp.sqrt",
+        fp_rounding_binary "fp.roundToIntegral",
+        fp_binary "fp.rem",
+        fp_binary "fp.min",
+        fp_binary "fp.max",
+        fp_unary "fp.abs",
+        fp_unary "fp.neg",
+        official_entry "fp.leq" chainable_attributes
+          ["(fp.leq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
+          (chainable (fn (x, y) => abstract_bool "fp.leq" [x, y])),
+        official_entry "fp.lt" chainable_attributes
+          ["(fp.lt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
+          (chainable (fn (x, y) => abstract_bool "fp.lt" [x, y])),
+        official_entry "fp.geq" chainable_attributes
+          ["(fp.geq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
+          (chainable (fn (x, y) => abstract_bool "fp.geq" [x, y])),
+        official_entry "fp.gt" chainable_attributes
+          ["(fp.gt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
+          (chainable (fn (x, y) => abstract_bool "fp.gt" [x, y])),
+        official_entry "fp.eq" no_attributes
+          ["(fp.eq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool)"]
+          (K_zero_two (fn (x, y) => abstract_bool "fp.eq" [x, y])),
+        fp_pred "fp.isNormal",
+        fp_pred "fp.isSubnormal",
+        fp_pred "fp.isZero",
+        fp_pred "fp.isInfinite",
+        fp_pred "fp.isNaN",
+        fp_pred "fp.isNegative",
+        fp_pred "fp.isPositive",
+        official_entry "to_fp" (indexed_attributes ["eb", "sb"])
+          ["((_ to_fp eb sb) ... (_ FloatingPoint eb sb))"]
+          (fn _ => fn indices => fn args =>
+            abstract_indexed_const "to_fp" indices (fp_type_from_indices indices)
+              args),
+        official_entry "to_fp_unsigned" (indexed_attributes ["eb", "sb"])
+          ["((_ to_fp_unsigned eb sb) ... (_ FloatingPoint eb sb))"]
+          (fn _ => fn indices => fn args =>
+            abstract_indexed_const "to_fp_unsigned" indices
+              (fp_type_from_indices indices) args),
+        official_entry "fp.to_ubv" (indexed_attributes ["m"])
+          ["((_ fp.to_ubv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))"]
+          (K_one_one (fn n => fn x =>
+            abstract_indexed_const "fp.to_ubv" [n]
+              (wordsSyntax.mk_word_type (word_index_type n)) [x])),
+        official_entry "fp.to_sbv" (indexed_attributes ["m"])
+          ["((_ fp.to_sbv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))"]
+          (K_one_one (fn n => fn x =>
+            abstract_indexed_const "fp.to_sbv" [n]
+              (wordsSyntax.mk_word_type (word_index_type n)) [x])),
+        official_entry "fp.to_real" no_attributes
+          ["(fp.to_real (_ FloatingPoint eb sb) Real)"]
+          (K_zero_one (fn x => abstract_const "fp.to_real" realSyntax.real_ty [x]))
+      ]
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "FloatingPoint" "sort" tyentries @
+      metadata_of_entries "FloatingPoint" "term" tmentries
+
+  end
+
+  (* UnicodeStrings and regular expressions *)
+
+  structure UnicodeStrings =
+  struct
+
+    val tyentries = [
+      official_entry "String" no_attributes ["(String 0)"]
+        (K_zero_zero stringSyntax.string_ty),
+      official_entry "RegLan" (parametric_attributes ["String"])
+        ["(RegLan String)"]
+        (K_zero_one (fn _ => reglan_ty))
+    ]
+
+    fun str_unary name ret_ty =
+      official_entry name no_attributes [unary_decl name "String" "String"]
+        (K_zero_one (fn x => abstract_const name ret_ty [x]))
+
+    fun str_binary name ret_ty =
+      official_entry name no_attributes
+        ["(" ^ name ^ " String String " ^
+         (if ret_ty = Type.bool then "Bool" else "String") ^ ")"]
+        (K_zero_two (fn (x, y) => abstract_const name ret_ty [x, y]))
+
+    fun str_int_binary name =
+      official_entry name no_attributes ["(" ^ name ^ " String Int String)"]
+        (K_zero_two (fn (x, i) =>
+          abstract_const name stringSyntax.string_ty [x, i]))
+
+    fun re_binary name =
+      official_entry name no_attributes
+        ["(" ^ name ^ " (RegLan String) (RegLan String) (RegLan String))"]
+        (K_zero_two (fn (x, y) => abstract_const name reglan_ty [x, y]))
+
+    val tmentries = [
+      official_entry "str.++" left_assoc_attributes
+        ["(str.++ String String String :left-assoc)"]
+        (leftassoc stringSyntax.mk_strcat),
+      official_entry "str.len" no_attributes ["(str.len String Int)"]
+        (K_zero_one (intSyntax.mk_injected o stringSyntax.mk_strlen)),
+      official_entry "str.<" chainable_attributes
+        ["(str.< String String Bool :chainable)"]
+        (chainable stringSyntax.mk_string_lt),
+      official_entry "str.<=" chainable_attributes
+        ["(str.<= String String Bool :chainable)"]
+        (chainable stringSyntax.mk_string_le),
+      str_int_binary "str.at",
+      official_entry "str.substr" no_attributes
+        ["(str.substr String Int Int String)"]
+        (K_zero_three (fn (s, i, n) =>
+          abstract_const "str.substr" stringSyntax.string_ty [s, i, n])),
+      official_entry "str.prefixof" no_attributes ["(str.prefixof String String Bool)"]
+        (K_zero_two stringSyntax.mk_isprefix),
+      str_binary "str.suffixof" Type.bool,
+      str_binary "str.contains" Type.bool,
+      official_entry "str.indexof" no_attributes ["(str.indexof String String Int Int)"]
+        (K_zero_three (fn (s, sub, offset) =>
+          abstract_const "str.indexof" intSyntax.int_ty [s, sub, offset])),
+      official_entry "str.replace" no_attributes
+        ["(str.replace String String String String)"]
+        (K_zero_three (fn (s, src, dst) =>
+          abstract_const "str.replace" stringSyntax.string_ty [s, src, dst])),
+      official_entry "str.replace_all" no_attributes
+        ["(str.replace_all String String String String)"]
+        (K_zero_three (fn (s, src, dst) =>
+          abstract_const "str.replace_all" stringSyntax.string_ty [s, src, dst])),
+      official_entry "str.is_digit" no_attributes ["(str.is_digit String Bool)"]
+        (K_zero_one (fn s => abstract_bool "str.is_digit" [s])),
+      official_entry "str.to_code" no_attributes ["(str.to_code String Int)"]
+        (K_zero_one (fn s => abstract_const "str.to_code" intSyntax.int_ty [s])),
+      official_entry "str.from_code" no_attributes ["(str.from_code Int String)"]
+        (K_zero_one (fn i =>
+          abstract_const "str.from_code" stringSyntax.string_ty [i])),
+      official_entry "str.to_int" no_attributes ["(str.to_int String Int)"]
+        (K_zero_one (fn s => abstract_const "str.to_int" intSyntax.int_ty [s])),
+      official_entry "str.from_int" no_attributes ["(str.from_int Int String)"]
+        (K_zero_one (fn i =>
+          abstract_const "str.from_int" stringSyntax.string_ty [i])),
+      official_entry "str.to_re" no_attributes ["(str.to_re String (RegLan String))"]
+        (K_zero_one (fn s => abstract_const "str.to_re" reglan_ty [s])),
+      official_entry "str.in_re" no_attributes ["(str.in_re String (RegLan String) Bool)"]
+        (K_zero_two (fn (s, re) => abstract_bool "str.in_re" [s, re])),
+      official_entry "str.replace_re" no_attributes
+        ["(str.replace_re String (RegLan String) String String)"]
+        (K_zero_three (fn (s, re, dst) =>
+          abstract_const "str.replace_re" stringSyntax.string_ty [s, re, dst])),
+      official_entry "str.replace_re_all" no_attributes
+        ["(str.replace_re_all String (RegLan String) String String)"]
+        (K_zero_three (fn (s, re, dst) =>
+          abstract_const "str.replace_re_all" stringSyntax.string_ty
+            [s, re, dst])),
+      official_entry "re.none" no_attributes ["(re.none (RegLan String))"]
+        (K_zero_zero (Term.mk_var ("smtlib_re_none", reglan_ty))),
+      official_entry "re.all" no_attributes ["(re.all (RegLan String))"]
+        (K_zero_zero (Term.mk_var ("smtlib_re_all", reglan_ty))),
+      official_entry "re.allchar" no_attributes ["(re.allchar (RegLan String))"]
+        (K_zero_zero (Term.mk_var ("smtlib_re_allchar", reglan_ty))),
+      re_binary "re.++",
+      official_entry "re.union" left_assoc_attributes
+        ["(re.union (RegLan String) (RegLan String) (RegLan String) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "re.union" reglan_ty [x, y])),
+      official_entry "re.inter" left_assoc_attributes
+        ["(re.inter (RegLan String) (RegLan String) (RegLan String) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "re.inter" reglan_ty [x, y])),
+      re_binary "re.diff",
+      official_entry "re.*" no_attributes ["(re.* (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => abstract_const "re.*" reglan_ty [re])),
+      official_entry "re.+" no_attributes ["(re.+ (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => abstract_const "re.+" reglan_ty [re])),
+      official_entry "re.opt" no_attributes ["(re.opt (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => abstract_const "re.opt" reglan_ty [re])),
+      official_entry "re.range" no_attributes ["(re.range String String (RegLan String))"]
+        (K_zero_two (fn (lo, hi) => abstract_const "re.range" reglan_ty [lo, hi])),
+      official_entry "re.^" (indexed_attributes ["n"])
+        ["((_ re.^ n) (RegLan String) (RegLan String))"]
+        (K_one_one (fn n => fn re =>
+          abstract_indexed_const "re.^" [n] reglan_ty [re])),
+      official_entry "re.loop" (indexed_attributes ["lo", "hi"])
+        ["((_ re.loop lo hi) (RegLan String) (RegLan String))"]
+        (fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([lo, hi], [re]) => abstract_indexed_const "re.loop" [lo, hi]
+              reglan_ty [re]
+          | _ => raise ERR "<re.loop>"
+              "two indices and one argument expected")
+    ]
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "UnicodeStrings" "sort" tyentries @
+      metadata_of_entries "UnicodeStrings" "term" tmentries
+
+  end
+
+  (* Z3 sequence, set, and bag extensions *)
+
+  structure Z3_Extensions =
+  struct
+
+    val tyentries = [
+      extension_entry "Z3" "Seq" (parametric_attributes ["Element"])
+        ["(Seq Element)"] (K_zero_one sequence_ty),
+      extension_entry "Z3" "Set" (parametric_attributes ["Element"])
+        ["(Set Element)"] (K_zero_one set_ty),
+      extension_entry "Z3" "Bag" (parametric_attributes ["Element"])
+        ["(Bag Element)"] (K_zero_one bag_ty)
+    ]
+
+    fun ext_term name attrs decl parse =
+      extension_entry "Z3" name attrs decl parse
+
+    val tmentries = [
+      ext_term "seq.++" left_assoc_attributes
+        ["(seq.++ (Seq A) (Seq A) (Seq A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "seq.++" (Term.type_of x) [x, y])),
+      ext_term "seq.len" no_attributes ["(seq.len (Seq A) Int)"]
+        (K_zero_one (fn s => abstract_const "seq.len" intSyntax.int_ty [s])),
+      ext_term "seq.extract" no_attributes ["(seq.extract (Seq A) Int Int (Seq A))"]
+        (K_zero_three (fn (s, i, n) =>
+          abstract_const "seq.extract" (Term.type_of s) [s, i, n])),
+      ext_term "seq.contains" no_attributes ["(seq.contains (Seq A) (Seq A) Bool)"]
+        (K_zero_two (fn (x, y) => abstract_bool "seq.contains" [x, y])),
+      ext_term "set.member" no_attributes ["(set.member A (Set A) Bool)"]
+        (K_zero_two (fn (x, s) => abstract_bool "set.member" [x, s])),
+      ext_term "set.insert" no_attributes ["(set.insert A (Set A) (Set A))"]
+        (K_zero_two (fn (x, s) => abstract_const "set.insert" (Term.type_of s)
+          [x, s])),
+      ext_term "set.union" left_assoc_attributes
+        ["(set.union (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "set.union" (Term.type_of x)
+          [x, y])),
+      ext_term "set.intersect" left_assoc_attributes
+        ["(set.intersect (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "set.intersect" (Term.type_of x)
+          [x, y])),
+      ext_term "set.minus" no_attributes ["(set.minus (Set A) (Set A) (Set A))"]
+        (K_zero_two (fn (x, y) => abstract_const "set.minus" (Term.type_of x)
+          [x, y])),
+      ext_term "set.subset" no_attributes ["(set.subset (Set A) (Set A) Bool)"]
+        (K_zero_two (fn (x, y) => abstract_bool "set.subset" [x, y])),
+      ext_term "bag.union_disjoint" left_assoc_attributes
+        ["(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "bag.union_disjoint"
+          (Term.type_of x) [x, y])),
+      ext_term "bag.union_max" left_assoc_attributes
+        ["(bag.union_max (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "bag.union_max"
+          (Term.type_of x) [x, y])),
+      ext_term "bag.inter_min" left_assoc_attributes
+        ["(bag.inter_min (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc (fn (x, y) => abstract_const "bag.inter_min"
+          (Term.type_of x) [x, y])),
+      ext_term "bag.difference_subtract" no_attributes
+        ["(bag.difference_subtract (Bag A) (Bag A) (Bag A))"]
+        (K_zero_two (fn (x, y) => abstract_const "bag.difference_subtract"
+          (Term.type_of x) [x, y])),
+      ext_term "bag.count" no_attributes ["(bag.count A (Bag A) Int)"]
+        (K_zero_two (fn (x, b) => abstract_const "bag.count" intSyntax.int_ty
+          [x, b]))
+    ]
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "Z3_Extensions" "sort" tyentries @
+      metadata_of_entries "Z3_Extensions" "term" tmentries
+
+  end
+
   (* ArraysEx *)
 
   structure ArraysEx =

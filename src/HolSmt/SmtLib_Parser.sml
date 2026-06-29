@@ -1087,6 +1087,8 @@ local
         intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
         handle Feedback.HOL_ERR _ =>
           parse_term_with_cfg cfg get_token' (tydict, tmdict)
+          handle Feedback.HOL_ERR _ =>
+            Term.mk_var (token, Type.mk_vartype "'smtlib_index")
     in
       if token = ")" then
         List.rev acc
@@ -1405,6 +1407,117 @@ local
 
   val parse_declare_const = parse_declare_const_fun false
   val parse_declare_fun = parse_declare_const_fun true
+
+  fun parse_declare_datatype get_token (tydict, tmdict) =
+  let
+    val name = get_token ()
+    val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ name)
+    fun parse_ty token indices args =
+      if List.null indices andalso List.null args then
+        datatype_ty
+      else
+        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+    val tydict = Library.extend_dict ((name, parse_ty), tydict)
+
+    fun add_constructor (ctor_name, selectors, tmdict) =
+      let
+        val arg_tys = List.map Lib.snd selectors
+        val ctor_tm = Term.mk_var (ctor_name,
+          boolSyntax.list_mk_fun (arg_tys, datatype_ty))
+        val args_count = List.length arg_tys
+        fun ctor_parse token indices args =
+          if List.null indices andalso List.length args = args_count then
+            Term.list_mk_comb (ctor_tm, args)
+          else
+            raise ERR ("<" ^ ctor_name ^ ">") "wrong number of arguments"
+        fun selector_entry ((selector_name, selector_ty), tmdict) =
+          let
+            val selector_tm = Term.mk_var (selector_name,
+              Type.--> (datatype_ty, selector_ty))
+            fun selector_parse token indices args =
+              if List.null indices andalso List.length args = 1 then
+                Term.list_mk_comb (selector_tm, args)
+              else
+                raise ERR ("<" ^ selector_name ^ ">")
+                  "wrong number of arguments"
+          in
+            Library.extend_dict ((selector_name, selector_parse), tmdict)
+          end
+        fun tester_parse token indices args =
+          case (indices, args) of
+            ([index], [arg]) =>
+              let
+                val index_name = Lib.fst (Term.dest_var index)
+              in
+                if index_name = ctor_name then
+                  Term.list_mk_comb
+                    (Term.mk_var ("is_" ^ ctor_name,
+                       Type.--> (datatype_ty, Type.bool)),
+                     [arg])
+                else
+                  raise ERR ("<is " ^ ctor_name ^ ">")
+                    "tester constructor mismatch"
+              end
+          | _ => raise ERR ("<is " ^ ctor_name ^ ">")
+              "one constructor index and one argument expected"
+        val tmdict = Library.extend_dict ((ctor_name, ctor_parse), tmdict)
+        val tmdict = Library.extend_dict (("is", tester_parse), tmdict)
+      in
+        List.foldl selector_entry tmdict selectors
+      end
+
+    fun parse_selector selectors =
+      let
+        val selector_name = get_token ()
+        val selector_ty = parse_type get_token tydict
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        (selector_name, selector_ty) :: selectors
+      end
+
+    fun parse_constructor_open tmdict =
+      let
+        val ctor_name = get_token ()
+        fun selectors acc =
+          let val token = get_token ()
+          in
+            if token = ")" then List.rev acc
+            else (
+              Library.expect_token "(" token;
+              selectors (parse_selector acc)
+            )
+          end
+        val selectors = selectors []
+      in
+        add_constructor (ctor_name, selectors, tmdict)
+      end
+
+    val _ = Library.expect_token "(" (get_token ())
+    val first = get_token ()
+    val _ =
+      if first = "par" then
+        raise ERR "declare-datatype"
+          "parametric datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      else
+        Library.expect_token "(" first
+
+    fun constructors tmdict =
+      let
+        val tmdict = parse_constructor_open tmdict
+        val token = get_token ()
+      in
+        if token = ")" then tmdict
+        else (
+          Library.expect_token "(" token;
+          constructors tmdict
+        )
+      end
+
+    val tmdict = constructors tmdict
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    (tydict, tmdict)
+  end
 
   fun define_fun_term name vars range_type definiens tmdict =
   let
@@ -1748,8 +1861,15 @@ local
       raise ERR "parse_commands"
         "unsupported command 'define-funs-rec': mutually recursive definitions are parsed by the script AST but not expanded into HOL definitions"
     | "declare-datatype" =>
-      raise ERR "parse_commands"
-        "unsupported command 'declare-datatype': datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      let
+        val command_state = dest_state "declare-datatype" state
+        val (tydict, tmdict) = current_dicts command_state
+        val (tydict, tmdict) = parse_declare_datatype get_token
+          (tydict, tmdict)
+      in
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
+      end
     | "declare-datatypes" =>
       raise ERR "parse_commands"
         "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"

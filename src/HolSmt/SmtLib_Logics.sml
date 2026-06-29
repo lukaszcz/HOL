@@ -54,6 +54,42 @@ local
   val BV_extension_metadata =
     metadata_of_entries "Fixed_Size_BitVectors" "term" BV_extension_tmentries
 
+  structure Strings_Ints =
+  struct
+    val tydict = union_dicts [Core.tydict, Ints.tydict,
+      UnicodeStrings.tydict]
+    val tmdict = union_dicts [Core.tmdict, Ints.tmdict,
+      UnicodeStrings.tmdict]
+    val metadata = union_metadata [Core.metadata, Ints.metadata,
+      UnicodeStrings.metadata]
+  end
+
+  structure FP_Core =
+  struct
+    val tydict = union_dicts [Core.tydict, Ints.tydict, Reals.tydict,
+      Fixed_Size_BitVectors.tydict, FloatingPoint.tydict]
+    val tmdict = union_dicts [Core.tmdict, Ints.tmdict, Reals.tmdict,
+      Fixed_Size_BitVectors.tmdict, FloatingPoint.tmdict, BV_extension_tmdict]
+    val metadata = union_metadata [Core.metadata, Ints.metadata, Reals.metadata,
+      Fixed_Size_BitVectors.metadata, FloatingPoint.metadata,
+      BV_extension_metadata]
+  end
+
+  structure ALL =
+  struct
+    val tydict = union_dicts [Core.tydict, Ints.tydict, Reals.tydict,
+      Reals_Ints.tydict, ArraysEx.tydict, Fixed_Size_BitVectors.tydict,
+      FloatingPoint.tydict, UnicodeStrings.tydict, Z3_Extensions.tydict]
+    val tmdict = union_dicts [Core.tmdict, Ints.tmdict, Reals.tmdict,
+      Reals_Ints.tmdict, ArraysEx.tmdict, Fixed_Size_BitVectors.tmdict,
+      FloatingPoint.tmdict, UnicodeStrings.tmdict, Z3_Extensions.tmdict,
+      BV_extension_tmdict]
+    val metadata = union_metadata [Core.metadata, Ints.metadata,
+      Reals.metadata, Reals_Ints.metadata, ArraysEx.metadata,
+      Fixed_Size_BitVectors.metadata, FloatingPoint.metadata,
+      UnicodeStrings.metadata, Z3_Extensions.metadata, BV_extension_metadata]
+  end
+
 in
 
   (* In general, parsing is too liberal -- for instance, we do not
@@ -261,6 +297,15 @@ in
     val metadata = QF_IDL.metadata
   end
 
+  structure QF_S = Strings_Ints
+  structure QF_SLIA = Strings_Ints
+  structure QF_SNIA = Strings_Ints
+  structure QF_FP = FP_Core
+  structure QF_FPBV = FP_Core
+  structure QF_BVFP = FP_Core
+  structure QF_UFFP = FP_Core
+  structure QF_UFBVFP = FP_Core
+
   structure ALIA = AUFLIA
   structure ANIA = AUFLIA
   structure ALIRA = AUFLIRA
@@ -297,7 +342,25 @@ in
      to parse types/terms of the given SMT-LIB 2 logic *)
   fun parsedicts_of_logic (logic : string) =
     case logic of
-      "ALIA" =>
+      "ALL" =>
+      (ALL.tydict, ALL.tmdict)
+    | "QF_S" =>
+      (QF_S.tydict, QF_S.tmdict)
+    | "QF_SLIA" =>
+      (QF_SLIA.tydict, QF_SLIA.tmdict)
+    | "QF_SNIA" =>
+      (QF_SNIA.tydict, QF_SNIA.tmdict)
+    | "QF_FP" =>
+      (QF_FP.tydict, QF_FP.tmdict)
+    | "QF_FPBV" =>
+      (QF_FPBV.tydict, QF_FPBV.tmdict)
+    | "QF_BVFP" =>
+      (QF_BVFP.tydict, QF_BVFP.tmdict)
+    | "QF_UFFP" =>
+      (QF_UFFP.tydict, QF_UFFP.tmdict)
+    | "QF_UFBVFP" =>
+      (QF_UFBVFP.tydict, QF_UFBVFP.tmdict)
+    | "ALIA" =>
       (ALIA.tydict, ALIA.tmdict)
     | "ALIRA" =>
       (ALIRA.tydict, ALIRA.tmdict)
@@ -398,7 +461,16 @@ in
      the given SMT-LIB 2 logic *)
   fun metadata_of_logic (logic : string) =
     case logic of
-      "ALIA" => ALIA.metadata
+      "ALL" => ALL.metadata
+    | "QF_S" => QF_S.metadata
+    | "QF_SLIA" => QF_SLIA.metadata
+    | "QF_SNIA" => QF_SNIA.metadata
+    | "QF_FP" => QF_FP.metadata
+    | "QF_FPBV" => QF_FPBV.metadata
+    | "QF_BVFP" => QF_BVFP.metadata
+    | "QF_UFFP" => QF_UFFP.metadata
+    | "QF_UFBVFP" => QF_UFBVFP.metadata
+    | "ALIA" => ALIA.metadata
     | "ALIRA" => ALIRA.metadata
     | "ANIA" => ANIA.metadata
     | "ANIRA" => ANIRA.metadata
