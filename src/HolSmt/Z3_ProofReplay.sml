@@ -491,16 +491,93 @@ local
     Tactical.TAC_PROOF ((HOLset.listItems asms, t), metisLib.METIS_TAC thms)
   end
 
+  val INT_LE_RMUL_EXP = Tactical.prove(
+    ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
+    REPEAT STRIP_TAC THEN
+    bossLib.Cases_on `n = 0` THENL [
+      bossLib.ASM_SIMP_TAC intLib.int_ss [],
+      SUBGOAL_THEN ``0i < n`` ASSUME_TAC THENL [intLib.ARITH_TAC, ALL_TAC] THEN
+      bossLib.Cases_on `a = b` THENL [
+        bossLib.ASM_SIMP_TAC intLib.int_ss [],
+        SUBGOAL_THEN ``a < b:int`` ASSUME_TAC THENL
+          [intLib.ARITH_TAC, ALL_TAC] THEN
+        Tactic.MP_TAC (Q.SPECL [`a:int`, `b:int`, `n:int`]
+          intExtensionTheory.INT_LT_RMUL_EXP) THEN
+        intLib.ARITH_TAC
+      ]
+    ])
+
+  val INT_LE_LMUL_EXP = Tactical.prove(
+    ``!a b n:int. 0 <= n ==> a <= b ==> n * a <= n * b``,
+    metisLib.METIS_TAC [INT_LE_RMUL_EXP, integerTheory.INT_MUL_COMM])
+
+  val INT_LE_MUL2 = Tactical.prove(
+    ``!x1 x2 y1 y2:int.
+        0 <= x1 /\ 0 <= y1 /\ x1 <= x2 /\ y1 <= y2 ==>
+        x1 * y1 <= x2 * y2``,
+    REPEAT STRIP_TAC THEN
+    SUBGOAL_THEN ``x1 * y1 <= x2 * y1:int`` ASSUME_TAC THENL
+      [metisLib.METIS_TAC [INT_LE_RMUL_EXP], ALL_TAC] THEN
+    SUBGOAL_THEN ``x2 * y1 <= x2 * y2:int`` ASSUME_TAC THENL
+      [metisLib.METIS_TAC [INT_LE_LMUL_EXP, integerTheory.INT_LE_TRANS],
+       ALL_TAC] THEN
+    metisLib.METIS_TAC [integerTheory.INT_LE_TRANS])
+
+  fun int_product_bound_tac (asl, w) =
+  let
+    fun dest_not_leq_mult tm =
+      let
+        val (_, product) = intSyntax.dest_leq (boolSyntax.dest_neg tm)
+        val (x, y) = intSyntax.dest_mult product
+      in
+        (x, y)
+      end
+    fun dest_lower_bound tm = SOME (intSyntax.dest_leq tm)
+      handle Feedback.HOL_ERR _ => NONE
+    fun lower_bounds_for x =
+      List.mapPartial (fn tm =>
+        case dest_lower_bound tm of
+          SOME (lower, upper) => if upper ~~ x then SOME lower else NONE
+        | NONE => NONE) asl
+    fun candidate_tacs (x, y) =
+      List.concat (map (fn x_lower =>
+        map (fn y_lower =>
+          Tactic.MP_TAC (Drule.SPECL [x_lower, x, y_lower, y] INT_LE_MUL2) THEN
+          bossLib.FULL_SIMP_TAC
+            (bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
+             intSimps.INT_ARITH_ss) [] THEN
+          intLib.ARITH_TAC) (lower_bounds_for y)) (lower_bounds_for x))
+    val tacs = List.concat (List.mapPartial (fn tm =>
+      SOME (candidate_tacs (dest_not_leq_mult tm))
+      handle Feedback.HOL_ERR _ => NONE) asl)
+    fun first [] _ = raise ERR "int_product_bound_tac"
+      ("failed: " ^ Hol_pp.term_to_string w)
+      | first (tac :: tacs) goal =
+          tac goal handle Feedback.HOL_ERR _ => first tacs goal
+  in
+    first tacs (asl, w)
+  end
+
+  fun int_product_prove t =
+    Tactical.TAC_PROOF (([], t),
+      PURE_REWRITE_TAC [integerTheory.INT_GE] THEN
+      (metisLib.METIS_TAC
+         [integerTheory.INT_LE_MUL, integerTheory.INT_LE_SQUARE, INT_LE_MUL2]
+       ORELSE
+       REPEAT STRIP_TAC THEN int_product_bound_tac))
+
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
     arith_prove_linear t
     handle Feedback.HOL_ERR _ =>
-    (* nonlinear fallback: only after linear tactics fail, to avoid
-       expensive SOS certificate search on goals linear tactics handle *)
-    if Library.is_nonlinear t then
-      profile "arith_prove(nla)" Library.nla_prove t
-    else raise ERR "arith_prove" (Hol_pp.term_to_string t)
+    int_product_prove t
+    handle Feedback.HOL_ERR _ =>
+      (* nonlinear fallback: only after linear tactics fail, to avoid
+         expensive SOS certificate search on goals linear tactics handle *)
+      if Library.is_nonlinear t then
+        profile "arith_prove(nla)" Library.nla_prove t
+      else raise ERR "arith_prove" (Hol_pp.term_to_string t)
 
   and arith_prove_linear t =
     let
@@ -1651,17 +1728,19 @@ in
     val final_thm = profile "check_proof(remove_extra_hyps)" remove_extra_hyps
       (#asserted_hyps state, final_thm)
 
-    (* check that the final theorem contains no hyps other than those
-       that have been asserted *)
-    val _ = profile "check_proof(hypcheck)" HOLset.isSubset (Thm.hypset final_thm,
-        #asserted_hyps state) orelse
-      raise ERR "check_proof" "final theorem contains additional hyp(s)"
-
     (* if the final theorem contains hyps that are not in `asl`, it likely means
        that we've run into a Z3 issue where it slightly modifies the original
        assumptions; as a workaround we try to remove those hyps here *)
     val final_thm = profile "check_proof(hyp_removal)" remove_hyps
       (asl, g, final_thm)
+
+    (* check that the final theorem contains no hyps other than those that have
+       been asserted or those used by the hypothesis-removal workaround above *)
+    val allowed_hyps = HOLset.union (#asserted_hyps state,
+      HOLset.addList (Term.empty_tmset, boolSyntax.mk_neg g :: asl))
+    val _ = profile "check_proof(hypcheck)" HOLset.isSubset
+      (Thm.hypset final_thm, allowed_hyps) orelse
+      raise ERR "check_proof" "final theorem contains additional hyp(s)"
   in
     final_thm
   end
