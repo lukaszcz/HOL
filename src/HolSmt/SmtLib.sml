@@ -11,8 +11,14 @@ datatype logic_features = LogicFeatures of {
   bitvectors : bool,
   integers : bool,
   reals : bool,
+  strings : bool,
   nonlinear : bool
 }
+
+datatype encoding_mode =
+    NativeSMTLIB
+  | ConservativeEmbedding
+  | Preprocessing
 
 datatype translation_record =
     LogicSelection of {logic : string, reason : string,
@@ -26,6 +32,11 @@ datatype translation_record =
                          sort : string, definition : string}
   | EncodedSymbol of {hol_term : Term.term, smt_symbol : string,
                       arity : int}
+  | HOLTheoryEncoding of {feature : string, smt_theory : string,
+                          mode : encoding_mode, parse : bool,
+                          typecheck : bool, translate : bool,
+                          replay : bool, notes : string,
+                          proof_obligation : string}
 
 type translation = {
   logic : string,
@@ -49,6 +60,7 @@ local
     (Type.bool, Lib.K "Bool"),
     (intSyntax.int_ty, Lib.K "Int"),
     (realSyntax.real_ty, Lib.K "Real"),
+    (stringSyntax.string_ty, Lib.K "String"),
     (* bit-vector types *)
     (wordsSyntax.mk_word_type Type.alpha, fn ty =>
       "(_ BitVec " ^ Arbnum.toString
@@ -90,6 +102,12 @@ local
     (boolSyntax.equality, apfst_K "="),
     (* (..., "distinct"), *)
     (boolSyntax.conditional, apfst_K "ite"),
+    (* UnicodeStrings.  HOL strings are char lists; the encoding is native
+       SMT-LIB String syntax with a semantic obligation recorded below. *)
+    (stringSyntax.strcat_tm, apfst_K "str.++"),
+    (stringSyntax.isprefix_tm, apfst_K "str.prefixof"),
+    (stringSyntax.string_lt_tm, apfst_K "str.<"),
+    (stringSyntax.string_le_tm, apfst_K "str.<="),
     (* Reals_Ints *)
     (* numerals (excluding 'intSyntax.negate_tm') *)
     (Term.mk_var ("x", intSyntax.int_ty), Lib.apfst (fn tm =>
@@ -372,6 +390,12 @@ local
   fun type_contains_real ty =
     type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
 
+  fun type_contains_string ty =
+    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
+      ty
+
+  fun is_function_type ty = Lib.can Type.dom_rng ty
+
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
@@ -419,6 +443,12 @@ local
 
   fun is_nonlinear_arith_const tm =
     same_const intSyntax.mult_tm tm orelse same_const realSyntax.mult_tm tm
+
+  fun is_string_const tm =
+    List.exists (fn c => same_const c tm) [
+      stringSyntax.strcat_tm, stringSyntax.isprefix_tm,
+      stringSyntax.string_lt_tm, stringSyntax.string_le_tm
+    ]
 
   fun subterms tm =
     tm ::
@@ -491,7 +521,7 @@ local
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      nonlinear}) =
+      strings, nonlinear}) =
     String.concatWith "," (List.map Lib.fst (List.filter Lib.snd [
       ("quantifiers", quantifiers),
       ("uninterpreted", uninterpreted),
@@ -499,12 +529,13 @@ local
       ("bitvectors", bitvectors),
       ("integers", integers),
       ("reals", reals),
+      ("strings", strings),
       ("nonlinear", nonlinear)
     ]))
 
   fun infer_logic_from_features (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      nonlinear}) =
+      strings, nonlinear}) =
     let
       val qf = if quantifiers then "" else "QF_"
       fun arith_logic () =
@@ -527,7 +558,15 @@ local
         else
           qf ^ "UF"
       val logic =
-        if bitvectors then
+        if strings then
+          if bitvectors orelse reals orelse quantifiers orelse arrays orelse
+             uninterpreted then
+            "ALL"
+          else if integers then
+            if nonlinear then "QF_SNIA" else "QF_SLIA"
+          else
+            "QF_S"
+        else if bitvectors then
           if integers orelse reals orelse quantifiers then
             "ALL"
           else if arrays then
@@ -584,6 +623,10 @@ local
         subterm_types type_contains_real orelse
         List.exists (fn tm => is_real_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val strings =
+        subterm_types type_contains_string orelse
+        List.exists (fn tm => is_string_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val nonlinear =
         List.exists (fn tm => is_nonlinear_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
@@ -602,7 +645,90 @@ local
     in
       LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
-        reals = reals, nonlinear = nonlinear}
+        reals = reals, strings = strings, nonlinear = nonlinear}
+    end
+
+  fun advanced_encoding_records terms =
+    let
+      val all_subterms = List.concat (List.map subterms terms)
+      fun subterm_types p =
+        List.exists (fn tm => p (Term.type_of tm)) all_subterms
+      val has_strings =
+        subterm_types type_contains_string orelse
+        List.exists (fn tm => is_string_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val string_record =
+        HOLTheoryEncoding {
+          feature = "HOL strings: string type, STRCAT, isPREFIX, string_lt, string_le",
+          smt_theory = "UnicodeStrings",
+          mode = NativeSMTLIB,
+          parse = true,
+          typecheck = true,
+          translate = true,
+          replay = false,
+          notes = "HOL strings are char lists over HOL characters; SMT-LIB String is UnicodeStrings.",
+          proof_obligation =
+            "TASK_021 must prove or constrain the HOL char-list to SMT Unicode string correspondence before replay is claimed."
+        }
+      val datatype_record =
+        HOLTheoryEncoding {
+          feature = "HOL datatypes and recursive datatypes",
+          smt_theory = "Datatypes",
+          mode = ConservativeEmbedding,
+          parse = true,
+          typecheck = true,
+          translate = false,
+          replay = false,
+          notes =
+            "SMT-LIB datatype commands are parsed/typechecked; HOL datatype constructors/selectors are not emitted as native SMT datatypes by this translator.",
+          proof_obligation =
+            "TASK_021 must connect constructor disjointness, injectivity, selectors, testers, and recursion axioms before native replay support."
+        }
+      val fp_record =
+        HOLTheoryEncoding {
+          feature = "HOL floating point",
+          smt_theory = "FloatingPoint",
+          mode = ConservativeEmbedding,
+          parse = true,
+          typecheck = true,
+          translate = false,
+          replay = false,
+          notes =
+            "SMT-LIB floating-point symbols are parsed/typechecked; HOL binary_ieee terms are not translated to native FloatingPoint.",
+          proof_obligation =
+            "TASK_021 must audit NaN, infinities, signed zero, rounding modes, and underspecified conversions before replay support."
+        }
+      val z3_ext_record =
+        HOLTheoryEncoding {
+          feature = "sequences, sets, and bags",
+          smt_theory = "Z3 sequence/set/bag extensions",
+          mode = ConservativeEmbedding,
+          parse = true,
+          typecheck = true,
+          translate = false,
+          replay = false,
+          notes =
+            "Z3 extension symbols are parser/typechecker entries only; generic HOL lists, predicates-as-sets, and bags are not emitted as Seq/Set/Bag.",
+          proof_obligation =
+            "TASK_021 must establish list/sequence, predicate/set, and multiplicity/bag correspondences before replay support."
+        }
+      val regex_record =
+        HOLTheoryEncoding {
+          feature = "regular expressions",
+          smt_theory = "UnicodeStrings RegLan",
+          mode = ConservativeEmbedding,
+          parse = true,
+          typecheck = true,
+          translate = false,
+          replay = false,
+          notes =
+            "SMT-LIB regex terms are parsed/typechecked through RegLan; HOL regex libraries are not translated to RegLan.",
+          proof_obligation =
+            "TASK_021 must relate HOL regex languages to SMT-LIB RegLan membership and Unicode string semantics before replay support."
+        }
+    in
+      (if has_strings then [string_record] else []) @
+      [datatype_record, fp_record, z3_ext_record, regex_record]
     end
 
   fun build_translation_records terms logic reason features tydict tmdict =
@@ -614,9 +740,10 @@ local
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict tydict (key, name) :: acc) [] tmdict
       val builtin_records = encoded_symbol_records terms
+      val advanced_records = advanced_encoding_records terms
     in
       logic_record :: List.rev type_records @ List.rev term_records @
-      List.rev builtin_records
+      List.rev builtin_records @ advanced_records
     end
 
   fun parser_dicts_for_translation_aux ({logic, tydict, tmdict, ...} : translation) =
@@ -643,6 +770,13 @@ local
      given type *)
   fun translate_type (tydict, ty) =
   let
+    val _ =
+      if is_function_type ty then
+        raise ERR "translate_type"
+          ("unsupported higher-order/function sort " ^
+           Hol_pp.type_to_string ty)
+      else
+        ()
     val name =
       case first_success (fn (_, f) => f ty)
           (TypeNet.match (builtin_types, ty)) of
@@ -711,7 +845,16 @@ local
           (Redblackmap.insert (bounds, v, name), name)
         end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
+    fun reject_function_term context t =
+      if is_function_type (Term.type_of t) then
+        raise ERR "translate_term"
+          ("unsupported higher-order/function-valued HOL term in " ^
+           context ^ ": " ^ Hol_pp.term_to_string t ^ " : " ^
+           Hol_pp.type_to_string (Term.type_of t))
+      else
+        ()
   in
+    reject_function_term "term position" tm;
     (* binders *)
     let
       (* perhaps we should use a table of binders instead *)
@@ -783,6 +926,12 @@ local
 
       let
         val rands_count = List.length rands
+        val _ =
+          if Term.is_const rator orelse Term.is_var rator then ()
+          else
+            raise ERR "translate_term"
+              ("unsupported higher-order rator expression: " ^
+               Hol_pp.term_to_string rator)
         val (acc, (decls, name)) =
           (* translate the rator as a previously defined symbol *)
           (acc, ([], Redblackmap.find (tmdict, (rator, rands_count))))

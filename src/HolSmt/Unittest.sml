@@ -1268,6 +1268,66 @@ in
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
+fun smtlib_extended_hol_encoding_records_success () =
+let
+  val s = Term.mk_var ("s", stringSyntax.string_ty)
+  val t = Term.mk_var ("t", stringSyntax.string_ty)
+  val term = boolSyntax.mk_eq
+    (stringSyntax.mk_strcat (s, t), stringSyntax.mk_strcat (t, s))
+  val (logic, _, records, translation) = inferred_logic term
+  val has_string_encoding =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            feature, smt_theory = "UnicodeStrings",
+            mode = SmtLib.NativeSMTLIB, parse = true,
+            typecheck = true, translate = true, replay = false, ...} =>
+            contains "HOL strings" feature
+        | _ => false) records
+  val has_concat_symbol =
+    List.exists (fn SmtLib.EncodedSymbol {smt_symbol = "str.++", ...} =>
+        true
+      | _ => false) records
+  val has_fp_matrix_row =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "FloatingPoint", translate = false,
+            replay = false, proof_obligation, ...} =>
+            contains "NaN" proof_obligation
+        | _ => false) records
+  val has_bag_matrix_row =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "Z3 sequence/set/bag extensions",
+            translate = false, replay = false, notes, ...} =>
+            contains "Seq/Set/Bag" notes
+        | _ => false) records
+  val _ = SmtLib.parser_dicts_for_translation translation
+in
+  assert (logic = "QF_S",
+    "string translation expected QF_S, got " ^ logic);
+  assert (has_string_encoding,
+    "translation records lacked native HOL string encoding row");
+  assert (has_concat_symbol,
+    "translation records lacked str.++ encoded symbol");
+  assert (has_fp_matrix_row,
+    "translation records lacked FloatingPoint proof-obligation row");
+  assert (has_bag_matrix_row,
+    "translation records lacked sequence/set/bag matrix row")
+end
+
+fun smtlib_higher_order_translation_rejection_diagnostic () =
+  let
+    val _ = inferred_logic ``(H:('a -> 'b) -> bool) f``
+  in
+    die "higher-order HOL translation unexpectedly succeeded"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains "unsupported higher-order/function" msg,
+        "higher-order diagnostic was not explicit: " ^ msg)
+    end
+
 fun smtlib_roundtrip_current_theories_success () =
 let
   fun roundtrip name goal = assert_goal_roundtrip name goal
@@ -1303,15 +1363,27 @@ let
     {encoding = "SMT ArraysEx select/store",
      status = "known gap: parser maps select/store to HOL application/update, \
               \but HOL translation currently emits function application as UF \
-              \rather than SMT array select/store"}
+              \rather than SMT array select/store"},
+    {encoding = "strings/UnicodeStrings",
+     status = "HOL string sort and selected string operations translate with \
+              \native SMT-LIB records; replay remains unsupported"},
+    {encoding = "floating point, regex, datatypes, sequences, sets, bags",
+     status = "parse/typecheck matrix entries only unless a HOLTheoryEncoding \
+              \record explicitly marks translate=true; replay remains false"}
   ]
   fun has_array_gap {encoding, status} =
     encoding = "SMT ArraysEx select/store" andalso
     String.isSubstring "known gap" status andalso
     String.isSubstring "select/store" status
+  fun has_advanced_gap {encoding, status} =
+    encoding = "floating point, regex, datatypes, sequences, sets, bags" andalso
+    String.isSubstring "parse/typecheck" status andalso
+    String.isSubstring "replay remains false" status
 in
   assert (List.exists has_array_gap matrix,
-    "round-trip matrix lacks explicit ArraysEx select/store diagnostic")
+    "round-trip matrix lacks explicit ArraysEx select/store diagnostic");
+  assert (List.exists has_advanced_gap matrix,
+    "round-trip matrix lacks explicit advanced-theory diagnostic")
 end
 
 (*****************************************************************************)
@@ -1392,6 +1464,10 @@ let
       smtlib_translation_logic_inference_success),
     ("smtlib_translation_records_success",
       smtlib_translation_records_success),
+    ("smtlib_extended_hol_encoding_records_success",
+      smtlib_extended_hol_encoding_records_success),
+    ("smtlib_higher_order_translation_rejection_diagnostic",
+      smtlib_higher_order_translation_rejection_diagnostic),
     ("smtlib_roundtrip_current_theories_success",
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",

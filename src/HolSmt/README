@@ -26,6 +26,36 @@ Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
 
+SMT-LIB support matrix:
+
+  Area                         Parse  Typecheck  HOL translate  Replay
+  Core Bool/UF                 yes    yes        native         Z3/cvc5 paths
+  Int/Real arithmetic          yes    yes        native         partial
+  Fixed bit-vectors            yes    yes        native         partial
+  ArraysEx select/store        yes    yes        no             no
+  Unicode strings              yes    yes        selected native no
+  Regular expressions          yes    yes        no             no
+  FloatingPoint                yes    yes        no             no
+  Datatypes                    yes    single declarations only no no
+  Recursive datatypes          AST only explicit rejection no    no
+  Z3 Seq/Set/Bag extensions    yes    yes        no             no
+
+HOL translation records include HOLTheoryEncoding rows for the advanced
+theories.  These rows distinguish native SMT-LIB encodings from conservative
+parser/typechecker embeddings and record proof obligations for the soundness
+audit.  Replay is not claimed merely because parsing, typechecking or HOL
+translation succeeds.
+
+The current native HOL string translation covers the string sort, STRCAT,
+isPREFIX, string_lt and string_le.  It emits SMT-LIB UnicodeStrings symbols;
+the semantic mismatch with HOL's char-list strings is deliberately recorded as
+a TASK_021 proof obligation.
+
+Higher-order/function-valued HOL terms that would require abstracting function
+sorts are rejected deterministically by SmtLib.translate_type/translate_term.
+First-order applications such as (P:'a -> bool) x remain supported as
+uninterpreted functions.
+
 Z3 version diagnostics and CI hooks:
 
 Z3.sml reports the configured executable and discovered Z3 version through
