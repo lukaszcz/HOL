@@ -279,6 +279,122 @@ fun script_ast_locations_syntax_error () =
         "syntax error did not include the source location: " ^ msg)
     end
 
+fun located_string x =
+  SmtLib_Parser.node_of x
+
+fun located_sort_identifier x =
+  case SmtLib_Parser.node_of x of
+    SmtLib_Parser.SortIdentifier name => name
+  | _ => die "expected sort identifier"
+
+fun located_term_annotation_count x =
+  case SmtLib_Parser.node_of x of
+    SmtLib_Parser.TermAnnotated (_, attrs) => List.length attrs
+  | _ => die "expected annotated term"
+
+fun script_ast_metadata_decls_success () =
+let
+  val script =
+    SmtLib_Parser.parse_script_string
+      ("(set-logic QF_UF)\n" ^
+       "(set-info :source \"unit\")\n" ^
+       "(set-option :produce-models true)\n" ^
+       "(get-info :name)\n" ^
+       "(get-option :produce-models)\n" ^
+       "(declare-sort |U sort| 0)\n" ^
+       "(define-sort |Box sort| (A) A)\n" ^
+       "(declare-const |x value| |U sort|)\n" ^
+       "(declare-fun |f fun| (|U sort| Bool) |U sort|)\n" ^
+       "(define-const |c const| Bool (! true :named |truth attr|))\n" ^
+       "(define-fun |g fun| ((|arg 1| Bool)) Bool (! |arg 1| :named |id attr|))\n")
+in
+  case script of
+    [c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11] =>
+      let
+        val () = (case SmtLib_Parser.node_of c1 of
+            SmtLib_Parser.CmdSetLogic logic =>
+              assert (located_string logic = "QF_UF", "set-logic name mismatch")
+          | _ => die "set-logic did not parse to CmdSetLogic")
+        val () = (case SmtLib_Parser.node_of c2 of
+            SmtLib_Parser.CmdSetInfo items =>
+              assert (List.length items = 2, "set-info payload mismatch")
+          | _ => die "set-info did not parse to CmdSetInfo")
+        val () = (case SmtLib_Parser.node_of c3 of
+            SmtLib_Parser.CmdSetOption items =>
+              assert (List.length items = 2, "set-option payload mismatch")
+          | _ => die "set-option did not parse to CmdSetOption")
+        val () = (case SmtLib_Parser.node_of c4 of
+            SmtLib_Parser.CmdGetInfo keyword =>
+              assert (located_string keyword = ":name", "get-info keyword mismatch")
+          | _ => die "get-info did not parse to CmdGetInfo")
+        val () = (case SmtLib_Parser.node_of c5 of
+            SmtLib_Parser.CmdGetOption keyword =>
+              assert (located_string keyword = ":produce-models",
+                "get-option keyword mismatch")
+          | _ => die "get-option did not parse to CmdGetOption")
+        val () = (case SmtLib_Parser.node_of c6 of
+            SmtLib_Parser.CmdDeclareSort (name, arity) =>
+              assert (located_string name = "U sort" andalso
+                located_string arity = "0", "declare-sort fields mismatch")
+          | _ => die "declare-sort did not parse to CmdDeclareSort")
+        val () = (case SmtLib_Parser.node_of c7 of
+            SmtLib_Parser.CmdDefineSort (name, params, body) =>
+              assert (located_string name = "Box sort" andalso
+                List.map located_string params = ["A"] andalso
+                located_sort_identifier body = "A",
+                "define-sort fields mismatch")
+          | _ => die "define-sort did not parse to CmdDefineSort")
+        val () = (case SmtLib_Parser.node_of c8 of
+            SmtLib_Parser.CmdDeclareConst (name, sort) =>
+              assert (located_string name = "x value" andalso
+                located_sort_identifier sort = "U sort",
+                "declare-const fields mismatch")
+          | _ => die "declare-const did not parse to CmdDeclareConst")
+        val () = (case SmtLib_Parser.node_of c9 of
+            SmtLib_Parser.CmdDeclareFun (name, domain, range) =>
+              assert (located_string name = "f fun" andalso
+                List.length domain = 2 andalso
+                located_sort_identifier range = "U sort",
+                "declare-fun fields mismatch")
+          | _ => die "declare-fun did not parse to CmdDeclareFun")
+        val () = (case SmtLib_Parser.node_of c10 of
+            SmtLib_Parser.CmdDefineConst (name, sort, body) =>
+              assert (located_string name = "c const" andalso
+                located_sort_identifier sort = "Bool" andalso
+                located_term_annotation_count body = 2,
+                "define-const fields mismatch")
+          | _ => die "define-const did not parse to CmdDefineConst")
+        val () = (case SmtLib_Parser.node_of c11 of
+            SmtLib_Parser.CmdDefineFun (name, vars, range, body) =>
+              assert (located_string name = "g fun" andalso
+                List.length vars = 1 andalso
+                located_sort_identifier range = "Bool" andalso
+                located_term_annotation_count body = 2,
+                "define-fun fields mismatch")
+          | _ => die "define-fun did not parse to CmdDefineFun")
+      in
+        ()
+      end
+  | _ => die "metadata/declaration script parsed to the wrong command count"
+end
+
+fun script_ast_command_syntax_error () =
+  let
+    val _ = SmtLib_Parser.parse_script_string
+      "(define-sort Alias (A) Bool extra)"
+  in
+    die "script AST parser accepted a malformed define-sort command"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let
+      val msg = Feedback.message_of holerr
+    in
+      assert (contains "define-sort" msg,
+        "syntax error did not include the command name: " ^ msg);
+      assert (contains "line 1, column 29" msg,
+        "syntax error did not include the source location: " ^ msg)
+    end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -309,7 +425,9 @@ let
     ("remove_definitions_circular1", fn () => remove_defs_test remove_defs_circular1),
     ("remove_definitions_circular2", fn () => remove_defs_test remove_defs_circular2),
     ("script_ast_locations_success", script_ast_locations_success),
-    ("script_ast_locations_syntax_error", script_ast_locations_syntax_error)
+    ("script_ast_locations_syntax_error", script_ast_locations_syntax_error),
+    ("script_ast_metadata_decls_success", script_ast_metadata_decls_success),
+    ("script_ast_command_syntax_error", script_ast_command_syntax_error)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

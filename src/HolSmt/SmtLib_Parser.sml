@@ -43,10 +43,15 @@ struct
 
   datatype command_ast =
       CmdSetInfo of sexp_ast located list
+    | CmdSetOption of sexp_ast located list
     | CmdSetLogic of string located
+    | CmdGetInfo of string located
+    | CmdGetOption of string located
     | CmdDeclareSort of string located * string located
+    | CmdDefineSort of string located * string located list * sort_ast located
     | CmdDeclareConst of string located * sort_ast located
     | CmdDeclareFun of string located * sort_ast located list * sort_ast located
+    | CmdDefineConst of string located * sort_ast located * term_ast located
     | CmdDefineFun of string located * sorted_var_ast located list *
         sort_ast located * term_ast located
     | CmdAssert of term_ast located
@@ -399,6 +404,17 @@ local
         sorts
       end
 
+    fun parse_symbol_list () =
+      let
+        val open_tok = need_token "parse_symbol_list" "'('"
+        val _ = expect_token "parse_symbol_list" "(" open_tok
+        val (symbols, _) =
+          parse_until_rparen "parse_symbol_list"
+            (parse_atom_name "parse_symbol_list") []
+      in
+        symbols
+      end
+
     fun parse_empty_command fn_name open_tok node =
       let
         val close_tok = need_token fn_name "')'"
@@ -412,72 +428,125 @@ local
         val _ = expect_token "parse_command" "(" open_tok
         val cmd_tok = need_token "parse_command" "command name"
         val cmd = token_text cmd_tok
+        fun command_error loc msg =
+          syntax_error "parse_command" loc (cmd ^ ": " ^ msg)
+        fun command_need what =
+          case get_next_token () of
+            SOME tok => tok
+          | NONE => command_error (eof_loc ()) ("expected " ^ what)
+        fun command_expect expected tok =
+          if token_text tok = expected then ()
+          else command_error (token_loc tok)
+            ("expected '" ^ expected ^ "', found '" ^ token_text tok ^ "'")
+        fun command_atom what =
+          let val tok = command_need what
+          in
+            if token_text tok = "(" orelse token_text tok = ")" then
+              command_error (token_loc tok)
+                ("expected atom, found '" ^ token_text tok ^ "'")
+            else
+              located (token_loc tok) (token_text tok)
+          end
         fun finish node close_tok =
           located (combine_span (token_loc open_tok) (token_loc close_tok)) node
+        fun finish_with_close node =
+          let
+            val close_tok = command_need "')'"
+            val _ = command_expect ")" close_tok
+          in
+            finish node close_tok
+          end
       in
         case cmd of
           "set-info" =>
             let val (items, close_tok) =
                   parse_until_rparen "parse_command" parse_sexp_from_first []
             in finish (CmdSetInfo items) close_tok end
+        | "set-option" =>
+            let val (items, close_tok) =
+                  parse_until_rparen "parse_command" parse_sexp_from_first []
+            in finish (CmdSetOption items) close_tok end
         | "set-logic" =>
             let
-              val logic = parse_atom_name "parse_command"
-                (need_token "parse_command" "logic name")
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val logic = command_atom "logic name"
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdSetLogic logic) close_tok
             end
+        | "get-info" =>
+            let
+              val keyword = command_atom "info keyword"
+            in
+              finish_with_close (CmdGetInfo keyword)
+            end
+        | "get-option" =>
+            let
+              val keyword = command_atom "option keyword"
+            in
+              finish_with_close (CmdGetOption keyword)
+            end
         | "declare-sort" =>
             let
-              val name = parse_atom_name "parse_command"
-                (need_token "parse_command" "sort name")
-              val arity = parse_atom_name "parse_command"
-                (need_token "parse_command" "sort arity")
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val name = command_atom "sort name"
+              val arity = command_atom "sort arity"
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdDeclareSort (name, arity)) close_tok
             end
+        | "define-sort" =>
+            let
+              val name = command_atom "sort name"
+              val params = parse_symbol_list ()
+              val body = parse_sort ()
+            in
+              finish_with_close (CmdDefineSort (name, params, body))
+            end
         | "declare-const" =>
             let
-              val name = parse_atom_name "parse_command"
-                (need_token "parse_command" "constant name")
+              val name = command_atom "constant name"
               val sort = parse_sort ()
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdDeclareConst (name, sort)) close_tok
             end
         | "declare-fun" =>
             let
-              val name = parse_atom_name "parse_command"
-                (need_token "parse_command" "function name")
+              val name = command_atom "function name"
               val domain = parse_sort_list ()
               val range = parse_sort ()
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdDeclareFun (name, domain, range)) close_tok
             end
+        | "define-const" =>
+            let
+              val name = command_atom "constant name"
+              val sort = parse_sort ()
+              val body = parse_term_from_first
+                (command_need "constant definition body")
+            in
+              finish_with_close (CmdDefineConst (name, sort, body))
+            end
         | "define-fun" =>
             let
-              val name = parse_atom_name "parse_command"
-                (need_token "parse_command" "function name")
+              val name = command_atom "function name"
               val vars = parse_sorted_var_list ()
               val range = parse_sort ()
-              val body = parse_term_from_first (need_token "parse_command" "function body")
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val body = parse_term_from_first (command_need "function body")
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdDefineFun (name, vars, range, body)) close_tok
             end
         | "assert" =>
             let
-              val term = parse_term_from_first (need_token "parse_command" "assertion")
-              val close_tok = need_token "parse_command" "')'"
-              val _ = expect_token "parse_command" ")" close_tok
+              val term = parse_term_from_first (command_need "assertion")
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
             in
               finish (CmdAssert term) close_tok
             end
@@ -917,6 +986,18 @@ local
     else
       parse_set_info get_token
 
+  val parse_set_option = parse_set_info
+
+  fun parse_get_info get_token =
+    let
+      val _ = get_token ()
+      val _ = Library.expect_token ")" (get_token ())
+    in
+      ()
+    end
+
+  val parse_get_option = parse_get_info
+
   (* returns the SMT-LIB logic name and its type/term dictionaries *)
   fun parse_set_logic get_token =
   let
@@ -942,6 +1023,31 @@ local
         raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
   in
     Library.extend_dict ((name, parsefn), tydict)
+  end
+
+  fun parse_define_sort get_token tydict =
+  let
+    val _ = get_token ()
+    val _ = Library.expect_token "(" (get_token ())
+    fun skip_params () =
+      if get_token () = ")" then ()
+      else skip_params ()
+    fun skip_balanced 0 = ()
+      | skip_balanced depth =
+          (case get_token () of
+             "(" => skip_balanced (depth + 1)
+           | ")" => skip_balanced (depth - 1)
+           | _ => skip_balanced depth)
+    fun skip_sort () =
+      case get_token () of
+        "(" => skip_balanced 1
+      | ")" => raise ERR "parse_define_sort" "missing sort body"
+      | _ => ()
+    val _ = skip_params ()
+    val _ = skip_sort ()
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    tydict
   end
 
   (* returns an extended 'tmdict' *)
@@ -970,12 +1076,40 @@ local
   val parse_declare_const = parse_declare_const_fun false
   val parse_declare_fun = parse_declare_const_fun true
 
+  fun define_fun_term name vars range_type definiens tmdict =
+  let
+    val domain_types = List.map (Term.type_of o Lib.snd) vars
+    val tm = Term.mk_var (name,
+      boolSyntax.list_mk_fun (domain_types, range_type))
+    val args_count = List.length domain_types
+    fun parsefn token indices args =
+      if List.null indices andalso List.length args = args_count then
+        Term.list_mk_comb (tm, args)
+      else
+        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+    val tmdict = Library.extend_dict ((name, parsefn), tmdict)
+    val vars = List.map Lib.snd vars
+    val definition = boolSyntax.list_mk_forall (vars,
+      boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
+  in
+    (tmdict, definition)
+  end
+
+  fun parse_define_const get_token (tydict, tmdict) =
+  let
+    val name = get_token ()
+    val range_type = parse_type get_token tydict
+    val definiens = parse_term get_token (tydict, tmdict)
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    define_fun_term name [] range_type definiens tmdict
+  end
+
   (* returns an extended 'tmdict', and the definition (as a formula) *)
   fun parse_define_fun get_token (tydict, tmdict) =
   let
     val name = get_token ()
     val vars = parse_sorted_vars get_token tydict
-    val domain_types = List.map Lib.snd vars
     val range_type = parse_type get_token tydict
     val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
     (* variables don't take arguments *)
@@ -989,22 +1123,8 @@ local
       (List.map (Lib.apsnd var_parsefn) vars)
     val definiens = parse_term get_token (tydict, definiens_tmdict)
     val _ = Library.expect_token ")" (get_token ())
-    (* 'name' from now on should be parsed as 'tm' *)
-    val tm = Term.mk_var (name,
-      boolSyntax.list_mk_fun (domain_types, range_type))
-    val args_count = List.length domain_types
-    fun parsefn token indices args =
-      if List.null indices andalso List.length args = args_count then
-        Term.list_mk_comb (tm, args)
-      else
-        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
-    val tmdict = Library.extend_dict ((name, parsefn), tmdict)
-    (* the semantics of define-fun: ``!x1...xn. f x1 ... xn = definiens`` *)
-    val vars = List.map Lib.snd vars
-    val definition = boolSyntax.list_mk_forall (vars,
-      boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
   in
-    (tmdict, definition)
+    define_fun_term name vars range_type definiens tmdict
   end
 
   fun dest_state cmd (SOME x) = x
@@ -1027,6 +1147,12 @@ local
       in
         parse_commands get_token state
       end
+    | "set-option" =>
+      let
+        val _ = parse_set_option get_token
+      in
+        parse_commands get_token state
+      end
     | "set-logic" =>
       let
         val _ = not (Option.isSome state) orelse
@@ -1035,10 +1161,29 @@ local
       in
         parse_commands get_token (SOME (logic, tydict, tmdict, []))
       end
+    | "get-info" =>
+      let
+        val _ = parse_get_info get_token
+      in
+        parse_commands get_token state
+      end
+    | "get-option" =>
+      let
+        val _ = parse_get_option get_token
+      in
+        parse_commands get_token state
+      end
     | "declare-sort" =>
       let
         val (logic, tydict, tmdict, asserted) = dest_state "declare-sort" state
         val tydict = parse_declare_sort get_token tydict
+      in
+        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+      end
+    | "define-sort" =>
+      let
+        val (logic, tydict, tmdict, asserted) = dest_state "define-sort" state
+        val tydict = parse_define_sort get_token tydict
       in
         parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
       end
@@ -1053,6 +1198,14 @@ local
       let
         val (logic, tydict, tmdict, asserted) = dest_state "declare-fun" state
         val (_, tmdict) = parse_declare_fun get_token (tydict, tmdict)
+      in
+        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+      end
+    | "define-const" =>
+      let
+        val (logic, tydict, tmdict, asserted) = dest_state "define-const" state
+        val (tmdict, def) = parse_define_const get_token (tydict, tmdict)
+        val asserted = def :: asserted
       in
         parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
       end
@@ -1139,9 +1292,11 @@ in
      "assert"ed formulae *)
 
   (* This parser handles a restricted subset of SMT-LIB 2.  Recognised
-     commands: set-info (content discarded), set-logic, declare-sort,
-     declare-const, declare-fun, define-fun, assert, check-sat (no
-     answer produced), get-proof (no proof produced), and exit.  Any
+     commands: set-info and set-option (content discarded), set-logic,
+     get-info, get-option, declare-sort, define-sort (content checked
+     and discarded), declare-const, declare-fun, define-const,
+     define-fun, assert, check-sat (no answer produced), get-proof
+     (no proof produced), and exit.  Any
      other command is rejected with "unknown command".  Assertion
      stack management ("push"/"pop" in the SMT-LIB 2 standard) is
      not supported. *)
