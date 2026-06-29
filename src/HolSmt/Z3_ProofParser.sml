@@ -351,13 +351,25 @@ local
   let
     val (hd, args) = boolSyntax.strip_comb t
     val name = Lib.fst (Term.dest_var hd)
+      handle Feedback.HOL_ERR holerr =>
+        raise ERR "proofterm_of_term"
+          ("local proof subterm <" ^ Library.term_to_string t ^
+           "> does not encode a Z3 proofterm: " ^ Feedback.message_of holerr)
   in
-    Redblackmap.find (!pt_dict, name) args
-      handle Redblackmap.NotFound =>
-        ID (proofterm_id (Lib.fst (Term.dest_var t)))
-      handle Feedback.HOL_ERR _ =>
-        raise ERR "proofterm_of_term" ("term <" ^ Hol_pp.term_to_string t ^
-          "> does not encode a Z3 proofterm")
+    case Redblackmap.peek (!pt_dict, name) of
+      SOME mk_pt =>
+        (mk_pt args
+          handle Feedback.HOL_ERR holerr =>
+            raise ERR "proofterm_of_term"
+              ("malformed Z3 proof rule '" ^ name ^ "' in local proof subterm <" ^
+               Library.term_to_string t ^ ">: " ^ Feedback.message_of holerr))
+    | NONE =>
+        if List.null args andalso String.isPrefix "@x" name then
+          ID (proofterm_id name)
+        else
+          raise ERR "proofterm_of_term"
+            ("unknown Z3 proof rule '" ^ name ^
+             "' in local proof subterm <" ^ Library.term_to_string t ^ ">")
   end
 
   val zero_prems_pt = SmtLib_Theories.one_arg

@@ -27,12 +27,19 @@ structure Z3 = struct
 
   val error_msg = "Z3 not configured: set the HOL4_Z3_EXECUTABLE environment variable to point to the Z3 executable file.";
 
-  fun mk_Z3_fun name pre cmd_stem post goal =
+  fun configured_executable () =
     case OS.Process.getEnv "HOL4_Z3_EXECUTABLE" of
+      SOME file => if file = "" then NONE else SOME file
+    | NONE => NONE
+
+  fun executable_string () =
+    case configured_executable () of
+      SOME file => file
+    | NONE => "<unconfigured>"
+
+  fun mk_Z3_fun name pre cmd_stem post goal =
+    case configured_executable () of
       SOME file =>
-        if file = "" then
-           raise Feedback.mk_HOL_ERR "Z3" name error_msg
-        else
         SolverSpec.make_solver pre (file ^ cmd_stem) post goal
     | NONE =>
         raise Feedback.mk_HOL_ERR "Z3" name error_msg
@@ -57,14 +64,16 @@ structure Z3 = struct
       val s = TextIO.inputAll instrm before TextIO.closeIn instrm
       val tokens = String.tokens Char.isSpace s
     in
-      List.nth (tokens, 2)
+      case tokens of
+        "Z3" :: "version" :: version :: _ => version
+      | _ => "0"
     end
+    handle _ => "0"
 
   val Z3version =
-      case OS.Process.getEnv "HOL4_Z3_EXECUTABLE" of
+      case configured_executable () of
           NONE => "0"
         | SOME p =>
-          if p = "" then "0" else
           let
             val outfile = OS.FileSys.tmpName()
             fun work () = let
@@ -78,7 +87,15 @@ structure Z3 = struct
             Portable.finally finish work ()
           end
 
-  val is_v4 = String.sub(Z3version, 0) = #"4"
+  fun configured_version () =
+    if Z3version = "0" then NONE else SOME Z3version
+
+  fun version_string () =
+    case configured_version () of
+      SOME version => version
+    | NONE => "<undiscoverable>"
+
+  val is_v4 = String.isPrefix "4" Z3version
 
   fun is_v4_configured () = is_configured () andalso is_v4
 
@@ -91,6 +108,24 @@ structure Z3 = struct
     else
       " PROOF_MODE=2"
 
+  val proof_cmd_stem = proof_option ^ " -smt2 -file:"
+
+  fun command_string cmd_stem =
+    executable_string () ^ cmd_stem ^ "<input-file> > <output-file>"
+
+  fun hol_err_string holerr =
+    Feedback.top_structure_of holerr ^ "." ^
+    Feedback.top_function_of holerr ^ ": " ^
+    Feedback.message_of holerr
+    handle Feedback.HOL_ERR _ => Feedback.message_of holerr
+
+  fun raise_with_context function phase cmd_stem holerr =
+    raise Feedback.mk_HOL_ERR "Z3" function
+      ("Z3 " ^ phase ^ " failed\n" ^
+       "Z3 version: " ^ version_string () ^ "\n" ^
+       "Z3 command: " ^ command_string cmd_stem ^ "\n" ^
+       "underlying HOL_ERR: " ^ hol_err_string holerr)
+
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover =
     mk_Z3_fun "Z3_SMT_Prover"
@@ -101,7 +136,7 @@ structure Z3 = struct
         in
           (((goal, validation), ty_tm_dict), strings)
         end)
-      (proof_option ^ " -smt2 -file:")
+      proof_cmd_stem
       (fn ((goal, validation), (ty_dict, tm_dict)) =>
         fn outfile =>
           let
@@ -135,9 +170,16 @@ structure Z3 = struct
                 (* parse the proof and check it in HOL *)
                 val proof = Z3_ProofParser.parse_stream (ty_dict, tm_dict)
                   instream
+                  handle Feedback.HOL_ERR holerr =>
+                    (TextIO.closeIn instream;
+                     raise_with_context "Z3_SMT_Prover" "proof parse"
+                       proof_cmd_stem holerr)
                 val _ = TextIO.closeIn instream
                 val (As, g) = goal
                 val thm = Z3_ProofReplay.check_proof (As, g, proof)
+                  handle Feedback.HOL_ERR holerr =>
+                    raise_with_context "Z3_SMT_Prover" "proof replay"
+                      proof_cmd_stem holerr
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
                 val () = Library.check_oracle_tags

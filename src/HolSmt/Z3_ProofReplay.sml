@@ -1307,6 +1307,140 @@ local
   (* proof traversal, turning proofterms into theorems                       *)
   (***************************************************************************)
 
+  fun take _ [] = []
+    | take 0 _ = []
+    | take n (x :: xs) = x :: take (n - 1) xs
+
+  fun term_diag tm =
+    Library.term_to_string tm
+    handle _ => "<unprintable term>"
+
+  fun thm_diag thm =
+    Library.thm_to_string thm
+    handle _ => "<unprintable theorem>"
+
+  fun list_summary item_to_string items =
+  let
+    val total = List.length items
+    val shown = take 3 items
+    val body = String.concatWith ", " (List.map item_to_string shown)
+    val more = if total > List.length shown then ", ..." else ""
+  in
+    "[" ^ body ^ more ^ "]"
+  end
+
+  fun term_set_summary label set =
+    label ^ "=" ^ Int.toString (HOLset.numItems set) ^ " " ^
+    list_summary term_diag (HOLset.listItems set)
+
+  fun state_summary (state : state) =
+    String.concatWith "; " [
+      term_set_summary "asserted_hyps" (#asserted_hyps state),
+      term_set_summary "definition_hyps" (#definition_hyps state),
+      term_set_summary "z3_vars" (#var_set state)
+    ]
+
+  fun proofterm_rule (AND_ELIM _) = "and-elim"
+    | proofterm_rule (ASSERTED _) = "asserted"
+    | proofterm_rule (COMMUTATIVITY _) = "commutativity"
+    | proofterm_rule (DEF_AXIOM _) = "def-axiom"
+    | proofterm_rule (ELIM_UNUSED _) = "elim-unused"
+    | proofterm_rule (HYPOTHESIS _) = "hypothesis"
+    | proofterm_rule (IFF_FALSE _) = "iff-false"
+    | proofterm_rule (IFF_TRUE _) = "iff-true"
+    | proofterm_rule (INTRO_DEF _) = "intro-def"
+    | proofterm_rule (LEMMA _) = "lemma"
+    | proofterm_rule (MONOTONICITY _) = "monotonicity"
+    | proofterm_rule (MP _) = "mp"
+    | proofterm_rule (MP_EQ _) = "mp~"
+    | proofterm_rule (NNF_NEG _) = "nnf-neg"
+    | proofterm_rule (NNF_POS _) = "nnf-pos"
+    | proofterm_rule (NOT_OR_ELIM _) = "not-or-elim"
+    | proofterm_rule (QUANT_INST _) = "quant-inst"
+    | proofterm_rule (QUANT_INTRO _) = "quant-intro"
+    | proofterm_rule (REFL _) = "refl"
+    | proofterm_rule (REWRITE _) = "rewrite"
+    | proofterm_rule (SKOLEM _) = "sk"
+    | proofterm_rule (SYMM _) = "symm"
+    | proofterm_rule (TH_LEMMA_ARITH _) = "th-lemma[arith]"
+    | proofterm_rule (TH_LEMMA_ARRAY _) = "th-lemma[array]"
+    | proofterm_rule (TH_LEMMA_BASIC _) = "th-lemma[basic]"
+    | proofterm_rule (TH_LEMMA_BV _) = "th-lemma[bv]"
+    | proofterm_rule (TRANS _) = "trans"
+    | proofterm_rule (TRANS_STAR _) = "trans*"
+    | proofterm_rule (TRUE_AXIOM _) = "true-axiom"
+    | proofterm_rule (UNIT_RESOLUTION _) = "unit-resolution"
+    | proofterm_rule (ID id) = "@" ^ Int.toString id
+    | proofterm_rule (THEOREM _) = "<replayed theorem>"
+
+  fun proofterm_concl (AND_ELIM (_, concl)) = SOME concl
+    | proofterm_concl (ASSERTED concl) = SOME concl
+    | proofterm_concl (COMMUTATIVITY concl) = SOME concl
+    | proofterm_concl (DEF_AXIOM concl) = SOME concl
+    | proofterm_concl (ELIM_UNUSED concl) = SOME concl
+    | proofterm_concl (HYPOTHESIS concl) = SOME concl
+    | proofterm_concl (IFF_FALSE (_, concl)) = SOME concl
+    | proofterm_concl (IFF_TRUE (_, concl)) = SOME concl
+    | proofterm_concl (INTRO_DEF concl) = SOME concl
+    | proofterm_concl (LEMMA (_, concl)) = SOME concl
+    | proofterm_concl (MONOTONICITY (_, concl)) = SOME concl
+    | proofterm_concl (MP (_, _, concl)) = SOME concl
+    | proofterm_concl (MP_EQ (_, _, concl)) = SOME concl
+    | proofterm_concl (NNF_NEG (_, concl)) = SOME concl
+    | proofterm_concl (NNF_POS (_, concl)) = SOME concl
+    | proofterm_concl (NOT_OR_ELIM (_, concl)) = SOME concl
+    | proofterm_concl (QUANT_INST (_, concl)) = SOME concl
+    | proofterm_concl (QUANT_INTRO (_, concl)) = SOME concl
+    | proofterm_concl (REFL concl) = SOME concl
+    | proofterm_concl (REWRITE concl) = SOME concl
+    | proofterm_concl (SKOLEM concl) = SOME concl
+    | proofterm_concl (SYMM (_, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_ARITH (_, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_ARRAY (_, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_BASIC (_, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_BV (_, concl)) = SOME concl
+    | proofterm_concl (TRANS (_, _, concl)) = SOME concl
+    | proofterm_concl (TRANS_STAR (_, concl)) = SOME concl
+    | proofterm_concl (TRUE_AXIOM concl) = SOME concl
+    | proofterm_concl (UNIT_RESOLUTION (_, concl)) = SOME concl
+    | proofterm_concl (ID _) = NONE
+    | proofterm_concl (THEOREM thm) = SOME (Thm.concl thm)
+
+  fun proofterm_ref (ID id) = "ID " ^ Int.toString id
+    | proofterm_ref (THEOREM thm) = "THEOREM(" ^ term_diag (Thm.concl thm) ^ ")"
+    | proofterm_ref pt =
+        case proofterm_concl pt of
+          SOME concl => proofterm_rule pt ^ "(" ^ term_diag concl ^ ")"
+        | NONE => proofterm_rule pt
+
+  fun rule_application name pts concl =
+    name ^ "(premises=" ^ list_summary proofterm_ref pts ^
+    ", conclusion=" ^ term_diag concl ^ ")"
+
+  fun hol_err_diag holerr =
+    Feedback.top_structure_of holerr ^ "." ^
+    Feedback.top_function_of holerr ^ ": " ^
+    Feedback.message_of holerr
+    handle Feedback.HOL_ERR _ => Feedback.message_of holerr
+
+  fun raise_replay_error function state name pts concl thms holerr =
+    raise ERR function
+      ("Z3 proof replay failure\n" ^
+       "proof rule: " ^ name ^ "\n" ^
+       "local proof subterm: " ^ rule_application name pts concl ^ "\n" ^
+       "parsed HOL conclusion: " ^ term_diag concl ^ "\n" ^
+       "replay state: " ^ state_summary state ^ "\n" ^
+       "premise HOL theorems: " ^ list_summary thm_diag thms ^ "\n" ^
+       "underlying HOL_ERR: " ^ hol_err_diag holerr)
+
+  fun raise_final_error stage state thm holerr =
+    raise ERR "check_proof"
+      ("Z3 proof replay finalization failure\n" ^
+       "stage: " ^ stage ^ "\n" ^
+       "replay state: " ^ state_summary state ^ "\n" ^
+       "local theorem: " ^ thm_diag thm ^ "\n" ^
+       "underlying HOL_ERR: " ^ hol_err_diag holerr)
+
   (* We use a depth-first post-order traversal of the proof, checking
      each premise of a proofterm (i.e., deriving the corresponding
      theorem) before checking the proofterm's inference itself.
@@ -1334,9 +1468,11 @@ local
       : (state * proof) * Thm.thm =
   let
     val (state, thm) = profile name z3_rule_fn (state, concl)
-      handle Feedback.HOL_ERR _ =>
-        raise ERR name (Hol_pp.term_to_string concl)
+      handle Feedback.HOL_ERR holerr =>
+        raise_replay_error name state name [] concl [] holerr
     val _ = profile "check_thm" check_thm (name, thm, concl)
+      handle Feedback.HOL_ERR holerr =>
+        raise_replay_error "check_thm" state name [] concl [thm] holerr
   in
     continuation ((state, proof), thm)
   end
@@ -1349,9 +1485,11 @@ local
       : (state * proof) * Thm.thm =
   let
     val (state, thm) = profile name z3_rule_fn (state, arg, concl)
-      handle Feedback.HOL_ERR _ =>
-        raise ERR name (Hol_pp.term_to_string concl)
+      handle Feedback.HOL_ERR holerr =>
+        raise_replay_error name state name [] concl [] holerr
     val _ = profile "check_thm" check_thm (name, thm, concl)
+      handle Feedback.HOL_ERR holerr =>
+        raise_replay_error "check_thm" state name [] concl [thm] holerr
   in
     continuation ((state, proof), thm)
   end
@@ -1366,10 +1504,11 @@ local
       (fn ((state, proof), thm) =>
         let
           val (state, thm) = profile name z3_rule_fn (state, thm, concl)
-            handle Feedback.HOL_ERR _ =>
-              raise ERR name (Hol_pp.thm_to_string thm ^ ", " ^
-                Hol_pp.term_to_string concl)
+            handle Feedback.HOL_ERR holerr =>
+              raise_replay_error name state name [pt] concl [thm] holerr
           val _ = profile "check_thm" check_thm (name, thm, concl)
+            handle Feedback.HOL_ERR holerr =>
+              raise_replay_error "check_thm" state name [pt] concl [thm] holerr
         in
           ((state, proof), thm)
         end))
@@ -1386,11 +1525,13 @@ local
           let
             val (state, thm) = profile name z3_rule_fn
               (state, thm1, thm2, concl)
-                handle Feedback.HOL_ERR _ =>
-                  raise ERR name (Hol_pp.thm_to_string thm1 ^ ", " ^
-                    Hol_pp.thm_to_string thm2 ^ ", " ^
-                    Hol_pp.term_to_string concl)
+                handle Feedback.HOL_ERR holerr =>
+                  raise_replay_error name state name [pt1, pt2] concl
+                    [thm1, thm2] holerr
             val _ = profile "check_thm" check_thm (name, thm, concl)
+              handle Feedback.HOL_ERR holerr =>
+                raise_replay_error "check_thm" state name [pt1, pt2] concl
+                  [thm1, thm2, thm] holerr
           in
             ((state, proof), thm)
           end)))
@@ -1405,10 +1546,11 @@ local
     let
       val acc = List.rev acc
       val (state, thm) = profile name z3_rule_fn (state, acc, concl)
-        handle Feedback.HOL_ERR _ =>
-          raise ERR name ("[" ^ String.concatWith ", " (List.map
-            Hol_pp.thm_to_string acc) ^ "], " ^ Hol_pp.term_to_string concl)
+        handle Feedback.HOL_ERR holerr =>
+          raise_replay_error name state name [] concl acc holerr
       val _ = profile "check_thm" check_thm (name, thm, concl)
+        handle Feedback.HOL_ERR holerr =>
+          raise_replay_error "check_thm" state name [] concl (thm :: acc) holerr
     in
       continuation ((state, proof), thm)
     end
@@ -1723,16 +1865,22 @@ in
     (* remove the definitions introduced by Z3 from the set of hypotheses *)
     val final_thm = profile "check_proof(remove_definitions)" remove_definitions
       (#definition_hyps state, #var_set state, thm)
+      handle Feedback.HOL_ERR holerr =>
+        raise_final_error "remove_definitions" state thm holerr
 
     (* workaround for Z3 bug *)
     val final_thm = profile "check_proof(remove_extra_hyps)" remove_extra_hyps
       (#asserted_hyps state, final_thm)
+      handle Feedback.HOL_ERR holerr =>
+        raise_final_error "remove_extra_hyps" state final_thm holerr
 
     (* if the final theorem contains hyps that are not in `asl`, it likely means
        that we've run into a Z3 issue where it slightly modifies the original
        assumptions; as a workaround we try to remove those hyps here *)
     val final_thm = profile "check_proof(hyp_removal)" remove_hyps
       (asl, g, final_thm)
+      handle Feedback.HOL_ERR holerr =>
+        raise_final_error "hyp_removal" state final_thm holerr
 
     (* check that the final theorem contains no hyps other than those that have
        been asserted or those used by the hypothesis-removal workaround above *)
@@ -1741,6 +1889,8 @@ in
     val _ = profile "check_proof(hypcheck)" HOLset.isSubset
       (Thm.hypset final_thm, allowed_hyps) orelse
       raise ERR "check_proof" "final theorem contains additional hyp(s)"
+      handle Feedback.HOL_ERR holerr =>
+        raise_final_error "hypcheck" state final_thm holerr
   in
     final_thm
   end

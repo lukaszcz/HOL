@@ -26,5 +26,30 @@ Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
 
+Z3 version diagnostics and CI hooks:
+
+Z3.sml reports the configured executable and discovered Z3 version through
+configured_executable, configured_version and Z3version.  Z3_SMT_Prover adds
+that version data path, together with the proof command stem, to proof parse
+and replay failures before raising them to HolSmtLib.
+
+Replay diagnostics from Z3_ProofReplay.sml include the proof rule, local proof
+subterm, parsed HOL conclusion and a replay-state summary of asserted
+hypotheses, definition hypotheses and Z3-created variables.  Unknown proof
+rules are reported by Z3_ProofParser.sml with the missing rule name and local
+proof subterm.
+
+Pull-request CI runs the PolyML expk build against the Z3 versions already
+provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
+equivalent local hook is:
+
+  docker buildx build \
+    --build-arg SML=poly \
+    --build-arg Z3_VERSION=<2.19.1|4.12.4|4.13.0> \
+    --build-arg CVC_VERSION=5 \
+    --build-arg CSDP_VERSION=1 \
+    --build-arg 'BUILDOPTS=--no-cache --expk -j4 -t' \
+    -f developers/docker-ci/Dockerfile .
+
 Further documentation can be found in the HOL Description (in
 HOL/Manual/Description).

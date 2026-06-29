@@ -31,6 +31,14 @@ jobs:
 
   build-expk:
     runs-on: ubuntu-latest
+    name: build-expk-z3-${{ matrix.z3-version }}
+    strategy:
+      fail-fast: false
+      matrix:
+        z3-version:
+          - 2.19.1
+          - 4.12.4
+          - 4.13.0
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -46,7 +54,7 @@ jobs:
           push: false
           build-args: |
             SML=poly
-            Z3_VERSION=4.13.0
+            Z3_VERSION=${{ matrix.z3-version }}
             CVC_VERSION=5
             CSDP_VERSION=1
             BUILDOPTS=--no-cache --expk -j4 -t
