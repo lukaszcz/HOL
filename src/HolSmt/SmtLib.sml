@@ -4,17 +4,37 @@
 
 structure SmtLib = struct
 
-local
+datatype logic_features = LogicFeatures of {
+  quantifiers : bool,
+  uninterpreted : bool,
+  arrays : bool,
+  bitvectors : bool,
+  integers : bool,
+  reals : bool,
+  nonlinear : bool
+}
 
-  (* FIXME: We translate into a fictitious SMT-LIB logic AUFBVNIRA
-     that comprises arrays (A), uninterpreted functions (UF),
-     bit-vectors (BV), non-linear (N) integer (I) and real arithmetic
-     (RA).  Unfortunately, there is no actual SMT-LIB logic at the
-     moment that contains all these features: AUFNIRA is missing
-     bit-vectors, while QF_AUFBV is missing quantifiers and
-     arithmetic.  See SmtLib_{Theories,Logics}.sml for details.  At
-     present, we make no attempt to identify a less expressive SMT-LIB
-     logic based on the constants that actually appear in the goal. *)
+datatype translation_record =
+    LogicSelection of {logic : string, reason : string,
+                       features : logic_features}
+  | TypeDeclaration of {hol_type : Type.hol_type, smt_name : string,
+                        declaration : string}
+  | TermDeclaration of {hol_term : Term.term, arity : int,
+                        smt_name : string, domain_sorts : string list,
+                        range_sort : string, declaration : string}
+  | DefinitionRecord of {hol_term : Term.term, smt_name : string,
+                         sort : string, definition : string}
+  | EncodedSymbol of {hol_term : Term.term, smt_symbol : string,
+                      arity : int}
+
+type translation = {
+  logic : string,
+  tydict : (Type.hol_type, string) Redblackmap.dict,
+  tmdict : (Term.term * int, string) Redblackmap.dict,
+  records : translation_record list
+}
+
+local
 
   (* For successful proof reconstruction, it is important that the
      translation implemented in SmtLib_{Theories,Logics}.sml is an
@@ -324,15 +344,310 @@ local
   val tm_prefix = "v"  (* for terms *)
   val bv_prefix = "b"  (* for bound variables *)
 
+  fun first_success f [] = NONE
+    | first_success f (x :: xs) =
+      SOME (f x) handle _ => first_success f xs
+
+  fun has_type_builtin ty =
+    Option.isSome (first_success (fn (_, f) => f ty)
+      (TypeNet.match (builtin_types, ty)))
+
+  fun smt_sort_of_type tydict ty =
+    case first_success (fn (_, f) => f ty) (TypeNet.match (builtin_types, ty)) of
+      SOME name => name
+    | NONE => Redblackmap.find (tydict, ty)
+
+  fun type_contains pred ty =
+    pred ty orelse
+    (let val (dom, rng) = Type.dom_rng ty
+     in type_contains pred dom orelse type_contains pred rng end
+     handle _ => false)
+
+  fun type_contains_word ty =
+    type_contains (Lib.can wordsSyntax.dest_word_type) ty
+
+  fun type_contains_int ty =
+    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
+
+  fun type_contains_real ty =
+    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
+
+  fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
+
+  val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
+  val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
+  val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
+
+  fun is_int_arith_const tm =
+    List.exists (fn c => same_const c tm) [
+      intSyntax.negate_tm, intSyntax.minus_tm, intSyntax.plus_tm,
+      intSyntax.mult_tm, int_ediv_tm, int_emod_tm, intSyntax.absval_tm,
+      intSyntax.leq_tm, intSyntax.less_tm, intSyntax.geq_tm,
+      intSyntax.greater_tm
+    ]
+
+  fun is_real_arith_const tm =
+    List.exists (fn c => same_const c tm) [
+      realSyntax.negate_tm, realSyntax.minus_tm, realSyntax.plus_tm,
+      realSyntax.mult_tm, smt_rdiv_tm, realSyntax.leq_tm,
+      realSyntax.less_tm, realSyntax.geq_tm, realSyntax.greater_tm,
+      intrealSyntax.real_of_int_tm, intrealSyntax.INT_FLOOR_tm,
+      intrealSyntax.is_int_tm
+    ]
+
+  fun is_bv_const tm =
+    List.exists (fn c => same_const c tm) [
+      wordsSyntax.word_concat_tm, wordsSyntax.word_extract_tm,
+      wordsSyntax.word_1comp_tm, wordsSyntax.word_and_tm,
+      wordsSyntax.word_or_tm, wordsSyntax.word_nand_tm,
+      wordsSyntax.word_nor_tm, wordsSyntax.word_xor_tm,
+      wordsSyntax.word_xnor_tm, wordsSyntax.word_2comp_tm,
+      wordsSyntax.word_compare_tm, wordsSyntax.word_add_tm,
+      wordsSyntax.word_sub_tm, wordsSyntax.word_mul_tm,
+      wordsSyntax.word_quot_tm, wordsSyntax.word_rem_tm,
+      integer_wordSyntax.word_smod_tm, wordsSyntax.word_div_tm,
+      wordsSyntax.word_mod_tm, wordsSyntax.word_lsl_bv_tm,
+      wordsSyntax.word_lsr_bv_tm, wordsSyntax.word_asr_bv_tm,
+      wordsSyntax.word_replicate_tm, wordsSyntax.w2w_tm,
+      wordsSyntax.sw2sw_tm, wordsSyntax.word_rol_tm,
+      wordsSyntax.word_ror_tm, wordsSyntax.word_lo_tm,
+      wordsSyntax.word_ls_tm, wordsSyntax.word_hi_tm,
+      wordsSyntax.word_hs_tm, wordsSyntax.word_lt_tm,
+      wordsSyntax.word_le_tm, wordsSyntax.word_gt_tm,
+      wordsSyntax.word_ge_tm
+    ]
+
+  fun is_nonlinear_arith_const tm =
+    same_const intSyntax.mult_tm tm orelse same_const realSyntax.mult_tm tm
+
+  fun subterms tm =
+    tm ::
+    (let
+       val (rator, rand) = Term.dest_comb tm
+     in
+       subterms rator @ subterms rand
+     end
+     handle _ =>
+       (let val (_, body) = Term.dest_abs tm
+        in subterms body end
+        handle _ => []))
+
+  fun has_quantifier tm =
+    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
+    (let
+       val (rator, rand) = Term.dest_comb tm
+     in
+       has_quantifier rator orelse has_quantifier rand
+     end
+     handle _ =>
+       (let val (_, body) = Term.dest_abs tm
+        in has_quantifier body end
+        handle _ => false))
+
+  fun builtin_encoding tm =
+    let
+      val (rator, rands) = boolSyntax.strip_comb tm
+      fun try_whole () =
+        if not (Lib.can Type.dom_rng (Term.type_of tm)) then
+          (case first_success (fn parsefn => parsefn (tm, []))
+              (Net.match tm builtin_symbols) of
+             SOME (symbol, _) => SOME (symbol, 0)
+           | NONE => NONE)
+        else
+          NONE
+        handle _ => NONE
+    in
+      case first_success (fn parsefn => parsefn (rator, rands))
+          (Net.match rator builtin_symbols) of
+        SOME (symbol, _) => SOME (symbol, List.length rands)
+      | NONE => try_whole ()
+    end
+
+  fun insert_builtin_record (record, records) =
+    if List.exists
+        (fn EncodedSymbol {hol_term, smt_symbol, arity} =>
+              (case record of
+                 EncodedSymbol {hol_term = hol_term',
+                   smt_symbol = smt_symbol', arity = arity'} =>
+                   Term.compare (hol_term, hol_term') = EQUAL andalso
+                   smt_symbol = smt_symbol' andalso arity = arity'
+               | _ => false)
+          | _ => false) records
+    then records
+    else record :: records
+
+  fun encoded_symbol_records terms =
+    let
+      fun add (tm, records) =
+        case builtin_encoding tm of
+          SOME (symbol, arity) =>
+            insert_builtin_record
+              (EncodedSymbol {hol_term = Lib.fst (boolSyntax.strip_comb tm),
+                smt_symbol = symbol, arity = arity}, records)
+        | NONE => records
+    in
+      List.foldl add [] (List.concat (List.map subterms terms))
+    end
+
+  fun features_to_string (LogicFeatures {
+      quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
+      nonlinear}) =
+    String.concatWith "," (List.map Lib.fst (List.filter Lib.snd [
+      ("quantifiers", quantifiers),
+      ("uninterpreted", uninterpreted),
+      ("arrays", arrays),
+      ("bitvectors", bitvectors),
+      ("integers", integers),
+      ("reals", reals),
+      ("nonlinear", nonlinear)
+    ]))
+
+  fun infer_logic_from_features (features as LogicFeatures {
+      quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
+      nonlinear}) =
+    let
+      val qf = if quantifiers then "" else "QF_"
+      fun arith_logic () =
+        if integers andalso reals then
+          if quantifiers orelse arrays orelse uninterpreted then
+            "AUFNIRA"
+          else if nonlinear then qf ^ "NIRA" else qf ^ "LIRA"
+        else if integers then
+          if uninterpreted orelse arrays then
+            qf ^ "UF" ^ (if nonlinear then "NIA" else "LIA")
+          else
+            qf ^ (if nonlinear then "NIA" else "LIA")
+        else if reals then
+          if uninterpreted orelse arrays then
+            qf ^ "UF" ^ (if nonlinear then "NRA" else "LRA")
+          else
+            qf ^ (if nonlinear then "NRA" else "LRA")
+        else if arrays then
+          if uninterpreted then qf ^ "AUFBV" else qf ^ "AX"
+        else
+          qf ^ "UF"
+      val logic =
+        if bitvectors then
+          if integers orelse reals orelse quantifiers then
+            "ALL"
+          else if arrays then
+            if uninterpreted then qf ^ "AUFBV" else qf ^ "ABV"
+          else if uninterpreted then
+            qf ^ "UFBV"
+          else
+            qf ^ "BV"
+        else
+          arith_logic ()
+      val reason =
+        "deterministic feature scan: " ^
+        (case features_to_string features of "" => "core" | s => s)
+    in
+      (logic, reason)
+    end
+
+  fun term_decl_for_tmdict tydict ((tm, arity), name) =
+    let
+      fun doms_rng acc 0 ty = (List.rev acc, ty)
+        | doms_rng acc n ty =
+          let val (dom, rng) = Type.dom_rng ty
+          in doms_rng (dom :: acc) (n - 1) rng end
+      val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
+      val domain_sorts = List.map (smt_sort_of_type tydict) domtys
+      val range_sort = smt_sort_of_type tydict rngty
+      val declaration = "(declare-fun " ^ name ^ " (" ^
+        String.concatWith " " domain_sorts ^ ") " ^ range_sort ^ ")\n"
+    in
+      TermDeclaration {hol_term = tm, arity = arity, smt_name = name,
+        domain_sorts = domain_sorts, range_sort = range_sort,
+        declaration = declaration}
+    end
+
+  fun type_decl_record (ty, name) =
+    TypeDeclaration {hol_type = ty, smt_name = name,
+      declaration = "(declare-sort " ^ name ^ " 0)\n"}
+
+  fun infer_features terms tydict tmdict =
+    let
+      val all_subterms = List.concat (List.map subterms terms)
+      fun subterm_types p =
+        List.exists (fn tm => p (Term.type_of tm)) all_subterms
+      val quantifiers = List.exists has_quantifier terms
+      val bitvectors =
+        subterm_types type_contains_word orelse
+        List.exists (fn tm => is_bv_const (Lib.fst (boolSyntax.strip_comb tm)))
+          all_subterms
+      val integers =
+        subterm_types type_contains_int orelse
+        List.exists (fn tm => is_int_arith_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val reals =
+        subterm_types type_contains_real orelse
+        List.exists (fn tm => is_real_arith_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val nonlinear =
+        List.exists (fn tm => is_nonlinear_arith_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val has_uninterpreted_type = Redblackmap.numItems tydict > 0
+      fun range_after 0 ty = ty
+        | range_after n ty = range_after (n - 1) (Lib.snd (Type.dom_rng ty))
+      fun term_needs_uf ((tm, arity), _) =
+        arity > 0 orelse
+        (arity = 0 andalso
+         not (has_type_builtin (range_after arity (Term.type_of tm))))
+      val uninterpreted =
+        has_uninterpreted_type orelse
+        Redblackmap.foldl (fn (key, value, b) =>
+          b orelse term_needs_uf (key, value)) false tmdict
+      val arrays = false
+    in
+      LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
+        arrays = arrays, bitvectors = bitvectors, integers = integers,
+        reals = reals, nonlinear = nonlinear}
+    end
+
+  fun build_translation_records terms logic reason features tydict tmdict =
+    let
+      val logic_record = LogicSelection {logic = logic, reason = reason,
+        features = features}
+      val type_records = Redblackmap.foldl (fn (ty, name, acc) =>
+        type_decl_record (ty, name) :: acc) [] tydict
+      val term_records = Redblackmap.foldl (fn (key, name, acc) =>
+        term_decl_for_tmdict tydict (key, name) :: acc) [] tmdict
+      val builtin_records = encoded_symbol_records terms
+    in
+      logic_record :: List.rev type_records @ List.rev term_records @
+      List.rev builtin_records
+    end
+
+  fun parser_dicts_for_translation_aux ({logic, tydict, tmdict, ...} : translation) =
+    let
+      val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
+        Redblackmap.insert (dict, s, [SmtLib_Theories.K_zero_zero ty]))
+        (Redblackmap.mkDict String.compare) tydict
+      val tm_dict = Redblackmap.foldl (fn ((tm, n), s, dict) =>
+        Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
+          (fn args =>
+            if List.length args = n then
+              Term.list_mk_comb (tm, args)
+            else
+              raise ERR ("<" ^ s ^ ">") "wrong number of arguments"))]))
+        (Redblackmap.mkDict String.compare) tmdict
+      val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic logic
+    in
+      (Library.union_dict logic_tydict ty_dict,
+       Library.union_dict logic_tmdict tm_dict)
+    end
+
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB type declarations, and the SMT-LIB representation of the
      given type *)
   fun translate_type (tydict, ty) =
   let
-    val name = Lib.tryfind (fn (_, f) => f ty)
-        (TypeNet.match (builtin_types, ty)) (* may fail *)
-      handle Feedback.HOL_ERR _ =>
-        Redblackmap.find (tydict, ty)
+    val name =
+      case first_success (fn (_, f) => f ty)
+          (TypeNet.match (builtin_types, ty)) of
+        SOME name => name
+      | NONE => Redblackmap.find (tydict, ty)
   in
     (tydict, ([], name))
   end
@@ -464,7 +779,7 @@ local
         builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
-      handle Feedback.HOL_ERR _ =>
+    handle Feedback.HOL_ERR _ =>
 
       let
         val rands_count = List.length rands
@@ -530,28 +845,34 @@ local
      arguments to the term.  (Because SMT-LIB is first-order,
      partially applied functions are mapped to different SMT-LIB
      identifiers, depending on the number of actual arguments.) *)
-  fun goal_to_SmtLib_aux logic (ts, t)
-    : ((Type.hol_type, string) Redblackmap.dict *
-      (Term.term * int, string) Redblackmap.dict) * string list =
+  fun goal_to_SmtLib_aux logic (ts, t) : translation * string list =
   let
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
+    val terms = ts @ [boolSyntax.mk_neg t]
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) => translate_term (acc, (bounds, tm)))
-      ((tydict, tmdict), ts @ [boolSyntax.mk_neg t])
+      ((tydict, tmdict), terms)
+    val (tydict, tmdict) = acc
+    val features = infer_features terms tydict tmdict
+    val (inferred_logic, reason) = infer_logic_from_features features
+    val (selected_logic, reason) =
+      case logic of
+        NONE => (inferred_logic, reason)
+      | SOME l => (l, "caller override")
+    val records =
+      build_translation_records terms selected_logic reason features tydict tmdict
+    val translation = {logic = selected_logic, tydict = tydict,
+      tmdict = tmdict, records = records}
     (* we choose to intertwine declarations and assertions (for no
        particular reason; an alternative would be to emit all
        declarations before all assertions) *)
     val smtlibs = List.foldl
       (fn ((xs, s), acc) => acc @ xs @ ["(assert " ^ s ^ ")\n"]) [] smtlibs
-    val set_logic =
-      case logic of
-        NONE => []
-      | SOME l => ["(set-logic " ^ l ^ ")\n"]
   in
-    (acc, set_logic @ [
+    (translation, ["(set-logic " ^ selected_logic ^ ")\n"] @ [
       "(set-info :source |Automatically generated from HOL4 by SmtLib.goal_to_SmtLib.\n",
       "Copyright (c) 2011 Tjark Weber. All rights reserved.|)\n",
       "(set-info :smt-lib-version 2.6)\n"
@@ -728,11 +1049,32 @@ in
      SMT performance in some cases, hence this escape hatch. *)
   val include_theorems = ref true
 
-  fun goal_to_SmtLib logic =
+  fun translation_logic ({logic, ...} : translation) = logic
+  fun translation_records ({records, ...} : translation) = records
+  fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
+  val parser_dicts_for_translation = parser_dicts_for_translation_aux
+
+  fun goal_to_SmtLib_translation logic =
     Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o (goal_to_SmtLib_aux logic)
 
-  fun goal_to_SmtLib_with_get_proof logic =
-    Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o (goal_to_SmtLib_aux logic)
+  fun goal_to_SmtLib logic goal =
+    let
+      val (translation, strings) = goal_to_SmtLib_translation logic goal
+    in
+      (translation_dicts translation, strings)
+    end
+
+  fun goal_to_SmtLib_with_get_proof_translation logic =
+    Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
+      (goal_to_SmtLib_aux logic)
+
+  fun goal_to_SmtLib_with_get_proof logic goal =
+    let
+      val (translation, strings) =
+        goal_to_SmtLib_with_get_proof_translation logic goal
+    in
+      (translation_dicts translation, strings)
+    end
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
 

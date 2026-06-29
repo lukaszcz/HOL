@@ -44,6 +44,18 @@ fun parse_smtlib_assertions contents =
 fun parse_smtlib_state contents =
   with_temp_file contents SmtLib_Parser.parse_file_state
 
+fun inferred_logic tm =
+let
+  val (translation, strings) = SmtLib.goal_to_SmtLib_translation NONE ([], tm)
+  val set_logic =
+    case strings of
+      first :: _ => first
+    | [] => die "SMT-LIB translation emitted no commands"
+in
+  (SmtLib.translation_logic translation, set_logic,
+   SmtLib.translation_records translation, translation)
+end
+
 fun term_is_var_named name tm =
   let val (var_name, _) = Term.dest_var tm
   in var_name = name end
@@ -1136,6 +1148,55 @@ in
   List.app require_logic logics
 end
 
+fun smtlib_translation_logic_inference_success () =
+let
+  fun expect_logic expected tm =
+    let
+      val (logic, set_logic, _, _) = inferred_logic tm
+    in
+      assert (logic = expected,
+        "expected inferred logic " ^ expected ^ ", got " ^ logic);
+      assert (set_logic = "(set-logic " ^ expected ^ ")\n",
+        "set-logic command did not match inferred logic " ^ expected)
+    end
+in
+  expect_logic "QF_LIA" ``(x:int) <= x + 1``;
+  expect_logic "QF_NIA" ``(x:int) * y = y * x``;
+  expect_logic "QF_BV" ``(x:word32) && y = y && x``;
+  expect_logic "QF_UF" ``(P:'a -> bool) x``;
+  (* HOL function application is currently emitted as UF, not SMT Array
+     select/store. This is the stable approximation until the emitter gains
+     first-class array encoding. *)
+  expect_logic "QF_UF" ``(f:'a -> 'b) x = f x``
+end
+
+fun smtlib_translation_records_success () =
+let
+  val (logic, _, records, translation) = inferred_logic ``(P:'a -> bool) x``
+  val _ = assert (logic = "QF_UF", "record test expected QF_UF")
+  val has_logic =
+    List.exists (fn SmtLib.LogicSelection {logic = "QF_UF", ...} => true
+      | _ => false) records
+  val has_type_decl =
+    List.exists (fn SmtLib.TypeDeclaration {smt_name, ...} =>
+        String.isPrefix "t" smt_name
+      | _ => false) records
+  val has_term_decl =
+    List.exists (fn SmtLib.TermDeclaration {arity = 1, smt_name, ...} =>
+        String.isPrefix "v" smt_name
+      | _ => false) records
+  val has_encoded_symbol =
+    List.exists (fn SmtLib.EncodedSymbol {smt_symbol = "not", ...} => true
+      | SmtLib.EncodedSymbol {smt_symbol = "=", ...} => true
+      | _ => false) records
+  val _ = SmtLib.parser_dicts_for_translation translation
+in
+  assert (has_logic, "translation records did not include selected logic");
+  assert (has_type_decl, "translation records did not include type declaration");
+  assert (has_term_decl, "translation records did not include term declaration");
+  assert (has_encoded_symbol, "translation records did not include encoded symbol")
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -1209,7 +1270,11 @@ let
     ("smtlib_z3_extension_parse_signatures_success",
       smtlib_z3_extension_parse_signatures_success),
     ("smtlib_scoped_logic_dictionary_success",
-      smtlib_scoped_logic_dictionary_success)
+      smtlib_scoped_logic_dictionary_success),
+    ("smtlib_translation_logic_inference_success",
+      smtlib_translation_logic_inference_success),
+    ("smtlib_translation_records_success",
+      smtlib_translation_records_success)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

@@ -132,12 +132,13 @@ structure Z3 = struct
       (fn goal =>
         let
           val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
-          val (ty_tm_dict, strings) = SmtLib.goal_to_SmtLib_with_get_proof NONE goal
+          val (translation, strings) =
+            SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
         in
-          (((goal, validation), ty_tm_dict), strings)
+          (((goal, validation), translation), strings)
         end)
       proof_cmd_stem
-      (fn ((goal, validation), (ty_dict, tm_dict)) =>
+      (fn ((goal, validation), translation) =>
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
@@ -146,27 +147,8 @@ structure Z3 = struct
             case result of
               SolverSpec.UNSAT NONE =>
               let
-                (* invert 'ty_dict' and 'tm_dict', create parsing functions *)
-                val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
-                  (* types don't take arguments *)
-                  Redblackmap.insert (dict, s, [SmtLib_Theories.K_zero_zero ty]))
-                  (Redblackmap.mkDict String.compare) ty_dict
-                val tm_dict = Redblackmap.foldl (fn ((tm, n), s, dict) =>
-                  Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
-                    (fn args =>
-                      if List.length args = n then
-                        Term.list_mk_comb (tm, args)
-                      else
-                        raise Feedback.mk_HOL_ERR "Z3" ("<" ^ s ^ ">")
-                          "wrong number of arguments"))]))
-                  (Redblackmap.mkDict String.compare) tm_dict
-                (* add relevant SMT-LIB types/terms to dictionaries *)
-                val ty_dict = Library.union_dict (Library.union_dict
-                  SmtLib_Logics.AUFNIRA.tydict SmtLib_Logics.QF_ABV.tydict)
-                  ty_dict
-                val tm_dict = Library.union_dict (Library.union_dict
-                  SmtLib_Logics.AUFNIRA.tmdict SmtLib_Logics.QF_ABV.tmdict)
-                  tm_dict
+                val (ty_dict, tm_dict) =
+                  SmtLib.parser_dicts_for_translation translation
                 (* parse the proof and check it in HOL *)
                 val proof = Z3_ProofParser.parse_stream (ty_dict, tm_dict)
                   instream
