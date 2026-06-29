@@ -1340,38 +1340,45 @@ local
       term_set_summary "z3_vars" (#var_set state)
     ]
 
-  fun proofterm_rule (AND_ELIM _) = "and-elim"
-    | proofterm_rule (ASSERTED _) = "asserted"
-    | proofterm_rule (COMMUTATIVITY _) = "commutativity"
-    | proofterm_rule (DEF_AXIOM _) = "def-axiom"
-    | proofterm_rule (ELIM_UNUSED _) = "elim-unused"
-    | proofterm_rule (HYPOTHESIS _) = "hypothesis"
-    | proofterm_rule (IFF_FALSE _) = "iff-false"
-    | proofterm_rule (IFF_TRUE _) = "iff-true"
-    | proofterm_rule (INTRO_DEF _) = "intro-def"
-    | proofterm_rule (LEMMA _) = "lemma"
-    | proofterm_rule (MONOTONICITY _) = "monotonicity"
-    | proofterm_rule (MP _) = "mp"
-    | proofterm_rule (MP_EQ _) = "mp~"
-    | proofterm_rule (NNF_NEG _) = "nnf-neg"
-    | proofterm_rule (NNF_POS _) = "nnf-pos"
-    | proofterm_rule (NOT_OR_ELIM _) = "not-or-elim"
-    | proofterm_rule (QUANT_INST _) = "quant-inst"
-    | proofterm_rule (QUANT_INTRO _) = "quant-intro"
-    | proofterm_rule (REFL _) = "refl"
-    | proofterm_rule (REWRITE _) = "rewrite"
-    | proofterm_rule (SKOLEM _) = "sk"
-    | proofterm_rule (SYMM _) = "symm"
-    | proofterm_rule (TH_LEMMA_ARITH _) = "th-lemma[arith]"
-    | proofterm_rule (TH_LEMMA_ARRAY _) = "th-lemma[array]"
-    | proofterm_rule (TH_LEMMA_BASIC _) = "th-lemma[basic]"
-    | proofterm_rule (TH_LEMMA_BV _) = "th-lemma[bv]"
-    | proofterm_rule (TRANS _) = "trans"
-    | proofterm_rule (TRANS_STAR _) = "trans*"
-    | proofterm_rule (TRUE_AXIOM _) = "true-axiom"
-    | proofterm_rule (UNIT_RESOLUTION _) = "unit-resolution"
-    | proofterm_rule (ID id) = "@" ^ Int.toString id
+  fun proofterm_replay_handler (AND_ELIM _) = "and_elim"
+    | proofterm_replay_handler (ASSERTED _) = "asserted"
+    | proofterm_replay_handler (COMMUTATIVITY _) = "commutativity"
+    | proofterm_replay_handler (DEF_AXIOM _) = "def_axiom"
+    | proofterm_replay_handler (ELIM_UNUSED _) = "elim_unused"
+    | proofterm_replay_handler (HYPOTHESIS _) = "hypothesis"
+    | proofterm_replay_handler (IFF_FALSE _) = "iff_false"
+    | proofterm_replay_handler (IFF_TRUE _) = "iff_true"
+    | proofterm_replay_handler (INTRO_DEF _) = "intro_def"
+    | proofterm_replay_handler (LEMMA _) = "lemma"
+    | proofterm_replay_handler (MONOTONICITY _) = "monotonicity"
+    | proofterm_replay_handler (MP _) = "mp"
+    | proofterm_replay_handler (MP_EQ _) = "mp_eq"
+    | proofterm_replay_handler (NNF_NEG _) = "nnf_neg"
+    | proofterm_replay_handler (NNF_POS _) = "nnf_pos"
+    | proofterm_replay_handler (NOT_OR_ELIM _) = "not_or_elim"
+    | proofterm_replay_handler (QUANT_INST _) = "quant_inst"
+    | proofterm_replay_handler (QUANT_INTRO _) = "quant_intro"
+    | proofterm_replay_handler (REFL _) = "refl"
+    | proofterm_replay_handler (REWRITE _) = "rewrite"
+    | proofterm_replay_handler (SKOLEM _) = "skolem"
+    | proofterm_replay_handler (SYMM _) = "symm"
+    | proofterm_replay_handler (TH_LEMMA_ARITH _) = "th_lemma[arith]"
+    | proofterm_replay_handler (TH_LEMMA_ARRAY _) = "th_lemma[array]"
+    | proofterm_replay_handler (TH_LEMMA_BASIC _) = "th_lemma[basic]"
+    | proofterm_replay_handler (TH_LEMMA_BV _) = "th_lemma[bv]"
+    | proofterm_replay_handler (TRANS _) = "trans"
+    | proofterm_replay_handler (TRANS_STAR _) = "trans_star"
+    | proofterm_replay_handler (TRUE_AXIOM _) = "true_axiom"
+    | proofterm_replay_handler (UNIT_RESOLUTION _) = "unit_resolution"
+    | proofterm_replay_handler (ID id) = "@" ^ Int.toString id
+    | proofterm_replay_handler (THEOREM _) = "<replayed theorem>"
+
+  fun proofterm_rule (ID id) = "@" ^ Int.toString id
     | proofterm_rule (THEOREM _) = "<replayed theorem>"
+    | proofterm_rule pt =
+        (case lookup_rule_by_handler (proofterm_replay_handler pt) of
+          SOME rule => #name rule
+        | NONE => proofterm_replay_handler pt)
 
   fun proofterm_concl (AND_ELIM (_, concl)) = SOME concl
     | proofterm_concl (ASSERTED concl) = SOME concl
@@ -1630,7 +1637,7 @@ local
         list_prems state_proof "unit_resolution" z3_unit_resolution x
           continuation []
     | thm_of_proofterm ((state, proof), ID id) continuation =
-        (case Redblackmap.peek (Lib.fst proof, id) of
+        (case Redblackmap.peek (proof_steps proof, id) of
           SOME (THEOREM thm) =>
             continuation ((state, proof), thm)
         | SOME pt => (
@@ -1641,13 +1648,15 @@ local
             thm_of_proofterm ((state, proof), pt) (continuation o
               (* update the proof, replacing the original proofterm with
                  the theorem just derived *)
-              (fn ((state, (steps, vars)), thm) =>
+              (fn ((state, proof), thm) =>
                 (
                   if !Library.trace > 2 then
                     Feedback.HOL_MESG
                       ("HolSmtLib: updating proof at ID " ^ Int.toString id)
                   else ();
-                  ((state, (Redblackmap.insert (steps, id, THEOREM thm), vars)), thm)
+                  ((state, update_proof_steps proof
+                    (Redblackmap.insert (proof_steps proof, id, THEOREM thm))),
+                    thm)
                 )))
         )
         | NONE =>
@@ -1853,7 +1862,7 @@ in
       asserted_hyps = Term.empty_tmset,
       definition_hyps = Term.empty_tmset,
       thm_cache = Net.empty,
-      var_set = Lib.snd proof
+      var_set = proof_vars proof
     }
 
     (* ID 0 denotes the proof's root node *)

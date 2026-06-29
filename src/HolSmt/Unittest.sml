@@ -1386,6 +1386,54 @@ in
     "round-trip matrix lacks explicit advanced-theory diagnostic")
 end
 
+fun parse_z3_proof_string version contents =
+let
+  val dicts = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val instream = TextIO.openString contents
+in
+  Z3_ProofParser.parse_stream_with_version dicts version instream
+end
+
+fun z3_proof_registry_metadata_success () =
+  case Z3_Proof.lookup_rule "4.12.4" "mp-eq" of
+    SOME ({name, premise_shape, conclusion_shape, replay_handler, ...}
+          : Z3_Proof.proof_rule) =>
+      (assert (name = "mp~", "mp-eq alias did not normalize to mp~");
+       assert (premise_shape = Z3_Proof.TwoPremises,
+        "mp~ registry premise shape is not TwoPremises");
+       assert (conclusion_shape = Z3_Proof.BooleanConclusion,
+        "mp~ registry conclusion shape is not BooleanConclusion");
+       assert (replay_handler = "mp_eq",
+        "mp~ registry replay handler is not mp_eq"))
+  | NONE => die "FAIL: mp-eq alias was not found in Z3 proof rule registry"
+
+fun z3_proof_parser_normalizes_rule_alias_success () =
+let
+  val proof = parse_z3_proof_string "4.12.4"
+    "((proof (mp-eq (asserted false) (asserted (= false false)) false)))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.MP_EQ _) => ()
+  | SOME _ => die "FAIL: mp-eq proof rule parsed to unexpected constructor"
+  | NONE => die "FAIL: mp-eq proof did not define root proof step"
+end
+
+fun z3_proof_parser_unknown_rule_diagnostic () =
+  (ignore (parse_z3_proof_string "4.12.4"
+    "((proof (new-z3-rule false)))");
+   die "FAIL: unknown Z3 proof rule parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "registry lookup failed" msg,
+        "unknown-rule diagnostic did not report registry lookup failure: " ^
+        msg);
+      assert (String.isSubstring "new-z3-rule" msg,
+        "unknown-rule diagnostic did not include rule name: " ^ msg);
+      assert (String.isSubstring "4.12.4" msg,
+        "unknown-rule diagnostic did not include Z3 version: " ^ msg)
+    end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -1471,7 +1519,13 @@ let
     ("smtlib_roundtrip_current_theories_success",
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",
-      smtlib_roundtrip_known_gap_matrix_success)
+      smtlib_roundtrip_known_gap_matrix_success),
+    ("z3_proof_registry_metadata_success",
+      z3_proof_registry_metadata_success),
+    ("z3_proof_parser_normalizes_rule_alias_success",
+      z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_unknown_rule_diagnostic",
+      z3_proof_parser_unknown_rule_diagnostic)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

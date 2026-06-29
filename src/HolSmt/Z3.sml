@@ -150,8 +150,8 @@ structure Z3 = struct
                 val (ty_dict, tm_dict) =
                   SmtLib.parser_dicts_for_translation translation
                 (* parse the proof and check it in HOL *)
-                val proof = Z3_ProofParser.parse_stream (ty_dict, tm_dict)
-                  instream
+                val proof = Z3_ProofParser.parse_stream_with_version
+                  (ty_dict, tm_dict) (version_string ()) instream
                   handle Feedback.HOL_ERR holerr =>
                     (TextIO.closeIn instream;
                      raise_with_context "Z3_SMT_Prover" "proof parse"
