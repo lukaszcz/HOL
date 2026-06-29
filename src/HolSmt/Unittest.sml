@@ -218,6 +218,68 @@ in
 end
 
 (*****************************************************************************)
+(* SMT-LIB script AST parser tests                                           *)
+(*****************************************************************************)
+
+fun span_start_line_column span =
+  case span of
+    SmtLib_Parser.SourceSpan {start = {line, column, ...}, ...} =>
+      (line, column)
+
+fun contains needle haystack =
+let
+  val n = String.size needle
+  val h = String.size haystack
+  fun loop i =
+    i + n <= h andalso
+    (String.substring (haystack, i, n) = needle orelse loop (i + 1))
+in
+  n = 0 orelse loop 0
+end
+
+fun script_ast_locations_success () =
+let
+  val script =
+    SmtLib_Parser.parse_script_string
+      "(set-logic QF_UF)\n(assert true)\n"
+in
+  case script of
+    [cmd1, cmd2] =>
+      let
+        val (cmd1_line, cmd1_col) =
+          span_start_line_column (SmtLib_Parser.loc_of cmd1)
+        val () = assert (cmd1_line = 1 andalso cmd1_col = 1,
+          "set-logic command location was not preserved")
+      in
+        case SmtLib_Parser.node_of cmd2 of
+          SmtLib_Parser.CmdAssert term =>
+            let
+              val (term_line, term_col) =
+                span_start_line_column (SmtLib_Parser.loc_of term)
+            in
+              assert (term_line = 2 andalso term_col = 9,
+                "asserted term location was not preserved")
+            end
+        | _ => die "second parsed command was not an assert"
+      end
+  | _ => die "script AST parser returned the wrong number of commands"
+end
+
+fun script_ast_locations_syntax_error () =
+  let
+    val _ = SmtLib_Parser.parse_script_string "(set-logic QF_UF"
+  in
+    die "script AST parser accepted a malformed command"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let
+      val msg = Feedback.message_of holerr
+    in
+      assert (contains "line 1, column 12" msg,
+        "syntax error did not include the source location: " ^ msg)
+    end
+
+(*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
 
@@ -245,7 +307,9 @@ let
     ("remove_definitions_tricky1", fn () => remove_defs_test remove_defs_tricky1),
     ("remove_definitions_tricky2", fn () => remove_defs_test remove_defs_tricky2),
     ("remove_definitions_circular1", fn () => remove_defs_test remove_defs_circular1),
-    ("remove_definitions_circular2", fn () => remove_defs_test remove_defs_circular2)
+    ("remove_definitions_circular2", fn () => remove_defs_test remove_defs_circular2),
+    ("script_ast_locations_success", script_ast_locations_success),
+    ("script_ast_locations_syntax_error", script_ast_locations_syntax_error)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

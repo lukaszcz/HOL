@@ -13,6 +13,50 @@ struct
 
   type bindings = (string * Term.term * Term.term) list
 
+  type source_pos = {line: int, column: int, offset: int}
+
+  datatype source_span =
+    SourceSpan of {start: source_pos, stop: source_pos}
+
+  datatype 'a located =
+    Located of {loc: source_span, node: 'a}
+
+  datatype sexp_ast =
+      SexpAtom of string
+    | SexpList of sexp_ast located list
+
+  datatype sort_ast =
+      SortIdentifier of string
+    | SortIndexed of string located * string located list
+    | SortApply of string located * sort_ast located list
+
+  datatype term_ast =
+      TermIdentifier of string
+    | TermIndexed of string located * term_ast located list
+    | TermApply of term_ast located * term_ast located list
+    | TermLet of (string located * term_ast located) list * term_ast located
+    | TermForall of sorted_var_ast located list * term_ast located
+    | TermExists of sorted_var_ast located list * term_ast located
+    | TermAnnotated of term_ast located * sexp_ast located list
+  and sorted_var_ast =
+      SortedVar of string located * sort_ast located
+
+  datatype command_ast =
+      CmdSetInfo of sexp_ast located list
+    | CmdSetLogic of string located
+    | CmdDeclareSort of string located * string located
+    | CmdDeclareConst of string located * sort_ast located
+    | CmdDeclareFun of string located * sort_ast located list * sort_ast located
+    | CmdDefineFun of string located * sorted_var_ast located list *
+        sort_ast located * term_ast located
+    | CmdAssert of term_ast located
+    | CmdCheckSat
+    | CmdGetProof
+    | CmdExit
+    | CmdUnknown of string located * sexp_ast located list
+
+  type script_ast = command_ast located list
+
   type parser_cfg = {
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
@@ -23,6 +67,456 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Parser"
   val WARNING = Feedback.HOL_WARNING "SmtLib_Parser"
+
+  (***************************************************************************)
+  (* source-located SMT-LIB script AST                                       *)
+  (***************************************************************************)
+
+  fun loc_of (Located {loc, ...}) = loc
+  fun node_of (Located {node, ...}) = node
+
+  fun span_start (SourceSpan {start, ...}) = start
+  fun span_stop (SourceSpan {stop, ...}) = stop
+
+  fun source_pos_to_string ({line, column, ...}: source_pos) =
+    "line " ^ Int.toString line ^ ", column " ^ Int.toString column
+
+  fun source_span_to_string span =
+    source_pos_to_string (span_start span)
+
+  fun combine_span start_span stop_span =
+    SourceSpan {start = span_start start_span, stop = span_stop stop_span}
+
+  fun located loc node = Located {loc = loc, node = node}
+
+  datatype located_token = Token of {text: string, loc: source_span}
+
+  fun token_text (Token {text, ...}) = text
+  fun token_loc (Token {loc, ...}) = loc
+
+  fun syntax_error fn_name loc msg =
+    raise ERR fn_name (msg ^ " at " ^ source_span_to_string loc)
+
+  fun mk_point_span pos = SourceSpan {start = pos, stop = pos}
+
+  fun make_located_tokenizer (text: string) : unit -> located_token option =
+  let
+    val len = String.size text
+    val index = ref 0
+    val line = ref 1
+    val column = ref 1
+
+    fun pos () = {line = !line, column = !column, offset = !index}
+
+    fun peek () =
+      if !index >= len then NONE else SOME (String.sub (text, !index))
+
+    fun advance () =
+      case peek () of
+        NONE => NONE
+      | SOME c =>
+          (index := !index + 1;
+           if c = #"\n" then (line := !line + 1; column := 1)
+           else column := !column + 1;
+           SOME c)
+
+    fun skip_comment () =
+      case advance () of
+        NONE => ()
+      | SOME #"\n" => ()
+      | SOME _ => skip_comment ()
+
+    fun skip_space_and_comments () =
+      case peek () of
+        SOME #" " => (ignore (advance ()); skip_space_and_comments ())
+      | SOME #"\t" => (ignore (advance ()); skip_space_and_comments ())
+      | SOME #"\n" => (ignore (advance ()); skip_space_and_comments ())
+      | SOME #"\r" => (ignore (advance ()); skip_space_and_comments ())
+      | SOME #";" => (skip_comment (); skip_space_and_comments ())
+      | _ => ()
+
+    fun token start chars =
+      Token {text = String.implode (List.rev chars),
+             loc = SourceSpan {start = start, stop = pos ()}}
+
+    fun atom start chars =
+      case peek () of
+        NONE => token start chars
+      | SOME c =>
+          if c = #" " orelse c = #"\t" orelse c = #"\n" orelse
+             c = #"\r" orelse c = #"(" orelse c = #")" orelse c = #";"
+          then token start chars
+          else (ignore (advance ()); atom start (c :: chars))
+
+    fun quoted_symbol start chars =
+      case advance () of
+        NONE => syntax_error "get_token" (mk_point_span (pos ()))
+          "unterminated quoted symbol"
+      | SOME #"|" => token start chars
+      | SOME c => quoted_symbol start (c :: chars)
+
+    fun string_lit start chars =
+      case advance () of
+        NONE => syntax_error "get_token" (mk_point_span (pos ()))
+          "unterminated string literal"
+      | SOME #"\"" => token start chars
+      | SOME #"\\" =>
+          (case advance () of
+             NONE => syntax_error "get_token" (mk_point_span (pos ()))
+               "unterminated string escape"
+           | SOME c => string_lit start (c :: chars))
+      | SOME c => string_lit start (c :: chars)
+  in
+    fn () =>
+      (skip_space_and_comments ();
+       case peek () of
+         NONE => NONE
+       | SOME #"(" =>
+           let val start = pos ()
+               val _ = advance ()
+           in SOME (token start [#"("]) end
+       | SOME #")" =>
+           let val start = pos ()
+               val _ = advance ()
+           in SOME (token start [#")"]) end
+       | SOME #"|" =>
+           let val start = pos ()
+               val _ = advance ()
+           in SOME (quoted_symbol start []) end
+       | SOME #"\"" =>
+           let val start = pos ()
+               val _ = advance ()
+           in SOME (string_lit start []) end
+       | SOME c =>
+           let val start = pos ()
+               val _ = advance ()
+           in SOME (atom start [c]) end)
+  end
+
+  fun parse_script_tokens next_token : script_ast =
+  let
+    val last_loc =
+      ref (mk_point_span {line = 1, column = 1, offset = 0})
+
+    fun get_next_token () =
+      case next_token () of
+        NONE => NONE
+      | SOME tok => (last_loc := token_loc tok; SOME tok)
+
+    fun eof_loc () =
+      !last_loc
+
+    fun need_token fn_name what =
+      case get_next_token () of
+        SOME tok => tok
+      | NONE => syntax_error fn_name (eof_loc ()) ("expected " ^ what)
+
+    fun expect_token fn_name expected tok =
+      if token_text tok = expected then ()
+      else syntax_error fn_name (token_loc tok)
+        ("expected '" ^ expected ^ "', found '" ^ token_text tok ^ "'")
+
+    fun parse_atom_name fn_name tok =
+      if token_text tok = "(" orelse token_text tok = ")" then
+        syntax_error fn_name (token_loc tok)
+          ("expected atom, found '" ^ token_text tok ^ "'")
+      else located (token_loc tok) (token_text tok)
+
+    fun parse_until_rparen fn_name parse_item acc =
+      let
+        val tok = need_token fn_name "')'"
+      in
+        if token_text tok = ")" then
+          (List.rev acc, tok)
+        else
+          parse_until_rparen fn_name parse_item (parse_item tok :: acc)
+      end
+
+    fun parse_sexp_from_first tok =
+      if token_text tok = "(" then
+        let
+          val (items, close_tok) =
+            parse_until_rparen "parse_sexp" parse_sexp_from_first []
+          val loc = combine_span (token_loc tok) (token_loc close_tok)
+        in
+          located loc (SexpList items)
+        end
+      else if token_text tok = ")" then
+        syntax_error "parse_sexp" (token_loc tok) "unexpected ')'"
+      else
+        located (token_loc tok) (SexpAtom (token_text tok))
+
+    fun parse_sort_from_first tok =
+      if token_text tok = "(" then
+        let
+          val head_tok = need_token "parse_sort" "sort head"
+        in
+          if token_text head_tok = "_" then
+            let
+              val name = parse_atom_name "parse_sort" (need_token "parse_sort" "indexed sort name")
+              fun indices acc =
+                let val tok = need_token "parse_sort" "')'"
+                in
+                  if token_text tok = ")" then (List.rev acc, tok)
+                  else indices (parse_atom_name "parse_sort" tok :: acc)
+                end
+              val (idxs, close_tok) = indices []
+              val loc = combine_span (token_loc tok) (token_loc close_tok)
+            in
+              located loc (SortIndexed (name, idxs))
+            end
+          else if token_text head_tok = ")" then
+            syntax_error "parse_sort" (token_loc head_tok) "empty sort application"
+          else
+            let
+              val head = parse_atom_name "parse_sort" head_tok
+              val (args, close_tok) =
+                parse_until_rparen "parse_sort" parse_sort_from_first []
+              val loc = combine_span (token_loc tok) (token_loc close_tok)
+            in
+              located loc (SortApply (head, args))
+            end
+        end
+      else if token_text tok = ")" then
+        syntax_error "parse_sort" (token_loc tok) "unexpected ')'"
+      else
+        located (token_loc tok) (SortIdentifier (token_text tok))
+
+    fun parse_sort () =
+      parse_sort_from_first (need_token "parse_sort" "sort")
+
+    fun parse_sorted_var_from_first tok =
+      let
+        val _ = expect_token "parse_sorted_var" "(" tok
+        val name = parse_atom_name "parse_sorted_var"
+          (need_token "parse_sorted_var" "variable name")
+        val sort = parse_sort ()
+        val close_tok = need_token "parse_sorted_var" "')'"
+        val _ = expect_token "parse_sorted_var" ")" close_tok
+        val loc = combine_span (token_loc tok) (token_loc close_tok)
+      in
+        located loc (SortedVar (name, sort))
+      end
+
+    fun parse_sorted_var_list () =
+      let
+        val open_tok = need_token "parse_sorted_var_list" "'('"
+        val _ = expect_token "parse_sorted_var_list" "(" open_tok
+        val (vars, _) =
+          parse_until_rparen "parse_sorted_var_list"
+            parse_sorted_var_from_first []
+      in
+        vars
+      end
+
+    fun parse_term_from_first tok =
+      if token_text tok = "(" then
+        parse_term_list tok
+      else if token_text tok = ")" then
+        syntax_error "parse_term" (token_loc tok) "unexpected ')'"
+      else
+        located (token_loc tok) (TermIdentifier (token_text tok))
+
+    and parse_term_list open_tok =
+      let
+        val head_tok = need_token "parse_term" "term head"
+        val head_text = token_text head_tok
+      in
+        if head_text = "_" then
+          let
+            val name = parse_atom_name "parse_term"
+              (need_token "parse_term" "indexed term name")
+            val (indices, close_tok) =
+              parse_until_rparen "parse_term" parse_term_from_first []
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermIndexed (name, indices))
+          end
+        else if head_text = "let" then
+          let
+            val bindings_open = need_token "parse_term" "'('"
+            val _ = expect_token "parse_term" "(" bindings_open
+            fun parse_binding tok =
+              let
+                val _ = expect_token "parse_term" "(" tok
+                val name = parse_atom_name "parse_term"
+                  (need_token "parse_term" "let binding name")
+                val term = parse_term_from_first (need_token "parse_term" "let binding term")
+                val close_tok = need_token "parse_term" "')'"
+                val _ = expect_token "parse_term" ")" close_tok
+              in
+                (name, term)
+              end
+            val (bindings, _) =
+              parse_until_rparen "parse_term" parse_binding []
+            val body = parse_term_from_first (need_token "parse_term" "let body")
+            val close_tok = need_token "parse_term" "')'"
+            val _ = expect_token "parse_term" ")" close_tok
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermLet (bindings, body))
+          end
+        else if head_text = "forall" orelse head_text = "exists" then
+          let
+            val vars = parse_sorted_var_list ()
+            val body = parse_term_from_first (need_token "parse_term" "quantifier body")
+            val close_tok = need_token "parse_term" "')'"
+            val _ = expect_token "parse_term" ")" close_tok
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            if head_text = "forall" then
+              located loc (TermForall (vars, body))
+            else
+              located loc (TermExists (vars, body))
+          end
+        else if head_text = "!" then
+          let
+            val term = parse_term_from_first (need_token "parse_term" "annotated term")
+            val (attrs, close_tok) =
+              parse_until_rparen "parse_term" parse_sexp_from_first []
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermAnnotated (term, attrs))
+          end
+        else
+          let
+            val head = parse_term_from_first head_tok
+            val (args, close_tok) =
+              parse_until_rparen "parse_term" parse_term_from_first []
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermApply (head, args))
+          end
+      end
+
+    fun parse_sort_list () =
+      let
+        val open_tok = need_token "parse_sort_list" "'('"
+        val _ = expect_token "parse_sort_list" "(" open_tok
+        val (sorts, _) =
+          parse_until_rparen "parse_sort_list" parse_sort_from_first []
+      in
+        sorts
+      end
+
+    fun parse_empty_command fn_name open_tok node =
+      let
+        val close_tok = need_token fn_name "')'"
+        val _ = expect_token fn_name ")" close_tok
+      in
+        located (combine_span (token_loc open_tok) (token_loc close_tok)) node
+      end
+
+    fun parse_command_from_first open_tok =
+      let
+        val _ = expect_token "parse_command" "(" open_tok
+        val cmd_tok = need_token "parse_command" "command name"
+        val cmd = token_text cmd_tok
+        fun finish node close_tok =
+          located (combine_span (token_loc open_tok) (token_loc close_tok)) node
+      in
+        case cmd of
+          "set-info" =>
+            let val (items, close_tok) =
+                  parse_until_rparen "parse_command" parse_sexp_from_first []
+            in finish (CmdSetInfo items) close_tok end
+        | "set-logic" =>
+            let
+              val logic = parse_atom_name "parse_command"
+                (need_token "parse_command" "logic name")
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdSetLogic logic) close_tok
+            end
+        | "declare-sort" =>
+            let
+              val name = parse_atom_name "parse_command"
+                (need_token "parse_command" "sort name")
+              val arity = parse_atom_name "parse_command"
+                (need_token "parse_command" "sort arity")
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdDeclareSort (name, arity)) close_tok
+            end
+        | "declare-const" =>
+            let
+              val name = parse_atom_name "parse_command"
+                (need_token "parse_command" "constant name")
+              val sort = parse_sort ()
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdDeclareConst (name, sort)) close_tok
+            end
+        | "declare-fun" =>
+            let
+              val name = parse_atom_name "parse_command"
+                (need_token "parse_command" "function name")
+              val domain = parse_sort_list ()
+              val range = parse_sort ()
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdDeclareFun (name, domain, range)) close_tok
+            end
+        | "define-fun" =>
+            let
+              val name = parse_atom_name "parse_command"
+                (need_token "parse_command" "function name")
+              val vars = parse_sorted_var_list ()
+              val range = parse_sort ()
+              val body = parse_term_from_first (need_token "parse_command" "function body")
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdDefineFun (name, vars, range, body)) close_tok
+            end
+        | "assert" =>
+            let
+              val term = parse_term_from_first (need_token "parse_command" "assertion")
+              val close_tok = need_token "parse_command" "')'"
+              val _ = expect_token "parse_command" ")" close_tok
+            in
+              finish (CmdAssert term) close_tok
+            end
+        | "check-sat" => parse_empty_command "parse_command" open_tok CmdCheckSat
+        | "get-proof" => parse_empty_command "parse_command" open_tok CmdGetProof
+        | "exit" => parse_empty_command "parse_command" open_tok CmdExit
+        | _ =>
+            let val (payload, close_tok) =
+                  parse_until_rparen "parse_command" parse_sexp_from_first []
+            in
+              finish (CmdUnknown (located (token_loc cmd_tok) cmd, payload))
+                close_tok
+            end
+      end
+
+    fun parse_commands acc =
+      case get_next_token () of
+        NONE => List.rev acc
+      | SOME tok =>
+          if token_text tok = "(" then
+            parse_commands (parse_command_from_first tok :: acc)
+          else
+            syntax_error "parse_script" (token_loc tok)
+              ("expected command, found '" ^ token_text tok ^ "'")
+  in
+    parse_commands []
+  end
+
+  fun parse_script_string text =
+    parse_script_tokens (make_located_tokenizer text)
+
+  fun parse_script_file path =
+  let
+    val instream = TextIO.openIn path
+    val text = TextIO.inputAll instream
+    val _ = TextIO.closeIn instream
+  in
+    parse_script_string text
+  end
 
   (***************************************************************************)
   (* parsing of types/terms                                                  *)
@@ -619,6 +1113,13 @@ local
     parse_commands get_token NONE
 
 in
+
+  val loc_of = loc_of
+  val node_of = node_of
+  val source_pos_to_string = source_pos_to_string
+  val source_span_to_string = source_span_to_string
+  val parse_script_string = parse_script_string
+  val parse_script_file = parse_script_file
 
   val smtlib_mk_let_bindings = smtlib_mk_let_bindings
   val smtlib_mk_let = smtlib_mk_let
