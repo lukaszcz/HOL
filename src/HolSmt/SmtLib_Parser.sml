@@ -55,8 +55,19 @@ struct
     | CmdDefineFun of string located * sorted_var_ast located list *
         sort_ast located * term_ast located
     | CmdAssert of term_ast located
+    | CmdPush of string located option
+    | CmdPop of string located option
+    | CmdReset
+    | CmdResetAssertions
     | CmdCheckSat
+    | CmdCheckSatAssuming of term_ast located list
     | CmdGetProof
+    | CmdGetUnsatAssumptions
+    | CmdGetUnsatCore
+    | CmdGetModel
+    | CmdGetValue of term_ast located list
+    | CmdGetAssignment
+    | CmdGetAssertions
     | CmdExit
     | CmdUnknown of string located * sexp_ast located list
 
@@ -66,6 +77,26 @@ struct
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
     parse_lambda: bool
+  }
+
+  datatype query_command =
+      QueryCheckSat of Term.term list
+    | QueryGetProof
+    | QueryGetUnsatAssumptions
+    | QueryGetUnsatCore
+    | QueryGetModel
+    | QueryGetValue of Term.term list
+    | QueryGetAssignment
+    | QueryGetAssertions
+
+  type command_state_snapshot = {
+    logic: string,
+    tydict: Type.hol_type dict,
+    tmdict: Term.term dict,
+    assertions: Term.term list,
+    named_assertions: (string * Term.term) list,
+    local_definitions: Term.term list,
+    queries: query_command list
   }
 
 local
@@ -456,6 +487,35 @@ local
           in
             finish node close_tok
           end
+        fun parse_optional_atom_command what mk =
+          let
+            val tok = command_need ("')' or " ^ what)
+          in
+            if token_text tok = ")" then
+              finish (mk NONE) tok
+            else if token_text tok = "(" then
+              command_error (token_loc tok)
+                ("expected atom, found '" ^ token_text tok ^ "'")
+            else
+              let
+                val arg = located (token_loc tok) (token_text tok)
+                val close_tok = command_need "')'"
+                val _ = command_expect ")" close_tok
+              in
+                finish (mk (SOME arg)) close_tok
+              end
+          end
+        fun parse_command_term_list what =
+          let
+            val open_args = command_need what
+            val _ = command_expect "(" open_args
+            val (terms, close_args) =
+              parse_until_rparen "parse_command" parse_term_from_first []
+            val close_tok = command_need "')'"
+            val _ = command_expect ")" close_tok
+          in
+            (terms, close_tok)
+          end
       in
         case cmd of
           "set-info" =>
@@ -550,8 +610,36 @@ local
             in
               finish (CmdAssert term) close_tok
             end
+        | "push" => parse_optional_atom_command "push level" CmdPush
+        | "pop" => parse_optional_atom_command "pop level" CmdPop
+        | "reset" => parse_empty_command "parse_command" open_tok CmdReset
+        | "reset-assertions" =>
+            parse_empty_command "parse_command" open_tok CmdResetAssertions
         | "check-sat" => parse_empty_command "parse_command" open_tok CmdCheckSat
+        | "check-sat-assuming" =>
+            let
+              val (assumptions, close_tok) =
+                parse_command_term_list "assumption list"
+            in
+              finish (CmdCheckSatAssuming assumptions) close_tok
+            end
         | "get-proof" => parse_empty_command "parse_command" open_tok CmdGetProof
+        | "get-unsat-assumptions" =>
+            parse_empty_command "parse_command" open_tok CmdGetUnsatAssumptions
+        | "get-unsat-core" =>
+            parse_empty_command "parse_command" open_tok CmdGetUnsatCore
+        | "get-model" => parse_empty_command "parse_command" open_tok CmdGetModel
+        | "get-value" =>
+            let
+              val (terms, close_tok) =
+                parse_command_term_list "value term list"
+            in
+              finish (CmdGetValue terms) close_tok
+            end
+        | "get-assignment" =>
+            parse_empty_command "parse_command" open_tok CmdGetAssignment
+        | "get-assertions" =>
+            parse_empty_command "parse_command" open_tok CmdGetAssertions
         | "exit" => parse_empty_command "parse_command" open_tok CmdExit
         | _ =>
             let val (payload, close_tok) =
@@ -1127,15 +1215,199 @@ local
     define_fun_term name vars range_type definiens tmdict
   end
 
+  type assertion_frame = {
+    tydict: Type.hol_type dict,
+    tmdict: Term.term dict,
+    assertions: Term.term list,
+    named_assertions: (string * Term.term) list,
+    local_definitions: Term.term list
+  }
+
+  type command_state = {
+    logic: string,
+    frames: assertion_frame list,
+    queries: query_command list
+  }
+
+  fun frame_tydict ({tydict, ...}: assertion_frame) = tydict
+  fun frame_tmdict ({tmdict, ...}: assertion_frame) = tmdict
+  fun frame_assertions ({assertions, ...}: assertion_frame) = assertions
+  fun frame_named_assertions ({named_assertions, ...}: assertion_frame) =
+    named_assertions
+  fun frame_local_definitions ({local_definitions, ...}: assertion_frame) =
+    local_definitions
+
+  fun mk_frame tydict tmdict = {
+    tydict = tydict,
+    tmdict = tmdict,
+    assertions = [],
+    named_assertions = [],
+    local_definitions = []
+  }
+
+  fun current_frame ({frames, ...}: command_state) =
+    case frames of
+      frame :: _ => frame
+    | [] => raise ERR "current_frame" "empty assertion stack"
+
+  fun current_dicts state =
+    let val frame = current_frame state
+    in (frame_tydict frame, frame_tmdict frame) end
+
+  fun update_current_frame f ({logic, frames, queries}: command_state) =
+    case frames of
+      frame :: rest => {logic = logic, frames = f frame :: rest, queries = queries}
+    | [] => raise ERR "update_current_frame" "empty assertion stack"
+
+  fun update_current_dicts (tydict, tmdict) state =
+    update_current_frame
+      (fn frame => {
+        tydict = tydict,
+        tmdict = tmdict,
+        assertions = frame_assertions frame,
+        named_assertions = frame_named_assertions frame,
+        local_definitions = frame_local_definitions frame
+      }) state
+
+  fun add_assertion assertion name state =
+    update_current_frame
+      (fn frame => {
+        tydict = frame_tydict frame,
+        tmdict = frame_tmdict frame,
+        assertions = assertion :: frame_assertions frame,
+        named_assertions =
+          (case name of
+             NONE => frame_named_assertions frame
+           | SOME n => (n, assertion) :: frame_named_assertions frame),
+        local_definitions = frame_local_definitions frame
+      }) state
+
+  fun add_definition assertion state =
+    update_current_frame
+      (fn frame => {
+        tydict = frame_tydict frame,
+        tmdict = frame_tmdict frame,
+        assertions = assertion :: frame_assertions frame,
+        named_assertions = frame_named_assertions frame,
+        local_definitions = assertion :: frame_local_definitions frame
+      }) state
+
+  fun add_query query ({logic, frames, queries}: command_state) =
+    {logic = logic, frames = frames, queries = query :: queries}
+
+  fun active_assertions ({frames, ...}: command_state) =
+    List.concat (List.map (List.rev o frame_assertions) (List.rev frames))
+
+  fun active_named_assertions ({frames, ...}: command_state) =
+    List.concat
+      (List.map (List.rev o frame_named_assertions) (List.rev frames))
+
+  fun active_local_definitions ({frames, ...}: command_state) =
+    List.concat
+      (List.map (List.rev o frame_local_definitions) (List.rev frames))
+
+  fun new_state logic tydict tmdict =
+    {logic = logic, frames = [mk_frame tydict tmdict], queries = []}
+
   fun dest_state cmd (SOME x) = x
     | dest_state cmd NONE     =
         raise ERR "dest_state" ("received " ^ cmd ^ " before set-logic")
 
-  and finalize_state cmd state =
+  fun parse_stack_count cmd NONE = 1
+    | parse_stack_count cmd (SOME token) =
+        (case Int.fromString token of
+           SOME n =>
+             if n < 0 then
+               raise ERR cmd "stack count must be non-negative"
+             else n
+         | NONE => raise ERR cmd ("expected non-negative integer, got '" ^
+             token ^ "'"))
+
+  fun push_frames 0 state = state
+    | push_frames n ({logic, frames, queries}: command_state) =
+        let
+          val top = current_frame {logic = logic, frames = frames, queries = queries}
+          val frame = mk_frame (frame_tydict top) (frame_tmdict top)
+        in
+          push_frames (n - 1)
+            {logic = logic, frames = frame :: frames, queries = queries}
+        end
+
+  fun pop_frames 0 state = state
+    | pop_frames n ({logic, frames, queries}: command_state) =
+        (case frames of
+           _ :: rest =>
+             if List.null rest then
+               raise ERR "pop" "cannot pop the base assertion scope"
+             else
+               pop_frames (n - 1)
+                 {logic = logic, frames = rest, queries = queries}
+         | [] => raise ERR "pop" "empty assertion stack")
+
+  fun reset_assertions ({logic, frames, queries}: command_state) =
+    let val frame = current_frame {logic = logic, frames = frames, queries = queries}
+    in
+      {logic = logic,
+       frames = [mk_frame (frame_tydict frame) (frame_tmdict frame)],
+       queries = queries}
+    end
+
+  fun parse_top_level_assertion get_token (tydict, tmdict) =
   let
-    val (logic, tydict, tmdict, asserted) = dest_state cmd state
+    fun parse_attributes depth named =
+      let
+        val token = get_token ()
+      in
+        if token = ")" then
+          if depth = 0 then named else parse_attributes (depth - 1) named
+        else if token = "(" then
+          parse_attributes (depth + 1) named
+        else if token = ":named" andalso depth = 0 then
+          parse_attributes depth (SOME (get_token ()))
+        else
+          parse_attributes depth named
+      end
+
+    val first = get_token ()
   in
-    (logic, tydict, tmdict, List.rev asserted)
+    if first = "(" then
+      let
+        val second = get_token ()
+      in
+        if second = "!" then
+          let
+            val term = parse_term get_token (tydict, tmdict)
+            val name = parse_attributes 0 NONE
+          in
+            (term, name)
+          end
+        else
+          let
+            val get_token' = Library.undo_look_ahead [first, second] get_token
+          in
+            (parse_term get_token' (tydict, tmdict), NONE)
+          end
+      end
+    else
+      (parse_term_aux smtlib_cfg get_token (tydict, tmdict) first [], NONE)
+  end
+
+  fun query_warning cmd msg =
+    WARNING cmd ("parsed command is not meaningful in proof reconstruction " ^
+      "mode: " ^ msg)
+
+  fun finalize_state cmd state : command_state_snapshot =
+  let
+    val command_state as {logic, queries, ...} = dest_state cmd state
+    val (tydict, tmdict) = current_dicts command_state
+  in
+    {logic = logic,
+     tydict = tydict,
+     tmdict = tmdict,
+     assertions = active_assertions command_state,
+     named_assertions = active_named_assertions command_state,
+     local_definitions = active_local_definitions command_state,
+     queries = List.rev queries}
   end
 
   (* returns the logic's name, its 'tydict', its 'tmdict' extended with
@@ -1159,7 +1431,7 @@ local
           raise ERR "parse_commands" "set-logic issued more than once"
         val (logic, tydict, tmdict) = parse_set_logic get_token
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, []))
+        parse_commands get_token (SOME (new_state logic tydict tmdict))
       end
     | "get-info" =>
       let
@@ -1175,69 +1447,188 @@ local
       end
     | "declare-sort" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "declare-sort" state
+        val command_state = dest_state "declare-sort" state
+        val (tydict, tmdict) = current_dicts command_state
         val tydict = parse_declare_sort get_token tydict
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
       end
     | "define-sort" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "define-sort" state
+        val command_state = dest_state "define-sort" state
+        val (tydict, tmdict) = current_dicts command_state
         val tydict = parse_define_sort get_token tydict
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
       end
     | "declare-const" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "declare-const" state
+        val command_state = dest_state "declare-const" state
+        val (tydict, tmdict) = current_dicts command_state
         val (_, tmdict) = parse_declare_const get_token (tydict, tmdict)
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
       end
     | "declare-fun" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "declare-fun" state
+        val command_state = dest_state "declare-fun" state
+        val (tydict, tmdict) = current_dicts command_state
         val (_, tmdict) = parse_declare_fun get_token (tydict, tmdict)
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
       end
     | "define-const" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "define-const" state
+        val command_state = dest_state "define-const" state
+        val (tydict, tmdict) = current_dicts command_state
         val (tmdict, def) = parse_define_const get_token (tydict, tmdict)
-        val asserted = def :: asserted
+        val command_state = update_current_dicts (tydict, tmdict) command_state
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token (SOME (add_definition def command_state))
       end
     | "define-fun" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "define-fun" state
+        val command_state = dest_state "define-fun" state
+        val (tydict, tmdict) = current_dicts command_state
         val (tmdict, def) = parse_define_fun get_token (tydict, tmdict)
-        val asserted = def :: asserted
+        val command_state = update_current_dicts (tydict, tmdict) command_state
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token (SOME (add_definition def command_state))
       end
     | "assert" =>
       let
-        val (logic, tydict, tmdict, asserted) = dest_state "assert" state
-        val asserted = parse_term get_token (tydict, tmdict) :: asserted
+        val command_state = dest_state "assert" state
+        val (tydict, tmdict) = current_dicts command_state
+        val (assertion, name) =
+          parse_top_level_assertion get_token (tydict, tmdict)
         val _ = Library.expect_token ")" (get_token ())
       in
-        parse_commands get_token (SOME (logic, tydict, tmdict, asserted))
+        parse_commands get_token
+          (SOME (add_assertion assertion name command_state))
+      end
+    | "push" =>
+      let
+        val command_state = dest_state "push" state
+        val next = get_token ()
+        val count =
+          if next = ")" then 1
+          else parse_stack_count "push" (SOME next)
+        val _ = if next = ")" then () else Library.expect_token ")" (get_token ())
+      in
+        parse_commands get_token (SOME (push_frames count command_state))
+      end
+    | "pop" =>
+      let
+        val command_state = dest_state "pop" state
+        val next = get_token ()
+        val count =
+          if next = ")" then 1
+          else parse_stack_count "pop" (SOME next)
+        val _ = if next = ")" then () else Library.expect_token ")" (get_token ())
+      in
+        parse_commands get_token (SOME (pop_frames count command_state))
+      end
+    | "reset" =>
+      let
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        parse_commands get_token NONE
+      end
+    | "reset-assertions" =>
+      let
+        val command_state = dest_state "reset-assertions" state
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        parse_commands get_token (SOME (reset_assertions command_state))
       end
     | "check-sat" =>
       let
-        val _ = dest_state "check-sat" state
+        val command_state = dest_state "check-sat" state
         val _ = Library.expect_token ")" (get_token ())
       in
-        parse_commands get_token state
+        parse_commands get_token
+          (SOME (add_query (QueryCheckSat []) command_state))
+      end
+    | "check-sat-assuming" =>
+      let
+        val command_state = dest_state "check-sat-assuming" state
+        val assumptions = parse_term_list get_token (current_dicts command_state)
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "check-sat-assuming"
+          "assumptions are recorded but not replayed by Z3_TAC"
+      in
+        parse_commands get_token
+          (SOME (add_query (QueryCheckSat assumptions) command_state))
       end
     | "get-proof" =>
       let
-        val _ = dest_state "get-proof" state
+        val command_state = dest_state "get-proof" state
         val _ = Library.expect_token ")" (get_token ())
       in
-        parse_commands get_token state
+        parse_commands get_token (SOME (add_query QueryGetProof command_state))
+      end
+    | "get-unsat-assumptions" =>
+      let
+        val command_state = dest_state "get-unsat-assumptions" state
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-unsat-assumptions"
+          "unsat-assumption extraction is not implemented"
+      in
+        parse_commands get_token
+          (SOME (add_query QueryGetUnsatAssumptions command_state))
+      end
+    | "get-unsat-core" =>
+      let
+        val command_state = dest_state "get-unsat-core" state
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-unsat-core"
+          "unsat-core extraction is not implemented"
+      in
+        parse_commands get_token
+          (SOME (add_query QueryGetUnsatCore command_state))
+      end
+    | "get-model" =>
+      let
+        val command_state = dest_state "get-model" state
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-model" "models are not produced by Z3_TAC"
+      in
+        parse_commands get_token (SOME (add_query QueryGetModel command_state))
+      end
+    | "get-value" =>
+      let
+        val command_state = dest_state "get-value" state
+        val terms = parse_term_list get_token (current_dicts command_state)
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-value"
+          "term values are not produced by Z3_TAC"
+      in
+        parse_commands get_token
+          (SOME (add_query (QueryGetValue terms) command_state))
+      end
+    | "get-assignment" =>
+      let
+        val command_state = dest_state "get-assignment" state
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-assignment"
+          "assignments are not produced by Z3_TAC"
+      in
+        parse_commands get_token
+          (SOME (add_query QueryGetAssignment command_state))
+      end
+    | "get-assertions" =>
+      let
+        val command_state = dest_state "get-assertions" state
+        val _ = Library.expect_token ")" (get_token ())
+        val _ = query_warning "get-assertions"
+          "assertion output is not produced by Z3_TAC"
+      in
+        parse_commands get_token
+          (SOME (add_query QueryGetAssertions command_state))
       end
     | "exit" =>
       finalize_state "exit" state
@@ -1261,9 +1652,16 @@ local
       )
   end
 
+  fun legacy_result_of_state
+    ({logic, tydict, tmdict, assertions, ...}: command_state_snapshot) =
+    (logic, tydict, tmdict, assertions)
+
   (* entry point into the parser (i.e., the grammar's start symbol) *)
-  fun parse_benchmark get_token =
+  fun parse_benchmark_state get_token =
     parse_commands get_token NONE
+
+  fun parse_benchmark get_token =
+    legacy_result_of_state (parse_benchmark_state get_token)
 
 in
 
@@ -1295,14 +1693,14 @@ in
      commands: set-info and set-option (content discarded), set-logic,
      get-info, get-option, declare-sort, define-sort (content checked
      and discarded), declare-const, declare-fun, define-const,
-     define-fun, assert, check-sat (no answer produced), get-proof
-     (no proof produced), and exit.  Any
-     other command is rejected with "unknown command".  Assertion
-     stack management ("push"/"pop" in the SMT-LIB 2 standard) is
-     not supported. *)
+     define-fun, assert, push, pop, reset, reset-assertions, check-sat,
+     check-sat-assuming, get-proof, get-unsat-assumptions, get-unsat-core,
+     get-model, get-value, get-assignment, get-assertions, and exit.
+     Solver query commands update parser state, but model/value/core output
+     is not produced by this parser or by proof reconstruction mode.  Any
+     other command is rejected with "unknown command". *)
 
-  fun parse_file (path : string)
-    : string * Type.hol_type dict * Term.term dict * Term.term list =
+  fun parse_file_state (path : string) : command_state_snapshot =
   let
     (* parse the file contents *)
     val _ = if !Library.trace > 1 then
@@ -1311,7 +1709,7 @@ in
       else ()
     val instream = TextIO.openIn path
     val get_token = Library.get_token (Library.get_buffered_char instream)
-    val result = parse_benchmark get_token
+    val result = parse_benchmark_state get_token
     val _ = if !Library.trace > 0 then
         WARNING "parse_file" ("ignoring token '" ^ get_token () ^
           "' (and perhaps others) after benchmark")
@@ -1321,6 +1719,10 @@ in
   in
     result
   end
+
+  fun parse_file (path : string)
+    : string * Type.hol_type dict * Term.term dict * Term.term list =
+    legacy_result_of_state (parse_file_state path)
 
 end  (* local *)
 

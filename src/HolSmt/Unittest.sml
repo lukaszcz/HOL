@@ -19,6 +19,36 @@ fun die s =
 
 fun assert (x, msg) = if x then () else die ("FAIL: " ^ msg)
 
+fun with_temp_file contents f =
+let
+  val path = OS.FileSys.tmpName ()
+  val outstream = TextIO.openOut path
+  val _ = TextIO.output (outstream, contents)
+  val _ = TextIO.closeOut outstream
+  fun cleanup () = OS.FileSys.remove path handle _ => ()
+  val result = f path handle e => (cleanup (); raise e)
+  val _ = cleanup ()
+in
+  result
+end
+
+fun parse_smtlib_assertions contents =
+  with_temp_file contents
+    (fn path =>
+      let
+        val (_, _, _, assertions) = SmtLib_Parser.parse_file path
+      in
+        assertions
+      end)
+
+fun parse_smtlib_state contents =
+  with_temp_file contents SmtLib_Parser.parse_file_state
+
+fun term_is_var_named name tm =
+  let val (var_name, _) = Term.dest_var tm
+  in var_name = name end
+  handle HOL_ERR _ => false
+
 (* Make sure two theorems are identical *)
 fun compare_thms thm_pair =
 let
@@ -395,6 +425,198 @@ fun script_ast_command_syntax_error () =
         "syntax error did not include the source location: " ^ msg)
     end
 
+fun script_ast_stack_and_query_success () =
+let
+  val script =
+    SmtLib_Parser.parse_script_string
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(assert (! a :named A))\n" ^
+       "(push 1)\n" ^
+       "(pop)\n" ^
+       "(reset-assertions)\n" ^
+       "(check-sat)\n" ^
+       "(check-sat-assuming (a))\n" ^
+       "(get-proof)\n" ^
+       "(get-unsat-assumptions)\n" ^
+       "(get-unsat-core)\n" ^
+       "(get-model)\n" ^
+       "(get-value (a true))\n" ^
+       "(get-assignment)\n" ^
+       "(get-assertions)\n" ^
+       "(reset)\n" ^
+       "(exit)\n")
+in
+  case script of
+    [_, _, _, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13, c14, c15, c16, c17] =>
+      let
+        val () = (case SmtLib_Parser.node_of c4 of
+            SmtLib_Parser.CmdPush (SOME level) =>
+              assert (located_string level = "1", "push level mismatch")
+          | _ => die "push did not parse to CmdPush")
+        val () = (case SmtLib_Parser.node_of c5 of
+            SmtLib_Parser.CmdPop NONE => ()
+          | _ => die "pop did not parse to CmdPop")
+        val () = (case SmtLib_Parser.node_of c6 of
+            SmtLib_Parser.CmdResetAssertions => ()
+          | _ => die "reset-assertions did not parse")
+        val () = (case SmtLib_Parser.node_of c7 of
+            SmtLib_Parser.CmdCheckSat => ()
+          | _ => die "check-sat did not parse")
+        val () = (case SmtLib_Parser.node_of c8 of
+            SmtLib_Parser.CmdCheckSatAssuming assumptions =>
+              assert (List.length assumptions = 1,
+                "check-sat-assuming assumption count mismatch")
+          | _ => die "check-sat-assuming did not parse")
+        val () = (case SmtLib_Parser.node_of c9 of
+            SmtLib_Parser.CmdGetProof => ()
+          | _ => die "get-proof did not parse")
+        val () = (case SmtLib_Parser.node_of c10 of
+            SmtLib_Parser.CmdGetUnsatAssumptions => ()
+          | _ => die "get-unsat-assumptions did not parse")
+        val () = (case SmtLib_Parser.node_of c11 of
+            SmtLib_Parser.CmdGetUnsatCore => ()
+          | _ => die "get-unsat-core did not parse")
+        val () = (case SmtLib_Parser.node_of c12 of
+            SmtLib_Parser.CmdGetModel => ()
+          | _ => die "get-model did not parse")
+        val () = (case SmtLib_Parser.node_of c13 of
+            SmtLib_Parser.CmdGetValue terms =>
+              assert (List.length terms = 2, "get-value term count mismatch")
+          | _ => die "get-value did not parse")
+        val () = (case SmtLib_Parser.node_of c14 of
+            SmtLib_Parser.CmdGetAssignment => ()
+          | _ => die "get-assignment did not parse")
+        val () = (case SmtLib_Parser.node_of c15 of
+            SmtLib_Parser.CmdGetAssertions => ()
+          | _ => die "get-assertions did not parse")
+        val () = (case SmtLib_Parser.node_of c16 of
+            SmtLib_Parser.CmdReset => ()
+          | _ => die "reset did not parse")
+        val () = (case SmtLib_Parser.node_of c17 of
+            SmtLib_Parser.CmdExit => ()
+          | _ => die "exit did not parse")
+      in
+        ()
+      end
+  | _ => die "stack/query script parsed to the wrong command count"
+end
+
+fun parse_file_push_pop_assertion_scoping () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(assert a)\n" ^
+       "(push 1)\n" ^
+       "(declare-const b Bool)\n" ^
+       "(assert b)\n" ^
+       "(pop 1)\n" ^
+       "(assert true)\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 2, "push/pop assertion count mismatch");
+  assert (List.exists (term_is_var_named "a") assertions,
+    "base assertion was not retained");
+  assert (List.exists (fn tm => Term.term_eq tm boolSyntax.T) assertions,
+    "post-pop assertion was not retained");
+  assert (not (List.exists (term_is_var_named "b") assertions),
+    "popped assertion remained visible")
+end
+
+fun parse_file_push_pop_declaration_scoping () =
+  let
+    val _ =
+      parse_smtlib_assertions
+        ("(set-logic QF_UF)\n" ^
+         "(push 1)\n" ^
+         "(declare-const b Bool)\n" ^
+         "(pop 1)\n" ^
+         "(assert b)\n" ^
+         "(exit)\n")
+  in
+    die "popped declaration remained visible"
+  end
+  handle Feedback.HOL_ERR _ => ()
+
+fun parse_file_reset_assertions_state () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(declare-const b Bool)\n" ^
+       "(assert a)\n" ^
+       "(push 1)\n" ^
+       "(assert false)\n" ^
+       "(reset-assertions)\n" ^
+       "(assert b)\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "reset-assertions did not clear assertion stack");
+  assert (List.exists (term_is_var_named "b") assertions,
+    "reset-assertions did not preserve declarations");
+  assert (not (List.exists (term_is_var_named "a") assertions),
+    "reset-assertions retained an old assertion")
+end
+
+fun parse_file_reset_state () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(assert a)\n" ^
+       "(reset)\n" ^
+       "(set-logic QF_UF)\n" ^
+       "(declare-const b Bool)\n" ^
+       "(assert b)\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1, "reset did not clear old assertions");
+  assert (List.exists (term_is_var_named "b") assertions,
+    "reset did not permit rebuilding state");
+  assert (not (List.exists (term_is_var_named "a") assertions),
+    "reset retained pre-reset assertions or declarations")
+end
+
+fun parse_file_query_commands_success () =
+let
+  val {assertions, named_assertions, queries, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(assert (! a :named A))\n" ^
+       "(check-sat)\n" ^
+       "(check-sat-assuming (a))\n" ^
+       "(get-model)\n" ^
+       "(get-value (a true))\n" ^
+       "(get-assignment)\n" ^
+       "(get-assertions)\n" ^
+       "(get-unsat-assumptions)\n" ^
+       "(get-unsat-core)\n" ^
+       "(get-proof)\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1, "query commands changed assertions");
+  assert (List.exists (term_is_var_named "a") assertions,
+    "named assertion was not preserved through query commands");
+  assert (List.length named_assertions = 1,
+    "named assertion metadata was not preserved");
+  assert (List.exists (fn (name, tm) =>
+      name = "A" andalso term_is_var_named "a" tm) named_assertions,
+    "named assertion metadata is incorrect");
+  assert (List.exists (fn query =>
+      case query of
+        SmtLib_Parser.QueryCheckSat assumptions =>
+          List.length assumptions = 1 andalso
+          List.exists (term_is_var_named "a") assumptions
+      | _ => false) queries,
+    "check-sat-assuming assumptions were not preserved")
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -427,7 +649,15 @@ let
     ("script_ast_locations_success", script_ast_locations_success),
     ("script_ast_locations_syntax_error", script_ast_locations_syntax_error),
     ("script_ast_metadata_decls_success", script_ast_metadata_decls_success),
-    ("script_ast_command_syntax_error", script_ast_command_syntax_error)
+    ("script_ast_command_syntax_error", script_ast_command_syntax_error),
+    ("script_ast_stack_and_query_success", script_ast_stack_and_query_success),
+    ("parse_file_push_pop_assertion_scoping",
+      parse_file_push_pop_assertion_scoping),
+    ("parse_file_push_pop_declaration_scoping",
+      parse_file_push_pop_declaration_scoping),
+    ("parse_file_reset_assertions_state", parse_file_reset_assertions_state),
+    ("parse_file_reset_state", parse_file_reset_state),
+    ("parse_file_query_commands_success", parse_file_query_commands_success)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"
