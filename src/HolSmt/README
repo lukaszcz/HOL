@@ -71,11 +71,13 @@ proof subterm.
 
 Z3 th-lemma replay coverage:
 
-  Theory      Subkind/index handling         Replay status
-  arith       preserved in diagnostics       checked by existing arith_prove path
-  array       preserved in diagnostics       checked by existing update prover path
-  bv          preserved in diagnostics       checked by existing word/BBLAST path
-  basic       preserved in diagnostics       unsupported diagnostic:
+  Theory      Collected subkind shapes       Replay status
+  arith       farkas, assign-bounds,         checked by existing arith_prove path
+              eq-propagate, gomory-cut,
+              triangle-eq
+  array       select-store, extensionality   checked by existing update prover path
+  bv          bit-blast                      checked by existing word/BBLAST path
+  basic       eq-propagate                   unsupported diagnostic:
               "unsupported th-lemma shape: theory=basic; checked replay is not
               implemented for basic Boolean/equality simplification lemmas"
 

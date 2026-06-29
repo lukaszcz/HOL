@@ -179,17 +179,16 @@ local
     List.concat (List.map proof_rule_builtin proof_rule_registry)
 
   val z3_builtin_dict = Library.dict_from_list (proof_rule_builtin_entries @ [
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
+    (* the following names are used as `(_ th-lemma ...)` indices. *)
     ("arith",           builtin_name "arith"),
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
+    ("array",           builtin_name "array"),
     ("assign-bounds",   builtin_name "assign-bounds"),
-    (* the following is used in `(_ th-lemma bv ...)` inference rules *)
+    ("basic",           builtin_name "basic"),
+    ("bit-blast",       builtin_name "bit-blast"),
     ("bv",              builtin_name "bv"),
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
     ("eq-propagate",    builtin_name "eq-propagate"),
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
+    ("extensionality",  builtin_name "extensionality"),
     ("farkas",          builtin_name "farkas"),
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
     ("gomory-cut",      builtin_name "gomory-cut"),
     (* `proof-bind` doesn't seem to have semantic value, despite the Z3 v4.12.4
        source code implying that it either introduces lambda abstractions or
@@ -218,7 +217,7 @@ local
           th_lemma_prems name metadata prems
         end)),
     ("trans",           two_prems "trans"),
-    (* the following is used in `(_ th-lemma arith ...)` inference rules *)
+    ("select-store",    builtin_name "select-store"),
     ("triangle-eq",     builtin_name "triangle-eq"),
 
     (* FIXME: I am hoping that the Z3 proof format will eventually be

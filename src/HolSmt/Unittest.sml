@@ -1573,12 +1573,29 @@ end
 fun z3_th_lemma_existing_theory_replay_minimal_success () =
 let
   val cases = [
-    "((proof ((_ th-lemma arith farkas 1) (= 1 1))))",
-    "((proof ((_ th-lemma array select-store 0) (= false false))))",
-    "((proof ((_ th-lemma bv bit-blast 1) (= false false))))"
+    ("arith/farkas",
+      "((proof ((_ th-lemma arith farkas 1) (= 1 1))))"),
+    ("arith/assign-bounds",
+      "((proof ((_ th-lemma arith assign-bounds 0) (= 2 2))))"),
+    ("arith/eq-propagate",
+      "((proof ((_ th-lemma arith eq-propagate 0) (= 3 3))))"),
+    ("arith/gomory-cut",
+      "((proof ((_ th-lemma arith gomory-cut 0) (= 4 4))))"),
+    ("arith/triangle-eq",
+      "((proof ((_ th-lemma arith triangle-eq 0) (= 5 5))))"),
+    ("array/select-store",
+      "((proof ((_ th-lemma array select-store 0) (= false false))))"),
+    ("array/extensionality",
+      "((proof ((_ th-lemma array extensionality 0) (= true true))))"),
+    ("bv/bit-blast",
+      "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
   ]
 in
-  List.app (ignore o replay_z3_proof_string) cases
+  List.app (fn (name, proof_text) =>
+    (ignore (replay_z3_proof_string proof_text)
+      handle Feedback.HOL_ERR holerr =>
+        die ("FAIL: th-lemma " ^ name ^ " did not replay: " ^
+          Feedback.message_of holerr))) cases
 end
 
 fun z3_th_lemma_basic_unsupported_diagnostic () =
