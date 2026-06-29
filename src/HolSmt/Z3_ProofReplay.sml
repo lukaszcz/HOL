@@ -78,7 +78,8 @@ local
        later retrieval, to avoid re-reproving them *)
     thm_cache : Thm.thm Net.net,
     (* contains all of the variables that Z3 has defined *)
-    var_set : Term.term HOLset.set
+    var_set : Term.term HOLset.set,
+    z3_version : string
   }
 
   fun state_assert (s : state) (t : Term.term) : state =
@@ -86,7 +87,8 @@ local
       asserted_hyps = HOLset.add (#asserted_hyps s, t),
       definition_hyps = #definition_hyps s,
       thm_cache = #thm_cache s,
-      var_set = #var_set s
+      var_set = #var_set s,
+      z3_version = #z3_version s
     }
 
   fun state_define (s : state) (terms : Term.term list) : state =
@@ -94,7 +96,8 @@ local
       asserted_hyps = #asserted_hyps s,
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
       thm_cache = #thm_cache s,
-      var_set = #var_set s
+      var_set = #var_set s,
+      z3_version = #z3_version s
     }
 
   fun state_cache_thm (s : state) (thm : Thm.thm) : state =
@@ -102,7 +105,8 @@ local
       asserted_hyps = #asserted_hyps s,
       definition_hyps = #definition_hyps s,
       thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
-      var_set = #var_set s
+      var_set = #var_set s,
+      z3_version = #z3_version s
     }
 
   fun state_inst_cached_thm (s : state) (t : Term.term) : Thm.thm =
@@ -1272,6 +1276,37 @@ local
       end)
   end
 
+  fun th_lemma_metadata_has_subkind subkinds
+      ({subkind, ...} : th_lemma_metadata) =
+    case subkind of
+      SOME s => List.exists (Lib.equal s) subkinds
+    | NONE => false
+
+  fun unsupported_advanced_th_lemma_message (state : state)
+      (metadata : th_lemma_metadata) t =
+    "unsupported th-lemma shape: " ^
+    th_lemma_metadata_to_string metadata ^
+    "; z3_version=" ^ #z3_version state ^
+    "; proof-format limitation=Z3 does not emit a checked certificate " ^
+    "for HolSmt replay of this advanced theory family; conclusion=" ^
+    Library.term_to_string t
+
+  fun z3_th_lemma_advanced_unsupported metadata =
+    th_lemma_wrapper ("advanced:" ^ #theory metadata) (fn (state, t) =>
+      raise ERR "z3_th_lemma_advanced_unsupported"
+        (unsupported_advanced_th_lemma_message state metadata t))
+
+  fun z3_th_lemma_arith_checked metadata (state, thms, t) =
+    if th_lemma_metadata_has_subkind
+        ["nonlinear", "nonlinear-arith", "nla", "nra", "nia"] metadata
+    then
+      z3_th_lemma_advanced_unsupported
+        (mk_th_lemma_metadata
+          ("nonlinear-arith", #subkind metadata, #indices metadata))
+        (state, thms, t)
+    else
+      z3_th_lemma_arith (state, thms, t)
+
   fun z3_trans (state, thm1, thm2, t) =
     (state, Thm.TRANS thm1 thm2)
 
@@ -1339,7 +1374,8 @@ local
     String.concatWith "; " [
       term_set_summary "asserted_hyps" (#asserted_hyps state),
       term_set_summary "definition_hyps" (#definition_hyps state),
-      term_set_summary "z3_vars" (#var_set state)
+      term_set_summary "z3_vars" (#var_set state),
+      "z3_version=" ^ #z3_version state
     ]
 
   fun proofterm_replay_handler (AND_ELIM _) = "and_elim"
@@ -1368,6 +1404,7 @@ local
     | proofterm_replay_handler (TH_LEMMA_ARRAY _) = "th_lemma[array]"
     | proofterm_replay_handler (TH_LEMMA_BASIC _) = "th_lemma[basic]"
     | proofterm_replay_handler (TH_LEMMA_BV _) = "th_lemma[bv]"
+    | proofterm_replay_handler (TH_LEMMA_ADVANCED _) = "th_lemma[advanced]"
     | proofterm_replay_handler (TRANS _) = "trans"
     | proofterm_replay_handler (TRANS_STAR _) = "trans_star"
     | proofterm_replay_handler (TRUE_AXIOM _) = "true_axiom"
@@ -1384,6 +1421,8 @@ local
     | proofterm_rule (TH_LEMMA_BASIC (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule (TH_LEMMA_BV (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_ADVANCED (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule pt =
         (case lookup_rule_by_handler (proofterm_replay_handler pt) of
@@ -1416,6 +1455,7 @@ local
     | proofterm_concl (TH_LEMMA_ARRAY (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_BASIC (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_BV (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_ADVANCED (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS_STAR (_, concl)) = SOME concl
     | proofterm_concl (TRUE_AXIOM concl) = SOME concl
@@ -1628,8 +1668,8 @@ local
         one_prem state_proof "symm" z3_symm x continuation
     | thm_of_proofterm (state_proof, TH_LEMMA_ARITH (metadata, pts, concl))
         continuation =
-        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_arith
-          (pts, concl) continuation []
+        list_prems state_proof (th_lemma_rule_name metadata)
+          (z3_th_lemma_arith_checked metadata) (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_ARRAY (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_array
@@ -1642,6 +1682,11 @@ local
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_bv
           (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_ADVANCED (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata)
+          (z3_th_lemma_advanced_unsupported metadata) (pts, concl)
+          continuation []
     | thm_of_proofterm (state_proof, TRANS x) continuation =
         two_prems state_proof "trans" z3_trans x continuation
     | thm_of_proofterm (state_proof, TRANS_STAR x) continuation =
@@ -1870,7 +1915,8 @@ in
       asserted_hyps = Term.empty_tmset,
       definition_hyps = Term.empty_tmset,
       thm_cache = Net.empty,
-      var_set = proof_vars proof
+      var_set = proof_vars proof,
+      z3_version = proof_version proof
     }
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
   in
@@ -1890,7 +1936,8 @@ in
       asserted_hyps = Term.empty_tmset,
       definition_hyps = Term.empty_tmset,
       thm_cache = Net.empty,
-      var_set = proof_vars proof
+      var_set = proof_vars proof,
+      z3_version = proof_version proof
     }
 
     (* ID 0 denotes the proof's root node *)

@@ -81,6 +81,8 @@ struct
                          Term.term
                      | TH_LEMMA_BV of th_lemma_metadata * proofterm list *
                          Term.term
+                     | TH_LEMMA_ADVANCED of th_lemma_metadata * proofterm list *
+                         Term.term
                      | TRANS of proofterm * proofterm * Term.term
                      | TRANS_STAR of proofterm list * Term.term
                      | TRUE_AXIOM of Term.term
@@ -151,6 +153,25 @@ struct
       "th_lemma[basic]"),
     mk_rule ("th-lemma-bv", ["th-lemma[bv]"], ListPremises,
       "th_lemma[bv]"),
+    mk_rule ("th-lemma-fp", ["th-lemma[fp]", "th-lemma-fpa",
+      "th-lemma[fpa]", "th-lemma-floating-point",
+      "th-lemma[floating-point]"], ListPremises, "th_lemma[advanced]"),
+    mk_rule ("th-lemma-seq", ["th-lemma[seq]", "th-lemma-sequence",
+      "th-lemma[sequence]", "th-lemma-sequences", "th-lemma[sequences]"],
+      ListPremises, "th_lemma[advanced]"),
+    mk_rule ("th-lemma-string", ["th-lemma[string]", "th-lemma-strings",
+      "th-lemma[strings]", "th-lemma-str", "th-lemma[str]"],
+      ListPremises, "th_lemma[advanced]"),
+    mk_rule ("th-lemma-regexp", ["th-lemma[regexp]", "th-lemma-regex",
+      "th-lemma[regex]", "th-lemma-re", "th-lemma[re]"], ListPremises,
+      "th_lemma[advanced]"),
+    mk_rule ("th-lemma-datatype", ["th-lemma[datatype]",
+      "th-lemma-datatypes", "th-lemma[datatypes]", "th-lemma-dt",
+      "th-lemma[dt]"], ListPremises, "th_lemma[advanced]"),
+    mk_rule ("th-lemma-nonlinear-arith", ["th-lemma[nonlinear-arith]",
+      "th-lemma-nonlinear", "th-lemma[nonlinear]", "th-lemma-nla",
+      "th-lemma[nla]", "th-lemma-nra", "th-lemma[nra]", "th-lemma-nia",
+      "th-lemma[nia]"], ListPremises, "th_lemma[advanced]"),
     mk_rule ("trans", [], TwoPremises, "trans"),
     mk_rule ("trans*", ["trans-star"], ListPremises, "trans_star"),
     mk_rule ("true-axiom", [], ZeroPremises, "true_axiom"),

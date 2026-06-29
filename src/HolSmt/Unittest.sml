@@ -1450,6 +1450,27 @@ in
   | NONE => die "FAIL: indexed th-lemma proof did not define root proof step"
 end
 
+fun z3_proof_parser_advanced_th_lemma_metadata_success () =
+let
+  val proof = parse_z3_proof_string "4.13.0"
+    "((proof ((_ th-lemma fp eq-propagate 4) false)))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.TH_LEMMA_ADVANCED
+      ({theory, subkind, indices}, [], concl)) =>
+        (assert (theory = "fp",
+          "advanced th-lemma metadata did not preserve theory");
+         assert (subkind = SOME "eq-propagate",
+          "advanced th-lemma metadata did not preserve subkind");
+         assert (indices = ["4"],
+          "advanced th-lemma metadata did not preserve proof indices: [" ^
+          String.concatWith ", " indices ^ "]");
+         assert (concl ~~ ``F``,
+          "advanced th-lemma metadata test parsed unexpected conclusion"))
+  | SOME _ => die "FAIL: advanced th-lemma parsed to unexpected constructor"
+  | NONE => die "FAIL: advanced th-lemma proof did not define root proof step"
+end
+
 fun z3_proof_parser_unknown_rule_diagnostic () =
   (ignore (parse_z3_proof_string "4.12.4"
     "((proof (new-z3-rule false)))");
@@ -1617,6 +1638,53 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
         "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
     end
 
+fun expect_advanced_th_lemma_diagnostic (name, proof_text, theory_text) =
+  (ignore (replay_z3_proof_string proof_text);
+   die ("FAIL: unsupported advanced th-lemma " ^ name ^
+     " replayed successfully"))
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring theory_text msg,
+        "advanced th-lemma diagnostic did not include theory for " ^ name ^
+        ": " ^ msg);
+      assert (String.isSubstring "z3_version=4.12.4" msg,
+        "advanced th-lemma diagnostic did not include Z3 version for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "proof-format limitation" msg,
+        "advanced th-lemma diagnostic did not explain proof-format limit for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "parsed HOL conclusion: F" msg,
+        "advanced th-lemma diagnostic did not include conclusion for " ^
+        name ^ ": " ^ msg)
+    end
+
+fun z3_th_lemma_advanced_unsupported_diagnostic () =
+let
+  val cases = [
+    ("floating-point",
+      "((proof ((_ th-lemma fp eq-propagate 1) false)))",
+      "theory=fp"),
+    ("sequence",
+      "((proof ((_ th-lemma seq eq-propagate 2) false)))",
+      "theory=seq"),
+    ("string",
+      "((proof ((_ th-lemma string eq-propagate 3) false)))",
+      "theory=string"),
+    ("regexp",
+      "((proof ((_ th-lemma regexp eq-propagate 4) false)))",
+      "theory=regexp"),
+    ("datatype",
+      "((proof ((_ th-lemma datatype eq-propagate 5) false)))",
+      "theory=datatype"),
+    ("nonlinear-arith",
+      "((proof ((_ th-lemma arith nla 6) false)))",
+      "theory=nonlinear-arith")
+  ]
+in
+  List.app expect_advanced_th_lemma_diagnostic cases
+end
+
 fun z3_proof_replay_failure_diagnostic () =
   (ignore (replay_z3_proof_string "((proof (commutativity false)))");
    die "FAIL: malformed Z3 proof rule replayed successfully")
@@ -1723,6 +1791,8 @@ let
       z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_th_lemma_metadata_success",
       z3_proof_parser_th_lemma_metadata_success),
+    ("z3_proof_parser_advanced_th_lemma_metadata_success",
+      z3_proof_parser_advanced_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_core_proof_rule_replay_minimal_raw_success",
@@ -1731,6 +1801,8 @@ let
       z3_th_lemma_existing_theory_replay_minimal_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
+    ("z3_th_lemma_advanced_unsupported_diagnostic",
+      z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
       z3_proof_replay_failure_diagnostic)
   ]

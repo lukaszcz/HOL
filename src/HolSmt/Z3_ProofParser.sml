@@ -186,10 +186,30 @@ local
     ("basic",           builtin_name "basic"),
     ("bit-blast",       builtin_name "bit-blast"),
     ("bv",              builtin_name "bv"),
+    ("datatype",        builtin_name "datatype"),
+    ("datatypes",       builtin_name "datatypes"),
+    ("dt",              builtin_name "dt"),
     ("eq-propagate",    builtin_name "eq-propagate"),
     ("extensionality",  builtin_name "extensionality"),
     ("farkas",          builtin_name "farkas"),
+    ("floating-point",  builtin_name "floating-point"),
+    ("fp",              builtin_name "fp"),
+    ("fpa",             builtin_name "fpa"),
     ("gomory-cut",      builtin_name "gomory-cut"),
+    ("nla",             builtin_name "nla"),
+    ("nia",             builtin_name "nia"),
+    ("nonlinear",       builtin_name "nonlinear"),
+    ("nonlinear-arith", builtin_name "nonlinear-arith"),
+    ("nra",             builtin_name "nra"),
+    ("re",              builtin_name "re"),
+    ("regex",           builtin_name "regex"),
+    ("regexp",          builtin_name "regexp"),
+    ("seq",             builtin_name "seq"),
+    ("sequence",        builtin_name "sequence"),
+    ("sequences",       builtin_name "sequences"),
+    ("str",             builtin_name "str"),
+    ("string",          builtin_name "string"),
+    ("strings",         builtin_name "strings"),
     (* `proof-bind` doesn't seem to have semantic value, despite the Z3 v4.12.4
        source code implying that it either introduces lambda abstractions or
        `forall` quantifiers, depending on the interpretation *)
@@ -480,6 +500,8 @@ local
         th_lemma_prems_pt version TH_LEMMA_BASIC
     | proofterm_maker version "th_lemma[bv]" =
         th_lemma_prems_pt version TH_LEMMA_BV
+    | proofterm_maker version "th_lemma[advanced]" =
+        th_lemma_prems_pt version TH_LEMMA_ADVANCED
     | proofterm_maker version "trans" = two_prems_pt version TRANS
     | proofterm_maker version "trans_star" = list_prems_pt version TRANS_STAR
     | proofterm_maker version "true_axiom" = zero_prems_pt TRUE_AXIOM
