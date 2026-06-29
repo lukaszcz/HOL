@@ -1445,6 +1445,122 @@ fun z3_proof_parser_unknown_rule_diagnostic () =
         "unknown-rule diagnostic did not include Z3 version: " ^ msg)
     end
 
+fun replay_z3_proof_string contents =
+  Z3_ProofReplay.replay_root_for_test
+    (parse_z3_proof_string "4.12.4" contents)
+
+fun assert_replays_raw_z3_proof_rule (name, proof_text, expected) =
+let
+  val thm = replay_z3_proof_string proof_text
+  val actual = Thm.concl thm
+in
+  assert (actual ~~ expected,
+    "raw Z3 proof rule " ^ name ^ " replayed to " ^
+    term_with_types actual ^ ", expected " ^ term_with_types expected)
+end
+
+fun z3_core_proof_rule_replay_minimal_raw_success () =
+let
+  val cases = [
+    ("and-elim",
+      "((proof (and-elim (asserted (and false true)) false)))",
+      ``F``),
+    ("asserted",
+      "((proof (asserted false)))",
+      ``F``),
+    ("commutativity",
+      "((proof (commutativity (= (= false true) (= true false)))))",
+      ``(F = T) = (T = F)``),
+    ("def-axiom",
+      "((proof (def-axiom (or (not (and false true)) false))))",
+      ``~(F /\ T) \/ F``),
+    ("elim-unused",
+      "((proof (elim-unused (= (forall ((x Bool)) false) false))))",
+      ``(!x:bool. F) = F``),
+    ("hypothesis",
+      "((proof (hypothesis false)))",
+      ``F``),
+    ("iff-false",
+      "((proof (iff-false (asserted (not true)) (= true false))))",
+      ``T = F``),
+    ("iff-true",
+      "((proof (iff-true (asserted true) (= true true))))",
+      ``T = T``),
+    ("intro-def",
+      "((declare-fun z () Bool) (proof (intro-def (= z false))))",
+      ``(z:bool) = F``),
+    ("lemma",
+      "((proof (lemma (hypothesis false) (not false))))",
+      ``~F``),
+    ("monotonicity",
+      "((proof (monotonicity (refl (= false false)) (= (not false) (not false)))))",
+      ``~F = ~F``),
+    ("mp",
+      "((proof (mp (asserted true) (asserted (implies true false)) false)))",
+      ``F``),
+    ("mp~",
+      "((proof (mp~ (asserted true) (asserted (= true false)) false)))",
+      ``F``),
+    ("nnf-neg",
+      "((proof (nnf-neg (asserted false) false)))",
+      ``F``),
+    ("nnf-pos",
+      "((proof (nnf-pos (asserted false) false)))",
+      ``F``),
+    ("not-or-elim",
+      "((proof (not-or-elim (asserted (not (or false true))) (not true))))",
+      ``~T``),
+    ("quant-inst",
+      "((proof ((_ quant-inst false) (or (not (forall ((x Bool)) x)) false))))",
+      ``~(!x:bool. x) \/ F``),
+    ("quant-intro",
+      "((proof (quant-intro (refl (= false false)) \
+        \(= (forall ((x Bool)) false) (forall ((x Bool)) false)))))",
+      ``(!x:bool. F) = (!x:bool. F)``),
+    ("refl",
+      "((proof (refl (= false false))))",
+      ``F = F``),
+    ("rewrite",
+      "((proof (rewrite (= false false))))",
+      ``F = F``),
+    ("sk",
+      "((declare-fun z () Bool) (proof (sk (= (exists ((x Bool)) x) z))))",
+      ``(?x:bool. x) = z``),
+    ("symm",
+      "((proof (symm (asserted (= false true)) (= true false))))",
+      ``T = F``),
+    ("trans",
+      "((proof (trans (asserted (= false true)) \
+        \(asserted (= true false)) (= false false))))",
+      ``F = F``),
+    ("trans*",
+      "((proof (trans* (asserted (= false true)) \
+        \(asserted (= true false)) (= false false))))",
+      ``F = F``),
+    ("true-axiom",
+      "((proof (true-axiom true)))",
+      ``T``),
+    ("unit-resolution",
+      "((proof (unit-resolution (asserted (or false true)) \
+        \(asserted (not true)) false)))",
+      ``F``)
+  ]
+in
+  List.app assert_replays_raw_z3_proof_rule cases
+end
+
+fun z3_proof_replay_failure_diagnostic () =
+  (ignore (replay_z3_proof_string "((proof (commutativity false)))");
+   die "FAIL: malformed Z3 proof rule replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "proof rule: commutativity" msg,
+        "replay diagnostic did not include exact proof rule: " ^ msg);
+      assert (String.isSubstring "parsed HOL conclusion: F" msg,
+        "replay diagnostic did not include parsed conclusion: " ^ msg)
+    end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -1538,7 +1654,11 @@ let
     ("z3_proof_parser_erases_proof_bind_success",
       z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
-      z3_proof_parser_unknown_rule_diagnostic)
+      z3_proof_parser_unknown_rule_diagnostic),
+    ("z3_core_proof_rule_replay_minimal_raw_success",
+      z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_proof_replay_failure_diagnostic",
+      z3_proof_replay_failure_diagnostic)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

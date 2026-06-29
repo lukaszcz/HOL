@@ -1849,6 +1849,19 @@ in
   (* For unit tests *)
   val remove_definitions = remove_definitions
 
+  fun replay_root_for_test proof : Thm.thm =
+  let
+    val state = {
+      asserted_hyps = Term.empty_tmset,
+      definition_hyps = Term.empty_tmset,
+      thm_cache = Net.empty,
+      var_set = proof_vars proof
+    }
+    val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
+  in
+    thm
+  end
+
   (* returns a theorem that concludes ``F``, with its hypotheses (a
      subset of) those asserted in the proof *)
   fun check_proof (asl, g, proof) : Thm.thm =
