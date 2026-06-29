@@ -28,6 +28,54 @@ Z3_ProofParser.sml      Proof reconstruction for Z3: parsing of Z3's proofs.
 Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
                         HOL.
 
+User contract:
+
+HolSmt targets SMT-LIB 2.7.  The generated support report
+`.agent-files/SMTLIB_COVERAGE.md` is the source of truth for parser,
+typechecker, translation, solver and proof-replay status.  Regenerate it from
+the repository root with:
+
+  python3 .agent-files/tools/generate_smtlib_coverage.py
+
+The SMT-LIB 2.7 frontend is not a full-language completeness claim.  It
+accepts the commands, theories and logics recorded in the matrix, and it must
+fail with an explicit invalid-input or unsupported diagnostic for accepted
+syntax whose proof reconstruction is not implemented.  SMT-LIB 3 is not part
+of the contract: no SMT-LIB 3 parser, logic registry or replay path is
+currently identified in the matrix.
+
+`Z3_TAC` is the checked Z3 tactic.  It invokes Z3 in proof-producing mode,
+parses the proof, replays supported proof rules in HOL, and rejects theorem
+outputs with unexpected oracle tags.  It has no oracle fallback in the complete
+target: `UNSAT NONE` from the generic SMT tactic is not an acceptable
+`Z3_TAC` result.  Use `Z3_ORACLE_TAC` only when an oracle result is intended;
+it is outside the checked `Z3_TAC` trusted-code-base boundary.
+
+Supported Z3 versions:
+
+  Version   Proof options used by HolSmt                  Support status
+  2.19.1   PROOF_MODE=2                                  CI matrix legacy path
+  4.12.4   proof=true pp.simplify_implies=false          CI matrix v4 path
+  4.13.0   proof=true pp.simplify_implies=false          CI matrix v4 path
+
+The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
+replay diagnostics include the discovered Z3 version and command stem.
+
+Unsupported or deprecated Z3 versions:
+
+  Version class              Reason
+  2.19                       Deprecated by the exact 2.19.1 CI target; use
+                             2.19.1 when checking the legacy proof path.
+  Other pre-4 versions       Legacy proof format drift is not in the CI matrix;
+                             no support claim is made without corpus evidence.
+  Other 4.x versions         Z3 proof formats and rule aliases can drift between
+                             point releases; add corpus evidence and CI before
+                             claiming support.
+  Future major versions      Unsupported until the proof command, proof-rule
+                             registry, corpus gate and matrix are updated.
+  Undiscoverable version     Diagnostics still run, but the version cannot be
+                             matched to a supported matrix row.
+
 SMT-LIB support matrix:
 
   Area                         Parse  Typecheck  HOL translate  Replay
@@ -41,6 +89,47 @@ SMT-LIB support matrix:
   Datatypes                    yes    single declarations only no no
   Recursive datatypes          AST only explicit rejection no    no
   Z3 Seq/Set/Bag extensions    yes    yes        no             no
+
+Logic coverage summary:
+
+  Logic family                 Contract summary
+  UF, QF_UF                   Implemented parser, translation, solving and
+                              checked replay coverage.
+  LIA, NIA, UFIDL, UFLIA,     Implemented integer parser/translator/replay
+  UFNIA, QF_IDL, QF_LIA,      coverage; parser is permissive and does not
+  QF_NIA, QF_UFIDL, QF_UFLIA  enforce every linear or difference-logic
+                              fragment restriction.
+  LRA, NRA, UFLRA, UFNRA,     Implemented real parser/translator/replay
+  QF_LRA, QF_NRA, QF_RDL,     coverage; parser is permissive about fragment
+  QF_UFLRA, QF_UFNRA          restrictions.
+  QF_LIRA, QF_NIRA,           Implemented mixed Int/Real coverage for current
+  QF_UFLIRA, QF_UFNIRA        selftests and dictionaries.
+  BV, UFBV, QF_ABV,           Implemented bit-vector parser/translator/replay
+  QF_AUFBV, QF_BV, QF_UFBV    coverage, with division/remainder/overflow edges
+                              tracked in the soundness-audit matrix.
+  ALIA, ANIA, AUFLIA,         Core + Ints + ArraysEx dictionaries; parser
+  QF_ALIA, QF_ANIA,           coverage is implemented, while solver/replay
+  QF_AUFLIA, QF_AUFNIA        status is matrix-specific and not a blanket
+                              completeness claim.
+  ALIRA, ANIRA, AUFLIRA,      Core + Reals_Ints + ArraysEx dictionaries; parser
+  AUFNIRA, QF_ALRA,           coverage is implemented, while solver/replay
+  QF_ANRA, QF_AUFLIRA,        status is matrix-specific.
+  QF_AUFNIRA
+  QF_AX                       Array parser/typechecker coverage exists; proof
+                              reconstruction coverage remains limited.
+  QF_S, QF_SLIA, QF_SNIA      String logic parse/typecheck embeddings; string
+                              and regex theory lemmas are unsupported for
+                              checked replay unless a listed replay path applies.
+  QF_FP, QF_FPBV, QF_BVFP,    FloatingPoint parse/typecheck embeddings; checked
+  QF_UFFP, QF_UFBVFP          replay for FP theory lemmas is unsupported.
+  ALL                         HolSmt's permissive aggregate parser dictionary,
+                              not an official SMT-LIB logic and not a
+                              soundness/completeness claim.
+  SMT-LIB 3 logics            Unsupported; no SMT-LIB 3 registry is present.
+
+For the complete per-logic and per-theory rows, including evidence and test
+status, read `.agent-files/SMTLIB_COVERAGE.md`.  Public documentation should
+not claim more than that generated report.
 
 HOL translation records include HOLTheoryEncoding rows for the advanced
 theories.  These rows distinguish native SMT-LIB encodings from conservative
@@ -129,6 +218,78 @@ driver without making the default Python suite depend on a particular heap:
 Unconfigured hooks are counted as `unsupported`, not hidden.  Unsupported
 counts are grouped by logic, mode, SMT-LIB target version and discovered Z3
 version in the generated reports.
+
+Reproducing proof-replay failures:
+
+  python3 src/HolSmt/tools/run_conformance_suite.py \
+    --out /tmp/holsmt-replay-repro \
+    --logic QF_UF \
+    --mode proof-parse \
+    --mode proof-replay \
+    --z3 "${HOL4_Z3_EXECUTABLE:-z3}"
+
+Failing modes preserve `input.smt2`, `result.json`, command output and raw Z3
+proof text when available under:
+
+  /tmp/holsmt-replay-repro/repro/<logic>/<case>/<mode>/
+
+Replay the minimized or preserved input directly with the same proof mode.  For
+Z3 4.x:
+
+  "${HOL4_Z3_EXECUTABLE:-z3}" \
+    proof=true pp.simplify_implies=false -smt2 \
+    /tmp/holsmt-replay-repro/repro/<logic>/<case>/<mode>/input.smt2 \
+    > /tmp/holsmt-replay-repro/manual.stdout \
+    2> /tmp/holsmt-replay-repro/manual.stderr
+
+For the legacy 2.19.1 path, replace the proof options with `PROOF_MODE=2`.
+Keep reducing the preserved `input.smt2` until the same unknown rule,
+unsupported th-lemma shape or replay error remains, then record the minimized
+input through the proof-corpus recorder:
+
+  python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+    --out /tmp/holsmt-proof-corpus \
+    --expected-rules src/HolSmt/tools/proof-corpus/minimal_expected_rules.json \
+    --fail-on-unseen-rules \
+    --fail-on-unknown-rules \
+    /tmp/minimized-repro.smt2
+
+The corpus output records Z3 version, input path, raw proof, rule histogram,
+unseen rules, replay-unknown rules and malformed proof fragments.  Parser-only
+wrappers such as `proof-bind` are reported separately from replay obligations.
+
+Adding support for a new Z3 proof rule:
+
+  1. Add or minimize a corpus input that triggers the rule and run
+     `record_z3_proof_corpus.py` with `--fail-on-unseen-rules` and
+     `--fail-on-unknown-rules`.
+  2. Extend `src/HolSmt/Z3_Proof.sml`: add a `proofterm` constructor if the
+     rule needs a new replay shape, add the rule or alias to
+     `proof_rule_registry`, and set the replay handler identity.
+  3. Extend `src/HolSmt/Z3_ProofParser.sml` only when the rule needs a new
+     premise shape, indexed metadata, alias normalization or wrapper behavior.
+  4. Add the checked replay handler in `src/HolSmt/Z3_ProofReplay.sml`, or add
+     an explicit unsupported diagnostic if the proof certificate does not yet
+     expose enough evidence for sound replay.
+  5. Add deterministic coverage in `src/HolSmt/Unittest.sml` and, when the raw
+     proof extraction rules change, in
+     `src/HolSmt/tools/tests/test_record_z3_proof_corpus.py`.
+  6. Update the expected proof-rule manifest or corpus fixture only after the
+     parser/replay status is intentional.
+  7. Update `.agent-files/smtlib_coverage.json`, regenerate
+     `.agent-files/SMTLIB_COVERAGE.md`, and keep this README in agreement.
+
+Updating the Z3 version matrix:
+
+  1. Add the version to `.github/workflows/docker-ci-for-pr.yml` and make sure
+     `developers/docker-ci/latest/Dockerfile` can install that exact version.
+  2. Run the expk docker build with `Z3_VERSION=<version>` and the HolSmt
+     selftest.
+  3. Run the proof-corpus gate and conformance suite for the new executable.
+  4. If proof options, aliases or unsupported diagnostics changed, update the
+     proof-rule registry, replay tests and expected-rule manifests first.
+  5. Update `.agent-files/smtlib_coverage.json`, regenerate the matrix, and
+     adjust the "Supported Z3 versions" table above.
 
 Pull-request CI runs the PolyML expk build against the Z3 versions already
 provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
