@@ -41,6 +41,26 @@ struct
   and sorted_var_ast =
       SortedVar of string located * sort_ast located
 
+  datatype datatype_selector_ast =
+      DatatypeSelector of string located * sort_ast located
+
+  datatype datatype_tester_ast =
+      DatatypeTester of string located
+
+  datatype datatype_constructor_ast =
+      DatatypeConstructor of string located * datatype_tester_ast located *
+        datatype_selector_ast located list
+
+  datatype datatype_decl_ast =
+      DatatypeDecl of string located list * datatype_constructor_ast located list
+
+  datatype datatype_binding_ast =
+      DatatypeBinding of string located * string located
+
+  datatype function_signature_ast =
+      FunctionSignature of string located * sorted_var_ast located list *
+        sort_ast located
+
   datatype command_ast =
       CmdSetInfo of sexp_ast located list
     | CmdSetOption of sexp_ast located list
@@ -54,6 +74,13 @@ struct
     | CmdDefineConst of string located * sort_ast located * term_ast located
     | CmdDefineFun of string located * sorted_var_ast located list *
         sort_ast located * term_ast located
+    | CmdDefineFunRec of string located * sorted_var_ast located list *
+        sort_ast located * term_ast located
+    | CmdDefineFunsRec of function_signature_ast located list *
+        term_ast located list
+    | CmdDeclareDatatype of string located * datatype_decl_ast located
+    | CmdDeclareDatatypes of datatype_binding_ast located list *
+        datatype_decl_ast located list
     | CmdAssert of term_ast located
     | CmdPush of string located option
     | CmdPop of string located option
@@ -68,6 +95,7 @@ struct
     | CmdGetValue of term_ast located list
     | CmdGetAssignment
     | CmdGetAssertions
+    | CmdEcho of string located
     | CmdExit
     | CmdUnknown of string located * sexp_ast located list
 
@@ -446,6 +474,168 @@ local
         symbols
       end
 
+    fun parse_datatype_selector_from_first tok =
+      let
+        val _ = expect_token "parse_datatype_selector" "(" tok
+        val name = parse_atom_name "parse_datatype_selector"
+          (need_token "parse_datatype_selector" "selector name")
+        val sort = parse_sort ()
+        val close_tok = need_token "parse_datatype_selector" "')'"
+        val _ = expect_token "parse_datatype_selector" ")" close_tok
+        val loc = combine_span (token_loc tok) (token_loc close_tok)
+      in
+        located loc (DatatypeSelector (name, sort))
+      end
+
+    fun parse_datatype_constructor_from_first tok =
+      let
+        val _ = expect_token "parse_datatype_constructor" "(" tok
+        val name = parse_atom_name "parse_datatype_constructor"
+          (need_token "parse_datatype_constructor" "constructor name")
+        fun parse_selector tok =
+          if token_text tok = "(" then
+            parse_datatype_selector_from_first tok
+          else
+            syntax_error "parse_datatype_constructor" (token_loc tok)
+              ("expected selector declaration or ')', found '" ^
+               token_text tok ^ "'")
+        val (selectors, close_tok) =
+          parse_until_rparen "parse_datatype_constructor" parse_selector []
+        val loc = combine_span (token_loc tok) (token_loc close_tok)
+        val tester = located (loc_of name) (DatatypeTester name)
+      in
+        located loc (DatatypeConstructor (name, tester, selectors))
+      end
+
+    fun parse_datatype_constructor_list_from_open open_tok =
+      let
+        val _ = expect_token "parse_datatype_constructor_list" "(" open_tok
+        fun parse_constructor tok =
+          if token_text tok = "(" then
+            parse_datatype_constructor_from_first tok
+          else
+            syntax_error "parse_datatype_constructor_list" (token_loc tok)
+              ("expected constructor declaration or ')', found '" ^
+               token_text tok ^ "'")
+        val (constructors, close_tok) =
+          parse_until_rparen "parse_datatype_constructor_list"
+            parse_constructor []
+      in
+        (constructors, close_tok)
+      end
+
+    fun parse_datatype_decl_from_first tok =
+      let
+        val _ = expect_token "parse_datatype_decl" "(" tok
+        val next = need_token "parse_datatype_decl"
+          "'par' or constructor declaration"
+      in
+        if token_text next = "par" then
+          let
+            val params = parse_symbol_list ()
+            val ctors_open = need_token "parse_datatype_decl"
+              "constructor declaration list"
+            val (constructors, close_ctors) =
+              parse_datatype_constructor_list_from_open ctors_open
+            val close_tok = need_token "parse_datatype_decl" "')'"
+            val _ = expect_token "parse_datatype_decl" ")" close_tok
+            val loc = combine_span (token_loc tok) (token_loc close_tok)
+          in
+            located loc (DatatypeDecl (params, constructors))
+          end
+        else if token_text next = "(" then
+          let
+            val first_ctor = parse_datatype_constructor_from_first next
+            fun parse_constructor tok =
+              if token_text tok = "(" then
+                parse_datatype_constructor_from_first tok
+              else
+                syntax_error "parse_datatype_decl" (token_loc tok)
+                  ("expected constructor declaration or ')', found '" ^
+                   token_text tok ^ "'")
+            val (rest, close_tok) =
+              parse_until_rparen "parse_datatype_decl" parse_constructor []
+            val loc = combine_span (token_loc tok) (token_loc close_tok)
+          in
+            located loc (DatatypeDecl ([], first_ctor :: rest))
+          end
+        else
+          syntax_error "parse_datatype_decl" (token_loc next)
+            ("expected 'par' or constructor declaration, found '" ^
+             token_text next ^ "'")
+      end
+
+    fun parse_datatype_binding_from_first tok =
+      let
+        val _ = expect_token "parse_datatype_binding" "(" tok
+        val name = parse_atom_name "parse_datatype_binding"
+          (need_token "parse_datatype_binding" "datatype name")
+        val arity = parse_atom_name "parse_datatype_binding"
+          (need_token "parse_datatype_binding" "datatype arity")
+        val close_tok = need_token "parse_datatype_binding" "')'"
+        val _ = expect_token "parse_datatype_binding" ")" close_tok
+        val loc = combine_span (token_loc tok) (token_loc close_tok)
+      in
+        located loc (DatatypeBinding (name, arity))
+      end
+
+    fun parse_datatype_binding_list () =
+      let
+        val open_tok = need_token "parse_datatype_binding_list" "'('"
+        val _ = expect_token "parse_datatype_binding_list" "(" open_tok
+        val (bindings, _) =
+          parse_until_rparen "parse_datatype_binding_list"
+            parse_datatype_binding_from_first []
+      in
+        bindings
+      end
+
+    fun parse_datatype_decl_list () =
+      let
+        val open_tok = need_token "parse_datatype_decl_list" "'('"
+        val _ = expect_token "parse_datatype_decl_list" "(" open_tok
+        val (decls, _) =
+          parse_until_rparen "parse_datatype_decl_list"
+            parse_datatype_decl_from_first []
+      in
+        decls
+      end
+
+    fun parse_function_signature_from_first tok =
+      let
+        val _ = expect_token "parse_function_signature" "(" tok
+        val name = parse_atom_name "parse_function_signature"
+          (need_token "parse_function_signature" "function name")
+        val vars = parse_sorted_var_list ()
+        val range = parse_sort ()
+        val close_tok = need_token "parse_function_signature" "')'"
+        val _ = expect_token "parse_function_signature" ")" close_tok
+        val loc = combine_span (token_loc tok) (token_loc close_tok)
+      in
+        located loc (FunctionSignature (name, vars, range))
+      end
+
+    fun parse_function_signature_list () =
+      let
+        val open_tok = need_token "parse_function_signature_list" "'('"
+        val _ = expect_token "parse_function_signature_list" "(" open_tok
+        val (sigs, _) =
+          parse_until_rparen "parse_function_signature_list"
+            parse_function_signature_from_first []
+      in
+        sigs
+      end
+
+    fun parse_term_list_ast () =
+      let
+        val open_tok = need_token "parse_term_list" "'('"
+        val _ = expect_token "parse_term_list" "(" open_tok
+        val (terms, _) =
+          parse_until_rparen "parse_term_list" parse_term_from_first []
+      in
+        terms
+      end
+
     fun parse_empty_command fn_name open_tok node =
       let
         val close_tok = need_token fn_name "')'"
@@ -602,6 +792,46 @@ local
             in
               finish (CmdDefineFun (name, vars, range, body)) close_tok
             end
+        | "define-fun-rec" =>
+            let
+              val name = command_atom "recursive function name"
+              val vars = parse_sorted_var_list ()
+              val range = parse_sort ()
+              val body = parse_term_from_first
+                (command_need "recursive function body")
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
+            in
+              finish (CmdDefineFunRec (name, vars, range, body)) close_tok
+            end
+        | "define-funs-rec" =>
+            let
+              val sigs = parse_function_signature_list ()
+              val bodies = parse_term_list_ast ()
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
+            in
+              finish (CmdDefineFunsRec (sigs, bodies)) close_tok
+            end
+        | "declare-datatype" =>
+            let
+              val name = command_atom "datatype name"
+              val decl = parse_datatype_decl_from_first
+                (command_need "datatype declaration")
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
+            in
+              finish (CmdDeclareDatatype (name, decl)) close_tok
+            end
+        | "declare-datatypes" =>
+            let
+              val bindings = parse_datatype_binding_list ()
+              val decls = parse_datatype_decl_list ()
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
+            in
+              finish (CmdDeclareDatatypes (bindings, decls)) close_tok
+            end
         | "assert" =>
             let
               val term = parse_term_from_first (command_need "assertion")
@@ -640,6 +870,14 @@ local
             parse_empty_command "parse_command" open_tok CmdGetAssignment
         | "get-assertions" =>
             parse_empty_command "parse_command" open_tok CmdGetAssertions
+        | "echo" =>
+            let
+              val msg = command_atom "echo string"
+              val close_tok = command_need "')'"
+              val _ = command_expect ")" close_tok
+            in
+              finish (CmdEcho msg) close_tok
+            end
         | "exit" => parse_empty_command "parse_command" open_tok CmdExit
         | _ =>
             let val (payload, close_tok) =
@@ -1499,6 +1737,18 @@ local
       in
         parse_commands get_token (SOME (add_definition def command_state))
       end
+    | "define-fun-rec" =>
+      raise ERR "parse_commands"
+        "unsupported command 'define-fun-rec': recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+    | "define-funs-rec" =>
+      raise ERR "parse_commands"
+        "unsupported command 'define-funs-rec': mutually recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+    | "declare-datatype" =>
+      raise ERR "parse_commands"
+        "unsupported command 'declare-datatype': datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+    | "declare-datatypes" =>
+      raise ERR "parse_commands"
+        "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
     | "assert" =>
       let
         val command_state = dest_state "assert" state
@@ -1630,6 +1880,13 @@ local
         parse_commands get_token
           (SOME (add_query QueryGetAssertions command_state))
       end
+    | "echo" =>
+      let
+        val _ = get_token ()
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        parse_commands get_token state
+      end
     | "exit" =>
       finalize_state "exit" state
         before Library.expect_token ")" (get_token ())
@@ -1695,10 +1952,12 @@ in
      and discarded), declare-const, declare-fun, define-const,
      define-fun, assert, push, pop, reset, reset-assertions, check-sat,
      check-sat-assuming, get-proof, get-unsat-assumptions, get-unsat-core,
-     get-model, get-value, get-assignment, get-assertions, and exit.
+     get-model, get-value, get-assignment, get-assertions, echo, and exit.
      Solver query commands update parser state, but model/value/core output
-     is not produced by this parser or by proof reconstruction mode.  Any
-     other command is rejected with "unknown command". *)
+     is not produced by this parser or by proof reconstruction mode.
+     Recursive definitions and datatype commands are represented by the
+     script AST but rejected here with explicit unsupported-command
+     diagnostics.  Any other command is rejected with "unknown command". *)
 
   fun parse_file_state (path : string) : command_state_snapshot =
   let

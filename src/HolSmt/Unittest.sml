@@ -322,6 +322,22 @@ fun located_term_annotation_count x =
     SmtLib_Parser.TermAnnotated (_, attrs) => List.length attrs
   | _ => die "expected annotated term"
 
+fun located_datatype_decl_counts x =
+  case SmtLib_Parser.node_of x of
+    SmtLib_Parser.DatatypeDecl (params, constructors) =>
+      (List.length params, List.length constructors)
+
+fun constructor_selector_count x =
+  case SmtLib_Parser.node_of x of
+    SmtLib_Parser.DatatypeConstructor (_, tester, selectors) =>
+      (case SmtLib_Parser.node_of tester of
+         SmtLib_Parser.DatatypeTester constructor_name =>
+           (located_string constructor_name, List.length selectors))
+
+fun function_signature_name x =
+  case SmtLib_Parser.node_of x of
+    SmtLib_Parser.FunctionSignature (name, _, _) => located_string name
+
 fun script_ast_metadata_decls_success () =
 let
   val script =
@@ -502,6 +518,120 @@ in
   | _ => die "stack/query script parsed to the wrong command count"
 end
 
+fun script_ast_datatype_recursive_remaining_success () =
+let
+  val script =
+    SmtLib_Parser.parse_script_string
+      ("(set-logic ALL)\n" ^
+       "(define-fun-rec fact ((n Int)) Int (ite (= n 0) 1 (* n (fact (- n 1)))))\n" ^
+       "(define-funs-rec ((even ((n Int)) Bool) (odd ((n Int)) Bool)) " ^
+         "((ite (= n 0) true (odd (- n 1))) (ite (= n 0) false (even (- n 1)))))\n" ^
+       "(declare-datatype Color ((red) (green) (blue)))\n" ^
+       "(declare-datatype List (par (T) ((nil) (cons (head T) (tail (List T))))))\n" ^
+       "(declare-datatypes ((Tree 1) (Forest 1)) " ^
+         "((par (T) ((leaf (value T)) (node (children (Forest T))))) " ^
+          "(par (T) ((empty) (insert (first (Tree T)) (rest (Forest T)))))))\n" ^
+       "(assert ((_ is cons) xs))\n" ^
+       "(echo \"datatype examples parsed\")\n" ^
+       "(exit)\n")
+in
+  case script of
+    [_, c2, c3, c4, c5, c6, c7, c8, c9] =>
+      let
+        val () = (case SmtLib_Parser.node_of c2 of
+            SmtLib_Parser.CmdDefineFunRec (name, vars, range, _) =>
+              assert (located_string name = "fact" andalso
+                List.length vars = 1 andalso
+                located_sort_identifier range = "Int",
+                "define-fun-rec fields mismatch")
+          | _ => die "define-fun-rec did not parse")
+        val () = (case SmtLib_Parser.node_of c3 of
+            SmtLib_Parser.CmdDefineFunsRec (sigs, bodies) =>
+              assert (List.map function_signature_name sigs = ["even", "odd"] andalso
+                List.length bodies = 2,
+                "define-funs-rec fields mismatch")
+          | _ => die "define-funs-rec did not parse")
+        val () = (case SmtLib_Parser.node_of c4 of
+            SmtLib_Parser.CmdDeclareDatatype (name, decl) =>
+              assert (located_string name = "Color" andalso
+                located_datatype_decl_counts decl = (0, 3),
+                "declare-datatype enum fields mismatch")
+          | _ => die "enum declare-datatype did not parse")
+        val () = (case SmtLib_Parser.node_of c5 of
+            SmtLib_Parser.CmdDeclareDatatype (name, decl) =>
+              assert (located_string name = "List" andalso
+                located_datatype_decl_counts decl = (1, 2),
+                "parametric declare-datatype fields mismatch")
+          | _ => die "parametric declare-datatype did not parse")
+        val () = (case SmtLib_Parser.node_of c6 of
+            SmtLib_Parser.CmdDeclareDatatypes (bindings, decls) =>
+              assert (List.length bindings = 2 andalso
+                List.map located_datatype_decl_counts decls = [(1, 2), (1, 2)],
+                "declare-datatypes fields mismatch")
+          | _ => die "declare-datatypes did not parse")
+        val () = (case SmtLib_Parser.node_of c5 of
+            SmtLib_Parser.CmdDeclareDatatype (_, decl) =>
+              (case SmtLib_Parser.node_of decl of
+                 SmtLib_Parser.DatatypeDecl (_, [_, cons_ctor]) =>
+                   assert (constructor_selector_count cons_ctor = ("cons", 2),
+                     "constructor selectors/tester were not represented")
+               | _ => die "unexpected datatype declaration shape")
+          | _ => die "parametric declare-datatype did not parse")
+        val () = (case SmtLib_Parser.node_of c7 of
+            SmtLib_Parser.CmdAssert term =>
+              (case SmtLib_Parser.node_of term of
+                 SmtLib_Parser.TermApply (head, _) =>
+                   (case SmtLib_Parser.node_of head of
+                      SmtLib_Parser.TermIndexed (index_head, indices) =>
+                        assert (located_string index_head = "is" andalso
+                          List.length indices = 1,
+                          "tester term did not parse as indexed identifier")
+                    | _ => die "tester assert head was not indexed")
+               | _ => die "tester assert was not an application")
+          | _ => die "tester assert did not parse")
+        val () = (case SmtLib_Parser.node_of c8 of
+            SmtLib_Parser.CmdEcho msg =>
+              assert (located_string msg = "datatype examples parsed",
+                "echo string mismatch")
+          | _ => die "echo did not parse")
+        val () = (case SmtLib_Parser.node_of c9 of
+            SmtLib_Parser.CmdExit => ()
+          | _ => die "exit did not parse")
+      in
+        ()
+      end
+  | _ => die "datatype/recursive script parsed to the wrong command count"
+end
+
+fun parse_file_datatype_unsupported_diagnostic () =
+  let
+    val _ =
+      parse_smtlib_assertions
+        ("(set-logic QF_UF)\n" ^
+         "(declare-datatype Color ((red) (green)))\n" ^
+         "(exit)\n")
+  in
+    die "legacy benchmark parser accepted datatype declarations"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains "unsupported command 'declare-datatype'" msg,
+        "datatype diagnostic was not explicit: " ^ msg)
+    end
+
+fun parse_file_echo_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_UF)\n" ^
+       "(echo \"hello\")\n" ^
+       "(assert true)\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1, "echo changed assertion state")
+end
+
 fun parse_file_push_pop_assertion_scoping () =
 let
   val assertions =
@@ -651,6 +781,11 @@ let
     ("script_ast_metadata_decls_success", script_ast_metadata_decls_success),
     ("script_ast_command_syntax_error", script_ast_command_syntax_error),
     ("script_ast_stack_and_query_success", script_ast_stack_and_query_success),
+    ("script_ast_datatype_recursive_remaining_success",
+      script_ast_datatype_recursive_remaining_success),
+    ("parse_file_datatype_unsupported_diagnostic",
+      parse_file_datatype_unsupported_diagnostic),
+    ("parse_file_echo_success", parse_file_echo_success),
     ("parse_file_push_pop_assertion_scoping",
       parse_file_push_pop_assertion_scoping),
     ("parse_file_push_pop_declaration_scoping",
