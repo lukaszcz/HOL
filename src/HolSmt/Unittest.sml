@@ -56,6 +56,77 @@ in
    SmtLib.translation_records translation, translation)
 end
 
+fun term_with_types t =
+  Lib.with_flag (show_types, true) Hol_pp.term_to_string t
+
+fun string_get_char text =
+let
+  val pos = ref 0
+  val len = String.size text
+in
+  fn () =>
+    if !pos < len then
+      let
+        val c = String.sub (text, !pos)
+      in
+        pos := !pos + 1;
+        c
+      end
+    else
+      raise Feedback.mk_HOL_ERR "Unittest" "string_get_char"
+        "end of string"
+end
+
+fun assert_body s =
+  if String.isPrefix "(assert " s then
+    let
+      val prefix_len = String.size "(assert "
+      val suffix_len = String.size ")\n"
+      val body_len = String.size s - prefix_len - suffix_len
+    in
+      SOME (String.substring (s, prefix_len, body_len))
+    end
+  else
+    NONE
+
+fun parse_roundtrip_term test_name smt_term dicts =
+  SmtLib_Parser.parse_term (Library.get_token (string_get_char smt_term)) dicts
+  handle Feedback.HOL_ERR holerr =>
+    die ("FAIL: round-trip test '" ^ test_name ^
+      "' failed to parse SMT-LIB term '" ^ smt_term ^ "': " ^
+      top_structure_of holerr ^ "." ^ top_function_of holerr ^
+      ", message: " ^ message_of holerr)
+
+fun assert_roundtrip_assertion test_name idx smt_term expected parsed =
+  assert (Term.aconv expected parsed,
+    "round-trip test '" ^ test_name ^ "' assertion " ^
+    Int.toString idx ^ " mismatch for SMT-LIB term '" ^ smt_term ^
+    "'\nexpected: " ^ term_with_types expected ^
+    "\nparsed: " ^ term_with_types parsed)
+
+fun assert_goal_roundtrip test_name (goal as (assumptions, conclusion)) =
+let
+  val (translation, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+  val dicts = SmtLib.parser_dicts_for_translation translation
+  val smt_assertions = List.mapPartial assert_body strings
+  val expected_assertions = assumptions @ [boolSyntax.mk_neg conclusion]
+  val parsed_assertions =
+    List.map (fn smt => parse_roundtrip_term test_name smt dicts)
+      smt_assertions
+  val _ = assert (List.length smt_assertions = List.length expected_assertions,
+    "round-trip test '" ^ test_name ^ "' emitted " ^
+    Int.toString (List.length smt_assertions) ^ " assertion(s), expected " ^
+    Int.toString (List.length expected_assertions))
+  fun compare_one (idx, (smt_term, (expected, parsed))) =
+    assert_roundtrip_assertion test_name idx smt_term expected parsed
+in
+  List.app compare_one
+    (ListPair.zipEq
+      (List.tabulate (List.length smt_assertions, fn n => n + 1),
+       ListPair.zipEq (smt_assertions,
+         ListPair.zipEq (expected_assertions, parsed_assertions))))
+end
+
 fun term_is_var_named name tm =
   let val (var_name, _) = Term.dest_var tm
   in var_name = name end
@@ -1197,6 +1268,52 @@ in
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
+fun smtlib_roundtrip_current_theories_success () =
+let
+  fun roundtrip name goal = assert_goal_roundtrip name goal
+in
+  roundtrip "integers" ([],
+    ``(x:int) + 7 <= y - ~3``);
+  roundtrip "reals" ([],
+    ``(x:real) + 7r <= y * 2r``);
+  roundtrip "num-numerals-uninterpreted" ([],
+    ``42n = n``);
+  roundtrip "words-bitvectors" ([],
+    ``((x:word8) && 3w) = (y || 1w)``);
+  roundtrip "uninterpreted-functions-and-equality" ([],
+    ``(f:'a -> 'b) x = g y``);
+  roundtrip "function-application-current-encoding" ([],
+    ``(f:'a -> 'b) x = f x``);
+  roundtrip "mixed-int-word-uf" ([``(x:int) <= y``],
+    ``((x:int) + 1 <= y + 2) /\ ((w:word8) + 1w = w + 1w) /\
+      (P:'a -> bool) a``)
+end
+
+fun smtlib_roundtrip_known_gap_matrix_success () =
+let
+  val matrix = [
+    {encoding = "integers/reals/numerals",
+     status = "round-trips through parser_dicts_for_translation"},
+    {encoding = "words/bit-vectors",
+     status = "round-trips through parser_dicts_for_translation"},
+    {encoding = "uninterpreted functions/equality",
+     status = "round-trips through parser_dicts_for_translation"},
+    {encoding = "HOL function application",
+     status = "currently emitted as uninterpreted functions"},
+    {encoding = "SMT ArraysEx select/store",
+     status = "known gap: parser maps select/store to HOL application/update, \
+              \but HOL translation currently emits function application as UF \
+              \rather than SMT array select/store"}
+  ]
+  fun has_array_gap {encoding, status} =
+    encoding = "SMT ArraysEx select/store" andalso
+    String.isSubstring "known gap" status andalso
+    String.isSubstring "select/store" status
+in
+  assert (List.exists has_array_gap matrix,
+    "round-trip matrix lacks explicit ArraysEx select/store diagnostic")
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -1274,7 +1391,11 @@ let
     ("smtlib_translation_logic_inference_success",
       smtlib_translation_logic_inference_success),
     ("smtlib_translation_records_success",
-      smtlib_translation_records_success)
+      smtlib_translation_records_success),
+    ("smtlib_roundtrip_current_theories_success",
+      smtlib_roundtrip_current_theories_success),
+    ("smtlib_roundtrip_known_gap_matrix_success",
+      smtlib_roundtrip_known_gap_matrix_success)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"
