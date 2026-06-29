@@ -30,6 +30,27 @@ struct
      bind its handler identity in the parser/replay compatibility
      wrappers. *)
 
+  type th_lemma_metadata = {
+    theory : string,
+    subkind : string option,
+    indices : string list
+  }
+
+  fun mk_th_lemma_metadata (theory, subkind, indices) : th_lemma_metadata = {
+    theory = theory,
+    subkind = subkind,
+    indices = indices
+  }
+
+  fun th_lemma_metadata_to_string ({theory, subkind, indices}
+      : th_lemma_metadata) =
+    "theory=" ^ theory ^
+    ", subkind=" ^ Option.getOpt (subkind, "<none>") ^
+    ", indices=[" ^ String.concatWith ", " indices ^ "]"
+
+  fun th_lemma_rule_name metadata =
+    "th_lemma[" ^ th_lemma_metadata_to_string metadata ^ "]"
+
   datatype proofterm = AND_ELIM of proofterm * Term.term
                      | ASSERTED of Term.term
                      | COMMUTATIVITY of Term.term
@@ -52,10 +73,14 @@ struct
                      | REWRITE of Term.term
                      | SKOLEM of Term.term
                      | SYMM of proofterm * Term.term
-                     | TH_LEMMA_ARITH of proofterm list * Term.term
-                     | TH_LEMMA_ARRAY of proofterm list * Term.term
-                     | TH_LEMMA_BASIC of proofterm list * Term.term
-                     | TH_LEMMA_BV of proofterm list * Term.term
+                     | TH_LEMMA_ARITH of th_lemma_metadata * proofterm list *
+                         Term.term
+                     | TH_LEMMA_ARRAY of th_lemma_metadata * proofterm list *
+                         Term.term
+                     | TH_LEMMA_BASIC of th_lemma_metadata * proofterm list *
+                         Term.term
+                     | TH_LEMMA_BV of th_lemma_metadata * proofterm list *
+                         Term.term
                      | TRANS of proofterm * proofterm * Term.term
                      | TRANS_STAR of proofterm list * Term.term
                      | TRUE_AXIOM of Term.term

@@ -69,6 +69,19 @@ hypotheses, definition hypotheses and Z3-created variables.  Unknown proof
 rules are reported by Z3_ProofParser.sml with the missing rule name and local
 proof subterm.
 
+Z3 th-lemma replay coverage:
+
+  Theory      Subkind/index handling         Replay status
+  arith       preserved in diagnostics       checked by existing arith_prove path
+  array       preserved in diagnostics       checked by existing update prover path
+  bv          preserved in diagnostics       checked by existing word/BBLAST path
+  basic       preserved in diagnostics       unsupported diagnostic:
+              "unsupported th-lemma shape: theory=basic; checked replay is not
+              implemented for basic Boolean/equality simplification lemmas"
+
+Indexed th-lemma failures include theory, subkind, remaining proof indices and
+the parsed HOL conclusion in the replay error.
+
 Pull-request CI runs the PolyML expk build against the Z3 versions already
 provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
 equivalent local hook is:

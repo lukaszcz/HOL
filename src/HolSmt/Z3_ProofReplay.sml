@@ -1239,8 +1239,10 @@ local
     end)
 
   val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
-    (*TODO: not implemented yet*)
-    raise ERR "" "")
+    raise ERR "z3_th_lemma_basic"
+      ("unsupported th-lemma shape: theory=basic; checked replay is not " ^
+       "implemented for basic Boolean/equality simplification lemmas; " ^
+       "conclusion=" ^ Library.term_to_string t))
 
   val z3_th_lemma_bv =
   let
@@ -1375,6 +1377,14 @@ local
 
   fun proofterm_rule (ID id) = "@" ^ Int.toString id
     | proofterm_rule (THEOREM _) = "<replayed theorem>"
+    | proofterm_rule (TH_LEMMA_ARITH (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_ARRAY (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_BASIC (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_BV (metadata, _, _)) =
+        th_lemma_rule_name metadata
     | proofterm_rule pt =
         (case lookup_rule_by_handler (proofterm_replay_handler pt) of
           SOME rule => #name rule
@@ -1402,10 +1412,10 @@ local
     | proofterm_concl (REWRITE concl) = SOME concl
     | proofterm_concl (SKOLEM concl) = SOME concl
     | proofterm_concl (SYMM (_, concl)) = SOME concl
-    | proofterm_concl (TH_LEMMA_ARITH (_, concl)) = SOME concl
-    | proofterm_concl (TH_LEMMA_ARRAY (_, concl)) = SOME concl
-    | proofterm_concl (TH_LEMMA_BASIC (_, concl)) = SOME concl
-    | proofterm_concl (TH_LEMMA_BV (_, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_ARITH (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_ARRAY (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_BASIC (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_BV (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS_STAR (_, concl)) = SOME concl
     | proofterm_concl (TRUE_AXIOM concl) = SOME concl
@@ -1616,17 +1626,22 @@ local
         zero_prems state_proof "skolem" z3_skolem x continuation
     | thm_of_proofterm (state_proof, SYMM x) continuation =
         one_prem state_proof "symm" z3_symm x continuation
-    | thm_of_proofterm (state_proof, TH_LEMMA_ARITH x) continuation =
-        list_prems state_proof "th_lemma[arith]" z3_th_lemma_arith x
-          continuation []
-    | thm_of_proofterm (state_proof, TH_LEMMA_ARRAY x) continuation =
-        list_prems state_proof "th_lemma[array]" z3_th_lemma_array x
-          continuation []
-    | thm_of_proofterm (state_proof, TH_LEMMA_BASIC x) continuation =
-        list_prems state_proof "th_lemma[basic]" z3_th_lemma_basic x
-          continuation []
-    | thm_of_proofterm (state_proof, TH_LEMMA_BV x) continuation =
-        list_prems state_proof "th_lemma[bv]" z3_th_lemma_bv x continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_ARITH (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_arith
+          (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_ARRAY (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_array
+          (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_BASIC (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_basic
+          (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_BV (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_bv
+          (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TRANS x) continuation =
         two_prems state_proof "trans" z3_trans x continuation
     | thm_of_proofterm (state_proof, TRANS_STAR x) continuation =

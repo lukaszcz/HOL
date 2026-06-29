@@ -65,6 +65,7 @@ local
      parsed the last premise, and can continue by parsing a term. *)
 
   val pt_ty = Type.mk_vartype "'pt"
+  val th_lemma_metadata_ty = listSyntax.mk_list_type stringSyntax.string_ty
 
   fun zero_prems name =
     SmtLib_Theories.K_zero_one (Lib.curry Term.mk_comb (Term.mk_var
@@ -89,6 +90,57 @@ local
       (Lib.curry Term.mk_comb (Term.mk_var (name, boolSyntax.list_mk_fun
       ([listSyntax.mk_list_type pt_ty, Type.bool], pt_ty))))) o
       Lib.apfst (Lib.C (Lib.curry listSyntax.mk_list) pt_ty) o Lib.front_last)
+
+  fun th_lemma_normalize_index_string s =
+  let
+    val n = String.size s
+    fun all_digits_until limit i =
+      i >= limit orelse
+      (Char.isDigit (String.sub (s, i)) andalso
+       all_digits_until limit (i + 1))
+    val int_suffix =
+      n > 1 andalso String.sub (s, n - 1) = #"i" andalso
+      (all_digits_until (n - 1) 0 orelse
+       (n > 2 andalso
+        (String.sub (s, 0) = #"-" orelse String.sub (s, 0) = #"~") andalso
+        all_digits_until (n - 1) 1))
+  in
+    if int_suffix then String.substring (s, 0, n - 1) else s
+  end
+
+  fun th_lemma_index_to_string tm =
+    th_lemma_normalize_index_string (Arbint.toString (intSyntax.int_of_term tm))
+    handle Feedback.HOL_ERR _ =>
+      th_lemma_normalize_index_string (Lib.fst (Term.dest_var tm))
+      handle Feedback.HOL_ERR _ =>
+        th_lemma_normalize_index_string (Library.term_to_string tm)
+
+  fun th_lemma_metadata_of_index_terms indices =
+    case List.map th_lemma_index_to_string indices of
+      theory :: subkind :: rest =>
+        mk_th_lemma_metadata (theory, SOME subkind, rest)
+    | theory :: [] =>
+        mk_th_lemma_metadata (theory, NONE, [])
+    | [] =>
+        raise ERR "th_lemma_metadata_of_index_terms"
+          "th-lemma rule has no theory index"
+
+  fun th_lemma_metadata_term ({theory, subkind, indices}
+      : th_lemma_metadata) =
+    listSyntax.mk_list
+      (List.map stringSyntax.fromMLstring
+        (theory :: Option.getOpt (subkind, "") :: indices),
+       stringSyntax.string_ty)
+
+  fun th_lemma_prems name metadata prems =
+  let
+    val (pts, concl) = Lib.front_last prems
+    val t = Term.mk_var (name, boolSyntax.list_mk_fun
+      ([th_lemma_metadata_ty, listSyntax.mk_list_type pt_ty, Type.bool], pt_ty))
+  in
+    Term.list_mk_comb (t, [th_lemma_metadata_term metadata,
+      listSyntax.mk_list (pts, pt_ty), concl])
+  end
 
   fun list_args_zero_prems name =
     SmtLib_Theories.K_list_one (fn indices => fn term =>
@@ -154,16 +206,16 @@ local
              we're already matching "th-lemma".
 
              The indices will be passed as [``arith``, ``farkas``, ``1``, ``1``,
-             ``1``] but currently we only care about the first one (the theory
-             name), so we'll discard the rest.
+             ``1``].  Preserve them as theory/subkind/proof indices so replay
+             dispatch and diagnostics can report the exact indexed rule.
 
              We'll change the name of the rule to "th-lemma-<theory>" which will
              later hook into the theory-specific rule processing. *)
-          val theory_tm = List.hd indices
-          val theory_str = Lib.fst (Term.dest_var theory_tm)
+          val metadata = th_lemma_metadata_of_index_terms indices
+          val theory_str = #theory metadata
           val name = "th-lemma-" ^ theory_str
         in
-          list_prems name token [] prems
+          th_lemma_prems name metadata prems
         end)),
     ("trans",           two_prems "trans"),
     (* the following is used in `(_ th-lemma arith ...)` inference rules *)
@@ -377,6 +429,24 @@ local
 
   and list_args_zero_prems_pt f = f o Lib.front_last
 
+  and th_lemma_metadata_of_term metadata_tm =
+    case List.map stringSyntax.fromHOLstring
+        (Lib.fst (listSyntax.dest_list metadata_tm)) of
+      theory :: "" :: indices =>
+        mk_th_lemma_metadata (theory, NONE, indices)
+    | theory :: subkind :: indices =>
+        mk_th_lemma_metadata (theory, SOME subkind, indices)
+    | _ =>
+        raise ERR "th_lemma_metadata_of_term"
+          "malformed th-lemma metadata term"
+
+  and th_lemma_prems_pt version f =
+    SmtLib_Theories.three_args (fn (metadata_tm, pts_tm, concl) =>
+      f (th_lemma_metadata_of_term metadata_tm,
+         List.map (proofterm_of_term version)
+          (Lib.fst (listSyntax.dest_list pts_tm)),
+         concl))
+
   and proofterm_maker version "and_elim" = one_prem_pt version AND_ELIM
     | proofterm_maker version "asserted" = zero_prems_pt ASSERTED
     | proofterm_maker version "commutativity" = zero_prems_pt COMMUTATIVITY
@@ -404,13 +474,13 @@ local
     | proofterm_maker version "skolem" = zero_prems_pt SKOLEM
     | proofterm_maker version "symm" = one_prem_pt version SYMM
     | proofterm_maker version "th_lemma[arith]" =
-        list_prems_pt version TH_LEMMA_ARITH
+        th_lemma_prems_pt version TH_LEMMA_ARITH
     | proofterm_maker version "th_lemma[array]" =
-        list_prems_pt version TH_LEMMA_ARRAY
+        th_lemma_prems_pt version TH_LEMMA_ARRAY
     | proofterm_maker version "th_lemma[basic]" =
-        list_prems_pt version TH_LEMMA_BASIC
+        th_lemma_prems_pt version TH_LEMMA_BASIC
     | proofterm_maker version "th_lemma[bv]" =
-        list_prems_pt version TH_LEMMA_BV
+        th_lemma_prems_pt version TH_LEMMA_BV
     | proofterm_maker version "trans" = two_prems_pt version TRANS
     | proofterm_maker version "trans_star" = list_prems_pt version TRANS_STAR
     | proofterm_maker version "true_axiom" = zero_prems_pt TRUE_AXIOM

@@ -1429,6 +1429,27 @@ in
   | NONE => die "FAIL: proof-bind proof did not define root proof step"
 end
 
+fun z3_proof_parser_th_lemma_metadata_success () =
+let
+  val proof = parse_z3_proof_string "4.12.4"
+    "((proof ((_ th-lemma arith farkas 1 2) true)))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.TH_LEMMA_ARITH
+      ({theory, subkind, indices}, [], concl)) =>
+        (assert (theory = "arith",
+          "th-lemma metadata did not preserve theory");
+         assert (subkind = SOME "farkas",
+         "th-lemma metadata did not preserve subkind");
+         assert (indices = ["1", "2"],
+          "th-lemma metadata did not preserve proof indices: [" ^
+          String.concatWith ", " indices ^ "]");
+         assert (concl ~~ ``T``,
+          "th-lemma metadata test parsed unexpected conclusion"))
+  | SOME _ => die "FAIL: indexed th-lemma parsed to unexpected constructor"
+  | NONE => die "FAIL: indexed th-lemma proof did not define root proof step"
+end
+
 fun z3_proof_parser_unknown_rule_diagnostic () =
   (ignore (parse_z3_proof_string "4.12.4"
     "((proof (new-z3-rule false)))");
@@ -1549,6 +1570,36 @@ in
   List.app assert_replays_raw_z3_proof_rule cases
 end
 
+fun z3_th_lemma_existing_theory_replay_minimal_success () =
+let
+  val cases = [
+    "((proof ((_ th-lemma arith farkas 1) (= 1 1))))",
+    "((proof ((_ th-lemma array select-store 0) (= false false))))",
+    "((proof ((_ th-lemma bv bit-blast 1) (= false false))))"
+  ]
+in
+  List.app (ignore o replay_z3_proof_string) cases
+end
+
+fun z3_th_lemma_basic_unsupported_diagnostic () =
+  (ignore (replay_z3_proof_string
+    "((proof ((_ th-lemma basic eq-propagate 7) false)))");
+   die "FAIL: unsupported basic th-lemma replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "theory=basic" msg,
+        "basic th-lemma diagnostic did not include theory: " ^ msg);
+      assert (String.isSubstring "subkind=eq-propagate" msg,
+        "basic th-lemma diagnostic did not include subkind: " ^ msg);
+      assert (String.isSubstring "indices=[7]" msg,
+        "basic th-lemma diagnostic did not include proof indices: " ^ msg);
+      assert (String.isSubstring "parsed HOL conclusion: F" msg,
+        "basic th-lemma diagnostic did not include conclusion: " ^ msg);
+      assert (String.isSubstring "unsupported th-lemma shape" msg,
+        "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
+    end
+
 fun z3_proof_replay_failure_diagnostic () =
   (ignore (replay_z3_proof_string "((proof (commutativity false)))");
    die "FAIL: malformed Z3 proof rule replayed successfully")
@@ -1653,10 +1704,16 @@ let
       z3_proof_parser_normalizes_rule_alias_success),
     ("z3_proof_parser_erases_proof_bind_success",
       z3_proof_parser_erases_proof_bind_success),
+    ("z3_proof_parser_th_lemma_metadata_success",
+      z3_proof_parser_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_th_lemma_existing_theory_replay_minimal_success",
+      z3_th_lemma_existing_theory_replay_minimal_success),
+    ("z3_th_lemma_basic_unsupported_diagnostic",
+      z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
       z3_proof_replay_failure_diagnostic)
   ]
