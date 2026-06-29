@@ -18,6 +18,7 @@ from typing import Iterable
 
 
 SCHEMA = "holsmt-z3-proof-corpus-v1"
+RULE_CONTEXT_LIMIT = 3
 
 REPLAY_SUPPORTED_RULES = {
     "and-elim",
@@ -282,6 +283,7 @@ def malformed_item(text: str, message: str, start: int, end: int) -> dict[str, o
 
 def extract_rule_report(proof_text: str) -> dict[str, object]:
     histogram: collections.Counter[str] = collections.Counter()
+    rule_contexts: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
     unknown_contexts: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
     malformed: list[dict[str, object]] = []
 
@@ -298,21 +300,28 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
         )
         return {
             "rule_histogram": {},
+            "rule_contexts": {},
             "unknown_rules": [],
             "malformed_fragments": malformed,
         }
 
-    def record_unknown(rule: str, node: ListNode) -> None:
-        if len(unknown_contexts[rule]) >= 3:
-            return
+    def context_item(node: ListNode) -> dict[str, object]:
         loc = line_col(proof_text, node.start)
-        unknown_contexts[rule].append(
-            {
-                "line": loc["line"],
-                "column": loc["column"],
-                "context": context_for(proof_text, node.start, node.end),
-            }
-        )
+        return {
+            "line": loc["line"],
+            "column": loc["column"],
+            "context": context_for(proof_text, node.start, node.end),
+        }
+
+    def record_rule_context(rule: str, node: ListNode) -> None:
+        if len(rule_contexts[rule]) >= RULE_CONTEXT_LIMIT:
+            return
+        rule_contexts[rule].append(context_item(node))
+
+    def record_unknown(rule: str, node: ListNode) -> None:
+        if len(unknown_contexts[rule]) >= RULE_CONTEXT_LIMIT:
+            return
+        unknown_contexts[rule].append(context_item(node))
 
     def visit(node: Node, proof_expected: bool) -> None:
         if isinstance(node, Atom):
@@ -387,6 +396,7 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
             return
 
         histogram[head_name] += 1
+        record_rule_context(head_name, node)
         if head_name not in REPLAY_SUPPORTED_RULES:
             record_unknown(head_name, node)
 
@@ -451,6 +461,7 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
 
     return {
         "rule_histogram": dict(sorted(histogram.items())),
+        "rule_contexts": dict(sorted(rule_contexts.items())),
         "unknown_rules": unknown_rules,
         "malformed_fragments": malformed,
     }
@@ -560,6 +571,7 @@ def record_one(
     proof_hash: str | None = None
     proof_report = {
         "rule_histogram": {},
+        "rule_contexts": {},
         "unknown_rules": [],
         "malformed_fragments": [],
     }
@@ -609,16 +621,25 @@ def record_one(
 def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
     entries = list(entries)
     aggregate: collections.Counter[str] = collections.Counter()
+    aggregate_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    version_entries: collections.Counter[str] = collections.Counter()
+    version_proofs: collections.Counter[str] = collections.Counter()
     unknown: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
     malformed_count = 0
     for entry in entries:
         proof = entry["proof"]  # type: ignore[index]
+        version = entry["z3"]["version"]  # type: ignore[index]
+        version_entries[version] += 1
+        if proof["available"]:  # type: ignore[index]
+            version_proofs[version] += 1
         for rule, count in proof["rule_histogram"].items():  # type: ignore[index, union-attr]
             aggregate[rule] += count
+            aggregate_by_version[version][rule] += count
         for item in proof["unknown_rules"]:  # type: ignore[index, union-attr]
             unknown[item["rule"]].append(  # type: ignore[index]
                 {
                     "input": entry["input"]["path"],  # type: ignore[index]
+                    "z3_version": version,
                     "count": item["count"],  # type: ignore[index]
                     "contexts": item["contexts"],  # type: ignore[index]
                 }
@@ -630,7 +651,24 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         "kind": "proof-corpus-summary",
         "entry_count": len(entries),
         "proof_count": sum(1 for entry in entries if entry["proof"]["available"]),  # type: ignore[index]
+        "z3_versions": [
+            {
+                "version": version,
+                "entry_count": version_entries[version],
+                "proof_count": version_proofs[version],
+            }
+            for version in sorted(version_entries)
+        ],
+        "discovered_rules": sorted(aggregate),
         "aggregate_rule_histogram": dict(sorted(aggregate.items())),
+        "rules_by_version": [
+            {
+                "z3_version": version,
+                "rules": sorted(histogram),
+                "rule_histogram": dict(sorted(histogram.items())),
+            }
+            for version, histogram in sorted(aggregate_by_version.items())
+        ],
         "unknown_rule_coverage": [
             {
                 "rule": rule,
@@ -641,6 +679,104 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         ],
         "malformed_fragment_count": malformed_count,
         "entries": [entry["input"]["path"] for entry in entries],  # type: ignore[index]
+    }
+
+
+def load_expected_rule_manifest(path: pathlib.Path) -> object:
+    with path.open(encoding="utf-8") as infile:
+        return json.load(infile)
+
+
+def _rule_list(value: object) -> set[str]:
+    if value is None:
+        return set()
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        raise ValueError("expected proof-rule manifest entries must be string lists")
+    return set(value)
+
+
+def expected_rules_for_version(manifest: object, version: str) -> set[str]:
+    if isinstance(manifest, list):
+        return _rule_list(manifest)
+    if not isinstance(manifest, dict):
+        raise ValueError("expected proof-rule manifest must be a list or object")
+
+    rules = _rule_list(manifest.get("default"))
+    rules.update(_rule_list(manifest.get("rules")))
+    versions = manifest.get("versions", {})
+    if versions is None:
+        versions = {}
+    if not isinstance(versions, dict):
+        raise ValueError("expected proof-rule manifest 'versions' must be an object")
+
+    for key, value in versions.items():
+        if not isinstance(key, str):
+            raise ValueError("expected proof-rule manifest version keys must be strings")
+        if key == version or (key.endswith("*") and version.startswith(key[:-1])):
+            rules.update(_rule_list(value))
+    return rules
+
+
+def build_rule_gate_report(
+    entries: Iterable[dict[str, object]],
+    expected_manifest: object | None,
+) -> dict[str, object]:
+    unseen: list[dict[str, object]] = []
+    replay_unknown: list[dict[str, object]] = []
+    malformed: list[dict[str, object]] = []
+
+    for entry in entries:
+        input_path = entry["input"]["path"]  # type: ignore[index]
+        version = entry["z3"]["version"]  # type: ignore[index]
+        proof = entry["proof"]  # type: ignore[index]
+        expected = (
+            expected_rules_for_version(expected_manifest, version)
+            if expected_manifest is not None
+            else None
+        )
+        contexts = proof.get("rule_contexts", {})  # type: ignore[union-attr]
+
+        if expected is not None:
+            for rule, count in sorted(proof["rule_histogram"].items()):  # type: ignore[index, union-attr]
+                if rule not in expected:
+                    unseen.append(
+                        {
+                            "z3_version": version,
+                            "input": input_path,
+                            "rule": rule,
+                            "count": count,
+                            "contexts": contexts.get(rule, []),  # type: ignore[union-attr]
+                        }
+                    )
+
+        for item in proof["unknown_rules"]:  # type: ignore[index, union-attr]
+            replay_unknown.append(
+                {
+                    "z3_version": version,
+                    "input": input_path,
+                    "rule": item["rule"],  # type: ignore[index]
+                    "count": item["count"],  # type: ignore[index]
+                    "contexts": item["contexts"],  # type: ignore[index]
+                }
+            )
+
+        fragments = proof["malformed_fragments"]  # type: ignore[index]
+        if fragments:
+            malformed.append(
+                {
+                    "z3_version": version,
+                    "input": input_path,
+                    "fragments": fragments,
+                }
+            )
+
+    return {
+        "schema": SCHEMA,
+        "kind": "proof-rule-discovery-gate",
+        "passed": not unseen and not replay_unknown and not malformed,
+        "unseen_rules": unseen,
+        "replay_unknown_rules": replay_unknown,
+        "malformed_fragments": malformed,
     }
 
 
@@ -687,7 +823,57 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         default=[],
         help="additional option passed to Z3 before -smt2",
     )
-    return parser.parse_args(argv)
+    parser.add_argument(
+        "--expected-rules",
+        type=pathlib.Path,
+        help=(
+            "JSON manifest of expected proof rules. A list applies to every Z3 "
+            "version; an object may contain default/rules and versions entries."
+        ),
+    )
+    parser.add_argument(
+        "--gate-report",
+        default="rule-gate.json",
+        help="rule-discovery gate JSON file name inside --out",
+    )
+    parser.add_argument(
+        "--fail-on-unseen-rules",
+        action="store_true",
+        help="return nonzero if a discovered proof rule is absent from --expected-rules",
+    )
+    parser.add_argument(
+        "--fail-on-unknown-rules",
+        action="store_true",
+        help="return nonzero if a discovered proof rule is not replay-supported by HolSmt",
+    )
+    args = parser.parse_args(argv)
+    if args.fail_on_unseen_rules and args.expected_rules is None:
+        parser.error("--fail-on-unseen-rules requires --expected-rules")
+    return args
+
+
+def print_gate_findings(report: dict[str, object]) -> None:
+    unseen = report["unseen_rules"]  # type: ignore[index]
+    replay_unknown = report["replay_unknown_rules"]  # type: ignore[index]
+    malformed = report["malformed_fragments"]  # type: ignore[index]
+    if unseen:
+        print("unseen proof rules:")
+        for item in unseen[:10]:  # type: ignore[index]
+            print(
+                f"  {item['z3_version']} {item['input']}: "  # type: ignore[index]
+                f"{item['rule']} ({item['count']})"  # type: ignore[index]
+            )
+    if replay_unknown:
+        print("HolSmt replay-unknown proof rules:")
+        for item in replay_unknown[:10]:  # type: ignore[index]
+            print(
+                f"  {item['z3_version']} {item['input']}: "  # type: ignore[index]
+                f"{item['rule']} ({item['count']})"  # type: ignore[index]
+            )
+    if malformed:
+        print("malformed proof fragments:")
+        for item in malformed[:10]:  # type: ignore[index]
+            print(f"  {item['z3_version']} {item['input']}")  # type: ignore[index]
 
 
 def main(argv: list[str]) -> int:
@@ -720,6 +906,25 @@ def main(argv: list[str]) -> int:
 
     print(f"wrote {len(entries)} corpus entries to {entries_path}")
     print(f"wrote summary to {out_dir / args.summary}")
+
+    expected_manifest = None
+    if args.expected_rules is not None:
+        expected_manifest = load_expected_rule_manifest(args.expected_rules)
+
+    should_write_gate = args.expected_rules is not None or args.fail_on_unknown_rules
+    if not should_write_gate:
+        return 0
+
+    gate_report = build_rule_gate_report(entries, expected_manifest)
+    gate_path = out_dir / args.gate_report
+    json_dump(gate_path, gate_report)
+    print(f"wrote proof-rule gate report to {gate_path}")
+
+    fail_unseen = bool(gate_report["unseen_rules"]) or bool(gate_report["malformed_fragments"])
+    fail_unknown = bool(gate_report["replay_unknown_rules"])
+    if (args.fail_on_unseen_rules and fail_unseen) or (args.fail_on_unknown_rules and fail_unknown):
+        print_gate_findings(gate_report)
+        return 1
     return 0
 
 
