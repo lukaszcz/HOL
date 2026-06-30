@@ -1,0 +1,64 @@
+name: holsmt-external-benchmarks
+
+on:
+  pull_request:
+    branches:
+      - "develop"
+    paths:
+      - "src/HolSmt/tools/**"
+      - ".github/workflows/holsmt-external-benchmarks.yml"
+  push:
+    branches:
+      - "master"
+      - "develop"
+    paths:
+      - "src/HolSmt/tools/**"
+      - ".github/workflows/holsmt-external-benchmarks.yml"
+  schedule:
+    - cron: "17 3 * * 0"
+  workflow_dispatch:
+
+jobs:
+  curated-small:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run curated external benchmark slice
+        run: |
+          python3 src/HolSmt/tools/run_conformance_suite.py \
+            --no-default-suite \
+            --benchmark-dir src/HolSmt/tools/external-benchmarks/curated-small \
+            --mode parser-only \
+            --out /tmp/holsmt-curated-external
+
+      - name: Run HolSmt tool tests
+        run: python3 -m unittest src/HolSmt/tools/tests/test_run_conformance_suite.py
+
+  scheduled-large:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    env:
+      HOLSMT_LARGE_BENCHMARK_DIR: ${{ vars.HOLSMT_LARGE_BENCHMARK_DIR }}
+      HOLSMT_Z3_PROOF_DIR: ${{ vars.HOLSMT_Z3_PROOF_DIR }}
+      HOLSMT_REGRESSION_DIR: ${{ vars.HOLSMT_REGRESSION_DIR }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run configured large external benchmark slice
+        run: |
+          args=(
+            --no-default-suite
+            --out /tmp/holsmt-large-external
+            --mode parser-only
+            --regression-dir "${HOLSMT_REGRESSION_DIR:-src/HolSmt/tools/external-benchmarks/local-regressions}"
+          )
+          if [ -n "${HOLSMT_LARGE_BENCHMARK_DIR:-}" ] && [ -d "${HOLSMT_LARGE_BENCHMARK_DIR}" ]; then
+            args+=(--benchmark-dir "${HOLSMT_LARGE_BENCHMARK_DIR}")
+          fi
+          if [ -n "${HOLSMT_Z3_PROOF_DIR:-}" ] && [ -d "${HOLSMT_Z3_PROOF_DIR}" ]; then
+            args+=(--z3-proof-dir "${HOLSMT_Z3_PROOF_DIR}")
+          fi
+          python3 src/HolSmt/tools/run_conformance_suite.py "${args[@]}"

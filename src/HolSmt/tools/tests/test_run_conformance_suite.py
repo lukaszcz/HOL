@@ -202,6 +202,144 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(qf_lia[conformance.MODE_PARSER]["pass"], 1)
             self.assertEqual(qf_lia[conformance.MODE_Z3_TAC]["unsupported"], 1)
             self.assertIn("no z3-tac command configured", "\n".join(report["summary"]["unsupported_reasons"]))
+            self.assertEqual(
+                report["external_benchmark_coverage"]["by_kind"]["benchmark"]["cases"],
+                1,
+            )
+
+    def test_external_source_manifest_regressions_and_unsupported_families_are_reported(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            proof_dir = root / "proof"
+            regression_dir = root / "regression"
+            for directory in (bench_dir, proof_dir, regression_dir):
+                directory.mkdir()
+            (bench_dir / "bench.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; family: uf-official
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "no z3-tac command configured"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (proof_dir / "proof.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; family: z3-proof-smoke
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "no z3-tac command configured"}}
+                    (set-logic QF_LIA)
+                    (assert false)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (regression_dir / "regression.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; family: unsupported-queries
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "no z3-tac command configured"}}
+                    (set-logic QF_UF)
+                    (assert true)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            manifest = root / "sources.json"
+            manifest.write_text(
+                json.dumps(
+                    {
+                        "schema": conformance.EXTERNAL_SOURCE_SCHEMA,
+                        "default_pending_reason": "pending by test",
+                        "sources": [
+                            {
+                                "id": "official",
+                                "kind": "official-smtlib",
+                                "url": "https://example.invalid/smtlib",
+                                "pin_type": "git-commit",
+                                "pin": "abc123",
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--z3-proof-dir",
+                    str(proof_dir),
+                    "--regression-dir",
+                    str(regression_dir),
+                    "--external-source-manifest",
+                    str(manifest),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                    "--mode",
+                    conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    "",
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            external = report["external_benchmark_coverage"]
+            self.assertEqual(external["source_pins"][0]["pin"], "abc123")
+            self.assertEqual(external["by_kind"]["benchmark"]["cases"], 1)
+            self.assertEqual(external["by_kind"]["z3-proof"]["cases"], 1)
+            self.assertEqual(external["by_kind"]["regression"]["cases"], 1)
+            self.assertEqual(external["official_logic_status"]["QF_UF"]["status"], "covered")
+            self.assertEqual(external["official_logic_status"]["QF_BV"]["status"], "pending")
+            self.assertEqual(external["official_logic_status"]["QF_BV"]["reason"], "pending by test")
+            families = {
+                (item["kind"], item["family"], item["mode"]): item
+                for item in external["unsupported_families"]
+            }
+            self.assertEqual(
+                families[("regression", "unsupported-queries", conformance.MODE_Z3_TAC)]["count"],
+                1,
+            )
+            self.assertEqual(
+                report["summary"]["failure_class_counts"]["expected unsupported diagnostic"],
+                3,
+            )
+
+    def test_checked_in_curated_benchmark_slice_covers_selected_logics(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            out_dir = pathlib.Path(tmp) / "out"
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(conformance.DEFAULT_CURATED_BENCHMARK_DIR),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            external = report["external_benchmark_coverage"]
+            for logic in ["QF_AUFLIA", "QF_BV", "QF_LIA", "QF_LRA", "QF_S", "QF_UF"]:
+                self.assertEqual(external["official_logic_status"][logic]["status"], "covered")
+            self.assertEqual(external["official_logic_status"]["UF"]["status"], "pending")
+            self.assertTrue(external["source_pins"])
 
     def test_expected_pass_fail_and_unsupported_outcomes_are_valid(self):
         with tempfile.TemporaryDirectory() as tmp:

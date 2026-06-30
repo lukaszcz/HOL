@@ -124,6 +124,15 @@ DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{inp
 DEFAULT_Z3_TAC_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-z3-tac"
 DEFAULT_Z3_TAC_COMMAND = f"{shlex.quote(str(DEFAULT_Z3_TAC_DRIVER))} {{input}} {{logic}}"
 DEFAULT_CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "conformance-corpus" / "v1"
+EXTERNAL_SOURCE_SCHEMA = "holsmt-external-benchmark-sources-v1"
+DEFAULT_EXTERNAL_BENCHMARK_ROOT = pathlib.Path(__file__).resolve().parent / "external-benchmarks"
+DEFAULT_EXTERNAL_SOURCE_MANIFEST = DEFAULT_EXTERNAL_BENCHMARK_ROOT / "sources.json"
+DEFAULT_CURATED_BENCHMARK_DIR = DEFAULT_EXTERNAL_BENCHMARK_ROOT / "curated-small"
+
+SOURCE_KIND_BENCHMARK = "benchmark"
+SOURCE_KIND_Z3_PROOF = "z3-proof"
+SOURCE_KIND_REGRESSION = "regression"
+SOURCE_KIND_CORPUS = "corpus"
 
 
 @dataclass(frozen=True)
@@ -165,6 +174,15 @@ def slug(text: str) -> str:
 def find_set_logic(text: str) -> str | None:
     match = re.search(r"\(\s*set-logic\s+([^\s()]+)\s*\)", text)
     return match.group(1) if match else None
+
+
+def find_family_directive(text: str) -> str | None:
+    for line in text.splitlines():
+        match = re.match(r"\s*;\s*family\s*:\s*(.*?)\s*$", line, flags=re.IGNORECASE)
+        if match:
+            family = slug(match.group(1))
+            return family if family else None
+    return None
 
 
 def normalize_expected_outcome(value: object, *, context: str) -> ExpectedOutcome:
@@ -355,20 +373,29 @@ def discover_smt2_files(paths: Iterable[pathlib.Path]) -> list[pathlib.Path]:
     return sorted(dict.fromkeys(files))
 
 
-def external_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | None) -> list[Case]:
+def external_cases(
+    paths: Iterable[pathlib.Path],
+    selected_logics: set[str] | None,
+    *,
+    source_kind: str = SOURCE_KIND_BENCHMARK,
+) -> list[Case]:
     cases: list[Case] = []
     for path in discover_smt2_files(paths):
         text = path.read_text(encoding="utf-8")
         logic = find_set_logic(text) or "UNKNOWN"
         if selected_logics is not None and logic not in selected_logics:
             continue
+        family = find_family_directive(text)
+        tags = ["external", source_kind]
+        if family:
+            tags.append(f"family:{family}")
         cases.append(
             Case(
                 name=slug(path.stem),
                 logic=logic,
                 text=text,
-                origin="external",
-                tags=("external",),
+                origin=f"external:{source_kind}",
+                tags=tuple(tags),
                 source_path=path,
                 expected=parse_expected_outcomes(text, context=str(path)),
             )
@@ -556,6 +583,33 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
         item["conformance_status"] = PASS
         item["classification"] = CLASSIFICATION_MATCHED
     return item
+
+
+def failure_class(item: dict[str, object]) -> str | None:
+    status = str(item.get("status"))
+    conformance_status = str(item.get("conformance_status", status))
+    mode = str(item.get("mode"))
+    expected_status = item.get("expected_status")
+
+    if expected_status == UNSUPPORTED and status == UNSUPPORTED:
+        return "expected unsupported diagnostic"
+    if status == UNSUPPORTED and mode == MODE_Z3_ORACLE:
+        return "solver unsupported behavior"
+    if status != FAIL and conformance_status != FAIL:
+        return None
+    if mode == MODE_PARSER:
+        return "parser"
+    if mode == MODE_TYPECHECK:
+        return "typecheck"
+    if mode == MODE_Z3_ORACLE:
+        return "solver unsupported behavior" if status == UNSUPPORTED else "solver"
+    if mode == MODE_PROOF_PARSE:
+        return "proof parse"
+    if mode == MODE_PROOF_REPLAY:
+        return "proof replay"
+    if expected_status == UNSUPPORTED:
+        return "expected unsupported diagnostic"
+    return mode
 
 
 def parser_check(case: Case) -> dict[str, object]:
@@ -954,6 +1008,7 @@ def summarize(results: Iterable[dict[str, object]]) -> dict[str, object]:
     unsupported_reasons: collections.Counter[str] = collections.Counter()
     classification_counts: collections.Counter[str] = collections.Counter()
     conformance_counts: collections.Counter[str] = collections.Counter()
+    failure_class_counts: collections.Counter[str] = collections.Counter()
     diagnostic_mismatches: list[dict[str, object]] = []
 
     for item in results:
@@ -966,6 +1021,9 @@ def summarize(results: Iterable[dict[str, object]]) -> dict[str, object]:
         summary[logic][mode][status] += 1
         classification_counts[classification] += 1
         conformance_counts[conformance_status] += 1
+        item_failure_class = item.get("failure_class")
+        if isinstance(item_failure_class, str) and item_failure_class:
+            failure_class_counts[item_failure_class] += 1
         if status == UNSUPPORTED:
             unsupported_reasons[f"{mode}: {item['detail']}"] += 1
         if classification == CLASSIFICATION_DIAGNOSTIC_MISMATCH:
@@ -994,6 +1052,7 @@ def summarize(results: Iterable[dict[str, object]]) -> dict[str, object]:
         "by_logic_mode": serial_summary,
         "unsupported_reasons": dict(sorted(unsupported_reasons.items())),
         "classification_counts": dict(sorted(classification_counts.items())),
+        "failure_class_counts": dict(sorted(failure_class_counts.items())),
         "conformance_status_counts": {
             PASS: conformance_counts[PASS],
             FAIL: conformance_counts[FAIL],
@@ -1087,12 +1146,170 @@ def build_metamorphic_groups(
     }
 
 
+def load_external_source_manifest(path: pathlib.Path) -> dict[str, object]:
+    if not path.exists():
+        return {
+            "schema": EXTERNAL_SOURCE_SCHEMA,
+            "sources": [],
+            "default_pending_reason": "No curated external benchmark source is configured for this logic.",
+            "logic_status": {},
+        }
+    with path.open(encoding="utf-8") as infile:
+        manifest = json.load(infile)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{path}: external source manifest root must be an object")
+    if manifest.get("schema") != EXTERNAL_SOURCE_SCHEMA:
+        raise ValueError(f"{path}: external source manifest schema must be {EXTERNAL_SOURCE_SCHEMA}")
+    sources = manifest.get("sources", [])
+    if not isinstance(sources, list):
+        raise ValueError(f"{path}: sources must be a list")
+    for index, source in enumerate(sources, start=1):
+        context = f"{path} sources[{index}]"
+        if not isinstance(source, dict):
+            raise ValueError(f"{context}: source must be an object")
+        for field_name in ("id", "kind", "url", "pin_type", "pin"):
+            if not isinstance(source.get(field_name), str) or not source.get(field_name):
+                raise ValueError(f"{context}: {field_name} must be a non-empty string")
+    logic_status = manifest.get("logic_status", {})
+    if not isinstance(logic_status, dict):
+        raise ValueError(f"{path}: logic_status must be an object")
+    default_pending = manifest.get("default_pending_reason")
+    if default_pending is not None and not isinstance(default_pending, str):
+        raise ValueError(f"{path}: default_pending_reason must be a string")
+    return manifest
+
+
+def case_source_kind(case: Case) -> str | None:
+    for kind in (SOURCE_KIND_BENCHMARK, SOURCE_KIND_Z3_PROOF, SOURCE_KIND_REGRESSION):
+        if kind in case.tags:
+            return kind
+    return None
+
+
+def benchmark_family(case: Case) -> str:
+    tagged = tag_value(case.tags, "family")
+    if tagged:
+        return tagged
+    if case.source_path is not None:
+        parent = case.source_path.parent.name
+        if parent and parent != ".":
+            return parent
+    return case.logic
+
+
+def summarize_external_benchmarks(
+    cases: list[Case],
+    results: list[dict[str, object]],
+    source_manifest: Mapping[str, object],
+) -> dict[str, object]:
+    external_cases_by_name = {
+        case.name: case
+        for case in cases
+        if case_source_kind(case) is not None
+    }
+    results_by_case: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
+    for item in results:
+        case_name = str(item["case"])
+        if case_name in external_cases_by_name:
+            results_by_case[case_name].append(item)
+
+    by_kind: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    by_logic: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    unsupported_families: dict[str, dict[str, object]] = {}
+    for case_name, case in external_cases_by_name.items():
+        kind = case_source_kind(case) or "external"
+        by_kind[kind]["cases"] += 1
+        by_logic[case.logic]["cases"] += 1
+        for item in results_by_case.get(case_name, []):
+            status = str(item["status"])
+            by_kind[kind][status] += 1
+            by_logic[case.logic][status] += 1
+            if status == UNSUPPORTED:
+                key = f"{kind}:{benchmark_family(case)}:{item['mode']}"
+                family = unsupported_families.setdefault(
+                    key,
+                    {
+                        "kind": kind,
+                        "family": benchmark_family(case),
+                        "logic": case.logic,
+                        "mode": item["mode"],
+                        "count": 0,
+                        "reasons": collections.Counter(),
+                        "cases": set(),
+                    },
+                )
+                family["count"] = int(family["count"]) + 1
+                family["reasons"][str(item["detail"])] += 1  # type: ignore[index]
+                family["cases"].add(case.name)  # type: ignore[union-attr]
+
+    logic_status = source_manifest.get("logic_status", {})
+    if not isinstance(logic_status, dict):
+        logic_status = {}
+    default_pending = source_manifest.get("default_pending_reason")
+    if not isinstance(default_pending, str) or not default_pending:
+        default_pending = "Curated external benchmark coverage is pending for this logic."
+
+    official_logic_status: dict[str, dict[str, object]] = {}
+    for logic in OFFICIAL_LOGICS:
+        covered = by_logic.get(logic, collections.Counter())["cases"]
+        configured = logic_status.get(logic, {})
+        if not isinstance(configured, dict):
+            configured = {"reason": str(configured)}
+        reason = configured.get("reason")
+        source = configured.get("source")
+        status = "covered" if covered else "pending"
+        official_logic_status[logic] = {
+            "status": status,
+            "case_count": covered,
+            "reason": None if covered else (reason if isinstance(reason, str) and reason else default_pending),
+            "source": source if isinstance(source, str) else None,
+        }
+
+    unsupported_serial = []
+    for value in unsupported_families.values():
+        reasons = value["reasons"]
+        cases_set = value["cases"]
+        unsupported_serial.append(
+            {
+                "kind": value["kind"],
+                "family": value["family"],
+                "logic": value["logic"],
+                "mode": value["mode"],
+                "count": value["count"],
+                "reasons": dict(sorted(reasons.items())),  # type: ignore[union-attr]
+                "cases": sorted(cases_set),  # type: ignore[arg-type]
+            }
+        )
+
+    def counter_json(counter: collections.Counter[str]) -> dict[str, int]:
+        return {
+            "cases": counter["cases"],
+            PASS: counter[PASS],
+            FAIL: counter[FAIL],
+            UNSUPPORTED: counter[UNSUPPORTED],
+        }
+
+    sources = source_manifest.get("sources", [])
+    return {
+        "schema": EXTERNAL_SOURCE_SCHEMA,
+        "source_pins": sources if isinstance(sources, list) else [],
+        "by_kind": {kind: counter_json(counts) for kind, counts in sorted(by_kind.items())},
+        "by_logic": {logic: counter_json(counts) for logic, counts in sorted(by_logic.items())},
+        "unsupported_families": sorted(
+            unsupported_serial,
+            key=lambda item: (str(item["kind"]), str(item["family"]), str(item["mode"])),
+        ),
+        "official_logic_status": official_logic_status,
+    }
+
+
 def build_report(
     cases: list[Case],
     results: list[dict[str, object]],
     proof_entries: list[dict[str, object]],
     z3: str,
     z3_ver: str,
+    external_source_manifest: Mapping[str, object],
 ) -> dict[str, object]:
     counts = collections.Counter(str(item["status"]) for item in results)
     logic_summary = summarize(results)
@@ -1100,6 +1317,7 @@ def build_report(
     proof_summary = build_proof_corpus_summary(proof_entries) if proof_entries else None
     official_missing = sorted(set(OFFICIAL_LOGICS) - {case.logic for case in cases})
     metamorphic_summary = build_metamorphic_groups(cases, results)
+    benchmark_summary = summarize_external_benchmarks(cases, results, external_source_manifest)
     return {
         "schema": SCHEMA,
         "smtlib_version": SMTLIB_VERSION,
@@ -1126,6 +1344,7 @@ def build_report(
         "summary": logic_summary,
         "proof_corpus_summary": proof_summary,
         "metamorphic_groups": metamorphic_summary,
+        "external_benchmark_coverage": benchmark_summary,
         "cases": [
             {
                 "name": case.name,
@@ -1183,6 +1402,32 @@ def markdown_report(report: dict[str, object]) -> str:
         lines.extend(["", "## Expectation Classifications", "", "| Classification | Count |", "| --- | ---: |"])
         for classification, count in classifications.items():  # type: ignore[union-attr]
             lines.append(f"| `{classification}` | {count} |")
+
+    failure_classes = report["summary"].get("failure_class_counts", {})  # type: ignore[index]
+    if failure_classes:
+        lines.extend(["", "## Failure Classes", "", "| Class | Count |", "| --- | ---: |"])
+        for classification, count in failure_classes.items():  # type: ignore[union-attr]
+            lines.append(f"| `{classification}` | {count} |")
+
+    benchmark = report.get("external_benchmark_coverage")
+    if isinstance(benchmark, dict):
+        by_kind = benchmark.get("by_kind", {})
+        lines.extend(["", "## External Benchmark Coverage", ""])
+        if by_kind:
+            lines.extend(["| Kind | Cases | Pass | Fail | Unsupported |", "| --- | ---: | ---: | ---: | ---: |"])
+            for kind, counts in by_kind.items():  # type: ignore[union-attr]
+                lines.append(
+                    f"| {kind} | {counts['cases']} | {counts[PASS]} | {counts[FAIL]} | {counts[UNSUPPORTED]} |"
+                )
+        else:
+            lines.append("No external benchmark directories were selected.")
+        unsupported_families = benchmark.get("unsupported_families", [])
+        if unsupported_families:
+            lines.extend(["", "### Unsupported Benchmark Families", "", "| Kind | Family | Logic | Mode | Count |", "| --- | --- | --- | --- | ---: |"])
+            for family in unsupported_families:  # type: ignore[union-attr]
+                lines.append(
+                    f"| {family['kind']} | {family['family']} | {family['logic']} | {family['mode']} | {family['count']} |"
+                )
 
     proof_summary = report.get("proof_corpus_summary")
     if proof_summary:
@@ -1243,6 +1488,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--benchmark-dir", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--z3-proof-dir", action="append", type=pathlib.Path, default=[])
     parser.add_argument(
+        "--regression-dir",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+        help="local minimized HolSmt regression directory or .smt2 file",
+    )
+    parser.add_argument(
+        "--external-source-manifest",
+        type=pathlib.Path,
+        default=DEFAULT_EXTERNAL_SOURCE_MANIFEST,
+        help="JSON manifest documenting pinned external benchmark/proof sources",
+    )
+    parser.add_argument(
         "--typecheck-command",
         default=default_typecheck_command(),
         help=(
@@ -1277,10 +1535,31 @@ def main(argv: list[str]) -> int:
     if not args.no_default_suite and DEFAULT_CORPUS_DIR.exists():
         corpus_dirs.insert(0, DEFAULT_CORPUS_DIR)
     cases.extend(corpus_cases(corpus_dirs, selected_logics))
-    cases.extend(external_cases([*args.benchmark_dir, *args.z3_proof_dir], selected_logics))
+    cases.extend(
+        external_cases(
+            args.benchmark_dir,
+            selected_logics,
+            source_kind=SOURCE_KIND_BENCHMARK,
+        )
+    )
+    cases.extend(
+        external_cases(
+            args.z3_proof_dir,
+            selected_logics,
+            source_kind=SOURCE_KIND_Z3_PROOF,
+        )
+    )
+    cases.extend(
+        external_cases(
+            args.regression_dir,
+            selected_logics,
+            source_kind=SOURCE_KIND_REGRESSION,
+        )
+    )
     if not cases:
         print("no conformance cases selected", file=sys.stderr)
         return 2
+    external_source_manifest = load_external_source_manifest(args.external_source_manifest)
 
     case_inputs = write_case_inputs(cases, out_dir)
     z3_ver = z3_version(args.z3) if executable_available(args.z3) else "unavailable"
@@ -1310,11 +1589,12 @@ def main(argv: list[str]) -> int:
                 raise AssertionError(f"unhandled conformance mode: {mode}")
 
             item = apply_expectation(case, item)
+            item["failure_class"] = failure_class(item)
             results.append(item)
             if item["status"] == FAIL or item["conformance_status"] == FAIL:
                 preserve_repro(out_dir, case, input_path, item)
 
-    report = build_report(cases, results, proof_entries, args.z3, z3_ver)
+    report = build_report(cases, results, proof_entries, args.z3, z3_ver, external_source_manifest)
     json_path = out_dir / args.json_report
     markdown_path = out_dir / args.markdown_report
     json_dump(json_path, report)
