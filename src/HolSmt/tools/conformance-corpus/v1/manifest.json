@@ -1845,10 +1845,172 @@
         "parser-typecheck",
         "z3-4.11-gap"
       ]
+    },
+    {
+      "file": "cases/floatingpoint/qf_fp_advanced_typecheck.smt2",
+      "id": "qf_fp_advanced_typecheck",
+      "logic": "QF_FP",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "floatingpoint",
+        "parser-typecheck",
+        "rounding-modes",
+        "float-aliases",
+        "indexed-sorts",
+        "special-values",
+        "arithmetic",
+        "comparisons",
+        "conversions"
+      ]
+    },
+    {
+      "file": "cases/strings/qf_s_unicode_regex_typecheck.smt2",
+      "id": "qf_s_unicode_regex_typecheck",
+      "logic": "QF_SLIA",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "strings",
+        "regex",
+        "parser-typecheck",
+        "concat",
+        "length",
+        "prefix-suffix-contains",
+        "replace",
+        "index",
+        "substring",
+        "code-conversion",
+        "membership"
+      ]
+    },
+    {
+      "file": "cases/strings/qf_s_string_literals_parser_only.smt2",
+      "id": "qf_s_string_literals_parser_only",
+      "logic": "QF_S",
+      "modes": [
+        "parser-only"
+      ],
+      "tags": [
+        "strings",
+        "literals",
+        "parser-only",
+        "token-kind-gap"
+      ]
+    },
+    {
+      "file": "cases/datatypes/all_simple_datatype_typecheck.smt2",
+      "id": "all_simple_datatype_typecheck",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "datatypes",
+        "parser-typecheck",
+        "constructors",
+        "selectors",
+        "testers",
+        "simple"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
+          "status": "fail"
+        }
+      },
+      "file": "cases/datatypes/all_recursive_datatype_type_error.smt2",
+      "id": "all_recursive_datatype_type_error",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "datatypes",
+        "diagnostic",
+        "recursive",
+        "unsupported"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "unsupported command 'declare-datatypes'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/datatypes/all_mutual_datatype_type_error.smt2",
+      "id": "all_mutual_datatype_type_error",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "datatypes",
+        "diagnostic",
+        "mutual",
+        "unsupported"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "unsupported parametric datatype declaration",
+          "status": "fail"
+        }
+      },
+      "file": "cases/datatypes/all_parametric_datatype_type_error.smt2",
+      "id": "all_parametric_datatype_type_error",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "datatypes",
+        "diagnostic",
+        "parametric",
+        "unsupported"
+      ]
+    },
+    {
+      "file": "cases/z3_extensions/all_z3_seq_set_bag_typecheck.smt2",
+      "id": "all_z3_seq_set_bag_typecheck",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "z3-extension",
+        "not-smtlib-2.7",
+        "sequences",
+        "sets",
+        "bags",
+        "parser-typecheck"
+      ]
     }
   ],
-  "description": "Core, UF, Ints, Reals, Reals_Ints, ArraysEx, and FixedSizeBitVectors curated SMT-LIB corpus for HolSmt conformance evidence.",
-  "generator": "python3 src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py; hand-curated ArraysEx/FixedSizeBitVectors cases are appended in manifest.json",
+  "description": "Core, UF, Ints, Reals, Reals_Ints, ArraysEx, FixedSizeBitVectors, FloatingPoint, UnicodeStrings/regex, datatypes, and Z3 Seq/Set/Bag extension curated SMT-LIB corpus for HolSmt conformance evidence.",
+  "generator": "python3 src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py; hand-curated ArraysEx/FixedSizeBitVectors and advanced-theory cases are appended in manifest.json",
   "logic_families": {
     "arrays": [
       "QF_AX",
@@ -1858,6 +2020,12 @@
     ],
     "bitvectors": [
       "QF_BV"
+    ],
+    "datatypes": [
+      "ALL"
+    ],
+    "floatingpoint": [
+      "QF_FP"
     ],
     "ints": [
       "QF_IDL",
@@ -1888,9 +2056,16 @@
       "UFLRA",
       "UFNRA"
     ],
+    "strings_regex": [
+      "QF_S",
+      "QF_SLIA"
+    ],
     "uf": [
       "QF_UF",
       "UF"
+    ],
+    "z3_extensions": [
+      "ALL"
     ]
   },
   "schema": "holsmt-conformance-corpus-v1",

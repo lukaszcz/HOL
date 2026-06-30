@@ -729,21 +729,34 @@ end
 
 fun parse_file_datatype_unsupported_diagnostic () =
   let
-    val _ =
-      parse_smtlib_assertions
-        ("(set-logic QF_UF)\n" ^
-         "(declare-datatypes ((Tree 1) (Forest 1)) " ^
-         "((par (T) ((leaf (value T)))) (par (T) ((empty)))))\n" ^
-         "(exit)\n")
+    fun expect_datatype_error label expected script =
+      (parse_smtlib_assertions script;
+       die ("legacy benchmark parser accepted " ^ label))
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr
+        in
+          assert (contains expected msg,
+            label ^ " diagnostic was not explicit: " ^ msg)
+        end
+    val _ = expect_datatype_error "recursive datatype"
+      "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype List ((nil) (cons (tail List))))\n" ^
+       "(exit)\n")
+    val _ = expect_datatype_error "parametric datatype"
+      "unsupported parametric datatype declaration"
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype Box (par (T) ((box (value T)))))\n" ^
+       "(exit)\n")
+    val _ = expect_datatype_error "mutual datatype"
+      "unsupported command 'declare-datatypes'"
+      ("(set-logic QF_UF)\n" ^
+       "(declare-datatypes ((Tree 1) (Forest 1)) " ^
+       "((par (T) ((leaf (value T)))) (par (T) ((empty)))))\n" ^
+       "(exit)\n")
   in
-    die "legacy benchmark parser accepted mutual datatype declarations"
+    ()
   end
-  handle Feedback.HOL_ERR holerr =>
-    let val msg = Feedback.message_of holerr
-    in
-      assert (contains "unsupported command 'declare-datatypes'" msg,
-        "datatype diagnostic was not explicit: " ^ msg)
-    end
 
 fun parse_file_datatype_dictionary_success () =
 let

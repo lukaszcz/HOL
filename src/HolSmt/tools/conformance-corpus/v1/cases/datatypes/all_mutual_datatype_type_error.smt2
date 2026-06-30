@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-datatypes ((Tree 1) (Forest 1))
+  ((par (T) ((leaf (value T))))
+   (par (T) ((empty)))))
+(exit)

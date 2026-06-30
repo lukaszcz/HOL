@@ -1414,6 +1414,12 @@ local
   let
     val name = get_token ()
     val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ name)
+    fun reject_recursive selector_ty =
+      if selector_ty = datatype_ty then
+        raise ERR "declare-datatype"
+          "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      else
+        ()
     fun parse_ty token indices args =
       if List.null indices andalso List.null args then
         datatype_ty
@@ -1472,6 +1478,7 @@ local
       let
         val selector_name = get_token ()
         val selector_ty = parse_type get_token tydict
+        val _ = reject_recursive selector_ty
         val _ = Library.expect_token ")" (get_token ())
       in
         (selector_name, selector_ty) :: selectors
@@ -2565,6 +2572,12 @@ local
     let
       val datatype_name = located_string_node name
       val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
+      fun reject_recursive loc selector_ty =
+        if selector_ty = datatype_ty then
+          type_error "typecheck_declare_datatype" context loc NONE NONE
+            "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+        else
+          ()
       fun parse_ty token indices args =
         if List.null indices andalso List.null args then datatype_ty
         else raise ERR ("<" ^ datatype_name ^ ">") "wrong number of arguments"
@@ -2578,8 +2591,12 @@ local
               fun selector_info selector =
                 case node_of selector of
                   DatatypeSelector (selector_name, selector_sort) =>
-                    (located_string_node selector_name,
-                     typecheck_sort context tydict selector_sort)
+                    let
+                      val selector_ty = typecheck_sort context tydict selector_sort
+                      val _ = reject_recursive (loc_of selector_sort) selector_ty
+                    in
+                      (located_string_node selector_name, selector_ty)
+                    end
               val selectors = List.map selector_info selectors
               val arg_tys = List.map Lib.snd selectors
               val ctor_tm = Term.mk_var (ctor_name_s,

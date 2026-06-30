@@ -415,45 +415,45 @@
       "item": "FloatingPoint",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.FloatingPoint records RoundingMode, indexed FloatingPoint sorts, Float16/32/64/128 aliases, rounding modes, special values, arithmetic, predicates, and conversion symbols; src/HolSmt/Unittest.sml checks metadata and representative indexed signatures; Z3_Proof.TH_LEMMA_ADVANCED gates fp/fpa th-lemma replay with a versioned proof-format diagnostic.",
-      "notes": "Floating-point support is a conservative parse/typecheck embedding with abstract HOL terms. Z3 th-lemma replay is explicitly unsupported until Z3 emits enough checked certificate evidence for IEEE operations, NaN, infinity, and rounding-mode lemmas."
+      "evidence": "SmtLib_Theories.FloatingPoint records RoundingMode, indexed FloatingPoint sorts, Float16/32/64/128 aliases, rounding modes, special values, arithmetic, predicates, and conversion symbols; conformance case qf_fp_advanced_typecheck covers representative parser/typecheck behavior; Z3_Proof.TH_LEMMA_ADVANCED gates fp/fpa th-lemma replay with a versioned proof-format diagnostic.",
+      "notes": "Floating-point support is a conservative parse/typecheck embedding with abstract HOL terms. Solver and HOL translation completeness are not claimed for this row. Z3 th-lemma replay is explicitly unsupported until Z3 emits enough checked certificate evidence for IEEE operations, NaN, infinity, and rounding-mode lemmas."
     },
     {
       "item": "Strings and regular expressions",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.UnicodeStrings records String and RegLan sorts plus string, code conversion, replacement, membership, and regex operators; src/HolSmt/Unittest.sml covers representative string and indexed regex signatures; Z3_Proof.TH_LEMMA_ADVANCED gates string/regexp th-lemma replay with a versioned proof-format diagnostic.",
-      "notes": "Basic string concatenation, length, ordering, and prefix use existing HOL string/list constructors where available; remaining string and regex operators are abstract parse/typecheck embeddings. SMT-LIB string literals remain limited by the legacy tokenizer's lack of token-kind metadata. Z3 th-lemma replay is explicitly unsupported until proof certificates expose checkable string/regex evidence."
+      "evidence": "SmtLib_Theories.UnicodeStrings records String and RegLan sorts plus string, code conversion, replacement, membership, and regex operators; conformance cases qf_s_unicode_regex_typecheck and qf_s_string_literals_parser_only cover representative typecheck and literal-token parsing behavior; Z3_Proof.TH_LEMMA_ADVANCED gates string/regexp th-lemma replay with a versioned proof-format diagnostic.",
+      "notes": "Basic string concatenation, length, ordering, and prefix use existing HOL string/list constructors where available; remaining string and regex operators are abstract parse/typecheck embeddings. SMT-LIB string literals remain parser-only because the legacy tokenizer lacks token-kind metadata. Z3 th-lemma replay is explicitly unsupported until proof certificates expose checkable string/regex evidence."
     },
     {
       "item": "Datatypes",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser represents SMT-LIB datatype declarations; legacy parser installs simple declare-datatype constructors, selectors, and testers as abstract typed HOL symbols; src/HolSmt/Unittest.sml covers datatype dictionary use and mutual-datatype diagnostics; Z3_Proof.TH_LEMMA_ADVANCED gates datatype/dt th-lemma replay with a versioned proof-format diagnostic.",
+      "evidence": "SmtLib_Parser typed AST parser represents SMT-LIB datatype declarations; conformance cases all_simple_datatype_typecheck, all_recursive_datatype_type_error, all_mutual_datatype_type_error, and all_parametric_datatype_type_error cover constructor/selector/tester embeddings and exact unsupported diagnostics; Z3_Proof.TH_LEMMA_ADVANCED gates datatype/dt th-lemma replay with a versioned proof-format diagnostic.",
       "notes": "External SMT-LIB datatype declarations are parse/typecheck embeddings. Recursive, mutual, and parametric datatype declarations remain explicit diagnostics in the legacy benchmark parser. Z3 datatype th-lemma replay is explicitly unsupported until constructor/selector/tester certificate evidence is available."
     },
     {
       "item": "Sequences, sets, bags",
       "class": "Z3 extension",
       "parsed": "implemented",
-      "translated": "untested",
-      "solved": "untested",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.Z3_Extensions records Seq, Set, and Bag sorts and representative Z3 sequence/set/bag operators as extension metadata; src/HolSmt/Unittest.sml parses representative signatures through the ALL dictionary; Z3_Proof.TH_LEMMA_ADVANCED gates seq/sequence th-lemma replay with a versioned proof-format diagnostic.",
-      "notes": "These entries are explicitly marked as Z3 extensions and are abstract parse/typecheck embeddings, not official SMT-LIB 2.7 surface. Z3 sequence th-lemma replay is explicitly unsupported until proof certificates expose checkable sequence evidence."
+      "evidence": "SmtLib_Theories.Z3_Extensions records Seq, Set, and Bag sorts and representative Z3 sequence/set/bag operators as extension metadata; conformance case all_z3_seq_set_bag_typecheck parses representative signatures through the ALL dictionary; Z3_Proof.TH_LEMMA_ADVANCED gates seq/sequence th-lemma replay with a versioned proof-format diagnostic.",
+      "notes": "These entries are explicitly marked as Z3 extensions and are abstract parse/typecheck embeddings, not official SMT-LIB 2.7 surface. Solver and HOL translation completeness are not claimed. Z3 sequence th-lemma replay is explicitly unsupported until proof certificates expose checkable sequence evidence."
     }
   ],
   "logics": [
@@ -549,33 +549,33 @@
       "item": "QF_S, QF_SLIA, QF_SNIA",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.Strings_Ints combines Core, Ints, and UnicodeStrings dictionaries; src/HolSmt/Unittest.sml checks metadata and representative string/regex signatures; advanced th-lemma raw replay tests cover string and regexp unsupported diagnostics.",
+      "evidence": "SmtLib_Logics.Strings_Ints combines Core, Ints, and UnicodeStrings dictionaries; conformance cases qf_s_unicode_regex_typecheck and qf_s_string_literals_parser_only check parser/typecheck and literal parser surfaces; advanced th-lemma raw replay tests cover string and regexp unsupported diagnostics.",
       "notes": "String logics are parse/typecheck embeddings. Parser does not enforce logic fragment restrictions, and proof replay gates string or regex theory lemmas with versioned proof-format diagnostics."
     },
     {
       "item": "QF_FP, QF_FPBV, QF_BVFP, QF_UFFP, QF_UFBVFP",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.FP_Core combines Core, Ints, Reals, Fixed_Size_BitVectors, and FloatingPoint dictionaries; src/HolSmt/Unittest.sml checks metadata and representative indexed floating-point signatures; advanced th-lemma raw replay tests cover floating-point unsupported diagnostics.",
+      "evidence": "SmtLib_Logics.FP_Core combines Core, Ints, Reals, Fixed_Size_BitVectors, and FloatingPoint dictionaries; conformance case qf_fp_advanced_typecheck checks representative indexed floating-point signatures; advanced th-lemma raw replay tests cover floating-point unsupported diagnostics.",
       "notes": "Floating-point logics are parse/typecheck embeddings. Parser does not enforce logic fragment restrictions, and proof replay gates floating-point theory lemmas with versioned proof-format diagnostics."
     },
     {
       "item": "ALL",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.ALL provides a broad parser dictionary combining current official theory dictionaries with explicitly marked Z3 extension metadata; src/HolSmt/Unittest.sml uses it for datatype and sequence/set/bag parse coverage and advanced th-lemma unsupported diagnostics.",
+      "evidence": "SmtLib_Logics.ALL provides a broad parser dictionary combining current official theory dictionaries with explicitly marked Z3 extension metadata; conformance cases all_simple_datatype_typecheck and all_z3_seq_set_bag_typecheck use it for datatype and sequence/set/bag parse coverage and advanced th-lemma unsupported diagnostics.",
       "notes": "ALL is a permissive coverage dictionary for parsing/typechecking selected surfaces, not a soundness or replay completeness claim. Advanced th-lemma replay is explicitly gated."
     },
     {
@@ -1061,11 +1061,11 @@
       "item": "Floating-point NaN, infinity and rounding-mode semantics",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
+      "translated": "parse_only",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.FloatingPoint records indexed FP sorts and rounding modes; src/HolSmt/Unittest.sml smtlib_floatingpoint_parse_signatures_success and smtlib_indexed_parametric_sort_reconstruction_success cover parse/typecheck; Z3_ProofReplay reports unsupported fp/fpa th-lemma diagnostics.",
+      "evidence": "SmtLib_Theories.FloatingPoint records indexed FP sorts and rounding modes; conformance case qf_fp_advanced_typecheck covers NaN, infinities, signed zeros, rounding modes, arithmetic, comparisons, and conversions at parser/typecheck level; Z3_ProofReplay reports unsupported fp/fpa th-lemma diagnostics.",
       "notes": "FloatingPoint remains a parse/typecheck embedding until proof certificates expose checkable IEEE evidence for NaN, infinities and rounding."
     },
     {
@@ -1073,10 +1073,10 @@
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
       "translated": "implemented",
-      "solved": "unknown",
+      "solved": "parse_only",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "src/HolSmt/SmtLib.sml records HOLTheoryEncoding proof obligations for HOL char-list strings and regex; src/HolSmt/Unittest.sml smtlib_extended_hol_encoding_records_success and smtlib_string_regex_parse_signatures_success cover the records and signatures; Z3_ProofReplay gates string/regex th-lemma replay.",
+      "evidence": "src/HolSmt/SmtLib.sml records HOLTheoryEncoding proof obligations for HOL char-list strings and regex; src/HolSmt/Unittest.sml smtlib_extended_hol_encoding_records_success checks selected native HOL string translation records; conformance case qf_s_unicode_regex_typecheck covers supported string and regex signatures; Z3_ProofReplay gates string/regex th-lemma replay.",
       "notes": "Selected HOL string operations are emitted as SMT-LIB UnicodeStrings, but replay completeness requires a proof obligation relating HOL char lists, Unicode strings and regex-language membership."
     },
     {

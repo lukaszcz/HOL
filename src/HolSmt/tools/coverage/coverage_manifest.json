@@ -2658,6 +2658,821 @@
         }
       ],
       "notes": "Checked z3-tac array reconstruction fails with an exact higher-order/function-sort diagnostic."
+    },
+    {
+      "section": "theories",
+      "item": "FloatingPoint",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_fp_advanced_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Theories.sml",
+          "match": "structure FloatingPoint"
+        }
+      ],
+      "notes": "Covers FP aliases, indexed sorts, rounding modes, special values, arithmetic, comparisons, conversions, and exact th-lemma replay diagnostics."
+    },
+    {
+      "section": "theories",
+      "item": "FloatingPoint",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "FloatingPoint has parser/typechecker evidence only; solver and HOL translation completeness are not claimed."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "theories",
+      "item": "FloatingPoint",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=fp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Advanced FP th-lemma replay fails explicitly instead of falling through."
+    },
+    {
+      "section": "theories",
+      "item": "Strings and regular expressions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_s_unicode_regex_typecheck"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_s_string_literals_parser_only"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Theories.sml",
+          "match": "structure UnicodeStrings"
+        }
+      ],
+      "notes": "Covers supported string/regex parser/typechecker surface and parser-only string literal syntax."
+    },
+    {
+      "section": "theories",
+      "item": "Strings and regular expressions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "UnicodeStrings/regex theory row is parser/typechecker evidence; native HOL string translation is tracked separately in the soundness audit row."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding for regex and non-native string operators."
+    },
+    {
+      "section": "theories",
+      "item": "Strings and regular expressions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=regexp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "String and regex th-lemma replay fails explicitly."
+    },
+    {
+      "section": "theories",
+      "item": "Datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_simple_datatype_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_recursive_datatype_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_mutual_datatype_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_parametric_datatype_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "typecheck_declare_datatype"
+        }
+      ],
+      "notes": "Covers simple datatype declarations and exact recursive/mutual/parametric diagnostics."
+    },
+    {
+      "section": "theories",
+      "item": "Datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Datatype support is a parser/typechecker embedding; solver and HOL translation completeness are not claimed."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "theories",
+      "item": "Datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=datatype"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Datatype th-lemma replay fails explicitly."
+    },
+    {
+      "section": "theories",
+      "item": "Sequences, sets, bags",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_z3_seq_set_bag_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Theories.sml",
+          "match": "structure Z3_Extensions"
+        }
+      ],
+      "notes": "Classified as Z3 extension evidence, not official SMT-LIB 2.7."
+    },
+    {
+      "section": "theories",
+      "item": "Sequences, sets, bags",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 Seq/Set/Bag support is parser/typechecker evidence for extension symbols only."
+        }
+      ],
+      "notes": "No official SMT-LIB 2.7 or solver/replay completeness claim."
+    },
+    {
+      "section": "theories",
+      "item": "Sequences, sets, bags",
+      "class": "Z3 extension",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=seq"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Sequence th-lemma replay fails explicitly."
+    },
+    {
+      "section": "logics",
+      "item": "QF_S, QF_SLIA, QF_SNIA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_s_unicode_regex_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=string"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Logics.sml",
+          "match": "structure Strings_Ints"
+        }
+      ],
+      "notes": "String logic parser/typechecker evidence plus exact advanced th-lemma diagnostics."
+    },
+    {
+      "section": "logics",
+      "item": "QF_S, QF_SLIA, QF_SNIA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "String logic row is parser/typechecker coverage; full solver and HOL translation completeness are not claimed."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "logics",
+      "item": "QF_S, QF_SLIA, QF_SNIA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=regexp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "String/regex proof replay is explicitly gated."
+    },
+    {
+      "section": "logics",
+      "item": "QF_FP, QF_FPBV, QF_BVFP, QF_UFFP, QF_UFBVFP",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_fp_advanced_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=fp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Logics.sml",
+          "match": "structure FP_Core"
+        }
+      ],
+      "notes": "Floating-point logic parser/typechecker evidence plus exact advanced th-lemma diagnostics."
+    },
+    {
+      "section": "logics",
+      "item": "QF_FP, QF_FPBV, QF_BVFP, QF_UFFP, QF_UFBVFP",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Floating-point logic row is parser/typechecker coverage; full solver and HOL translation completeness are not claimed."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "logics",
+      "item": "QF_FP, QF_FPBV, QF_BVFP, QF_UFFP, QF_UFBVFP",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=fp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Floating-point proof replay is explicitly gated."
+    },
+    {
+      "section": "logics",
+      "item": "ALL",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_simple_datatype_typecheck"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "all_z3_seq_set_bag_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Logics.sml",
+          "match": "structure ALL"
+        }
+      ],
+      "notes": "ALL covers broad parser/typechecker dictionaries, including datatypes and Z3 extension metadata."
+    },
+    {
+      "section": "logics",
+      "item": "ALL",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "ALL is a permissive parser/typechecker dictionary, not a solver or HOL translation completeness claim."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "logics",
+      "item": "ALL",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Advanced proof replay is explicitly gated."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma advanced theory families",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_advanced_unsupported_diagnostic"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "TH_LEMMA_ADVANCED"
+        }
+      ],
+      "notes": "Advanced th-lemma labels are parsed and classified."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma advanced theory families",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma advanced theory families",
+      "class": "Z3 extension",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "Advanced th-lemma replay reports exact unsupported diagnostics."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Floating-point NaN, infinity and rounding-mode semantics",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_fp_advanced_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=fp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Theories.sml",
+          "match": "fp.isNaN"
+        }
+      ],
+      "notes": "FP semantic edge cases are parser/typechecker evidence with replay diagnostics."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Floating-point NaN, infinity and rounding-mode semantics",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "FP semantic edge cases remain parser/typechecker evidence until checked proof certificates expose IEEE semantics."
+        }
+      ],
+      "notes": "Conservative parse/typecheck embedding."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Floating-point NaN, infinity and rounding-mode semantics",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=fp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "FP replay remains explicitly gated."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "HOL strings versus SMT-LIB UnicodeStrings and regex",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_extended_hol_encoding_records_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_s_unicode_regex_typecheck"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=string"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "HOL strings: string type, STRCAT, isPREFIX, string_lt, string_le"
+        }
+      ],
+      "notes": "Selected HOL string operations have native translation records; regex remains parser/typechecker evidence."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "HOL strings versus SMT-LIB UnicodeStrings and regex",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved"
+      ],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "String/regex soundness audit has parser/typechecker and translation-record evidence, but no solver completeness claim."
+        }
+      ],
+      "notes": "Conservative soundness-audit status."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "HOL strings versus SMT-LIB UnicodeStrings and regex",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "theory=regexp"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "proof-format limitation"
+        }
+      ],
+      "notes": "String/regex replay remains explicitly gated."
     }
   ]
 }
