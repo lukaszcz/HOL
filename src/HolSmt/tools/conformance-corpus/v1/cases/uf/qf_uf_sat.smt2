@@ -1,0 +1,10 @@
+(set-logic QF_UF)
+
+(declare-sort U 0)
+(declare-const a U)
+(declare-fun f (U Bool) U)
+(declare-fun p (U) Bool)
+(assert (= (f a true) (f a (not false))))
+(assert (xor (p a) (not (p a))))
+(check-sat)
+(exit)

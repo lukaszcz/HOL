@@ -1305,6 +1305,809 @@
         }
       ],
       "notes": "Representative parse-only row: the proof parser normalizes proof-bind as transparent and intentionally has no replay obligation."
+    },
+    {
+      "section": "theories",
+      "item": "Core",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_core_operators_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_unsat_proof"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_core_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_core_arity_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Core operator corpus covers Bool constants, not, implication, and/or/xor, equality, distinct, ite, and arity/type diagnostics."
+    },
+    {
+      "section": "theories",
+      "item": "Ints",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_unsat_proof"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_div_mod_audit"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Integer corpus covers representative linear/nonlinear arithmetic plus explicit div/mod audit cases."
+    },
+    {
+      "section": "theories",
+      "item": "Reals",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_unsat_proof"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nra_real_division_audit"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Real corpus covers representative arithmetic, comparisons, proof-producing contradictions, and division audit cases."
+    },
+    {
+      "section": "theories",
+      "item": "Reals_Ints",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_unsat_proof"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_conversions_audit"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Mixed arithmetic corpus covers to_real, to_int, is_int, and representative sat/proof/type-error scripts."
+    },
+    {
+      "section": "logics",
+      "item": "UF, QF_UF",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_unsat_proof"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_unsat_proof"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_quantified_shadowing_sat"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "UF corpus gives each official UF logic sat, unsat-proof, and type-error coverage, plus quantified, shadowing, and quoted-symbol cases."
+    },
+    {
+      "section": "logics",
+      "item": "LIA, NIA, UFIDL, UFLIA, UFNIA, QF_IDL, QF_LIA, QF_NIA, QF_UFIDL, QF_UFLIA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_idl_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufidl_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "lia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "nia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufidl_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uflia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufnia_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_unsat_proof"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_idl_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufidl_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "lia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "nia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufidl_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uflia_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufnia_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Integer logic-family corpus supplies sat, unsat-proof, and type-error cases for each listed official logic; nonlinear-in-linear scripts are tagged audit-only."
+    },
+    {
+      "section": "logics",
+      "item": "LRA, NRA, QF_LRA, QF_NRA, QF_RDL, QF_UFLRA, QF_UFNRA, UFLRA, UFNRA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_rdl_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufnra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "lra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "nra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uflra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufnra_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_unsat_proof"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_rdl_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufnra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "lra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "nra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uflra_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "ufnra_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Real logic-family corpus supplies sat, unsat-proof, and type-error cases for each listed official logic."
+    },
+    {
+      "section": "logics",
+      "item": "QF_LIRA, QF_NIRA, QF_UFLIRA, QF_UFNIRA",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nira_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflira_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufnira_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_unsat_proof"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lira_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nira_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uflira_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_ufnira_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Reals_Ints logic-family corpus supplies sat, unsat-proof, type-error, and conversion audit coverage."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Arithmetic operators and inequalities",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_nonlinear_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_nonlinear_audit"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_div_mod_audit"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nra_real_division_audit"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_lia_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Named corpus entries make the arithmetic selftest category executable through the conformance runner."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Uninterpreted functions and predicates",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_symbols_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_quantified_shadowing_sat"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Named corpus entries cover nullary and n-ary functions, predicates, quantified formulas, shadowing, and quoted identifiers."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Binders, shadowing, quoted identifiers, and local definitions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "uf_quantified_shadowing_sat"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Corpus evidence covers quoted |and|, quoted predicate symbols, quantified binders, and let shadowing."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Binders, shadowing, quoted identifiers, and local definitions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "This soundness-audit row records frontend scoping evidence; solver and proof reconstruction obligations belong to the enclosing checked proof cases."
+        }
+      ],
+      "notes": "The row is a parser/typechecker scoping audit rather than a solver/proof replay claim."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Integer and real division by zero",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nia_div_mod_audit"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_nra_real_division_audit"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "holsmt-conformance-corpus-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py",
+          "match": "generated_cases"
+        }
+      ],
+      "notes": "Audit-only corpus cases classify SMT-LIB integer and real division by zero as explicitly tracked edge cases."
     }
   ]
 }

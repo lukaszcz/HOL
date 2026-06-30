@@ -28,6 +28,7 @@ from record_z3_proof_corpus import (
 
 SCHEMA = "holsmt-conformance-v1"
 SMTLIB_VERSION = "2.7"
+CORPUS_SCHEMA = "holsmt-conformance-corpus-v1"
 
 MODE_PARSER = "parser-only"
 MODE_TYPECHECK = "typecheck-only"
@@ -122,6 +123,7 @@ DEFAULT_TYPECHECK_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt
 DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{input}} {{logic}}"
 DEFAULT_Z3_TAC_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-z3-tac"
 DEFAULT_Z3_TAC_COMMAND = f"{shlex.quote(str(DEFAULT_Z3_TAC_DRIVER))} {{input}} {{logic}}"
+DEFAULT_CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "conformance-corpus" / "v1"
 
 
 @dataclass(frozen=True)
@@ -371,6 +373,94 @@ def external_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | No
                 expected=parse_expected_outcomes(text, context=str(path)),
             )
         )
+    return cases
+
+
+def load_corpus_manifest(corpus_dir: pathlib.Path) -> dict[str, object]:
+    manifest_path = corpus_dir / "manifest.json"
+    with manifest_path.open(encoding="utf-8") as infile:
+        manifest = json.load(infile)
+    if not isinstance(manifest, dict):
+        raise ValueError(f"{manifest_path}: corpus manifest root must be an object")
+    if manifest.get("schema") != CORPUS_SCHEMA:
+        raise ValueError(f"{manifest_path}: corpus manifest schema must be {CORPUS_SCHEMA}")
+    cases = manifest.get("cases")
+    if not isinstance(cases, list) or not cases:
+        raise ValueError(f"{manifest_path}: corpus manifest cases must be a non-empty list")
+    return manifest
+
+
+def corpus_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | None) -> list[Case]:
+    cases: list[Case] = []
+    seen: set[str] = set()
+    for corpus_dir in paths:
+        corpus_dir = corpus_dir.resolve()
+        manifest = load_corpus_manifest(corpus_dir)
+        for index, entry in enumerate(manifest["cases"], start=1):  # type: ignore[index]
+            context = f"{corpus_dir / 'manifest.json'} cases[{index}]"
+            if not isinstance(entry, dict):
+                raise ValueError(f"{context}: case entry must be an object")
+            case_id = entry.get("id")
+            logic = entry.get("logic")
+            file_name = entry.get("file")
+            if not isinstance(case_id, str) or not case_id:
+                raise ValueError(f"{context}: id must be a non-empty string")
+            if not isinstance(logic, str) or not logic:
+                raise ValueError(f"{context}: logic must be a non-empty string")
+            if not isinstance(file_name, str) or not file_name:
+                raise ValueError(f"{context}: file must be a non-empty string")
+            if case_id in seen:
+                raise ValueError(f"{context}: duplicate corpus case id {case_id!r}")
+            seen.add(case_id)
+            if selected_logics is not None and logic not in selected_logics:
+                continue
+
+            case_path = (corpus_dir / file_name).resolve()
+            text = case_path.read_text(encoding="utf-8")
+            observed_logic = find_set_logic(text)
+            if observed_logic != logic:
+                raise ValueError(
+                    f"{context}: file set-logic {observed_logic!r} does not match manifest logic {logic!r}"
+                )
+
+            tags_value = entry.get("tags", [])
+            if not isinstance(tags_value, list) or not all(isinstance(tag, str) for tag in tags_value):
+                raise ValueError(f"{context}: tags must be a list of strings")
+            modes_value = entry.get("modes", ALL_MODES)
+            if not isinstance(modes_value, list) or not modes_value:
+                raise ValueError(f"{context}: modes must be a non-empty list")
+            modes: list[str] = []
+            for mode in modes_value:
+                if not isinstance(mode, str) or mode not in ALL_MODES:
+                    raise ValueError(f"{context}: unknown mode {mode!r}")
+                modes.append(mode)
+
+            expected: dict[str, ExpectedOutcome] = {}
+            expected_value = entry.get("expected", {})
+            if expected_value:
+                if not isinstance(expected_value, dict):
+                    raise ValueError(f"{context}: expected must be an object")
+                for mode, value in expected_value.items():
+                    if mode not in ALL_MODES:
+                        raise ValueError(f"{context}: unknown expected mode {mode!r}")
+                    expected[mode] = normalize_expected_outcome(
+                        value,
+                        context=f"{context} expected {mode}",
+                    )
+            expected.update(parse_expected_outcomes(text, context=str(case_path)))
+
+            cases.append(
+                Case(
+                    name=case_id,
+                    logic=logic,
+                    text=text,
+                    origin=f"corpus:{manifest.get('version', corpus_dir.name)}",
+                    tags=("corpus", *tuple(tags_value)),
+                    modes=tuple(modes),
+                    source_path=case_path,
+                    expected=expected,
+                )
+            )
     return cases
 
 
@@ -1040,6 +1130,16 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--logic", action="append", choices=HOLSMT_LOGICS)
     parser.add_argument("--mode", action="append", choices=ALL_MODES)
     parser.add_argument("--no-default-suite", action="store_true")
+    parser.add_argument(
+        "--corpus-dir",
+        action="append",
+        type=pathlib.Path,
+        default=[],
+        help=(
+            "versioned conformance corpus directory containing manifest.json; "
+            f"defaults to {DEFAULT_CORPUS_DIR} with the default suite"
+        ),
+    )
     parser.add_argument("--benchmark-dir", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--z3-proof-dir", action="append", type=pathlib.Path, default=[])
     parser.add_argument(
@@ -1073,6 +1173,10 @@ def main(argv: list[str]) -> int:
     cases: list[Case] = []
     if not args.no_default_suite:
         cases.extend(default_cases(selected_logics))
+    corpus_dirs = list(args.corpus_dir)
+    if not args.no_default_suite and DEFAULT_CORPUS_DIR.exists():
+        corpus_dirs.insert(0, DEFAULT_CORPUS_DIR)
+    cases.extend(corpus_cases(corpus_dirs, selected_logics))
     cases.extend(external_cases([*args.benchmark_dir, *args.z3_proof_dir], selected_logics))
     if not cases:
         print("no conformance cases selected", file=sys.stderr)

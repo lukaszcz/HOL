@@ -44,6 +44,92 @@ class ConformanceSuiteTests(unittest.TestCase):
         self.assertIn("ALL", represented)
         self.assertTrue(any("metamorphic" in case.tags for case in cases))
 
+    def test_versioned_corpus_covers_core_uf_and_arithmetic_families(self):
+        cases = conformance.corpus_cases([conformance.DEFAULT_CORPUS_DIR], None)
+        by_name = {case.name: case for case in cases}
+        represented = {case.logic for case in cases}
+        expected_logics = {
+            "QF_UF",
+            "UF",
+            "QF_IDL",
+            "QF_LIA",
+            "QF_NIA",
+            "QF_UFIDL",
+            "QF_UFLIA",
+            "LIA",
+            "NIA",
+            "UFIDL",
+            "UFLIA",
+            "UFNIA",
+            "QF_RDL",
+            "QF_LRA",
+            "QF_NRA",
+            "QF_UFLRA",
+            "QF_UFNRA",
+            "LRA",
+            "NRA",
+            "UFLRA",
+            "UFNRA",
+            "QF_LIRA",
+            "QF_NIRA",
+            "QF_UFLIRA",
+            "QF_UFNIRA",
+        }
+
+        self.assertFalse(expected_logics - represented)
+        self.assertIn("qf_uf_core_operators_sat", by_name)
+        self.assertIn("qf_uf_symbols_sat", by_name)
+        self.assertIn("uf_quantified_shadowing_sat", by_name)
+        self.assertIn("qf_nia_div_mod_audit", by_name)
+        self.assertIn("qf_nra_real_division_audit", by_name)
+        self.assertIn("qf_lira_conversions_audit", by_name)
+        self.assertIn("qf_lia_nonlinear_audit", by_name)
+        self.assertEqual(
+            by_name["qf_uf_unsat_proof"].modes,
+            (
+                conformance.MODE_PARSER,
+                conformance.MODE_TYPECHECK,
+                conformance.MODE_Z3_ORACLE,
+                conformance.MODE_PROOF_PARSE,
+                conformance.MODE_PROOF_REPLAY,
+                conformance.MODE_Z3_TAC,
+            ),
+        )
+        self.assertEqual(
+            by_name["qf_lia_type_error"].expected[conformance.MODE_TYPECHECK].status,
+            conformance.FAIL,
+        )
+        self.assertEqual(
+            by_name["qf_lia_type_error"].expected[conformance.MODE_TYPECHECK].diagnostic_substring,
+            "expected sort :bool",
+        )
+
+    def test_corpus_dir_cli_uses_manifest_names_modes_and_origins(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            out_dir = root / "out"
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--corpus-dir",
+                    str(conformance.DEFAULT_CORPUS_DIR),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                    "--logic",
+                    "QF_UF",
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            by_case = {case["name"]: case for case in report["cases"]}
+            self.assertIn("qf_uf_core_operators_sat", by_case)
+            self.assertEqual(by_case["qf_uf_core_operators_sat"]["origin"], "corpus:v1")
+            self.assertIn("corpus", by_case["qf_uf_core_operators_sat"]["tags"])
+            self.assertEqual(report["summary"]["by_logic_mode"]["QF_UF"][conformance.MODE_PARSER]["pass"], 7)
+
     def test_external_benchmark_dir_and_unsupported_mode_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
@@ -463,6 +549,12 @@ class ConformanceSuiteTests(unittest.TestCase):
     def test_configured_command_mode_passes_command_context(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "qf_uf.smt2").write_text(
+                "(set-logic QF_UF)\n(assert true)\n(check-sat)\n",
+                encoding="utf-8",
+            )
             checker = root / "checker.py"
             checker.write_text(
                 textwrap.dedent(
@@ -482,6 +574,9 @@ class ConformanceSuiteTests(unittest.TestCase):
                 [
                     "--out",
                     str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
                     "--logic",
                     "QF_UF",
                     "--mode",
