@@ -15,6 +15,9 @@ ROOT = Path(__file__).resolve().parents[4]
 COVERAGE_DIR = ROOT / "src" / "HolSmt" / "tools" / "coverage"
 DEFAULT_COVERAGE = COVERAGE_DIR / "smtlib_coverage.json"
 DEFAULT_MANIFEST = COVERAGE_DIR / "coverage_manifest.json"
+DEFAULT_PROOF_REPORT = (
+    ROOT / "src" / "HolSmt" / "tools" / "proof-corpus" / "supported_versions" / "summary.json"
+)
 SCHEMA = "holsmt-coverage-manifest-v1"
 STATUS_COLUMNS = ("parsed", "translated", "solved", "reconstructed", "tested")
 IGNORED_COVERAGE_KEYS = {"metadata", "status_legend", "source_classes"}
@@ -495,7 +498,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--conformance-report", action="append", type=Path, default=[])
-    parser.add_argument("--proof-report", action="append", type=Path, default=[])
+    parser.add_argument("--proof-report", action="append", type=Path, default=[DEFAULT_PROOF_REPORT])
     parser.add_argument(
         "--enforce",
         action="store_true",

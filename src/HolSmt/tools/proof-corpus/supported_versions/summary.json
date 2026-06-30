@@ -1,0 +1,134 @@
+{
+  "aggregate_rule_histogram": {
+    "asserted": 6,
+    "unit-resolution": 3
+  },
+  "discovered_rules": [
+    "asserted",
+    "unit-resolution"
+  ],
+  "entries": [
+    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
+    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
+    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2"
+  ],
+  "entry_count": 3,
+  "kind": "proof-corpus-summary",
+  "malformed_fragment_count": 0,
+  "proof_count": 3,
+  "proof_rule_support": {
+    "parse_only": [
+      "proof-bind"
+    ],
+    "replay_supported": [
+      "and-elim",
+      "asserted",
+      "commutativity",
+      "def-axiom",
+      "elim-unused",
+      "hypothesis",
+      "iff-false",
+      "iff-true",
+      "intro-def",
+      "lemma",
+      "monotonicity",
+      "mp",
+      "mp-eq",
+      "mp_eq",
+      "mp~",
+      "nnf-neg",
+      "nnf-pos",
+      "not-or-elim",
+      "quant-inst",
+      "quant-intro",
+      "refl",
+      "rewrite",
+      "sk",
+      "skolem",
+      "symm",
+      "th-lemma-arith",
+      "th-lemma-array",
+      "th-lemma-basic",
+      "th-lemma-bv",
+      "th-lemma-datatype",
+      "th-lemma-datatypes",
+      "th-lemma-dt",
+      "th-lemma-floating-point",
+      "th-lemma-fp",
+      "th-lemma-fpa",
+      "th-lemma-nia",
+      "th-lemma-nla",
+      "th-lemma-nonlinear",
+      "th-lemma-nonlinear-arith",
+      "th-lemma-nra",
+      "th-lemma-re",
+      "th-lemma-regex",
+      "th-lemma-regexp",
+      "th-lemma-seq",
+      "th-lemma-sequence",
+      "th-lemma-sequences",
+      "th-lemma-str",
+      "th-lemma-string",
+      "th-lemma-strings",
+      "trans",
+      "trans*",
+      "trans-star",
+      "true-axiom",
+      "unit-resolution"
+    ]
+  },
+  "rules_by_version": [
+    {
+      "rule_histogram": {
+        "asserted": 2,
+        "unit-resolution": 1
+      },
+      "rules": [
+        "asserted",
+        "unit-resolution"
+      ],
+      "z3_version": "2.19.1"
+    },
+    {
+      "rule_histogram": {
+        "asserted": 2,
+        "unit-resolution": 1
+      },
+      "rules": [
+        "asserted",
+        "unit-resolution"
+      ],
+      "z3_version": "4.12.4"
+    },
+    {
+      "rule_histogram": {
+        "asserted": 2,
+        "unit-resolution": 1
+      },
+      "rules": [
+        "asserted",
+        "unit-resolution"
+      ],
+      "z3_version": "4.13.0"
+    }
+  ],
+  "schema": "holsmt-z3-proof-corpus-v1",
+  "unknown_rule_coverage": [],
+  "z3_versions": [
+    {
+      "entry_count": 1,
+      "proof_count": 1,
+      "version": "2.19.1"
+    },
+    {
+      "entry_count": 1,
+      "proof_count": 1,
+      "version": "4.12.4"
+    },
+    {
+      "entry_count": 1,
+      "proof_count": 1,
+      "version": "4.13.0"
+    }
+  ]
+}

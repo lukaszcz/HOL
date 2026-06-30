@@ -7,6 +7,129 @@
   },
   "entries": [
     {
+      "section": "version_targets",
+      "item": "Supported Z3 versions",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "proof_version",
+          "version": "2.19.1"
+        },
+        {
+          "kind": "proof_version",
+          "version": "4.12.4"
+        },
+        {
+          "kind": "proof_version",
+          "version": "4.13.0"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [
+        "2.19.1",
+        "4.12.4",
+        "4.13.0"
+      ],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/manifest.json",
+          "match": "holsmt-z3-proof-corpus-matrix-v1"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/summary.json",
+          "match": "\"version\": \"4.13.0\""
+        }
+      ],
+      "notes": "Checked-in proof-corpus matrix validates raw artifacts and normalized summaries for every supported Z3 version."
+    },
+    {
+      "section": "version_targets",
+      "item": "Z3 4.x proof mode",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "proof_version",
+          "version": "4.12.4"
+        },
+        {
+          "kind": "proof_version",
+          "version": "4.13.0"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [
+        "4.12.4",
+        "4.13.0"
+      ],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/manifest.json",
+          "match": "pp.simplify_implies=false"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/record_z3_proof_corpus.py",
+          "match": "proof=true"
+        }
+      ],
+      "notes": "Z3 v4 proof options are represented in the recorder and validated by checked-in 4.12.4/4.13.0 corpus artifacts."
+    },
+    {
+      "section": "version_targets",
+      "item": "Z3 pre-4 proof mode",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "proof_version",
+          "version": "2.19.1"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [
+        "2.19.1"
+      ],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/manifest.json",
+          "match": "PROOF_MODE=2"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/record_z3_proof_corpus.py",
+          "match": "PROOF_MODE=2"
+        }
+      ],
+      "notes": "The legacy proof option is represented in the recorder and validated by the checked-in 2.19.1 corpus artifact."
+    },
+    {
       "section": "commands",
       "item": "set-info",
       "class": "SMT-LIB 2.7",
@@ -1228,6 +1351,128 @@
         }
       ],
       "notes": "Covers AST and no-op state behavior for echo."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "asserted",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "proof_rule",
+          "rule": "asserted"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_core_proof_rule_replay_minimal_raw_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [
+        "2.19.1",
+        "4.12.4",
+        "4.13.0"
+      ],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/summary.json",
+          "match": "\"asserted\": 6"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"asserted\""
+        }
+      ],
+      "notes": "The checked-in supported-version proof corpus records real asserted-rule occurrences for all supported Z3 versions."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "asserted",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "unit-resolution",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "proof_rule",
+          "rule": "unit-resolution"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_core_proof_rule_replay_minimal_raw_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [
+        "2.19.1",
+        "4.12.4",
+        "4.13.0"
+      ],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/proof-corpus/supported_versions/summary.json",
+          "match": "\"unit-resolution\": 3"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"unit-resolution\""
+        }
+      ],
+      "notes": "The checked-in supported-version proof corpus records real unit-resolution occurrences for all supported Z3 versions."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "unit-resolution",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
     },
     {
       "section": "z3_proof_rules",

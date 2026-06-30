@@ -50,6 +50,21 @@ python3 src/HolSmt/tools/record_z3_proof_corpus.py \
   src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2
 ```
 
+For the checked-in supported-version corpus matrix:
+
+```sh
+python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+  --validate-corpus-manifest
+```
+
+This validates `supported_versions/manifest.json`, the raw stdout/stderr/proof
+artifacts for Z3 2.19.1, 4.12.4, and 4.13.0, the normalized
+`supported_versions/summary.json`, and `supported_versions/rule-gate.json`.
+The validation recomputes input and artifact hashes, extracts the proof-rule
+histogram from the raw proof text, checks the expected replay-supported,
+parse-only, unsupported, and unknown-rule sets for each version, and fails if
+the checked-in unseen-rule gate would no longer pass.
+
 The expected-rule manifest may be either a JSON list of rule names for every
 Z3 version, or an object with `default`/`rules` and `versions` entries. Version
 keys match exactly; keys ending in `*` match by prefix, for example `4.*`.
@@ -59,3 +74,7 @@ reported separately so unknown rules are not hidden behind parser failures.
 
 The checked-in `minimal_bool_unsat.smt2` is a small HolSmt-style SMT-LIB proof
 input suitable for selftests and minimized repros.
+The supported-version matrix uses this intentionally small input for stable
+cross-version proof evidence; `supported_versions/manifest.json` records
+justifications for supported replay rules that do not occur in that minimal
+raw corpus.

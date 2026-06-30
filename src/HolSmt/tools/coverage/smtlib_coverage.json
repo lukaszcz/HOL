@@ -47,13 +47,13 @@
     {
       "item": "Supported Z3 versions",
       "class": "Z3 extension",
-      "parsed": "unknown",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
-      "tested": "untested",
-      "evidence": ".github/workflows/docker-ci-for-pr.yml defines an expk Z3_VERSION matrix for 2.19.1, 4.12.4 and 4.13.0; src/HolSmt/Z3.sml exposes configured_executable, configured_version, Z3version and proof-command diagnostics.",
-      "notes": "The version data path is available to coverage reporting through Z3.sml and to failures through Z3_SMT_Prover parse/replay wrappers."
+      "parsed": "implemented",
+      "translated": "implemented",
+      "solved": "implemented",
+      "reconstructed": "implemented",
+      "tested": "implemented",
+      "evidence": ".github/workflows/docker-ci-for-pr.yml defines an expk Z3_VERSION matrix for 2.19.1, 4.12.4 and 4.13.0; src/HolSmt/Z3.sml exposes configured_executable, configured_version, Z3version and proof-command diagnostics; src/HolSmt/tools/proof-corpus/supported_versions/summary.json records checked-in proof evidence for each supported version.",
+      "notes": "The version data path is available to coverage reporting through Z3.sml and to failures through Z3_SMT_Prover parse/replay wrappers; the proof-corpus manifest validates raw stdout/stderr/proof artifacts for every supported version."
     },
     {
       "item": "Z3 4.x proof mode",
@@ -62,9 +62,9 @@
       "translated": "implemented",
       "solved": "implemented",
       "reconstructed": "implemented",
-      "tested": "untested",
-      "evidence": "src/HolSmt/Z3.sml detects Z3 v4, uses proof=true pp.simplify_implies=false and reports configured_version in proof diagnostics; PR CI covers 4.12.4 and 4.13.0.",
-      "notes": "Current behavior depends on HOL4_Z3_EXECUTABLE; replay failures include the discovered version when available."
+      "tested": "implemented",
+      "evidence": "src/HolSmt/Z3.sml detects Z3 v4, uses proof=true pp.simplify_implies=false and reports configured_version in proof diagnostics; src/HolSmt/tools/proof-corpus/supported_versions/manifest.json records v4 proof-mode artifacts for 4.12.4 and 4.13.0.",
+      "notes": "Current behavior depends on HOL4_Z3_EXECUTABLE; replay failures include the discovered version when available, and the checked-in proof corpus validates the normalized v4 rule histogram."
     },
     {
       "item": "Z3 pre-4 proof mode",
@@ -73,9 +73,9 @@
       "translated": "implemented",
       "solved": "implemented",
       "reconstructed": "implemented",
-      "tested": "untested",
-      "evidence": "src/HolSmt/Z3.sml falls back to PROOF_MODE=2 when not v4 and reports configured_version in proof diagnostics; PR CI covers 2.19.1.",
-      "notes": "Retained legacy path; replay failures include the discovered version when available."
+      "tested": "implemented",
+      "evidence": "src/HolSmt/Z3.sml falls back to PROOF_MODE=2 when not v4 and reports configured_version in proof diagnostics; src/HolSmt/tools/proof-corpus/supported_versions/manifest.json records legacy proof-mode artifacts for 2.19.1.",
+      "notes": "Retained legacy path; replay failures include the discovered version when available, and the checked-in proof corpus validates the normalized pre-4 rule histogram."
     },
     {
       "item": "cvc5 Alethe proof mode",

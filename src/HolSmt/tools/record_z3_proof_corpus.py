@@ -18,7 +18,16 @@ from typing import Iterable
 
 
 SCHEMA = "holsmt-z3-proof-corpus-v1"
+MATRIX_SCHEMA = "holsmt-z3-proof-corpus-matrix-v1"
 RULE_CONTEXT_LIMIT = 3
+ROOT = pathlib.Path(__file__).resolve().parents[3]
+DEFAULT_SUPPORTED_VERSION_MANIFEST = (
+    pathlib.Path(__file__).resolve().parent
+    / "proof-corpus"
+    / "supported_versions"
+    / "manifest.json"
+)
+SUPPORTED_Z3_VERSIONS = ("2.19.1", "4.12.4", "4.13.0")
 
 REPLAY_SUPPORTED_RULES = {
     "and-elim",
@@ -748,6 +757,21 @@ def load_expected_rule_manifest(path: pathlib.Path) -> object:
         return json.load(infile)
 
 
+def load_json(path: pathlib.Path) -> object:
+    with path.open(encoding="utf-8") as infile:
+        return json.load(infile)
+
+
+def resolve_manifest_path(manifest_path: pathlib.Path, value: str) -> pathlib.Path:
+    path = pathlib.Path(value)
+    if path.is_absolute():
+        return path
+    root_path = ROOT / path
+    if root_path.exists():
+        return root_path
+    return manifest_path.parent / path
+
+
 def _rule_list(value: object) -> set[str]:
     if value is None:
         return set()
@@ -855,11 +879,261 @@ def build_rule_gate_report(
     }
 
 
+def _as_string_list(value: object, label: str, errors: list[str]) -> list[str]:
+    if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+        errors.append(f"{label} must be a list of strings")
+        return []
+    return value
+
+
+def _read_version_entry(
+    manifest_path: pathlib.Path,
+    item: dict[str, object],
+    input_by_id: dict[str, dict[str, object]],
+    errors: list[str],
+) -> dict[str, object] | None:
+    version = item.get("version")
+    input_id = item.get("input")
+    if not isinstance(version, str) or not version:
+        errors.append("version entry is missing version")
+        return None
+    if not isinstance(input_id, str) or input_id not in input_by_id:
+        errors.append(f"version {version} references unknown input {input_id!r}")
+        return None
+
+    input_item = input_by_id[input_id]
+    input_path_value = input_item.get("path")
+    if not isinstance(input_path_value, str) or not input_path_value:
+        errors.append(f"input {input_id} is missing path")
+        return None
+    input_path = resolve_manifest_path(manifest_path, input_path_value)
+    if not input_path.exists():
+        errors.append(f"input {input_id} path does not exist: {input_path_value}")
+        return None
+    expected_input_hash = input_item.get("sha256")
+    actual_input_hash = sha256_file(input_path)
+    if expected_input_hash != actual_input_hash:
+        errors.append(
+            f"input {input_id} sha256 mismatch: expected {expected_input_hash}, got {actual_input_hash}"
+        )
+
+    def read_artifact(field: str) -> tuple[pathlib.Path | None, str]:
+        value = item.get(field)
+        if not isinstance(value, str) or not value:
+            errors.append(f"version {version} is missing {field}")
+            return None, ""
+        path = resolve_manifest_path(manifest_path, value)
+        if not path.exists():
+            errors.append(f"version {version} artifact does not exist: {value}")
+            return path, ""
+        actual_hash = sha256_file(path)
+        expected_hash = item.get(f"{field}_sha256")
+        if expected_hash != actual_hash:
+            errors.append(
+                f"version {version} {field} sha256 mismatch: "
+                f"expected {expected_hash}, got {actual_hash}"
+            )
+        return path, path.read_text(encoding="utf-8")
+
+    stdout_path, stdout = read_artifact("stdout")
+    stderr_path, stderr = read_artifact("stderr")
+    proof_path, proof_text = read_artifact("proof")
+    if stdout_path is None or stderr_path is None or proof_path is None:
+        return None
+
+    solver_result, stdout_proof = detect_solver_result(stdout)
+    if solver_result != "unsat":
+        errors.append(f"version {version} expected unsat stdout, got {solver_result}")
+    if stdout_proof != proof_text:
+        errors.append(f"version {version} stdout proof payload does not match proof artifact")
+
+    proof_report = extract_rule_report(proof_text)
+    expected_rule_sets = item.get("expected_rule_sets")
+    if not isinstance(expected_rule_sets, dict):
+        errors.append(f"version {version} expected_rule_sets must be an object")
+        expected_rule_sets = {}
+    histogram = proof_report["rule_histogram"]
+    assert isinstance(histogram, dict)
+    actual_rule_sets = {
+        "replay_supported": sorted(rule for rule in histogram if rule in REPLAY_SUPPORTED_RULES),
+        "parse_only": sorted(rule for rule in histogram if rule in PARSE_ONLY_RULES),
+        "unsupported": sorted(rule for rule in histogram if rule not in KNOWN_RULES),
+        "unknown": sorted(item["rule"] for item in proof_report["unknown_rules"]),  # type: ignore[index]
+    }
+    for field, actual in actual_rule_sets.items():
+        expected = expected_rule_sets.get(field, [])
+        if expected != actual:
+            errors.append(
+                f"version {version} expected_rule_sets.{field} mismatch: "
+                f"expected {expected}, got {actual}"
+            )
+
+    return {
+        "schema": SCHEMA,
+        "kind": "proof-corpus-entry",
+        "input": {
+            "path": input_path_value,
+            "sha256": actual_input_hash,
+            "effective_sha256": actual_input_hash,
+            "append_get_proof": False,
+        },
+        "z3": {
+            "executable": str(item.get("z3_executable", "z3")),
+            "version": version,
+            "command_line": [
+                str(item.get("z3_executable", "z3")),
+                *_as_string_list(item.get("proof_options", []), f"version {version} proof_options", errors),
+                "-smt2",
+                input_path_value,
+            ],
+            "exit_code": int(item.get("exit_code", 0)),
+            "timed_out": bool(item.get("timed_out", False)),
+            "stdout_path": str(item.get("stdout")),
+            "stderr_path": str(item.get("stderr")),
+        },
+        "solver": {
+            "result": solver_result,
+            "z3_failure": bool(item.get("z3_failure", False)),
+        },
+        "proof": {
+            "available": bool(proof_text.strip()),
+            "raw_path": str(item.get("proof")),
+            "raw_sha256": sha256_bytes(proof_text.encode("utf-8")),
+            **proof_report,
+        },
+        "holsmt": {
+            "proof_parse_status": "not-run",
+            "proof_replay_status": "not-run",
+            "failure": None,
+        },
+    }
+
+
+def validate_corpus_manifest(manifest_path: pathlib.Path) -> list[str]:
+    errors: list[str] = []
+    manifest_obj = load_json(manifest_path)
+    if not isinstance(manifest_obj, dict):
+        return ["proof corpus manifest root must be an object"]
+    if manifest_obj.get("schema") != MATRIX_SCHEMA:
+        errors.append(f"proof corpus manifest schema must be {MATRIX_SCHEMA}")
+
+    supported_versions = _as_string_list(
+        manifest_obj.get("supported_z3_versions"),
+        "supported_z3_versions",
+        errors,
+    )
+    if sorted(supported_versions) != sorted(SUPPORTED_Z3_VERSIONS):
+        errors.append(
+            "supported_z3_versions mismatch: expected "
+            + ", ".join(SUPPORTED_Z3_VERSIONS)
+            + "; got "
+            + ", ".join(supported_versions)
+        )
+
+    inputs = manifest_obj.get("inputs")
+    if not isinstance(inputs, list) or not inputs:
+        errors.append("inputs must be a non-empty list")
+        inputs = []
+    input_by_id: dict[str, dict[str, object]] = {}
+    for index, input_item in enumerate(inputs, 1):
+        if not isinstance(input_item, dict):
+            errors.append(f"inputs[{index}] must be an object")
+            continue
+        input_id = input_item.get("id")
+        if not isinstance(input_id, str) or not input_id:
+            errors.append(f"inputs[{index}] is missing id")
+            continue
+        input_by_id[input_id] = input_item
+
+    versions = manifest_obj.get("versions")
+    if not isinstance(versions, list) or not versions:
+        errors.append("versions must be a non-empty list")
+        versions = []
+
+    entries = []
+    seen_versions: set[str] = set()
+    for index, version_item in enumerate(versions, 1):
+        if not isinstance(version_item, dict):
+            errors.append(f"versions[{index}] must be an object")
+            continue
+        entry = _read_version_entry(manifest_path, version_item, input_by_id, errors)
+        if entry is None:
+            continue
+        seen_versions.add(str(entry["z3"]["version"]))  # type: ignore[index]
+        entries.append(entry)
+
+    if sorted(seen_versions) != sorted(SUPPORTED_Z3_VERSIONS):
+        errors.append(
+            "versions must contain exactly the supported Z3 versions: "
+            + ", ".join(SUPPORTED_Z3_VERSIONS)
+        )
+
+    expected_rules_path = manifest_obj.get("expected_rules")
+    expected_rules = None
+    if not isinstance(expected_rules_path, str) or not expected_rules_path:
+        errors.append("expected_rules must point to an expected-rule manifest")
+    else:
+        resolved_expected_rules = resolve_manifest_path(manifest_path, expected_rules_path)
+        if not resolved_expected_rules.exists():
+            errors.append(f"expected_rules path does not exist: {expected_rules_path}")
+        else:
+            expected_rules = load_expected_rule_manifest(resolved_expected_rules)
+
+    if entries:
+        summary = build_summary(entries)
+        expected_summary_path = manifest_obj.get("expected_summary")
+        if not isinstance(expected_summary_path, str) or not expected_summary_path:
+            errors.append("expected_summary must point to a checked-in summary")
+        else:
+            expected_summary = load_json(resolve_manifest_path(manifest_path, expected_summary_path))
+            if expected_summary != summary:
+                errors.append("checked-in proof corpus summary is stale")
+
+        if expected_rules is not None:
+            gate = build_rule_gate_report(entries, expected_rules)
+            expected_gate_path = manifest_obj.get("expected_gate")
+            if not isinstance(expected_gate_path, str) or not expected_gate_path:
+                errors.append("expected_gate must point to a checked-in gate report")
+            else:
+                expected_gate = load_json(resolve_manifest_path(manifest_path, expected_gate_path))
+                if expected_gate != gate:
+                    errors.append("checked-in proof-rule gate report is stale")
+            if not gate["passed"]:  # type: ignore[index]
+                errors.append("proof-rule gate fails for checked-in corpus")
+
+        discovered_rules = set(summary["discovered_rules"])  # type: ignore[index]
+        replay_missing = sorted(REPLAY_SUPPORTED_RULES - discovered_rules)
+        replay_justifications = manifest_obj.get("missing_replay_supported_justifications", {})
+        if not isinstance(replay_justifications, dict):
+            errors.append("missing_replay_supported_justifications must be an object")
+            replay_justifications = {}
+        for rule in replay_missing:
+            if not isinstance(replay_justifications.get(rule), str) or not replay_justifications[rule]:
+                errors.append(f"missing replay-supported rule lacks justification: {rule}")
+        for rule in replay_justifications:
+            if rule not in REPLAY_SUPPORTED_RULES:
+                errors.append(f"justification names an unknown replay-supported rule: {rule}")
+
+        parse_only_missing = sorted(PARSE_ONLY_RULES - discovered_rules)
+        parse_only_justifications = manifest_obj.get("missing_parse_only_justifications", {})
+        if not isinstance(parse_only_justifications, dict):
+            errors.append("missing_parse_only_justifications must be an object")
+            parse_only_justifications = {}
+        for rule in parse_only_missing:
+            if (
+                not isinstance(parse_only_justifications.get(rule), str)
+                or not parse_only_justifications[rule]
+            ):
+                errors.append(f"missing parse-only rule lacks justification: {rule}")
+
+    return errors
+
+
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Run Z3 on SMT-LIB inputs and record raw proof-rule histograms."
     )
-    parser.add_argument("inputs", nargs="+", help="SMT-LIB files to run through Z3")
+    parser.add_argument("inputs", nargs="*", help="SMT-LIB files to run through Z3")
     parser.add_argument(
         "--z3",
         default=os.environ.get("HOL4_Z3_EXECUTABLE") or "z3",
@@ -921,7 +1195,21 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         action="store_true",
         help="return nonzero if a discovered proof rule is not replay-supported by HolSmt",
     )
+    parser.add_argument(
+        "--validate-corpus-manifest",
+        nargs="?",
+        const=DEFAULT_SUPPORTED_VERSION_MANIFEST,
+        type=pathlib.Path,
+        help=(
+            "validate a checked-in proof-corpus matrix manifest without running Z3; "
+            "defaults to the supported-version corpus manifest"
+        ),
+    )
     args = parser.parse_args(argv)
+    if args.validate_corpus_manifest is not None:
+        return args
+    if not args.inputs:
+        parser.error("SMT-LIB input files are required unless --validate-corpus-manifest is used")
     if args.fail_on_unseen_rules and args.expected_rules is None:
         parser.error("--fail-on-unseen-rules requires --expected-rules")
     return args
@@ -953,6 +1241,16 @@ def print_gate_findings(report: dict[str, object]) -> None:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if args.validate_corpus_manifest is not None:
+        errors = validate_corpus_manifest(args.validate_corpus_manifest)
+        if errors:
+            print("proof corpus manifest validation failed:")
+            for error in errors:
+                print(f"  {error}")
+            return 1
+        print(f"validated proof corpus manifest {args.validate_corpus_manifest}")
+        return 0
+
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     version = z3_version(args.z3)

@@ -14,6 +14,9 @@ The default mode validates the manifest, checks evidence that is available in
 the checkout, and prints missing row-level obligations without failing CI. Use
 `--enforce` only after a later task deliberately turns missing obligations into
 a gate.
+The checked-in supported-version proof summary is loaded as a default
+`--proof-report`; pass additional `--proof-report` paths when auditing freshly
+recorded Z3 proof-corpus runs.
 
 Add one manifest entry per coverage row, using the exact `section`, `item`, and
 `class` values from `smtlib_coverage.json`. Put the covered status columns in

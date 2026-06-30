@@ -2,11 +2,13 @@
 
 import pathlib
 import sys
+import tempfile
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 
 from record_z3_proof_corpus import (
+    DEFAULT_SUPPORTED_VERSION_MANIFEST,
     PARSE_ONLY_RULES,
     REPLAY_SUPPORTED_RULES,
     RULE_PREMISE_KIND,
@@ -14,6 +16,7 @@ from record_z3_proof_corpus import (
     build_summary,
     expected_rules_for_version,
     extract_rule_report,
+    validate_corpus_manifest,
 )
 
 
@@ -192,6 +195,39 @@ class ProofRuleExtractionTests(unittest.TestCase):
         self.assertIn(
             "mystery-rule",
             report["replay_unknown_rules"][0]["contexts"][0]["context"],
+        )
+
+    def test_checked_in_supported_version_manifest_validates(self):
+        self.assertEqual(validate_corpus_manifest(DEFAULT_SUPPORTED_VERSION_MANIFEST), [])
+
+    def test_supported_version_manifest_requires_all_supported_versions(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            manifest = pathlib.Path(tmp) / "manifest.json"
+            manifest.write_text(
+                """{
+  "schema": "holsmt-z3-proof-corpus-matrix-v1",
+  "supported_z3_versions": ["4.13.0"],
+  "expected_rules": "expected.json",
+  "expected_summary": "summary.json",
+  "expected_gate": "rule-gate.json",
+  "inputs": [],
+  "versions": [],
+  "missing_replay_supported_justifications": {},
+  "missing_parse_only_justifications": {}
+}
+""",
+                encoding="utf-8",
+            )
+
+            errors = validate_corpus_manifest(manifest)
+
+        self.assertTrue(
+            any("supported_z3_versions mismatch" in error for error in errors),
+            errors,
+        )
+        self.assertTrue(
+            any("versions must contain exactly" in error for error in errors),
+            errors,
         )
 
 
