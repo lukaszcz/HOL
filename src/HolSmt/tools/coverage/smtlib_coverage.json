@@ -237,12 +237,12 @@
       "item": "define-sort",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
+      "translated": "not_applicable",
+      "solved": "not_applicable",
+      "reconstructed": "not_applicable",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdDefineSort; benchmark parser consumes balanced define-sort syntax as an explicit no-op; src/HolSmt/Unittest.sml covers the AST form.",
-      "notes": "Sort aliases are represented in the typed AST but not applied to later legacy benchmark parsing."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdDefineSort; typecheck_script validates parameters and the body sort; benchmark parser consumes balanced define-sort syntax as an explicit no-op; src/HolSmt/Unittest.sml covers the AST form and malformed diagnostics.",
+      "notes": "Sort aliases are validated in the typed AST/typecheck path and intentionally not emitted or replayed as solver/proof commands."
     },
     {
       "item": "define-const",
@@ -259,23 +259,23 @@
       "item": "define-fun-rec, define-funs-rec",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
+      "translated": "unsupported_diagnostic",
+      "solved": "not_applicable",
+      "reconstructed": "not_applicable",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdDefineFunRec and CmdDefineFunsRec; legacy benchmark parser rejects both with explicit unsupported-command diagnostics; src/HolSmt/Unittest.sml covers recursive definition examples.",
-      "notes": "Recursive definitions are represented syntactically but not yet expanded into HOL definitions."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdDefineFunRec and CmdDefineFunsRec; typecheck_script and the legacy benchmark parser reject both with explicit unsupported-command diagnostics; src/HolSmt/Unittest.sml covers recursive definition examples and diagnostics.",
+      "notes": "Recursive definitions are represented syntactically but not expanded into HOL definitions; unsupported diagnostics stop before solver or replay phases."
     },
     {
       "item": "declare-datatype, declare-datatypes",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
+      "translated": "unsupported_diagnostic",
+      "solved": "not_applicable",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; legacy benchmark parser installs simple declare-datatype constructor/selector/tester dictionaries and rejects mutual/parametric forms with explicit diagnostics; src/HolSmt/Unittest.sml covers both paths.",
-      "notes": "Simple datatype declarations are parse/typecheck embeddings only. Mutual and parametric datatype declarations remain represented by the typed AST but are not installed into the legacy HOL parser dictionaries."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; simple declare-datatype installs parser/typecheck dictionaries; mutual/parametric datatype paths and datatype replay are covered by explicit diagnostics in src/HolSmt/Unittest.sml.",
+      "notes": "Simple datatype declarations are parse/typecheck embeddings. Mutual datatype declarations are not installed into the HOL dictionary, and Z3 datatype theory replay remains explicitly unsupported."
     },
     {
       "item": "push, pop",
@@ -304,33 +304,33 @@
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
       "translated": "not_applicable",
-      "solved": "unknown",
-      "reconstructed": "unknown",
+      "solved": "unsupported_diagnostic",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdCheckSatAssuming; parse_command records QueryCheckSat assumptions and emits a proof-reconstruction diagnostic; src/HolSmt/Unittest.sml covers the command form.",
-      "notes": "Assumptions are preserved syntactically but not replayed by Z3_TAC."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdCheckSatAssuming; parse_command/typecheck_script record QueryCheckSat assumptions; z3_tac_driver rejects assumed checks with an explicit checked-Z3_TAC diagnostic; src/HolSmt/Unittest.sml covers the command form and malformed assumption diagnostics.",
+      "notes": "Assumptions are preserved syntactically and typechecked, but raw SMT-LIB check-sat-assuming is outside the checked Z3_TAC command-line replay entry point."
     },
     {
       "item": "get-unsat-assumptions, get-unsat-core",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
       "translated": "not_applicable",
-      "solved": "unknown",
-      "reconstructed": "unknown",
+      "solved": "unsupported_diagnostic",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdGetUnsatAssumptions and CmdGetUnsatCore; parse_command records query variants and emits proof-reconstruction diagnostics; src/HolSmt/Unittest.sml covers the command forms.",
-      "notes": "Named assertion metadata is preserved, but unsat-core/assumption extraction is not implemented."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdGetUnsatAssumptions and CmdGetUnsatCore; parse_command/typecheck_script record query variants and emit unsupported extraction warnings; z3_tac_driver rejects raw query commands outside checked Z3_TAC; src/HolSmt/Unittest.sml covers the command forms.",
+      "notes": "Named assertion metadata is preserved, but unsat-core/assumption extraction is not implemented by the checked Z3_TAC path."
     },
     {
       "item": "get-model, get-value, get-assignment, get-assertions",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
       "translated": "not_applicable",
-      "solved": "unknown",
+      "solved": "unsupported_diagnostic",
       "reconstructed": "not_applicable",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdGetModel, CmdGetValue, CmdGetAssignment, and CmdGetAssertions; parse_command records query variants and emits proof-reconstruction diagnostics where applicable; src/HolSmt/Unittest.sml covers the command forms.",
-      "notes": "Model/value/assertion output commands are parsed but no response object is produced by Z3_TAC proof reconstruction."
+      "evidence": "SmtLib_Parser typed AST parser produces CmdGetModel, CmdGetValue, CmdGetAssignment, and CmdGetAssertions; parse_command/typecheck_script record query variants and emit unsupported response warnings; z3_tac_driver rejects raw query commands outside checked Z3_TAC; src/HolSmt/Unittest.sml and conformance tests cover the command forms and diagnostics.",
+      "notes": "Model/value/assertion output commands are parsed and typechecked where terms are present, but no response object is produced by checked Z3_TAC reconstruction."
     },
     {
       "item": "echo",

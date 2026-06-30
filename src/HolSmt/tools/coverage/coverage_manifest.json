@@ -1,25 +1,91 @@
 {
   "schema": "holsmt-coverage-manifest-v1",
   "metadata": {
-    "title": "Initial HolSmt SMT-LIB coverage evidence manifest",
-    "scope": "Representative end-to-end slice only. Later tasks should add entries for each coverage row as executable evidence is created.",
+    "title": "HolSmt SMT-LIB coverage evidence manifest",
+    "scope": "Executable evidence IDs for SMT-LIB command rows plus representative non-command rows populated by earlier tasks.",
     "schema_path": "src/HolSmt/tools/coverage/coverage_manifest_schema.json"
   },
   "entries": [
     {
       "section": "commands",
-      "item": "set-logic",
+      "item": "set-info",
       "class": "SMT-LIB 2.7",
-      "phases": ["parsed", "translated", "solved", "reconstructed", "tested"],
+      "phases": [
+        "parsed",
+        "tested"
+      ],
       "expected_status": "implemented",
       "positive_tests": [
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "CmdSetLogic"
+          "match": "script_ast_metadata_decls_success"
         }
       ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdSetInfo"
+        }
+      ],
+      "notes": "Parser preserves set-info payloads; legacy command processing intentionally ignores metadata."
+    },
+    {
+      "section": "commands",
+      "item": "set-info",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
       "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "set-info: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Parser preserves set-info payloads; legacy command processing intentionally ignores metadata."
+        }
+      ],
+      "notes": "Parser preserves set-info payloads; legacy command processing intentionally ignores metadata."
+    },
+    {
+      "section": "commands",
+      "item": "set-logic",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
       "z3_versions": [],
       "artifacts": [
         {
@@ -28,37 +94,1149 @@
           "match": "parse_set_logic"
         }
       ],
-      "notes": "Start with one command whose parser, translator, solve, replay, and checked-test columns are already implemented in the baseline matrix."
+      "notes": "Covers supported logic parsing plus duplicate and unknown logic diagnostics."
     },
     {
       "section": "commands",
-      "item": "declare-const",
+      "item": "declare-sort",
       "class": "SMT-LIB 2.7",
-      "phases": ["parsed", "translated", "solved", "reconstructed", "tested"],
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
       "expected_status": "implemented",
       "positive_tests": [
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "CmdDeclareConst"
+          "match": "script_ast_metadata_decls_success"
         }
       ],
-      "negative_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
       "z3_versions": [],
       "artifacts": [
         {
           "kind": "source",
           "path": "src/HolSmt/SmtLib_Parser.sml",
-          "match": "parse_declare_const"
+          "match": "typecheck_declare_sort"
         }
       ],
-      "notes": "Covers a declaration command with parser and typed HOL dictionary behavior."
+      "notes": "Covers arity-0 declarations and unsupported arity diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "declare-const",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDeclareConst"
+        }
+      ],
+      "notes": "Covers nullary declaration parsing/typechecking and malformed command diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "declare-fun",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDeclareFun"
+        }
+      ],
+      "notes": "Covers function declarations and use-site arity/type mismatch diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "define-fun",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "typecheck_define_fun"
+        }
+      ],
+      "notes": "Covers non-recursive function definitions and malformed recursive-definition separation."
+    },
+    {
+      "section": "commands",
+      "item": "assert",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_stack_and_query_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_typecheck_invalid_assertion_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdAssert"
+        }
+      ],
+      "notes": "Covers named/unnamed assertions and non-Bool assertion diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "check-sat",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "QueryCheckSat"
+        }
+      ],
+      "notes": "Covers query recording and checked solver-result handling via existing solver diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "check-sat",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "check-sat: reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers query recording and checked solver-result handling via existing solver diagnostics."
+        }
+      ],
+      "notes": "Covers query recording and checked solver-result handling via existing solver diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-proof",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "QueryGetProof"
+        }
+      ],
+      "notes": "Covers query recording and proof-producing translation output."
+    },
+    {
+      "section": "commands",
+      "item": "exit",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_stack_and_query_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdExit"
+        }
+      ],
+      "notes": "Covers explicit exit and final state handling."
+    },
+    {
+      "section": "commands",
+      "item": "exit",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "exit: solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers explicit exit and final state handling."
+        }
+      ],
+      "notes": "Covers explicit exit and final state handling."
+    },
+    {
+      "section": "commands",
+      "item": "set-option",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdSetOption"
+        }
+      ],
+      "notes": "Parser preserves option syntax; legacy command processing treats options as no-ops."
+    },
+    {
+      "section": "commands",
+      "item": "set-option",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "set-option: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Parser preserves option syntax; legacy command processing treats options as no-ops."
+        }
+      ],
+      "notes": "Parser preserves option syntax; legacy command processing treats options as no-ops."
+    },
+    {
+      "section": "commands",
+      "item": "get-info",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdGetInfo"
+        }
+      ],
+      "notes": "Covers parser/query metadata without claiming a response object."
+    },
+    {
+      "section": "commands",
+      "item": "get-info",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "get-info: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers parser/query metadata without claiming a response object."
+        }
+      ],
+      "notes": "Covers parser/query metadata without claiming a response object."
+    },
+    {
+      "section": "commands",
+      "item": "get-option",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdGetOption"
+        }
+      ],
+      "notes": "Covers parser/query metadata without claiming a response object."
+    },
+    {
+      "section": "commands",
+      "item": "get-option",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "get-option: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers parser/query metadata without claiming a response object."
+        }
+      ],
+      "notes": "Covers parser/query metadata without claiming a response object."
+    },
+    {
+      "section": "commands",
+      "item": "define-sort",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_indexed_parametric_sort_reconstruction_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "typecheck_define_sort"
+        }
+      ],
+      "notes": "Covers AST preservation and typecheck validation while documenting no solver/replay phase."
+    },
+    {
+      "section": "commands",
+      "item": "define-sort",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "define-sort: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers AST preservation and typecheck validation while documenting no solver/replay phase."
+        }
+      ],
+      "notes": "Covers AST preservation and typecheck validation while documenting no solver/replay phase."
+    },
+    {
+      "section": "commands",
+      "item": "define-const",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_soundness_audit_scope_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "typecheck_define_const"
+        }
+      ],
+      "notes": "Covers nullary definitions, local definition tracking, and diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "define-fun-rec, define-funs-rec",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_datatype_recursive_remaining_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDefineFunRec"
+        }
+      ],
+      "notes": "Covers AST representation and exact unsupported diagnostics for recursive definitions."
+    },
+    {
+      "section": "commands",
+      "item": "define-fun-rec, define-funs-rec",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDefineFunRec"
+        }
+      ],
+      "notes": "Covers AST representation and exact unsupported diagnostics for recursive definitions."
+    },
+    {
+      "section": "commands",
+      "item": "define-fun-rec, define-funs-rec",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "define-fun-rec, define-funs-rec: solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers AST representation and exact unsupported diagnostics for recursive definitions."
+        }
+      ],
+      "notes": "Covers AST representation and exact unsupported diagnostics for recursive definitions."
+    },
+    {
+      "section": "commands",
+      "item": "declare-datatype, declare-datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_datatype_dictionary_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_datatype_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDeclareDatatype"
+        }
+      ],
+      "notes": "Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "declare-datatype, declare-datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_datatype_unsupported_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdDeclareDatatype"
+        }
+      ],
+      "notes": "Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "declare-datatype, declare-datatypes",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "declare-datatype, declare-datatypes: solved phase(s) are not part of this command's checked HolSmt behavior; Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+        }
+      ],
+      "notes": "Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "push, pop",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_push_pop_assertion_scoping"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdPush"
+        }
+      ],
+      "notes": "Covers scoped assertions/declarations and pop-underflow diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "push, pop",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "push, pop: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers scoped assertions/declarations and pop-underflow diagnostics."
+        }
+      ],
+      "notes": "Covers scoped assertions/declarations and pop-underflow diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "reset, reset-assertions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_reset_assertions_state"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdResetAssertions"
+        }
+      ],
+      "notes": "Covers deterministic reset and reset-assertions state behavior."
+    },
+    {
+      "section": "commands",
+      "item": "reset, reset-assertions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "reset, reset-assertions: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers deterministic reset and reset-assertions state behavior."
+        }
+      ],
+      "notes": "Covers deterministic reset and reset-assertions state behavior."
+    },
+    {
+      "section": "commands",
+      "item": "check-sat-assuming",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_command_malformed_diagnostics"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "check-sat-assuming is outside checked Z3_TAC"
+        }
+      ],
+      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "check-sat-assuming",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "check-sat-assuming: translated phase(s) are not part of this command's checked HolSmt behavior; Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
+        }
+      ],
+      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "check-sat-assuming",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "check-sat-assuming is outside checked Z3_TAC"
+        }
+      ],
+      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-unsat-assumptions, get-unsat-core",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "unsat-core extraction is not implemented"
+        }
+      ],
+      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-unsat-assumptions, get-unsat-core",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "get-unsat-assumptions, get-unsat-core: translated phase(s) are not part of this command's checked HolSmt behavior; Covers query preservation and explicit unsupported extraction diagnostics."
+        }
+      ],
+      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-unsat-assumptions, get-unsat-core",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "unsat-core extraction is not implemented"
+        }
+      ],
+      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-model, get-value, get-assignment, get-assertions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_query_commands_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "raw SMT-LIB query "
+        }
+      ],
+      "notes": "Covers query preservation, get-value typechecking, and checked Z3_TAC response-object diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-model, get-value, get-assignment, get-assertions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "get-model, get-value, get-assignment, get-assertions: translated, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers query preservation, get-value typechecking, and checked Z3_TAC response-object diagnostics."
+        }
+      ],
+      "notes": "Covers query preservation, get-value typechecking, and checked Z3_TAC response-object diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "get-model, get-value, get-assignment, get-assertions",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "raw SMT-LIB query "
+        }
+      ],
+      "notes": "Covers query preservation, get-value typechecking, and checked Z3_TAC response-object diagnostics."
+    },
+    {
+      "section": "commands",
+      "item": "echo",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "parse_file_echo_success"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_command_syntax_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "CmdEcho"
+        }
+      ],
+      "notes": "Covers AST and no-op state behavior for echo."
+    },
+    {
+      "section": "commands",
+      "item": "echo",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "echo: translated, solved, reconstructed phase(s) are not part of this command's checked HolSmt behavior; Covers AST and no-op state behavior for echo."
+        }
+      ],
+      "notes": "Covers AST and no-op state behavior for echo."
     },
     {
       "section": "z3_proof_rules",
       "item": "proof-bind",
       "class": "Z3 extension",
-      "phases": ["parsed", "tested"],
+      "phases": [
+        "parsed",
+        "tested"
+      ],
       "expected_status": "implemented",
       "positive_tests": [
         {
@@ -87,7 +1265,10 @@
       "section": "z3_proof_rules",
       "item": "proof-bind",
       "class": "Z3 extension",
-      "phases": ["translated", "solved"],
+      "phases": [
+        "translated",
+        "solved"
+      ],
       "expected_status": "not_applicable",
       "positive_tests": [],
       "negative_tests": [],
@@ -104,7 +1285,9 @@
       "section": "z3_proof_rules",
       "item": "proof-bind",
       "class": "Z3 extension",
-      "phases": ["reconstructed"],
+      "phases": [
+        "reconstructed"
+      ],
       "expected_status": "parse_only",
       "positive_tests": [],
       "negative_tests": [],

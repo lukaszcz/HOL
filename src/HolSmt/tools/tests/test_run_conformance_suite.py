@@ -238,6 +238,31 @@ class ConformanceSuiteTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bench_dir / "assuming.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "check-sat-assuming is outside checked Z3_TAC"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (check-sat-assuming (p))
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "unsat_core.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "get-unsat-core is outside checked Z3_TAC"}}
+                    (set-logic QF_UF)
+                    (assert (! false :named bad))
+                    (check-sat)
+                    (get-unsat-core)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
             checker = root / "fake-z3-tac.py"
             checker.write_text(
                 textwrap.dedent(
@@ -249,6 +274,14 @@ class ConformanceSuiteTests(unittest.TestCase):
                     if "(get-model)" in text:
                         print("Z3_TAC_UNSUPPORTED")
                         print("diagnostic=raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point")
+                        raise SystemExit(1)
+                    if "(check-sat-assuming" in text:
+                        print("Z3_TAC_UNSUPPORTED")
+                        print("diagnostic=check-sat-assuming is outside checked Z3_TAC command-line entry point")
+                        raise SystemExit(1)
+                    if "(get-unsat-core)" in text:
+                        print("Z3_TAC_UNSUPPORTED")
+                        print("diagnostic=raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point")
                         raise SystemExit(1)
                     print("Z3_TAC_PASS")
                     print("z3_version=4.13.0")
@@ -280,6 +313,18 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(by_case["diagnostic"]["status"], conformance.UNSUPPORTED)
             self.assertEqual(by_case["diagnostic"]["classification"], conformance.CLASSIFICATION_MATCHED)
             self.assertIn("get-model is outside checked Z3_TAC", by_case["diagnostic"]["actual_diagnostic"])
+            self.assertEqual(by_case["assuming"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["assuming"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn(
+                "check-sat-assuming is outside checked Z3_TAC",
+                by_case["assuming"]["actual_diagnostic"],
+            )
+            self.assertEqual(by_case["unsat_core"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["unsat_core"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn(
+                "get-unsat-core is outside checked Z3_TAC",
+                by_case["unsat_core"]["actual_diagnostic"],
+            )
 
     def test_z3_tac_oracle_tag_output_is_a_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

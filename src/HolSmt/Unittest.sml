@@ -378,6 +378,19 @@ in
   n = 0 orelse loop 0
 end
 
+fun expect_hol_error_contains label expected f =
+  let
+    val _ = f ()
+  in
+    die ("expected HOL error for " ^ label)
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains expected msg,
+        label ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
+    end
+
 fun script_ast_locations_success () =
 let
   val script =
@@ -972,6 +985,55 @@ fun smtlib_typecheck_declared_function_mismatch_diagnostic () =
               contains "actual sort :int" msg,
         "function mismatch diagnostic lacked expected/actual sorts: " ^ msg)
     end
+
+fun smtlib_command_malformed_diagnostics () =
+  let
+    fun typecheck text () = ignore (SmtLib_Parser.typecheck_script_string text)
+    fun parse_state text () = ignore (parse_smtlib_state text)
+  in
+    expect_hol_error_contains "unknown set-logic" "unknown logic"
+      (typecheck "(set-logic NO_SUCH_LOGIC)\n");
+    expect_hol_error_contains "duplicate set-logic"
+      "set-logic issued more than once"
+      (typecheck "(set-logic QF_UF)\n(set-logic QF_UF)\n");
+    expect_hol_error_contains "declare-sort arity"
+      "unsupported sort arity"
+      (typecheck "(set-logic QF_UF)\n(declare-sort U 1)\n");
+    expect_hol_error_contains "declare-fun arity"
+      "wrong number of arguments for 'f'"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(declare-fun f (Bool) Bool)\n" ^
+         "(assert (f true true))\n"));
+    expect_hol_error_contains "recursive define-fun"
+      "unsupported command 'define-fun-rec'"
+      (typecheck
+        ("(set-logic QF_LIA)\n" ^
+         "(define-fun-rec f ((x Int)) Int x)\n"));
+    expect_hol_error_contains "mutual recursive define-fun"
+      "unsupported command 'define-funs-rec'"
+      (typecheck
+        ("(set-logic QF_LIA)\n" ^
+         "(define-funs-rec ((f ((x Int)) Int)) (x))\n"));
+    expect_hol_error_contains "mutual datatype"
+      "unsupported command 'declare-datatypes'"
+      (typecheck
+        ("(set-logic ALL)\n" ^
+         "(declare-datatypes ((T 0)) (((mkT))))\n"));
+    expect_hol_error_contains "check-sat-assuming sort"
+      "command 'check-sat-assuming'"
+      (typecheck
+        ("(set-logic QF_LIA)\n" ^
+         "(check-sat-assuming (1))\n"));
+    expect_hol_error_contains "get-value sort"
+      "could not resolve symbol 'missing'"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(get-value (missing))\n"));
+    expect_hol_error_contains "pop underflow"
+      "cannot pop the base assertion scope"
+      (parse_state "(set-logic QF_UF)\n(pop 1)\n")
+  end
 
 fun smtlib_typecheck_overloaded_and_indexed_success () =
 let
@@ -1835,6 +1897,8 @@ let
       smtlib_typecheck_invalid_assertion_diagnostic),
     ("smtlib_typecheck_declared_function_mismatch_diagnostic",
       smtlib_typecheck_declared_function_mismatch_diagnostic),
+    ("smtlib_command_malformed_diagnostics",
+      smtlib_command_malformed_diagnostics),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
     ("smtlib_core_symbol_metadata_success",
