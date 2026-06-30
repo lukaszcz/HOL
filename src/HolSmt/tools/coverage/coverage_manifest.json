@@ -1354,6 +1354,983 @@
     },
     {
       "section": "z3_proof_rules",
+      "item": "and-elim",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"and-elim\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"and-elim\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported and-elim constructor."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "and-elim",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "commutativity",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"commutativity\""
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_proof_replay_failure_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"commutativity\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported commutativity constructor; malformed shape diagnostics assert the replay envelope."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "commutativity",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "def-axiom, elim-unused, hypothesis, intro-def, sk, true-axiom",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"def-axiom\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"elim-unused\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"hypothesis\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"intro-def\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"sk\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"true-axiom\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"def-axiom\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"true-axiom\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported definition, hypothesis, skolem, and true-axiom constructors."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "def-axiom, elim-unused, hypothesis, intro-def, sk, true-axiom",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "iff-false, iff-true",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"iff-false\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"iff-true\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"iff-false\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported iff-false and iff-true constructors."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "iff-false, iff-true",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "lemma",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"lemma\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"lemma\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported lemma constructor."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "lemma",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "monotonicity",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"monotonicity\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"monotonicity\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported monotonicity constructor."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "monotonicity",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "mp, mp~",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"mp\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"mp~\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_proof_parser_normalizes_rule_alias_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"mp\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"mp~\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers mp and mp~; parser coverage checks mp-eq alias normalization."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "mp, mp~",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "nnf-neg, nnf-pos",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"nnf-neg\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"nnf-pos\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"nnf-neg\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported nnf-neg and nnf-pos constructors."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "nnf-neg, nnf-pos",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "not-or-elim",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"not-or-elim\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"not-or-elim\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported not-or-elim constructor."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "not-or-elim",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "quant-inst, quant-intro",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"quant-inst\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"quant-intro\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"quant-inst\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported quant-inst and quant-intro constructors."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "quant-inst, quant-intro",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "refl, symm, trans, trans*",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"refl\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"symm\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"trans\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"trans*\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"refl\""
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"trans*\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported equality proof constructors."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "refl, symm, trans, trans*",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "rewrite",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "(\"rewrite\""
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"rewrite\""
+        }
+      ],
+      "notes": "Synthetic raw proof replay covers the supported rewrite constructor."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "rewrite",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-arith collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "arith/farkas"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "arith/triangle-eq"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"th-lemma-arith\""
+        }
+      ],
+      "notes": "Synthetic th-lemma replay covers collected arithmetic subkinds."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-arith collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-array collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "array/select-store"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "array/extensionality"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"th-lemma-array\""
+        }
+      ],
+      "notes": "Synthetic th-lemma replay covers collected array subkinds."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-array collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-basic collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_th_lemma_basic_unsupported_diagnostic"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"th-lemma-basic\""
+        }
+      ],
+      "notes": "Basic th-lemma labels are parsed and classified; replay remains diagnostic-only."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-basic collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-basic collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "unsupported th-lemma shape"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "unsupported th-lemma shape"
+        }
+      ],
+      "notes": "Basic th-lemma replay fails with a checked unsupported-shape diagnostic."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-bv collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "bv/bit-blast"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "mk_rule (\"th-lemma-bv\""
+        }
+      ],
+      "notes": "Synthetic th-lemma replay covers the collected bit-vector bit-blast subkind."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "th-lemma-bv collected subkinds",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "unknown or future Z3 proof rules",
+      "class": "Z3 extension",
+      "phases": [
+        "parsed",
+        "reconstructed"
+      ],
+      "expected_status": "unsupported_diagnostic",
+      "positive_tests": [],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_proof_parser_unknown_rule_diagnostic"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_proof_replay_failure_diagnostic"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_Proof.sml",
+          "match": "registry_lookup_failure"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "Z3 proof replay failure"
+        }
+      ],
+      "notes": "Unknown parser rules and malformed replay shapes fail with checked diagnostics instead of silently using an oracle."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "unknown or future Z3 proof rules",
+      "class": "Z3 extension",
+      "phases": [
+        "translated",
+        "solved"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Z3 proof-rule rows do not have HOL translation or solver phases."
+        }
+      ],
+      "notes": "Proof-rule replay surface."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "unknown or future Z3 proof rules",
+      "class": "Z3 extension",
+      "phases": [
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_proof_parser_unknown_rule_diagnostic"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_record_z3_proof_corpus.py",
+          "match": "unseen_rules"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/record_z3_proof_corpus.py",
+          "match": "fail-on-unseen-rules"
+        }
+      ],
+      "notes": "Unit and corpus-discovery tests cover unknown or future proof-rule drift."
+    },
+    {
+      "section": "z3_proof_rules",
       "item": "asserted",
       "class": "Z3 extension",
       "phases": [

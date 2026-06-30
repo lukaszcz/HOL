@@ -1819,8 +1819,17 @@ fun z3_proof_replay_failure_diagnostic () =
     in
       assert (String.isSubstring "proof rule: commutativity" msg,
         "replay diagnostic did not include exact proof rule: " ^ msg);
+      assert (String.isSubstring "local proof subterm: commutativity" msg,
+        "replay diagnostic did not include local proof term: " ^ msg);
       assert (String.isSubstring "parsed HOL conclusion: F" msg,
-        "replay diagnostic did not include parsed conclusion: " ^ msg)
+        "replay diagnostic did not include parsed conclusion: " ^ msg);
+      assert (String.isSubstring "replay state:" msg andalso
+              String.isSubstring "asserted_hyps=" msg andalso
+              String.isSubstring "definition_hyps=" msg andalso
+              String.isSubstring "z3_vars=" msg,
+        "replay diagnostic did not include replay-state summary: " ^ msg);
+      assert (String.isSubstring "z3_version=4.12.4" msg,
+        "replay diagnostic did not include Z3 version: " ^ msg)
     end
 
 fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
