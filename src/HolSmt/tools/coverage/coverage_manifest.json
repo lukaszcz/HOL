@@ -2657,6 +2657,16 @@
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "qf_nra_real_division_audit"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_preprocessing_and_gap_diagnostics"
         }
       ],
       "negative_tests": [
@@ -2769,6 +2779,16 @@
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "uf_quantified_shadowing_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
         }
       ],
       "negative_tests": [
@@ -3214,6 +3234,16 @@
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "uf_quantified_shadowing_sat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_preprocessing_and_gap_diagnostics"
         }
       ],
       "negative_tests": [
@@ -3399,6 +3429,11 @@
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "qf_alia_select_non_array_type_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_preprocessing_and_gap_diagnostics"
         }
       ],
       "z3_versions": [],
@@ -3458,6 +3493,16 @@
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "qf_bv_int_conversions_typecheck"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
         }
       ],
       "negative_tests": [],
@@ -3661,6 +3706,16 @@
         },
         {
           "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        },
+        {
+          "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "qf_aufbv_mixed_array_bv_sat"
         }
@@ -3831,6 +3886,11 @@
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
           "match": "smtlib_translation_logic_inference_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
         },
         {
           "kind": "source",
@@ -4630,6 +4690,11 @@
         },
         {
           "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        },
+        {
+          "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
           "match": "qf_s_unicode_regex_typecheck"
         }
@@ -4695,6 +4760,697 @@
         }
       ],
       "notes": "String/regex replay remains explicitly gated."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Propositional logic",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* propositional logic *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "boolSyntax.conditional"
+        }
+      ],
+      "notes": "Selftest replay covers propositional goals; the branch matrix asserts emitted equality, negation, conjunction, constants, and ite shape."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Numerals: num, int, real",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* num *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "Term.mk_var (\"x\", realSyntax.real_ty)"
+        }
+      ],
+      "notes": "Covers current num-as-UF behavior plus native Int and Real literal translation."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Numeric conversions",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "real_of_int x"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_term_translation_branch_matrix_success"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "intrealSyntax.real_of_int_tm"
+        }
+      ],
+      "notes": "Selftest covers int/real conversions and the branch matrix covers word zero/sign extension casts."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Quantifiers",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* quantifiers *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "quantifier-binder"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "(\"forall\", boolSyntax.strip_forall tm)"
+        }
+      ],
+      "notes": "Covers binder translation, generated bound-variable declarations, and existing semantic replay tests."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Let binders and lambda abstractions",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* let binders *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "let-binder"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "let/lambda/beta validation"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "pairSyntax.dest_anylet tm"
+        }
+      ],
+      "notes": "Asserts direct SMT let output and preprocessing validation for lambda/beta simplification."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Higher-order logic",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* lambda abstractions *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_higher_order_translation_rejection_diagnostic"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "function-valued equality"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "unsupported higher-order/function-valued HOL term"
+        }
+      ],
+      "notes": "Higher-order terms are either preprocessed away by selftest simplification or rejected with exact diagnostics when function-valued sorts reach the translator."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Tuples, FST, SND",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* tuples, FST, SND *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "tuple-selector-current-uf"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "pair selector simplification validation"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "uninterpreted type"
+        }
+      ],
+      "notes": "Tuple selectors are covered both as current UF translation and as SmtLib.SIMP_TAC preprocessing."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Words / bit-vectors",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* words (i.e., bit vectors) *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "word-bitvectors"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "word-casts"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "wordsSyntax.word_and_tm"
+        }
+      ],
+      "notes": "Covers fixed-width BV sorts, literals, Boolean word ops, and casts."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Named bit-vector regressions",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "sw2sw w"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "word-casts"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "wordsSyntax.sw2sw_tm"
+        }
+      ],
+      "notes": "Regression evidence covers named word cast/extract combinations and the unit matrix asserts emitted sign/zero extension forms."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Named bit-vector regressions",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "word-casts"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "assert_goal_roundtrip"
+        }
+      ],
+      "notes": "Parsed coverage is exercised through generated SMT-LIB round-trip parsing for word cast and bit-vector terms."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "HOL datatypes",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "Hol_datatype `dt1 = foo | bar | baz`"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "datatype-constructor-current-uf"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "datatype case selector current gap"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "HOL datatypes and recursive datatypes"
+        }
+      ],
+      "notes": "Current HOL datatype constructors follow UF encoding; datatype case-selector higher-order gaps are diagnostic-gated."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Records",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* records: field selectors *)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* records: field updates *)"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "HOL record syntax elaborates before SmtLib.sml and has no separate native SMT-LIB record branch; selftest covers selector/update/literal behavior through the existing UF/preprocessing paths."
+        }
+      ],
+      "notes": "Documented not-applicable native record branch with semantic selftest evidence for current behavior."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Sets as predicates",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "(* sets (as predicates -- every set expression must be applied to an"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "sets-as-predicates-current-uf"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "(declare-fun "
+        }
+      ],
+      "notes": "Sets-as-predicates are tested as applied predicate UF terms, matching the current HOL encoding."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Euclidean div/mod and regressions",
+      "class": "HolSmt",
+      "phases": [
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "prove that `ediv` and `emod` match Boute's Euclidean definition"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "integer-ediv-emod"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "int_ediv_tm"
+        }
+      ],
+      "notes": "Selftest proves EDIV/EMOD regressions and the unit matrix asserts div/mod SMT-LIB emission."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Propositional logic",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "bool-sort-and-equality"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "assert_goal_roundtrip"
+        }
+      ],
+      "notes": "Parsed evidence comes from generated SMT-LIB assertion round-trips for propositional terms."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Arithmetic operators and inequalities",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "int-linear-arithmetic"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "assert_goal_roundtrip"
+        }
+      ],
+      "notes": "Parsed evidence comes from generated SMT-LIB round-trips for Int/Real arithmetic terms."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Uninterpreted functions and predicates",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "function-uninterpreted-symbols"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "assert_goal_roundtrip"
+        }
+      ],
+      "notes": "Parsed evidence comes from generated SMT-LIB round-trips for UF declarations and applications."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Higher-order logic",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Higher-order HOL goals are produced by the HOL frontend, not parsed from SMT-LIB text in this selftest category."
+        }
+      ],
+      "notes": "HOL frontend category."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Tuples, FST, SND",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Tuple syntax and selectors are HOL frontend syntax in this category; there is no SMT-LIB parse phase."
+        }
+      ],
+      "notes": "HOL frontend category."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "HOL datatypes",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "HOL datatype selftests exercise HOL frontend terms, not SMT-LIB datatype command parsing."
+        }
+      ],
+      "notes": "HOL frontend category."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Records",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "HOL record syntax elaborates before translation and has no SMT-LIB parse phase in this selftest category."
+        }
+      ],
+      "notes": "HOL frontend category."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Sets as predicates",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Predicate-as-set HOL terms are frontend terms in this selftest category, not SMT-LIB Set extension parses."
+        }
+      ],
+      "notes": "HOL frontend category."
+    },
+    {
+      "section": "selftest_categories",
+      "item": "Euclidean div/mod and regressions",
+      "class": "HolSmt",
+      "phases": [
+        "parsed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "EDIV/EMOD regression goals are HOL frontend terms; the SMT-LIB parser phase is not part of this selftest category."
+        }
+      ],
+      "notes": "HOL frontend category."
     }
   ]
 }

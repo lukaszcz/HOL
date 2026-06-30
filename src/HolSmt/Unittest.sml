@@ -1454,6 +1454,157 @@ fun smtlib_higher_order_translation_rejection_diagnostic () =
         "higher-order diagnostic was not explicit: " ^ msg)
     end
 
+fun smtlib_translation_shape_matrix_success () =
+let
+  fun smtlib_text goal =
+    let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+    in String.concat strings end
+  fun assert_snippet test_name text snippet =
+    assert (contains snippet text,
+      "translation matrix case '" ^ test_name ^
+      "' did not emit expected SMT-LIB snippet '" ^ snippet ^
+      "'\nSMT-LIB:\n" ^ text)
+  fun expect_shape (test_name, goal, snippets) =
+    let val text = smtlib_text goal
+    in List.app (assert_snippet test_name text) snippets end
+  val cases = [
+    ("bool-sort-and-equality", ([], ``(p:bool) = q``),
+      ["(set-logic QF_UF)\n", "(declare-fun v0 () Bool)\n",
+       "(assert (not (= v0 v1)))"]),
+    ("num-uninterpreted-sort", ([], ``42n = n``),
+      ["(set-logic QF_UF)\n", "(declare-sort t0 0)\n",
+       "(declare-fun v0 (t0) t0)"]),
+    ("int-linear-arithmetic", ([], ``(x:int) + 7 <= y - ~3``),
+      ["(set-logic QF_LIA)\n", "(declare-fun v0 () Int)\n",
+       "(<= (+ v0 7) (- v1 (- 3)))"]),
+    ("real-nonlinear-arithmetic", ([], ``(x:real) + 7r <= y * 2r``),
+      ["(set-logic QF_NRA)\n", "(declare-fun v0 () Real)\n",
+       "(<= (+ v0 7.0) (* v1 2.0))"]),
+    ("word-bitvectors", ([], ``((x:word8) && 3w) = (y || 1w)``),
+      ["(set-logic QF_BV)\n", "(_ BitVec 8)",
+       "(= (bvand v0 (_ bv3 8)) (bvor v1 (_ bv1 8)))"]),
+    ("string-native-sort-and-concat", ([],
+       ``STRCAT (s:string) t = STRCAT t s``),
+      ["(set-logic QF_S)\n", "(declare-fun v0 () String)\n",
+       "(= (str.++ v0 v1) (str.++ v1 v0))"]),
+    ("list-constructor-current-uf", ([],
+       ``CONS (x:int) xs = CONS y ys``),
+      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)\n",
+       "(declare-fun v0 (Int t0) t0)"]),
+    ("function-uninterpreted-symbols", ([],
+       ``(f:'a -> 'b) x = g y``),
+      ["(set-logic QF_UF)\n", "(declare-fun v0 (t0) t1)",
+       "(declare-fun v2 (t2) t1)"]),
+    ("tuple-selector-current-uf", ([],
+       ``FST (p:int # bool) <= FST p + 1``),
+      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)",
+       "(declare-fun v0 (t0) Int)"]),
+    ("sets-as-predicates-current-uf", ([],
+       ``(s:'a -> bool) x``),
+      ["(set-logic QF_UF)\n", "(declare-fun v0 (t0) Bool)",
+       "(assert (not (v0 v1)))"])
+  ]
+in
+  List.app expect_shape cases
+end
+
+fun smtlib_term_translation_branch_matrix_success () =
+let
+  fun smtlib_text goal =
+    let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+    in String.concat strings end
+  fun assert_has name text snippet =
+    assert (contains snippet text,
+      "term branch case '" ^ name ^ "' missed SMT-LIB snippet '" ^
+      snippet ^ "'\nSMT-LIB:\n" ^ text)
+  fun expect (name, goal, snippets) =
+    let val text = smtlib_text goal
+    in List.app (assert_has name text) snippets end
+  val cases = [
+    ("variables-constants-applications", ([],
+       ``(P:'a -> bool) x /\ T /\ ~F``),
+      ["(declare-fun v0 (t0) Bool)", "(and (v0 v1) (and true (not false)))"]),
+    ("quantifier-binder", ([], ``!x:int. x <= x + 1``),
+      ["(set-logic LIA)\n", "(forall ((b0 Int)) (<= b0 (+ b0 1)))"]),
+    ("let-binder", ([],
+       ``let x = (y:int) + 1 in x <= y + 1``),
+      ["(let ((b0 (+ v0 1))) (<= b0 (+ v0 1)))"]),
+    ("conditional", ([], ``(if p then q else ~q):bool``),
+      ["(ite v0 v1 (not v1))"]),
+    ("distinct-like-not-equal", ([],
+       ``((x:'a) = y) <=> ~(x <> y)``),
+      ["(= (= v0 v1) (not (not (= v0 v1))))"]),
+    ("integer-ediv-emod", ([],
+       ``integer$ediv (x:int) y + integer$emod x y = x``),
+      ["(+ (div v0 v1) (mod v0 v1))"]),
+    ("real-division-preprocessed-symbol", ([],
+       ``HolSmt$smt_rdiv (x:real) y = x``),
+      ["(set-logic QF_LRA)\n", "(= (/ v0 v1) v0)"]),
+    ("word-casts", ([],
+       ``((w2w (x:word8)):word16) = sw2sw x``),
+      ["((_ zero_extend 8) v0)", "((_ sign_extend 8) v0)"]),
+    ("string-operations", ([],
+       ``isPREFIX (s:string) (STRCAT s t) /\ (s < t) /\ (s <= t)``),
+      ["str.prefixof", "str.++", "str.<", "str.<="]),
+    ("datatype-constructor-current-uf", ([],
+       ``SOME (x:int) = SOME y``),
+      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)",
+       "(declare-fun v0 (Int) t0)"])
+  ]
+in
+  List.app expect cases
+end
+
+fun smtlib_preprocessing_and_gap_diagnostics () =
+let
+  fun expect_translation_error label term expected =
+    let
+      val _ = SmtLib.goal_to_SmtLib_translation NONE ([], term)
+    in
+      die ("expected translation diagnostic for " ^ label)
+    end
+    handle Feedback.HOL_ERR holerr =>
+      let val msg = Feedback.message_of holerr
+      in
+        assert (contains expected msg,
+          label ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
+      end
+  fun preprocessing_removes label term forbidden =
+    let
+      val (subgoals, _) = SmtLib.SIMP_TAC true ([], term)
+      val rendered = String.concatWith "\n"
+        (List.map (fn (_, t) => term_with_types t) subgoals)
+    in
+      assert (not (List.null subgoals),
+        label ^ " preprocessing unexpectedly solved all goals");
+      List.app
+        (fn snippet =>
+          assert (not (contains snippet rendered),
+            label ^ " preprocessing left '" ^ snippet ^
+            "' in subgoals:\n" ^ rendered))
+        forbidden
+    end
+    handle Feedback.HOL_ERR holerr =>
+      die (label ^ " simplification/preprocessing tactic failed: " ^
+        Feedback.message_of holerr)
+  val rdiv_thm = Hol_pp.thm_to_string HolSmtTheory.real_div_smt_rdiv
+in
+  expect_translation_error "higher-order argument"
+    ``(H:('a -> 'b) -> bool) f`` "unsupported higher-order/function";
+  expect_translation_error "function-valued equality"
+    ``(f:int -> bool) = g`` "unsupported higher-order/function sort";
+  expect_translation_error "datatype case selector current gap"
+    ``(case (opt:int option) of NONE => 0i | SOME x => x) = 0i``
+    "unsupported higher-order/function sort";
+  assert (contains "if y = 0 then 0 else smt_rdiv x y" rdiv_thm,
+    "real division preprocessing theorem did not expose smt_rdiv shape: " ^
+    rdiv_thm);
+  preprocessing_removes "let/lambda/beta validation"
+    ``(let f = (\x:int. x + 1) in f 2) = 3`` ["let", "\\"];
+  preprocessing_removes "pair selector simplification validation"
+    ``FST ((x:int), p) = x`` ["FST"]
+end
+
 fun smtlib_roundtrip_current_theories_success () =
 let
   fun roundtrip name goal = assert_goal_roundtrip name goal
@@ -1951,6 +2102,12 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_higher_order_translation_rejection_diagnostic",
       smtlib_higher_order_translation_rejection_diagnostic),
+    ("smtlib_translation_shape_matrix_success",
+      smtlib_translation_shape_matrix_success),
+    ("smtlib_term_translation_branch_matrix_success",
+      smtlib_term_translation_branch_matrix_success),
+    ("smtlib_preprocessing_and_gap_diagnostics",
+      smtlib_preprocessing_and_gap_diagnostics),
     ("smtlib_roundtrip_current_theories_success",
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",
