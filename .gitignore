@@ -146,3 +146,4 @@ examples/l3-machine-code/**/*-heap
 /.pi/
 CLAUDE.local.md
 .agent-files
+__pycache__
