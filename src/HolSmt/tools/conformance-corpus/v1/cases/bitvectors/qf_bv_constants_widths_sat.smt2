@@ -1,0 +1,11 @@
+(set-logic QF_BV)
+(assert (and
+  (= #b1 (_ bv1 1))
+  (= #b10 (_ bv2 2))
+  (= #x0f (_ bv15 8))
+  (= #x00ff (_ bv255 16))
+  (= #x000000ff (_ bv255 32))
+  (= #x00000000000000ff (_ bv255 64))
+))
+(check-sat)
+(exit)

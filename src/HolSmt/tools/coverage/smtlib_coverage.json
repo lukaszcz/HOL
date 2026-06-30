@@ -395,10 +395,10 @@
       "parsed": "implemented",
       "translated": "implemented",
       "solved": "implemented",
-      "reconstructed": "untested",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.ArraysEx maps Array to functions and select/store to application/update; src/HolSmt/Unittest.sml parses select/store signatures.",
-      "notes": "External SMT-LIB array parsing is covered; solver/proof reconstruction coverage remains to be expanded."
+      "evidence": "SmtLib_Theories.ArraysEx maps Array to functions and select/store to application/update; conformance cases qf_ax_select_store_sat, qf_ax_read_over_write_unsat_proof, qf_ax_extensionality_unsat_proof, qf_auflira_mixed_array_int_real_sat, and qf_aufbv_mixed_array_bv_sat cover select/store, read-over-write, extensionality, QF_AX, and mixed Int/Real/BV arrays.",
+      "notes": "External SMT-LIB arrays parse, typecheck, and solve through Z3 oracle coverage. Checked z3-tac reconstruction currently fails for native HOL function sort encoding with an exact diagnostic."
     },
     {
       "item": "FixedSizeBitVectors",
@@ -408,8 +408,8 @@
       "solved": "implemented",
       "reconstructed": "implemented",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.Fixed_Size_BitVectors metadata-backed entries cover official constants, indexed forms, conversions, comparisons, overflow predicates, and division-audit markers; src/HolSmt/Unittest.sml parses the scoped signatures.",
-      "notes": "Z3 proof aliases remain separated in BV_extension_metadata. Bit-vector division/remainder entries are marked for later soundness audit."
+      "evidence": "SmtLib_Theories.Fixed_Size_BitVectors metadata-backed entries plus conformance cases qf_bv_constants_widths_sat, qf_bv_core_ops_unsat_proof, qf_bv_width1_2_boundaries_unsat_proof, qf_bv_shift_rotate_boundaries_unsat_proof, qf_bv_div_rem_zero_unsat_proof, qf_bv_overflow_predicates_typecheck, and qf_bv_int_conversions_typecheck cover constants, indexed literals, concat/extract, bitwise/arithmetic operators, comparisons, boundary shifts/rotates, division/remainder by zero, overflow predicates, Int conversions, and widths 1/2/8/16/32/64.",
+      "notes": "Z3 4.11 lacks SMT-LIB 2.7 overflow and Int-conversion names, so those are parser/typecheck evidence. Division/remainder-by-zero checked replay has a recorded diagnostic in the soundness-audit row."
     },
     {
       "item": "FloatingPoint",
@@ -461,23 +461,23 @@
       "item": "ALIA, ANIA, AUFLIA, QF_ALIA, QF_ANIA, QF_AUFLIA, QF_AUFNIA",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "untested",
-      "solved": "untested",
-      "reconstructed": "untested",
+      "translated": "implemented",
+      "solved": "implemented",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.parsedicts_of_logic and metadata_of_logic; src/HolSmt/Unittest.sml checks these scoped logic dictionaries.",
-      "notes": "Core + Ints + ArraysEx; parser does not enforce linearity or quantifier restrictions."
+      "evidence": "SmtLib_Logics parsedicts/metadata plus conformance cases qf_alia_select_non_array_type_error and qf_ax_read_over_write_unsat_proof provide parser/typecheck, Z3 oracle, and exact checked-replay gap evidence for Int array logic coverage.",
+      "notes": "Core + Ints + ArraysEx; parser does not enforce linearity or quantifier restrictions. Checked replay for native array/function encoding is currently diagnostic-gated."
     },
     {
       "item": "ALIRA, ANIRA, AUFLIRA, AUFNIRA, QF_ALRA, QF_ANRA, QF_AUFLIRA, QF_AUFNIRA",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "untested",
-      "solved": "untested",
-      "reconstructed": "untested",
+      "translated": "implemented",
+      "solved": "implemented",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.parsedicts_of_logic and metadata_of_logic; src/HolSmt/Unittest.sml checks these scoped logic dictionaries.",
-      "notes": "Core + Reals_Ints + ArraysEx; AUFNIRA is also used as part of the current broad Z3 proof dictionary."
+      "evidence": "SmtLib_Logics parsedicts/metadata plus conformance case qf_auflira_mixed_array_int_real_sat covers mixed Int/Real ArraysEx parser/typecheck and Z3 oracle behavior; QF_AX replay diagnostics cover the shared array reconstruction gap.",
+      "notes": "Core + Reals_Ints + ArraysEx; AUFNIRA is also used as part of the current broad Z3 proof dictionary. Checked replay for native array/function encoding is currently diagnostic-gated."
     },
     {
       "item": "LRA, NRA, QF_LRA, QF_NRA, QF_RDL, QF_UFLRA, QF_UFNRA, UFLRA, UFNRA",
@@ -498,8 +498,8 @@
       "solved": "implemented",
       "reconstructed": "implemented",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics parsedicts, metadata_of_logic, and words selftest category.",
-      "notes": "Includes official SMT-LIB 2.7 bit-vector operators plus Int sort/numerals for BV conversion symbols; Z3-only proof aliases remain separated in BV_extension_metadata."
+      "evidence": "SmtLib_Logics parsedicts, metadata_of_logic, words selftest category, qf_aufbv_mixed_array_bv_sat, and QF_BV conformance cases for constants, widths, operators, comparisons, shifts/rotates, division/remainder, overflow predicates, and Int conversions.",
+      "notes": "Includes official SMT-LIB 2.7 bit-vector operators plus Int sort/numerals for BV conversion symbols. Z3 4.11 gaps for overflow/conversion names are kept as parser/typecheck evidence; Z3-only proof aliases remain separated in BV_extension_metadata."
     },
     {
       "item": "LIA, NIA, UFIDL, UFLIA, UFNIA, QF_IDL, QF_LIA, QF_NIA, QF_UFIDL, QF_UFLIA",
@@ -516,12 +516,12 @@
       "item": "QF_AX",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "untested",
-      "solved": "untested",
-      "reconstructed": "untested",
+      "translated": "implemented",
+      "solved": "implemented",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Logics.QF_AX; src/HolSmt/Unittest.sml checks logic metadata and array parser signatures.",
-      "notes": "Array-only logic dictionary exists; solver/proof reconstruction coverage remains limited."
+      "evidence": "SmtLib_Logics.QF_AX plus conformance cases qf_ax_select_store_sat, qf_ax_read_over_write_unsat_proof, and qf_ax_extensionality_unsat_proof cover select/store, read-over-write, extensionality, Z3 oracle, proof parsing, and exact z3-tac reconstruction diagnostics.",
+      "notes": "Array-only logic dictionary exists. Checked z3-tac reconstruction currently fails for HOL function sort encoding and is covered by exact diagnostics."
     },
     {
       "item": "UF, QF_UF",
@@ -1052,10 +1052,10 @@
       "parsed": "implemented",
       "translated": "implemented",
       "solved": "implemented",
-      "reconstructed": "implemented",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Theories.Fixed_Size_BitVectors metadata marks division/remainder entries for soundness audit; src/HolSmt/Unittest.sml smtlib_logic_metadata_extension_split_success checks that marker; src/HolSmt/selftest.sml words tests cover division, remainder, shifts, rotations and signedness regressions.",
-      "notes": "SMT-LIB bit-vector division-by-zero and overflow behavior must match the HOL word operations for every accepted proof. Unsupported or unproved Z3 proof shapes must fail with diagnostics."
+      "evidence": "Conformance cases qf_bv_div_rem_zero_unsat_proof and qf_bv_overflow_predicates_typecheck cover division/remainder-by-zero semantics, overflow predicate parser/typecheck coverage, and the exact checked-replay diagnostic for word division by zero.",
+      "notes": "Z3 oracle accepts unsigned division/remainder-by-zero identities. Checked z3-tac replay currently fails in the HOL word division rewrite path; overflow predicates are parser/typecheck evidence because local Z3 4.11 lacks the SMT-LIB 2.7 names."
     },
     {
       "item": "Floating-point NaN, infinity and rounding-mode semantics",
@@ -1083,12 +1083,12 @@
       "item": "ArraysEx select/store versus HOL function encoding",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unknown",
-      "solved": "untested",
-      "reconstructed": "untested",
+      "translated": "implemented",
+      "solved": "unsupported_diagnostic",
+      "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "src/HolSmt/Unittest.sml smtlib_roundtrip_known_gap_matrix_success records the ArraysEx translation gap; SmtLib_Parser maps select/store for external SMT-LIB parsing.",
-      "notes": "External SMT-LIB arrays parse as HOL application/update, while HOL function application is currently emitted as uninterpreted functions rather than native Array select/store."
+      "evidence": "Conformance cases qf_alia_select_non_array_type_error, qf_ax_read_over_write_unsat_proof, and qf_ax_extensionality_unsat_proof plus src/HolSmt/Unittest.sml smtlib_translation_logic_inference_success and smtlib_roundtrip_known_gap_matrix_success record the current HOL function versus ArraysEx behavior.",
+      "notes": "External SMT-LIB arrays parse as HOL application/update, while HOL function application is currently emitted as uninterpreted functions rather than native Array select/store. Checked z3-tac array reconstruction fails with an exact higher-order/function-sort diagnostic."
     },
     {
       "item": "sat and unknown solver results",
