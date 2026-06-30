@@ -206,24 +206,30 @@ Large external benchmark runs are opt-in:
     --z3-proof-dir /path/to/z3/proof/tests
 
 Use `--logic` and repeated `--mode` flags to restrict a run.  The
-typecheck-only mode defaults to the HOL driver built by:
+typecheck-only and checked Z3_TAC modes default to HOL drivers built by:
 
   bin/Holmake -C src/HolSmt holsmt-typecheck
+  bin/Holmake -C src/HolSmt holsmt-z3-tac
 
-The driver accepts an SMT-LIB input path and logic name, runs the
+The typecheck driver accepts an SMT-LIB input path and logic name, runs the
 `SmtLib_Parser` typechecker, and prints deterministic `TYPECHECK_PASS` or
-`TYPECHECK_FAIL` records.  A custom driver can still be supplied with
-`--typecheck-command`; end-to-end Z3_TAC remains a command-template hook:
+`TYPECHECK_FAIL` records.  The checked Z3_TAC driver accepts the same arguments,
+converts supported `check-sat` unsat scripts into a HOL goal over the parsed
+assertions, proves it through the same `Z3.Z3_SMT_Prover` checked replay path
+used by `HolSmtLib.Z3_TAC`, and rejects unexpected oracle/axiom tags.  Raw
+query shapes outside that entry point, such as `get-model`, are reported as
+explicit `Z3_TAC_UNSUPPORTED` diagnostics.  Custom drivers can still be
+supplied with `--typecheck-command` or `--z3-tac-command`:
 
   python3 src/HolSmt/tools/run_conformance_suite.py \
     --mode typecheck-only \
     --mode z3-tac \
     --z3-tac-command 'my-z3-tac-check {input} {logic}'
 
-If the default typecheck driver has not been built, typecheck-only is reported
-as an explicit unsupported environment condition.  Unconfigured hooks are
-counted as `unsupported`, not hidden.  Unsupported counts are grouped by logic,
-mode, SMT-LIB target version and discovered Z3 version in the generated reports.
+If a default driver has not been built, that mode is reported as an explicit
+unsupported environment condition.  Unconfigured hooks are counted as
+`unsupported`, not hidden.  Unsupported counts are grouped by logic, mode,
+SMT-LIB target version and discovered Z3 version in the generated reports.
 
 Reproducing proof-replay failures:
 

@@ -667,6 +667,14 @@ local
   in
     if head = "proof" then
       parse_proof_expression get_token (tydict, tmdict, proof) (rpars + 1)
+    else if head = "set-logic" then (
+      (* Modern Z3 v4 proof output may echo the script's logic command before
+         the proof expression.  It carries no declaration information for
+         replay, so skip it like the surrounding proof wrapper metadata. *)
+      get_token ();
+      Library.expect_token ")" (get_token ());
+      parse_proof_decl get_token (tydict, tmdict, proof) rpars
+    )
     else if head = "declare-fun" then
       let
         val (tm, tmdict) = SmtLib_Parser.parse_declare_fun get_token (tydict, tmdict)

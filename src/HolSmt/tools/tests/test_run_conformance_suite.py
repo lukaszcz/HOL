@@ -66,6 +66,8 @@ class ConformanceSuiteTests(unittest.TestCase):
                     conformance.MODE_PARSER,
                     "--mode",
                     conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    "",
                 ]
             )
 
@@ -126,6 +128,8 @@ class ConformanceSuiteTests(unittest.TestCase):
                     conformance.MODE_PARSER,
                     "--mode",
                     conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    "",
                 ]
             )
 
@@ -182,6 +186,8 @@ class ConformanceSuiteTests(unittest.TestCase):
                     str(bench_dir),
                     "--mode",
                     conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    "",
                 ]
             )
 
@@ -198,6 +204,124 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertFalse(item["diagnostic_match"])
             self.assertTrue(list((out_dir / "repro").rglob("input.smt2")))
             self.assertTrue(list((out_dir / "repro").rglob("result.json")))
+
+    def test_z3_tac_command_reports_success_and_expected_diagnostic(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "success.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "pass"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (assert (not p))
+                    (check-sat)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "diagnostic.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "get-model is outside checked Z3_TAC"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    (get-model)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            checker = root / "fake-z3-tac.py"
+            checker.write_text(
+                textwrap.dedent(
+                    """\
+                    import pathlib
+                    import sys
+
+                    text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+                    if "(get-model)" in text:
+                        print("Z3_TAC_UNSUPPORTED")
+                        print("diagnostic=raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point")
+                        raise SystemExit(1)
+                    print("Z3_TAC_PASS")
+                    print("z3_version=4.13.0")
+                    print("theorem=[] |- ~(p /\\ ~p)")
+                    """
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    f"{sys.executable} {checker} {{input}} {{logic}}",
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            by_case = {item["case"]: item for item in report["results"]}
+            self.assertEqual(by_case["success"]["status"], conformance.PASS)
+            self.assertEqual(by_case["diagnostic"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["diagnostic"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn("get-model is outside checked Z3_TAC", by_case["diagnostic"]["actual_diagnostic"])
+
+    def test_z3_tac_oracle_tag_output_is_a_failure(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "oracle.smt2").write_text(
+                "(set-logic QF_UF)\n(assert false)\n(check-sat)\n",
+                encoding="utf-8",
+            )
+            checker = root / "fake-z3-tac.py"
+            checker.write_text(
+                textwrap.dedent(
+                    """\
+                    print("Z3_TAC_FAIL")
+                    print("diagnostic=solver 'Z3_TAC conformance driver' produced unexpected oracle/axiom tags")
+                    raise SystemExit(1)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_Z3_TAC,
+                    "--z3-tac-command",
+                    f"{sys.executable} {checker} {{input}} {{logic}}",
+                ]
+            )
+
+            self.assertEqual(code, 1)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            item = report["results"][0]
+            self.assertEqual(item["status"], conformance.FAIL)
+            self.assertIn("oracle/axiom tags", item["actual_diagnostic"])
 
     @unittest.skipUnless(
         conformance.DEFAULT_TYPECHECK_DRIVER.exists(),
@@ -228,6 +352,35 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(by_case["non_bool_assert"]["status"], conformance.FAIL)
             self.assertEqual(by_case["non_bool_assert"]["classification"], conformance.CLASSIFICATION_MATCHED)
             self.assertIn("expected sort :bool", by_case["non_bool_assert"]["actual_diagnostic"])
+
+    @unittest.skipUnless(
+        conformance.DEFAULT_Z3_TAC_DRIVER.exists(),
+        "HolSmt z3-tac driver has not been built",
+    )
+    def test_default_z3_tac_driver_runs_representative_conformance_slice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            out_dir = root / "out"
+            fixture_dir = pathlib.Path(__file__).resolve().parent / "conformance" / "z3_tac"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(fixture_dir),
+                    "--mode",
+                    conformance.MODE_Z3_TAC,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            by_case = {item["case"]: item for item in report["results"]}
+            self.assertEqual(by_case["success"]["status"], conformance.PASS)
+            self.assertEqual(by_case["diagnostic"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["diagnostic"]["classification"], conformance.CLASSIFICATION_MATCHED)
 
     def test_proof_replay_failure_preserves_repro_input_and_raw_proof(self):
         with tempfile.TemporaryDirectory() as tmp:

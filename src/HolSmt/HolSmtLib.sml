@@ -64,6 +64,8 @@ structure HolSmtLib :> HolSmtLib = struct
           prove_fn boolSyntax.T;  (* try to prove ``T`` *)
           Feedback.HOL_MESG ("HolSmtLib: solver " ^ name ^ " is available.")
         )
+        handle Feedback.HOL_ERR herr =>
+          Feedback.HOL_MESG ("HolSmtLib: " ^ Feedback.message_of herr)
       fun provoke_err prove_fn =
         ignore (prove_fn boolSyntax.T)  (* should fail *)
           handle Feedback.HOL_ERR herr =>

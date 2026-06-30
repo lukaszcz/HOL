@@ -120,6 +120,8 @@ HOLSMT_LOGICS = ["ALL", *OFFICIAL_LOGICS]
 SOLVER_RESULTS = {"sat", "unsat", "unknown"}
 DEFAULT_TYPECHECK_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-typecheck"
 DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{input}} {{logic}}"
+DEFAULT_Z3_TAC_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-z3-tac"
+DEFAULT_Z3_TAC_COMMAND = f"{shlex.quote(str(DEFAULT_Z3_TAC_DRIVER))} {{input}} {{logic}}"
 
 
 @dataclass(frozen=True)
@@ -694,6 +696,111 @@ def run_typecheck_mode(
     return run_command_mode(case, MODE_TYPECHECK, input_path, command_template, timeout)
 
 
+def command_output_field(stdout: str, stderr: str, field: str) -> str | None:
+    prefix = f"{field}="
+    for line in stdout.splitlines() + stderr.splitlines():
+        if line.startswith(prefix):
+            return line[len(prefix):]
+    return None
+
+
+def default_z3_tac_command() -> str:
+    return DEFAULT_Z3_TAC_COMMAND
+
+
+def run_z3_tac_mode(
+    case: Case,
+    input_path: pathlib.Path,
+    command_template: str | None,
+    timeout: int,
+) -> dict[str, object]:
+    if not command_template:
+        return result(case, MODE_Z3_TAC, UNSUPPORTED, "no z3-tac command configured")
+    if command_template == DEFAULT_Z3_TAC_COMMAND and not DEFAULT_Z3_TAC_DRIVER.exists():
+        return result(
+            case,
+            MODE_Z3_TAC,
+            UNSUPPORTED,
+            f"default z3-tac driver not built: {DEFAULT_Z3_TAC_DRIVER}",
+            artifact={"command": command_template},
+        )
+
+    command = command_template.format(
+        input=str(input_path),
+        logic=case.logic,
+        name=case.name,
+    )
+    try:
+        completed = subprocess.run(
+            command,
+            shell=True,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        return result(
+            case,
+            MODE_Z3_TAC,
+            FAIL,
+            f"{MODE_Z3_TAC} command timed out after {timeout}s",
+            artifact={"command": command, "stdout": exc.stdout or "", "stderr": exc.stderr or ""},
+        )
+
+    stdout = completed.stdout
+    stderr = completed.stderr
+    artifact = {
+        "command": command,
+        "exit_code": completed.returncode,
+        "stdout": stdout,
+        "stderr": stderr,
+    }
+    diagnostic = command_output_field(stdout, stderr, "diagnostic")
+    version = command_output_field(stdout, stderr, "z3_version")
+
+    combined = f"{stdout}\n{stderr}"
+    if "Z3_TAC_PASS" in combined and completed.returncode == 0:
+        return result(
+            case,
+            MODE_Z3_TAC,
+            PASS,
+            "checked Z3_TAC theorem proved",
+            artifact=artifact,
+            version=version,
+        )
+    if "Z3_TAC_UNSUPPORTED" in combined:
+        return result(
+            case,
+            MODE_Z3_TAC,
+            UNSUPPORTED,
+            diagnostic or "checked Z3_TAC driver reported unsupported input",
+            artifact=artifact,
+            version=version,
+        )
+    if "unexpected oracle/axiom tags" in combined:
+        return result(
+            case,
+            MODE_Z3_TAC,
+            FAIL,
+            "checked Z3_TAC result carried oracle/axiom tags",
+            artifact=artifact,
+            version=version,
+        )
+    if "Z3_TAC_FAIL" in combined:
+        return result(
+            case,
+            MODE_Z3_TAC,
+            FAIL,
+            diagnostic or "checked Z3_TAC driver failed",
+            artifact=artifact,
+            version=version,
+        )
+    if completed.returncode == 0:
+        return result(case, MODE_Z3_TAC, PASS, f"{MODE_Z3_TAC} command succeeded", artifact=artifact, version=version)
+    return result(case, MODE_Z3_TAC, FAIL, f"{MODE_Z3_TAC} command failed", artifact=artifact, version=version)
+
+
 def preserve_repro(out_dir: pathlib.Path, case: Case, input_path: pathlib.Path, item: dict[str, object]) -> None:
     repro_dir = out_dir / "repro" / slug(case.logic) / slug(case.name) / slug(str(item["mode"]))
     repro_dir.mkdir(parents=True, exist_ok=True)
@@ -943,7 +1050,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "{input}, {logic}, {name}; defaults to src/HolSmt/holsmt-typecheck"
         ),
     )
-    parser.add_argument("--z3-tac-command", help="shell command template for z3-tac mode; placeholders: {input}, {logic}, {name}")
+    parser.add_argument(
+        "--z3-tac-command",
+        default=default_z3_tac_command(),
+        help=(
+            "shell command template for z3-tac mode; placeholders: "
+            "{input}, {logic}, {name}; defaults to src/HolSmt/holsmt-z3-tac"
+        ),
+    )
     parser.add_argument("--json-report", default="conformance.json")
     parser.add_argument("--markdown-report", default="CONFORMANCE.md")
     return parser.parse_args(argv)
@@ -987,7 +1101,7 @@ def main(argv: list[str]) -> int:
             elif mode == MODE_TYPECHECK:
                 item = run_typecheck_mode(case, input_path, args.typecheck_command, args.timeout)
             elif mode == MODE_Z3_TAC:
-                item = run_command_mode(case, mode, input_path, args.z3_tac_command, args.timeout)
+                item = run_z3_tac_mode(case, input_path, args.z3_tac_command, args.timeout)
             else:
                 raise AssertionError(f"unhandled conformance mode: {mode}")
 
