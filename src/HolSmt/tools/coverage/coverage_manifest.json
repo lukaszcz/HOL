@@ -5451,6 +5451,257 @@
         }
       ],
       "notes": "HOL frontend category."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Indexed and parametric sort reconstruction",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_indexed_parametric_sort_reconstruction_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_bv_width1_xor_zero_unsat"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_bv_illegal_indexed_symbol_type_error"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "could not resolve indexed symbol"
+        }
+      ],
+      "notes": "Indexed sort and indexed-symbol behavior now has both width-parametrized BV metamorphic evidence and an exact illegal-index diagnostic case."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Indexed and parametric sort reconstruction",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "solved",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "This row covers frontend sort reconstruction; solver and replay obligations are represented by the enclosing theory and proof-rule rows."
+        }
+      ],
+      "notes": "Frontend sort reconstruction does not by itself create a solver or replay obligation."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Replay assumptions and theorem shape",
+      "class": "HolSmt",
+      "phases": [
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_assert_order_a_unsat"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "expect_thm"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SolverSpec.sml",
+          "match": "conclusion of theorem does not match goal"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "replay state:"
+        }
+      ],
+      "notes": "Metamorphic unsat scripts exercise final checked theorem production; SolverSpec and replay diagnostics document shape and hypothesis checks."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Replay assumptions and theorem shape",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Replay theorem-shape checks apply after a solver/replay result exists, not to parser or translator phases."
+        }
+      ],
+      "notes": "Parser/translator evidence belongs to the SMT-LIB command and theory rows."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Z3_TAC oracle-tag boundary",
+      "class": "HolSmt",
+      "phases": [
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Z3.sml",
+          "match": "check_oracle_tags"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_oracle_tag_output_is_a_failure"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "z3_tac_oracle_tag_gate_rejects_oracle_thm"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "oracle/axiom tags"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Library.sml",
+          "match": "unexpected oracle/axiom tags"
+        }
+      ],
+      "notes": "The deterministic unit test and conformance runner test explicitly reject oracle-tagged checked Z3_TAC theorems."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "Z3_TAC oracle-tag boundary",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "Oracle-tag gating applies to checked solver theorem results, not to parser or translator phases."
+        }
+      ],
+      "notes": "Frontend parsing and translation do not produce theorem tags."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "sat and unknown solver results",
+      "class": "HolSmt",
+      "phases": [
+        "solved",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_sat_theorem_request_z3_tac_error"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "holsmt_solver_result_negative_diagnostics"
+        }
+      ],
+      "negative_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "unknown_theorem"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "sat_theorem"
+        }
+      ],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "solver reports unknown"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "solver reports negated term to be satisfiable"
+        }
+      ],
+      "notes": "SAT is exercised by a corpus z3-tac diagnostic case; UNKNOWN is exercised deterministically through the runner fake-driver path and the SML solver-result unit test."
+    },
+    {
+      "section": "soundness_audit",
+      "item": "sat and unknown solver results",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "reconstructed"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "SAT/UNKNOWN are solver outcomes. They are not parser/translator behavior and do not produce a replay theorem."
+        }
+      ],
+      "notes": "Only UNSAT proof-producing solver results enter checked reconstruction."
     }
   ]
 }

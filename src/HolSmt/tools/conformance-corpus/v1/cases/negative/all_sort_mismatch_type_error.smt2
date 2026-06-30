@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-fun f (Bool) Bool)
+(assert (f 0))
+(check-sat)
+(exit)

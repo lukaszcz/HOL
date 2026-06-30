@@ -1002,6 +1002,91 @@ def summarize(results: Iterable[dict[str, object]]) -> dict[str, object]:
     }
 
 
+def tag_value(tags: Iterable[str], prefix: str) -> str | None:
+    marker = f"{prefix}:"
+    for tag in tags:
+        if tag.startswith(marker):
+            return tag[len(marker):]
+    return None
+
+
+def semantic_result(item: dict[str, object]) -> str | None:
+    artifact = item.get("artifact")
+    if isinstance(artifact, dict):
+        solver_result = artifact.get("solver_result")
+        if isinstance(solver_result, str) and solver_result:
+            return solver_result
+    return None
+
+
+def result_signature(items: Iterable[dict[str, object]]) -> dict[str, dict[str, str | None]]:
+    signature: dict[str, dict[str, str | None]] = {}
+    for item in sorted(items, key=lambda result: str(result["mode"])):
+        mode = str(item["mode"])
+        signature[mode] = {
+            "status": str(item.get("status")),
+            "conformance_status": str(item.get("conformance_status", item.get("status"))),
+            "semantic_result": semantic_result(item),
+        }
+    return signature
+
+
+def build_metamorphic_groups(
+    cases: list[Case],
+    results: list[dict[str, object]],
+) -> dict[str, object]:
+    cases_by_group: dict[str, list[Case]] = {}
+    expected_semantics: dict[str, set[str]] = {}
+    for case in cases:
+        group = tag_value(case.tags, "metamorphic-group")
+        if group is None:
+            continue
+        cases_by_group.setdefault(group, []).append(case)
+        expected = tag_value(case.tags, "metamorphic-result")
+        if expected is not None:
+            expected_semantics.setdefault(group, set()).add(expected)
+
+    results_by_case: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
+    for item in results:
+        results_by_case[str(item["case"])].append(item)
+
+    groups: list[dict[str, object]] = []
+    failing = 0
+    for group, group_cases in sorted(cases_by_group.items()):
+        signatures = {
+            case.name: result_signature(results_by_case.get(case.name, []))
+            for case in group_cases
+        }
+        non_empty_signatures = [sig for sig in signatures.values() if sig]
+        reference = non_empty_signatures[0] if non_empty_signatures else {}
+        agree = bool(non_empty_signatures) and all(
+            signature == reference for signature in non_empty_signatures
+        )
+        expected = sorted(expected_semantics.get(group, set()))
+        expected_agree = len(expected) <= 1
+        status = PASS if agree and expected_agree else FAIL
+        if status == FAIL:
+            failing += 1
+        groups.append(
+            {
+                "group": group,
+                "status": status,
+                "cases": [case.name for case in group_cases],
+                "expected_semantic_results": expected,
+                "signatures": signatures,
+            }
+        )
+
+    return {
+        "group_count": len(groups),
+        "status_counts": {
+            PASS: len(groups) - failing,
+            FAIL: failing,
+        },
+        "groups": groups,
+    }
+
+
 def build_report(
     cases: list[Case],
     results: list[dict[str, object]],
@@ -1014,6 +1099,7 @@ def build_report(
     conformance_counts = logic_summary["conformance_status_counts"]  # type: ignore[index]
     proof_summary = build_proof_corpus_summary(proof_entries) if proof_entries else None
     official_missing = sorted(set(OFFICIAL_LOGICS) - {case.logic for case in cases})
+    metamorphic_summary = build_metamorphic_groups(cases, results)
     return {
         "schema": SCHEMA,
         "smtlib_version": SMTLIB_VERSION,
@@ -1039,6 +1125,7 @@ def build_report(
         },
         "summary": logic_summary,
         "proof_corpus_summary": proof_summary,
+        "metamorphic_groups": metamorphic_summary,
         "cases": [
             {
                 "name": case.name,
@@ -1108,6 +1195,19 @@ def markdown_report(report: dict[str, object]) -> str:
                 f"- Proofs: {proof_summary['proof_count']}",  # type: ignore[index]
                 f"- Discovered rules: {', '.join(proof_summary['discovered_rules']) or '(none)'}",  # type: ignore[index]
                 f"- Malformed fragments: {proof_summary['malformed_fragment_count']}",  # type: ignore[index]
+            ]
+        )
+
+    metamorphic = report.get("metamorphic_groups")
+    if isinstance(metamorphic, dict) and metamorphic.get("group_count"):
+        counts = metamorphic["status_counts"]  # type: ignore[index]
+        lines.extend(
+            [
+                "",
+                "## Metamorphic Groups",
+                "",
+                f"- Groups: {metamorphic['group_count']}",  # type: ignore[index]
+                f"- Agreement: pass {counts[PASS]}, fail {counts[FAIL]}",  # type: ignore[index]
             ]
         )
 
@@ -1221,7 +1321,10 @@ def main(argv: list[str]) -> int:
     write_text(markdown_path, markdown_report(report))
     print(f"wrote conformance JSON report to {json_path}")
     print(f"wrote conformance Markdown report to {markdown_path}")
-    return 1 if report["conformance_status_counts"][FAIL] else 0  # type: ignore[index]
+    metamorphic_counts = report["metamorphic_groups"]["status_counts"]  # type: ignore[index]
+    return 1 if (
+        report["conformance_status_counts"][FAIL] or metamorphic_counts[FAIL]  # type: ignore[index]
+    ) else 0
 
 
 if __name__ == "__main__":

@@ -2279,6 +2279,21 @@ local
     SOME (Redblackmap.find (sigdict, name))
     handle Redblackmap.NotFound => NONE
 
+  fun same_signature domain range
+      ({domain = existing_domain, range = existing_range, ...}
+         : function_signature) =
+    existing_domain = domain andalso existing_range = range
+
+  fun reject_duplicate_signature context loc name domain range sigdict =
+    case peek_signatures (sigdict, name) of
+      NONE => ()
+    | SOME signatures =>
+        if List.exists (same_signature domain range) signatures then
+          type_error "reject_duplicate_signature" context loc NONE NONE
+            ("duplicate declaration for symbol '" ^ name ^ "'")
+        else
+          ()
+
   fun make_decl_parsefn name tm args_count token indices args =
     if List.null indices andalso List.length args = args_count then
       Term.list_mk_comb (tm, args)
@@ -2776,9 +2791,11 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val range = typecheck_sort (context "declare-const") tydict sort
+            val name_text = located_string_node name
+            val _ = reject_duplicate_signature (context "declare-const")
+              (loc_of name) name_text [] range sigdict
             val (_, tmdict, sigdict) =
-              add_value_signature (located_string_node name) [] range
-                (tmdict, sigdict)
+              add_value_signature name_text [] range (tmdict, sigdict)
           in
             finish (update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state)
@@ -2792,9 +2809,11 @@ local
             val domain = List.map
               (typecheck_sort (context "declare-fun") tydict) domain
             val range = typecheck_sort (context "declare-fun") tydict range
+            val name_text = located_string_node name
+            val _ = reject_duplicate_signature (context "declare-fun")
+              (loc_of name) name_text domain range sigdict
             val (_, tmdict, sigdict) =
-              add_value_signature (located_string_node name) domain range
-                (tmdict, sigdict)
+              add_value_signature name_text domain range (tmdict, sigdict)
           in
             finish (update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state)

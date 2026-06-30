@@ -2007,10 +2007,670 @@
         "bags",
         "parser-typecheck"
       ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "diagnostic": "missing ')'",
+          "status": "fail"
+        },
+        "typecheck-only": {
+          "diagnostic": "expected ')'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_malformed_sexp_parser_error.smt2",
+      "id": "qf_uf_malformed_sexp_parser_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "malformed-sexpression"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "diagnostic": "unterminated SMT-LIB string",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_unterminated_string_parser_error.smt2",
+      "id": "qf_uf_unterminated_string_parser_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "unterminated-string"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "could not resolve symbol '01'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_lia_illegal_numeral_type_error.smt2",
+      "id": "qf_lia_illegal_numeral_type_error",
+      "logic": "QF_LIA",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "illegal-numeral"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "could not resolve indexed symbol 'extract'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_bv_illegal_indexed_symbol_type_error.smt2",
+      "id": "qf_bv_illegal_indexed_symbol_type_error",
+      "logic": "QF_BV",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "illegal-indexed-symbol"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "could not resolve symbol 'missing'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_undeclared_symbol_type_error.smt2",
+      "id": "qf_uf_undeclared_symbol_type_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "undeclared-symbol"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "duplicate declaration for symbol 'p'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_duplicate_declaration_type_error.smt2",
+      "id": "qf_uf_duplicate_declaration_type_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "duplicate-declaration"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "wrong number of arguments for 'f'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_arity_mismatch_type_error.smt2",
+      "id": "qf_uf_arity_mismatch_type_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "arity-mismatch"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "argument sort mismatch for 'f'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/all_sort_mismatch_type_error.smt2",
+      "id": "all_sort_mismatch_type_error",
+      "logic": "ALL",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "sort-mismatch"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "unknown logic 'NO_SUCH_LOGIC'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/no_such_logic_type_error.smt2",
+      "id": "no_such_logic_type_error",
+      "logic": "NO_SUCH_LOGIC",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "invalid-logic"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "received assert before set-logic",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_invalid_command_order_type_error.smt2",
+      "id": "qf_uf_invalid_command_order_type_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "invalid-command-order"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "cannot pop the base assertion scope",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_scope_underflow_type_error.smt2",
+      "id": "qf_uf_scope_underflow_type_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "scope-underflow"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "unsupported command 'define-fun-rec'",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_lia_recursive_define_fun_type_error.smt2",
+      "id": "qf_lia_recursive_define_fun_type_error",
+      "logic": "QF_LIA",
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "recursive-construct",
+        "unsupported"
+      ]
+    },
+    {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "diagnostic": "satisfiable",
+          "status": "fail"
+        }
+      },
+      "file": "cases/negative/qf_uf_sat_theorem_request_z3_tac_error.smt2",
+      "id": "qf_uf_sat_theorem_request_z3_tac_error",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "tags": [
+        "negative",
+        "diagnostic",
+        "sat-theorem-request",
+        "z3-tac"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_alpha_baseline_unsat.smt2",
+      "id": "qf_uf_alpha_baseline_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:alpha-renaming",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_alpha_renamed_unsat.smt2",
+      "id": "qf_uf_alpha_renamed_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:alpha-renaming",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_symbol_unquoted_unsat.smt2",
+      "id": "qf_uf_symbol_unquoted_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:quoted-symbol-variant",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_symbol_quoted_unsat.smt2",
+      "id": "qf_uf_symbol_quoted_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:quoted-symbol-variant",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_assert_order_a_unsat.smt2",
+      "id": "qf_uf_assert_order_a_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:assertion-order-permutation",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_assert_order_b_unsat.smt2",
+      "id": "qf_uf_assert_order_b_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:assertion-order-permutation",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_commutative_and_a_unsat.smt2",
+      "id": "qf_uf_commutative_and_a_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:commutative-operands",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_commutative_and_b_unsat.smt2",
+      "id": "qf_uf_commutative_and_b_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:commutative-operands",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_nested_let_unsat.smt2",
+      "id": "qf_uf_nested_let_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:nested-let-expansion",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_let_expanded_unsat.smt2",
+      "id": "qf_uf_let_expanded_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:nested-let-expansion",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_push_pop_direct_unsat.smt2",
+      "id": "qf_uf_push_pop_direct_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:push-pop-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_push_pop_variant_unsat.smt2",
+      "id": "qf_uf_push_pop_variant_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:push-pop-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_reset_direct_unsat.smt2",
+      "id": "qf_uf_reset_direct_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:reset-assertions-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_reset_assertions_variant_unsat.smt2",
+      "id": "qf_uf_reset_assertions_variant_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:reset-assertions-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_bool_rewrite_implies_unsat.smt2",
+      "id": "qf_uf_bool_rewrite_implies_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:boolean-rewrite-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_uf_bool_rewrite_or_unsat.smt2",
+      "id": "qf_uf_bool_rewrite_or_unsat",
+      "logic": "QF_UF",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:boolean-rewrite-equivalence",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_bv_width1_xor_zero_unsat.smt2",
+      "id": "qf_bv_width1_xor_zero_unsat",
+      "logic": "QF_BV",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:bv-width-parametrized-identity",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
+    },
+    {
+      "file": "cases/metamorphic/qf_bv_width8_xor_zero_unsat.smt2",
+      "id": "qf_bv_width8_xor_zero_unsat",
+      "logic": "QF_BV",
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay"
+      ],
+      "tags": [
+        "metamorphic",
+        "metamorphic-group:bv-width-parametrized-identity",
+        "metamorphic-result:unsat",
+        "unsat",
+        "proof"
+      ]
     }
   ],
-  "description": "Core, UF, Ints, Reals, Reals_Ints, ArraysEx, FixedSizeBitVectors, FloatingPoint, UnicodeStrings/regex, datatypes, and Z3 Seq/Set/Bag extension curated SMT-LIB corpus for HolSmt conformance evidence.",
-  "generator": "python3 src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py; hand-curated ArraysEx/FixedSizeBitVectors and advanced-theory cases are appended in manifest.json",
+  "description": "Core, UF, Ints, Reals, Reals_Ints, ArraysEx, FixedSizeBitVectors, FloatingPoint, UnicodeStrings/regex, datatypes, Z3 Seq/Set/Bag extension, negative diagnostic, and metamorphic curated SMT-LIB corpus for HolSmt conformance evidence.",
+  "generator": "python3 src/HolSmt/tools/conformance-corpus/v1/generate_core_uf_arithmetic_corpus.py; hand-curated ArraysEx/FixedSizeBitVectors, advanced-theory, negative, and metamorphic cases are appended in manifest.json",
   "logic_families": {
     "arrays": [
       "QF_AX",
@@ -2039,11 +2699,22 @@
       "UFLIA",
       "UFNIA"
     ],
+    "metamorphic": [
+      "QF_BV",
+      "QF_UF"
+    ],
     "mixed_reals_ints": [
       "QF_LIRA",
       "QF_NIRA",
       "QF_UFLIRA",
       "QF_UFNIRA"
+    ],
+    "negative": [
+      "ALL",
+      "NO_SUCH_LOGIC",
+      "QF_BV",
+      "QF_LIA",
+      "QF_UF"
     ],
     "reals": [
       "QF_RDL",

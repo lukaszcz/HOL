@@ -1,0 +1,6 @@
+(set-logic QF_UF)
+(declare-const p Bool)
+(assert (not (= (let ((x p)) (let ((y x)) y)) p)))
+(check-sat)
+(get-proof)
+(exit)

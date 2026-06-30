@@ -84,6 +84,36 @@ class ConformanceSuiteTests(unittest.TestCase):
         self.assertIn("qf_nra_real_division_audit", by_name)
         self.assertIn("qf_lira_conversions_audit", by_name)
         self.assertIn("qf_lia_nonlinear_audit", by_name)
+        self.assertIn("qf_uf_malformed_sexp_parser_error", by_name)
+        self.assertIn("qf_uf_unterminated_string_parser_error", by_name)
+        self.assertIn("qf_uf_duplicate_declaration_type_error", by_name)
+        self.assertIn("qf_uf_sat_theorem_request_z3_tac_error", by_name)
+        self.assertEqual(
+            by_name["qf_uf_duplicate_declaration_type_error"].expected[
+                conformance.MODE_TYPECHECK
+            ].diagnostic_substring,
+            "duplicate declaration for symbol 'p'",
+        )
+        metamorphic_groups = {
+            tag.removeprefix("metamorphic-group:")
+            for case in cases
+            for tag in case.tags
+            if tag.startswith("metamorphic-group:")
+        }
+        self.assertGreaterEqual(
+            metamorphic_groups,
+            {
+                "alpha-renaming",
+                "quoted-symbol-variant",
+                "assertion-order-permutation",
+                "commutative-operands",
+                "nested-let-expansion",
+                "push-pop-equivalence",
+                "reset-assertions-equivalence",
+                "boolean-rewrite-equivalence",
+                "bv-width-parametrized-identity",
+            },
+        )
         self.assertEqual(
             by_name["qf_uf_unsat_proof"].modes,
             (
@@ -128,7 +158,16 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertIn("qf_uf_core_operators_sat", by_case)
             self.assertEqual(by_case["qf_uf_core_operators_sat"]["origin"], "corpus:v1")
             self.assertIn("corpus", by_case["qf_uf_core_operators_sat"]["tags"])
-            self.assertEqual(report["summary"]["by_logic_mode"]["QF_UF"][conformance.MODE_PARSER]["pass"], 7)
+            self.assertGreaterEqual(
+                report["summary"]["by_logic_mode"]["QF_UF"][conformance.MODE_PARSER]["pass"],
+                20,
+            )
+            self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 0)
+            self.assertGreaterEqual(report["metamorphic_groups"]["group_count"], 8)
+            self.assertEqual(
+                report["metamorphic_groups"]["status_counts"][conformance.FAIL],
+                0,
+            )
 
     def test_external_benchmark_dir_and_unsupported_mode_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -349,6 +388,32 @@ class ConformanceSuiteTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bench_dir / "sat_theorem.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "fail", "diagnostic": "satisfiable"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "unknown_theorem.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "fail", "diagnostic": "unknown"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
             checker = root / "fake-z3-tac.py"
             checker.write_text(
                 textwrap.dedent(
@@ -356,7 +421,8 @@ class ConformanceSuiteTests(unittest.TestCase):
                     import pathlib
                     import sys
 
-                    text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+                    path = pathlib.Path(sys.argv[1])
+                    text = path.read_text(encoding="utf-8")
                     if "(get-model)" in text:
                         print("Z3_TAC_UNSUPPORTED")
                         print("diagnostic=raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point")
@@ -368,6 +434,14 @@ class ConformanceSuiteTests(unittest.TestCase):
                     if "(get-unsat-core)" in text:
                         print("Z3_TAC_UNSUPPORTED")
                         print("diagnostic=raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point")
+                        raise SystemExit(1)
+                    if "sat_theorem" in path.name:
+                        print("Z3_TAC_FAIL")
+                        print("diagnostic=solver reports negated term to be satisfiable")
+                        raise SystemExit(1)
+                    if "unknown_theorem" in path.name:
+                        print("Z3_TAC_FAIL")
+                        print("diagnostic=solver reports unknown: audit")
                         raise SystemExit(1)
                     print("Z3_TAC_PASS")
                     print("z3_version=4.13.0")
@@ -411,6 +485,12 @@ class ConformanceSuiteTests(unittest.TestCase):
                 "get-unsat-core is outside checked Z3_TAC",
                 by_case["unsat_core"]["actual_diagnostic"],
             )
+            self.assertEqual(by_case["sat_theorem"]["status"], conformance.FAIL)
+            self.assertEqual(by_case["sat_theorem"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn("satisfiable", by_case["sat_theorem"]["actual_diagnostic"])
+            self.assertEqual(by_case["unknown_theorem"]["status"], conformance.FAIL)
+            self.assertEqual(by_case["unknown_theorem"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn("unknown", by_case["unknown_theorem"]["actual_diagnostic"])
 
     def test_z3_tac_oracle_tag_output_is_a_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

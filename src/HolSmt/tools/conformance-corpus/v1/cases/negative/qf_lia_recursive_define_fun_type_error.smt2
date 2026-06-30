@@ -1,0 +1,5 @@
+(set-logic QF_LIA)
+(define-fun-rec f ((x Int)) Int x)
+(assert (= (f 0) 0))
+(check-sat)
+(exit)

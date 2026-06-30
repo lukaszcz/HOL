@@ -1018,6 +1018,12 @@ fun smtlib_command_malformed_diagnostics () =
         ("(set-logic QF_UF)\n" ^
          "(declare-fun f (Bool) Bool)\n" ^
          "(assert (f true true))\n"));
+    expect_hol_error_contains "duplicate declare-const"
+      "duplicate declaration for symbol 'p'"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(declare-const p Bool)\n" ^
+         "(declare-const p Bool)\n"));
     expect_hol_error_contains "recursive define-fun"
       "unsupported command 'define-fun-rec'"
       (typecheck
