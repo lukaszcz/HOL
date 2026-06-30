@@ -668,7 +668,7 @@ local
           replay = false,
           notes = "HOL strings are char lists over HOL characters; SMT-LIB String is UnicodeStrings.",
           proof_obligation =
-            "TASK_021 must prove or constrain the HOL char-list to SMT Unicode string correspondence before replay is claimed."
+            "A checked soundness argument must prove or constrain the HOL char-list to SMT Unicode string correspondence before replay is claimed."
         }
       val datatype_record =
         HOLTheoryEncoding {
@@ -682,7 +682,7 @@ local
           notes =
             "SMT-LIB datatype commands are parsed/typechecked; HOL datatype constructors/selectors are not emitted as native SMT datatypes by this translator.",
           proof_obligation =
-            "TASK_021 must connect constructor disjointness, injectivity, selectors, testers, and recursion axioms before native replay support."
+            "A checked soundness argument must connect constructor disjointness, injectivity, selectors, testers, and recursion axioms before native replay support."
         }
       val fp_record =
         HOLTheoryEncoding {
@@ -696,7 +696,7 @@ local
           notes =
             "SMT-LIB floating-point symbols are parsed/typechecked; HOL binary_ieee terms are not translated to native FloatingPoint.",
           proof_obligation =
-            "TASK_021 must audit NaN, infinities, signed zero, rounding modes, and underspecified conversions before replay support."
+            "A checked soundness argument must audit NaN, infinities, signed zero, rounding modes, and underspecified conversions before replay support."
         }
       val z3_ext_record =
         HOLTheoryEncoding {
@@ -710,7 +710,7 @@ local
           notes =
             "Z3 extension symbols are parser/typechecker entries only; generic HOL lists, predicates-as-sets, and bags are not emitted as Seq/Set/Bag.",
           proof_obligation =
-            "TASK_021 must establish list/sequence, predicate/set, and multiplicity/bag correspondences before replay support."
+            "A checked soundness argument must establish list/sequence, predicate/set, and multiplicity/bag correspondences before replay support."
         }
       val regex_record =
         HOLTheoryEncoding {
@@ -724,7 +724,7 @@ local
           notes =
             "SMT-LIB regex terms are parsed/typechecked through RegLan; HOL regex libraries are not translated to RegLan.",
           proof_obligation =
-            "TASK_021 must relate HOL regex languages to SMT-LIB RegLan membership and Unicode string semantics before replay support."
+            "A checked soundness argument must relate HOL regex languages to SMT-LIB RegLan membership and Unicode string semantics before replay support."
         }
     in
       (if has_strings then [string_record] else []) @

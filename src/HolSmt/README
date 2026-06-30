@@ -31,11 +31,11 @@ Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
 User contract:
 
 HolSmt targets SMT-LIB 2.7.  The generated support report
-`.agent-files/SMTLIB_COVERAGE.md` is the source of truth for parser,
+`src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md` is the source of truth for parser,
 typechecker, translation, solver and proof-replay status.  Regenerate it from
 the repository root with:
 
-  python3 .agent-files/tools/generate_smtlib_coverage.py
+  python3 src/HolSmt/tools/coverage/generate_smtlib_coverage.py
 
 The SMT-LIB 2.7 frontend is not a full-language completeness claim.  It
 accepts the commands, theories and logics recorded in the matrix, and it must
@@ -128,7 +128,7 @@ Logic coverage summary:
   SMT-LIB 3 logics            Unsupported; no SMT-LIB 3 registry is present.
 
 For the complete per-logic and per-theory rows, including evidence and test
-status, read `.agent-files/SMTLIB_COVERAGE.md`.  Public documentation should
+status, read `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`.  Public documentation should
 not claim more than that generated report.
 
 HOL translation records include HOLTheoryEncoding rows for the advanced
@@ -141,7 +141,7 @@ Trusted-code-base boundary and soundness audit:
 
 `TRUSTED_CODE_BASE.md` documents the checked `Z3_TAC` path, the code that is
 inside the audit boundary, and the code that remains outside it, including
-`Z3_ORACLE_TAC`.  The generated `.agent-files/SMTLIB_COVERAGE.md` report
+`Z3_ORACLE_TAC`.  The generated `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md` report
 contains the cross-referenced "Soundness Audit and Semantic Mismatches" matrix.
 Every intentional mismatch must have a checked replay path, a preprocessing
 theorem or an explicit unsupported diagnostic.
@@ -149,7 +149,7 @@ theorem or an explicit unsupported diagnostic.
 The current native HOL string translation covers the string sort, STRCAT,
 isPREFIX, string_lt and string_le.  It emits SMT-LIB UnicodeStrings symbols;
 the semantic mismatch with HOL's char-list strings is deliberately recorded as
-a TASK_021 proof obligation.
+a soundness-audit proof obligation.
 
 Higher-order/function-valued HOL terms that would require abstracting function
 sorts are rejected deterministically by SmtLib.translate_type/translate_term.
@@ -276,8 +276,8 @@ Adding support for a new Z3 proof rule:
      `src/HolSmt/tools/tests/test_record_z3_proof_corpus.py`.
   6. Update the expected proof-rule manifest or corpus fixture only after the
      parser/replay status is intentional.
-  7. Update `.agent-files/smtlib_coverage.json`, regenerate
-     `.agent-files/SMTLIB_COVERAGE.md`, and keep this README in agreement.
+  7. Update `src/HolSmt/tools/coverage/smtlib_coverage.json`, regenerate
+     `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`, and keep this README in agreement.
 
 Updating the Z3 version matrix:
 
@@ -288,8 +288,8 @@ Updating the Z3 version matrix:
   3. Run the proof-corpus gate and conformance suite for the new executable.
   4. If proof options, aliases or unsupported diagnostics changed, update the
      proof-rule registry, replay tests and expected-rule manifests first.
-  5. Update `.agent-files/smtlib_coverage.json`, regenerate the matrix, and
-     adjust the "Supported Z3 versions" table above.
+  5. Update `src/HolSmt/tools/coverage/smtlib_coverage.json`, regenerate the
+     matrix, and adjust the "Supported Z3 versions" table above.
 
 Pull-request CI runs the PolyML expk build against the Z3 versions already
 provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
