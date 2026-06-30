@@ -279,6 +279,15 @@ wrappers such as `proof-bind` are reported separately from replay obligations.
 
 Local CI contract commands:
 
+  # Run the local contract checks below, resolving z3 from PATH when
+  # HOL4_Z3_EXECUTABLE is not already set.  The script fails fast if that
+  # executable is outside the supported Z3 matrix; pass --allow-unsupported-z3
+  # to investigate proof-format drift intentionally.
+  src/HolSmt/tools/run_holsmt_tests.sh
+
+  # Also run the Docker selftest matrix
+  src/HolSmt/tools/run_holsmt_tests.sh --include-docker
+
   # Python tool unit tests
   python3 -m unittest \
     src/HolSmt/tools/tests/test_audit_coverage_manifest.py \
