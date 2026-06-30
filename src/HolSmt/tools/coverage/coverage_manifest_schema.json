@@ -1,0 +1,135 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol-theorem-prover.org/holsmt/coverage-manifest.schema.json",
+  "title": "HolSmt SMT-LIB coverage manifest",
+  "type": "object",
+  "required": ["schema", "entries"],
+  "additionalProperties": false,
+  "properties": {
+    "schema": {
+      "const": "holsmt-coverage-manifest-v1"
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "entries": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/entry"
+      }
+    }
+  },
+  "$defs": {
+    "entry": {
+      "type": "object",
+      "required": [
+        "section",
+        "item",
+        "class",
+        "phases",
+        "expected_status",
+        "positive_tests",
+        "negative_tests",
+        "z3_versions",
+        "artifacts"
+      ],
+      "additionalProperties": true,
+      "properties": {
+        "section": {
+          "type": "string",
+          "description": "Coverage JSON section containing the row, for example commands or z3_proof_rules."
+        },
+        "item": {
+          "type": "string",
+          "description": "Exact coverage row item text."
+        },
+        "class": {
+          "type": "string",
+          "description": "Exact coverage row class text."
+        },
+        "phases": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "enum": ["parsed", "translated", "solved", "reconstructed", "tested"]
+          }
+        },
+        "expected_status": {
+          "enum": [
+            "implemented",
+            "parse_only",
+            "unsupported_diagnostic",
+            "untested",
+            "unknown",
+            "not_applicable"
+          ]
+        },
+        "positive_tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "negative_tests": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "z3_versions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "artifacts": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/evidence"
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "required": ["kind"],
+      "additionalProperties": true,
+      "properties": {
+        "kind": {
+          "type": "string",
+          "description": "Evidence kind. The audit currently understands source, conformance_result, proof_rule, proof_version, and manual."
+        },
+        "path": {
+          "type": "string"
+        },
+        "match": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "logic": {
+          "type": "string"
+        },
+        "rule": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "description": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}

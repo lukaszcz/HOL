@@ -1,0 +1,127 @@
+{
+  "schema": "holsmt-coverage-manifest-v1",
+  "metadata": {
+    "title": "Initial HolSmt SMT-LIB coverage evidence manifest",
+    "scope": "Representative end-to-end slice only. Later tasks should add entries for each coverage row as executable evidence is created.",
+    "schema_path": "src/HolSmt/tools/coverage/coverage_manifest_schema.json"
+  },
+  "entries": [
+    {
+      "section": "commands",
+      "item": "set-logic",
+      "class": "SMT-LIB 2.7",
+      "phases": ["parsed", "translated", "solved", "reconstructed", "tested"],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "CmdSetLogic"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "parse_set_logic"
+        }
+      ],
+      "notes": "Start with one command whose parser, translator, solve, replay, and checked-test columns are already implemented in the baseline matrix."
+    },
+    {
+      "section": "commands",
+      "item": "declare-const",
+      "class": "SMT-LIB 2.7",
+      "phases": ["parsed", "translated", "solved", "reconstructed", "tested"],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "CmdDeclareConst"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "parse_declare_const"
+        }
+      ],
+      "notes": "Covers a declaration command with parser and typed HOL dictionary behavior."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "proof-bind",
+      "class": "Z3 extension",
+      "phases": ["parsed", "tested"],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "proof-bind"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_record_z3_proof_corpus.py",
+          "match": "test_parse_only_rule_is_recorded_but_not_replay_unknown"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/record_z3_proof_corpus.py",
+          "match": "PARSE_ONLY_RULES"
+        }
+      ],
+      "notes": "Covers proof-bind parser and test evidence while keeping its replay normalization as a separate parse-only obligation."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "proof-bind",
+      "class": "Z3 extension",
+      "phases": ["translated", "solved"],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "manual",
+          "description": "proof-bind is a Z3 proof syntax wrapper, so HolSmt has no SMT-LIB translation or solver-result phase for this row."
+        }
+      ],
+      "notes": "Documents the not-applicable phases for the proof-bind proof-rule row."
+    },
+    {
+      "section": "z3_proof_rules",
+      "item": "proof-bind",
+      "class": "Z3 extension",
+      "phases": ["reconstructed"],
+      "expected_status": "parse_only",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "proof-bind"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_record_z3_proof_corpus.py",
+          "match": "test_parse_only_rule_is_recorded_but_not_replay_unknown"
+        }
+      ],
+      "notes": "Representative parse-only row: the proof parser normalizes proof-bind as transparent and intentionally has no replay obligation."
+    }
+  ]
+}
