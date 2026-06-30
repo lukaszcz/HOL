@@ -22,9 +22,22 @@ from record_z3_proof_corpus import (
 
 def entry(path, version, proof):
     return {
-        "input": {"path": path},
-        "z3": {"version": version},
-        "proof": {"available": True, **proof},
+        "input": {
+            "path": path,
+            "sha256": "input-hash",
+            "effective_sha256": "effective-input-hash",
+        },
+        "z3": {
+            "version": version,
+            "stdout_path": "raw/stdout.txt",
+            "stderr_path": "raw/stderr.txt",
+        },
+        "proof": {
+            "available": True,
+            "raw_path": "proofs/input.proof",
+            "raw_sha256": "proof-hash",
+            **proof,
+        },
     }
 
 
@@ -181,6 +194,17 @@ class ProofRuleExtractionTests(unittest.TestCase):
             "unit-resolution",
             report["unseen_rules"][0]["contexts"][0]["context"],
         )
+        self.assertEqual(
+            report["unseen_rules"][0]["artifacts"],
+            {
+                "effective_input_sha256": "effective-input-hash",
+                "input_sha256": "input-hash",
+                "proof_path": "proofs/input.proof",
+                "proof_sha256": "proof-hash",
+                "stderr_path": "raw/stderr.txt",
+                "stdout_path": "raw/stdout.txt",
+            },
+        )
 
     def test_gate_flags_replay_unknown_rule_with_context(self):
         proof = extract_rule_report("(proof (mystery-rule false))")
@@ -195,6 +219,24 @@ class ProofRuleExtractionTests(unittest.TestCase):
         self.assertIn(
             "mystery-rule",
             report["replay_unknown_rules"][0]["contexts"][0]["context"],
+        )
+        self.assertEqual(
+            report["replay_unknown_rules"][0]["artifacts"]["proof_path"],
+            "proofs/input.proof",
+        )
+
+    def test_gate_flags_malformed_fragment_with_artifacts(self):
+        proof = extract_rule_report("(proof (asserted false)")
+        report = build_rule_gate_report(
+            [entry("malformed.smt2", "4.13.0", proof)],
+            {"default": ["asserted"]},
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["malformed_fragments"][0]["input"], "malformed.smt2")
+        self.assertEqual(
+            report["malformed_fragments"][0]["artifacts"]["stdout_path"],
+            "raw/stdout.txt",
         )
 
     def test_checked_in_supported_version_manifest_validates(self):

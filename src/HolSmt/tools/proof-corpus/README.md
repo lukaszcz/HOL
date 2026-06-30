@@ -68,9 +68,10 @@ the checked-in unseen-rule gate would no longer pass.
 The expected-rule manifest may be either a JSON list of rule names for every
 Z3 version, or an object with `default`/`rules` and `versions` entries. Version
 keys match exactly; keys ending in `*` match by prefix, for example `4.*`.
-The gate reports Z3 version, input file, rule name, count, and local proof
-context for every unseen or replay-unknown rule. Malformed proof fragments are
-reported separately so unknown rules are not hidden behind parser failures.
+The gate reports Z3 version, input file, rule name, count, local proof context,
+and the input/stdout/stderr/proof artifact paths and hashes for every unseen or
+replay-unknown rule. Malformed proof fragments are reported separately with the
+same artifact references so unknown rules are not hidden behind parser failures.
 
 The checked-in `minimal_bool_unsat.smt2` is a small HolSmt-style SMT-LIB proof
 input suitable for selftests and minimized repros.

@@ -811,10 +811,42 @@ def build_rule_gate_report(
     parse_only: list[dict[str, object]] = []
     malformed: list[dict[str, object]] = []
 
+    def artifact_refs(entry: dict[str, object]) -> dict[str, object]:
+        input_info = entry.get("input", {})
+        z3_info = entry.get("z3", {})
+        proof_info = entry.get("proof", {})
+        artifacts: dict[str, object] = {}
+        if isinstance(input_info, dict):
+            for source, target in (
+                ("sha256", "input_sha256"),
+                ("effective_sha256", "effective_input_sha256"),
+            ):
+                value = input_info.get(source)
+                if isinstance(value, str) and value:
+                    artifacts[target] = value
+        if isinstance(z3_info, dict):
+            for source, target in (
+                ("stdout_path", "stdout_path"),
+                ("stderr_path", "stderr_path"),
+            ):
+                value = z3_info.get(source)
+                if isinstance(value, str) and value:
+                    artifacts[target] = value
+        if isinstance(proof_info, dict):
+            for source, target in (
+                ("raw_path", "proof_path"),
+                ("raw_sha256", "proof_sha256"),
+            ):
+                value = proof_info.get(source)
+                if isinstance(value, str) and value:
+                    artifacts[target] = value
+        return artifacts
+
     for entry in entries:
         input_path = entry["input"]["path"]  # type: ignore[index]
         version = entry["z3"]["version"]  # type: ignore[index]
         proof = entry["proof"]  # type: ignore[index]
+        artifacts = artifact_refs(entry)
         expected = (
             expected_rules_for_version(expected_manifest, version)
             if expected_manifest is not None
@@ -831,6 +863,7 @@ def build_rule_gate_report(
                         "rule": rule,
                         "count": count,
                         "contexts": contexts.get(rule, []),  # type: ignore[union-attr]
+                        "artifacts": artifacts,
                     }
                 )
 
@@ -844,6 +877,7 @@ def build_rule_gate_report(
                             "rule": rule,
                             "count": count,
                             "contexts": contexts.get(rule, []),  # type: ignore[union-attr]
+                            "artifacts": artifacts,
                         }
                     )
 
@@ -855,6 +889,7 @@ def build_rule_gate_report(
                     "rule": item["rule"],  # type: ignore[index]
                     "count": item["count"],  # type: ignore[index]
                     "contexts": item["contexts"],  # type: ignore[index]
+                    "artifacts": artifacts,
                 }
             )
 
@@ -865,6 +900,7 @@ def build_rule_gate_report(
                     "z3_version": version,
                     "input": input_path,
                     "fragments": fragments,
+                    "artifacts": artifacts,
                 }
             )
 
