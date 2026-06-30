@@ -76,6 +76,129 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(qf_lia[conformance.MODE_TYPECHECK]["unsupported"], 1)
             self.assertIn("no typecheck-only command configured", "\n".join(report["summary"]["unsupported_reasons"]))
 
+    def test_expected_pass_fail_and_unsupported_outcomes_are_valid(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "pass.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"parser-only": {"status": "pass"}}
+                    (set-logic QF_LIA)
+                    (assert true)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "fail.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"parser-only": {"status": "fail", "diagnostic": "missing set-logic"}}
+                    (assert true)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "unsupported.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"typecheck-only": {"status": "unsupported", "diagnostic": "no typecheck-only command configured"}}
+                    (set-logic QF_LIA)
+                    (assert true)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                    "--mode",
+                    conformance.MODE_TYPECHECK,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["status_counts"][conformance.FAIL], 1)
+            self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 0)
+            by_case_mode = {
+                (item["case"], item["mode"]): item
+                for item in report["results"]
+            }
+            self.assertEqual(
+                by_case_mode[("pass", conformance.MODE_PARSER)]["classification"],
+                conformance.CLASSIFICATION_MATCHED,
+            )
+            self.assertEqual(
+                by_case_mode[("fail", conformance.MODE_PARSER)]["classification"],
+                conformance.CLASSIFICATION_MATCHED,
+            )
+            self.assertEqual(
+                by_case_mode[("unsupported", conformance.MODE_TYPECHECK)]["classification"],
+                conformance.CLASSIFICATION_MATCHED,
+            )
+            fail_case = next(case for case in report["cases"] if case["name"] == "fail")
+            self.assertEqual(
+                fail_case["expected"][conformance.MODE_PARSER]["diagnostic_substring"],
+                "missing set-logic",
+            )
+
+    def test_expected_diagnostic_mismatch_is_distinct_and_preserves_repro(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "unsupported.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"typecheck-only": {"status": "unsupported", "diagnostic": "some other diagnostic"}}
+                    (set-logic QF_LIA)
+                    (assert true)
+                    (check-sat)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_TYPECHECK,
+                ]
+            )
+
+            self.assertEqual(code, 1)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 1)
+            self.assertEqual(
+                report["classification_counts"][conformance.CLASSIFICATION_DIAGNOSTIC_MISMATCH],
+                1,
+            )
+            item = report["results"][0]
+            self.assertEqual(item["status"], conformance.UNSUPPORTED)
+            self.assertEqual(item["classification"], conformance.CLASSIFICATION_DIAGNOSTIC_MISMATCH)
+            self.assertFalse(item["diagnostic_match"])
+            self.assertTrue(list((out_dir / "repro").rglob("input.smt2")))
+            self.assertTrue(list((out_dir / "repro").rglob("result.json")))
+
     def test_proof_replay_failure_preserves_repro_input_and_raw_proof(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)
