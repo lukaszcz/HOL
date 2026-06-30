@@ -1,10 +1,28 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
            ../res_quan/src ../sort ../string
 
-all: $(DEFAULT_TARGETS) selftest.exe
+all: $(DEFAULT_TARGETS) selftest.exe holsmt-typecheck
 .PHONY: all
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
+
+holsmt-typecheck: typecheck_driver.uo
+	printf '%s\n' \
+	  '#!/bin/sh' \
+	  'set -e' \
+	  'if [ "$$#" -ne 2 ]; then' \
+	  '  echo "Usage: $$0 <input.smt2> <logic>" >&2' \
+	  '  exit 1' \
+	  'fi' \
+	  'case "$$1" in' \
+	  '  /*) input=$$1 ;;' \
+	  '  *) input=$$(pwd)/$$1 ;;' \
+	  'esac' \
+	  'cd "$$(dirname "$$0")"' \
+	  'extra=$$(printf "%s\n%s" "$$input" "$$2")' \
+	  '$(HOLDIR)/bin/hol --gcthreads=1 run --holstate=$(HOLDIR)/src/HolSmt/smtheap --extra "$$extra" typecheck_driver' \
+	  > $@
+	chmod +x $@
 
 ifdef HOLSELFTESTLEVEL
 all: holsmt-selftest.log
@@ -13,7 +31,7 @@ holsmt-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1,$@)
 endif
 
-EXTRA_CLEANS = selftest.exe holsmt-selftest.log
+EXTRA_CLEANS = selftest.exe holsmt-typecheck holsmt-selftest.log
 
 ifdef HOLBUILD
 all: link-to-sigobj
@@ -33,7 +51,7 @@ BARE_DEPS = $(patsubst %,../%,$(SMT_DEPS))
 
 DEPS = $(patsubst %,%.uo,$(BARE_DEPS))
 
-all: $(HOLHEAP) selftest.exe
+all: $(HOLHEAP) selftest.exe holsmt-typecheck
 
 $(HOLHEAP): $(DEPS) $(dprot $(HOLDIR)/src/real/analysis/realheap)
 	$(protect $(HOLDIR)/bin/hol) buildheap $(DEBUG_FLAG) -o $@ \

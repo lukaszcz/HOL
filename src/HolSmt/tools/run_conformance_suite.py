@@ -118,6 +118,8 @@ OFFICIAL_LOGICS = [
 
 HOLSMT_LOGICS = ["ALL", *OFFICIAL_LOGICS]
 SOLVER_RESULTS = {"sat", "unsat", "unknown"}
+DEFAULT_TYPECHECK_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-typecheck"
+DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{input}} {{logic}}"
 
 
 @dataclass(frozen=True)
@@ -671,6 +673,27 @@ def run_command_mode(
     return result(case, mode, FAIL, f"{mode} command failed", artifact=artifact)
 
 
+def default_typecheck_command() -> str:
+    return DEFAULT_TYPECHECK_COMMAND
+
+
+def run_typecheck_mode(
+    case: Case,
+    input_path: pathlib.Path,
+    command_template: str | None,
+    timeout: int,
+) -> dict[str, object]:
+    if command_template == DEFAULT_TYPECHECK_COMMAND and not DEFAULT_TYPECHECK_DRIVER.exists():
+        return result(
+            case,
+            MODE_TYPECHECK,
+            UNSUPPORTED,
+            f"default typecheck-only driver not built: {DEFAULT_TYPECHECK_DRIVER}",
+            artifact={"command": command_template},
+        )
+    return run_command_mode(case, MODE_TYPECHECK, input_path, command_template, timeout)
+
+
 def preserve_repro(out_dir: pathlib.Path, case: Case, input_path: pathlib.Path, item: dict[str, object]) -> None:
     repro_dir = out_dir / "repro" / slug(case.logic) / slug(case.name) / slug(str(item["mode"]))
     repro_dir.mkdir(parents=True, exist_ok=True)
@@ -912,7 +935,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--no-default-suite", action="store_true")
     parser.add_argument("--benchmark-dir", action="append", type=pathlib.Path, default=[])
     parser.add_argument("--z3-proof-dir", action="append", type=pathlib.Path, default=[])
-    parser.add_argument("--typecheck-command", help="shell command template for typecheck-only mode; placeholders: {input}, {logic}, {name}")
+    parser.add_argument(
+        "--typecheck-command",
+        default=default_typecheck_command(),
+        help=(
+            "shell command template for typecheck-only mode; placeholders: "
+            "{input}, {logic}, {name}; defaults to src/HolSmt/holsmt-typecheck"
+        ),
+    )
     parser.add_argument("--z3-tac-command", help="shell command template for z3-tac mode; placeholders: {input}, {logic}, {name}")
     parser.add_argument("--json-report", default="conformance.json")
     parser.add_argument("--markdown-report", default="CONFORMANCE.md")
@@ -955,7 +985,7 @@ def main(argv: list[str]) -> int:
                         proof_entries.append(proof_result_cache[2])
                 item = proof_result_cache[0] if mode == MODE_PROOF_PARSE else proof_result_cache[1]
             elif mode == MODE_TYPECHECK:
-                item = run_command_mode(case, mode, input_path, args.typecheck_command, args.timeout)
+                item = run_typecheck_mode(case, input_path, args.typecheck_command, args.timeout)
             elif mode == MODE_Z3_TAC:
                 item = run_command_mode(case, mode, input_path, args.z3_tac_command, args.timeout)
             else:

@@ -65,7 +65,7 @@ class ConformanceSuiteTests(unittest.TestCase):
                     "--mode",
                     conformance.MODE_PARSER,
                     "--mode",
-                    conformance.MODE_TYPECHECK,
+                    conformance.MODE_Z3_TAC,
                 ]
             )
 
@@ -73,8 +73,8 @@ class ConformanceSuiteTests(unittest.TestCase):
             report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
             qf_lia = report["summary"]["by_logic_mode"]["QF_LIA"]
             self.assertEqual(qf_lia[conformance.MODE_PARSER]["pass"], 1)
-            self.assertEqual(qf_lia[conformance.MODE_TYPECHECK]["unsupported"], 1)
-            self.assertIn("no typecheck-only command configured", "\n".join(report["summary"]["unsupported_reasons"]))
+            self.assertEqual(qf_lia[conformance.MODE_Z3_TAC]["unsupported"], 1)
+            self.assertIn("no z3-tac command configured", "\n".join(report["summary"]["unsupported_reasons"]))
 
     def test_expected_pass_fail_and_unsupported_outcomes_are_valid(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,7 +105,7 @@ class ConformanceSuiteTests(unittest.TestCase):
             (bench_dir / "unsupported.smt2").write_text(
                 textwrap.dedent(
                     """\
-                    ; holsmt-expected: {"typecheck-only": {"status": "unsupported", "diagnostic": "no typecheck-only command configured"}}
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "no z3-tac command configured"}}
                     (set-logic QF_LIA)
                     (assert true)
                     (check-sat)
@@ -125,7 +125,7 @@ class ConformanceSuiteTests(unittest.TestCase):
                     "--mode",
                     conformance.MODE_PARSER,
                     "--mode",
-                    conformance.MODE_TYPECHECK,
+                    conformance.MODE_Z3_TAC,
                 ]
             )
 
@@ -146,7 +146,7 @@ class ConformanceSuiteTests(unittest.TestCase):
                 conformance.CLASSIFICATION_MATCHED,
             )
             self.assertEqual(
-                by_case_mode[("unsupported", conformance.MODE_TYPECHECK)]["classification"],
+                by_case_mode[("unsupported", conformance.MODE_Z3_TAC)]["classification"],
                 conformance.CLASSIFICATION_MATCHED,
             )
             fail_case = next(case for case in report["cases"] if case["name"] == "fail")
@@ -163,7 +163,7 @@ class ConformanceSuiteTests(unittest.TestCase):
             (bench_dir / "unsupported.smt2").write_text(
                 textwrap.dedent(
                     """\
-                    ; holsmt-expected: {"typecheck-only": {"status": "unsupported", "diagnostic": "some other diagnostic"}}
+                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "some other diagnostic"}}
                     (set-logic QF_LIA)
                     (assert true)
                     (check-sat)
@@ -181,7 +181,7 @@ class ConformanceSuiteTests(unittest.TestCase):
                     "--benchmark-dir",
                     str(bench_dir),
                     "--mode",
-                    conformance.MODE_TYPECHECK,
+                    conformance.MODE_Z3_TAC,
                 ]
             )
 
@@ -198,6 +198,36 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertFalse(item["diagnostic_match"])
             self.assertTrue(list((out_dir / "repro").rglob("input.smt2")))
             self.assertTrue(list((out_dir / "repro").rglob("result.json")))
+
+    @unittest.skipUnless(
+        conformance.DEFAULT_TYPECHECK_DRIVER.exists(),
+        "HolSmt typecheck driver has not been built",
+    )
+    def test_default_typecheck_driver_runs_representative_conformance_slice(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            out_dir = root / "out"
+            fixture_dir = pathlib.Path(__file__).resolve().parent / "conformance" / "typecheck"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(fixture_dir),
+                    "--mode",
+                    conformance.MODE_TYPECHECK,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            by_case = {item["case"]: item for item in report["results"]}
+            self.assertEqual(by_case["pass_bool"]["status"], conformance.PASS)
+            self.assertEqual(by_case["non_bool_assert"]["status"], conformance.FAIL)
+            self.assertEqual(by_case["non_bool_assert"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn("expected sort :bool", by_case["non_bool_assert"]["actual_diagnostic"])
 
     def test_proof_replay_failure_preserves_repro_input_and_raw_proof(self):
         with tempfile.TemporaryDirectory() as tmp:

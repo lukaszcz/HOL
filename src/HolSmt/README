@@ -205,19 +205,25 @@ Large external benchmark runs are opt-in:
     --benchmark-dir /path/to/smtlib-benchmarks \
     --z3-proof-dir /path/to/z3/proof/tests
 
-Use `--logic` and repeated `--mode` flags to restrict a run.  The typecheck-only
-and end-to-end Z3_TAC modes are command-template hooks so CI can plug in a HOL
-driver without making the default Python suite depend on a particular heap:
+Use `--logic` and repeated `--mode` flags to restrict a run.  The
+typecheck-only mode defaults to the HOL driver built by:
+
+  bin/Holmake -C src/HolSmt holsmt-typecheck
+
+The driver accepts an SMT-LIB input path and logic name, runs the
+`SmtLib_Parser` typechecker, and prints deterministic `TYPECHECK_PASS` or
+`TYPECHECK_FAIL` records.  A custom driver can still be supplied with
+`--typecheck-command`; end-to-end Z3_TAC remains a command-template hook:
 
   python3 src/HolSmt/tools/run_conformance_suite.py \
     --mode typecheck-only \
-    --typecheck-command 'my-holsmt-typecheck {input} {logic}' \
     --mode z3-tac \
     --z3-tac-command 'my-z3-tac-check {input} {logic}'
 
-Unconfigured hooks are counted as `unsupported`, not hidden.  Unsupported
-counts are grouped by logic, mode, SMT-LIB target version and discovered Z3
-version in the generated reports.
+If the default typecheck driver has not been built, typecheck-only is reported
+as an explicit unsupported environment condition.  Unconfigured hooks are
+counted as `unsupported`, not hidden.  Unsupported counts are grouped by logic,
+mode, SMT-LIB target version and discovered Z3 version in the generated reports.
 
 Reproducing proof-replay failures:
 
