@@ -263,9 +263,7 @@ def validate(data: dict, manifest: dict | None = None, release: bool = False) ->
     if release:
         validate_release_unknowns(data)
 
-    required_statuses = {"implemented", "unsupported_diagnostic", "untested"}
-    if not release:
-        required_statuses.add("unknown")
+    required_statuses = {"implemented", "unsupported_diagnostic"}
     missing_statuses = sorted(required_statuses - seen_statuses)
     if missing_statuses:
         raise SystemExit(

@@ -277,6 +277,64 @@ The corpus output records Z3 version, input path, raw proof, rule histogram,
 unseen rules, replay-unknown rules and malformed proof fragments.  Parser-only
 wrappers such as `proof-bind` are reported separately from replay obligations.
 
+Local CI contract commands:
+
+  # Python tool unit tests
+  python3 -m unittest \
+    src/HolSmt/tools/tests/test_audit_coverage_manifest.py \
+    src/HolSmt/tools/tests/test_generate_smtlib_coverage.py \
+    src/HolSmt/tools/tests/test_record_z3_proof_corpus.py \
+    src/HolSmt/tools/tests/test_run_conformance_suite.py
+
+  # Coverage report regeneration and enforcing manifest audit
+  python3 src/HolSmt/tools/coverage/generate_smtlib_coverage.py --release
+  git diff --exit-code -- \
+    src/HolSmt/tools/coverage/smtlib_coverage.json \
+    src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md
+  python3 src/HolSmt/tools/coverage/audit_coverage_manifest.py --enforce
+
+  # Parser conformance for the full checked-in corpus
+  python3 src/HolSmt/tools/run_conformance_suite.py \
+    --out /tmp/holsmt-parser-conformance \
+    --no-default-suite \
+    --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
+    --mode parser-only
+
+  # Z3 oracle, proof-parse and proof-replay conformance slice
+  python3 src/HolSmt/tools/run_conformance_suite.py \
+    --out /tmp/holsmt-z3-conformance \
+    --no-default-suite \
+    --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
+    --logic QF_UF \
+    --logic QF_LIA \
+    --mode z3-oracle \
+    --mode proof-parse \
+    --mode proof-replay \
+    --timeout 20
+
+  # Checked-in proof matrix and live unseen-rule gate
+  python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+    --validate-corpus-manifest
+  python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+    --out /tmp/holsmt-proof-corpus \
+    --expected-rules src/HolSmt/tools/proof-corpus/minimal_expected_rules.json \
+    --fail-on-unseen-rules \
+    --fail-on-unknown-rules \
+    src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2
+
+  # HOL driver conformance after building src/HolSmt drivers
+  bin/Holmake -C src/HolSmt holsmt-typecheck holsmt-z3-tac
+  python3 src/HolSmt/tools/run_conformance_suite.py \
+    --out /tmp/holsmt-typecheck-conformance \
+    --no-default-suite \
+    --benchmark-dir src/HolSmt/tools/tests/conformance/typecheck \
+    --mode typecheck-only
+  python3 src/HolSmt/tools/run_conformance_suite.py \
+    --out /tmp/holsmt-z3-tac-conformance \
+    --no-default-suite \
+    --benchmark-dir src/HolSmt/tools/tests/conformance/z3_tac \
+    --mode z3-tac
+
 Adding support for a new Z3 proof rule:
 
   1. Add or minimize a corpus input that triggers the rule and run

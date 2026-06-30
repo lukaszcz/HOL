@@ -8,6 +8,80 @@
   "entries": [
     {
       "section": "version_targets",
+      "item": "SMT-LIB language",
+      "class": "SMT-LIB 2.7",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "script_ast_metadata_decls_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "smtlib_translation_shape_matrix_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
+          "match": "qf_uf_core_operators_sat"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib_Parser.sml",
+          "match": "parse_script"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "(set-logic "
+        }
+      ],
+      "notes": "The SMT-LIB 2.7 target row is backed by parser, translator, and conformance-corpus evidence; individual command/theory/logic rows carry the detailed diagnostics."
+    },
+    {
+      "section": "version_targets",
+      "item": "SMT-LIB 3 language",
+      "class": "SMT-LIB 3",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/README",
+          "match": "SMT-LIB 3 is not part"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/coverage/smtlib_coverage.json",
+          "match": "No SMT-LIB 3 specific parser or translator path identified."
+        }
+      ],
+      "notes": "SMT-LIB 3 is explicitly out of scope for this SMT-LIB 2.7 contract rather than an unknown support claim."
+    },
+    {
+      "section": "version_targets",
       "item": "Supported Z3 versions",
       "class": "Z3 extension",
       "phases": [
@@ -128,6 +202,75 @@
         }
       ],
       "notes": "The legacy proof option is represented in the recorder and validated by the checked-in 2.19.1 corpus artifact."
+    },
+    {
+      "section": "version_targets",
+      "item": "cvc5 Alethe proof mode",
+      "class": "HolSmt",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "cvc5 (proofs)"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "expect_thm true"
+        }
+      ],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/CVC.sml",
+          "match": "--proof-format-mode=alethe"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/CVC.sml",
+          "match": "Alethe_ProofReplay.check_proof"
+        }
+      ],
+      "notes": "The CVC/Alethe row is retained as HolSmt evidence; the detailed SMT-LIB enforcement plan remains focused on Z3_TAC."
+    },
+    {
+      "section": "logics",
+      "item": "SMT-LIB 3 logics",
+      "class": "SMT-LIB 3",
+      "phases": [
+        "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
+        "tested"
+      ],
+      "expected_status": "not_applicable",
+      "positive_tests": [],
+      "negative_tests": [],
+      "z3_versions": [],
+      "artifacts": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/README",
+          "match": "SMT-LIB 3 logics            Unsupported"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/coverage/smtlib_coverage.json",
+          "match": "No SMT-LIB 3 logic registry found."
+        }
+      ],
+      "notes": "SMT-LIB 3 logic support is not part of the documented SMT-LIB 2.7 contract."
     },
     {
       "section": "commands",

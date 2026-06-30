@@ -29,25 +29,29 @@
       "translated": "implemented",
       "solved": "implemented",
       "reconstructed": "implemented",
-      "tested": "untested",
+      "tested": "implemented",
       "evidence": "src/HolSmt/SmtLib_Parser.sml parses a restricted SMT-LIB 2 benchmark subset; src/HolSmt/SmtLib.sml emits SMT-LIB 2.",
       "notes": "Target is versioned as SMT-LIB 2.7, but current code is older SMT-LIB 2 style and does not validate the full 2.7 command/theory surface.",
-      "test_ids": [],
-      "last_verified_by": "unverified",
+      "test_ids": [
+        "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success",
+        "source:src/HolSmt/Unittest.sml#smtlib_translation_shape_matrix_success",
+        "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_uf_core_operators_sat"
+      ],
+      "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": []
     },
     {
       "item": "SMT-LIB 3 language",
       "class": "SMT-LIB 3",
-      "parsed": "unknown",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
-      "tested": "unknown",
+      "parsed": "not_applicable",
+      "translated": "not_applicable",
+      "solved": "not_applicable",
+      "reconstructed": "not_applicable",
+      "tested": "not_applicable",
       "evidence": "No SMT-LIB 3 specific parser or translator path identified.",
       "notes": "Tracked separately so future SMT-LIB 3 support does not get conflated with SMT-LIB 2.7.",
       "test_ids": [],
-      "last_verified_by": "unverified",
+      "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": []
     },
     {
@@ -108,11 +112,14 @@
       "translated": "implemented",
       "solved": "implemented",
       "reconstructed": "implemented",
-      "tested": "untested",
+      "tested": "implemented",
       "evidence": "src/HolSmt/CVC.sml invokes --produce-proofs --dump-proofs --proof-format-mode=alethe; selftest has cvc5 proof gates.",
       "notes": "Included for honesty because selftests exercise it, but the SMT-LIB plan is focused on Z3_TAC completeness.",
-      "test_ids": [],
-      "last_verified_by": "unverified",
+      "test_ids": [
+        "source:src/HolSmt/selftest.sml#cvc5 (proofs)",
+        "source:src/HolSmt/selftest.sml#expect_thm true"
+      ],
+      "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": []
     }
   ],
@@ -929,15 +936,15 @@
     {
       "item": "SMT-LIB 3 logics",
       "class": "SMT-LIB 3",
-      "parsed": "unknown",
-      "translated": "unknown",
-      "solved": "unknown",
-      "reconstructed": "unknown",
-      "tested": "unknown",
+      "parsed": "not_applicable",
+      "translated": "not_applicable",
+      "solved": "not_applicable",
+      "reconstructed": "not_applicable",
+      "tested": "not_applicable",
       "evidence": "No SMT-LIB 3 logic registry found.",
       "notes": "Tracked separately from the SMT-LIB 2.7 baseline.",
       "test_ids": [],
-      "last_verified_by": "unverified",
+      "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": []
     }
   ],

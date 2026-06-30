@@ -1,0 +1,214 @@
+name: holsmt-contract
+
+on:
+  pull_request:
+    branches:
+      - "develop"
+    paths:
+      - "src/HolSmt/**"
+      - ".github/workflows/holsmt-contract.yml"
+  push:
+    branches:
+      - "master"
+      - "develop"
+    paths:
+      - "src/HolSmt/**"
+      - ".github/workflows/holsmt-contract.yml"
+  workflow_dispatch:
+
+jobs:
+  python-tools:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Run HolSmt Python tool tests
+        run: |
+          python3 -m unittest \
+            src/HolSmt/tools/tests/test_audit_coverage_manifest.py \
+            src/HolSmt/tools/tests/test_generate_smtlib_coverage.py \
+            src/HolSmt/tools/tests/test_record_z3_proof_corpus.py \
+            src/HolSmt/tools/tests/test_run_conformance_suite.py
+
+  coverage-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Regenerate coverage report in enforcing mode
+        run: python3 src/HolSmt/tools/coverage/generate_smtlib_coverage.py --release
+
+      - name: Reject stale generated coverage files
+        run: |
+          git diff --exit-code -- \
+            src/HolSmt/tools/coverage/smtlib_coverage.json \
+            src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md
+
+      - name: Enforce coverage manifest evidence
+        run: python3 src/HolSmt/tools/coverage/audit_coverage_manifest.py --enforce
+
+  conformance-python-z3:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          z3 -version
+
+      - name: Run parser conformance corpus
+        run: |
+          python3 src/HolSmt/tools/run_conformance_suite.py \
+            --out /tmp/holsmt-parser-conformance \
+            --no-default-suite \
+            --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
+            --mode parser-only
+
+      - name: Run Z3 oracle and proof conformance slice
+        run: |
+          python3 src/HolSmt/tools/run_conformance_suite.py \
+            --out /tmp/holsmt-z3-conformance \
+            --no-default-suite \
+            --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
+            --logic QF_UF \
+            --logic QF_LIA \
+            --mode z3-oracle \
+            --mode proof-parse \
+            --mode proof-replay \
+            --timeout 20
+
+  proof-corpus-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Z3
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y z3
+          z3 -version
+
+      - name: Validate checked-in supported-version proof matrix
+        run: python3 src/HolSmt/tools/record_z3_proof_corpus.py --validate-corpus-manifest
+
+      - name: Reject live unseen or replay-unknown proof rules
+        run: |
+          python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+            --out /tmp/holsmt-proof-corpus \
+            --expected-rules src/HolSmt/tools/proof-corpus/minimal_expected_rules.json \
+            --fail-on-unseen-rules \
+            --fail-on-unknown-rules \
+            src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2
+
+  sml-no-solver:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build HOL without configured solvers
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: developers/docker-ci/Dockerfile
+          push: false
+          load: true
+          tags: holsmt-nosolver:ci
+          build-args: |
+            SML=poly
+            BUILDOPTS=--no-cache --expk -j4
+
+      - name: Run HolSmt SML unit tests without solvers
+        run: |
+          docker run --rm \
+            -e HOL4_Z3_EXECUTABLE= \
+            -e HOL4_CVC_EXECUTABLE= \
+            -e HOL4_YICES_EXECUTABLE= \
+            holsmt-nosolver:ci \
+            sh -lc 'src/HolSmt/selftest.exe'
+
+  holsmt-z3-selftest:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        z3-version:
+          - 2.19.1
+          - 4.12.4
+          - 4.13.0
+    name: holsmt-z3-selftest-${{ matrix.z3-version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build HOL with configured Z3
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: developers/docker-ci/Dockerfile
+          push: false
+          load: true
+          tags: holsmt-z3:${{ matrix.z3-version }}
+          build-args: |
+            SML=poly
+            Z3_VERSION=${{ matrix.z3-version }}
+            BUILDOPTS=--no-cache --expk -j4
+
+      - name: Run HolSmt selftest with configured Z3
+        run: |
+          docker run --rm holsmt-z3:${{ matrix.z3-version }} \
+            sh -lc '"$HOL4_Z3_EXECUTABLE" -version && src/HolSmt/selftest.exe'
+
+  checked-driver-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build HOL with current Z3
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: developers/docker-ci/Dockerfile
+          push: false
+          load: true
+          tags: holsmt-drivers:4.13.0
+          build-args: |
+            SML=poly
+            Z3_VERSION=4.13.0
+            BUILDOPTS=--no-cache --expk -j4
+
+      - name: Run typecheck-only conformance fixture
+        run: |
+          docker run --rm holsmt-drivers:4.13.0 \
+            sh -lc 'python3 src/HolSmt/tools/run_conformance_suite.py \
+              --out /tmp/holsmt-typecheck-conformance \
+              --no-default-suite \
+              --benchmark-dir src/HolSmt/tools/tests/conformance/typecheck \
+              --mode typecheck-only \
+              --timeout 30'
+
+      - name: Run checked Z3_TAC conformance fixture
+        run: |
+          docker run --rm holsmt-drivers:4.13.0 \
+            sh -lc 'python3 src/HolSmt/tools/run_conformance_suite.py \
+              --out /tmp/holsmt-z3-tac-conformance \
+              --no-default-suite \
+              --benchmark-dir src/HolSmt/tools/tests/conformance/z3_tac \
+              --mode z3-tac \
+              --timeout 30'
