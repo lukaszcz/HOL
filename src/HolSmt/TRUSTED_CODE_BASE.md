@@ -3,7 +3,10 @@
 This note documents the checked boundary for `Z3_TAC`. It is an audit guide,
 not a completeness claim. The generated coverage report
 `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md` contains the cross-referenced
-support and semantic-mismatch matrix.
+support and semantic-mismatch matrix. The report is generated from
+`src/HolSmt/tools/coverage/smtlib_coverage.json` plus manifest-backed evidence
+in `src/HolSmt/tools/coverage/coverage_manifest.json`; tested support rows must
+carry executable test IDs, and unsupported rows must carry diagnostic test IDs.
 
 ## Checked `Z3_TAC` Path
 
@@ -43,7 +46,7 @@ Any accepted `Z3_TAC` theorem with an unexpected oracle tag is a test failure.
 
 The explicit list is generated in
 `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md` under `Soundness Audit and
-Semantic Mismatches`. Current audit items include:
+Semantic Mismatches`. Current manifest-backed audit items include:
 
 - binder scoping, shadowing, quoted identifiers and local definitions;
 - indexed and parametric sort reconstruction;

@@ -32,10 +32,16 @@ User contract:
 
 HolSmt targets SMT-LIB 2.7.  The generated support report
 `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md` is the source of truth for parser,
-typechecker, translation, solver and proof-replay status.  Regenerate it from
-the repository root with:
+typechecker, translation, solver and proof-replay status.  Its support rows are
+checked against `src/HolSmt/tools/coverage/coverage_manifest.json`; rows marked
+as tested support carry manifest-derived test IDs, and unsupported rows carry
+diagnostic test IDs.  Regenerate it from the repository root with:
 
   python3 src/HolSmt/tools/coverage/generate_smtlib_coverage.py
+
+Release/CI checks that want to forbid unresolved coverage can use:
+
+  python3 src/HolSmt/tools/coverage/generate_smtlib_coverage.py --release
 
 The SMT-LIB 2.7 frontend is not a full-language completeness claim.  It
 accepts the commands, theories and logics recorded in the matrix, and it must
@@ -127,9 +133,10 @@ Logic coverage summary:
                               soundness/completeness claim.
   SMT-LIB 3 logics            Unsupported; no SMT-LIB 3 registry is present.
 
-For the complete per-logic and per-theory rows, including evidence and test
-status, read `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`.  Public documentation should
-not claim more than that generated report.
+For the complete per-logic and per-theory rows, including evidence, test IDs,
+diagnostic IDs and test status, read
+`src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`.  Public documentation should not
+claim more than that generated report.
 
 HOL translation records include HOLTheoryEncoding rows for the advanced
 theories.  These rows distinguish native SMT-LIB encodings from conservative
@@ -288,7 +295,8 @@ Adding support for a new Z3 proof rule:
      `src/HolSmt/tools/tests/test_record_z3_proof_corpus.py`.
   6. Update the expected proof-rule manifest or corpus fixture only after the
      parser/replay status is intentional.
-  7. Update `src/HolSmt/tools/coverage/smtlib_coverage.json`, regenerate
+  7. Update `src/HolSmt/tools/coverage/smtlib_coverage.json` and
+     `src/HolSmt/tools/coverage/coverage_manifest.json`, regenerate
      `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`, and keep this README in agreement.
 
 Updating the Z3 version matrix:
@@ -300,8 +308,9 @@ Updating the Z3 version matrix:
   3. Run the proof-corpus gate and conformance suite for the new executable.
   4. If proof options, aliases or unsupported diagnostics changed, update the
      proof-rule registry, replay tests and expected-rule manifests first.
-  5. Update `src/HolSmt/tools/coverage/smtlib_coverage.json`, regenerate the
-     matrix, and adjust the "Supported Z3 versions" table above.
+  5. Update `src/HolSmt/tools/coverage/smtlib_coverage.json` and the coverage
+     manifest, regenerate the matrix, and adjust the "Supported Z3 versions"
+     table above.
 
 Pull-request CI runs the PolyML expk build against the Z3 versions already
 provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
