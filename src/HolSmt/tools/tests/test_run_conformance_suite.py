@@ -207,6 +207,49 @@ class ConformanceSuiteTests(unittest.TestCase):
                 1,
             )
 
+    def test_external_benchmark_duplicate_file_stems_get_distinct_case_names(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            (bench_dir / "family-a").mkdir(parents=True)
+            (bench_dir / "family-b").mkdir(parents=True)
+            for family, logic in (("family-a", "QF_UF"), ("family-b", "QF_LIA")):
+                (bench_dir / family / "case.smt2").write_text(
+                    f"; family: {family}\n(set-logic {logic})\n(assert true)\n(check-sat)\n",
+                    encoding="utf-8",
+                )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            case_names = [case["name"] for case in report["cases"]]
+            self.assertEqual(len(case_names), 2)
+            self.assertEqual(len(set(case_names)), 2)
+            self.assertEqual(
+                report["external_benchmark_coverage"]["by_kind"]["benchmark"]["cases"],
+                2,
+            )
+            self.assertEqual(
+                report["external_benchmark_coverage"]["by_logic"]["QF_UF"]["cases"],
+                1,
+            )
+            self.assertEqual(
+                report["external_benchmark_coverage"]["by_logic"]["QF_LIA"]["cases"],
+                1,
+            )
+
     def test_external_source_manifest_regressions_and_unsupported_families_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

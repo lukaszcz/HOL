@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import collections
+import hashlib
 import json
 import os
 import pathlib
@@ -362,15 +363,33 @@ def default_cases(selected_logics: set[str] | None) -> list[Case]:
     return cases
 
 
-def discover_smt2_files(paths: Iterable[pathlib.Path]) -> list[pathlib.Path]:
-    files: list[pathlib.Path] = []
+def discover_smt2_files(paths: Iterable[pathlib.Path]) -> list[tuple[pathlib.Path, str]]:
+    files: list[tuple[pathlib.Path, str]] = []
     for path in paths:
         path = path.resolve()
         if path.is_file():
-            files.append(path)
+            files.append((path, path.stem))
         elif path.is_dir():
-            files.extend(sorted(path.rglob("*.smt2")))
-    return sorted(dict.fromkeys(files))
+            for child in sorted(path.rglob("*.smt2")):
+                files.append((child, str(child.relative_to(path).with_suffix(""))))
+
+    by_path: dict[pathlib.Path, str] = {}
+    for path, label in files:
+        by_path.setdefault(path, label)
+    return sorted(by_path.items(), key=lambda item: (item[1], str(item[0])))
+
+
+def external_case_names(discovered: list[tuple[pathlib.Path, str]]) -> dict[pathlib.Path, str]:
+    candidates = {path: slug(label) for path, label in discovered}
+    counts = collections.Counter(candidates.values())
+    names: dict[pathlib.Path, str] = {}
+    for path, candidate in candidates.items():
+        if counts[candidate] == 1:
+            names[path] = candidate
+            continue
+        digest = hashlib.sha1(str(path).encode("utf-8")).hexdigest()[:8]
+        names[path] = f"{candidate}-{digest}"
+    return names
 
 
 def external_cases(
@@ -380,7 +399,9 @@ def external_cases(
     source_kind: str = SOURCE_KIND_BENCHMARK,
 ) -> list[Case]:
     cases: list[Case] = []
-    for path in discover_smt2_files(paths):
+    discovered = discover_smt2_files(paths)
+    names = external_case_names(discovered)
+    for path, _label in discovered:
         text = path.read_text(encoding="utf-8")
         logic = find_set_logic(text) or "UNKNOWN"
         if selected_logics is not None and logic not in selected_logics:
@@ -391,7 +412,7 @@ def external_cases(
             tags.append(f"family:{family}")
         cases.append(
             Case(
-                name=slug(path.stem),
+                name=names[path],
                 logic=logic,
                 text=text,
                 origin=f"external:{source_kind}",
