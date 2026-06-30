@@ -64,7 +64,7 @@ jobs:
       - name: Run parser conformance corpus
         run: |
           python3 src/HolSmt/tools/run_conformance_suite.py \
-            --out /tmp/holsmt-parser-conformance \
+            --out .holsmt-ci/conformance/parser \
             --no-default-suite \
             --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
             --mode parser-only
@@ -72,7 +72,7 @@ jobs:
       - name: Run Z3 oracle and proof conformance slice
         run: |
           python3 src/HolSmt/tools/run_conformance_suite.py \
-            --out /tmp/holsmt-z3-conformance \
+            --out .holsmt-ci/conformance/z3 \
             --no-default-suite \
             --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
             --logic QF_UF \
@@ -81,6 +81,18 @@ jobs:
             --mode proof-parse \
             --mode proof-replay \
             --timeout 20
+
+      - name: Upload Python/Z3 conformance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: holsmt-python-z3-conformance
+          path: |
+            .holsmt-ci/conformance/parser/conformance.json
+            .holsmt-ci/conformance/parser/CONFORMANCE.md
+            .holsmt-ci/conformance/z3/conformance.json
+            .holsmt-ci/conformance/z3/CONFORMANCE.md
+          if-no-files-found: error
 
   proof-corpus-gate:
     runs-on: ubuntu-latest
@@ -195,7 +207,10 @@ jobs:
 
       - name: Run typecheck-only conformance fixture
         run: |
-          docker run --rm holsmt-drivers:4.13.0 \
+          mkdir -p "$PWD/.holsmt-ci/conformance/typecheck"
+          docker run --rm \
+            -v "$PWD/.holsmt-ci/conformance/typecheck:/tmp/holsmt-typecheck-conformance" \
+            holsmt-drivers:4.13.0 \
             sh -lc 'python3 src/HolSmt/tools/run_conformance_suite.py \
               --out /tmp/holsmt-typecheck-conformance \
               --no-default-suite \
@@ -205,10 +220,55 @@ jobs:
 
       - name: Run checked Z3_TAC conformance fixture
         run: |
-          docker run --rm holsmt-drivers:4.13.0 \
+          mkdir -p "$PWD/.holsmt-ci/conformance/z3-tac"
+          docker run --rm \
+            -v "$PWD/.holsmt-ci/conformance/z3-tac:/tmp/holsmt-z3-tac-conformance" \
+            holsmt-drivers:4.13.0 \
             sh -lc 'python3 src/HolSmt/tools/run_conformance_suite.py \
               --out /tmp/holsmt-z3-tac-conformance \
               --no-default-suite \
               --benchmark-dir src/HolSmt/tools/tests/conformance/z3_tac \
               --mode z3-tac \
               --timeout 30'
+
+      - name: Upload checked-driver conformance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: holsmt-checked-driver-conformance
+          path: |
+            .holsmt-ci/conformance/typecheck/conformance.json
+            .holsmt-ci/conformance/typecheck/CONFORMANCE.md
+            .holsmt-ci/conformance/z3-tac/conformance.json
+            .holsmt-ci/conformance/z3-tac/CONFORMANCE.md
+          if-no-files-found: error
+
+  enforced-contract-gate:
+    runs-on: ubuntu-latest
+    needs:
+      - python-tools
+      - coverage-contract
+      - conformance-python-z3
+      - proof-corpus-gate
+      - sml-no-solver
+      - holsmt-z3-selftest
+      - checked-driver-conformance
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Download conformance report artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: holsmt-*-conformance
+          path: .holsmt-ci/artifacts
+          merge-multiple: true
+
+      - name: Enforce manifest against executed conformance summaries
+        run: |
+          python3 src/HolSmt/tools/coverage/audit_coverage_manifest.py \
+            --enforce \
+            --conformance-report .holsmt-ci/artifacts/parser/conformance.json \
+            --conformance-report .holsmt-ci/artifacts/z3/conformance.json \
+            --conformance-report .holsmt-ci/artifacts/typecheck/conformance.json \
+            --conformance-report .holsmt-ci/artifacts/z3-tac/conformance.json

@@ -295,14 +295,14 @@ Local CI contract commands:
 
   # Parser conformance for the full checked-in corpus
   python3 src/HolSmt/tools/run_conformance_suite.py \
-    --out /tmp/holsmt-parser-conformance \
+    --out .holsmt-ci/conformance/parser \
     --no-default-suite \
     --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
     --mode parser-only
 
   # Z3 oracle, proof-parse and proof-replay conformance slice
   python3 src/HolSmt/tools/run_conformance_suite.py \
-    --out /tmp/holsmt-z3-conformance \
+    --out .holsmt-ci/conformance/z3 \
     --no-default-suite \
     --corpus-dir src/HolSmt/tools/conformance-corpus/v1 \
     --logic QF_UF \
@@ -325,15 +325,50 @@ Local CI contract commands:
   # HOL driver conformance after building src/HolSmt drivers
   bin/Holmake -C src/HolSmt holsmt-typecheck holsmt-z3-tac
   python3 src/HolSmt/tools/run_conformance_suite.py \
-    --out /tmp/holsmt-typecheck-conformance \
+    --out .holsmt-ci/conformance/typecheck \
     --no-default-suite \
     --benchmark-dir src/HolSmt/tools/tests/conformance/typecheck \
     --mode typecheck-only
   python3 src/HolSmt/tools/run_conformance_suite.py \
-    --out /tmp/holsmt-z3-tac-conformance \
+    --out .holsmt-ci/conformance/z3-tac \
     --no-default-suite \
     --benchmark-dir src/HolSmt/tools/tests/conformance/z3_tac \
     --mode z3-tac
+
+  # Final contract audit against the executed conformance summaries
+  python3 src/HolSmt/tools/coverage/audit_coverage_manifest.py \
+    --enforce \
+    --conformance-report .holsmt-ci/conformance/parser/conformance.json \
+    --conformance-report .holsmt-ci/conformance/z3/conformance.json \
+    --conformance-report .holsmt-ci/conformance/typecheck/conformance.json \
+    --conformance-report .holsmt-ci/conformance/z3-tac/conformance.json
+
+  # SML unit tests without configured solvers, matching the CI Docker job
+  docker buildx build \
+    --load \
+    --tag holsmt-nosolver:ci \
+    --build-arg SML=poly \
+    --build-arg 'BUILDOPTS=--no-cache --expk -j4' \
+    -f developers/docker-ci/Dockerfile .
+  docker run --rm \
+    -e HOL4_Z3_EXECUTABLE= \
+    -e HOL4_CVC_EXECUTABLE= \
+    -e HOL4_YICES_EXECUTABLE= \
+    holsmt-nosolver:ci \
+    sh -lc 'src/HolSmt/selftest.exe'
+
+  # Z3 selftest matrix, matching the CI Docker job
+  for z3_version in 2.19.1 4.12.4 4.13.0; do
+    docker buildx build \
+      --load \
+      --tag "holsmt-z3:${z3_version}" \
+      --build-arg SML=poly \
+      --build-arg "Z3_VERSION=${z3_version}" \
+      --build-arg 'BUILDOPTS=--no-cache --expk -j4' \
+      -f developers/docker-ci/Dockerfile .
+    docker run --rm "holsmt-z3:${z3_version}" \
+      sh -lc '"$HOL4_Z3_EXECUTABLE" -version && src/HolSmt/selftest.exe'
+  done
 
 Adding support for a new Z3 proof rule:
 

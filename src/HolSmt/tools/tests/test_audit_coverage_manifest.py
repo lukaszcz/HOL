@@ -48,6 +48,20 @@ def row(item, tested):
     }
 
 
+def manifest_entry(item, phases, expected_status, *, positive=None, negative=None, artifacts=None, z3_versions=None):
+    return {
+        "section": "commands",
+        "item": item,
+        "class": "SMT-LIB 2.7",
+        "phases": phases,
+        "expected_status": expected_status,
+        "positive_tests": positive or [],
+        "negative_tests": negative or [],
+        "z3_versions": z3_versions or [],
+        "artifacts": artifacts or [],
+    }
+
+
 class CoverageManifestAuditTests(unittest.TestCase):
     def test_validation_rejects_malformed_manifest_entry(self):
         coverage = minimal_coverage([row("set-logic", "implemented")])
@@ -120,6 +134,130 @@ class CoverageManifestAuditTests(unittest.TestCase):
         self.assertIn("tested=untested", output)
         self.assertIn("missing_manifest_entry: commands/smtlib3-command", output)
         self.assertIn("tested=unknown", output)
+
+    def test_enforce_rejects_untested_and_unknown_rows(self):
+        coverage = minimal_coverage(
+            [
+                row("future-command", "untested"),
+                row("smtlib3-command", "unknown"),
+            ]
+        )
+        manifest = {
+            "schema": audit.SCHEMA,
+            "entries": [
+                manifest_entry(
+                    "future-command",
+                    ["parsed", "translated", "solved", "reconstructed", "tested"],
+                    "untested",
+                    positive=[{"kind": "manual", "description": "placeholder"}],
+                ),
+                manifest_entry(
+                    "smtlib3-command",
+                    ["parsed", "translated", "solved", "reconstructed", "tested"],
+                    "unknown",
+                    positive=[{"kind": "manual", "description": "placeholder"}],
+                ),
+            ],
+        }
+
+        issues = audit.audit(coverage, manifest, [], [], pathlib.Path.cwd())
+
+        self.assertTrue(
+            any(issue.code == "unresolved_expected_status" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+
+    def test_enforce_rejects_missing_implemented_and_unsupported_evidence(self):
+        coverage = minimal_coverage(
+            [
+                row("implemented-command", "implemented"),
+                {
+                    **row("unsupported-command", "unsupported_diagnostic"),
+                    "parsed": "unsupported_diagnostic",
+                    "translated": "unsupported_diagnostic",
+                    "solved": "unsupported_diagnostic",
+                    "reconstructed": "unsupported_diagnostic",
+                },
+            ]
+        )
+        manifest = {
+            "schema": audit.SCHEMA,
+            "entries": [
+                manifest_entry(
+                    "implemented-command",
+                    ["parsed", "translated", "solved", "reconstructed", "tested"],
+                    "implemented",
+                ),
+                manifest_entry(
+                    "unsupported-command",
+                    ["parsed", "translated", "solved", "reconstructed", "tested"],
+                    "unsupported_diagnostic",
+                ),
+            ],
+        }
+
+        issue_codes = {
+            issue.code
+            for issue in audit.audit(coverage, manifest, [], [], pathlib.Path.cwd())
+        }
+
+        self.assertIn("missing_positive_tests", issue_codes)
+        self.assertIn("missing_negative_tests", issue_codes)
+
+    def test_conformance_result_and_z3_version_evidence_must_match_reports(self):
+        coverage = minimal_coverage([row("set-logic", "implemented")])
+        manifest = {
+            "schema": audit.SCHEMA,
+            "entries": [
+                manifest_entry(
+                    "set-logic",
+                    ["parsed", "translated", "solved", "reconstructed", "tested"],
+                    "implemented",
+                    positive=[
+                        {
+                            "kind": "conformance_result",
+                            "logic": "QF_UF",
+                            "mode": "parser-only",
+                            "status": "pass",
+                        }
+                    ],
+                    z3_versions=["4.13.0"],
+                )
+            ],
+        }
+        conformance_report = {
+            "results": [
+                {
+                    "logic": "QF_UF",
+                    "mode": "parser-only",
+                    "status": "pass",
+                }
+            ],
+            "proof_corpus_summary": {
+                "z3_versions": [
+                    {
+                        "version": "4.13.0",
+                        "entry_count": 1,
+                        "proof_count": 1,
+                    }
+                ],
+            },
+        }
+
+        self.assertEqual(
+            audit.audit(coverage, manifest, [conformance_report], [], pathlib.Path.cwd()),
+            [],
+        )
+
+        missing_report_issues = audit.audit(coverage, manifest, [], [], pathlib.Path.cwd())
+        self.assertTrue(
+            any(issue.code == "invalid_positive_tests" for issue in missing_report_issues),
+            [issue.render() for issue in missing_report_issues],
+        )
+        self.assertTrue(
+            any(issue.code == "missing_z3_version_evidence" for issue in missing_report_issues),
+            [issue.render() for issue in missing_report_issues],
+        )
 
 
 if __name__ == "__main__":
