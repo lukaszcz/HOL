@@ -12,6 +12,7 @@ from record_z3_proof_corpus import (
     PARSE_ONLY_RULES,
     REPLAY_SUPPORTED_RULES,
     RULE_PREMISE_KIND,
+    build_requirement_report,
     build_rule_gate_report,
     build_summary,
     expected_rules_for_version,
@@ -37,6 +38,20 @@ def entry(path, version, proof):
             "raw_path": "proofs/input.proof",
             "raw_sha256": "proof-hash",
             **proof,
+        },
+        "holsmt": {
+            "proof_replay_status": "not-run",
+            "replay_result": {"status": "not-run", "checked": False},
+        },
+        "theorem": {
+            "tag_summary": {
+                "checked": False,
+                "oracle_tags": [],
+                "axiom_tags": [],
+                "unexpected_tags": [],
+                "has_oracles": False,
+                "has_axioms": False,
+            }
         },
     }
 
@@ -157,14 +172,27 @@ class ProofRuleExtractionTests(unittest.TestCase):
                     "z3_version": "2.19.1",
                     "rules": ["asserted"],
                     "rule_histogram": {"asserted": 1},
+                    "theory_lemma_subkinds": [],
+                    "theory_lemma_histogram": {},
                 },
                 {
                     "z3_version": "4.13.0",
                     "rules": ["asserted", "unit-resolution"],
                     "rule_histogram": {"asserted": 1, "unit-resolution": 1},
+                    "theory_lemma_subkinds": [],
+                    "theory_lemma_histogram": {},
                 },
             ],
         )
+
+    def test_records_indexed_th_lemma_metadata(self):
+        report = extract_rule_report("(proof ((_ th-lemma arith farkas 1 1) (asserted a) false))")
+
+        self.assertEqual(report["rule_histogram"], {"asserted": 1, "th-lemma-arith": 1})
+        self.assertEqual(report["theory_lemma_histogram"], {"arith:farkas": 1})
+        self.assertEqual(report["theory_lemma_metadata"][0]["theory"], "arith")
+        self.assertEqual(report["theory_lemma_metadata"][0]["subkind"], "farkas")
+        self.assertEqual(report["parsed_dag_summary"]["proof_rule_application_count"], 2)
 
     def test_expected_rules_are_version_aware(self):
         manifest = {
@@ -238,6 +266,38 @@ class ProofRuleExtractionTests(unittest.TestCase):
             report["malformed_fragments"][0]["artifacts"]["stdout_path"],
             "raw/stdout.txt",
         )
+
+    def test_requirement_report_flags_missing_rules_subkinds_and_replay(self):
+        proof = extract_rule_report("(proof ((_ th-lemma arith farkas 1) (asserted a) false))")
+        report = build_requirement_report(
+            [entry("arith.smt2", "4.13.0", proof)],
+            required_rules=["th-lemma-arith", "unit-resolution"],
+            required_theory_subkinds=["arith:farkas", "arith:gomory"],
+            require_replay_success=True,
+            require_no_oracles=True,
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["missing_rule_occurrences"], [{"rule": "unit-resolution"}])
+        self.assertEqual(report["missing_theory_subkinds"], [{"theory_subkind": "arith:gomory"}])
+        self.assertEqual(report["replay_failures"][0]["proof_replay_status"], "not-run")
+        self.assertEqual(report["oracle_failures"], [])
+
+    def test_requirement_report_flags_oracle_tags(self):
+        proof = extract_rule_report("(proof (asserted false))")
+        item = entry("oracle.smt2", "4.13.0", proof)
+        item["theorem"]["tag_summary"]["oracle_tags"] = ["HolSmtLib"]  # type: ignore[index]
+
+        report = build_requirement_report(
+            [item],
+            required_rules=[],
+            required_theory_subkinds=[],
+            require_replay_success=False,
+            require_no_oracles=True,
+        )
+
+        self.assertFalse(report["passed"])
+        self.assertEqual(report["oracle_failures"][0]["input"], "oracle.smt2")
 
     def test_checked_in_supported_version_manifest_validates(self):
         self.assertEqual(validate_corpus_manifest(DEFAULT_SUPPORTED_VERSION_MANIFEST), [])

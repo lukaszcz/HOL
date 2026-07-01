@@ -191,6 +191,28 @@ class ProofCompletenessAuditTests(unittest.TestCase):
         self.assertTrue(any(issue["subject"] == "mp" and not issue["blocking"] for issue in real_issues), real_issues)
         self.assertTrue(report["summary"]["passed"], report["issues"])
 
+    def test_missing_real_occurrence_includes_case_ids_and_implementation_files(self):
+        tmp, proof_source, unittest_source, manifest_path, summary_path = self.build_fixture()
+        self.addCleanup(tmp.cleanup)
+
+        report = audit.build_report(
+            proof_source=proof_source,
+            unittest_source=unittest_source,
+            manifest_path=manifest_path,
+            proof_summary_path=summary_path,
+            coverage_report_path=None,
+        )
+
+        issue = next(
+            issue
+            for issue in report["issues"]
+            if issue["code"] == "missing_real_proof_occurrence"
+            and issue["subject"] == "th-lemma-basic"
+        )
+        self.assertEqual(issue["severity"], "red")
+        self.assertEqual(issue["details"]["case_ids"], ["proof-rule:th-lemma-basic"])
+        self.assertEqual(issue["details"]["implementation_files"], ["src/HolSmt/Z3_ProofReplay.sml"])
+
     def test_diagnostic_th_lemma_families_require_red_obligations(self):
         tmp, proof_source, unittest_source, manifest_path, summary_path = self.build_fixture(
             manifest={"schema_version": "2", "cases": []}

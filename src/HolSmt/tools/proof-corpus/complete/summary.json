@@ -1,0 +1,21 @@
+{
+  "aggregate_rule_histogram": {},
+  "aggregate_theory_lemma_histogram": {},
+  "discovered_rules": [],
+  "entries": [],
+  "entry_count": 0,
+  "kind": "proof-corpus-summary",
+  "malformed_fragment_count": 0,
+  "proof_count": 0,
+  "proof_rule_support": {
+    "parse_only": [
+      "proof-bind"
+    ],
+    "replay_supported": []
+  },
+  "rules_by_version": [],
+  "schema": "holsmt-z3-proof-corpus-v1",
+  "theory_lemma_subkinds": [],
+  "unknown_rule_coverage": [],
+  "z3_versions": []
+}

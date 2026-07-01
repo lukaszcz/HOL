@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -27,7 +28,12 @@ DEFAULT_SUPPORTED_VERSION_MANIFEST = (
     / "supported_versions"
     / "manifest.json"
 )
+DEFAULT_COMPLETE_CORPUS_MANIFEST = (
+    pathlib.Path(__file__).resolve().parent / "proof-corpus" / "complete" / "manifest.json"
+)
 SUPPORTED_Z3_VERSIONS = ("2.19.1", "4.12.4", "4.13.0")
+COMPLETE_CORPUS_Z3_VERSIONS = ("2.19.1", "4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3")
+SUCCESS_STATUSES = {"pass", "passed", "success", "succeeded"}
 
 REPLAY_SUPPORTED_RULES = {
     "and-elim",
@@ -337,6 +343,59 @@ def normalize_rule_head(head: Node) -> str | None:
     return base
 
 
+def th_lemma_metadata_from_head(head: Node) -> dict[str, object] | None:
+    if not isinstance(head, ListNode) or len(head.items) < 3:
+        return None
+    first = atom_text(head.items[0])
+    base = atom_text(head.items[1])
+    theory = atom_text(head.items[2])
+    if first != "_" or base != "th-lemma" or theory is None:
+        return None
+    index_atoms = [atom_text(item) for item in head.items[3:]]
+    indices = [item for item in index_atoms if item is not None]
+    subkind = indices[0] if indices else None
+    return {
+        "theory": theory,
+        "subkind": subkind,
+        "indices": indices,
+        "key": f"{theory}:{subkind}" if subkind is not None else f"{theory}:<none>",
+        "rule": f"th-lemma-{theory}",
+    }
+
+
+def parsed_dag_summary(nodes: list[Node]) -> dict[str, object]:
+    summary = {
+        "top_level_sexp_count": len(nodes),
+        "list_node_count": 0,
+        "atom_count": 0,
+        "let_binding_count": 0,
+        "proof_wrapper_count": 0,
+        "max_list_depth": 0,
+    }
+
+    def visit(node: Node, depth: int) -> None:
+        if isinstance(node, Atom):
+            summary["atom_count"] += 1
+            return
+        summary["list_node_count"] += 1
+        summary["max_list_depth"] = max(int(summary["max_list_depth"]), depth)
+        head = atom_text(node.items[0]) if node.items else None
+        if head == "proof":
+            summary["proof_wrapper_count"] += 1
+        if head == "let" and len(node.items) >= 2 and isinstance(node.items[1], ListNode):
+            summary["let_binding_count"] += sum(
+                1
+                for item in node.items[1].items
+                if isinstance(item, ListNode) and len(item.items) == 2
+            )
+        for child in node.items:
+            visit(child, depth + 1)
+
+    for node in nodes:
+        visit(node, 1)
+    return summary
+
+
 def malformed_item(text: str, message: str, start: int, end: int) -> dict[str, object]:
     loc = line_col(text, start)
     return {
@@ -349,9 +408,21 @@ def malformed_item(text: str, message: str, start: int, end: int) -> dict[str, o
 
 def extract_rule_report(proof_text: str) -> dict[str, object]:
     histogram: collections.Counter[str] = collections.Counter()
+    theory_lemma_histogram: collections.Counter[str] = collections.Counter()
     rule_contexts: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
+    theory_lemma_metadata: list[dict[str, object]] = []
     unknown_contexts: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
     malformed: list[dict[str, object]] = []
+    dag_summary: dict[str, object] = {
+        "top_level_sexp_count": 0,
+        "list_node_count": 0,
+        "atom_count": 0,
+        "let_binding_count": 0,
+        "proof_wrapper_count": 0,
+        "max_list_depth": 0,
+        "proof_rule_application_count": 0,
+        "distinct_rule_count": 0,
+    }
 
     try:
         nodes = parse_sexps(proof_text)
@@ -367,9 +438,13 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
         return {
             "rule_histogram": {},
             "rule_contexts": {},
+            "parsed_dag_summary": dag_summary,
+            "theory_lemma_histogram": {},
+            "theory_lemma_metadata": [],
             "unknown_rules": [],
             "malformed_fragments": malformed,
         }
+    dag_summary = parsed_dag_summary(nodes)
 
     def context_item(node: ListNode) -> dict[str, object]:
         loc = line_col(proof_text, node.start)
@@ -463,6 +538,17 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
 
         histogram[head_name] += 1
         record_rule_context(head_name, node)
+        th_metadata = th_lemma_metadata_from_head(node.items[0])
+        if th_metadata is not None:
+            th_metadata = {
+                **th_metadata,
+                "line": line_col(proof_text, node.start)["line"],
+                "column": line_col(proof_text, node.start)["column"],
+                "context": context_for(proof_text, node.start, node.end),
+            }
+            theory_lemma_metadata.append(th_metadata)
+            key = str(th_metadata["key"])
+            theory_lemma_histogram[key] += 1
         if head_name not in KNOWN_RULES:
             record_unknown(head_name, node)
 
@@ -515,6 +601,8 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
 
     if not histogram and len(nodes) == 1:
         visit(nodes[0], True)
+    dag_summary["proof_rule_application_count"] = sum(histogram.values())
+    dag_summary["distinct_rule_count"] = len(histogram)
 
     unknown_rules = [
         {
@@ -528,6 +616,9 @@ def extract_rule_report(proof_text: str) -> dict[str, object]:
     return {
         "rule_histogram": dict(sorted(histogram.items())),
         "rule_contexts": dict(sorted(rule_contexts.items())),
+        "parsed_dag_summary": dag_summary,
+        "theory_lemma_histogram": dict(sorted(theory_lemma_histogram.items())),
+        "theory_lemma_metadata": theory_lemma_metadata,
         "unknown_rules": unknown_rules,
         "malformed_fragments": malformed,
     }
@@ -638,6 +729,18 @@ def record_one(
     proof_report = {
         "rule_histogram": {},
         "rule_contexts": {},
+        "parsed_dag_summary": {
+            "top_level_sexp_count": 0,
+            "list_node_count": 0,
+            "atom_count": 0,
+            "let_binding_count": 0,
+            "proof_wrapper_count": 0,
+            "max_list_depth": 0,
+            "proof_rule_application_count": 0,
+            "distinct_rule_count": 0,
+        },
+        "theory_lemma_histogram": {},
+        "theory_lemma_metadata": [],
         "unknown_rules": [],
         "malformed_fragments": [],
     }
@@ -679,7 +782,23 @@ def record_one(
         "holsmt": {
             "proof_parse_status": "not-run",
             "proof_replay_status": "not-run",
+            "replay_result": {
+                "status": "not-run",
+                "checked": False,
+                "detail": "HolSmt replay is not executed by the raw Z3 proof recorder",
+            },
             "failure": None,
+        },
+        "theorem": {
+            "tag_summary": {
+                "status": "not-run",
+                "checked": False,
+                "oracle_tags": [],
+                "axiom_tags": [],
+                "unexpected_tags": [],
+                "has_oracles": False,
+                "has_axioms": False,
+            }
         },
     }
 
@@ -687,7 +806,9 @@ def record_one(
 def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
     entries = list(entries)
     aggregate: collections.Counter[str] = collections.Counter()
+    theory_lemma_aggregate: collections.Counter[str] = collections.Counter()
     aggregate_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    theory_lemma_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     version_entries: collections.Counter[str] = collections.Counter()
     version_proofs: collections.Counter[str] = collections.Counter()
     unknown: dict[str, list[dict[str, object]]] = collections.defaultdict(list)
@@ -701,6 +822,9 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         for rule, count in proof["rule_histogram"].items():  # type: ignore[index, union-attr]
             aggregate[rule] += count
             aggregate_by_version[version][rule] += count
+        for key, count in proof.get("theory_lemma_histogram", {}).items():  # type: ignore[union-attr]
+            theory_lemma_aggregate[key] += count
+            theory_lemma_by_version[version][key] += count
         for item in proof["unknown_rules"]:  # type: ignore[index, union-attr]
             unknown[item["rule"]].append(  # type: ignore[index]
                 {
@@ -727,11 +851,15 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         ],
         "discovered_rules": sorted(aggregate),
         "aggregate_rule_histogram": dict(sorted(aggregate.items())),
+        "theory_lemma_subkinds": sorted(theory_lemma_aggregate),
+        "aggregate_theory_lemma_histogram": dict(sorted(theory_lemma_aggregate.items())),
         "rules_by_version": [
             {
                 "z3_version": version,
                 "rules": sorted(histogram),
                 "rule_histogram": dict(sorted(histogram.items())),
+                "theory_lemma_subkinds": sorted(theory_lemma_by_version.get(version, {})),
+                "theory_lemma_histogram": dict(sorted(theory_lemma_by_version.get(version, {}).items())),
             }
             for version, histogram in sorted(aggregate_by_version.items())
         ],
@@ -770,6 +898,60 @@ def resolve_manifest_path(manifest_path: pathlib.Path, value: str) -> pathlib.Pa
     if root_path.exists():
         return root_path
     return manifest_path.parent / path
+
+
+def complete_manifest_cases(manifest_path: pathlib.Path) -> list[dict[str, object]]:
+    manifest = load_json(manifest_path)
+    if not isinstance(manifest, dict):
+        raise ValueError("complete corpus manifest root must be an object")
+    cases = manifest.get("cases", [])
+    if not isinstance(cases, list):
+        raise ValueError("complete corpus manifest cases must be a list")
+    result = []
+    for item in cases:
+        if isinstance(item, dict):
+            result.append(item)
+    return result
+
+
+def complete_manifest_supported_versions(manifest_path: pathlib.Path) -> set[str]:
+    manifest = load_json(manifest_path)
+    if not isinstance(manifest, dict):
+        raise ValueError("complete corpus manifest root must be an object")
+    versions = manifest.get("supported_z3_versions", [])
+    if not isinstance(versions, list) or not all(isinstance(item, str) for item in versions):
+        raise ValueError("complete corpus manifest supported_z3_versions must be a string list")
+    if sorted(versions) != sorted(COMPLETE_CORPUS_Z3_VERSIONS):
+        raise ValueError(
+            "complete corpus manifest supported_z3_versions mismatch: expected "
+            + ", ".join(COMPLETE_CORPUS_Z3_VERSIONS)
+        )
+    return set(versions)
+
+
+def inputs_from_complete_manifest(
+    manifest_path: pathlib.Path,
+    case_ids: list[str],
+) -> list[pathlib.Path]:
+    cases = complete_manifest_cases(manifest_path)
+    selected_ids = set(case_ids)
+    selected_paths: list[pathlib.Path] = []
+    known_ids: set[str] = set()
+    for item in cases:
+        case_id = item.get("id")
+        path_value = item.get("path")
+        if isinstance(case_id, str):
+            known_ids.add(case_id)
+        if selected_ids and case_id not in selected_ids:
+            continue
+        if isinstance(path_value, str) and path_value:
+            selected_paths.append(resolve_manifest_path(manifest_path, path_value))
+    missing = sorted(selected_ids - known_ids)
+    if missing:
+        raise ValueError("complete corpus manifest has no case id(s): " + ", ".join(missing))
+    if not selected_paths:
+        raise ValueError("complete corpus manifest selection is empty")
+    return selected_paths
 
 
 def _rule_list(value: object) -> set[str]:
@@ -913,6 +1095,163 @@ def build_rule_gate_report(
         "parse_only_rules": parse_only,
         "malformed_fragments": malformed,
     }
+
+
+def entry_rule_histogram(entry: dict[str, object]) -> dict[str, int]:
+    proof = entry.get("proof", {})
+    if not isinstance(proof, dict):
+        return {}
+    histogram = proof.get("rule_histogram", {})
+    if not isinstance(histogram, dict):
+        return {}
+    return {
+        rule: count
+        for rule, count in histogram.items()
+        if isinstance(rule, str) and isinstance(count, int)
+    }
+
+
+def entry_theory_lemma_histogram(entry: dict[str, object]) -> dict[str, int]:
+    proof = entry.get("proof", {})
+    if not isinstance(proof, dict):
+        return {}
+    histogram = proof.get("theory_lemma_histogram", {})
+    if not isinstance(histogram, dict):
+        return {}
+    return {
+        key: count
+        for key, count in histogram.items()
+        if isinstance(key, str) and isinstance(count, int)
+    }
+
+
+def replay_status(entry: dict[str, object]) -> str:
+    holsmt = entry.get("holsmt", {})
+    if not isinstance(holsmt, dict):
+        return "missing"
+    replay_result = holsmt.get("replay_result", {})
+    if isinstance(replay_result, dict) and isinstance(replay_result.get("status"), str):
+        return str(replay_result["status"])
+    status = holsmt.get("proof_replay_status")
+    return status if isinstance(status, str) else "missing"
+
+
+def theorem_tag_summary(entry: dict[str, object]) -> dict[str, object]:
+    theorem = entry.get("theorem", {})
+    if not isinstance(theorem, dict):
+        return {}
+    tags = theorem.get("tag_summary", {})
+    return tags if isinstance(tags, dict) else {}
+
+
+def has_unexpected_theorem_tags(tags: dict[str, object]) -> bool:
+    for field in ("has_oracles", "has_axioms"):
+        if tags.get(field) is True:
+            return True
+    for field in ("oracle_tags", "axiom_tags", "unexpected_tags"):
+        value = tags.get(field)
+        if isinstance(value, list) and value:
+            return True
+    return False
+
+
+def build_requirement_report(
+    entries: Iterable[dict[str, object]],
+    *,
+    required_rules: Iterable[str],
+    required_theory_subkinds: Iterable[str],
+    require_replay_success: bool,
+    require_no_oracles: bool,
+) -> dict[str, object]:
+    entries = list(entries)
+    aggregate_rules: collections.Counter[str] = collections.Counter()
+    aggregate_subkinds: collections.Counter[str] = collections.Counter()
+    for entry in entries:
+        aggregate_rules.update(entry_rule_histogram(entry))
+        aggregate_subkinds.update(entry_theory_lemma_histogram(entry))
+
+    missing_rules = [
+        {"rule": rule}
+        for rule in sorted(set(required_rules))
+        if aggregate_rules.get(rule, 0) <= 0
+    ]
+    missing_subkinds = [
+        {"theory_subkind": item}
+        for item in sorted(set(required_theory_subkinds))
+        if aggregate_subkinds.get(item, 0) <= 0
+    ]
+
+    replay_failures: list[dict[str, object]] = []
+    if require_replay_success:
+        for entry in entries:
+            status = replay_status(entry)
+            if status.lower() not in SUCCESS_STATUSES:
+                replay_failures.append(
+                    {
+                        "input": entry.get("input", {}).get("path") if isinstance(entry.get("input"), dict) else None,
+                        "z3_version": entry.get("z3", {}).get("version") if isinstance(entry.get("z3"), dict) else None,
+                        "proof_replay_status": status,
+                    }
+                )
+
+    oracle_failures: list[dict[str, object]] = []
+    if require_no_oracles:
+        for entry in entries:
+            tags = theorem_tag_summary(entry)
+            if has_unexpected_theorem_tags(tags):
+                oracle_failures.append(
+                    {
+                        "input": entry.get("input", {}).get("path") if isinstance(entry.get("input"), dict) else None,
+                        "z3_version": entry.get("z3", {}).get("version") if isinstance(entry.get("z3"), dict) else None,
+                        "tag_summary": tags,
+                    }
+                )
+
+    return {
+        "required_rule_occurrences": sorted(set(required_rules)),
+        "required_theory_subkinds": sorted(set(required_theory_subkinds)),
+        "require_replay_success": require_replay_success,
+        "require_no_oracles": require_no_oracles,
+        "missing_rule_occurrences": missing_rules,
+        "missing_theory_subkinds": missing_subkinds,
+        "replay_failures": replay_failures,
+        "oracle_failures": oracle_failures,
+        "passed": not missing_rules and not missing_subkinds and not replay_failures and not oracle_failures,
+    }
+
+
+def write_minimized_repros(
+    repro_dir: pathlib.Path,
+    entries: Iterable[dict[str, object]],
+    failure_report: dict[str, object],
+) -> None:
+    repro_dir.mkdir(parents=True, exist_ok=True)
+    json_dump(repro_dir / "failure-report.json", failure_report)
+    for index, entry in enumerate(entries, 1):
+        entry_dir = repro_dir / f"case-{index:03d}"
+        entry_dir.mkdir(parents=True, exist_ok=True)
+        json_dump(entry_dir / "proof-corpus-entry.json", entry)
+        input_info = entry.get("input", {})
+        if isinstance(input_info, dict) and isinstance(input_info.get("path"), str):
+            source = pathlib.Path(str(input_info["path"]))
+            if source.exists():
+                shutil.copyfile(source, entry_dir / "input.smt2")
+        z3_info = entry.get("z3", {})
+        if isinstance(z3_info, dict):
+            command_line = z3_info.get("command_line")
+            if isinstance(command_line, list):
+                write_text(entry_dir / "command.txt", " ".join(str(part) for part in command_line) + "\n")
+            for source_field, target_name in (("stdout_path", "stdout.txt"), ("stderr_path", "stderr.txt")):
+                source_value = z3_info.get(source_field)
+                if isinstance(source_value, str):
+                    source = pathlib.Path(source_value)
+                    if source.exists():
+                        shutil.copyfile(source, entry_dir / target_name)
+        proof_info = entry.get("proof", {})
+        if isinstance(proof_info, dict) and isinstance(proof_info.get("raw_path"), str):
+            source = pathlib.Path(str(proof_info["raw_path"]))
+            if source.exists():
+                shutil.copyfile(source, entry_dir / "proof.raw")
 
 
 def _as_string_list(value: object, label: str, errors: list[str]) -> list[str]:
@@ -1176,6 +1515,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         help="Z3 executable, defaulting to HOL4_Z3_EXECUTABLE or z3",
     )
     parser.add_argument(
+        "--z3-version",
+        help="override detected Z3 version for version-selected corpus recording",
+    )
+    parser.add_argument(
         "--out",
         type=pathlib.Path,
         default=pathlib.Path("src/HolSmt/tools/proof-corpus/out"),
@@ -1241,10 +1584,60 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
             "defaults to the supported-version corpus manifest"
         ),
     )
+    parser.add_argument(
+        "--complete-corpus-manifest",
+        nargs="?",
+        const=DEFAULT_COMPLETE_CORPUS_MANIFEST,
+        type=pathlib.Path,
+        help=(
+            "load complete proof-corpus case metadata; when no input files are "
+            "provided, record the selected --case-id entries from this manifest"
+        ),
+    )
+    parser.add_argument(
+        "--case-id",
+        action="append",
+        default=[],
+        help="case id to select from --complete-corpus-manifest; may be repeated",
+    )
+    parser.add_argument(
+        "--require-rule-occurrence",
+        action="append",
+        default=[],
+        metavar="RULE",
+        help="return nonzero unless the recorded corpus contains RULE",
+    )
+    parser.add_argument(
+        "--require-theory-subkind",
+        action="append",
+        default=[],
+        metavar="THEORY:SUBKIND",
+        help="return nonzero unless a th-lemma with THEORY:SUBKIND metadata is recorded",
+    )
+    parser.add_argument(
+        "--require-replay-success",
+        action="store_true",
+        help="return nonzero unless every entry has successful HolSmt replay metadata",
+    )
+    parser.add_argument(
+        "--require-no-oracles",
+        action="store_true",
+        help="return nonzero if theorem tag metadata reports oracle or axiom tags",
+    )
+    parser.add_argument(
+        "--minimized-repro-dir",
+        type=pathlib.Path,
+        help="write minimized input/command/stdout/stderr/proof repros for failing proof cases",
+    )
     args = parser.parse_args(argv)
     if args.validate_corpus_manifest is not None:
         return args
-    if not args.inputs:
+    if args.case_id and args.complete_corpus_manifest is None:
+        parser.error("--case-id requires --complete-corpus-manifest")
+    malformed_subkinds = [item for item in args.require_theory_subkind if ":" not in item]
+    if malformed_subkinds:
+        parser.error("--require-theory-subkind values must have THEORY:SUBKIND shape")
+    if not args.inputs and args.complete_corpus_manifest is None:
         parser.error("SMT-LIB input files are required unless --validate-corpus-manifest is used")
     if args.fail_on_unseen_rules and args.expected_rules is None:
         parser.error("--fail-on-unseen-rules requires --expected-rules")
@@ -1289,7 +1682,29 @@ def main(argv: list[str]) -> int:
 
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
-    version = z3_version(args.z3)
+    try:
+        if args.complete_corpus_manifest is not None:
+            supported_versions = complete_manifest_supported_versions(args.complete_corpus_manifest)
+            if args.z3_version is not None and args.z3_version not in supported_versions:
+                print(
+                    f"selected Z3 version {args.z3_version} is not listed in "
+                    f"{args.complete_corpus_manifest}",
+                    file=sys.stderr,
+                )
+                return 2
+            if not args.inputs:
+                args.inputs = [
+                    str(path)
+                    for path in inputs_from_complete_manifest(
+                        args.complete_corpus_manifest,
+                        args.case_id,
+                    )
+                ]
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
+        print(f"complete proof corpus manifest error: {exc}", file=sys.stderr)
+        return 2
+
+    version = args.z3_version or z3_version(args.z3)
 
     entries = [
         record_one(
@@ -1320,19 +1735,54 @@ def main(argv: list[str]) -> int:
     if args.expected_rules is not None:
         expected_manifest = load_expected_rule_manifest(args.expected_rules)
 
-    should_write_gate = args.expected_rules is not None or args.fail_on_unknown_rules
+    has_requirements = bool(
+        args.require_rule_occurrence
+        or args.require_theory_subkind
+        or args.require_replay_success
+        or args.require_no_oracles
+    )
+    should_write_gate = args.expected_rules is not None or args.fail_on_unknown_rules or has_requirements
     if not should_write_gate:
         return 0
 
     gate_report = build_rule_gate_report(entries, expected_manifest)
+    requirement_report = build_requirement_report(
+        entries,
+        required_rules=args.require_rule_occurrence,
+        required_theory_subkinds=args.require_theory_subkind,
+        require_replay_success=args.require_replay_success,
+        require_no_oracles=args.require_no_oracles,
+    )
+    if has_requirements:
+        gate_report["requirements"] = requirement_report
+        gate_report["passed"] = bool(gate_report["passed"]) and bool(requirement_report["passed"])
     gate_path = out_dir / args.gate_report
     json_dump(gate_path, gate_report)
     print(f"wrote proof-rule gate report to {gate_path}")
 
     fail_unseen = bool(gate_report["unseen_rules"]) or bool(gate_report["malformed_fragments"])
     fail_unknown = bool(gate_report["replay_unknown_rules"])
-    if (args.fail_on_unseen_rules and fail_unseen) or (args.fail_on_unknown_rules and fail_unknown):
+    fail_requirements = has_requirements and not requirement_report["passed"]
+    if (
+        (args.fail_on_unseen_rules and fail_unseen)
+        or (args.fail_on_unknown_rules and fail_unknown)
+        or fail_requirements
+    ):
         print_gate_findings(gate_report)
+        if fail_requirements:
+            print("proof corpus requirement failures:")
+            for field in (
+                "missing_rule_occurrences",
+                "missing_theory_subkinds",
+                "replay_failures",
+                "oracle_failures",
+            ):
+                items = requirement_report[field]
+                if items:
+                    print(f"  {field}: {len(items)}")
+        if args.minimized_repro_dir is not None:
+            write_minimized_repros(args.minimized_repro_dir, entries, gate_report)
+            print(f"wrote minimized repros to {args.minimized_repro_dir}")
         return 1
     return 0
 

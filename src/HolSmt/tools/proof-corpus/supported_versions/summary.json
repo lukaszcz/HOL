@@ -3,6 +3,7 @@
     "asserted": 6,
     "unit-resolution": 3
   },
+  "aggregate_theory_lemma_histogram": {},
   "discovered_rules": [
     "asserted",
     "unit-resolution"
@@ -87,6 +88,8 @@
         "asserted",
         "unit-resolution"
       ],
+      "theory_lemma_histogram": {},
+      "theory_lemma_subkinds": [],
       "z3_version": "2.19.1"
     },
     {
@@ -98,6 +101,8 @@
         "asserted",
         "unit-resolution"
       ],
+      "theory_lemma_histogram": {},
+      "theory_lemma_subkinds": [],
       "z3_version": "4.12.4"
     },
     {
@@ -109,10 +114,13 @@
         "asserted",
         "unit-resolution"
       ],
+      "theory_lemma_histogram": {},
+      "theory_lemma_subkinds": [],
       "z3_version": "4.13.0"
     }
   ],
   "schema": "holsmt-z3-proof-corpus-v1",
+  "theory_lemma_subkinds": [],
   "unknown_rule_coverage": [],
   "z3_versions": [
     {

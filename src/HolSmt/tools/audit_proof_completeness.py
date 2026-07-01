@@ -24,7 +24,8 @@ TOOLS_DIR = ROOT / "src" / "HolSmt" / "tools"
 DEFAULT_PROOF_SOURCE = ROOT / "src" / "HolSmt" / "Z3_Proof.sml"
 DEFAULT_UNITTEST_SOURCE = ROOT / "src" / "HolSmt" / "Unittest.sml"
 DEFAULT_MANIFEST = TOOLS_DIR / "conformance-corpus" / "v2" / "manifest.json"
-DEFAULT_PROOF_SUMMARY = TOOLS_DIR / "proof-corpus" / "supported_versions" / "summary.json"
+DEFAULT_PROOF_SUMMARY = TOOLS_DIR / "proof-corpus" / "complete" / "summary.json"
+DEFAULT_COVERAGE_REPORT = TOOLS_DIR / "coverage" / "smtlib_coverage.json"
 
 SCHEMA = "holsmt-proof-completeness-audit-v1"
 
@@ -248,6 +249,63 @@ def manifest_red_proof_rule_features(path: Path | None) -> set[str]:
     return features
 
 
+def manifest_proof_rule_rows(path: Path | None) -> dict[str, dict[str, object]]:
+    rows: dict[str, dict[str, object]] = {}
+    for case in manifest_cases(path):
+        raw_features = case.get("features", [])
+        if not isinstance(raw_features, list):
+            continue
+        rules = [
+            feature.removeprefix("proof-rule:")
+            for feature in raw_features
+            if isinstance(feature, str) and feature.startswith("proof-rule:")
+        ]
+        if not rules:
+            continue
+        case_id = case.get("id")
+        obligation = case.get("implementation_obligation")
+        files: list[str] = []
+        if isinstance(obligation, dict):
+            raw_files = obligation.get("files", [])
+            if isinstance(raw_files, list):
+                files = [item for item in raw_files if isinstance(item, str)]
+        for rule in rules:
+            row = rows.setdefault(rule, {"case_ids": [], "implementation_files": []})
+            if isinstance(case_id, str):
+                row["case_ids"].append(case_id)  # type: ignore[index, union-attr]
+            row["implementation_files"].extend(files)  # type: ignore[index, union-attr]
+    for row in rows.values():
+        row["case_ids"] = sorted(set(row["case_ids"]))  # type: ignore[index, arg-type]
+        row["implementation_files"] = sorted(set(row["implementation_files"]))  # type: ignore[index, arg-type]
+    return rows
+
+
+def coverage_proof_rule_rows(path: Path | None) -> dict[str, dict[str, object]]:
+    if path is None or not path.exists():
+        return {}
+    coverage = load_json(path)
+    require(isinstance(coverage, dict), f"{path} root must be an object")
+    rows = coverage.get("z3_proof_rules", [])
+    require(isinstance(rows, list), f"{path} z3_proof_rules must be a list")
+    result: dict[str, dict[str, object]] = {}
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        item = row.get("item")
+        if not isinstance(item, str):
+            continue
+        test_ids = row.get("test_ids", [])
+        result[item] = {
+            "item": item,
+            "tested": row.get("tested"),
+            "reconstructed": row.get("reconstructed"),
+            "test_ids": [test_id for test_id in test_ids if isinstance(test_id, str)]
+            if isinstance(test_ids, list)
+            else [],
+        }
+    return result
+
+
 def real_proof_occurrences(path: Path | None) -> set[str]:
     if path is None or not path.exists():
         return set()
@@ -281,6 +339,8 @@ def audit(
     manifest_features: set[str],
     manifest_red_features: set[str],
     real_rules: set[str],
+    manifest_rows: dict[str, dict[str, object]],
+    coverage_rows: dict[str, dict[str, object]],
 ) -> list[Issue]:
     issues: list[Issue] = []
 
@@ -327,7 +387,29 @@ def audit(
             )
 
     for rule in rules:
+        if rule.name not in coverage_rows:
+            issues.append(
+                Issue(
+                    code="missing_coverage_proof_rule_row",
+                    category="coverage-report",
+                    subject=rule.name,
+                    message="registered Z3 proof rule has no generated coverage report row",
+                    severity="warning",
+                    blocking=False,
+                )
+            )
+
+    for rule in rules:
         if rule.name not in real_rules and set(rule.aliases).isdisjoint(real_rules):
+            manifest_row = manifest_rows.get(rule.name, {})
+            coverage_row = coverage_rows.get(rule.name, {})
+            implementation_files = manifest_row.get("implementation_files", [])
+            if not implementation_files:
+                implementation_files = [
+                    "src/HolSmt/Z3_Proof.sml",
+                    "src/HolSmt/Z3_ProofParser.sml",
+                    "src/HolSmt/Z3_ProofReplay.sml",
+                ]
             issues.append(
                 Issue(
                     code="missing_real_proof_occurrence",
@@ -336,7 +418,12 @@ def audit(
                     message="registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
                     severity="red",
                     blocking=False,
-                    details={"aliases": list(rule.aliases)},
+                    details={
+                        "aliases": list(rule.aliases),
+                        "case_ids": manifest_row.get("case_ids", []),
+                        "coverage_row": coverage_row,
+                        "implementation_files": implementation_files,
+                    },
                 )
             )
 
@@ -349,12 +436,15 @@ def build_report(
     unittest_source: Path,
     manifest_path: Path | None,
     proof_summary_path: Path | None,
+    coverage_report_path: Path | None = DEFAULT_COVERAGE_REPORT,
 ) -> dict[str, object]:
     rules = parse_proof_rules(proof_source)
     th_lemma_classes = parse_th_lemma_classes(proof_source, rules)
     synthetic_rules = parse_synthetic_replay_tests(unittest_source)
     manifest_features = manifest_proof_rule_features(manifest_path)
     manifest_red_features = manifest_red_proof_rule_features(manifest_path)
+    manifest_rows = manifest_proof_rule_rows(manifest_path)
+    coverage_rows = coverage_proof_rule_rows(coverage_report_path)
     real_rules = real_proof_occurrences(proof_summary_path)
     issues = audit(
         rules,
@@ -363,6 +453,8 @@ def build_report(
         manifest_features,
         manifest_red_features,
         real_rules,
+        manifest_rows,
+        coverage_rows,
     )
     blocking_issues = [issue for issue in issues if issue.blocking]
     red_obligations = [issue for issue in issues if issue.severity == "red"]
@@ -377,12 +469,14 @@ def build_report(
             "unittest_source": str(unittest_source),
             "manifest": str(manifest_path) if manifest_path is not None else None,
             "proof_summary": str(proof_summary_path) if proof_summary_path is not None else None,
+            "coverage_report": str(coverage_report_path) if coverage_report_path is not None else None,
         },
         "summary": {
             "registry_rule_count": len(rules),
             "th_lemma_class_count": len(th_lemma_classes),
             "synthetic_rule_count": len(synthetic_rules),
             "manifest_proof_rule_count": len(manifest_features),
+            "coverage_proof_rule_count": len(coverage_rows),
             "real_proof_rule_count": len(real_rules),
             "issue_count": len(issues),
             "blocking_issue_count": len(blocking_issues),
@@ -402,6 +496,7 @@ def build_report(
         "th_lemma_classes": th_lemma_classes,
         "synthetic_rules": sorted(synthetic_rules),
         "manifest_proof_rules": sorted(manifest_features),
+        "coverage_proof_rules": sorted(coverage_rows),
         "real_proof_rules": sorted(real_rules),
         "issues": [issue.to_json() for issue in issues],
     }
@@ -415,6 +510,7 @@ def print_text_summary(report: dict[str, object]) -> None:
     print(f"th-lemma classes: {summary['th_lemma_class_count']}")
     print(f"synthetic rules: {summary['synthetic_rule_count']}")
     print(f"manifest proof-rule rows: {summary['manifest_proof_rule_count']}")
+    print(f"coverage proof-rule rows: {summary['coverage_proof_rule_count']}")
     print(f"real proof rules: {summary['real_proof_rule_count']}")
     print(f"issues: {summary['issue_count']}")
     print(f"blocking issues: {summary['blocking_issue_count']}")
@@ -440,8 +536,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--unittest-source", type=Path, default=DEFAULT_UNITTEST_SOURCE)
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--proof-summary", type=Path, default=DEFAULT_PROOF_SUMMARY)
+    parser.add_argument("--coverage-report", type=Path, default=DEFAULT_COVERAGE_REPORT)
     parser.add_argument("--no-manifest", action="store_true", help="skip v2 manifest checks")
     parser.add_argument("--no-proof-summary", action="store_true", help="skip real proof-corpus occurrence checks")
+    parser.add_argument("--no-coverage-report", action="store_true", help="skip generated coverage report checks")
     parser.add_argument(
         "--fail-on-red-obligations",
         action="store_true",
@@ -461,12 +559,14 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     manifest_path = None if args.no_manifest else args.manifest
     proof_summary_path = None if args.no_proof_summary else args.proof_summary
+    coverage_report_path = None if args.no_coverage_report else args.coverage_report
     try:
         report = build_report(
             proof_source=args.proof_source,
             unittest_source=args.unittest_source,
             manifest_path=manifest_path,
             proof_summary_path=proof_summary_path,
+            coverage_report_path=coverage_report_path,
         )
     except (OSError, json.JSONDecodeError, AuditError) as exc:
         print(f"proof completeness audit infrastructure error: {exc}", file=sys.stderr)
