@@ -810,6 +810,180 @@ RECONSTRUCTED_COMMAND_GROUPS = {
     "set-option",
 }
 
+UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES = {
+    "theory:Fixed_Size_BitVectors:bvnego:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsaddo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsdivo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsmulo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvssubo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvuaddo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvumulo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvusubo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:int-to-bv:unsat-proof",
+    "theory:Fixed_Size_BitVectors:sbv-to-int:unsat-proof",
+    "theory:Fixed_Size_BitVectors:ubv-to-int:unsat-proof",
+    "theory:Ints:divisible:unsat-proof",
+    "theory:Ints:pow:unsat-proof",
+    "theory:Z3_Extensions:bag.count:unsat-proof",
+    "theory:Z3_Extensions:bag.difference-subtract:unsat-proof",
+    "theory:Z3_Extensions:bag.inter-min:unsat-proof",
+    "theory:Z3_Extensions:bag.union-disjoint:unsat-proof",
+    "theory:Z3_Extensions:bag.union-max:unsat-proof",
+    "theory:Z3_Extensions:bag:unsat-proof",
+    "theory:Z3_Extensions:set.insert:unsat-proof",
+    "theory:Z3_Extensions:set.intersect:unsat-proof",
+    "theory:Z3_Extensions:set.member:unsat-proof",
+    "theory:Z3_Extensions:set.minus:unsat-proof",
+    "theory:Z3_Extensions:set.subset:unsat-proof",
+    "theory:Z3_Extensions:set.union:unsat-proof",
+}
+
+RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
+    "theory:ArraysEx:select:unsat-proof",
+    "theory:Core:and:unsat-proof",
+    "theory:Core:bool:unsat-proof",
+    "theory:Core:eq:unsat-proof",
+    "theory:Core:false:unsat-proof",
+    "theory:Core:implies:unsat-proof",
+    "theory:Core:ite:unsat-proof",
+    "theory:Core:not:unsat-proof",
+    "theory:Core:or:unsat-proof",
+    "theory:Core:true:unsat-proof",
+    "theory:Fixed_Size_BitVectors:binary-hex-literal:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bitvec:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvadd:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvand:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvashr:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvlshr:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvmul:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvnand:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvneg:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvnego:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvnor:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvnot:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvor:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsdiv:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsdivo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsge:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsgt:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvshl:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsle:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvslt:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsmulo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsrem:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvsub:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvuaddo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvudiv:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvuge:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvugt:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvule:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvult:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvumulo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvurem:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvusubo:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvxnor:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvxor:unsat-proof",
+    "theory:Fixed_Size_BitVectors:concat:unsat-proof",
+    "theory:Fixed_Size_BitVectors:decimal-literal:unsat-proof",
+    "theory:Fixed_Size_BitVectors:extract:unsat-proof",
+    "theory:Fixed_Size_BitVectors:int-to-bv:unsat-proof",
+    "theory:Fixed_Size_BitVectors:repeat:unsat-proof",
+    "theory:Fixed_Size_BitVectors:rotate-left:unsat-proof",
+    "theory:Fixed_Size_BitVectors:rotate-right:unsat-proof",
+    "theory:Fixed_Size_BitVectors:sbv-to-int:unsat-proof",
+    "theory:Fixed_Size_BitVectors:sign-extend:unsat-proof",
+    "theory:Fixed_Size_BitVectors:ubv-to-int:unsat-proof",
+    "theory:Fixed_Size_BitVectors:zero-extend:unsat-proof",
+    "theory:FloatingPoint:float128:unsat-proof",
+    "theory:FloatingPoint:float16:unsat-proof",
+    "theory:FloatingPoint:float32:unsat-proof",
+    "theory:FloatingPoint:float64:unsat-proof",
+    "theory:FloatingPoint:fp.abs:unsat-proof",
+    "theory:FloatingPoint:fp.add:unsat-proof",
+    "theory:FloatingPoint:fp.div:unsat-proof",
+    "theory:FloatingPoint:fp.eq:unsat-proof",
+    "theory:FloatingPoint:fp.fma:unsat-proof",
+    "theory:FloatingPoint:fp.geq:unsat-proof",
+    "theory:FloatingPoint:fp.gt:unsat-proof",
+    "theory:FloatingPoint:fp.isinfinite:unsat-proof",
+    "theory:FloatingPoint:fp.isnan:unsat-proof",
+    "theory:FloatingPoint:fp.isnegative:unsat-proof",
+    "theory:FloatingPoint:fp.isnormal:unsat-proof",
+    "theory:FloatingPoint:fp.ispositive:unsat-proof",
+    "theory:FloatingPoint:fp.issubnormal:unsat-proof",
+    "theory:FloatingPoint:fp.iszero:unsat-proof",
+    "theory:FloatingPoint:fp.leq:unsat-proof",
+    "theory:FloatingPoint:fp.lt:unsat-proof",
+    "theory:FloatingPoint:fp.max:unsat-proof",
+    "theory:FloatingPoint:fp.min:unsat-proof",
+    "theory:FloatingPoint:fp.mul:unsat-proof",
+    "theory:FloatingPoint:fp.neg:unsat-proof",
+    "theory:FloatingPoint:fp.rem:unsat-proof",
+    "theory:FloatingPoint:fp.roundtointegral:unsat-proof",
+    "theory:FloatingPoint:fp.sqrt:unsat-proof",
+    "theory:FloatingPoint:fp.sub:unsat-proof",
+    "theory:FloatingPoint:fp.to-real:unsat-proof",
+    "theory:FloatingPoint:fp:unsat-proof",
+    "theory:FloatingPoint:nan:unsat-proof",
+    "theory:FloatingPoint:negative-infinity:unsat-proof",
+    "theory:FloatingPoint:negative-zero:unsat-proof",
+    "theory:FloatingPoint:positive-infinity:unsat-proof",
+    "theory:FloatingPoint:positive-zero:unsat-proof",
+    "theory:FloatingPoint:rna:unsat-proof",
+    "theory:FloatingPoint:rne:unsat-proof",
+    "theory:FloatingPoint:roundingmode:unsat-proof",
+    "theory:FloatingPoint:roundnearesttiestoaway:unsat-proof",
+    "theory:FloatingPoint:roundnearesttiestoeven:unsat-proof",
+    "theory:FloatingPoint:roundtowardnegative:unsat-proof",
+    "theory:FloatingPoint:roundtowardpositive:unsat-proof",
+    "theory:FloatingPoint:roundtowardzero:unsat-proof",
+    "theory:FloatingPoint:rtn:unsat-proof",
+    "theory:FloatingPoint:rtp:unsat-proof",
+    "theory:FloatingPoint:rtz:unsat-proof",
+    "theory:FloatingPoint:to-fp-unsigned:unsat-proof",
+    "theory:FloatingPoint:to-fp:unsat-proof",
+    "theory:Ints:abs:unsat-proof",
+    "theory:Ints:div:unsat-proof",
+    "theory:Ints:ge:unsat-proof",
+    "theory:Ints:gt:unsat-proof",
+    "theory:Ints:int:unsat-proof",
+    "theory:Ints:le:unsat-proof",
+    "theory:Ints:lt:unsat-proof",
+    "theory:Ints:mod:unsat-proof",
+    "theory:Ints:neg:unsat-proof",
+    "theory:Ints:numeral:unsat-proof",
+    "theory:Ints:plus:unsat-proof",
+    "theory:Ints:pow:unsat-proof",
+    "theory:Ints:sub:unsat-proof",
+    "theory:Ints:times:unsat-proof",
+    "theory:Reals:ge:unsat-proof",
+    "theory:Reals:gt:unsat-proof",
+    "theory:Reals:le:unsat-proof",
+    "theory:Reals:lt:unsat-proof",
+    "theory:Reals:neg:unsat-proof",
+    "theory:Reals:numeral:unsat-proof",
+    "theory:Reals:plus:unsat-proof",
+    "theory:Reals:real:unsat-proof",
+    "theory:Reals:sub:unsat-proof",
+    "theory:Reals:times:unsat-proof",
+    "theory:Reals_Ints:to-int:unsat-proof",
+    "theory:Reals_Ints:to-real:unsat-proof",
+    "theory:UnicodeStrings:re.all:unsat-proof",
+    "theory:UnicodeStrings:re.allchar:unsat-proof",
+    "theory:UnicodeStrings:re.none:unsat-proof",
+    "theory:UnicodeStrings:reglan:unsat-proof",
+    "theory:UnicodeStrings:str.from-code:unsat-proof",
+    "theory:UnicodeStrings:str.from-int:unsat-proof",
+    "theory:UnicodeStrings:str.is-digit:unsat-proof",
+    "theory:UnicodeStrings:str.to-int:unsat-proof",
+    "theory:UnicodeStrings:string:unsat-proof",
+    "theory:Z3_Extensions:seq-concat:unsat-proof",
+    "theory:Z3_Extensions:seq.contains:unsat-proof",
+    "theory:Z3_Extensions:seq.extract:unsat-proof",
+    "theory:Z3_Extensions:seq.len:unsat-proof",
+    "theory:Z3_Extensions:seq:unsat-proof",
+}
+
 
 def command_features(group: CommandGroup) -> list[str]:
     return [*(f"command:{command}" for command in group.commands), f"command-group:{group.slug}"]
@@ -3049,6 +3223,11 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             implementation = None
     elif kind == "unsat-proof":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac")
+        proof_modes_reconstructed = (
+            not parser_gap
+            and case_id not in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES
+        )
+        z3_tac_reconstructed = case_id in RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS
         expected = {
             "parser-only": expected_result(
                 "red" if parser_gap else "pass",
@@ -3067,35 +3246,43 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
             "proof-parse": expected_result(
-                "red",
+                "pass" if proof_modes_reconstructed else "red",
                 diagnostic="Z3 proof is unavailable until solver support for this theory symbol exists"
-                if z3_unsupported else blocked_by_parser
-                if parser_gap else "theory proof parsing evidence is incomplete",
+                if case_id in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES else blocked_by_parser
+                if parser_gap else None
+                if proof_modes_reconstructed else "theory proof parsing evidence is incomplete",
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else "proof-parse",
-                proof_rule_histogram={"asserted": 1},
+                if parser_gap else None
+                if proof_modes_reconstructed else "proof-parse",
+                proof_rule_histogram=None if proof_modes_reconstructed else {"asserted": 1},
             ),
             "proof-replay": expected_result(
-                "red",
+                "pass" if proof_modes_reconstructed else "red",
                 diagnostic="Z3 proof replay is unavailable until solver support for this theory symbol exists"
-                if z3_unsupported else blocked_by_parser
-                if parser_gap else "theory proof replay evidence is incomplete",
+                if case_id in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES else blocked_by_parser
+                if parser_gap else None
+                if proof_modes_reconstructed else "theory proof replay evidence is incomplete",
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else "proof-replay",
-                proof_rule_histogram={"asserted": 1},
+                if parser_gap else None
+                if proof_modes_reconstructed else "proof-replay",
+                proof_rule_histogram=None if proof_modes_reconstructed else {"asserted": 1},
             ),
             "z3-tac": expected_result(
-                "red",
+                "pass" if z3_tac_reconstructed else "red",
                 diagnostic="checked Z3_TAC reconstruction is blocked by missing solver support"
-                if z3_unsupported else blocked_by_parser
+                if z3_unsupported and not z3_tac_reconstructed else blocked_by_parser
                 if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
-                if translation_gap else "checked Z3_TAC reconstruction for theory symbol is incomplete",
+                if translation_gap else None
+                if z3_tac_reconstructed else "checked Z3_TAC reconstruction for theory symbol is incomplete",
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else "translation" if translation_gap else "proof-replay",
-                theorem_shape="closed theorem without oracle tags",
+                if parser_gap else None
+                if z3_tac_reconstructed else "translation" if translation_gap else "proof-replay",
+                theorem_shape=None if z3_tac_reconstructed else "closed theorem without oracle tags",
             ),
         }
-        if z3_unsupported:
+        if not any(result["status"] == "red" for result in expected.values()):
+            implementation = None
+        elif z3_unsupported:
             phase = "solver"
         elif parser_gap:
             phase = "parser"
@@ -3105,7 +3292,8 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             phase = "translation"
         else:
             phase = "proof-replay"
-        implementation = theory_obligation(symbol, kind, case_id, phase)
+        if any(result["status"] == "red" for result in expected.values()):
+            implementation = theory_obligation(symbol, kind, case_id, phase)
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
         expected = {
@@ -3328,25 +3516,15 @@ def logic_packet_cases(
                     "typecheck-only": expected_result("pass"),
                     "z3-oracle": expected_result("pass"),
                     "proof-parse": expected_result(
-                        "red",
-                        diagnostic="logic proof parsing evidence is incomplete",
-                        failure_phase="proof-parse",
-                        proof_rule_histogram={"asserted": 1},
+                        "pass",
                     ),
                     "proof-replay": expected_result(
-                        "red",
-                        diagnostic="logic proof replay evidence is incomplete",
-                        failure_phase="proof-replay",
-                        proof_rule_histogram={"asserted": 1},
+                        "pass",
                     ),
                     "z3-tac": expected_result(
-                        "red",
-                        diagnostic="checked Z3_TAC reconstruction for logic packet is incomplete",
-                        failure_phase="proof-replay",
-                        theorem_shape="closed theorem without oracle tags",
+                        "pass",
                     ),
                 },
-                implementation=logic_obligation(logic, "unsat-proof", unsat_case_id, "proof-replay"),
             )
         )
 
