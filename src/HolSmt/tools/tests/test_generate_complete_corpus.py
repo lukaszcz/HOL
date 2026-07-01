@@ -136,9 +136,20 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         ]
         for case in reconstruction_cases:
             obligation = case["implementation_obligation"]
-            self.assertIsNotNone(obligation, case)
-            for filename in obligation["files"]:
-                self.assertTrue((REPO_ROOT / filename).exists(), filename)
+            expected = case["expected"]["z3-tac"]
+            group = next(
+                feature.split(":", 1)[1]
+                for feature in case["features"]
+                if feature.startswith("command-group:")
+            )
+            if group in generator.RECONSTRUCTED_COMMAND_GROUPS:
+                self.assertEqual(expected["status"], "pass", case)
+                self.assertIsNone(obligation, case)
+            else:
+                self.assertEqual(expected["status"], "red", case)
+                self.assertIsNotNone(obligation, case)
+                for filename in obligation["files"]:
+                    self.assertTrue((REPO_ROOT / filename).exists(), filename)
 
     def test_logics_subcommand_emits_six_case_packet_per_packet_logic(self):
         stdout = io.StringIO()

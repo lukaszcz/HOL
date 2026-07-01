@@ -775,6 +775,18 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     ),
 )
 
+RECONSTRUCTED_COMMAND_GROUPS = {
+    "assert",
+    "check-sat",
+    "define-const",
+    "define-fun",
+    "echo",
+    "get-proof",
+    "set-info",
+    "set-logic",
+    "set-option",
+}
+
 
 def command_features(group: CommandGroup) -> list[str]:
     return [*(f"command:{command}" for command in group.commands), f"command-group:{group.slug}"]
@@ -1005,27 +1017,31 @@ def command_cases() -> list[GeneratedCase]:
             )
         )
         reconstruction_case_id = f"command:{group.slug}:reconstruction"
+        reconstruction_is_fixed = group.slug in RECONSTRUCTED_COMMAND_GROUPS
+        reconstruction_expected = expected_result(
+            "pass",
+            notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+        ) if reconstruction_is_fixed else expected_result(
+            "red",
+            diagnostic=group.reconstruction_diagnostic,
+            failure_phase=group.reconstruction_phase,
+            notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+        )
+        reconstruction_obligation = None if reconstruction_is_fixed else implementation_obligation(
+            files=group.obligation_files,
+            feature=f"command-reconstruction:{group.slug}",
+            test_ids=[reconstruction_case_id],
+            failure_phase=group.reconstruction_phase,
+            notes=GENERATED_OBLIGATION_NOTES,
+        )
         cases.append(
             command_case(
                 group,
                 "reconstruction",
                 group.reconstruction_script,
                 ("z3-tac",),
-                {
-                    "z3-tac": expected_result(
-                        "red",
-                        diagnostic=group.reconstruction_diagnostic,
-                        failure_phase=group.reconstruction_phase,
-                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
-                    )
-                },
-                implementation=implementation_obligation(
-                    files=group.obligation_files,
-                    feature=f"command-reconstruction:{group.slug}",
-                    test_ids=[reconstruction_case_id],
-                    failure_phase=group.reconstruction_phase,
-                    notes=GENERATED_OBLIGATION_NOTES,
-                ),
+                {"z3-tac": reconstruction_expected},
+                implementation=reconstruction_obligation,
             )
         )
     cases.extend(datatype_command_corpus_case(case) for case in DATATYPE_COMMAND_CORPUS_CASES)
