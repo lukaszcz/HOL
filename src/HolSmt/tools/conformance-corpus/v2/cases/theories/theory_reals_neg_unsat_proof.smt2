@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_LRA)
+(assert (= (- 3.0) 3.0))
+(check-sat)
+(get-proof)

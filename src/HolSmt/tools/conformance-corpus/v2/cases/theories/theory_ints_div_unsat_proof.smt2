@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_LIA)
+(assert (= (div 7 3) 3))
+(check-sat)
+(get-proof)

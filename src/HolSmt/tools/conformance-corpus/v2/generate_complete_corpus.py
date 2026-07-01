@@ -161,6 +161,21 @@ class CommandGroup:
     obligation_files: tuple[str, ...]
 
 
+@dataclass(frozen=True)
+class TheorySymbol:
+    theory: str
+    slug: str
+    kind: str
+    name: str
+    logic: str
+    declarations: tuple[str, ...]
+    sat_script: str
+    unsat_proof_script: str
+    type_error_script: str
+    boundary_script: str
+    behavior_features: tuple[str, ...] = ()
+
+
 def slug(value: str) -> str:
     result = re.sub(r"[^A-Za-z0-9]+", "_", value.lower()).strip("_")
     result = re.sub(r"_+", "_", result)
@@ -866,6 +881,663 @@ def command_cases() -> list[GeneratedCase]:
     return cases
 
 
+def proof_script(logic: str, body: str) -> str:
+    return f"(set-option :produce-proofs true)\n(set-logic {logic})\n{body}(check-sat)\n(get-proof)\n"
+
+
+CORE_ARITHMETIC_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    TheorySymbol(
+        "Core",
+        "bool",
+        "sort",
+        "Bool",
+        "QF_UF",
+        ("(Bool 0)",),
+        "(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n",
+        proof_script("QF_UF", "(assert false)\n"),
+        "(set-logic QF_UF)\n(declare-const bad (Bool Bool))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(declare-fun f (Bool) Bool)\n(assert (f true))\n(check-sat)\n",
+        ("theory-behavior:sort-arity",),
+    ),
+    TheorySymbol(
+        "Core",
+        "true",
+        "term",
+        "true",
+        "QF_UF",
+        ("(true Bool)",),
+        "(set-logic QF_UF)\n(assert true)\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (not true))\n"),
+        "(set-logic QF_UF)\n(assert (true))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= true true))\n(check-sat)\n",
+        ("theory-behavior:arity",),
+    ),
+    TheorySymbol(
+        "Core",
+        "false",
+        "term",
+        "false",
+        "QF_UF",
+        ("(false Bool)",),
+        "(set-logic QF_UF)\n(assert (not false))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert false)\n"),
+        "(set-logic QF_UF)\n(assert (false))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= false false))\n(check-sat)\n",
+        ("theory-behavior:arity",),
+    ),
+    TheorySymbol(
+        "Core",
+        "not",
+        "term",
+        "not",
+        "QF_UF",
+        ("(not Bool Bool)",),
+        "(set-logic QF_UF)\n(assert (not false))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (not true))\n"),
+        "(set-logic QF_UF)\n(assert (not true false))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= (not (not true)) true))\n(check-sat)\n",
+        ("theory-behavior:arity",),
+    ),
+    TheorySymbol(
+        "Core",
+        "implies",
+        "term",
+        "=>",
+        "QF_UF",
+        ("(=> Bool Bool Bool :right-assoc)",),
+        "(set-logic QF_UF)\n(assert (=> true true))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (=> true false))\n"),
+        "(set-logic QF_UF)\n(assert (=> true 0))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (=> true false false))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:right-associative"),
+    ),
+    TheorySymbol(
+        "Core",
+        "and",
+        "term",
+        "and",
+        "QF_UF",
+        ("(and Bool Bool Bool :left-assoc)",),
+        "(set-logic QF_UF)\n(assert (and true true true))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (and true false true))\n"),
+        "(set-logic QF_UF)\n(assert (and true 0))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= (and true true true) true))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative"),
+    ),
+    TheorySymbol(
+        "Core",
+        "or",
+        "term",
+        "or",
+        "QF_UF",
+        ("(or Bool Bool Bool :left-assoc)",),
+        "(set-logic QF_UF)\n(assert (or false false true))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (or false false false))\n"),
+        "(set-logic QF_UF)\n(assert (or false 0))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= (or false false true) true))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative"),
+    ),
+    TheorySymbol(
+        "Core",
+        "xor",
+        "term",
+        "xor",
+        "QF_UF",
+        ("(xor Bool Bool Bool :left-assoc)",),
+        "(set-logic QF_UF)\n(assert (xor true false))\n(check-sat)\n",
+        proof_script("QF_UF", "(assert (xor true true))\n"),
+        "(set-logic QF_UF)\n(assert (xor true 0))\n(check-sat)\n",
+        "(set-logic QF_UF)\n(assert (= (xor true false false) true))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative"),
+    ),
+    TheorySymbol(
+        "Core",
+        "eq",
+        "term",
+        "=",
+        "QF_LIA",
+        ("(par (A) (= A A Bool :chainable))",),
+        "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (= x x))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (not (= 1 1)))\n"),
+        "(set-logic QF_LIA)\n(assert (= true 0))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (= x 1 1 x))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:chainable", "theory-behavior:polymorphic-equality"),
+    ),
+    TheorySymbol(
+        "Core",
+        "distinct",
+        "term",
+        "distinct",
+        "QF_LIA",
+        ("(par (A) (distinct A A Bool :pairwise))",),
+        "(set-logic QF_LIA)\n(assert (distinct 0 1 2))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (distinct 1 1))\n"),
+        "(set-logic QF_LIA)\n(assert (distinct true 0))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (distinct 0 1 2 3))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:pairwise", "theory-behavior:polymorphic-equality"),
+    ),
+    TheorySymbol(
+        "Core",
+        "ite",
+        "term",
+        "ite",
+        "QF_LIA",
+        ("(par (A) (ite Bool A A A))",),
+        "(set-logic QF_LIA)\n(assert (ite true true false))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (not (ite true true false)))\n"),
+        "(set-logic QF_LIA)\n(assert (ite true 0 false))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(declare-const p Bool)\n(assert (= (ite p 1 2) 1))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:parametric-sort"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "int",
+        "sort",
+        "Int",
+        "QF_LIA",
+        ("(Int 0)",),
+        "(set-logic QF_LIA)\n(declare-const x Int)\n(assert (= x 0))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (not (= 0 0)))\n"),
+        "(set-logic QF_LIA)\n(declare-const bad (Int Int))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(declare-const huge Int)\n(assert (= huge 123456789012345678901234567890))\n(check-sat)\n",
+        ("theory-behavior:sort-arity", "theory-behavior:large-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "numeral",
+        "term",
+        "_",
+        "QF_LIA",
+        ("<numeral>",),
+        "(set-logic QF_LIA)\n(assert (= 42 42))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (not (= 42 42)))\n"),
+        "(set-logic QF_LIA)\n(assert 42)\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= 123456789012345678901234567890 123456789012345678901234567890))\n(check-sat)\n",
+        ("theory-behavior:large-numeral",),
+    ),
+    TheorySymbol(
+        "Ints",
+        "neg",
+        "term",
+        "-",
+        "QF_LIA",
+        ("(- Int Int)",),
+        "(set-logic QF_LIA)\n(assert (= (+ (- 3) 3) 0))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (- 3) 3))\n"),
+        "(set-logic QF_LIA)\n(assert (= (- 1 2 3) 0))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (- 0) 0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "sub",
+        "term",
+        "-",
+        "QF_LIA",
+        ("(- Int Int Int)",),
+        "(set-logic QF_LIA)\n(assert (= (- 7 2 3) 2))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (- 7 2) 6))\n"),
+        "(set-logic QF_LIA)\n(assert (= (- 1 true) 0))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (- 10 3 2) 5))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "plus",
+        "term",
+        "+",
+        "QF_LIA",
+        ("(+ Int Int Int :left-assoc)",),
+        "(set-logic QF_LIA)\n(assert (= (+ 1 2 3) 6))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (+ 1 2) 4))\n"),
+        "(set-logic QF_LIA)\n(assert (= (+ 1) 1))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (+ 1 2 3 4) 10))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:overloaded-arithmetic"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "times",
+        "term",
+        "*",
+        "QF_NIA",
+        ("(* Int Int Int :left-assoc)",),
+        "(set-logic QF_NIA)\n(assert (= (* 2 3 4) 24))\n(check-sat)\n",
+        proof_script("QF_NIA", "(assert (= (* 2 3) 7))\n"),
+        "(set-logic QF_NIA)\n(assert (= (* 2) 2))\n(check-sat)\n",
+        "(set-logic QF_NIA)\n(assert (= (* 2 3 4 5) 120))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:overloaded-arithmetic"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "pow",
+        "term",
+        "**",
+        "QF_NIA",
+        ("(** Int Int Int)",),
+        "(set-logic QF_NIA)\n(assert (= (** 2 3) 8))\n(check-sat)\n",
+        proof_script("QF_NIA", "(assert (= (** 2 3) 9))\n"),
+        "(set-logic QF_NIA)\n(assert (= (** 2 true) 1))\n(check-sat)\n",
+        "(set-logic QF_NIA)\n(assert (= (** 2 0) 1))\n(check-sat)\n",
+        ("theory-behavior:arity",),
+    ),
+    TheorySymbol(
+        "Ints",
+        "div",
+        "term",
+        "div",
+        "QF_LIA",
+        ("(div Int Int Int :left-assoc)",),
+        "(set-logic QF_LIA)\n(assert (= (div 7 3) 2))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (div 7 3) 3))\n"),
+        "(set-logic QF_LIA)\n(assert (= (div 7) 7))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (div 20 3 2) 3))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:division-modulo"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "mod",
+        "term",
+        "mod",
+        "QF_LIA",
+        ("(mod Int Int Int :left-assoc)",),
+        "(set-logic QF_LIA)\n(assert (= (mod 7 3) 1))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (mod 7 3) 2))\n"),
+        "(set-logic QF_LIA)\n(assert (= (mod 7) 0))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (mod 17 5) 2))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:division-modulo"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "abs",
+        "term",
+        "abs",
+        "QF_LIA",
+        ("(abs Int Int)",),
+        "(set-logic QF_LIA)\n(assert (= (abs (- 7)) 7))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (= (abs (- 7)) (- 7)))\n"),
+        "(set-logic QF_LIA)\n(assert (= (abs 1 2) 1))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (= (abs 0) 0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "divisible",
+        "term",
+        "divisible",
+        "QF_LIA",
+        ("((_ divisible n) Int Bool)",),
+        "(set-logic QF_LIA)\n(assert ((_ divisible 3) 6))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert ((_ divisible 3) 7))\n"),
+        "(set-logic QF_LIA)\n(assert ((_ divisible 3) true))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert ((_ divisible 1) 12345678901234567890))\n(check-sat)\n",
+        ("theory-behavior:indexed", "theory-behavior:division-modulo"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "le",
+        "term",
+        "<=",
+        "QF_LIA",
+        ("(<= Int Int Bool :chainable)",),
+        "(set-logic QF_LIA)\n(assert (<= 1 2 3))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (<= 3 2 1))\n"),
+        "(set-logic QF_LIA)\n(assert (<= 1 true))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (<= (- 10) 0 10))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "lt",
+        "term",
+        "<",
+        "QF_LIA",
+        ("(< Int Int Bool :chainable)",),
+        "(set-logic QF_LIA)\n(assert (< 1 2 3))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (< 3 2 1))\n"),
+        "(set-logic QF_LIA)\n(assert (< 1 true))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (< (- 10) 0 10))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "ge",
+        "term",
+        ">=",
+        "QF_LIA",
+        ("(>= Int Int Bool :chainable)",),
+        "(set-logic QF_LIA)\n(assert (>= 3 2 1))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (>= 1 2 3))\n"),
+        "(set-logic QF_LIA)\n(assert (>= 1 true))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (>= 10 0 (- 10)))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Ints",
+        "gt",
+        "term",
+        ">",
+        "QF_LIA",
+        ("(> Int Int Bool :chainable)",),
+        "(set-logic QF_LIA)\n(assert (> 3 2 1))\n(check-sat)\n",
+        proof_script("QF_LIA", "(assert (> 1 2 3))\n"),
+        "(set-logic QF_LIA)\n(assert (> 1 true))\n(check-sat)\n",
+        "(set-logic QF_LIA)\n(assert (> 10 0 (- 10)))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "real",
+        "sort",
+        "Real",
+        "QF_LRA",
+        ("(Real 0)",),
+        "(set-logic QF_LRA)\n(declare-const x Real)\n(assert (= x 0.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (not (= 0.0 0.0)))\n"),
+        "(set-logic QF_LRA)\n(declare-const bad (Real Real))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(declare-const x Real)\n(assert (= x 12345678901234567890.0))\n(check-sat)\n",
+        ("theory-behavior:sort-arity", "theory-behavior:large-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "numeral",
+        "term",
+        "_",
+        "QF_LRA",
+        ("<numeral>",),
+        "(set-logic QF_LRA)\n(assert (= 42 42.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (not (= 42 42.0)))\n"),
+        "(set-logic QF_LRA)\n(assert 42.0)\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (= 123456789012345678901234567890 123456789012345678901234567890.0))\n(check-sat)\n",
+        ("theory-behavior:large-numeral",),
+    ),
+    TheorySymbol(
+        "Reals",
+        "decimal",
+        "term",
+        "_",
+        "QF_LRA",
+        ("<decimal>",),
+        "(set-logic QF_LRA)\n(assert (= 1.5 (/ 3.0 2.0)))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (not (= 1.5 (/ 3.0 2.0))))\n"),
+        "(set-logic QF_LRA)\n(assert 1.5)\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (= 1.50 1.5))\n(check-sat)\n",
+        ("theory-behavior:rational-normalization",),
+    ),
+    TheorySymbol(
+        "Reals",
+        "neg",
+        "term",
+        "-",
+        "QF_LRA",
+        ("(- Real Real)",),
+        "(set-logic QF_LRA)\n(assert (= (+ (- 3.0) 3.0) 0.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (= (- 3.0) 3.0))\n"),
+        "(set-logic QF_LRA)\n(assert (= (- 1.0 2.0 3.0) 0.0))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (= (- 0.0) 0.0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "sub",
+        "term",
+        "-",
+        "QF_LRA",
+        ("(- Real Real Real)",),
+        "(set-logic QF_LRA)\n(assert (= (- 7.0 2.0 3.0) 2.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (= (- 7.0 2.0) 6.0))\n"),
+        "(set-logic QF_LRA)\n(assert (= (- 1.0 true) 0.0))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (= (- 10.0 3.0 2.0) 5.0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "plus",
+        "term",
+        "+",
+        "QF_LRA",
+        ("(+ Real Real Real :left-assoc)",),
+        "(set-logic QF_LRA)\n(assert (= (+ 1.0 2.0 3.0) 6.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (= (+ 1.0 2.0) 4.0))\n"),
+        "(set-logic QF_LRA)\n(assert (= (+ 1.0) 1.0))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (= (+ 1.0 2.0 3.0 4.0) 10.0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:overloaded-arithmetic"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "times",
+        "term",
+        "*",
+        "QF_NRA",
+        ("(* Real Real Real :left-assoc)",),
+        "(set-logic QF_NRA)\n(assert (= (* 2.0 3.0 4.0) 24.0))\n(check-sat)\n",
+        proof_script("QF_NRA", "(assert (= (* 2.0 3.0) 7.0))\n"),
+        "(set-logic QF_NRA)\n(assert (= (* 2.0) 2.0))\n(check-sat)\n",
+        "(set-logic QF_NRA)\n(assert (= (* 2.0 3.0 4.0 5.0) 120.0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:overloaded-arithmetic"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "div",
+        "term",
+        "/",
+        "QF_NRA",
+        ("(/ Real Real Real :left-assoc)",),
+        "(set-logic QF_NRA)\n(assert (= (/ 3.0 2.0) 1.5))\n(check-sat)\n",
+        proof_script("QF_NRA", "(assert (= (/ 3.0 2.0) 2.0))\n"),
+        "(set-logic QF_NRA)\n(assert (= (/ 1.0) 1.0))\n(check-sat)\n",
+        "(set-logic QF_NRA)\n(assert (= (/ 6.0 2.0 1.5) 2.0))\n(check-sat)\n",
+        ("theory-behavior:arity", "theory-behavior:left-associative", "theory-behavior:division-modulo", "theory-behavior:rational-normalization"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "le",
+        "term",
+        "<=",
+        "QF_LRA",
+        ("(<= Real Real Bool :chainable)",),
+        "(set-logic QF_LRA)\n(assert (<= 1.0 2.0 3.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (<= 3.0 2.0 1.0))\n"),
+        "(set-logic QF_LRA)\n(assert (<= 1.0 true))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (<= (- 10.0) 0.0 10.0))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "lt",
+        "term",
+        "<",
+        "QF_LRA",
+        ("(< Real Real Bool :chainable)",),
+        "(set-logic QF_LRA)\n(assert (< 1.0 2.0 3.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (< 3.0 2.0 1.0))\n"),
+        "(set-logic QF_LRA)\n(assert (< 1.0 true))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (< (- 10.0) 0.0 10.0))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "ge",
+        "term",
+        ">=",
+        "QF_LRA",
+        ("(>= Real Real Bool :chainable)",),
+        "(set-logic QF_LRA)\n(assert (>= 3.0 2.0 1.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (>= 1.0 2.0 3.0))\n"),
+        "(set-logic QF_LRA)\n(assert (>= 1.0 true))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (>= 10.0 0.0 (- 10.0)))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals",
+        "gt",
+        "term",
+        ">",
+        "QF_LRA",
+        ("(> Real Real Bool :chainable)",),
+        "(set-logic QF_LRA)\n(assert (> 3.0 2.0 1.0))\n(check-sat)\n",
+        proof_script("QF_LRA", "(assert (> 1.0 2.0 3.0))\n"),
+        "(set-logic QF_LRA)\n(assert (> 1.0 true))\n(check-sat)\n",
+        "(set-logic QF_LRA)\n(assert (> 10.0 0.0 (- 10.0)))\n(check-sat)\n",
+        ("theory-behavior:chainable", "theory-behavior:negative-numeral"),
+    ),
+    TheorySymbol(
+        "Reals_Ints",
+        "to-real",
+        "term",
+        "to_real",
+        "QF_NIRA",
+        ("(to_real Int Real)",),
+        "(set-logic QF_NIRA)\n(assert (= (to_real 2) 2.0))\n(check-sat)\n",
+        proof_script("QF_NIRA", "(assert (not (= (to_real 2) 2.0)))\n"),
+        "(set-logic QF_NIRA)\n(assert (= (to_real 2.0) 2.0))\n(check-sat)\n",
+        "(set-logic QF_NIRA)\n(assert (= (+ (to_real 2) 1.5) 3.5))\n(check-sat)\n",
+        ("theory-behavior:conversion", "theory-behavior:overloaded-arithmetic", "theory-behavior:rational-normalization"),
+    ),
+    TheorySymbol(
+        "Reals_Ints",
+        "to-int",
+        "term",
+        "to_int",
+        "QF_NIRA",
+        ("(to_int Real Int)",),
+        "(set-logic QF_NIRA)\n(assert (= (to_int 2.0) 2))\n(check-sat)\n",
+        proof_script("QF_NIRA", "(assert (not (= (to_int 2.0) 2)))\n"),
+        "(set-logic QF_NIRA)\n(assert (= (to_int 2) 2))\n(check-sat)\n",
+        "(set-logic QF_NIRA)\n(assert (= (to_int (/ 7.0 2.0)) 3))\n(check-sat)\n",
+        ("theory-behavior:conversion", "theory-behavior:rational-normalization"),
+    ),
+    TheorySymbol(
+        "Reals_Ints",
+        "is-int",
+        "term",
+        "is_int",
+        "QF_NIRA",
+        ("(is_int Real Bool)",),
+        "(set-logic QF_NIRA)\n(assert (is_int 2.0))\n(check-sat)\n",
+        proof_script("QF_NIRA", "(assert (is_int 2.5))\n"),
+        "(set-logic QF_NIRA)\n(assert (is_int 2))\n(check-sat)\n",
+        "(set-logic QF_NIRA)\n(assert (is_int (/ 4.0 2.0)))\n(check-sat)\n",
+        ("theory-behavior:conversion", "theory-behavior:rational-normalization"),
+    ),
+)
+
+
+def theory_features(symbol: TheorySymbol, kind: str) -> list[str]:
+    return [
+        f"theory:{symbol.theory}",
+        f"theory-kind:{symbol.kind}",
+        f"theory-operator:{symbol.theory}:{symbol.name}",
+        f"theory-entry:{symbol.theory}:{symbol.slug}",
+        f"theory-case:{kind}",
+        *(f"theory-declaration:{symbol.theory}:{declaration}" for declaration in symbol.declarations),
+        *symbol.behavior_features,
+    ]
+
+
+def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_phase: str) -> dict[str, object]:
+    return implementation_obligation(
+        files=("src/HolSmt/SmtLib_Theories.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        feature=f"theory-symbol:{symbol.theory}:{symbol.slug}:{kind}",
+        test_ids=[case_id],
+        failure_phase=failure_phase,
+        notes=GENERATED_OBLIGATION_NOTES,
+    )
+
+
+def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
+    case_id = f"theory:{symbol.theory}:{symbol.slug}:{kind}"
+    if kind == "sat":
+        modes = ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
+        expected = {
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result(
+                "fail",
+                diagnostic="SAT result has no HOL theorem to reconstruct",
+                failure_phase="theorem-shape",
+            ),
+        }
+        implementation = None
+    elif kind == "unsat-proof":
+        modes = ("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac")
+        expected = {
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "proof-parse": expected_result(
+                "red",
+                diagnostic="theory proof parsing evidence is incomplete",
+                failure_phase="proof-parse",
+                proof_rule_histogram={"asserted": 1},
+            ),
+            "proof-replay": expected_result(
+                "red",
+                diagnostic="theory proof replay evidence is incomplete",
+                failure_phase="proof-replay",
+                proof_rule_histogram={"asserted": 1},
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="checked Z3_TAC reconstruction for theory symbol is incomplete",
+                failure_phase="proof-replay",
+                theorem_shape="closed theorem without oracle tags",
+            ),
+        }
+        implementation = theory_obligation(symbol, kind, case_id, "proof-replay")
+    elif kind == "type-error":
+        modes = ("parser-only", "typecheck-only", "z3-tac")
+        expected = {
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="theory symbol arity or sort mismatch",
+                failure_phase="typecheck",
+            ),
+            "z3-tac": expected_result(
+                "fail",
+                diagnostic="theory symbol arity or sort mismatch",
+                failure_phase="typecheck",
+            ),
+        }
+        implementation = None
+    elif kind == "boundary":
+        modes = ("parser-only", "typecheck-only", "z3-oracle")
+        expected = {
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+        }
+        implementation = None
+    else:
+        raise GeneratorError(f"unknown theory case kind: {kind}")
+
+    entry = manifest_entry(
+        case_id=case_id,
+        file=deterministic_case_file("theory", case_id),
+        logic=symbol.logic,
+        standard="SMT-LIB-2.7",
+        row_class="theory",
+        features=theory_features(symbol, kind),
+        modes=modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=expected,
+        implementation_obligation=implementation,
+        source=source("SMT-LIB-theory", f"SMT-LIB 2.7 {symbol.theory} theory: {symbol.name}"),
+    )
+    return GeneratedCase(entry=entry, script=script)
+
+
+def theory_cases() -> list[GeneratedCase]:
+    cases: list[GeneratedCase] = []
+    for symbol in CORE_ARITHMETIC_THEORY_SYMBOLS:
+        cases.append(theory_case(symbol, "sat", symbol.sat_script))
+        cases.append(theory_case(symbol, "unsat-proof", symbol.unsat_proof_script))
+        cases.append(theory_case(symbol, "type-error", symbol.type_error_script))
+        cases.append(theory_case(symbol, "boundary", symbol.boundary_script))
+    return cases
+
+
 def logic_features(logic: str, kind: str) -> list[str]:
     features = [f"logic:{logic}", f"logic-case:{kind}"]
     if logic in UNDERREPRESENTED_LOGICS:
@@ -1204,6 +1876,8 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
 def cases_for_domain(domain: str) -> list[GeneratedCase]:
     if domain == "commands":
         return command_cases()
+    if domain == "theories":
+        return theory_cases()
     if domain == "logics":
         return logic_packet_cases()
     return sample_cases((DOMAIN_CLASSES[domain],))
@@ -1284,6 +1958,8 @@ def generate(classes: Iterable[str], manifest_path: Path, *, write: bool) -> dic
     requested = tuple(classes)
     if requested == ("command",):
         cases = command_cases()
+    elif requested == ("theory",):
+        cases = theory_cases()
     elif requested == ("logic",):
         cases = logic_packet_cases()
     else:

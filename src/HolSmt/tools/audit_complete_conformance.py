@@ -17,6 +17,7 @@ TOOLS_DIR = ROOT / "src" / "HolSmt" / "tools"
 DEFAULT_MANIFEST = TOOLS_DIR / "conformance-corpus" / "v2" / "manifest.json"
 DEFAULT_LOGICS_JSON = TOOLS_DIR / "conformance-corpus" / "v2" / "logics.json"
 DEFAULT_LOGIC_SOURCE = ROOT / "src" / "HolSmt" / "SmtLib_Logics.sml"
+DEFAULT_THEORY_SOURCE = ROOT / "src" / "HolSmt" / "SmtLib_Theories.sml"
 DEFAULT_COVERAGE = TOOLS_DIR / "coverage" / "smtlib_coverage.json"
 DEFAULT_COVERAGE_MANIFEST = TOOLS_DIR / "coverage" / "coverage_manifest.json"
 
@@ -33,6 +34,7 @@ V2_MODES = {
 }
 V2_STATUSES = {"pass", "fail", "red"}
 UNSAT_REQUIRED_MODES = {"proof-parse", "proof-replay", "z3-tac"}
+THEORY_REQUIRED_CASE_KINDS = {"sat", "unsat-proof", "type-error", "boundary"}
 COMPLETE_REQUIRED_CLASSES = {"SMT-LIB 2.7", "Z3 extension"}
 WEAK_COVERAGE_STATUSES = {
     "parse_only",
@@ -85,6 +87,19 @@ class CoverageRow:
     @property
     def key(self) -> tuple[str, str, str]:
         return self.section, self.item, self.row_class
+
+
+@dataclass(frozen=True)
+class TheoryMetadataSymbol:
+    theory: str
+    slug: str
+    kind: str
+    name: str
+    declarations: tuple[str, ...]
+
+    @property
+    def key(self) -> tuple[str, str]:
+        return self.theory, self.slug
 
 
 def load_json(path: Path) -> object:
@@ -351,6 +366,106 @@ def validate_logic_inventory(data: object, accepted_logics: list[str]) -> list[s
     return sorted(packet_logics)
 
 
+def extract_structure_body(text: str, structure_name: str) -> str:
+    marker = f"structure {structure_name} ="
+    start = text.find(marker)
+    if start < 0:
+        raise AuditError(f"could not find {structure_name} structure in SMT-LIB theory source")
+    next_section = text.find("\n  (*", start + len(marker))
+    if next_section < 0:
+        next_section = text.find("\nend  (* local *)", start + len(marker))
+    require(next_section > start, f"could not find end of {structure_name} structure in SMT-LIB theory source")
+    return text[start:next_section]
+
+
+def extract_entry_region(body: str, list_name: str) -> str:
+    start = body.find(f"val {list_name} = [")
+    if start < 0:
+        return ""
+    if list_name == "tyentries":
+        end_marker = "\n\n    val tmentries"
+    else:
+        end_marker = "\n\n    val tydict"
+    end = body.find(end_marker, start)
+    if end < 0:
+        return ""
+    return body[start:end]
+
+
+def official_entries_from_region(region: str) -> list[tuple[str, tuple[str, ...]]]:
+    entries: list[tuple[str, tuple[str, ...]]] = []
+    pattern = re.compile(
+        r'official_entry\s+"(?P<name>[^"]+)".*?\[(?P<declarations>(?:\s*"[^"]+"\s*,?)+)\]',
+        flags=re.DOTALL,
+    )
+    for match in pattern.finditer(region):
+        declarations = tuple(re.findall(r'"([^"]+)"', match.group("declarations")))
+        if declarations:
+            entries.append((match.group("name"), declarations))
+    return entries
+
+
+def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> str:
+    if kind == "sort":
+        return name.lower().replace("_", "-")
+    declaration = declarations[0] if declarations else ""
+    symbol_slugs = {
+        "=>": "implies",
+        "=": "eq",
+        "+": "plus",
+        "*": "times",
+        "**": "pow",
+        "/": "div",
+        "<=": "le",
+        "<": "lt",
+        ">=": "ge",
+        ">": "gt",
+        "to_real": "to-real",
+        "to_int": "to-int",
+        "is_int": "is-int",
+    }
+    if name == "_":
+        if declaration == "<decimal>":
+            return "decimal"
+        return "numeral"
+    if name == "-":
+        if re.match(r"^\(- (Int|Real) \1\)$", declaration):
+            return "neg"
+        return "sub"
+    return symbol_slugs.get(name, name.lower().replace("_", "-"))
+
+
+def parse_core_arithmetic_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
+    text = path.read_text(encoding="utf-8")
+    symbols: dict[tuple[str, str], TheoryMetadataSymbol] = {}
+
+    for theory in ("Core", "Ints", "Reals"):
+        body = extract_structure_body(text, theory)
+        for kind, list_name in (("sort", "tyentries"), ("term", "tmentries")):
+            for name, declarations in official_entries_from_region(extract_entry_region(body, list_name)):
+                symbol = TheoryMetadataSymbol(
+                    theory=theory,
+                    slug=theory_symbol_slug(kind, name, declarations),
+                    kind=kind,
+                    name=name,
+                    declarations=declarations,
+                )
+                symbols[symbol.key] = symbol
+
+    reals_ints_body = extract_structure_body(text, "Reals_Ints")
+    for name, declarations in official_entries_from_region(reals_ints_body):
+        symbol = TheoryMetadataSymbol(
+            theory="Reals_Ints",
+            slug=theory_symbol_slug("term", name, declarations),
+            kind="term",
+            name=name,
+            declarations=declarations,
+        )
+        symbols[symbol.key] = symbol
+
+    return [symbols[key] for key in sorted(symbols)]
+
+
 def case_expected_statuses(case: dict[str, object]) -> set[str]:
     expected = case.get("expected")
     if not isinstance(expected, dict):
@@ -419,6 +534,44 @@ def case_has_sat_no_theorem_diagnostic(case: dict[str, object]) -> bool:
         return False
     diagnostic = str(z3_tac.get("diagnostic", "")).lower()
     return z3_tac.get("status") == "fail" and "no" in diagnostic and "theorem" in diagnostic
+
+
+def is_theory_case_kind(case: dict[str, object], symbol: TheoryMetadataSymbol, kind: str) -> bool:
+    if case.get("class") != "theory":
+        return False
+    features = {feature for feature in case.get("features", []) if isinstance(feature, str)}
+    return {
+        f"theory:{symbol.theory}",
+        f"theory-entry:{symbol.theory}:{symbol.slug}",
+        f"theory-case:{kind}",
+    } <= features
+
+
+def audit_theory_symbols(cases: list[dict[str, object]], symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
+    issues: list[Issue] = []
+    for symbol in symbols:
+        missing_kinds = sorted(
+            kind
+            for kind in THEORY_REQUIRED_CASE_KINDS
+            if not any(is_theory_case_kind(case, symbol, kind) for case in cases)
+        )
+        if missing_kinds:
+            issues.append(
+                Issue(
+                    code="missing_theory_symbol_case",
+                    category="missing_complete_evidence",
+                    subject=f"theory/{symbol.theory}/{symbol.slug}",
+                    message="SMT-LIB theory metadata entry lacks required v2 symbol case coverage",
+                    details={
+                        "theory": symbol.theory,
+                        "kind": symbol.kind,
+                        "name": symbol.name,
+                        "declarations": list(symbol.declarations),
+                        "missing_case_kinds": missing_kinds,
+                    },
+                )
+            )
+    return issues
 
 
 def add_coverage_row(rows: dict[tuple[str, str, str], CoverageRow], row: CoverageRow) -> None:
@@ -749,6 +902,7 @@ def build_report(
     *,
     manifest_path: Path,
     logic_source: Path,
+    theory_source: Path,
     logics_json_path: Path | None,
     coverage_path: Path | None,
     coverage_manifest_path: Path | None,
@@ -756,6 +910,7 @@ def build_report(
     manifest = load_json(manifest_path)
     cases = validate_v2_manifest(manifest)
     accepted_logics = parse_accepted_logics(logic_source)
+    theory_symbols = parse_core_arithmetic_theory_symbols(theory_source)
     packet_logics = accepted_logics
     excluded_logics: list[str] = []
     if logics_json_path is not None and logics_json_path.exists():
@@ -771,6 +926,7 @@ def build_report(
             ]
     coverage_rows = load_coverage_rows(coverage_path, coverage_manifest_path)
     issues = audit_cases(cases, packet_logics)
+    issues.extend(audit_theory_symbols(cases, theory_symbols))
     issues.extend(audit_coverage(coverage_rows, cases))
 
     category_counts: dict[str, int] = {}
@@ -782,6 +938,7 @@ def build_report(
         "inputs": {
             "manifest": str(manifest_path),
             "logic_source": str(logic_source),
+            "theory_source": str(theory_source),
             "logics_json": str(logics_json_path) if logics_json_path is not None else None,
             "coverage": str(coverage_path) if coverage_path is not None else None,
             "coverage_manifest": str(coverage_manifest_path) if coverage_manifest_path is not None else None,
@@ -789,6 +946,7 @@ def build_report(
         "summary": {
             "accepted_logic_count": len(accepted_logics),
             "logic_packet_count": len(packet_logics),
+            "core_arithmetic_theory_symbol_count": len(theory_symbols),
             "v2_case_count": len(cases),
             "coverage_row_count": len({row.key for row in coverage_rows}),
             "issue_count": len(issues),
@@ -809,6 +967,8 @@ def print_text_summary(report: dict[str, object]) -> None:
     print(f"accepted logics: {summary['accepted_logic_count']}")
     if "logic_packet_count" in summary:
         print(f"logic packet logics: {summary['logic_packet_count']}")
+    if "core_arithmetic_theory_symbol_count" in summary:
+        print(f"core arithmetic theory symbols: {summary['core_arithmetic_theory_symbol_count']}")
     print(f"v2 cases: {summary['v2_case_count']}")
     print(f"coverage rows: {summary['coverage_row_count']}")
     print(f"issues: {summary['issue_count']}")
@@ -831,6 +991,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--logic-source", type=Path, default=DEFAULT_LOGIC_SOURCE)
+    parser.add_argument("--theory-source", type=Path, default=DEFAULT_THEORY_SOURCE)
     parser.add_argument("--logics-json", type=Path, default=DEFAULT_LOGICS_JSON)
     parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
     parser.add_argument("--coverage-manifest", type=Path, default=DEFAULT_COVERAGE_MANIFEST)
@@ -860,6 +1021,7 @@ def main(argv: list[str]) -> int:
         report = build_report(
             manifest_path=args.manifest,
             logic_source=args.logic_source,
+            theory_source=args.theory_source,
             logics_json_path=logics_json_path,
             coverage_path=coverage_path,
             coverage_manifest_path=coverage_manifest_path,
