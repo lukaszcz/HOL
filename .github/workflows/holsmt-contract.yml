@@ -244,6 +244,74 @@ jobs:
             .holsmt-ci/conformance/z3-tac/CONFORMANCE.md
           if-no-files-found: error
 
+  holsmt-complete-conformance:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Build HOL with current Z3
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: developers/docker-ci/Dockerfile
+          push: false
+          load: true
+          tags: holsmt-complete-conformance:4.13.0
+          build-args: |
+            SML=poly
+            Z3_VERSION=4.13.0
+            BUILDOPTS=--no-cache --expk -j4
+
+      - name: Run complete SMT-LIB conformance
+        run: |
+          mkdir -p "$PWD/.holsmt-ci/complete-conformance"
+          docker run --rm \
+            -v "$PWD/.holsmt-ci/complete-conformance:/tmp/holsmt-complete-conformance" \
+            holsmt-complete-conformance:4.13.0 \
+            sh -lc 'src/HolSmt/tools/run_complete_smtlib_conformance.sh \
+              --out-dir /tmp/holsmt-complete-conformance \
+              --timeout 30'
+
+      - name: Summarize complete conformance reports
+        if: always()
+        run: |
+          echo "Complete conformance artifact: holsmt-complete-conformance"
+          echo "Primary report paths:"
+          for path in \
+            .holsmt-ci/complete-conformance/complete-conformance.json \
+            .holsmt-ci/complete-conformance/COMPLETE_CONFORMANCE.md \
+            .holsmt-ci/complete-conformance/red-obligations.json \
+            .holsmt-ci/complete-conformance/RED_OBLIGATIONS.md
+          do
+            if [ -e "$path" ]; then
+              echo "  $path"
+            else
+              echo "  missing: $path"
+            fi
+          done
+
+          if [ -f .holsmt-ci/complete-conformance/COMPLETE_CONFORMANCE.md ]; then
+            echo
+            sed -n '1,120p' .holsmt-ci/complete-conformance/COMPLETE_CONFORMANCE.md
+          fi
+
+          if [ -f .holsmt-ci/complete-conformance/RED_OBLIGATIONS.md ]; then
+            echo
+            sed -n '1,120p' .holsmt-ci/complete-conformance/RED_OBLIGATIONS.md
+          fi
+
+      - name: Upload complete conformance reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: holsmt-complete-conformance
+          path: .holsmt-ci/complete-conformance
+          if-no-files-found: error
+
   enforced-contract-gate:
     runs-on: ubuntu-latest
     needs:
