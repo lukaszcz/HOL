@@ -2045,24 +2045,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "exit finalization behavior is not represented in theorem reconstruction",
+          "status": "unsupported",
+          "diagnostic": "no check-sat query in raw SMT-LIB script for checked Z3_TAC",
           "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/tools/conformance-corpus"
-        ],
-        "feature": "command-reconstruction:exit",
-        "test_ids": [
-          "command:exit:reconstruction"
-        ],
-        "failure_phase": "theorem-shape",
-        "notes": "Exit has parser/state behavior only; it does not correspond to a theorem-producing checked Z3_TAC query."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: exit"
@@ -2206,24 +2195,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "get-info/get-option response semantics are not reconstructed",
+          "status": "unsupported",
+          "diagnostic": "raw SMT-LIB query get-info is outside checked Z3_TAC command-line entry point",
           "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/tools/conformance-corpus"
-        ],
-        "feature": "command-reconstruction:get-info-get-option",
-        "test_ids": [
-          "command:get-info-get-option:reconstruction"
-        ],
-        "failure_phase": "theorem-shape",
-        "notes": "Information queries are recorded for parser/state coverage, but checked Z3_TAC does not reconstruct response objects for get-info/get-option."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: get-info, get-option"
@@ -2374,24 +2352,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "model/value response objects are not produced by checked reconstruction",
+          "status": "unsupported",
+          "diagnostic": "raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point",
           "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/tools/conformance-corpus"
-        ],
-        "feature": "command-reconstruction:get-model-get-value-get-assignment-get-assertions",
-        "test_ids": [
-          "command:get-model-get-value-get-assignment-get-assertions:reconstruction"
-        ],
-        "failure_phase": "theorem-shape",
-        "notes": "Model/value/assertion queries are recorded and explicitly unsupported by checked Z3_TAC because they do not produce unsat proof theorems."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: get-model, get-value, get-assignment, get-assertions"

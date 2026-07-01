@@ -32,7 +32,7 @@ V2_MODES = {
     "proof-replay",
     "z3-tac",
 }
-V2_STATUSES = {"pass", "fail", "red"}
+V2_STATUSES = {"pass", "fail", "unsupported", "red"}
 UNSAT_REQUIRED_MODES = {"proof-parse", "proof-replay", "z3-tac"}
 THEORY_REQUIRED_CASE_KINDS = {"sat", "unsat-proof", "type-error", "boundary"}
 COMPLETE_REQUIRED_CLASSES = {"SMT-LIB 2.7", "Z3 extension"}

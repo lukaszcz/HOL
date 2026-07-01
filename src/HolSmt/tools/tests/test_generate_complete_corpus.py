@@ -145,6 +145,10 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             if group in generator.RECONSTRUCTED_COMMAND_GROUPS:
                 self.assertEqual(expected["status"], "pass", case)
                 self.assertIsNone(obligation, case)
+            elif expected["notes"] == "theorem reconstruction applies: false":
+                self.assertEqual(expected["status"], "unsupported", case)
+                self.assertIsNone(obligation, case)
+                self.assertIn("Z3_TAC", expected["diagnostic"], case)
             else:
                 self.assertEqual(expected["status"], "red", case)
                 self.assertIsNotNone(obligation, case)

@@ -45,7 +45,7 @@ MODES = (
     "proof-replay",
     "z3-tac",
 )
-EXPECTED_STATUSES = ("pass", "fail", "red")
+EXPECTED_STATUSES = ("pass", "fail", "unsupported", "red")
 FAILURE_PHASES = (
     "parser",
     "typecheck",
@@ -159,6 +159,7 @@ class CommandGroup:
     reconstruction_diagnostic: str
     reconstruction_phase: str
     obligation_files: tuple[str, ...]
+    obligation_notes: str = GENERATED_OBLIGATION_NOTES
 
 
 @dataclass(frozen=True)
@@ -517,7 +518,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         negative_diagnostic="malformed get-option",
         negative_phase="parser",
         reconstruction_applies=False,
-        reconstruction_diagnostic="get-info/get-option response semantics are not reconstructed",
+        reconstruction_diagnostic="raw SMT-LIB query get-info is outside checked Z3_TAC command-line entry point",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
     ),
@@ -576,6 +577,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_diagnostic="function-sort and higher-order command replay is incomplete",
         reconstruction_phase="translation",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
+        obligation_notes=(
+            "First-order declarations are typechecked, but checked reconstruction for "
+            "function-sort and higher-order declarations remains outside the current translator."
+        ),
     ),
     CommandGroup(
         slug="define-const",
@@ -618,6 +623,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_diagnostic="recursive definition semantics are not implemented for checked replay",
         reconstruction_phase="translation",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
+        obligation_notes=(
+            "Recursive definition commands are parsed and bounded-state checked, but "
+            "recursive semantics are not translated for checked Z3_TAC replay."
+        ),
     ),
     CommandGroup(
         slug="declare-datatype-declare-datatypes",
@@ -632,6 +641,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_diagnostic="datatype constructor replay is incomplete",
         reconstruction_phase="translation",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        obligation_notes=(
+            "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC "
+            "translation still lacks native datatype constructor replay evidence."
+        ),
     ),
     CommandGroup(
         slug="assert",
@@ -702,6 +715,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_diagnostic="unsat-core and unsat-assumption extraction is not implemented",
         reconstruction_phase="proof-replay",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        obligation_notes=(
+            "Unsat-core and unsat-assumption commands are parsed and tracked, but checked "
+            "extraction/replay evidence is not implemented."
+        ),
     ),
     CommandGroup(
         slug="get-model-get-value-get-assignment-get-assertions",
@@ -713,7 +730,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         negative_diagnostic="malformed get-value",
         negative_phase="parser",
         reconstruction_applies=False,
-        reconstruction_diagnostic="model/value response objects are not produced by checked reconstruction",
+        reconstruction_diagnostic="raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
     ),
@@ -769,7 +786,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         negative_diagnostic="malformed exit",
         negative_phase="parser",
         reconstruction_applies=False,
-        reconstruction_diagnostic="exit finalization behavior is not represented in theorem reconstruction",
+        reconstruction_diagnostic="no check-sat query in raw SMT-LIB script for checked Z3_TAC",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
     ),
@@ -1024,21 +1041,31 @@ def command_cases() -> list[GeneratedCase]:
         )
         reconstruction_case_id = f"command:{group.slug}:reconstruction"
         reconstruction_is_fixed = group.slug in RECONSTRUCTED_COMMAND_GROUPS
-        reconstruction_expected = expected_result(
-            "pass",
-            notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
-        ) if reconstruction_is_fixed else expected_result(
-            "red",
-            diagnostic=group.reconstruction_diagnostic,
-            failure_phase=group.reconstruction_phase,
-            notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
-        )
-        reconstruction_obligation = None if reconstruction_is_fixed else implementation_obligation(
+        if reconstruction_is_fixed:
+            reconstruction_expected = expected_result(
+                "pass",
+                notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+            )
+        elif not group.reconstruction_applies:
+            reconstruction_expected = expected_result(
+                "unsupported",
+                diagnostic=group.reconstruction_diagnostic,
+                failure_phase=group.reconstruction_phase,
+                notes=f"theorem reconstruction applies: false",
+            )
+        else:
+            reconstruction_expected = expected_result(
+                "red",
+                diagnostic=group.reconstruction_diagnostic,
+                failure_phase=group.reconstruction_phase,
+                notes=f"theorem reconstruction applies: true",
+            )
+        reconstruction_obligation = None if reconstruction_is_fixed or not group.reconstruction_applies else implementation_obligation(
             files=group.obligation_files,
             feature=f"command-reconstruction:{group.slug}",
             test_ids=[reconstruction_case_id],
             failure_phase=group.reconstruction_phase,
-            notes=GENERATED_OBLIGATION_NOTES,
+            notes=group.obligation_notes,
         )
         cases.append(
             command_case(
