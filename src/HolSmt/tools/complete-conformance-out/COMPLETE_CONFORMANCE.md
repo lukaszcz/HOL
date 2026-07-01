@@ -1,8 +1,8 @@
 # HolSmt Complete SMT-LIB Conformance
 
 - Status: `unexpected-regression`
-- Red obligations: 1341
-- Unexpected regressions: 908
+- Red obligations: 1338
+- Unexpected regressions: 776
 - Infrastructure errors: 0
 - Steps: 29
 
@@ -53,14 +53,6 @@
 
 | Report | Case | Mode | Detail |
 | --- | --- | --- | --- |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:check-sat:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:define-fun-rec-define-funs-rec:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:echo:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:exit:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:get-info-get-option:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:get-model-get-value-get-assignment-get-assertions:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:reset-reset-assertions:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `command:set-info:negative` | `parser-only` | SMT-LIB S-expression parse succeeded |
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:ALIA:malformed` | `parser-only` | missing ')' |
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:ALIRA:malformed` | `parser-only` | missing ')' |
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:ANIA:malformed` | `parser-only` | missing ')' |
@@ -120,36 +112,44 @@
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:check-sat-assuming:negative` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-const` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-const:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-datatype-declare-datatypes:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-datatype-declare-datatypes:state` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-fun:negative` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-fun:state` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-sort:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-const:negative` | `typecheck-only` | typecheck-only command succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun-rec-define-funs-rec` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun-rec-define-funs-rec:state` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-sort` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-sort:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:push-pop:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:reset-reset-assertions` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:set-logic:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:set-option:negative` | `typecheck-only` | typecheck-only command succeeded |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:ALIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:ALIRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:ANIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:ANIRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:AUFLIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:AUFLIRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:AUFNIRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:BV:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:LIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:LRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:NIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:NRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_ABV:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_ALIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_ALRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_ANIA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_ANRA:type-error` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `logic:QF_AUFBV:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:array:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:extensionality:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:mixed-index-value-sorts:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:read-over-write:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:select:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:store:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:write-over-write:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:and:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:bool:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:distinct:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:eq:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:false:type-error` | `typecheck-only` | typecheck-only command succeeded |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:implies:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:ite:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:not:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:or:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:true:type-error` | `typecheck-only` | typecheck-only command succeeded |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Core:xor:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:binary-hex-literal:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bitvec:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvadd:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvand:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvashr:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvcomp:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvlshr:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvmul:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvnand:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvneg:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvnego:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvnor:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvnot:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvor:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsaddo:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsdiv:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsdivo:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsge:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsgt:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvshl:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsle:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvslt:type-error` | `typecheck-only` | typecheck-only command failed |

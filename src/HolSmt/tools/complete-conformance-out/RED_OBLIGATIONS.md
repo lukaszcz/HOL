@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1298
-- Complete-audit red rows: 1298
+- Manifest red rows: 1295
+- Complete-audit red rows: 1295
 - Proof-audit red rows: 43
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -10,9 +10,6 @@
 | `command:assert:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:assert` | `proof-replay` | src/HolSmt/SmtLib_TypeCheck.sml, src/HolSmt/Z3_ProofReplay.sml | command:assert:reconstruction |
 | `command:check-sat-assuming:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:check-sat-assuming` | `proof-replay` | src/HolSmt/SmtLib_TypeCheck.sml, src/HolSmt/Z3_ProofReplay.sml | command:check-sat-assuming:reconstruction |
 | `command:check-sat:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:check-sat` | `proof-replay` | src/HolSmt/SolverSpec.sml, src/HolSmt/Z3_ProofReplay.sml | command:check-sat:reconstruction |
-| `command:datatypes:mutual-tree-forest` | `typecheck-only` | `command` | `ALL` | `datatypes-reconstruction:mutual-command` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | command:datatypes:mutual-tree-forest |
-| `command:datatypes:parametric-box` | `typecheck-only` | `command` | `ALL` | `datatypes-reconstruction:parametric-command` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | command:datatypes:parametric-box |
-| `command:datatypes:recursive-list` | `typecheck-only` | `command` | `ALL` | `datatypes-reconstruction:recursive-command` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | command:datatypes:recursive-list |
 | `command:declare-const:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:declare-const` | `proof-replay` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml | command:declare-const:reconstruction |
 | `command:declare-datatype-declare-datatypes:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:declare-datatype-declare-datatypes` | `translation` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | command:declare-datatype-declare-datatypes:reconstruction |
 | `command:declare-fun:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:declare-fun` | `translation` | src/HolSmt/SmtLib_Translate.sml, src/HolSmt/SmtLib_TypeCheck.sml | command:declare-fun:reconstruction |
@@ -207,4 +204,7 @@
 | `logic:QF_RDL:fragment-violation` | `typecheck-only` | `logic` | `QF_RDL` | `logic-packet:QF_RDL:fragment-violation` | `typecheck` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_RDL:fragment-violation |
 | `logic:QF_RDL:fragment-violation` | `z3-tac` | `logic` | `QF_RDL` | `logic-packet:QF_RDL:fragment-violation` | `typecheck` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_RDL:fragment-violation |
 | `logic:QF_RDL:unsat-proof` | `proof-parse` | `logic` | `QF_RDL` | `logic-packet:QF_RDL:unsat-proof` | `proof-replay` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_RDL:unsat-proof |
-| ... | ... | ... | ... | ... | ... | ... | 1098 more in JSON |
+| `logic:QF_RDL:unsat-proof` | `proof-replay` | `logic` | `QF_RDL` | `logic-packet:QF_RDL:unsat-proof` | `proof-replay` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_RDL:unsat-proof |
+| `logic:QF_RDL:unsat-proof` | `z3-tac` | `logic` | `QF_RDL` | `logic-packet:QF_RDL:unsat-proof` | `proof-replay` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_RDL:unsat-proof |
+| `logic:QF_S:fragment-violation` | `typecheck-only` | `logic` | `QF_S` | `logic-packet:QF_S:fragment-violation` | `typecheck` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:QF_S:fragment-violation |
+| ... | ... | ... | ... | ... | ... | ... | 1095 more in JSON |

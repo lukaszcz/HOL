@@ -1,5 +1,5 @@
 {
-  "complete_audit_red_count": 1298,
+  "complete_audit_red_count": 1295,
   "complete_audit_red_obligations": [
     {
       "category": "implementation_obligation",
@@ -51,57 +51,6 @@
       "message": "red expected row requires implementation work for command-reconstruction:check-sat",
       "severity": "error",
       "subject": "case/command:check-sat:reconstruction:z3-tac"
-    },
-    {
-      "category": "datatypes-reconstruction",
-      "code": "red_implementation_obligation",
-      "details": {
-        "failure_phase": "typecheck",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "test_ids": [
-          "command:datatypes:mutual-tree-forest"
-        ]
-      },
-      "message": "red expected row requires implementation work for datatypes-reconstruction:mutual-command",
-      "severity": "error",
-      "subject": "case/command:datatypes:mutual-tree-forest:typecheck-only"
-    },
-    {
-      "category": "datatypes-reconstruction",
-      "code": "red_implementation_obligation",
-      "details": {
-        "failure_phase": "typecheck",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "test_ids": [
-          "command:datatypes:parametric-box"
-        ]
-      },
-      "message": "red expected row requires implementation work for datatypes-reconstruction:parametric-command",
-      "severity": "error",
-      "subject": "case/command:datatypes:parametric-box:typecheck-only"
-    },
-    {
-      "category": "datatypes-reconstruction",
-      "code": "red_implementation_obligation",
-      "details": {
-        "failure_phase": "typecheck",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "test_ids": [
-          "command:datatypes:recursive-list"
-        ]
-      },
-      "message": "red expected row requires implementation work for datatypes-reconstruction:recursive-command",
-      "severity": "error",
-      "subject": "case/command:datatypes:recursive-list:typecheck-only"
     },
     {
       "category": "implementation_obligation",
@@ -23568,7 +23517,7 @@
       "subject": "case/theory:Z3_Extensions:set:unsat-proof:z3-tac"
     }
   ],
-  "manifest_red_count": 1298,
+  "manifest_red_count": 1295,
   "manifest_red_obligations": [
     {
       "case": "command:assert:reconstruction",
@@ -23641,84 +23590,6 @@
       },
       "logic": "QF_UF",
       "mode": "z3-tac"
-    },
-    {
-      "case": "command:datatypes:mutual-tree-forest",
-      "class": "command",
-      "diagnostic": "unsupported command 'declare-datatypes'",
-      "features": [
-        "command-case:datatype-corpus",
-        "command:declare-datatypes",
-        "datatype-command:mutual",
-        "theory-behavior:mutual-datatype",
-        "theory:Datatypes"
-      ],
-      "implementation_obligation": {
-        "failure_phase": "typecheck",
-        "feature": "datatypes-reconstruction:mutual-command",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "notes": "Generated red seed row; keep red until executable evidence is added.",
-        "test_ids": [
-          "command:datatypes:mutual-tree-forest"
-        ]
-      },
-      "logic": "ALL",
-      "mode": "typecheck-only"
-    },
-    {
-      "case": "command:datatypes:parametric-box",
-      "class": "command",
-      "diagnostic": "unsupported parametric datatype declaration",
-      "features": [
-        "command-case:datatype-corpus",
-        "command:declare-datatype",
-        "datatype-command:parametric",
-        "theory-behavior:parametric-datatype",
-        "theory:Datatypes"
-      ],
-      "implementation_obligation": {
-        "failure_phase": "typecheck",
-        "feature": "datatypes-reconstruction:parametric-command",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "notes": "Generated red seed row; keep red until executable evidence is added.",
-        "test_ids": [
-          "command:datatypes:parametric-box"
-        ]
-      },
-      "logic": "ALL",
-      "mode": "typecheck-only"
-    },
-    {
-      "case": "command:datatypes:recursive-list",
-      "class": "command",
-      "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-      "features": [
-        "command-case:datatype-corpus",
-        "command:declare-datatype",
-        "datatype-command:recursive",
-        "theory-behavior:recursive-datatype",
-        "theory:Datatypes"
-      ],
-      "implementation_obligation": {
-        "failure_phase": "typecheck",
-        "feature": "datatypes-reconstruction:recursive-command",
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "notes": "Generated red seed row; keep red until executable evidence is added.",
-        "test_ids": [
-          "command:datatypes:recursive-list"
-        ]
-      },
-      "logic": "ALL",
-      "mode": "typecheck-only"
     },
     {
       "case": "command:declare-const:reconstruction",

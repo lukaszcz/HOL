@@ -151,18 +151,17 @@
       "classification_counts": {
         "diagnostic-mismatch": 55,
         "expected-implementation-gap": 5,
-        "matched": 1121,
-        "unexpected-status": 8
+        "matched": 1129
       },
       "conformance_status_counts": {
-        "fail": 63,
-        "pass": 1126
+        "fail": 55,
+        "pass": 1134
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json",
       "result_count": 1189,
       "status_counts": {
-        "fail": 55,
-        "pass": 1134,
+        "fail": 63,
+        "pass": 1126,
         "unsupported": 0
       }
     },
@@ -203,20 +202,20 @@
     {
       "case_count": 1249,
       "classification_counts": {
-        "diagnostic-mismatch": 259,
-        "expected-implementation-gap": 66,
-        "matched": 670,
-        "unexpected-status": 164
+        "diagnostic-mismatch": 197,
+        "expected-implementation-gap": 63,
+        "matched": 742,
+        "unexpected-status": 157
       },
       "conformance_status_counts": {
-        "fail": 423,
-        "pass": 736
+        "fail": 354,
+        "pass": 805
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
       "result_count": 1159,
       "status_counts": {
-        "fail": 425,
-        "pass": 734,
+        "fail": 416,
+        "pass": 743,
         "unsupported": 0
       }
     },
@@ -243,13 +242,14 @@
     {
       "case_count": 1249,
       "classification_counts": {
-        "diagnostic-mismatch": 395,
+        "diagnostic-mismatch": 340,
         "expected-implementation-gap": 515,
+        "matched": 55,
         "unexpected-status": 3
       },
       "conformance_status_counts": {
-        "fail": 398,
-        "pass": 515
+        "fail": 343,
+        "pass": 570
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
       "result_count": 913,
@@ -418,7 +418,7 @@
     }
   ],
   "red_obligations": {
-    "complete_audit_red_count": 1298,
+    "complete_audit_red_count": 1295,
     "complete_audit_red_obligations": [
       {
         "category": "implementation_obligation",
@@ -470,57 +470,6 @@
         "message": "red expected row requires implementation work for command-reconstruction:check-sat",
         "severity": "error",
         "subject": "case/command:check-sat:reconstruction:z3-tac"
-      },
-      {
-        "category": "datatypes-reconstruction",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "typecheck",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "test_ids": [
-            "command:datatypes:mutual-tree-forest"
-          ]
-        },
-        "message": "red expected row requires implementation work for datatypes-reconstruction:mutual-command",
-        "severity": "error",
-        "subject": "case/command:datatypes:mutual-tree-forest:typecheck-only"
-      },
-      {
-        "category": "datatypes-reconstruction",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "typecheck",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "test_ids": [
-            "command:datatypes:parametric-box"
-          ]
-        },
-        "message": "red expected row requires implementation work for datatypes-reconstruction:parametric-command",
-        "severity": "error",
-        "subject": "case/command:datatypes:parametric-box:typecheck-only"
-      },
-      {
-        "category": "datatypes-reconstruction",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "typecheck",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "test_ids": [
-            "command:datatypes:recursive-list"
-          ]
-        },
-        "message": "red expected row requires implementation work for datatypes-reconstruction:recursive-command",
-        "severity": "error",
-        "subject": "case/command:datatypes:recursive-list:typecheck-only"
       },
       {
         "category": "implementation_obligation",
@@ -23987,7 +23936,7 @@
         "subject": "case/theory:Z3_Extensions:set:unsat-proof:z3-tac"
       }
     ],
-    "manifest_red_count": 1298,
+    "manifest_red_count": 1295,
     "manifest_red_obligations": [
       {
         "case": "command:assert:reconstruction",
@@ -24060,84 +24009,6 @@
         },
         "logic": "QF_UF",
         "mode": "z3-tac"
-      },
-      {
-        "case": "command:datatypes:mutual-tree-forest",
-        "class": "command",
-        "diagnostic": "unsupported command 'declare-datatypes'",
-        "features": [
-          "command-case:datatype-corpus",
-          "command:declare-datatypes",
-          "datatype-command:mutual",
-          "theory-behavior:mutual-datatype",
-          "theory:Datatypes"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "typecheck",
-          "feature": "datatypes-reconstruction:mutual-command",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "command:datatypes:mutual-tree-forest"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "typecheck-only"
-      },
-      {
-        "case": "command:datatypes:parametric-box",
-        "class": "command",
-        "diagnostic": "unsupported parametric datatype declaration",
-        "features": [
-          "command-case:datatype-corpus",
-          "command:declare-datatype",
-          "datatype-command:parametric",
-          "theory-behavior:parametric-datatype",
-          "theory:Datatypes"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "typecheck",
-          "feature": "datatypes-reconstruction:parametric-command",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "command:datatypes:parametric-box"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "typecheck-only"
-      },
-      {
-        "case": "command:datatypes:recursive-list",
-        "class": "command",
-        "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-        "features": [
-          "command-case:datatype-corpus",
-          "command:declare-datatype",
-          "datatype-command:recursive",
-          "theory-behavior:recursive-datatype",
-          "theory:Datatypes"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "typecheck",
-          "feature": "datatypes-reconstruction:recursive-command",
-          "files": [
-            "src/HolSmt/SmtLib_Datatypes.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "command:datatypes:recursive-list"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "typecheck-only"
       },
       {
         "case": "command:declare-const:reconstruction",
@@ -66689,85 +66560,21 @@
   "summary": {
     "classification_counts": {
       "accepted": 27,
-      "diagnostic-mismatch": 711,
-      "expected-implementation-gap": 1298,
-      "matched": 2407,
+      "diagnostic-mismatch": 594,
+      "expected-implementation-gap": 1295,
+      "matched": 2542,
       "unexpected-failure": 14,
-      "unexpected-status": 176
+      "unexpected-status": 161
     },
     "infrastructure_error_count": 0,
-    "red_obligation_count": 1341,
+    "red_obligation_count": 1338,
     "report_dir": "src/HolSmt/tools/complete-conformance-out",
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "unexpected-regression",
     "step_count": 29,
-    "unexpected_regression_count": 908
+    "unexpected_regression_count": 776
   },
   "unexpected_regressions": [
-    {
-      "case": "command:check-sat:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:define-fun-rec-define-funs-rec:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:echo:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:exit:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:get-info-get-option:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:get-model-get-value-get-assignment-get-assertions:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:reset-reset-assertions:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
-    {
-      "case": "command:set-info:negative",
-      "classification": "unexpected-status",
-      "detail": "SMT-LIB S-expression parse succeeded",
-      "logic": "QF_UF",
-      "mode": "parser-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json"
-    },
     {
       "case": "logic:ALIA:malformed",
       "classification": "diagnostic-mismatch",
@@ -67241,562 +67048,10 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
     },
     {
-      "case": "command:declare-datatype-declare-datatypes:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:declare-datatype-declare-datatypes:state",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:declare-fun:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
       "case": "command:declare-fun:state",
       "classification": "unexpected-status",
       "detail": "typecheck-only command failed",
       "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:declare-sort:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-const:negative",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command succeeded",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun-rec-define-funs-rec",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun-rec-define-funs-rec:state",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-sort",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-sort:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:push-pop:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:reset-reset-assertions",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:set-logic:negative",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:set-option:negative",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command succeeded",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:ALIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "ALIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:ALIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "ALIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:ANIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "ANIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:ANIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "ANIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:AUFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "AUFLIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:AUFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "AUFLIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:AUFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "AUFNIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:BV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "BV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:LIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "LIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:LRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "LRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:NIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "NIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:NRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "NRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_ABV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_ABV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_ALIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_ALIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_ALRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_ALRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_ANIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_ANIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_ANRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_ANRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AUFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AUFBV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AUFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AUFLIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AUFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AUFLIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AUFNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AUFNIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AUFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AUFNIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_AX:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_AX",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_BV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_BV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_BVFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_BVFP",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_FP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_FP",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_FPBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_FPBV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_IDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_IDL",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_LIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_LIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_LIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_LIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_LRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_LRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_NIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_NIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_NIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_NIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_NRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_NRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_RDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_RDL",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_S:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_S",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_SLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_SLIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_SNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_SNIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UF:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFBV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFBVFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFBVFP",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFFP",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFIDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFIDL",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFLIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFLIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFLRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFLRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFNIRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:QF_UFNRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UFNRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UF:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFBV",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFIDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFIDL",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFLIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFLRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFLRA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFNIA",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "logic:UFNRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "typecheck-only command failed",
-      "logic": "UFNRA",
       "mode": "typecheck-only",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
     },
@@ -70625,25 +69880,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:ALIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "ALIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:ALIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "ALIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:ALIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "ALIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70657,25 +69896,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:ANIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "ANIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:ANIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "ANIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:ANIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "ANIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70689,25 +69912,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:AUFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "AUFLIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:AUFLIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "AUFLIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:AUFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "AUFLIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70721,25 +69928,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:AUFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "AUFNIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:BV:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "BV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:BV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70753,25 +69944,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:LIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "LIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:LRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "LRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:LRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "LRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70785,25 +69960,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:NIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "NIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:NRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "NRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:NRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "NRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70817,25 +69976,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_ABV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_ABV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_ALIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_ALIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_ALIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_ALIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70849,25 +69992,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_ALRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_ALRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_ANIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_ANIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_ANIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_ANIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70881,25 +70008,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_ANRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_ANRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_AUFBV:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_AUFBV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_AUFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_AUFBV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70913,25 +70024,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_AUFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_AUFLIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_AUFLIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_AUFLIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_AUFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_AUFLIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70945,25 +70040,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_AUFNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_AUFNIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_AUFNIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_AUFNIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_AUFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_AUFNIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -70977,25 +70056,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_AX:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_AX",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_BV:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_BV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_BV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71009,25 +70072,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_BVFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_BVFP",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_FP:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_FP",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_FP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71041,25 +70088,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_FPBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_FPBV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_IDL:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_IDL",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_IDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_IDL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71073,25 +70104,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_LIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_LIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_LIRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_LIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_LIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_LIRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71105,25 +70120,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_LRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_LRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_NIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_NIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_NIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_NIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71137,25 +70136,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_NIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_NIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_NRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_NRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_NRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_NRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71169,25 +70152,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_RDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_RDL",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_S:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_S",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_S:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_S",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71201,25 +70168,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_SLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_SLIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_SNIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_SNIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_SNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_SNIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71233,25 +70184,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_UF:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_UF",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_UFBV:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_UFBV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_UFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_UFBV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71265,25 +70200,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_UFBVFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_UFBVFP",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_UFFP:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_UFFP",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_UFFP:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_UFFP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71297,25 +70216,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_UFIDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_UFIDL",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_UFLIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_UFLIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_UFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_UFLIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71329,25 +70232,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_UFLIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_UFLIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_UFLRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_UFLRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_UFLRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_UFLRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71361,25 +70248,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:QF_UFNIRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "QF_UFNIRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:QF_UFNRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "QF_UFNRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:QF_UFNRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "QF_UFNRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71393,25 +70264,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:UF:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "UF",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:UFBV:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "UFBV",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:UFBV:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "UFBV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71425,25 +70280,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:UFIDL:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "UFIDL",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:UFLIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "UFLIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:UFLIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "UFLIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71457,14 +70296,6 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:UFLRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "UFLRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:UFNIA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
@@ -71473,25 +70304,9 @@
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
     },
     {
-      "case": "logic:UFNIA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
-      "logic": "UFNIA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
       "case": "logic:UFNRA:sat",
       "classification": "diagnostic-mismatch",
       "detail": "solver reports negated term to be satisfiable",
-      "logic": "UFNRA",
-      "mode": "z3-tac",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
-    },
-    {
-      "case": "logic:UFNRA:type-error",
-      "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :bool: wrong number of arguments for 'f': actual sorts [:bool, :bool]",
       "logic": "UFNRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71827,7 +70642,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvadd:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71843,7 +70658,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvand:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71859,7 +70674,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvashr:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71875,7 +70690,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvcomp:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word1: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word1: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71891,7 +70706,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvlshr:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71907,7 +70722,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvmul:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71923,7 +70738,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvnand:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71939,7 +70754,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvneg:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71963,7 +70778,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvnor:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71979,7 +70794,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvnot:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -71995,7 +70810,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvor:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72019,7 +70834,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvsdiv:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72075,7 +70890,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvshl:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72123,7 +70938,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvsmod:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72147,7 +70962,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvsrem:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72171,7 +70986,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvsub:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72195,7 +71010,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvudiv:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72283,7 +71098,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvurem:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72307,7 +71122,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvxnor:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72323,7 +71138,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:bvxor:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72339,7 +71154,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:concat:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72371,7 +71186,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:extract:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word9: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word9: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72379,7 +71194,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:int-to-bv:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72395,7 +71210,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:repeat:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72411,7 +71226,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:rotate-left:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72427,7 +71242,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:rotate-right:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72435,7 +71250,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:sbv-to-int:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72451,7 +71266,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:sign-extend:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72459,7 +71274,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:ubv-to-int:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72475,7 +71290,7 @@
     {
       "case": "theory:Fixed_Size_BitVectors:zero-extend:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :word4: assert term must have Bool sort",
       "logic": "QF_BV",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72523,7 +71338,7 @@
     {
       "case": "theory:FloatingPoint:fp.abs:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72531,7 +71346,7 @@
     {
       "case": "theory:FloatingPoint:fp.add:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72539,7 +71354,7 @@
     {
       "case": "theory:FloatingPoint:fp.div:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72651,7 +71466,7 @@
     {
       "case": "theory:FloatingPoint:fp.max:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72659,7 +71474,7 @@
     {
       "case": "theory:FloatingPoint:fp.min:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72667,7 +71482,7 @@
     {
       "case": "theory:FloatingPoint:fp.mul:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72675,7 +71490,7 @@
     {
       "case": "theory:FloatingPoint:fp.neg:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72683,7 +71498,7 @@
     {
       "case": "theory:FloatingPoint:fp.rem:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72691,7 +71506,7 @@
     {
       "case": "theory:FloatingPoint:fp.roundtointegral:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72699,7 +71514,7 @@
     {
       "case": "theory:FloatingPoint:fp.sqrt:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72707,7 +71522,7 @@
     {
       "case": "theory:FloatingPoint:fp.sub:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72715,7 +71530,7 @@
     {
       "case": "theory:FloatingPoint:fp.to-real:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :real: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :real: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72723,7 +71538,7 @@
     {
       "case": "theory:FloatingPoint:fp.to-sbv:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72731,7 +71546,7 @@
     {
       "case": "theory:FloatingPoint:fp.to-ubv:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :word8: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 5, column 9 in command 'assert', expected sort :bool, actual sort :word8: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72739,7 +71554,7 @@
     {
       "case": "theory:FloatingPoint:fp:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_2: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_2: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72787,7 +71602,7 @@
     {
       "case": "theory:FloatingPoint:rna:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72795,7 +71610,7 @@
     {
       "case": "theory:FloatingPoint:rne:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72811,7 +71626,7 @@
     {
       "case": "theory:FloatingPoint:roundnearesttiestoaway:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72819,7 +71634,7 @@
     {
       "case": "theory:FloatingPoint:roundnearesttiestoeven:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72827,7 +71642,7 @@
     {
       "case": "theory:FloatingPoint:roundtowardnegative:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72835,7 +71650,7 @@
     {
       "case": "theory:FloatingPoint:roundtowardpositive:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72843,7 +71658,7 @@
     {
       "case": "theory:FloatingPoint:roundtowardzero:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72851,7 +71666,7 @@
     {
       "case": "theory:FloatingPoint:rtn:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72859,7 +71674,7 @@
     {
       "case": "theory:FloatingPoint:rtp:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72867,7 +71682,7 @@
     {
       "case": "theory:FloatingPoint:rtz:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_RoundingMode: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72875,7 +71690,7 @@
     {
       "case": "theory:FloatingPoint:to-fp-unsigned:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -72883,7 +71698,7 @@
     {
       "case": "theory:FloatingPoint:to-fp:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :'smtlib_FloatingPoint_8_24: assert term must have Bool sort",
       "logic": "QF_FP",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73059,7 +71874,7 @@
     {
       "case": "theory:Ints:numeral:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :int: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :int: assert term must have Bool sort",
       "logic": "QF_LIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73139,7 +71954,7 @@
     {
       "case": "theory:Reals:decimal:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :real: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :real: assert term must have Bool sort",
       "logic": "QF_LRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73251,7 +72066,7 @@
     {
       "case": "theory:Reals:numeral:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :real: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :real: assert term must have Bool sort",
       "logic": "QF_LRA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73523,7 +72338,7 @@
     {
       "case": "theory:UnicodeStrings:str.from-code:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :string: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :string: assert term must have Bool sort",
       "logic": "QF_SLIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73531,7 +72346,7 @@
     {
       "case": "theory:UnicodeStrings:str.from-int:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :string: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 2, column 9 in command 'assert', expected sort :bool, actual sort :string: assert term must have Bool sort",
       "logic": "QF_SLIA",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73667,7 +72482,7 @@
     {
       "case": "theory:Z3_Extensions:bag.difference-subtract:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73675,7 +72490,7 @@
     {
       "case": "theory:Z3_Extensions:bag.inter-min:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73683,7 +72498,7 @@
     {
       "case": "theory:Z3_Extensions:bag.union-disjoint:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73691,7 +72506,7 @@
     {
       "case": "theory:Z3_Extensions:bag.union-max:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> num: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73707,7 +72522,7 @@
     {
       "case": "theory:Z3_Extensions:seq-concat:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int list: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int list: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73723,7 +72538,7 @@
     {
       "case": "theory:Z3_Extensions:seq.extract:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :int list: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :int list: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73747,7 +72562,7 @@
     {
       "case": "theory:Z3_Extensions:set.insert:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 3, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73755,7 +72570,7 @@
     {
       "case": "theory:Z3_Extensions:set.intersect:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73771,7 +72586,7 @@
     {
       "case": "theory:Z3_Extensions:set.minus:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
@@ -73787,7 +72602,7 @@
     {
       "case": "theory:Z3_Extensions:set.union:type-error",
       "classification": "diagnostic-mismatch",
-      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: sort mismatch",
+      "detail": "invalid SMT-LIB input at line 4, column 9 in command 'assert', expected sort :bool, actual sort :int -> bool: assert term must have Bool sort",
       "logic": "ALL",
       "mode": "z3-tac",
       "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
