@@ -2209,22 +2209,46 @@ local
     List.concat
       (List.map (List.rev o typecheck_frame_local_definitions) (List.rev frames))
 
+  val reset_logic_prefix = "__HOLSMT_RESET__:"
+
+  fun reset_logic logic = reset_logic_prefix ^ logic
+
+  fun is_reset_logic logic = String.isPrefix reset_logic_prefix logic
+
+  fun visible_logic logic =
+    if is_reset_logic logic then
+      String.extract (logic, String.size reset_logic_prefix, NONE)
+    else logic
+
+  fun has_active_typecheck_state state =
+    case state of
+      SOME {logic, ...} => not (is_reset_logic logic)
+    | NONE => false
+
   fun new_typecheck_state logic tydict tmdict =
     {logic = logic,
      frames = [mk_typecheck_frame tydict tmdict (empty_sigdict ())],
      queries = []}
 
-  fun dest_typecheck_state cmd (SOME x) = x
+  fun dest_typecheck_state cmd (SOME (x as {logic, ...})) =
+        if is_reset_logic logic then
+          raise ERR "typecheck_script"
+            ("received " ^ cmd ^ " before set-logic")
+        else x
     | dest_typecheck_state cmd NONE =
         raise ERR "typecheck_script" ("received " ^ cmd ^ " before set-logic")
 
   fun finalize_typecheck_state cmd state : command_state_snapshot =
   let
     val command_state as {logic, queries, ...} =
-      dest_typecheck_state cmd state
+      (case state of
+         SOME x => x
+       | NONE =>
+           raise ERR "typecheck_script"
+             ("received " ^ cmd ^ " before set-logic"))
     val (tydict, tmdict, _) = current_typecheck_dicts command_state
   in
-    {logic = logic,
+    {logic = visible_logic logic,
      tydict = tydict,
      tmdict = tmdict,
      assertions = active_typechecked_assertions command_state,
@@ -2290,6 +2314,14 @@ local
     | SOME _ =>
         type_error "reject_duplicate_signature" context loc NONE NONE
           ("duplicate declaration for symbol '" ^ name ^ "'")
+
+  fun reject_duplicate_definition context loc name sigdict =
+    case peek_signatures (sigdict, name) of
+      NONE => ()
+    | SOME _ =>
+        type_error "reject_duplicate_definition" context loc NONE NONE
+          ("duplicate define-const/define-fun declaration for symbol '" ^
+           name ^ "'")
 
   fun make_decl_parsefn name tm args_count token indices args =
     if List.null indices andalso List.length args = args_count then
@@ -2650,7 +2682,7 @@ local
         end)
       tydict params
 
-  fun typecheck_datatype_body context datatype_name decl
+  fun typecheck_datatype_body context recursive_datatype_tys datatype_name decl
       (tydict, tmdict, sigdict) =
     let
       val datatype_name_s = located_string_node datatype_name
@@ -2666,6 +2698,13 @@ local
                   DatatypeSelector (selector_name, selector_sort) =>
                     let
                       val selector_ty = typecheck_sort context tydict selector_sort
+                      val _ =
+                        if List.exists (fn ty => selector_ty = ty)
+                            recursive_datatype_tys then
+                          type_error "typecheck_declare_datatype" context
+                            (loc_of selector_sort) NONE NONE
+                            "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+                        else ()
                     in
                       (located_string_node selector_name, selector_ty)
                     end
@@ -2711,6 +2750,11 @@ local
       case node_of decl of
         DatatypeDecl (params, constructors) =>
           let
+            val _ =
+              if List.null params then ()
+              else type_error "typecheck_declare_datatype" context
+                (loc_of decl) NONE NONE
+                "unsupported parametric datatype declaration"
             val constructor_tydict = add_datatype_params params tydict
             val (tmdict, sigdict) =
               List.foldl (add_constructor constructor_tydict)
@@ -2727,7 +2771,8 @@ local
           DatatypeDecl (params, _) => List.length params
       val tydict = extend_datatype_sort context name arity tydict
     in
-      typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
+      typecheck_datatype_body context [datatype_type (located_string_node name)]
+        name decl (tydict, tmdict, sigdict)
     end
 
   fun typecheck_declare_datatypes context bindings decls
@@ -2742,6 +2787,11 @@ local
                         "empty declare-datatypes command"))
           NONE NONE
           "datatype binding count does not match datatype declaration count"
+
+      val _ =
+        if List.length bindings <= 1 then ()
+        else raise ERR "typecheck_script"
+          "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
 
       fun binding_info binding =
         case node_of binding of
@@ -2768,9 +2818,12 @@ local
           (fn ((name, arity), tydict) =>
             extend_datatype_sort context name arity tydict)
           tydict infos
+      val recursive_datatype_tys =
+        List.map (datatype_type o located_string_node o Lib.fst) infos
 
       fun add_one ((name, _), decl, (tydict, tmdict, sigdict)) =
-        typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
+        typecheck_datatype_body context recursive_datatype_tys
+          name decl (tydict, tmdict, sigdict)
     in
       ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
     end
@@ -2778,13 +2831,7 @@ local
   fun define_typechecked_fun context loc name vars range_type definiens
       (tmdict, sigdict) =
     let
-      val _ =
-        case peek_signatures (sigdict, name) of
-          NONE => ()
-        | SOME _ =>
-            type_error "define_typechecked_fun" context loc NONE NONE
-              ("duplicate define-const/define-fun declaration for symbol '" ^
-               name ^ "'")
+      val _ = reject_duplicate_definition context loc name sigdict
       val domain_types = List.map (Term.type_of o Lib.snd) vars
       val (tm, tmdict, sigdict) =
         add_value_signature name domain_types range_type (tmdict, sigdict)
@@ -2799,6 +2846,7 @@ local
     let
       val name_loc = loc_of name
       val name = located_string_node name
+      val _ = reject_duplicate_definition context name_loc name sigdict
       val range_type = typecheck_sort context tydict sort
       val body_checked = typecheck_term context (tydict, tmdict, sigdict) body
       val body_term = expect_checked_sort "typecheck_define_const" context
@@ -2815,6 +2863,7 @@ local
     let
       val name_loc = loc_of name
       val name = located_string_node name
+      val _ = reject_duplicate_definition context name_loc name sigdict
       fun term_mentions_name term =
         case node_of term of
           TermIdentifier n => n = name
@@ -2919,15 +2968,15 @@ local
         end
     in
       case node_of command of
-        CmdSetInfo _ => state
-      | CmdSetOption _ =>
-          if Option.isSome state then
+      CmdSetInfo _ => state
+    | CmdSetOption _ =>
+          if has_active_typecheck_state state then
             raise ERR "typecheck_script"
               "set-option after logic or assertions"
           else state
       | CmdSetLogic logic =>
           let
-            val _ = not (Option.isSome state) orelse
+            val _ = not (has_active_typecheck_state state) orelse
               raise ERR "typecheck_script"
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
@@ -3076,10 +3125,10 @@ local
       | CmdReset =>
           let
             val command_state = dest_typecheck_state "reset" state
-            val logic = #logic command_state
+            val logic = visible_logic (#logic command_state)
             val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic
           in
-            finish (new_typecheck_state logic tydict tmdict)
+            finish (new_typecheck_state (reset_logic logic) tydict tmdict)
           end
       | CmdResetAssertions =>
           let

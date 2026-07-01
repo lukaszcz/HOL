@@ -1024,21 +1024,32 @@ fun smtlib_command_malformed_diagnostics () =
         ("(set-logic QF_UF)\n" ^
          "(declare-const p Bool)\n" ^
          "(declare-const p Bool)\n"));
+    expect_hol_error_contains "duplicate define-const"
+      "duplicate define-const/define-fun declaration for symbol 'p'"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(define-const p Bool true)\n" ^
+         "(define-const p Bool false)\n"));
+    expect_hol_error_contains "set-option after logic"
+      "set-option after logic or assertions"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(set-option :produce-proofs true)\n"));
     expect_hol_error_contains "recursive define-fun"
-      "unsupported command 'define-fun-rec'"
+      "recursive self-reference"
       (typecheck
         ("(set-logic QF_LIA)\n" ^
-         "(define-fun-rec f ((x Int)) Int x)\n"));
+         "(define-fun-rec f ((x Int)) Int (f x))\n"));
     expect_hol_error_contains "mutual recursive define-fun"
-      "unsupported command 'define-funs-rec'"
+      "malformed recursive definition block"
       (typecheck
         ("(set-logic QF_LIA)\n" ^
-         "(define-funs-rec ((f ((x Int)) Int)) (x))\n"));
+         "(define-funs-rec ((f ((x Int)) Int)) ())\n"));
     expect_hol_error_contains "mutual datatype"
       "unsupported command 'declare-datatypes'"
       (typecheck
         ("(set-logic ALL)\n" ^
-         "(declare-datatypes ((T 0)) (((mkT))))\n"));
+         "(declare-datatypes ((T 0) (U 0)) (((mkT)) ((mkU))))\n"));
     expect_hol_error_contains "check-sat-assuming sort"
       "command 'check-sat-assuming'"
       (typecheck
