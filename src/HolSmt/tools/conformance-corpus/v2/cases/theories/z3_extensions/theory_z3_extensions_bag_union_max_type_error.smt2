@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-const b (Bag Int))
+(declare-const c (Bag Int))
+(assert (bag.union_max b c))
+(check-sat)

@@ -171,6 +171,54 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             set(generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE)),
         )
 
+    def test_theories_subcommand_separates_strings_and_z3_extensions(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(generator.main(["theories"]), 0)
+
+        manifest = json.loads(stdout.getvalue())
+        cases = audit.validate_v2_manifest(manifest)
+
+        string_cases = [
+            case for case in cases
+            if "theory:UnicodeStrings" in case["features"]
+        ]
+        extension_cases = [
+            case for case in cases
+            if "theory:Z3_Extensions" in case["features"]
+        ]
+        self.assertTrue(string_cases)
+        self.assertTrue(extension_cases)
+        self.assertTrue(
+            all(case["standard"] == "SMT-LIB-2.7" for case in string_cases)
+        )
+        self.assertTrue(
+            all(case["file"].startswith("cases/theories/strings/") for case in string_cases)
+        )
+        self.assertTrue(
+            all(case["standard"] == "Z3-extension" for case in extension_cases)
+        )
+        self.assertTrue(
+            all(case["file"].startswith("cases/theories/z3_extensions/") for case in extension_cases)
+        )
+        for case in string_cases + extension_cases:
+            self.assertIn("typecheck-only", case["modes"])
+            self.assertFalse(set(case["modes"]) <= {"parser-only"})
+            if "theory-case:type-error" not in case["features"]:
+                self.assertIn("z3-oracle", case["modes"])
+            if "theory-case:unsat-proof" in case["features"]:
+                self.assertIn("proof-parse", case["modes"])
+                self.assertIn("proof-replay", case["modes"])
+
+        literal_cases = [
+            case for case in string_cases
+            if "theory-entry:UnicodeStrings:string-literal" in case["features"]
+        ]
+        self.assertTrue(literal_cases)
+        self.assertTrue(
+            any(result["status"] == "red" for result in literal_cases[0]["expected"].values())
+        )
+
     def test_manifest_entry_preserves_red_obligation_contract(self):
         case_id = generator.deterministic_case_id("command", "command:future")
         common = {

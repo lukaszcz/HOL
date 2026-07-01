@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_SLIA)
+(assert (not (= ((_ re.^ 2) (str.to_re "a")) ((_ re.^ 2) (str.to_re "a")))))
+(check-sat)
+(get-proof)

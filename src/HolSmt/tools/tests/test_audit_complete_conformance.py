@@ -201,6 +201,63 @@ class CompleteConformanceAuditTests(unittest.TestCase):
             ["proof-parse", "proof-replay", "z3-tac"],
         )
 
+    def test_string_regex_and_extension_theory_rows_reject_parse_only_coverage(self):
+        case = v2_case(
+            "theory_unicode_strings_str_len_sat",
+            logic="QF_SLIA",
+            features=[
+                "theory:UnicodeStrings",
+                "theory-entry:UnicodeStrings:str.len",
+                "theory-case:sat",
+            ],
+            modes=["parser-only"],
+            expected={"parser-only": {"status": "pass"}},
+            row_class="theory",
+        )
+        case["file"] = "cases/theories/strings/theory_unicode_strings_str_len_sat.smt2"
+        case["source"] = {
+            "kind": "SMT-LIB-theory",
+            "reference": "SMT-LIB 2.7 UnicodeStrings str.len",
+        }
+
+        issues = audit.audit_cases([case], [])
+
+        self.assertTrue(
+            any(issue.code == "parse_only_string_regex_extension_coverage" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+
+    def test_string_regex_and_extension_theory_rows_accept_required_modes(self):
+        case = v2_case(
+            "theory_z3_extensions_seq_sat",
+            logic="ALL",
+            features=[
+                "theory:Z3_Extensions",
+                "theory-entry:Z3_Extensions:seq",
+                "theory-case:sat",
+            ],
+            modes=["parser-only", "typecheck-only", "z3-oracle"],
+            expected={
+                "parser-only": {"status": "pass"},
+                "typecheck-only": {"status": "pass"},
+                "z3-oracle": {"status": "pass"},
+            },
+            row_class="theory",
+        )
+        case["file"] = "cases/theories/z3_extensions/theory_z3_extensions_seq_sat.smt2"
+        case["standard"] = "Z3-extension"
+        case["source"] = {
+            "kind": "Z3-extension",
+            "reference": "Z3 Seq extension",
+        }
+
+        issues = audit.audit_cases([case], [])
+
+        self.assertFalse(
+            [issue for issue in issues if issue.code == "parse_only_string_regex_extension_coverage"],
+            [issue.render() for issue in issues],
+        )
+
     def test_red_rows_without_implementation_obligation_fail_manifest_validation(self):
         manifest = {
             "schema_version": "2",

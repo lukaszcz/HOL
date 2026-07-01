@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic QF_SLIA)
+(declare-const x String)
+(assert (not (= x x)))
+(check-sat)
+(get-proof)

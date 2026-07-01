@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-const xs (Seq Int))
+(assert (not (= (seq.len xs) (seq.len xs))))
+(check-sat)
+(get-proof)

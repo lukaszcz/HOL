@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_SLIA)
+(assert (not (= re.allchar re.allchar)))
+(check-sat)
+(get-proof)

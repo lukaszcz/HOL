@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-const b (Bag Int))
+(assert (not (= (bag.count 1 b) (bag.count 1 b))))
+(check-sat)
+(get-proof)

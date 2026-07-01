@@ -1,0 +1,7 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-const b (Bag Int))
+(declare-const c (Bag Int))
+(assert (not (= (bag.difference_subtract b c) (bag.difference_subtract b c))))
+(check-sat)
+(get-proof)

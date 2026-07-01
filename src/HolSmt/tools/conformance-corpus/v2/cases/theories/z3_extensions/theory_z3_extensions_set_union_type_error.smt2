@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-const s (Set Int))
+(declare-const t (Set Int))
+(assert (set.union s t))
+(check-sat)

@@ -1445,6 +1445,20 @@ FLOATINGPOINT_RECONSTRUCTION_FILES = (
     "src/HolSmt/Z3_ProofReplay.sml",
 )
 
+STRING_RECONSTRUCTION_FILES = (
+    "src/HolSmt/SmtLib_Parser.sml",
+    "src/HolSmt/SmtLib_Theories.sml",
+    "src/HolSmt/SmtLib.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
+Z3_EXTENSION_RECONSTRUCTION_FILES = (
+    "src/HolSmt/SmtLib_Theories.sml",
+    "src/HolSmt/SmtLib_Logics.sml",
+    "src/HolSmt/SmtLib.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
 Z3_UNSUPPORTED_BITVECTOR_OPERATORS = {
     "ubv_to_int",
     "sbv_to_int",
@@ -2012,11 +2026,299 @@ FLOATINGPOINT_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
 )
 
 
+def string_body(
+    assertion: str,
+    declarations: str = "",
+) -> str:
+    return declarations + f"(assert {assertion})\n"
+
+
+def string_self_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(or {term} (not {term}))"
+    return f"(= {term} {term})"
+
+
+def string_unsat_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(and {term} (not {term}))"
+    return f"(not (= {term} {term}))"
+
+
+def string_type_error_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "String":
+        return term
+    return f"(= {term} \"type-error\")"
+
+
+def string_boundary_body(extra_assertion: str = "") -> str:
+    return (
+        "(declare-const s String)\n"
+        "(assert (= (str.++ \"\" \"abc\") \"abc\"))\n"
+        "(assert (= (str.len \"abc\") 3))\n"
+        "(assert (str.prefixof \"a\" \"abc\"))\n"
+        "(assert (str.in_re \"aa\" ((_ re.loop 1 3) (str.to_re \"a\"))))\n"
+        + ("" if not extra_assertion else f"(assert {extra_assertion})\n")
+    )
+
+
+def string_symbol(
+    slug_name: str,
+    name: str,
+    declarations: tuple[str, ...],
+    term: str,
+    result_sort: str,
+    behavior_features: tuple[str, ...],
+    *,
+    kind: str = "term",
+    sat_declarations: str = "",
+    type_error_assertion: str | None = None,
+    boundary_assertion: str | None = None,
+) -> TheorySymbol:
+    return TheorySymbol(
+        "UnicodeStrings",
+        slug_name,
+        kind,
+        name,
+        "QF_SLIA",
+        declarations,
+        check_sat_script(
+            "QF_SLIA",
+            string_body(string_self_assertion(term, result_sort), sat_declarations),
+        ),
+        proof_script(
+            "QF_SLIA",
+            string_body(string_unsat_assertion(term, result_sort), sat_declarations),
+        ),
+        check_sat_script(
+            "QF_SLIA",
+            string_body(
+                type_error_assertion
+                if type_error_assertion is not None
+                else string_type_error_assertion(term, result_sort),
+                sat_declarations,
+            ),
+        ),
+        check_sat_script(
+            "QF_SLIA",
+            string_boundary_body("" if boundary_assertion is None else boundary_assertion),
+        ),
+        (
+            "theory-behavior:string",
+            "theory-behavior:translation-gap",
+            "theory-behavior:proof-gap",
+            *behavior_features,
+        ),
+    )
+
+
+def string_sort(slug_name: str, name: str, declaration: str, sat_decl: str) -> TheorySymbol:
+    return TheorySymbol(
+        "UnicodeStrings",
+        slug_name,
+        "sort",
+        name,
+        "QF_SLIA",
+        (declaration,),
+        check_sat_script("QF_SLIA", f"{sat_decl}\n(assert (= x x))\n"),
+        proof_script("QF_SLIA", f"{sat_decl}\n(assert (not (= x x)))\n"),
+        check_sat_script("QF_SLIA", f"(declare-const bad ({name} Bool))\n"),
+        check_sat_script("QF_SLIA", string_boundary_body()),
+        (
+            "theory-behavior:string",
+            "theory-behavior:translation-gap",
+            "theory-behavior:proof-gap",
+            "theory-behavior:sort-arity",
+        ),
+    )
+
+
+UNICODE_STRING_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    string_sort("string", "String", "(String 0)", "(declare-const x String)"),
+    string_sort("reglan", "RegLan", "(RegLan String)", "(declare-const x (RegLan String))"),
+    string_symbol(
+        "string-literal",
+        "<string literal>",
+        ("<string literal token>",),
+        "\"abc\"",
+        "String",
+        ("theory-behavior:literal", "theory-behavior:parser-gap"),
+        kind="literal",
+        type_error_assertion="(= \"abc\" 3)",
+        boundary_assertion="(= \"line\" \"line\")",
+    ),
+    string_symbol("str-concat", "str.++", ("(str.++ String String String :left-assoc)",), "(str.++ \"a\" \"b\")", "String", ("theory-behavior:left-associative", "theory-behavior:concat")),
+    string_symbol("str.len", "str.len", ("(str.len String Int)",), "(str.len \"abc\")", "Int", ("theory-behavior:length", "theory-behavior:string-int")),
+    string_symbol("str-lt", "str.<", ("(str.< String String Bool :chainable)",), "(str.< \"a\" \"b\")", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable")),
+    string_symbol("str-le", "str.<=", ("(str.<= String String Bool :chainable)",), "(str.<= \"a\" \"b\")", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable")),
+    string_symbol("str.at", "str.at", ("(str.at String Int String)",), "(str.at \"abc\" 1)", "String", ("theory-behavior:indexing", "theory-behavior:string-int")),
+    string_symbol("str.substr", "str.substr", ("(str.substr String Int Int String)",), "(str.substr \"abc\" 0 2)", "String", ("theory-behavior:substring", "theory-behavior:string-int")),
+    string_symbol("str.prefixof", "str.prefixof", ("(str.prefixof String String Bool)",), "(str.prefixof \"a\" \"abc\")", "Bool", ("theory-behavior:predicate", "theory-behavior:prefix")),
+    string_symbol("str.suffixof", "str.suffixof", ("(str.suffixof String String Bool)",), "(str.suffixof \"c\" \"abc\")", "Bool", ("theory-behavior:predicate", "theory-behavior:suffix")),
+    string_symbol("str.contains", "str.contains", ("(str.contains String String Bool)",), "(str.contains \"abc\" \"b\")", "Bool", ("theory-behavior:predicate", "theory-behavior:contains")),
+    string_symbol("str.indexof", "str.indexof", ("(str.indexof String String Int Int)",), "(str.indexof \"abc\" \"b\" 0)", "Int", ("theory-behavior:indexing", "theory-behavior:string-int")),
+    string_symbol("str.replace", "str.replace", ("(str.replace String String String String)",), "(str.replace \"abc\" \"b\" \"x\")", "String", ("theory-behavior:replace",)),
+    string_symbol("str.replace-all", "str.replace_all", ("(str.replace_all String String String String)",), "(str.replace_all \"aba\" \"a\" \"x\")", "String", ("theory-behavior:replace", "theory-behavior:global-replace")),
+    string_symbol("str.is-digit", "str.is_digit", ("(str.is_digit String Bool)",), "(str.is_digit \"7\")", "Bool", ("theory-behavior:predicate", "theory-behavior:code-conversion")),
+    string_symbol("str.to-code", "str.to_code", ("(str.to_code String Int)",), "(str.to_code \"A\")", "Int", ("theory-behavior:code-conversion", "theory-behavior:string-int")),
+    string_symbol("str.from-code", "str.from_code", ("(str.from_code Int String)",), "(str.from_code 65)", "String", ("theory-behavior:code-conversion", "theory-behavior:string-int")),
+    string_symbol("str.to-int", "str.to_int", ("(str.to_int String Int)",), "(str.to_int \"123\")", "Int", ("theory-behavior:int-conversion", "theory-behavior:string-int")),
+    string_symbol("str.from-int", "str.from_int", ("(str.from_int Int String)",), "(str.from_int 123)", "String", ("theory-behavior:int-conversion", "theory-behavior:string-int")),
+    string_symbol("str.to-re", "str.to_re", ("(str.to_re String (RegLan String))",), "(str.to_re \"a\")", "RegLan", ("theory-behavior:regex", "theory-behavior:conversion")),
+    string_symbol("str.in-re", "str.in_re", ("(str.in_re String (RegLan String) Bool)",), "(str.in_re \"a\" (str.to_re \"a\"))", "Bool", ("theory-behavior:regex", "theory-behavior:membership")),
+    string_symbol("str.replace-re", "str.replace_re", ("(str.replace_re String (RegLan String) String String)",), "(str.replace_re \"abc\" (str.to_re \"b\") \"x\")", "String", ("theory-behavior:regex", "theory-behavior:replace")),
+    string_symbol("str.replace-re-all", "str.replace_re_all", ("(str.replace_re_all String (RegLan String) String String)",), "(str.replace_re_all \"aba\" (str.to_re \"a\") \"x\")", "String", ("theory-behavior:regex", "theory-behavior:replace", "theory-behavior:global-replace")),
+    string_symbol("re.none", "re.none", ("(re.none (RegLan String))",), "re.none", "RegLan", ("theory-behavior:regex", "theory-behavior:regex-constant")),
+    string_symbol("re.all", "re.all", ("(re.all (RegLan String))",), "re.all", "RegLan", ("theory-behavior:regex", "theory-behavior:regex-constant")),
+    string_symbol("re.allchar", "re.allchar", ("(re.allchar (RegLan String))",), "re.allchar", "RegLan", ("theory-behavior:regex", "theory-behavior:regex-constant")),
+    string_symbol("re-concat", "re.++", ("(re.++ (RegLan String) (RegLan String) (RegLan String))",), "(re.++ (str.to_re \"a\") (str.to_re \"b\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:concat")),
+    string_symbol("re.union", "re.union", ("(re.union (RegLan String) (RegLan String) (RegLan String) :left-assoc)",), "(re.union (str.to_re \"a\") (str.to_re \"b\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:left-associative", "theory-behavior:union")),
+    string_symbol("re.inter", "re.inter", ("(re.inter (RegLan String) (RegLan String) (RegLan String) :left-assoc)",), "(re.inter (str.to_re \"a\") re.all)", "RegLan", ("theory-behavior:regex", "theory-behavior:left-associative", "theory-behavior:intersection")),
+    string_symbol("re.diff", "re.diff", ("(re.diff (RegLan String) (RegLan String) (RegLan String))",), "(re.diff re.all (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:difference")),
+    string_symbol("re-star", "re.*", ("(re.* (RegLan String) (RegLan String))",), "(re.* (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:kleene-star")),
+    string_symbol("re-plus", "re.+", ("(re.+ (RegLan String) (RegLan String))",), "(re.+ (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:kleene-plus")),
+    string_symbol("re.opt", "re.opt", ("(re.opt (RegLan String) (RegLan String))",), "(re.opt (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:option")),
+    string_symbol("re.range", "re.range", ("(re.range String String (RegLan String))",), "(re.range \"a\" \"z\")", "RegLan", ("theory-behavior:regex", "theory-behavior:range")),
+    string_symbol("re-power", "re.^", ("((_ re.^ n) (RegLan String) (RegLan String))",), "((_ re.^ 2) (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:indexed", "theory-behavior:power")),
+    string_symbol("re.loop", "re.loop", ("((_ re.loop lo hi) (RegLan String) (RegLan String))",), "((_ re.loop 1 3) (str.to_re \"a\"))", "RegLan", ("theory-behavior:regex", "theory-behavior:indexed", "theory-behavior:loop")),
+)
+
+
+def extension_body(assertion: str, declarations: str = "") -> str:
+    return declarations + f"(assert {assertion})\n"
+
+
+def extension_self_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(or {term} (not {term}))"
+    return f"(= {term} {term})"
+
+
+def extension_unsat_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(and {term} (not {term}))"
+    return f"(not (= {term} {term}))"
+
+
+def extension_type_error_assertion(term: str, result_sort: str) -> str:
+    if result_sort in {"Seq", "Set", "Bag"}:
+        return term
+    return f"(= {term} true)"
+
+
+def extension_boundary_body(extra_assertion: str = "") -> str:
+    return (
+        "(declare-const xs (Seq Int))\n"
+        "(declare-const ys (Seq Int))\n"
+        "(declare-const s (Set Int))\n"
+        "(declare-const b (Bag Int))\n"
+        "(assert (= (seq.++ xs ys) (seq.++ xs ys)))\n"
+        "(assert (= (set.insert 1 s) (set.insert 1 s)))\n"
+        "(assert (= (bag.count 1 b) (bag.count 1 b)))\n"
+        + ("" if not extra_assertion else f"(assert {extra_assertion})\n")
+    )
+
+
+def extension_symbol(
+    slug_name: str,
+    name: str,
+    declarations: tuple[str, ...],
+    term: str,
+    result_sort: str,
+    behavior_features: tuple[str, ...],
+    *,
+    kind: str = "term",
+    sat_declarations: str = "",
+    type_error_assertion: str | None = None,
+    boundary_assertion: str | None = None,
+) -> TheorySymbol:
+    return TheorySymbol(
+        "Z3_Extensions",
+        slug_name,
+        kind,
+        name,
+        "ALL",
+        declarations,
+        check_sat_script(
+            "ALL",
+            extension_body(extension_self_assertion(term, result_sort), sat_declarations),
+        ),
+        proof_script(
+            "ALL",
+            extension_body(extension_unsat_assertion(term, result_sort), sat_declarations),
+        ),
+        check_sat_script(
+            "ALL",
+            extension_body(
+                type_error_assertion
+                if type_error_assertion is not None
+                else extension_type_error_assertion(term, result_sort),
+                sat_declarations,
+            ),
+        ),
+        check_sat_script(
+            "ALL",
+            extension_boundary_body("" if boundary_assertion is None else boundary_assertion),
+        ),
+        (
+            "theory-behavior:z3-extension",
+            "theory-behavior:translation-gap",
+            "theory-behavior:proof-gap",
+            *behavior_features,
+        ),
+    )
+
+
+def extension_sort(slug_name: str, name: str, declaration: str, sat_decl: str) -> TheorySymbol:
+    return TheorySymbol(
+        "Z3_Extensions",
+        slug_name,
+        "sort",
+        name,
+        "ALL",
+        (declaration,),
+        check_sat_script("ALL", f"{sat_decl}\n(assert (= x x))\n"),
+        proof_script("ALL", f"{sat_decl}\n(assert (not (= x x)))\n"),
+        check_sat_script("ALL", f"(declare-const bad ({name}))\n"),
+        check_sat_script("ALL", extension_boundary_body()),
+        (
+            "theory-behavior:z3-extension",
+            "theory-behavior:translation-gap",
+            "theory-behavior:proof-gap",
+            "theory-behavior:parametric-sort",
+        ),
+    )
+
+
+Z3_EXTENSION_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    extension_sort("seq", "Seq", "(Seq Element)", "(declare-const x (Seq Int))"),
+    extension_sort("set", "Set", "(Set Element)", "(declare-const x (Set Int))"),
+    extension_sort("bag", "Bag", "(Bag Element)", "(declare-const x (Bag Int))"),
+    extension_symbol("seq-concat", "seq.++", ("(seq.++ (Seq A) (Seq A) (Seq A) :left-assoc)",), "(seq.++ xs ys)", "Seq", ("theory-behavior:sequence", "theory-behavior:left-associative", "theory-behavior:concat"), sat_declarations="(declare-const xs (Seq Int))\n(declare-const ys (Seq Int))\n"),
+    extension_symbol("seq.len", "seq.len", ("(seq.len (Seq A) Int)",), "(seq.len xs)", "Int", ("theory-behavior:sequence", "theory-behavior:length"), sat_declarations="(declare-const xs (Seq Int))\n"),
+    extension_symbol("seq.extract", "seq.extract", ("(seq.extract (Seq A) Int Int (Seq A))",), "(seq.extract xs 0 1)", "Seq", ("theory-behavior:sequence", "theory-behavior:extract"), sat_declarations="(declare-const xs (Seq Int))\n"),
+    extension_symbol("seq.contains", "seq.contains", ("(seq.contains (Seq A) (Seq A) Bool)",), "(seq.contains xs ys)", "Bool", ("theory-behavior:sequence", "theory-behavior:contains"), sat_declarations="(declare-const xs (Seq Int))\n(declare-const ys (Seq Int))\n"),
+    extension_symbol("set.member", "set.member", ("(set.member A (Set A) Bool)",), "(set.member 1 s)", "Bool", ("theory-behavior:set", "theory-behavior:membership"), sat_declarations="(declare-const s (Set Int))\n"),
+    extension_symbol("set.insert", "set.insert", ("(set.insert A (Set A) (Set A))",), "(set.insert 1 s)", "Set", ("theory-behavior:set", "theory-behavior:insert"), sat_declarations="(declare-const s (Set Int))\n"),
+    extension_symbol("set.union", "set.union", ("(set.union (Set A) (Set A) (Set A) :left-assoc)",), "(set.union s t)", "Set", ("theory-behavior:set", "theory-behavior:left-associative", "theory-behavior:union"), sat_declarations="(declare-const s (Set Int))\n(declare-const t (Set Int))\n"),
+    extension_symbol("set.intersect", "set.intersect", ("(set.intersect (Set A) (Set A) (Set A) :left-assoc)",), "(set.intersect s t)", "Set", ("theory-behavior:set", "theory-behavior:left-associative", "theory-behavior:intersection"), sat_declarations="(declare-const s (Set Int))\n(declare-const t (Set Int))\n"),
+    extension_symbol("set.minus", "set.minus", ("(set.minus (Set A) (Set A) (Set A))",), "(set.minus s t)", "Set", ("theory-behavior:set", "theory-behavior:difference"), sat_declarations="(declare-const s (Set Int))\n(declare-const t (Set Int))\n"),
+    extension_symbol("set.subset", "set.subset", ("(set.subset (Set A) (Set A) Bool)",), "(set.subset s t)", "Bool", ("theory-behavior:set", "theory-behavior:subset"), sat_declarations="(declare-const s (Set Int))\n(declare-const t (Set Int))\n"),
+    extension_symbol("bag.union-disjoint", "bag.union_disjoint", ("(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)",), "(bag.union_disjoint b c)", "Bag", ("theory-behavior:bag", "theory-behavior:left-associative", "theory-behavior:union"), sat_declarations="(declare-const b (Bag Int))\n(declare-const c (Bag Int))\n"),
+    extension_symbol("bag.union-max", "bag.union_max", ("(bag.union_max (Bag A) (Bag A) (Bag A) :left-assoc)",), "(bag.union_max b c)", "Bag", ("theory-behavior:bag", "theory-behavior:left-associative", "theory-behavior:union"), sat_declarations="(declare-const b (Bag Int))\n(declare-const c (Bag Int))\n"),
+    extension_symbol("bag.inter-min", "bag.inter_min", ("(bag.inter_min (Bag A) (Bag A) (Bag A) :left-assoc)",), "(bag.inter_min b c)", "Bag", ("theory-behavior:bag", "theory-behavior:left-associative", "theory-behavior:intersection"), sat_declarations="(declare-const b (Bag Int))\n(declare-const c (Bag Int))\n"),
+    extension_symbol("bag.difference-subtract", "bag.difference_subtract", ("(bag.difference_subtract (Bag A) (Bag A) (Bag A))",), "(bag.difference_subtract b c)", "Bag", ("theory-behavior:bag", "theory-behavior:difference"), sat_declarations="(declare-const b (Bag Int))\n(declare-const c (Bag Int))\n"),
+    extension_symbol("bag.count", "bag.count", ("(bag.count A (Bag A) Int)",), "(bag.count 1 b)", "Int", ("theory-behavior:bag", "theory-behavior:count"), sat_declarations="(declare-const b (Bag Int))\n"),
+)
+
+
 ALL_THEORY_SYMBOLS = (
     *CORE_ARITHMETIC_THEORY_SYMBOLS,
+    *UNICODE_STRING_THEORY_SYMBOLS,
     *ARRAY_THEORY_SYMBOLS,
     *BITVECTOR_THEORY_SYMBOLS,
     *FLOATINGPOINT_THEORY_SYMBOLS,
+    *Z3_EXTENSION_THEORY_SYMBOLS,
 )
 
 
@@ -2040,6 +2342,10 @@ def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_pha
         files = BITVECTOR_RECONSTRUCTION_FILES
     elif symbol.theory == "FloatingPoint":
         files = FLOATINGPOINT_RECONSTRUCTION_FILES
+    elif symbol.theory == "UnicodeStrings":
+        files = STRING_RECONSTRUCTION_FILES
+    elif symbol.theory == "Z3_Extensions":
+        files = Z3_EXTENSION_RECONSTRUCTION_FILES
     return implementation_obligation(
         files=files,
         feature=f"theory-symbol:{symbol.theory}:{symbol.slug}:{kind}",
@@ -2049,106 +2355,199 @@ def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_pha
     )
 
 
+def theory_case_file(symbol: TheorySymbol, case_id: str) -> str:
+    if symbol.theory == "UnicodeStrings":
+        return f"cases/theories/strings/{slug(case_id)}.smt2"
+    if symbol.theory == "Z3_Extensions":
+        return f"cases/theories/z3_extensions/{slug(case_id)}.smt2"
+    return deterministic_case_file("theory", case_id)
+
+
+def theory_standard(symbol: TheorySymbol) -> str:
+    if symbol.theory == "Z3_Extensions":
+        return "Z3-extension"
+    return "SMT-LIB-2.7"
+
+
+def theory_source(symbol: TheorySymbol) -> dict[str, object]:
+    if symbol.theory == "Z3_Extensions":
+        return source("Z3-extension", f"Z3 sequence/set/bag extension: {symbol.name}")
+    return source("SMT-LIB-theory", f"SMT-LIB 2.7 {symbol.theory} theory: {symbol.name}")
+
+
 def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
     case_id = f"theory:{symbol.theory}:{symbol.slug}:{kind}"
     z3_unsupported = "theory-behavior:z3-unsupported" in symbol.behavior_features
+    parser_gap = "theory-behavior:parser-gap" in symbol.behavior_features
+    translation_gap = "theory-behavior:translation-gap" in symbol.behavior_features
+    proof_gap = "theory-behavior:proof-gap" in symbol.behavior_features
+    blocked_by_parser = (
+        "SMT-LIB string literal tokenization lacks token-kind metadata for this coverage row"
+    )
     if kind == "sat":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
         expected = {
-            "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result("pass"),
+            "parser-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
+            "typecheck-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
             "z3-oracle": expected_result(
-                "red" if z3_unsupported else "pass",
+                "red" if z3_unsupported or parser_gap else "pass",
                 diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory symbol is incomplete"
-                if z3_unsupported else None,
-                failure_phase="solver" if z3_unsupported else None,
+                if z3_unsupported else blocked_by_parser if parser_gap else None,
+                failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
             "z3-tac": expected_result(
-                "red" if z3_unsupported else "fail",
+                "red" if z3_unsupported or parser_gap or translation_gap else "fail",
                 diagnostic="checked Z3_TAC cannot reach SAT no-theorem diagnostic until solver support exists"
-                if z3_unsupported else "SAT result has no HOL theorem to reconstruct",
-                failure_phase="solver" if z3_unsupported else "theorem-shape",
+                if z3_unsupported else blocked_by_parser
+                if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
+                if translation_gap else "SAT result has no HOL theorem to reconstruct",
+                failure_phase="solver" if z3_unsupported else "parser"
+                if parser_gap else "translation" if translation_gap else "theorem-shape",
             ),
         }
-        implementation = theory_obligation(symbol, kind, case_id, "solver") if z3_unsupported else None
+        if z3_unsupported or parser_gap or translation_gap:
+            phase = "solver" if z3_unsupported else "parser" if parser_gap else "translation"
+            implementation = theory_obligation(symbol, kind, case_id, phase)
+        else:
+            implementation = None
     elif kind == "unsat-proof":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac")
         expected = {
-            "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result("pass"),
+            "parser-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
+            "typecheck-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
             "z3-oracle": expected_result(
-                "red" if z3_unsupported else "pass",
+                "red" if z3_unsupported or parser_gap else "pass",
                 diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory symbol is incomplete"
-                if z3_unsupported else None,
-                failure_phase="solver" if z3_unsupported else None,
+                if z3_unsupported else blocked_by_parser if parser_gap else None,
+                failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
             "proof-parse": expected_result(
                 "red",
                 diagnostic="Z3 proof is unavailable until solver support for this theory symbol exists"
-                if z3_unsupported else "theory proof parsing evidence is incomplete",
-                failure_phase="solver" if z3_unsupported else "proof-parse",
+                if z3_unsupported else blocked_by_parser
+                if parser_gap else "theory proof parsing evidence is incomplete",
+                failure_phase="solver" if z3_unsupported else "parser"
+                if parser_gap else "proof-parse",
                 proof_rule_histogram={"asserted": 1},
             ),
             "proof-replay": expected_result(
                 "red",
                 diagnostic="Z3 proof replay is unavailable until solver support for this theory symbol exists"
-                if z3_unsupported else "theory proof replay evidence is incomplete",
-                failure_phase="solver" if z3_unsupported else "proof-replay",
+                if z3_unsupported else blocked_by_parser
+                if parser_gap else "theory proof replay evidence is incomplete",
+                failure_phase="solver" if z3_unsupported else "parser"
+                if parser_gap else "proof-replay",
                 proof_rule_histogram={"asserted": 1},
             ),
             "z3-tac": expected_result(
                 "red",
                 diagnostic="checked Z3_TAC reconstruction is blocked by missing solver support"
-                if z3_unsupported else "checked Z3_TAC reconstruction for theory symbol is incomplete",
-                failure_phase="solver" if z3_unsupported else "proof-replay",
+                if z3_unsupported else blocked_by_parser
+                if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
+                if translation_gap else "checked Z3_TAC reconstruction for theory symbol is incomplete",
+                failure_phase="solver" if z3_unsupported else "parser"
+                if parser_gap else "translation" if translation_gap else "proof-replay",
                 theorem_shape="closed theorem without oracle tags",
             ),
         }
-        implementation = theory_obligation(symbol, kind, case_id, "solver" if z3_unsupported else "proof-replay")
+        if z3_unsupported:
+            phase = "solver"
+        elif parser_gap:
+            phase = "parser"
+        elif proof_gap:
+            phase = "proof-replay"
+        elif translation_gap:
+            phase = "translation"
+        else:
+            phase = "proof-replay"
+        implementation = theory_obligation(symbol, kind, case_id, phase)
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
         expected = {
-            "parser-only": expected_result("pass"),
+            "parser-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
             "typecheck-only": expected_result(
-                "fail",
-                diagnostic="theory symbol arity or sort mismatch",
-                failure_phase="typecheck",
+                "red" if parser_gap else "fail",
+                diagnostic=blocked_by_parser if parser_gap else "theory symbol arity or sort mismatch",
+                failure_phase="parser" if parser_gap else "typecheck",
             ),
             "z3-tac": expected_result(
-                "fail",
-                diagnostic="theory symbol arity or sort mismatch",
-                failure_phase="typecheck",
+                "red" if parser_gap else "fail",
+                diagnostic=blocked_by_parser if parser_gap else "theory symbol arity or sort mismatch",
+                failure_phase="parser" if parser_gap else "typecheck",
             ),
         }
-        implementation = None
+        implementation = theory_obligation(symbol, kind, case_id, "parser") if parser_gap else None
     elif kind == "boundary":
-        modes = ("parser-only", "typecheck-only", "z3-oracle")
+        modes = (
+            ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
+            if parser_gap or translation_gap
+            else ("parser-only", "typecheck-only", "z3-oracle")
+        )
         expected = {
-            "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result("pass"),
+            "parser-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
+            "typecheck-only": expected_result(
+                "red" if parser_gap else "pass",
+                diagnostic=blocked_by_parser if parser_gap else None,
+                failure_phase="parser" if parser_gap else None,
+            ),
             "z3-oracle": expected_result(
-                "red" if z3_unsupported else "pass",
+                "red" if z3_unsupported or parser_gap else "pass",
                 diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory boundary case is incomplete"
-                if z3_unsupported else None,
-                failure_phase="solver" if z3_unsupported else None,
+                if z3_unsupported else blocked_by_parser if parser_gap else None,
+                failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
         }
-        implementation = theory_obligation(symbol, kind, case_id, "solver") if z3_unsupported else None
+        if parser_gap or translation_gap:
+            expected["z3-tac"] = expected_result(
+                "red",
+                diagnostic=blocked_by_parser
+                if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete",
+                failure_phase="parser" if parser_gap else "translation",
+            )
+        if z3_unsupported or parser_gap or translation_gap:
+            phase = "solver" if z3_unsupported else "parser" if parser_gap else "translation"
+            implementation = theory_obligation(symbol, kind, case_id, phase)
+        else:
+            implementation = None
     else:
         raise GeneratorError(f"unknown theory case kind: {kind}")
 
     entry = manifest_entry(
         case_id=case_id,
-        file=deterministic_case_file("theory", case_id),
+        file=theory_case_file(symbol, case_id),
         logic=symbol.logic,
-        standard="SMT-LIB-2.7",
+        standard=theory_standard(symbol),
         row_class="theory",
         features=theory_features(symbol, kind),
         modes=modes,
         versions=SUPPORTED_Z3_VERSIONS,
         expected=expected,
         implementation_obligation=implementation,
-        source=source("SMT-LIB-theory", f"SMT-LIB 2.7 {symbol.theory} theory: {symbol.name}"),
+        source=theory_source(symbol),
     )
     return GeneratedCase(entry=entry, script=script)
 

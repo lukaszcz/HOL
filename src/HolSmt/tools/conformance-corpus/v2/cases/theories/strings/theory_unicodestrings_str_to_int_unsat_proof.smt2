@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_SLIA)
+(assert (not (= (str.to_int "123") (str.to_int "123"))))
+(check-sat)
+(get-proof)

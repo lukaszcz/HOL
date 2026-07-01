@@ -44,10 +44,49 @@ WEAK_COVERAGE_STATUSES = {
 }
 UNRESOLVED_COVERAGE_STATUSES = {"unknown", "untested"}
 
-REQUIRED_ARRAY_BITVECTOR_FLOATINGPOINT_METADATA: dict[str, dict[str, set[str]]] = {
+REQUIRED_THEORY_METADATA: dict[str, dict[str, set[str]]] = {
     "ArraysEx": {
         "sort": {"Array"},
         "term": {"select", "store"},
+    },
+    "UnicodeStrings": {
+        "sort": {"String", "RegLan"},
+        "term": {
+            "str.++",
+            "str.len",
+            "str.<",
+            "str.<=",
+            "str.at",
+            "str.substr",
+            "str.prefixof",
+            "str.suffixof",
+            "str.contains",
+            "str.indexof",
+            "str.replace",
+            "str.replace_all",
+            "str.is_digit",
+            "str.to_code",
+            "str.from_code",
+            "str.to_int",
+            "str.from_int",
+            "str.to_re",
+            "str.in_re",
+            "str.replace_re",
+            "str.replace_re_all",
+            "re.none",
+            "re.all",
+            "re.allchar",
+            "re.++",
+            "re.union",
+            "re.inter",
+            "re.diff",
+            "re.*",
+            "re.+",
+            "re.opt",
+            "re.range",
+            "re.^",
+            "re.loop",
+        },
     },
     "Fixed_Size_BitVectors": {
         "sort": {"BitVec"},
@@ -151,6 +190,26 @@ REQUIRED_ARRAY_BITVECTOR_FLOATINGPOINT_METADATA: dict[str, dict[str, set[str]]] 
             "fp.to_ubv",
             "fp.to_sbv",
             "fp.to_real",
+        },
+    },
+    "Z3_Extensions": {
+        "sort": {"Seq", "Set", "Bag"},
+        "term": {
+            "seq.++",
+            "seq.len",
+            "seq.extract",
+            "seq.contains",
+            "set.member",
+            "set.insert",
+            "set.union",
+            "set.intersect",
+            "set.minus",
+            "set.subset",
+            "bag.union_disjoint",
+            "bag.union_max",
+            "bag.inter_min",
+            "bag.difference_subtract",
+            "bag.count",
         },
     },
 }
@@ -557,6 +616,46 @@ def official_entries_from_region(region: str) -> list[tuple[str, tuple[str, ...]
     return entries
 
 
+HELPER_GENERATED_TERMS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "Fixed_Size_BitVectors": (
+        ("bvredand", ("(bvredand (_ BitVec m) Bool)",)),
+        ("bvredor", ("(bvredor (_ BitVec m) Bool)",)),
+    ),
+    "UnicodeStrings": (
+        ("str.at", ("(str.at String Int String)",)),
+        ("str.suffixof", ("(str.suffixof String String Bool)",)),
+        ("str.contains", ("(str.contains String String Bool)",)),
+        ("re.++", ("(re.++ (RegLan String) (RegLan String) (RegLan String))",)),
+        ("re.diff", ("(re.diff (RegLan String) (RegLan String) (RegLan String))",)),
+    ),
+    "Z3_Extensions": (
+        ("seq.++", ("(seq.++ (Seq A) (Seq A) (Seq A) :left-assoc)",)),
+        ("seq.len", ("(seq.len (Seq A) Int)",)),
+        ("seq.extract", ("(seq.extract (Seq A) Int Int (Seq A))",)),
+        ("seq.contains", ("(seq.contains (Seq A) (Seq A) Bool)",)),
+        ("set.member", ("(set.member A (Set A) Bool)",)),
+        ("set.insert", ("(set.insert A (Set A) (Set A))",)),
+        ("set.union", ("(set.union (Set A) (Set A) (Set A) :left-assoc)",)),
+        ("set.intersect", ("(set.intersect (Set A) (Set A) (Set A) :left-assoc)",)),
+        ("set.minus", ("(set.minus (Set A) (Set A) (Set A))",)),
+        ("set.subset", ("(set.subset (Set A) (Set A) Bool)",)),
+        ("bag.union_disjoint", ("(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)",)),
+        ("bag.union_max", ("(bag.union_max (Bag A) (Bag A) (Bag A) :left-assoc)",)),
+        ("bag.inter_min", ("(bag.inter_min (Bag A) (Bag A) (Bag A) :left-assoc)",)),
+        ("bag.difference_subtract", ("(bag.difference_subtract (Bag A) (Bag A) (Bag A))",)),
+        ("bag.count", ("(bag.count A (Bag A) Int)",)),
+    ),
+}
+
+HELPER_GENERATED_SORTS: dict[str, tuple[tuple[str, tuple[str, ...]], ...]] = {
+    "Z3_Extensions": (
+        ("Seq", ("(Seq Element)",)),
+        ("Set", ("(Set Element)",)),
+        ("Bag", ("(Bag Element)",)),
+    ),
+}
+
+
 def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> str:
     if kind == "sort":
         if name == "BitVec":
@@ -588,6 +687,28 @@ def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> s
         "ubv_to_int": "ubv-to-int",
         "sbv_to_int": "sbv-to-int",
         "int_to_bv": "int-to-bv",
+        "<string literal>": "string-literal",
+        "str.++": "str-concat",
+        "str.<": "str-lt",
+        "str.<=": "str-le",
+        "str.is_digit": "str.is-digit",
+        "str.to_code": "str.to-code",
+        "str.from_code": "str.from-code",
+        "str.to_int": "str.to-int",
+        "str.from_int": "str.from-int",
+        "str.to_re": "str.to-re",
+        "str.in_re": "str.in-re",
+        "str.replace_re": "str.replace-re",
+        "str.replace_re_all": "str.replace-re-all",
+        "re.++": "re-concat",
+        "re.*": "re-star",
+        "re.+": "re-plus",
+        "re.^": "re-power",
+        "seq.++": "seq-concat",
+        "bag.union_disjoint": "bag.union-disjoint",
+        "bag.union_max": "bag.union-max",
+        "bag.inter_min": "bag.inter-min",
+        "bag.difference_subtract": "bag.difference-subtract",
     }
     if name == "_":
         if declaration == "<decimal>":
@@ -665,7 +786,16 @@ def parse_dictionary_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
     text = path.read_text(encoding="utf-8")
     symbols: dict[tuple[str, str], TheoryMetadataSymbol] = {}
 
-    for theory in ("Core", "Ints", "Reals", "ArraysEx", "Fixed_Size_BitVectors", "FloatingPoint"):
+    for theory in (
+        "Core",
+        "Ints",
+        "Reals",
+        "UnicodeStrings",
+        "ArraysEx",
+        "Fixed_Size_BitVectors",
+        "FloatingPoint",
+        "Z3_Extensions",
+    ):
         body = extract_structure_body(text, theory)
         for kind, list_name in (("sort", "tyentries"), ("term", "tmentries")):
             for name, declarations in official_entries_from_region(extract_entry_region(body, list_name)):
@@ -673,6 +803,26 @@ def parse_dictionary_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
                     theory=theory,
                     slug=theory_symbol_slug(kind, name, declarations),
                     kind=kind,
+                    name=name,
+                    declarations=declarations,
+                )
+                symbols[symbol.key] = symbol
+        for name, declarations in HELPER_GENERATED_SORTS.get(theory, ()):
+            if name in body:
+                symbol = TheoryMetadataSymbol(
+                    theory=theory,
+                    slug=theory_symbol_slug("sort", name, declarations),
+                    kind="sort",
+                    name=name,
+                    declarations=declarations,
+                )
+                symbols[symbol.key] = symbol
+        for name, declarations in HELPER_GENERATED_TERMS.get(theory, ()):
+            if name in body:
+                symbol = TheoryMetadataSymbol(
+                    theory=theory,
+                    slug=theory_symbol_slug("term", name, declarations),
+                    kind="term",
                     name=name,
                     declarations=declarations,
                 )
@@ -750,6 +900,13 @@ def case_has_expected_modes(case: dict[str, object], modes: set[str]) -> bool:
     return modes <= case_modes and modes <= expected_modes
 
 
+def is_string_regex_or_extension_theory_case(case: dict[str, object]) -> bool:
+    if case.get("class") != "theory":
+        return False
+    features = {feature for feature in case.get("features", []) if isinstance(feature, str)}
+    return bool(features & {"theory:UnicodeStrings", "theory:Z3_Extensions"})
+
+
 def case_has_all_supported_versions(case: dict[str, object]) -> bool:
     return set(str(version) for version in case.get("versions", [])) == {
         "2.19.1",
@@ -810,13 +967,13 @@ def audit_theory_symbols(cases: list[dict[str, object]], symbols: list[TheoryMet
     return issues
 
 
-def audit_required_array_bitvector_floatingpoint_metadata(symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
+def audit_required_theory_metadata(symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
     issues: list[Issue] = []
     actual = {
         (symbol.theory, symbol.kind, symbol.name)
         for symbol in symbols
     }
-    for theory, by_kind in sorted(REQUIRED_ARRAY_BITVECTOR_FLOATINGPOINT_METADATA.items()):
+    for theory, by_kind in sorted(REQUIRED_THEORY_METADATA.items()):
         for kind, names in sorted(by_kind.items()):
             missing = sorted(
                 name
@@ -829,7 +986,7 @@ def audit_required_array_bitvector_floatingpoint_metadata(symbols: list[TheoryMe
                         code="missing_theory_dictionary_metadata",
                         category="missing_complete_evidence",
                         subject=f"theory/{theory}/{kind}",
-                        message="required array, bitvector, or floating-point theory dictionary metadata is absent",
+                        message="required theory dictionary metadata is absent",
                         details={
                             "theory": theory,
                             "kind": kind,
@@ -1067,6 +1224,27 @@ def audit_cases(cases: list[dict[str, object]], accepted_logics: list[str]) -> l
 
     for case in cases:
         case_id = str(case["id"])
+        if is_string_regex_or_extension_theory_case(case):
+            modes = {str(mode) for mode in case["modes"]}
+            expected_modes = {str(mode) for mode in case["expected"]}
+            non_parser_modes = sorted(modes - {"parser-only"})
+            non_parser_expected = sorted(expected_modes - {"parser-only"})
+            if not non_parser_modes or not non_parser_expected:
+                issues.append(
+                    Issue(
+                        code="parse_only_string_regex_extension_coverage",
+                        category="missing_complete_evidence",
+                        subject=f"case/{case_id}",
+                        message="string/regex and Z3 extension theory rows must not be counted as parser-only coverage",
+                        details={
+                            "modes": sorted(modes),
+                            "expected_modes": sorted(expected_modes),
+                            "non_parser_modes": non_parser_modes,
+                            "non_parser_expected": non_parser_expected,
+                        },
+                    )
+                )
+
         if is_unsat_case(case):
             modes = set(str(mode) for mode in case["modes"])
             expected_modes = set(str(mode) for mode in case["expected"])
@@ -1245,7 +1423,7 @@ def build_report(
             ]
     coverage_rows = load_coverage_rows(coverage_path, coverage_manifest_path)
     issues = audit_cases(cases, packet_logics)
-    issues.extend(audit_required_array_bitvector_floatingpoint_metadata(theory_symbols))
+    issues.extend(audit_required_theory_metadata(theory_symbols))
     issues.extend(audit_theory_symbols(cases, theory_symbols))
     issues.extend(audit_floatingpoint_solver_proof_evidence(cases))
     issues.extend(audit_coverage(coverage_rows, cases))

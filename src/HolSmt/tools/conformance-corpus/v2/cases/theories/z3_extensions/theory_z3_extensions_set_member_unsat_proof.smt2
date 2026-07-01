@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-const s (Set Int))
+(assert (and (set.member 1 s) (not (set.member 1 s))))
+(check-sat)
+(get-proof)

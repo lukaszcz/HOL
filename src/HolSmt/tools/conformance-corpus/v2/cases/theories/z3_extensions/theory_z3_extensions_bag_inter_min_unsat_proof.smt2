@@ -1,0 +1,7 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-const b (Bag Int))
+(declare-const c (Bag Int))
+(assert (not (= (bag.inter_min b c) (bag.inter_min b c))))
+(check-sat)
+(get-proof)
