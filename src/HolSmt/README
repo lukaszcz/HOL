@@ -59,13 +59,25 @@ it is outside the checked `Z3_TAC` trusted-code-base boundary.
 
 Supported Z3 versions:
 
-  Version   Proof options used by HolSmt                  Support status
-  2.19.1   PROOF_MODE=2                                  CI matrix legacy path
-  4.12.4   proof=true pp.simplify_implies=false          CI matrix v4 path
-  4.13.0   proof=true pp.simplify_implies=false          CI matrix v4 path
+  Version range      Proof options used by HolSmt                  Support status
+  2.19.1             PROOF_MODE=2                                  legacy proof path
+  4.11.2 - 4.15.x    proof=true pp.simplify_implies=false          modern v4 proof path
 
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
+The checked-in proof corpus and CI jobs use exact representative versions from
+the supported ranges.  The current modern source-built matrix is 4.11.2,
+4.12.4, 4.13.0, 4.14.1 and 4.15.3.  The local contract runner accepts any
+discovered Z3 version in the supported ranges.
+Use `src/HolSmt/tools/verify_z3_versions.sh` to download representative Z3
+releases, run the proof-corpus gate, focused nonlinear replay smoke test and
+selftest checks, and record the exact versions verified in a JSON report.  Full
+nonlinear real replay checks require CSDP (`coinor-csdp`, or
+`HOL4_CSDP_EXECUTABLE`) just as the Docker CI jobs do.
+On platforms without trustworthy compatible Z3 release binaries, use
+`src/HolSmt/tools/build_z3_versions.sh` to build representative source
+releases locally with the TPTP frontend and install versioned binaries under
+`~/.local/bin`.
 
 Unsupported or deprecated Z3 versions:
 
@@ -74,13 +86,13 @@ Unsupported or deprecated Z3 versions:
                              2.19.1 when checking the legacy proof path.
   Other pre-4 versions       Legacy proof format drift is not in the CI matrix;
                              no support claim is made without corpus evidence.
-  Other 4.x versions         Z3 proof formats and rule aliases can drift between
-                             point releases; add corpus evidence and CI before
-                             claiming support.
+  4.x before 4.11.2          Outside the modern proof-mode support floor.
+  4.x after 4.15.x           Outside the currently documented support range;
+                             use --allow-unsupported-z3 to investigate drift.
   Future major versions      Unsupported until the proof command, proof-rule
                              registry, corpus gate and matrix are updated.
   Undiscoverable version     Diagnostics still run, but the version cannot be
-                             matched to a supported matrix row.
+                             matched to a supported range.
 
 SMT-LIB support matrix:
 
@@ -281,9 +293,23 @@ Local CI contract commands:
 
   # Run the local contract checks below, resolving z3 from PATH when
   # HOL4_Z3_EXECUTABLE is not already set.  The script fails fast if that
-  # executable is outside the supported Z3 matrix; pass --allow-unsupported-z3
-  # to investigate proof-format drift intentionally.
+  # executable is outside the supported Z3 ranges; pass --allow-unsupported-z3
+  # to investigate proof-format drift intentionally.  The script also discovers
+  # supported versioned z3-* binaries under ~/.local/bin or PATH and runs the
+  # focused checked replay matrix by default; pass --skip-z3-version-matrix to
+  # skip it.
   src/HolSmt/tools/run_holsmt_tests.sh
+
+  # Download representative Z3 releases for the supported range, run the
+  # proof-corpus gate and selftest against each executable, and write
+  # .holsmt-z3-version-matrix/report.json.  Use --z3 VERSION:PATH for locally
+  # installed versions when no compatible official binary exists for the host.
+  src/HolSmt/tools/verify_z3_versions.sh
+
+  # Build representative Z3 source releases with TPTP support and install
+  # versioned binaries such as ~/.local/bin/z3-4.11.2 and
+  # ~/.local/bin/z3_tptp-4.11.2.
+  src/HolSmt/tools/build_z3_versions.sh
 
   # Also run the Docker selftest matrix
   src/HolSmt/tools/run_holsmt_tests.sh --include-docker
@@ -366,7 +392,8 @@ Local CI contract commands:
     holsmt-nosolver:ci \
     sh -lc 'src/HolSmt/selftest.exe'
 
-  # Z3 selftest matrix, matching the CI Docker job
+  # Z3 selftest matrix, matching the exact CI Docker anchors inside the
+  # supported ranges
   for z3_version in 2.19.1 4.12.4 4.13.0; do
     docker buildx build \
       --load \
@@ -403,20 +430,22 @@ Adding support for a new Z3 proof rule:
 
 Updating the Z3 version matrix:
 
-  1. Add the version to `.github/workflows/docker-ci-for-pr.yml` and make sure
-     `developers/docker-ci/latest/Dockerfile` can install that exact version.
-  2. Run the expk docker build with `Z3_VERSION=<version>` and the HolSmt
-     selftest.
-  3. Run the proof-corpus gate and conformance suite for the new executable.
-  4. If proof options, aliases or unsupported diagnostics changed, update the
+  1. If the support range changes, update `run_holsmt_tests.sh` and this README.
+  2. Add representative exact versions to `verify_z3_versions.sh` and
+     `build_z3_versions.sh`.
+  3. Build the source releases with TPTP support and install the versioned
+     binaries under `~/.local/bin`.
+  4. Run `run_holsmt_tests.sh` or `verify_z3_versions.sh` so the detected
+     matrix records the exact executables that passed.
+  5. If proof options, aliases or unsupported diagnostics changed, update the
      proof-rule registry, replay tests and expected-rule manifests first.
-  5. Update `src/HolSmt/tools/coverage/smtlib_coverage.json` and the coverage
+  6. Update `src/HolSmt/tools/coverage/smtlib_coverage.json` and the coverage
      manifest, regenerate the matrix, and adjust the "Supported Z3 versions"
      table above.
 
 Pull-request CI runs the PolyML expk build against the Z3 versions already
-provided by the docker-ci base image: 2.19.1, 4.12.4 and 4.13.0.  The
-equivalent local hook is:
+provided by the docker-ci base image as exact anchors for the supported ranges:
+2.19.1, 4.12.4 and 4.13.0.  The equivalent local hook is:
 
   docker buildx build \
     --build-arg SML=poly \

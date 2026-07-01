@@ -386,6 +386,14 @@ in
       (boolSyntax.mk_eq (t1, wordsSyntax.mk_word_L (wordsSyntax.dim_of t1)),
        boolSyntax.mk_eq (t2, wordsSyntax.mk_word_T (wordsSyntax.dim_of t2)))
 
+  fun mk_int_ediv (t1, t2) =
+    Term.mk_comb (Term.mk_comb
+      (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2)
+
+  fun mk_int_emod (t1, t2) =
+    Term.mk_comb (Term.mk_comb
+      (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2)
+
   fun sanitize_name name =
     String.translate
       (fn c => if Char.isAlphaNum c then String.str c else "_") name
@@ -1154,11 +1162,15 @@ in
         (K_zero_two (fn (base, exponent) =>
           intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
       official_entry "div" left_assoc_attributes ["(div Int Int Int :left-assoc)"]
-        (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-          (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
+        (leftassoc mk_int_ediv),
+      extension_entry "Z3" "div0" left_assoc_attributes
+        ["(div0 Int Int Int :left-assoc)"]
+        (leftassoc mk_int_ediv),
       official_entry "mod" left_assoc_attributes ["(mod Int Int Int :left-assoc)"]
-        (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-          (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2))),
+        (leftassoc mk_int_emod),
+      extension_entry "Z3" "mod0" left_assoc_attributes
+        ["(mod0 Int Int Int :left-assoc)"]
+        (leftassoc mk_int_emod),
       official_entry "abs" no_attributes ["(abs Int Int)"]
         (K_zero_one intSyntax.mk_absval),
       official_entry "divisible" (indexed_attributes ["n"])
@@ -1253,14 +1265,10 @@ in
       ("*", leftassoc intSyntax.mk_mult),
       ("**", K_zero_two (fn (base, exponent) =>
         intSyntax.mk_exp (base, intSyntax.mk_Num exponent))),
-      ("div", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-        (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
-      ("div0", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-        (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
-      ("mod", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-        (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2))),
-      ("mod0", leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-        (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2))),
+      ("div", leftassoc mk_int_ediv),
+      ("div0", leftassoc mk_int_ediv),
+      ("mod", leftassoc mk_int_emod),
+      ("mod0", leftassoc mk_int_emod),
       ("abs", K_zero_one intSyntax.mk_absval),
       ("divisible", K_one_one (fn n => fn t => intSyntax.mk_divides (n, t))),
       ("<=", chainable intSyntax.mk_leq),
@@ -1291,15 +1299,7 @@ in
         official_entry "to_int" no_attributes ["(to_int Real Int)"]
           (K_zero_one intrealSyntax.mk_INT_FLOOR),
         official_entry "is_int" no_attributes ["(is_int Real Bool)"]
-          (K_zero_one intrealSyntax.mk_is_int),
-        extension_entry "Z3" "div0" left_assoc_attributes
-          ["(div0 Int Int Int :left-assoc)"]
-          (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-            (Term.prim_mk_const {Thy="integer", Name="ediv"}, t1), t2))),
-        extension_entry "Z3" "mod0" left_assoc_attributes
-          ["(mod0 Int Int Int :left-assoc)"]
-          (leftassoc (fn (t1, t2) => Term.mk_comb (Term.mk_comb
-            (Term.prim_mk_const {Thy="integer", Name="emod"}, t1), t2)))
+          (K_zero_one intrealSyntax.mk_is_int)
       ]
 
   end

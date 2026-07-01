@@ -570,12 +570,109 @@ local
        ORELSE
        REPEAT STRIP_TAC THEN int_product_bound_tac))
 
+  val REAL_ZERO_FACTOR_NONNEG = Tactical.prove(
+    ``!x:real. !y:real. x <= 0 ==> x >= 0 ==> 0 <= x * y``,
+    Tactical.REPEAT STRIP_TAC THEN
+    Tactic.MP_TAC
+      (RealField.REAL_ARITH ``x >= 0:real ==> x <= 0 ==> x = 0``) THEN
+    ASM_REWRITE_TAC [] THEN
+    DISCH_TAC THEN
+    ASM_REWRITE_TAC
+      [realTheory.REAL_MUL_LZERO, realTheory.REAL_LE_REFL])
+
+  val REAL_ZERO_FACTOR_NONNEG_CLAUSE = Tactical.prove(
+    ``!x:real. !y:real. 0 <= x * y \/ ~(x <= 0) \/ ~(x >= 0)``,
+    metisLib.METIS_TAC [REAL_ZERO_FACTOR_NONNEG])
+
+  fun real_zero_factor_clause_prove t =
+  let
+    fun strip_disj tm =
+      let val (l, r) = boolSyntax.dest_disj tm
+      in l :: strip_disj r end
+      handle Feedback.HOL_ERR _ => [tm]
+
+    fun is_real_zero tm = tm ~~ realSyntax.zero_tm
+
+    fun dest_nonneg_product lit =
+      let
+        val (l, r) = realSyntax.dest_leq lit
+      in
+        if is_real_zero l then realSyntax.dest_mult r
+        else raise ERR "dest_nonneg_product" ""
+      end
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (l, r) = realSyntax.dest_geq lit
+      in
+        if is_real_zero r then realSyntax.dest_mult l
+        else raise ERR "dest_nonneg_product" ""
+      end
+
+    fun dest_neg_le_zero lit =
+      let
+        val (l, r) = realSyntax.dest_leq (boolSyntax.dest_neg lit)
+      in
+        if is_real_zero r then SOME l else NONE
+      end
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (l, r) = realSyntax.dest_geq (boolSyntax.dest_neg lit)
+      in
+        if is_real_zero l then SOME r else NONE
+      end
+      handle Feedback.HOL_ERR _ => NONE
+
+    fun dest_neg_ge_zero lit =
+      let
+        val (l, r) = realSyntax.dest_geq (boolSyntax.dest_neg lit)
+      in
+        if is_real_zero r then SOME l else NONE
+      end
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (l, r) = realSyntax.dest_leq (boolSyntax.dest_neg lit)
+      in
+        if is_real_zero l then SOME r else NONE
+      end
+      handle Feedback.HOL_ERR _ => NONE
+
+    val lits = strip_disj t
+    val le_zero_vars = List.mapPartial dest_neg_le_zero lits
+    val ge_zero_vars = List.mapPartial dest_neg_ge_zero lits
+
+    fun find_bound_pair x =
+      List.exists (fn y => x ~~ y) le_zero_vars andalso
+      List.exists (fn y => x ~~ y) ge_zero_vars
+
+    fun prove_for_factor (x, y) =
+      if find_bound_pair x then
+        let
+          val thm = Drule.SPECL [x, y] REAL_ZERO_FACTOR_NONNEG_CLAUSE
+        in
+          metis_prove ([thm, realTheory.real_ge, realTheory.REAL_MUL_COMM], t)
+        end
+      else
+        raise ERR "real_zero_factor_clause_prove" ""
+
+    fun prove_from_lit lit =
+      let
+        val (l, r) = dest_nonneg_product lit
+      in
+        prove_for_factor (l, r)
+        handle Feedback.HOL_ERR _ => prove_for_factor (r, l)
+      end
+  in
+    Lib.tryfind prove_from_lit lits
+  end
+
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
     arith_prove_linear t
     handle Feedback.HOL_ERR _ =>
     int_product_prove t
+    handle Feedback.HOL_ERR _ =>
+    real_zero_factor_clause_prove t
     handle Feedback.HOL_ERR _ =>
       (* nonlinear fallback: only after linear tactics fail, to avoid
          expensive SOS certificate search on goals linear tactics handle *)

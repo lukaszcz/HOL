@@ -225,12 +225,15 @@ may delete temporary files automatically, e.g., when HOL exits).
 
 ### Installing SMT solvers
 
-`HolSmtLib` has been tested with cvc5 1.3.0, Yices 1.0.40, and Z3
-4.15.3.  Later versions may or may not work.  (Yices 2 is not
-supported.)  To use `HolSmtLib`, you need to install at least one
-of these SMT solvers on your machine.  As mentioned before, Yices
-supports a larger fragment of higher-order logic than Z3, but
-proof reconstruction has been implemented only for Z3.
+`HolSmtLib` has been tested with cvc5 1.3.0 and Yices 1.0.40.
+For checked Z3 proof reconstruction, HolSmt supports the legacy Z3
+2.19.1 proof path and the modern Z3 4.11.2--4.15.x proof path.
+Later Z3 versions may or may not work.  (Yices 2 is not supported.)
+To use `HolSmtLib`, you need to install at least one of these SMT
+solvers on your machine.  As mentioned before, Yices supports a
+larger fragment of higher-order logic than Z3, but proof
+reconstruction has been implemented only for Z3.  Some nonlinear
+real-arithmetic replay paths also require CSDP to be installed.
 
 cvc5 is available for various platforms from
 <https://cvc5.github.io/>.  After installation, you must set the
