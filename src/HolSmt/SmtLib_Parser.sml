@@ -2392,6 +2392,24 @@ local
   and typecheck_sort context tydict sort_ast =
     let
       fun arg_sorts args = List.map (typecheck_sort context tydict) args
+      fun function_sort loc args =
+        let
+          val sorts = arg_sorts args
+          fun split_last [] =
+                type_error "typecheck_sort" context loc NONE NONE
+                  "function sort '->' expects at least one domain sort and one range sort"
+            | split_last [range] = ([], range)
+            | split_last (domain :: rest) =
+                let val (domains, range) = split_last rest
+                in (domain :: domains, range) end
+          val (domains, range) = split_last sorts
+        in
+          case domains of
+            [] =>
+              type_error "typecheck_sort" context loc NONE NONE
+                "function sort '->' expects at least one domain sort and one range sort"
+          | _ => boolSyntax.list_mk_fun (domains, range)
+        end
       fun parse_index name_loc indices args =
         let
           val token = located_string_node name_loc
@@ -2419,11 +2437,14 @@ local
       | SortIndexed (name, indices) =>
           parse_index name indices []
       | SortApply (head, args) =>
-          (t_with_args tydict (located_string_node head) []
-             (arg_sorts args)
-           handle Feedback.HOL_ERR holerr =>
-             type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
-               (Feedback.message_of holerr))
+          if located_string_node head = "->" then
+            function_sort (loc_of sort_ast) args
+          else
+            (t_with_args tydict (located_string_node head) []
+               (arg_sorts args)
+             handle Feedback.HOL_ERR holerr =>
+               type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
+                 (Feedback.message_of holerr))
     end
 
   and typecheck_sorted_var context tydict sorted_var =

@@ -1029,6 +1029,15 @@ fun smtlib_command_malformed_diagnostics () =
         ("(set-logic QF_UF)\n" ^
          "(declare-fun f (Bool) Bool)\n" ^
          "(assert (f true true))\n"));
+    typecheck
+      ("(set-logic QF_UF)\n" ^
+       "(declare-fun h ((-> Bool Bool)) Bool)\n" ^
+       "(check-sat)\n") ();
+    expect_hol_error_contains "malformed function sort"
+      "function sort '->' expects at least one domain sort and one range sort"
+      (typecheck
+        ("(set-logic QF_UF)\n" ^
+         "(declare-const bad (-> Bool))\n"));
     expect_hol_error_contains "duplicate declare-const"
       "duplicate declaration for symbol 'p'"
       (typecheck
