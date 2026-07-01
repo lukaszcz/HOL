@@ -2682,7 +2682,7 @@ local
         end)
       tydict params
 
-  fun typecheck_datatype_body context recursive_datatype_tys datatype_name decl
+  fun typecheck_datatype_body context datatype_name decl
       (tydict, tmdict, sigdict) =
     let
       val datatype_name_s = located_string_node datatype_name
@@ -2698,13 +2698,6 @@ local
                   DatatypeSelector (selector_name, selector_sort) =>
                     let
                       val selector_ty = typecheck_sort context tydict selector_sort
-                      val _ =
-                        if List.exists (fn ty => selector_ty = ty)
-                            recursive_datatype_tys then
-                          type_error "typecheck_declare_datatype" context
-                            (loc_of selector_sort) NONE NONE
-                            "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
-                        else ()
                     in
                       (located_string_node selector_name, selector_ty)
                     end
@@ -2750,11 +2743,6 @@ local
       case node_of decl of
         DatatypeDecl (params, constructors) =>
           let
-            val _ =
-              if List.null params then ()
-              else type_error "typecheck_declare_datatype" context
-                (loc_of decl) NONE NONE
-                "unsupported parametric datatype declaration"
             val constructor_tydict = add_datatype_params params tydict
             val (tmdict, sigdict) =
               List.foldl (add_constructor constructor_tydict)
@@ -2771,8 +2759,7 @@ local
           DatatypeDecl (params, _) => List.length params
       val tydict = extend_datatype_sort context name arity tydict
     in
-      typecheck_datatype_body context [datatype_type (located_string_node name)]
-        name decl (tydict, tmdict, sigdict)
+      typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
     end
 
   fun typecheck_declare_datatypes context bindings decls
@@ -2787,11 +2774,6 @@ local
                         "empty declare-datatypes command"))
           NONE NONE
           "datatype binding count does not match datatype declaration count"
-
-      val _ =
-        if List.length bindings <= 1 then ()
-        else raise ERR "typecheck_script"
-          "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
 
       fun binding_info binding =
         case node_of binding of
@@ -2818,12 +2800,8 @@ local
           (fn ((name, arity), tydict) =>
             extend_datatype_sort context name arity tydict)
           tydict infos
-      val recursive_datatype_tys =
-        List.map (datatype_type o located_string_node o Lib.fst) infos
-
       fun add_one ((name, _), decl, (tydict, tmdict, sigdict)) =
-        typecheck_datatype_body context recursive_datatype_tys
-          name decl (tydict, tmdict, sigdict)
+        typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
     in
       ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
     end
