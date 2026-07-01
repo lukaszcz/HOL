@@ -108,7 +108,11 @@ struct
   }
 
   datatype query_command =
-      QueryCheckSat of Term.term list
+      QueryCheckSat of {
+        assumptions: Term.term list,
+        assertions: Term.term list,
+        local_definitions: Term.term list
+      }
     | QueryGetProof
     | QueryGetUnsatAssumptions
     | QueryGetUnsatCore
@@ -1670,6 +1674,13 @@ local
     List.concat
       (List.map (List.rev o frame_local_definitions) (List.rev frames))
 
+  fun check_sat_query state assumptions =
+    QueryCheckSat {
+      assumptions = assumptions,
+      assertions = active_assertions state,
+      local_definitions = active_local_definitions state
+    }
+
   fun new_state logic tydict tmdict =
     {logic = logic, frames = [mk_frame tydict tmdict], queries = []}
 
@@ -1934,18 +1945,17 @@ local
         val _ = Library.expect_token ")" (get_token ())
       in
         parse_commands get_token
-          (SOME (add_query (QueryCheckSat []) command_state))
+          (SOME (add_query (check_sat_query command_state []) command_state))
       end
     | "check-sat-assuming" =>
       let
         val command_state = dest_state "check-sat-assuming" state
         val assumptions = parse_term_list get_token (current_dicts command_state)
         val _ = Library.expect_token ")" (get_token ())
-        val _ = query_warning "check-sat-assuming"
-          "assumptions are recorded but not replayed by Z3_TAC"
       in
         parse_commands get_token
-          (SOME (add_query (QueryCheckSat assumptions) command_state))
+          (SOME (add_query (check_sat_query command_state assumptions)
+            command_state))
       end
     | "get-proof" =>
       let
@@ -2208,6 +2218,13 @@ local
   fun active_typechecked_local_definitions ({frames, ...}: typecheck_state) =
     List.concat
       (List.map (List.rev o typecheck_frame_local_definitions) (List.rev frames))
+
+  fun typechecked_check_sat_query state assumptions =
+    QueryCheckSat {
+      assumptions = assumptions,
+      assertions = active_typechecked_assertions state,
+      local_definitions = active_typechecked_local_definitions state
+    }
 
   val reset_logic_prefix = "__HOLSMT_RESET__:"
 
@@ -3117,7 +3134,10 @@ local
           end
       | CmdCheckSat =>
           let val command_state = dest_typecheck_state "check-sat" state
-          in finish (add_typechecked_query (QueryCheckSat []) command_state) end
+          in
+            finish (add_typechecked_query
+              (typechecked_check_sat_query command_state []) command_state)
+          end
       | CmdCheckSatAssuming assumptions =>
           let
             val command_state =
@@ -3126,10 +3146,9 @@ local
               (context "check-sat-assuming")
               (current_typecheck_dicts command_state)
               "typecheck_check_sat_assuming" assumptions
-            val _ = query_warning "check-sat-assuming"
-              "assumptions are recorded but not replayed by Z3_TAC"
           in
-            finish (add_typechecked_query (QueryCheckSat assumptions)
+            finish (add_typechecked_query
+              (typechecked_check_sat_query command_state assumptions)
               command_state)
           end
       | CmdGetProof =>

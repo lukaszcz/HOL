@@ -279,24 +279,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked theorem reconstruction with assumptions is not implemented",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "command-reconstruction:check-sat-assuming",
-        "test_ids": [
-          "command:check-sat-assuming:reconstruction"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
@@ -706,24 +693,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "declare-const checked replay matrix is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "command-reconstruction:declare-const",
-        "test_ids": [
-          "command:declare-const:reconstruction"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: declare-const"
@@ -1184,24 +1158,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "abstract sort reconstruction coverage is incomplete",
-          "failure_phase": "translation",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "command-reconstruction:declare-sort",
-        "test_ids": [
-          "command:declare-sort:reconstruction"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: declare-sort"
@@ -1794,24 +1755,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "define-sort alias replay evidence is incomplete",
-          "failure_phase": "translation",
-          "notes": "theorem reconstruction applies: false"
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "command-reconstruction:define-sort",
-        "test_ids": [
-          "command:define-sort:reconstruction"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: define-sort"
@@ -1843,11 +1791,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": null,
@@ -2897,24 +2845,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "scoped assertion proof replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "command-reconstruction:push-pop",
-        "test_ids": [
-          "command:push-pop:reconstruction"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: push, pop"
@@ -3059,24 +2994,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "reset/reset-assertions replay semantics are incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/SolverSpec.sml"
-        ],
-        "feature": "command-reconstruction:reset-reset-assertions",
-        "test_ids": [
-          "command:reset-reset-assertions:reconstruction"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: reset, reset-assertions"

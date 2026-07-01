@@ -892,11 +892,13 @@ in
     "named assertion metadata is incorrect");
   assert (List.exists (fn query =>
       case query of
-        SmtLib_Parser.QueryCheckSat assumptions =>
+        SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} =>
           List.length assumptions = 1 andalso
-          List.exists (term_is_var_named "a") assumptions
+          List.exists (term_is_var_named "a") assumptions andalso
+          List.length assertions = 1 andalso
+          List.exists (term_is_var_named "a") assertions
       | _ => false) queries,
-    "check-sat-assuming assumptions were not preserved")
+    "check-sat-assuming state snapshot was not preserved")
 end
 
 fun smtlib_soundness_audit_scope_success () =

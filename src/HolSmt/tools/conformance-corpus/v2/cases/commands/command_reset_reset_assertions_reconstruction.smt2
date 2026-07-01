@@ -1,4 +1,5 @@
 (set-logic QF_UF)
-(assert false)
+(assert true)
 (reset-assertions)
+(assert false)
 (check-sat)

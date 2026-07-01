@@ -1,5 +1,5 @@
 (set-logic QF_UF)
 (declare-sort U 0)
 (declare-const a U)
-(assert (= a a))
+(assert (not (= a a)))
 (check-sat)

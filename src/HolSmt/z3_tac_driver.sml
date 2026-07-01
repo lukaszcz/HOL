@@ -22,7 +22,7 @@ fun z3_tac_args () =
 
 fun z3_tac_query_name query =
   case query of
-    SmtLib_Parser.QueryCheckSat [] => "check-sat"
+    SmtLib_Parser.QueryCheckSat {assumptions = [], ...} => "check-sat"
   | SmtLib_Parser.QueryCheckSat _ => "check-sat-assuming"
   | SmtLib_Parser.QueryGetProof => "get-proof"
   | SmtLib_Parser.QueryGetUnsatAssumptions => "get-unsat-assumptions"
@@ -34,20 +34,23 @@ fun z3_tac_query_name query =
 
 fun z3_tac_query_diagnostic queries =
   case queries of
-    [SmtLib_Parser.QueryCheckSat []] => NONE
-  | [SmtLib_Parser.QueryCheckSat [], SmtLib_Parser.QueryGetProof] => NONE
+    [SmtLib_Parser.QueryCheckSat _] => NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetProof] => NONE
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
-  | [SmtLib_Parser.QueryCheckSat (_ :: _)] =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.QueryCheckSat (_ :: _) :: _ =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.QueryCheckSat [] :: query :: _ =>
+  | SmtLib_Parser.QueryCheckSat _ :: query :: _ =>
       SOME ("raw SMT-LIB query " ^ z3_tac_query_name query ^
             " is outside checked Z3_TAC command-line entry point")
   | query :: _ =>
       SOME ("raw SMT-LIB query " ^ z3_tac_query_name query ^
             " is outside checked Z3_TAC command-line entry point")
+
+fun z3_tac_query_assertions queries =
+  case queries of
+    SmtLib_Parser.QueryCheckSat
+      {assumptions, assertions, local_definitions} :: _ =>
+        local_definitions @ assertions @ assumptions
+  | _ => []
 
 fun z3_tac_conjunction [] = boolSyntax.T
   | z3_tac_conjunction (tm :: tms) =
@@ -84,7 +87,7 @@ let
     SmtLib_Parser.parse_file_state path
   val observed_logic = #logic state
   val queries = #queries state
-  val assertions = #local_definitions state @ #assertions state
+  val assertions = z3_tac_query_assertions queries
 in
   if observed_logic <> expected_logic then
     z3_tac_die "Z3_TAC_FAIL"
