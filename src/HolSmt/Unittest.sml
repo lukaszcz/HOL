@@ -1920,6 +1920,10 @@ let
       "((proof ((_ th-lemma array select-store 0) (= false false))))"),
     ("array/extensionality",
       "((proof ((_ th-lemma array extensionality 0) (= true true))))"),
+    ("basic/true",
+      "((proof ((_ th-lemma basic eq-propagate 0) true)))"),
+    ("basic/equality",
+      "((proof ((_ th-lemma basic eq-propagate 1) (= false false))))"),
     ("bv/bit-blast",
       "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
   ]

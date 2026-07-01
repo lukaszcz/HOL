@@ -1340,10 +1340,18 @@ local
     end)
 
   val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
-    raise ERR "z3_th_lemma_basic"
-      ("unsupported th-lemma shape: theory=basic; checked replay is not " ^
-       "implemented for basic Boolean/equality simplification lemmas; " ^
-       "conclusion=" ^ Library.term_to_string t))
+    let
+      val thm = profile "th_lemma[basic](3)(TAUT_PROVE)"
+        tautLib.TAUT_PROVE t
+    in
+      (* cache 'thm' *)
+      (state_cache_thm state thm, thm)
+    end
+    handle Feedback.HOL_ERR _ =>
+      raise ERR "z3_th_lemma_basic"
+        ("unsupported th-lemma shape: theory=basic; checked replay is only " ^
+         "implemented for Boolean tautology/equality simplification lemmas; " ^
+         "conclusion=" ^ Library.term_to_string t))
 
   val z3_th_lemma_bv =
   let

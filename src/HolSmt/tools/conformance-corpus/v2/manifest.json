@@ -20794,7 +20794,7 @@
       "features": [
         "proof-rule:th-lemma-basic",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule-behavior:partial-checked-replay"
       ],
       "modes": [
         "proof-parse",
@@ -20812,7 +20812,7 @@
       "expected": {
         "proof-parse": {
           "status": "red",
-          "diagnostic": "basic Boolean/equality th-lemma replay is diagnostic-only",
+          "diagnostic": "non-tautological basic th-lemma replay is incomplete",
           "failure_phase": "proof-parse",
           "proof_rule_histogram": {
             "th-lemma-basic": 1
@@ -20820,7 +20820,7 @@
         },
         "proof-replay": {
           "status": "red",
-          "diagnostic": "basic Boolean/equality th-lemma replay is diagnostic-only",
+          "diagnostic": "non-tautological basic th-lemma replay is incomplete",
           "failure_phase": "proof-replay",
           "proof_rule_histogram": {
             "th-lemma-basic": 1
@@ -20828,7 +20828,7 @@
         },
         "z3-tac": {
           "status": "red",
-          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "diagnostic": "non-tautological basic th-lemma shapes have no reconstructed HOL theorem yet",
           "failure_phase": "proof-replay",
           "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
@@ -20847,7 +20847,7 @@
           "proof-rule:th-lemma-basic"
         ],
         "failure_phase": "proof-replay",
-        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+        "notes": "Tautological Boolean/equality synthetic coverage is checked; keep this row red until non-tautological basic th-lemma shapes and real proof-corpus evidence are added."
       },
       "source": {
         "kind": "Z3-proof",
