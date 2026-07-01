@@ -1566,6 +1566,8 @@ let
       ["(let ((b0 (+ v0 1))) (<= b0 (+ v0 1)))"]),
     ("conditional", ([], ``(if p then q else ~q):bool``),
       ["(ite v0 v1 (not v1))"]),
+    ("core-xor", ([], ``HolSmt$xor p q``),
+      ["(set-logic QF_UF)\n", "(xor v0 v1)"]),
     ("distinct-like-not-equal", ([],
        ``((x:'a) = y) <=> ~(x <> y)``),
       ["(= (= v0 v1) (not (not (= v0 v1))))"]),
@@ -1654,6 +1656,8 @@ in
     ``((x:word8) && 3w) = (y || 1w)``);
   roundtrip "uninterpreted-functions-and-equality" ([],
     ``(f:'a -> 'b) x = g y``);
+  roundtrip "core-xor" ([],
+    ``HolSmt$xor p q``);
   roundtrip "function-application-current-encoding" ([],
     ``(f:'a -> 'b) x = f x``);
   roundtrip "mixed-int-word-uf" ([``(x:int) <= y``],

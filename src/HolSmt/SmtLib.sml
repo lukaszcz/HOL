@@ -98,7 +98,7 @@ local
     (boolSyntax.implication, apfst_K "=>"),
     (boolSyntax.conjunction, apfst_K "and"),
     (boolSyntax.disjunction, apfst_K "or"),
-    (* (..., "xor"), *)
+    (Term.prim_mk_const {Thy="HolSmt", Name="xor"}, apfst_K "xor"),
     (boolSyntax.equality, apfst_K "="),
     (* (..., "distinct"), *)
     (boolSyntax.conditional, apfst_K "ite"),
