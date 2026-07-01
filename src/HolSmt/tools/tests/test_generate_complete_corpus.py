@@ -146,9 +146,14 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 self.assertEqual(expected["status"], "pass", case)
                 self.assertIsNone(obligation, case)
             elif expected["notes"] == "theorem reconstruction applies: false":
-                self.assertEqual(expected["status"], "unsupported", case)
-                self.assertIsNone(obligation, case)
-                self.assertIn("Z3_TAC", expected["diagnostic"], case)
+                if expected["status"] == "red":
+                    self.assertIsNotNone(obligation, case)
+                    for filename in obligation["files"]:
+                        self.assertTrue((REPO_ROOT / filename).exists(), filename)
+                else:
+                    self.assertEqual(expected["status"], "unsupported", case)
+                    self.assertIsNone(obligation, case)
+                    self.assertIn("Z3_TAC", expected["diagnostic"], case)
             else:
                 self.assertEqual(expected["status"], "red", case)
                 self.assertIsNotNone(obligation, case)

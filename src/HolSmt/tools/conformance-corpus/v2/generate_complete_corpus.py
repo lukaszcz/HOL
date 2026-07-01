@@ -160,6 +160,7 @@ class CommandGroup:
     reconstruction_phase: str
     obligation_files: tuple[str, ...]
     obligation_notes: str = GENERATED_OBLIGATION_NOTES
+    red_when_reconstruction_not_applicable: bool = False
 
 
 @dataclass(frozen=True)
@@ -570,11 +571,11 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         positive_script="(set-logic QF_UF)\n(declare-fun f (Bool Bool) Bool)\n(declare-const p Bool)\n(assert (f p p))\n(check-sat)\n",
         negative_script="(set-logic QF_UF)\n(declare-fun f (Bool) Bool)\n(assert (f true false))\n",
         state_script="(set-logic QF_UF)\n(declare-sort U 0)\n(declare-fun pred (U) Bool)\n(declare-const x U)\n(assert (pred x))\n(check-sat)\n",
-        reconstruction_script="(set-logic QF_UF)\n(declare-fun h ((-> Bool Bool)) Bool)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-const id (-> Bool Bool))\n(declare-fun h ((-> Bool Bool)) Bool)\n(assert (h id))\n(assert (not (h id)))\n(check-sat)\n",
         negative_diagnostic="function arity mismatch",
         negative_phase="typecheck",
         reconstruction_applies=True,
-        reconstruction_diagnostic="function-sort and higher-order command replay is incomplete",
+        reconstruction_diagnostic="unsupported higher-order/function sort",
         reconstruction_phase="translation",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
         obligation_notes=(
@@ -620,8 +621,8 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         negative_diagnostic="malformed recursive definition block",
         negative_phase="parser",
         reconstruction_applies=True,
-        reconstruction_diagnostic="recursive definition semantics are not implemented for checked replay",
-        reconstruction_phase="translation",
+        reconstruction_diagnostic="recursive self-reference",
+        reconstruction_phase="typecheck",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
         obligation_notes=(
             "Recursive definition commands are parsed and bounded-state checked, but "
@@ -634,12 +635,12 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         positive_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(check-sat)\n",
         negative_script="(set-logic QF_UF)\n(declare-datatypes ((Tree 1)) (((node (left Tree) (right Tree)))))\n",
         state_script="(set-logic QF_UF)\n(declare-datatypes ((Color 0)) (((red) (blue))))\n(declare-const c Color)\n(check-sat)\n",
-        reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (not (= red blue)))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (= red blue))\n(check-sat)\n",
         negative_diagnostic="declare-datatypes arity for 'Tree'",
         negative_phase="typecheck",
         reconstruction_applies=True,
-        reconstruction_diagnostic="datatype constructor replay is incomplete",
-        reconstruction_phase="translation",
+        reconstruction_diagnostic="solver reports negated term to be satisfiable",
+        reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
         obligation_notes=(
             "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC "
@@ -711,14 +712,15 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n",
         negative_diagnostic="unsat core requested before unsat result",
         negative_phase="solver",
-        reconstruction_applies=True,
-        reconstruction_diagnostic="unsat-core and unsat-assumption extraction is not implemented",
-        reconstruction_phase="proof-replay",
-        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        reconstruction_applies=False,
+        reconstruction_diagnostic="raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/z3_tac_driver.sml", "src/HolSmt/Z3_ProofReplay.sml"),
         obligation_notes=(
-            "Unsat-core and unsat-assumption commands are parsed and tracked, but checked "
-            "extraction/replay evidence is not implemented."
+            "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked "
+            "Z3_TAC entry point does not implement extraction/replay response objects."
         ),
+        red_when_reconstruction_not_applicable=True,
     ),
     CommandGroup(
         slug="get-model-get-value-get-assignment-get-assertions",
@@ -1220,7 +1222,7 @@ def command_cases() -> list[GeneratedCase]:
                 "pass",
                 notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
             )
-        elif not group.reconstruction_applies:
+        elif not group.reconstruction_applies and not group.red_when_reconstruction_not_applicable:
             reconstruction_expected = expected_result(
                 "unsupported",
                 diagnostic=group.reconstruction_diagnostic,
@@ -1232,9 +1234,9 @@ def command_cases() -> list[GeneratedCase]:
                 "red",
                 diagnostic=group.reconstruction_diagnostic,
                 failure_phase=group.reconstruction_phase,
-                notes=f"theorem reconstruction applies: true",
+                notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
             )
-        reconstruction_obligation = None if reconstruction_is_fixed or not group.reconstruction_applies else implementation_obligation(
+        reconstruction_obligation = None if reconstruction_is_fixed or (not group.reconstruction_applies and not group.red_when_reconstruction_not_applicable) else implementation_obligation(
             files=group.obligation_files,
             feature=f"command-reconstruction:{group.slug}",
             test_ids=[reconstruction_case_id],

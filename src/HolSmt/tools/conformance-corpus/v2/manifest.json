@@ -842,8 +842,8 @@
       "expected": {
         "z3-tac": {
           "status": "red",
-          "diagnostic": "datatype constructor replay is incomplete",
-          "failure_phase": "translation",
+          "diagnostic": "solver reports negated term to be satisfiable",
+          "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: true"
         }
       },
@@ -856,7 +856,7 @@
         "test_ids": [
           "command:declare-datatype-declare-datatypes:reconstruction"
         ],
-        "failure_phase": "translation",
+        "failure_phase": "theorem-shape",
         "notes": "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC translation still lacks native datatype constructor replay evidence."
       },
       "source": {
@@ -1001,7 +1001,7 @@
       "expected": {
         "z3-tac": {
           "status": "red",
-          "diagnostic": "function-sort and higher-order command replay is incomplete",
+          "diagnostic": "unsupported higher-order/function sort",
           "failure_phase": "translation",
           "notes": "theorem reconstruction applies: true"
         }
@@ -1489,8 +1489,8 @@
       "expected": {
         "z3-tac": {
           "status": "red",
-          "diagnostic": "recursive definition semantics are not implemented for checked replay",
-          "failure_phase": "translation",
+          "diagnostic": "recursive self-reference",
+          "failure_phase": "typecheck",
           "notes": "theorem reconstruction applies: true"
         }
       },
@@ -1503,7 +1503,7 @@
         "test_ids": [
           "command:define-fun-rec-define-funs-rec:reconstruction"
         ],
-        "failure_phase": "translation",
+        "failure_phase": "typecheck",
         "notes": "Recursive definition commands are parsed and bounded-state checked, but recursive semantics are not translated for checked Z3_TAC replay."
       },
       "source": {
@@ -2651,22 +2651,23 @@
       "expected": {
         "z3-tac": {
           "status": "red",
-          "diagnostic": "unsat-core and unsat-assumption extraction is not implemented",
-          "failure_phase": "proof-replay",
-          "notes": "theorem reconstruction applies: true"
+          "diagnostic": "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
         }
       },
       "implementation_obligation": {
         "files": [
           "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/z3_tac_driver.sml"
         ],
         "feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
         "test_ids": [
           "command:get-unsat-assumptions-get-unsat-core:reconstruction"
         ],
-        "failure_phase": "proof-replay",
-        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but checked extraction/replay evidence is not implemented."
+        "failure_phase": "theorem-shape",
+        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked Z3_TAC entry point does not implement extraction/replay response objects."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -2700,11 +2701,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         }
       },
       "implementation_obligation": null,
