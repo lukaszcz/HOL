@@ -2609,22 +2609,54 @@ local
       Library.extend_dict ((sort_name, parsefn), tydict)
     end
 
-  fun typecheck_declare_datatype context name decl (tydict, tmdict, sigdict) =
+  fun datatype_type datatype_name =
+    Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
+
+  fun datatype_arity context loc datatype_name arity_text =
+    case Int.fromString arity_text of
+      SOME n =>
+        if n < 0 then
+          type_error "typecheck_declare_datatype" context loc NONE NONE
+            ("declare-datatypes arity for '" ^ datatype_name ^
+             "' must be non-negative")
+        else n
+    | NONE =>
+        type_error "typecheck_declare_datatype" context loc NONE NONE
+          ("declare-datatypes arity for '" ^ datatype_name ^
+           "' must be a numeral, got '" ^ arity_text ^ "'")
+
+  fun extend_datatype_sort context name arity tydict =
     let
       val datatype_name = located_string_node name
-      val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
-      fun reject_recursive loc selector_ty =
-        if selector_ty = datatype_ty then
-          type_error "typecheck_declare_datatype" context loc NONE NONE
-            "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
-        else
-          ()
+      val datatype_ty = datatype_type datatype_name
       fun parse_ty token indices args =
-        if List.null indices andalso List.null args then datatype_ty
+        if List.null indices andalso List.length args = arity then datatype_ty
         else raise ERR ("<" ^ datatype_name ^ ">") "wrong number of arguments"
-      val tydict = Library.extend_dict ((datatype_name, parse_ty), tydict)
+    in
+      Library.extend_dict ((datatype_name, parse_ty), tydict)
+    end
 
-      fun add_constructor (ctor, (tmdict, sigdict)) =
+  fun add_datatype_params params tydict =
+    List.foldl
+      (fn (param, tydict) =>
+        let
+          val pname = located_string_node param
+          val ty = Type.mk_vartype ("'" ^ pname)
+          fun parsefn token indices args =
+            if List.null indices andalso List.null args then ty
+            else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
+        in
+          Library.extend_dict ((pname, parsefn), tydict)
+        end)
+      tydict params
+
+  fun typecheck_datatype_body context datatype_name decl
+      (tydict, tmdict, sigdict) =
+    let
+      val datatype_name_s = located_string_node datatype_name
+      val datatype_ty = datatype_type datatype_name_s
+
+      fun add_constructor tydict (ctor, (tmdict, sigdict)) =
         case node_of ctor of
           DatatypeConstructor (ctor_name, _, selectors) =>
             let
@@ -2634,7 +2666,6 @@ local
                   DatatypeSelector (selector_name, selector_sort) =>
                     let
                       val selector_ty = typecheck_sort context tydict selector_sort
-                      val _ = reject_recursive (loc_of selector_sort) selector_ty
                     in
                       (located_string_node selector_name, selector_ty)
                     end
@@ -2678,17 +2709,70 @@ local
             end
     in
       case node_of decl of
-        DatatypeDecl ([], constructors) =>
+        DatatypeDecl (params, constructors) =>
           let
+            val constructor_tydict = add_datatype_params params tydict
             val (tmdict, sigdict) =
-              List.foldl add_constructor (tmdict, sigdict) constructors
+              List.foldl (add_constructor constructor_tydict)
+                (tmdict, sigdict) constructors
           in
             (tydict, tmdict, sigdict)
           end
-      | DatatypeDecl _ =>
-          type_error "typecheck_declare_datatype" context (loc_of decl)
-            NONE NONE
-            "unsupported parametric datatype declaration"
+    end
+
+  fun typecheck_declare_datatype context name decl (tydict, tmdict, sigdict) =
+    let
+      val arity =
+        case node_of decl of
+          DatatypeDecl (params, _) => List.length params
+      val tydict = extend_datatype_sort context name arity tydict
+    in
+      typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
+    end
+
+  fun typecheck_declare_datatypes context bindings decls
+      (tydict, tmdict, sigdict) =
+    let
+      val _ =
+        if List.length bindings = List.length decls then ()
+        else type_error "typecheck_declare_datatypes" context
+          (case bindings of b :: _ => loc_of b
+           | [] => (case decls of d :: _ => loc_of d
+                    | [] => raise ERR "typecheck_declare_datatypes"
+                        "empty declare-datatypes command"))
+          NONE NONE
+          "datatype binding count does not match datatype declaration count"
+
+      fun binding_info binding =
+        case node_of binding of
+          DatatypeBinding (name, arity) =>
+            (name, datatype_arity context (loc_of arity)
+               (located_string_node name) (located_string_node arity))
+
+      val infos = List.map binding_info bindings
+
+      fun check_decl_arity ((name, arity), decl) =
+        case node_of decl of
+          DatatypeDecl (params, _) =>
+            if arity = List.length params then ()
+            else type_error "typecheck_declare_datatypes" context (loc_of decl)
+              NONE NONE
+              ("declare-datatypes arity for '" ^ located_string_node name ^
+               "': expected " ^ Int.toString arity ^ ", actual " ^
+               Int.toString (List.length params))
+
+      val _ = List.app check_decl_arity (ListPair.zip (infos, decls))
+
+      val tydict =
+        List.foldl
+          (fn ((name, arity), tydict) =>
+            extend_datatype_sort context name arity tydict)
+          tydict infos
+
+      fun add_one ((name, _), decl, (tydict, tmdict, sigdict)) =
+        typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
+    in
+      ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
     end
 
   fun define_typechecked_fun context loc name vars range_type definiens
@@ -2944,35 +3028,20 @@ local
             finish (update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state)
           end
-      | CmdDeclareDatatypes _ =>
-          (case node_of command of
-             CmdDeclareDatatypes ([binding], [decl]) =>
-               (case node_of binding of
-                  DatatypeBinding (name, arity) =>
-                    let
-                      val command_state =
-                        dest_typecheck_state "declare-datatypes" state
-                      val (tydict, tmdict, sigdict) =
-                        current_typecheck_dicts command_state
-                      val _ =
-                        if located_string_node arity = "0" then ()
-                        else type_error "typecheck_declare_datatypes"
-                          (context "declare-datatypes") (loc_of arity)
-                          NONE NONE
-                          ("declare-datatypes arity for '" ^
-                           located_string_node name ^ "': expected 0, actual " ^
-                           located_string_node arity)
-                      val (tydict, tmdict, sigdict) =
-                        typecheck_declare_datatype
-                          (context "declare-datatypes")
-                          name decl (tydict, tmdict, sigdict)
-                    in
-                      finish (update_current_typecheck_dicts
-                        (tydict, tmdict, sigdict) command_state)
-                    end)
-           | _ =>
-               raise ERR "typecheck_script"
-                 "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary")
+      | CmdDeclareDatatypes (bindings, decls) =>
+          let
+            val command_state =
+              dest_typecheck_state "declare-datatypes" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tydict, tmdict, sigdict) =
+              typecheck_declare_datatypes
+                (context "declare-datatypes")
+                bindings decls (tydict, tmdict, sigdict)
+          in
+            finish (update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state)
+          end
       | CmdAssert term =>
           let
             val command_state = dest_typecheck_state "assert" state
@@ -3148,9 +3217,11 @@ in
      get-model, get-value, get-assignment, get-assertions, echo, and exit.
      Solver query commands update parser state, but model/value/core output
      is not produced by this parser or by proof reconstruction mode.
-     Recursive definitions and datatype commands are represented by the
-     script AST but rejected here with explicit unsupported-command
-     diagnostics.  Any other command is rejected with "unknown command". *)
+     Recursive definitions are represented by the script AST but rejected
+     here with explicit unsupported-command diagnostics.  Datatype commands
+     install uninterpreted datatype sorts plus constructor, selector, and
+     tester symbols for bounded command-state checking.  Any other command is
+     rejected with "unknown command". *)
 
   fun parse_file_state (path : string) : command_state_snapshot =
   let

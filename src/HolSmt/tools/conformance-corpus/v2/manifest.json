@@ -505,23 +505,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "unsupported command 'declare-datatypes'",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:mutual-command",
-        "test_ids": [
-          "command:datatypes:mutual-tree-forest"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatypes mutual datatype command"
@@ -557,23 +544,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "unsupported parametric datatype declaration",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:parametric-command",
-        "test_ids": [
-          "command:datatypes:parametric-box"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatype parametric datatype command"
@@ -609,23 +583,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:recursive-command",
-        "test_ids": [
-          "command:datatypes:recursive-list"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatype recursive datatype command"
@@ -897,7 +858,7 @@
       "expected": {
         "typecheck-only": {
           "status": "fail",
-          "diagnostic": "recursive datatype",
+          "diagnostic": "declare-datatypes arity for 'Tree'",
           "failure_phase": "typecheck"
         }
       },

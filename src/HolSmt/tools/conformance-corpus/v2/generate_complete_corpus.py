@@ -623,10 +623,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         slug="declare-datatype-declare-datatypes",
         commands=("declare-datatype", "declare-datatypes"),
         positive_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(check-sat)\n",
-        negative_script="(set-logic QF_UF)\n(declare-datatypes ((Tree 0)) (((node (left Tree) (right Tree)))))\n",
+        negative_script="(set-logic QF_UF)\n(declare-datatypes ((Tree 1)) (((node (left Tree) (right Tree)))))\n",
         state_script="(set-logic QF_UF)\n(declare-datatypes ((Color 0)) (((red) (blue))))\n(declare-const c Color)\n(check-sat)\n",
         reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (not (= red blue)))\n(check-sat)\n",
-        negative_diagnostic="recursive datatype",
+        negative_diagnostic="declare-datatypes arity for 'Tree'",
         negative_phase="typecheck",
         reconstruction_applies=True,
         reconstruction_diagnostic="datatype constructor replay is incomplete",
@@ -847,11 +847,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic="recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-                failure_phase="typecheck",
-            ),
+            "typecheck-only": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -860,9 +856,6 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "theory:Datatypes",
             "theory-behavior:recursive-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:recursive-command",
-        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
-        implementation_phase="typecheck",
         logic="ALL",
         source_reference="SMT-LIB 2.7 declare-datatype recursive datatype command",
         source_kind="SMT-LIB-standard",
@@ -879,11 +872,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic="unsupported command 'declare-datatypes'",
-                failure_phase="typecheck",
-            ),
+            "typecheck-only": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -892,9 +881,6 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "theory:Datatypes",
             "theory-behavior:mutual-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:mutual-command",
-        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
-        implementation_phase="typecheck",
         logic="ALL",
         source_reference="SMT-LIB 2.7 declare-datatypes mutual datatype command",
         source_kind="SMT-LIB-standard",
@@ -909,11 +895,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic="unsupported parametric datatype declaration",
-                failure_phase="typecheck",
-            ),
+            "typecheck-only": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -922,9 +904,6 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "theory:Datatypes",
             "theory-behavior:parametric-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:parametric-command",
-        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
-        implementation_phase="typecheck",
         logic="ALL",
         source_reference="SMT-LIB 2.7 declare-datatype parametric datatype command",
         source_kind="SMT-LIB-standard",
