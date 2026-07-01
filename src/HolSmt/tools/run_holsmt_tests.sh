@@ -205,6 +205,7 @@ run_in_dir "Run real SOS/CSDP selftest" src/real \
 
 run "Run HolSmt Python tool unit tests" \
   python3 -m unittest \
+    src/HolSmt/tools/tests/test_audit_proof_completeness.py \
     src/HolSmt/tools/tests/test_audit_coverage_manifest.py \
     src/HolSmt/tools/tests/test_generate_complete_corpus.py \
     src/HolSmt/tools/tests/test_generate_smtlib_coverage.py \

@@ -1989,6 +1989,44 @@ fun z3_proof_replay_failure_diagnostic () =
         "replay diagnostic did not include Z3 version: " ^ msg)
     end
 
+fun expect_z3_replay_malformed_premise_diagnostic (name, proof_text) =
+  (ignore (replay_z3_proof_string proof_text);
+   die ("FAIL: malformed-premise Z3 proof rule " ^ name ^
+     " replayed successfully"))
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring ("proof rule: " ^ name) msg,
+        "malformed-premise diagnostic did not include proof rule " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "local proof subterm:" msg,
+        "malformed-premise diagnostic did not include local proof subterm for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "parsed HOL conclusion:" msg,
+        "malformed-premise diagnostic did not include parsed conclusion for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "premise HOL theorems:" msg,
+        "malformed-premise diagnostic did not include premise theorems for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring "underlying HOL_ERR:" msg,
+        "malformed-premise diagnostic did not include underlying HOL_ERR for " ^
+        name ^ ": " ^ msg)
+    end
+
+fun z3_proof_replay_malformed_premise_diagnostics () =
+let
+  val cases = [
+    ("and_elim",
+      "((proof (and-elim (asserted false) true)))"),
+    ("mp",
+      "((proof (mp (asserted true) (asserted true) false)))"),
+    ("unit_resolution",
+      "((proof (unit-resolution false)))")
+  ]
+in
+  List.app expect_z3_replay_malformed_premise_diagnostic cases
+end
+
 fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
   (Library.check_oracle_tags "Z3_SMT_Prover"
      (Thm.mk_oracle_thm "HolSmtLib" ([], boolSyntax.T));
@@ -2140,6 +2178,8 @@ let
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
       z3_proof_replay_failure_diagnostic),
+    ("z3_proof_replay_malformed_premise_diagnostics",
+      z3_proof_replay_malformed_premise_diagnostics),
     ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
       z3_tac_oracle_tag_gate_rejects_oracle_thm),
     ("holsmt_solver_result_negative_diagnostics",

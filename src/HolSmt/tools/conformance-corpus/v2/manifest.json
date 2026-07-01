@@ -74848,6 +74848,489 @@
         "kind": "Z3-extension",
         "reference": "Z3 sequence/set/bag extension: Set"
       }
+    },
+    {
+      "id": "proof-rule:th-lemma-basic",
+      "file": "cases/proof_rules/proof_rule_th_lemma_basic.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-basic",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "basic Boolean/equality th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "basic Boolean/equality th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-basic",
+        "test_ids": [
+          "proof-rule:th-lemma-basic"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-basic"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-fp",
+      "file": "cases/proof_rules/proof_rule_th_lemma_fp.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-fp",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "floating-point th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-fp": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "floating-point th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-fp": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-fp": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-fp",
+        "test_ids": [
+          "proof-rule:th-lemma-fp"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-fp"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-seq",
+      "file": "cases/proof_rules/proof_rule_th_lemma_seq.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-seq",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "sequence th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-seq": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "sequence th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-seq": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-seq": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-seq",
+        "test_ids": [
+          "proof-rule:th-lemma-seq"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-seq"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-string",
+      "file": "cases/proof_rules/proof_rule_th_lemma_string.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-string",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "string th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-string": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "string th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-string": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-string": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-string",
+        "test_ids": [
+          "proof-rule:th-lemma-string"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-string"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-regexp",
+      "file": "cases/proof_rules/proof_rule_th_lemma_regexp.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-regexp",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "regular-expression th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-regexp": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "regular-expression th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-regexp": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-regexp": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-regexp",
+        "test_ids": [
+          "proof-rule:th-lemma-regexp"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-regexp"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-datatype",
+      "file": "cases/proof_rules/proof_rule_th_lemma_datatype.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-datatype",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "datatype th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-datatype": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "datatype th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-datatype": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-datatype": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-datatype",
+        "test_ids": [
+          "proof-rule:th-lemma-datatype"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-datatype"
+      }
+    },
+    {
+      "id": "proof-rule:th-lemma-nonlinear-arith",
+      "file": "cases/proof_rules/proof_rule_th_lemma_nonlinear_arith.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:th-lemma-nonlinear-arith",
+        "proof-rule-family:th-lemma",
+        "proof-rule-behavior:diagnostic-only"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma-nonlinear-arith": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma-nonlinear-arith": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-nonlinear-arith": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/Unittest.sml"
+        ],
+        "feature": "proof-rule:th-lemma-nonlinear-arith",
+        "test_ids": [
+          "proof-rule:th-lemma-nonlinear-arith"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-nonlinear-arith"
+      }
     }
   ]
 }
