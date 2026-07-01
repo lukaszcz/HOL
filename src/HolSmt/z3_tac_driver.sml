@@ -31,6 +31,8 @@ fun z3_tac_query_name query =
   | SmtLib_Parser.QueryGetValue _ => "get-value"
   | SmtLib_Parser.QueryGetAssignment => "get-assignment"
   | SmtLib_Parser.QueryGetAssertions => "get-assertions"
+  | SmtLib_Parser.QueryGetInfo _ => "get-info"
+  | SmtLib_Parser.QueryGetOption _ => "get-option"
 
 fun z3_tac_query_diagnostic queries =
   case queries of

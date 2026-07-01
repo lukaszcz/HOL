@@ -871,6 +871,8 @@ let
       ("(set-logic QF_UF)\n" ^
        "(declare-const a Bool)\n" ^
        "(assert (! a :named A))\n" ^
+       "(get-info :version)\n" ^
+       "(get-option :print-success)\n" ^
        "(check-sat)\n" ^
        "(check-sat-assuming (a))\n" ^
        "(get-model)\n" ^
@@ -898,7 +900,17 @@ in
           List.length assertions = 1 andalso
           List.exists (term_is_var_named "a") assertions
       | _ => false) queries,
-    "check-sat-assuming state snapshot was not preserved")
+    "check-sat-assuming state snapshot was not preserved");
+  assert (List.exists (fn query =>
+      case query of
+        SmtLib_Parser.QueryGetInfo keyword => keyword = ":version"
+      | _ => false) queries,
+    "get-info query was not recorded in the state snapshot");
+  assert (List.exists (fn query =>
+      case query of
+        SmtLib_Parser.QueryGetOption keyword => keyword = ":print-success"
+      | _ => false) queries,
+    "get-option query was not recorded in the state snapshot")
 end
 
 fun smtlib_soundness_audit_scope_success () =

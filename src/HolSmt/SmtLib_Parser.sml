@@ -120,6 +120,8 @@ struct
     | QueryGetValue of Term.term list
     | QueryGetAssignment
     | QueryGetAssertions
+    | QueryGetInfo of string
+    | QueryGetOption of string
 
   type command_state_snapshot = {
     logic: string,
@@ -1328,10 +1330,10 @@ local
 
   fun parse_get_info get_token =
     let
-      val _ = get_token ()
+      val keyword = get_token ()
       val _ = Library.expect_token ")" (get_token ())
     in
-      ()
+      keyword
     end
 
   val parse_get_option = parse_get_info
@@ -1810,15 +1812,19 @@ local
       end
     | "get-info" =>
       let
-        val _ = parse_get_info get_token
+        val option = parse_get_info get_token
+        val command_state = dest_state "get-info" state
       in
-        parse_commands get_token state
+        parse_commands get_token
+          (SOME (add_query (QueryGetInfo option) command_state))
       end
     | "get-option" =>
       let
-        val _ = parse_get_option get_token
+        val option = parse_get_option get_token
+        val command_state = dest_state "get-option" state
       in
-        parse_commands get_token state
+        parse_commands get_token
+          (SOME (add_query (QueryGetOption option) command_state))
       end
     | "declare-sort" =>
       let
@@ -2979,8 +2985,20 @@ local
           in
             finish (new_typecheck_state logic_name tydict tmdict)
           end
-      | CmdGetInfo _ => state
-      | CmdGetOption _ => state
+      | CmdGetInfo option =>
+          let
+            val command_state = dest_typecheck_state "get-info" state
+          in
+            finish (add_typechecked_query
+              (QueryGetInfo (located_string_node option)) command_state)
+          end
+      | CmdGetOption option =>
+          let
+            val command_state = dest_typecheck_state "get-option" state
+          in
+            finish (add_typechecked_query
+              (QueryGetOption (located_string_node option)) command_state)
+          end
       | CmdDeclareSort (name, arity) =>
           let
             val command_state =
