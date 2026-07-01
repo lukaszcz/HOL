@@ -476,6 +476,206 @@
       }
     },
     {
+      "id": "command:datatypes:mutual-tree-forest",
+      "file": "cases/commands/datatypes/command_datatypes_mutual_tree_forest.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatypes",
+        "datatype-command:mutual",
+        "theory-behavior:mutual-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "unsupported command 'declare-datatypes'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:mutual-command",
+        "test_ids": [
+          "command:datatypes:mutual-tree-forest"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatypes mutual datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:parametric-box",
+      "file": "cases/commands/datatypes/command_datatypes_parametric_box.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:parametric",
+        "theory-behavior:parametric-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "unsupported parametric datatype declaration",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:parametric-command",
+        "test_ids": [
+          "command:datatypes:parametric-box"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatype parametric datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:recursive-list",
+      "file": "cases/commands/datatypes/command_datatypes_recursive_list.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:recursive",
+        "theory-behavior:recursive-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:recursive-command",
+        "test_ids": [
+          "command:datatypes:recursive-list"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatype recursive datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:simple-enum",
+      "file": "cases/commands/datatypes/command_datatypes_simple_enum.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:simple",
+        "theory-behavior:constructor",
+        "theory-behavior:tester",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatype simple datatype command"
+      }
+    },
+    {
       "id": "command:declare-const",
       "file": "cases/commands/command_declare_const.smt2",
       "logic": "QF_UF",
@@ -24216,6 +24416,362 @@
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Core theory: xor"
+      }
+    },
+    {
+      "id": "theory:Datatypes:constructor-disjointness-replay",
+      "file": "cases/theories/datatypes/theory_datatypes_constructor_disjointness_replay.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:constructor",
+        "theory-behavior:disjointness",
+        "theory-behavior:proof-gap",
+        "theory-case:unsat-proof",
+        "theory-entry:Datatypes:constructor-disjointness",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "datatype disjointness proof parsing evidence is incomplete",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma[datatype]": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "datatype constructor disjointness replay is incomplete",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma[datatype]": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked Z3_TAC reconstruction for datatype disjointness is incomplete",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "datatypes-reconstruction:constructor-disjointness",
+        "test_ids": [
+          "theory:Datatypes:constructor-disjointness-replay"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory constructor disjointness"
+      }
+    },
+    {
+      "id": "theory:Datatypes:mutual-datatypes",
+      "file": "cases/theories/datatypes/theory_datatypes_mutual_datatypes.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:mutual-datatype",
+        "theory-case:type-error",
+        "theory-entry:Datatypes:mutual-datatypes",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "unsupported command 'declare-datatypes'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:mutual-datatypes",
+        "test_ids": [
+          "theory:Datatypes:mutual-datatypes"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory mutual datatypes"
+      }
+    },
+    {
+      "id": "theory:Datatypes:parametric-datatype",
+      "file": "cases/theories/datatypes/theory_datatypes_parametric_datatype.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:parametric-datatype",
+        "theory-case:type-error",
+        "theory-entry:Datatypes:parametric-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "unsupported parametric datatype declaration",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:parametric-datatype",
+        "test_ids": [
+          "theory:Datatypes:parametric-datatype"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory parametric datatype"
+      }
+    },
+    {
+      "id": "theory:Datatypes:recursive-datatype",
+      "file": "cases/theories/datatypes/theory_datatypes_recursive_datatype.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:recursive-datatype",
+        "theory-case:type-error",
+        "theory-entry:Datatypes:recursive-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-reconstruction:recursive-datatype",
+        "test_ids": [
+          "theory:Datatypes:recursive-datatype"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory recursive datatype"
+      }
+    },
+    {
+      "id": "theory:Datatypes:selector-theorem-replay",
+      "file": "cases/theories/datatypes/theory_datatypes_selector_theorem_replay.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:proof-gap",
+        "theory-behavior:selector",
+        "theory-case:unsat-proof",
+        "theory-entry:Datatypes:selector-theorem",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "datatype selector proof parsing evidence is incomplete",
+          "failure_phase": "proof-parse",
+          "proof_rule_histogram": {
+            "th-lemma[datatype]": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "datatype selector theorem replay is incomplete",
+          "failure_phase": "proof-replay",
+          "proof_rule_histogram": {
+            "th-lemma[datatype]": 1
+          }
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked Z3_TAC reconstruction for datatype selector theorem is incomplete",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem without oracle tags"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "datatypes-reconstruction:selector-theorem",
+        "test_ids": [
+          "theory:Datatypes:selector-theorem-replay"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory selector theorem"
+      }
+    },
+    {
+      "id": "theory:Datatypes:simple-constructors-selectors-testers",
+      "file": "cases/theories/datatypes/theory_datatypes_simple_constructors_selectors_testers.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:constructor",
+        "theory-behavior:selector",
+        "theory-behavior:tester",
+        "theory-case:sat",
+        "theory-entry:Datatypes:simple-constructors-selectors-testers",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Datatypes theory constructors, selectors, and testers"
       }
     },
     {
@@ -51797,6 +52353,347 @@
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 FloatingPoint theory: to_fp"
+      }
+    },
+    {
+      "id": "theory:HO_Core:function-argument-sort",
+      "file": "cases/theories/hocore/theory_ho_core_function_argument_sort.smt2",
+      "logic": "QF_AUFLIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "higher-order/function-sort",
+        "theory-behavior:function-argument",
+        "theory-behavior:function-sort",
+        "theory-case:sat",
+        "theory-entry:HO_Core:function-argument-sort",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
+          "failure_phase": "translation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "higher-order/function-sort:function-argument",
+        "test_ids": [
+          "theory:HO_Core:function-argument-sort"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB HO-Core function argument sort"
+      }
+    },
+    {
+      "id": "theory:HO_Core:function-result-sort",
+      "file": "cases/theories/hocore/theory_ho_core_function_result_sort.smt2",
+      "logic": "QF_AUFLIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "higher-order/function-sort",
+        "theory-behavior:function-result",
+        "theory-behavior:function-sort",
+        "theory-case:sat",
+        "theory-entry:HO_Core:function-result-sort",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
+          "failure_phase": "translation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "higher-order/function-sort:function-result",
+        "test_ids": [
+          "theory:HO_Core:function-result-sort"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB HO-Core function result sort"
+      }
+    },
+    {
+      "id": "theory:HO_Core:function-valued-array-declaration",
+      "file": "cases/theories/hocore/theory_ho_core_function_valued_array_declaration.smt2",
+      "logic": "QF_AUFLIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "higher-order/function-sort",
+        "theory-behavior:function-sort",
+        "theory-behavior:higher-order",
+        "theory-behavior:translate-type-rejection",
+        "theory-case:sat",
+        "theory-entry:HO_Core:function-valued-array-declaration",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
+          "failure_phase": "translation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "higher-order/function-sort:translate-type-array-declaration",
+        "test_ids": [
+          "theory:HO_Core:function-valued-array-declaration"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB HO-Core function-valued declaration represented by HOL Array/function sort"
+      }
+    },
+    {
+      "id": "theory:HO_Core:higher-order-equality",
+      "file": "cases/theories/hocore/theory_ho_core_higher_order_equality.smt2",
+      "logic": "QF_AUFLIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "higher-order/function-sort",
+        "theory-behavior:function-sort",
+        "theory-behavior:higher-order-equality",
+        "theory-case:sat",
+        "theory-entry:HO_Core:higher-order-equality",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "higher-order equality over function sorts is not reconstructed",
+          "failure_phase": "translation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "higher-order/function-sort:higher-order-equality",
+        "test_ids": [
+          "theory:HO_Core:higher-order-equality"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB HO-Core higher-order equality"
+      }
+    },
+    {
+      "id": "theory:HO_Core:lambda-like-universal-encoding",
+      "file": "cases/theories/hocore/theory_ho_core_lambda_like_universal_encoding.smt2",
+      "logic": "AUFLIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory-behavior:first-order-encoding",
+        "theory-behavior:lambda-like-encoding",
+        "theory-case:boundary",
+        "theory-entry:HO_Core:lambda-like-universal-encoding",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB HO-Core lambda-like behavior encoded with first-order function and universal axiom"
+      }
+    },
+    {
+      "id": "theory:HO_Core:native-function-sort",
+      "file": "cases/theories/hocore/theory_ho_core_native_function_sort.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-3",
+      "class": "theory",
+      "features": [
+        "higher-order/function-sort",
+        "theory-behavior:function-sort",
+        "theory-behavior:hocore-native-function-sort",
+        "theory-case:type-error",
+        "theory-entry:HO_Core:native-function-sort",
+        "theory:HO_Core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "native HO-Core function sort syntax is not installed in the SMT-LIB type dictionary",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/SmtLib_Theories.sml"
+        ],
+        "feature": "higher-order/function-sort:native-hocore-function-sort",
+        "test_ids": [
+          "theory:HO_Core:native-function-sort"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 3 HO-Core native function sort"
       }
     },
     {

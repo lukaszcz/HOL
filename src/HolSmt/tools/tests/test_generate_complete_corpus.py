@@ -60,18 +60,23 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertIn("proof-parse", cases[0]["expected"])
         self.assertIn("proof-replay", cases[0]["expected"])
 
-    def test_commands_subcommand_emits_four_cases_per_command_group(self):
+    def test_commands_subcommand_emits_command_groups_and_datatype_corpus_cases(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             self.assertEqual(generator.main(["commands"]), 0)
 
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
-        self.assertEqual(len(cases), 4 * len(generator.COMMAND_GROUPS))
+        self.assertEqual(
+            len(cases),
+            4 * len(generator.COMMAND_GROUPS) + len(generator.DATATYPE_COMMAND_CORPUS_CASES),
+        )
         self.assertEqual({case["class"] for case in cases}, {"command"})
 
         by_group = {}
         for case in cases:
+            if "command-case:datatype-corpus" in case["features"]:
+                continue
             group_features = [
                 feature
                 for feature in case["features"]
@@ -107,6 +112,22 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 self.assertEqual(result["status"], "fail")
                 self.assertIn("diagnostic", result)
                 self.assertIn("failure_phase", result)
+
+        datatype_cases = [
+            case for case in cases
+            if "command-case:datatype-corpus" in case["features"]
+        ]
+        self.assertEqual(len(datatype_cases), len(generator.DATATYPE_COMMAND_CORPUS_CASES))
+        self.assertTrue(
+            all(case["file"].startswith("cases/commands/datatypes/") for case in datatype_cases)
+        )
+        self.assertTrue(
+            any(
+                "datatype-command:parametric" in case["features"]
+                and case["expected"]["typecheck-only"]["status"] == "red"
+                for case in datatype_cases
+            )
+        )
 
     def test_logics_subcommand_emits_six_case_packet_per_packet_logic(self):
         stdout = io.StringIO()
@@ -217,6 +238,47 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertTrue(literal_cases)
         self.assertTrue(
             any(result["status"] == "red" for result in literal_cases[0]["expected"].values())
+        )
+
+    def test_theories_subcommand_emits_datatypes_and_hocore_cases(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(generator.main(["theories"]), 0)
+
+        manifest = json.loads(stdout.getvalue())
+        cases = audit.validate_v2_manifest(manifest)
+
+        datatype_cases = [
+            case for case in cases
+            if "theory:Datatypes" in case["features"]
+        ]
+        hocore_cases = [
+            case for case in cases
+            if "theory:HO_Core" in case["features"]
+        ]
+        self.assertEqual(len(datatype_cases), len(generator.DATATYPE_THEORY_CASES))
+        self.assertEqual(len(hocore_cases), len(generator.HOCORE_THEORY_CASES))
+        self.assertTrue(
+            all(case["file"].startswith("cases/theories/datatypes/") for case in datatype_cases)
+        )
+        self.assertTrue(
+            all(case["file"].startswith("cases/theories/hocore/") for case in hocore_cases)
+        )
+        self.assertTrue(
+            any("theory-behavior:selector" in case["features"] for case in datatype_cases)
+        )
+        self.assertTrue(
+            any("theory-behavior:disjointness" in case["features"] for case in datatype_cases)
+        )
+        translate_type_cases = [
+            case for case in hocore_cases
+            if "theory-behavior:translate-type-rejection" in case["features"]
+        ]
+        self.assertEqual(len(translate_type_cases), 1)
+        self.assertEqual(translate_type_cases[0]["expected"]["z3-tac"]["status"], "red")
+        self.assertIn(
+            "SmtLib.translate_type",
+            translate_type_cases[0]["expected"]["z3-tac"]["diagnostic"],
         )
 
     def test_manifest_entry_preserves_red_obligation_contract(self):

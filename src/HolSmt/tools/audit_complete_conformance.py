@@ -929,6 +929,15 @@ def case_has_sat_no_theorem_diagnostic(case: dict[str, object]) -> bool:
     return z3_tac.get("status") == "fail" and "no" in diagnostic and "theorem" in diagnostic
 
 
+def red_implementation_category(feature: object) -> str:
+    feature_text = str(feature).lower()
+    if "higher-order/function-sort" in feature_text or "hocore" in feature_text:
+        return "higher-order/function-sort"
+    if "datatype" in feature_text or "datatypes-reconstruction" in feature_text:
+        return "datatypes-reconstruction"
+    return "implementation_obligation"
+
+
 def is_theory_case_kind(case: dict[str, object], symbol: TheoryMetadataSymbol, kind: str) -> bool:
     if case.get("class") != "theory":
         return False
@@ -1271,7 +1280,7 @@ def audit_cases(cases: list[dict[str, object]], accepted_logics: list[str]) -> l
                 issues.append(
                     Issue(
                         code="red_implementation_obligation",
-                        category="implementation_obligation",
+                        category=red_implementation_category(obligation["feature"]),
                         subject=f"case/{case_id}:{mode}",
                         message=f"red expected row requires implementation work for {obligation['feature']}",
                         details={

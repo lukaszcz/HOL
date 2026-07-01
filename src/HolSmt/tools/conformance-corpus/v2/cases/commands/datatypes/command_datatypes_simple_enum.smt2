@@ -1,0 +1,5 @@
+(set-logic ALL)
+(declare-datatype Color ((red) (green) (blue)))
+(declare-const c Color)
+(assert (or ((_ is red) c) ((_ is green) c) ((_ is blue) c)))
+(check-sat)

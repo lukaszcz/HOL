@@ -291,6 +291,28 @@ class CompleteConformanceAuditTests(unittest.TestCase):
             [issue.render() for issue in issues],
         )
 
+    def test_red_rows_are_categorized_for_datatypes_and_hocore(self):
+        datatype = v2_case(
+            "datatype_red",
+            expected={"parser-only": {"status": "red"}},
+            impl=obligation("datatypes-reconstruction:selector-theorem"),
+            row_class="theory",
+        )
+        datatype["file"] = "cases/theories/datatypes/datatype_red.smt2"
+        hocore = v2_case(
+            "hocore_red",
+            expected={"parser-only": {"status": "red"}},
+            impl=obligation("higher-order/function-sort:translate-type"),
+            row_class="theory",
+        )
+        hocore["file"] = "cases/theories/hocore/hocore_red.smt2"
+
+        issues = audit.audit_cases([datatype, hocore], [])
+        categories = {issue.category for issue in issues if issue.code == "red_implementation_obligation"}
+
+        self.assertIn("datatypes-reconstruction", categories)
+        self.assertIn("higher-order/function-sort", categories)
+
     def test_complete_required_row_cannot_be_only_parse_or_unsupported_evidence(self):
         rows = [
             audit.CoverageRow(

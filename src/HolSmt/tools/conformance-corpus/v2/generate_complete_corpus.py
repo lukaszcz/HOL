@@ -176,6 +176,22 @@ class TheorySymbol:
     behavior_features: tuple[str, ...] = ()
 
 
+@dataclass(frozen=True)
+class ScriptedCase:
+    slug: str
+    script: str
+    modes: tuple[str, ...]
+    expected: dict[str, dict[str, object]]
+    features: tuple[str, ...]
+    implementation_feature: str | None = None
+    implementation_files: tuple[str, ...] = ()
+    implementation_phase: str | None = None
+    logic: str = "QF_UF"
+    standard: str = "SMT-LIB-2.7"
+    source_kind: str = "SMT-LIB-theory"
+    source_reference: str = ""
+
+
 def slug(value: str) -> str:
     result = re.sub(r"[^A-Za-z0-9]+", "_", value.lower()).strip("_")
     result = re.sub(r"_+", "_", result)
@@ -793,6 +809,161 @@ def command_case(
     return GeneratedCase(entry=entry, script=script)
 
 
+DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
+    ScriptedCase(
+        slug="simple-enum",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green) (blue)))\n"
+            "(declare-const c Color)\n"
+            "(assert (or ((_ is red) c) ((_ is green) c) ((_ is blue) c)))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:simple",
+            "theory:Datatypes",
+            "theory-behavior:constructor",
+            "theory-behavior:tester",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatype simple datatype command",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="recursive-list",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:recursive",
+            "theory:Datatypes",
+            "theory-behavior:recursive-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:recursive-command",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatype recursive datatype command",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="mutual-tree-forest",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatypes ((Tree 0) (Forest 0))\n"
+            "  (((leaf) (node (children Forest)))\n"
+            "   ((nilF) (consF (head Tree) (tail Forest)))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="unsupported command 'declare-datatypes'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatypes",
+            "datatype-command:mutual",
+            "theory:Datatypes",
+            "theory-behavior:mutual-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:mutual-command",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatypes mutual datatype command",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="parametric-box",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Box (par (T) ((box (value T)))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="unsupported parametric datatype declaration",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:parametric",
+            "theory:Datatypes",
+            "theory-behavior:parametric-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:parametric-command",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatype parametric datatype command",
+        source_kind="SMT-LIB-standard",
+    ),
+)
+
+
+def scripted_obligation(case: ScriptedCase, case_id: str) -> dict[str, object] | None:
+    if case.implementation_feature is None:
+        return None
+    if case.implementation_phase is None:
+        raise GeneratorError(f"{case_id} has an implementation feature without a failure phase")
+    return implementation_obligation(
+        files=case.implementation_files,
+        feature=case.implementation_feature,
+        test_ids=[case_id],
+        failure_phase=case.implementation_phase,
+        notes=GENERATED_OBLIGATION_NOTES,
+    )
+
+
+def datatype_command_corpus_case(case: ScriptedCase) -> GeneratedCase:
+    case_id = f"command:datatypes:{case.slug}"
+    entry = manifest_entry(
+        case_id=case_id,
+        file=f"cases/commands/datatypes/{slug(case_id)}.smt2",
+        logic=case.logic,
+        standard=case.standard,
+        row_class="command",
+        features=case.features,
+        modes=case.modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=case.expected,
+        implementation_obligation=scripted_obligation(case, case_id),
+        source=source(case.source_kind, case.source_reference),
+    )
+    return GeneratedCase(entry=entry, script=case.script)
+
+
 def mode_for_failure_phase(failure_phase: str) -> str:
     require_choice(failure_phase, "failure_phase", FAILURE_PHASES)
     if failure_phase == "parser":
@@ -878,6 +1049,7 @@ def command_cases() -> list[GeneratedCase]:
                 ),
             )
         )
+    cases.extend(datatype_command_corpus_case(case) for case in DATATYPE_COMMAND_CORPUS_CASES)
     return cases
 
 
@@ -2312,6 +2484,409 @@ Z3_EXTENSION_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
 )
 
 
+DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
+    ScriptedCase(
+        slug="simple-constructors-selectors-testers",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Pair ((mk-pair (left Int) (right Bool))))\n"
+            "(declare-const p Pair)\n"
+            "(assert (= (left (mk-pair 7 true)) 7))\n"
+            "(assert ((_ is mk-pair) p))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:simple-constructors-selectors-testers",
+            "theory-case:sat",
+            "theory-behavior:constructor",
+            "theory-behavior:selector",
+            "theory-behavior:tester",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory constructors, selectors, and testers",
+    ),
+    ScriptedCase(
+        slug="constructor-disjointness-replay",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype Color ((red) (blue)))\n"
+            "(assert (= red blue))\n",
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "proof-parse": expected_result(
+                "red",
+                diagnostic="datatype disjointness proof parsing evidence is incomplete",
+                failure_phase="proof-parse",
+                proof_rule_histogram={"th-lemma[datatype]": 1},
+            ),
+            "proof-replay": expected_result(
+                "red",
+                diagnostic="datatype constructor disjointness replay is incomplete",
+                failure_phase="proof-replay",
+                proof_rule_histogram={"th-lemma[datatype]": 1},
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="checked Z3_TAC reconstruction for datatype disjointness is incomplete",
+                failure_phase="proof-replay",
+                theorem_shape="closed theorem without oracle tags",
+            ),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:constructor-disjointness",
+            "theory-case:unsat-proof",
+            "theory-behavior:constructor",
+            "theory-behavior:disjointness",
+            "theory-behavior:proof-gap",
+        ),
+        implementation_feature="datatypes-reconstruction:constructor-disjointness",
+        implementation_files=("src/HolSmt/SmtLib_Datatypes.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        implementation_phase="proof-replay",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory constructor disjointness",
+    ),
+    ScriptedCase(
+        slug="selector-theorem-replay",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype Pair ((mk-pair (left Int) (right Bool))))\n"
+            "(assert (not (= (left (mk-pair 7 true)) 7)))\n",
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "proof-parse": expected_result(
+                "red",
+                diagnostic="datatype selector proof parsing evidence is incomplete",
+                failure_phase="proof-parse",
+                proof_rule_histogram={"th-lemma[datatype]": 1},
+            ),
+            "proof-replay": expected_result(
+                "red",
+                diagnostic="datatype selector theorem replay is incomplete",
+                failure_phase="proof-replay",
+                proof_rule_histogram={"th-lemma[datatype]": 1},
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="checked Z3_TAC reconstruction for datatype selector theorem is incomplete",
+                failure_phase="proof-replay",
+                theorem_shape="closed theorem without oracle tags",
+            ),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:selector-theorem",
+            "theory-case:unsat-proof",
+            "theory-behavior:selector",
+            "theory-behavior:proof-gap",
+        ),
+        implementation_feature="datatypes-reconstruction:selector-theorem",
+        implementation_files=("src/HolSmt/SmtLib_Datatypes.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        implementation_phase="proof-replay",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory selector theorem",
+    ),
+    ScriptedCase(
+        slug="recursive-datatype",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n"
+            "(declare-const xs List)\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:recursive-datatype",
+            "theory-case:type-error",
+            "theory-behavior:recursive-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:recursive-datatype",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory recursive datatype",
+    ),
+    ScriptedCase(
+        slug="mutual-datatypes",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatypes ((Tree 0) (Forest 0))\n"
+            "  (((leaf) (node (children Forest)))\n"
+            "   ((nilF) (consF (head Tree) (tail Forest)))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="unsupported command 'declare-datatypes'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:mutual-datatypes",
+            "theory-case:type-error",
+            "theory-behavior:mutual-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:mutual-datatypes",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory mutual datatypes",
+    ),
+    ScriptedCase(
+        slug="parametric-datatype",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Box (par (T) ((box (value T)))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="unsupported parametric datatype declaration",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:parametric-datatype",
+            "theory-case:type-error",
+            "theory-behavior:parametric-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:parametric-datatype",
+        implementation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Datatypes.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes theory parametric datatype",
+    ),
+)
+
+
+HOCORE_THEORY_CASES: tuple[ScriptedCase, ...] = (
+    ScriptedCase(
+        slug="function-valued-array-declaration",
+        script=(
+            "(set-logic QF_AUFLIA)\n"
+            "(declare-const f (Array Int Bool))\n"
+            "(assert (= f f))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="SmtLib.translate_type rejects unsupported higher-order/function sort",
+                failure_phase="translation",
+            ),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:function-valued-array-declaration",
+            "theory-case:sat",
+            "theory-behavior:higher-order",
+            "theory-behavior:function-sort",
+            "theory-behavior:translate-type-rejection",
+            "higher-order/function-sort",
+        ),
+        implementation_feature="higher-order/function-sort:translate-type-array-declaration",
+        implementation_files=("src/HolSmt/SmtLib.sml", "src/HolSmt/SmtLib_Translate.sml"),
+        implementation_phase="translation",
+        logic="QF_AUFLIA",
+        source_reference="SMT-LIB HO-Core function-valued declaration represented by HOL Array/function sort",
+    ),
+    ScriptedCase(
+        slug="function-argument-sort",
+        script=(
+            "(set-logic QF_AUFLIA)\n"
+            "(declare-fun H ((Array Int Bool)) Bool)\n"
+            "(declare-const f (Array Int Bool))\n"
+            "(assert (H f))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="SmtLib.translate_type rejects unsupported higher-order/function sort",
+                failure_phase="translation",
+            ),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:function-argument-sort",
+            "theory-case:sat",
+            "theory-behavior:function-argument",
+            "theory-behavior:function-sort",
+            "higher-order/function-sort",
+        ),
+        implementation_feature="higher-order/function-sort:function-argument",
+        implementation_files=("src/HolSmt/SmtLib.sml", "src/HolSmt/SmtLib_Translate.sml"),
+        implementation_phase="translation",
+        logic="QF_AUFLIA",
+        source_reference="SMT-LIB HO-Core function argument sort",
+    ),
+    ScriptedCase(
+        slug="function-result-sort",
+        script=(
+            "(set-logic QF_AUFLIA)\n"
+            "(declare-fun make () (Array Int Bool))\n"
+            "(assert (= make make))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="SmtLib.translate_type rejects unsupported higher-order/function sort",
+                failure_phase="translation",
+            ),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:function-result-sort",
+            "theory-case:sat",
+            "theory-behavior:function-result",
+            "theory-behavior:function-sort",
+            "higher-order/function-sort",
+        ),
+        implementation_feature="higher-order/function-sort:function-result",
+        implementation_files=("src/HolSmt/SmtLib.sml", "src/HolSmt/SmtLib_Translate.sml"),
+        implementation_phase="translation",
+        logic="QF_AUFLIA",
+        source_reference="SMT-LIB HO-Core function result sort",
+    ),
+    ScriptedCase(
+        slug="higher-order-equality",
+        script=(
+            "(set-logic QF_AUFLIA)\n"
+            "(declare-const f (Array Int Bool))\n"
+            "(declare-const g (Array Int Bool))\n"
+            "(assert (= f g))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="higher-order equality over function sorts is not reconstructed",
+                failure_phase="translation",
+            ),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:higher-order-equality",
+            "theory-case:sat",
+            "theory-behavior:higher-order-equality",
+            "theory-behavior:function-sort",
+            "higher-order/function-sort",
+        ),
+        implementation_feature="higher-order/function-sort:higher-order-equality",
+        implementation_files=("src/HolSmt/SmtLib.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        implementation_phase="translation",
+        logic="QF_AUFLIA",
+        source_reference="SMT-LIB HO-Core higher-order equality",
+    ),
+    ScriptedCase(
+        slug="lambda-like-universal-encoding",
+        script=(
+            "(set-logic AUFLIA)\n"
+            "(declare-fun lam (Int) Bool)\n"
+            "(assert (forall ((x Int)) (= (lam x) (> x 0))))\n"
+            "(assert (lam 1))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:lambda-like-universal-encoding",
+            "theory-case:boundary",
+            "theory-behavior:lambda-like-encoding",
+            "theory-behavior:first-order-encoding",
+        ),
+        logic="AUFLIA",
+        source_reference="SMT-LIB HO-Core lambda-like behavior encoded with first-order function and universal axiom",
+    ),
+    ScriptedCase(
+        slug="native-function-sort",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-const f (-> Int Bool))\n"
+            "(assert (= f f))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="native HO-Core function sort syntax is not installed in the SMT-LIB type dictionary",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "theory:HO_Core",
+            "theory-entry:HO_Core:native-function-sort",
+            "theory-case:type-error",
+            "theory-behavior:hocore-native-function-sort",
+            "theory-behavior:function-sort",
+            "higher-order/function-sort",
+        ),
+        implementation_feature="higher-order/function-sort:native-hocore-function-sort",
+        implementation_files=("src/HolSmt/SmtLib_Theories.sml", "src/HolSmt/SmtLib_Parser.sml"),
+        implementation_phase="typecheck",
+        logic="ALL",
+        standard="SMT-LIB-3",
+        source_reference="SMT-LIB 3 HO-Core native function sort",
+    ),
+)
+
+
 ALL_THEORY_SYMBOLS = (
     *CORE_ARITHMETIC_THEORY_SYMBOLS,
     *UNICODE_STRING_THEORY_SYMBOLS,
@@ -2373,6 +2948,32 @@ def theory_source(symbol: TheorySymbol) -> dict[str, object]:
     if symbol.theory == "Z3_Extensions":
         return source("Z3-extension", f"Z3 sequence/set/bag extension: {symbol.name}")
     return source("SMT-LIB-theory", f"SMT-LIB 2.7 {symbol.theory} theory: {symbol.name}")
+
+
+def scripted_theory_case_file(theory: str, case_id: str) -> str:
+    directory = {
+        "Datatypes": "datatypes",
+        "HO_Core": "hocore",
+    }[theory]
+    return f"cases/theories/{directory}/{slug(case_id)}.smt2"
+
+
+def scripted_theory_case(theory: str, case: ScriptedCase) -> GeneratedCase:
+    case_id = f"theory:{theory}:{case.slug}"
+    entry = manifest_entry(
+        case_id=case_id,
+        file=scripted_theory_case_file(theory, case_id),
+        logic=case.logic,
+        standard=case.standard,
+        row_class="theory",
+        features=case.features,
+        modes=case.modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=case.expected,
+        implementation_obligation=scripted_obligation(case, case_id),
+        source=source(case.source_kind, case.source_reference),
+    )
+    return GeneratedCase(entry=entry, script=case.script)
 
 
 def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
@@ -2559,6 +3160,8 @@ def theory_cases() -> list[GeneratedCase]:
         cases.append(theory_case(symbol, "unsat-proof", symbol.unsat_proof_script))
         cases.append(theory_case(symbol, "type-error", symbol.type_error_script))
         cases.append(theory_case(symbol, "boundary", symbol.boundary_script))
+    cases.extend(scripted_theory_case("Datatypes", case) for case in DATATYPE_THEORY_CASES)
+    cases.extend(scripted_theory_case("HO_Core", case) for case in HOCORE_THEORY_CASES)
     return cases
 
 

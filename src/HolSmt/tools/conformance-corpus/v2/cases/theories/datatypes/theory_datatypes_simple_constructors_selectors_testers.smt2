@@ -1,0 +1,6 @@
+(set-logic ALL)
+(declare-datatype Pair ((mk-pair (left Int) (right Bool))))
+(declare-const p Pair)
+(assert (= (left (mk-pair 7 true)) 7))
+(assert ((_ is mk-pair) p))
+(check-sat)
