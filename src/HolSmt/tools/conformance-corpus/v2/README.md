@@ -146,6 +146,8 @@ The `holsmt-contract` GitHub Actions workflow also contains the required
 `src/HolSmt/tools/run_complete_smtlib_conformance.sh` in the HOL/Z3 CI image,
 prints the primary report paths on failure, and uploads the
 `holsmt-complete-conformance` artifact containing the full report directory.
+The aggregate `enforced-contract-gate` depends on that job and rejects any red
+or failed complete-conformance result rather than bypassing it.
 It is intentionally expected to be red while v2 manifest rows still carry
 implementation obligations; CI artifact retention is diagnostic only and must
 not be treated as a waiver.  COMPLETE SMT-LIB conformance is claimable only

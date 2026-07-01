@@ -313,6 +313,7 @@ jobs:
           if-no-files-found: error
 
   enforced-contract-gate:
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     needs:
       - python-tools
@@ -322,6 +323,7 @@ jobs:
       - sml-no-solver
       - holsmt-z3-selftest
       - checked-driver-conformance
+      - holsmt-complete-conformance
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -341,3 +343,27 @@ jobs:
             --conformance-report .holsmt-ci/artifacts/z3/conformance.json \
             --conformance-report .holsmt-ci/artifacts/typecheck/conformance.json \
             --conformance-report .holsmt-ci/artifacts/z3-tac/conformance.json
+
+      - name: Reject failed required HolSmt jobs
+        if: ${{ always() }}
+        env:
+          NEEDS_JSON: ${{ toJson(needs) }}
+        run: |
+          python3 - <<'PY'
+          import json
+          import os
+          import sys
+
+          needs = json.loads(os.environ["NEEDS_JSON"])
+          failed = {
+              name: detail.get("result")
+              for name, detail in sorted(needs.items())
+              if detail.get("result") != "success"
+          }
+          if failed:
+              print("Required HolSmt prerequisite jobs did not pass:")
+              for name, result in failed.items():
+                  print(f"  {name}: {result}")
+              print("COMPLETE conformance is claimable only when holsmt-complete-conformance is green.")
+              sys.exit(1)
+          PY
