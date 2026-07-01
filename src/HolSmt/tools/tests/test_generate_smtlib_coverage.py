@@ -160,9 +160,14 @@ class CoverageGenerationPolicyTests(unittest.TestCase):
             root = pathlib.Path(tmp)
             coverage_path = root / "coverage.json"
             manifest_path = root / "manifest.json"
+            complete_manifest_path = root / "complete_manifest.json"
             report_path = root / "coverage.md"
             coverage_path.write_text(json.dumps(coverage, indent=2) + "\n", encoding="utf-8")
             manifest_path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+            complete_manifest_path.write_text(
+                json.dumps({"schema_version": "2", "cases": []}, indent=2) + "\n",
+                encoding="utf-8",
+            )
             stderr = io.StringIO()
 
             with contextlib.redirect_stderr(stderr):
@@ -172,6 +177,8 @@ class CoverageGenerationPolicyTests(unittest.TestCase):
                         str(coverage_path),
                         "--manifest",
                         str(manifest_path),
+                        "--complete-manifest",
+                        str(complete_manifest_path),
                         "--report",
                         str(report_path),
                     ]
@@ -269,7 +276,32 @@ class CoverageGenerationPolicyTests(unittest.TestCase):
             ],
         }
 
-        enriched = generator.enrich_rows_with_manifest_evidence(coverage, manifest, [], [])
+        complete_manifest = {
+            "schema_version": "2",
+            "cases": [
+                {
+                    "id": "command:set-logic",
+                    "class": "command",
+                    "features": ["command:set-logic"],
+                    "modes": ["parser-only", "typecheck-only"],
+                    "expected": {
+                        "parser-only": {"status": "pass"},
+                        "typecheck-only": {"status": "pass"},
+                    },
+                },
+                {
+                    "id": "command:set-logic:reconstruction",
+                    "class": "command",
+                    "features": ["command:set-logic"],
+                    "modes": ["z3-tac"],
+                    "expected": {"z3-tac": {"status": "red"}},
+                },
+            ],
+        }
+
+        enriched = generator.enrich_rows_with_manifest_evidence(
+            coverage, manifest, complete_manifest, [], []
+        )
         enriched_row = enriched["commands"][0]
         self.assertEqual(
             enriched_row["test_ids"],
@@ -284,6 +316,10 @@ class CoverageGenerationPolicyTests(unittest.TestCase):
             ],
         )
         self.assertEqual(enriched_row["last_verified_by"], "coverage_manifest.json")
+        self.assertEqual(enriched_row["current_status"], "unsupported_diagnostic")
+        self.assertEqual(enriched_row["complete_required_status"], "red")
+        self.assertEqual(enriched_row["complete_test_ids"], ["command:set-logic"])
+        self.assertEqual(enriched_row["red_obligation_ids"], ["command:set-logic:reconstruction"])
 
     def test_generation_rejects_manual_only_implemented_claim(self):
         command_row = command_coverage_row()

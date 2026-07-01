@@ -2,7 +2,7 @@
   "schema": "holsmt-coverage-manifest-v1",
   "metadata": {
     "title": "HolSmt SMT-LIB coverage evidence manifest",
-    "scope": "Executable evidence IDs for SMT-LIB command rows plus representative non-command rows populated by earlier tasks.",
+    "scope": "Executable evidence IDs for current SMT-LIB command rows plus representative non-command rows populated by earlier tasks. COMPLETE-required status, red obligation IDs, and complete test IDs are derived from the v2 complete conformance manifest.",
     "schema_path": "src/HolSmt/tools/coverage/coverage_manifest_schema.json"
   },
   "entries": [

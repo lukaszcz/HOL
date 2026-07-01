@@ -48,6 +48,25 @@ def row(item, tested):
     }
 
 
+def complete_row(
+    item,
+    *,
+    current_status="implemented",
+    complete_status="reconstructed",
+    complete_ids=None,
+    red_ids=None,
+    diagnostics=None,
+):
+    return {
+        **row(item, "implemented"),
+        "current_status": current_status,
+        "complete_required_status": complete_status,
+        "complete_test_ids": [] if complete_ids is None else complete_ids,
+        "red_obligation_ids": [] if red_ids is None else red_ids,
+        "diagnostic_test_ids": [] if diagnostics is None else diagnostics,
+    }
+
+
 def manifest_entry(item, phases, expected_status, *, positive=None, negative=None, artifacts=None, z3_versions=None):
     return {
         "section": "commands",
@@ -257,6 +276,136 @@ class CoverageManifestAuditTests(unittest.TestCase):
         self.assertTrue(
             any(issue.code == "missing_z3_version_evidence" for issue in missing_report_issues),
             [issue.render() for issue in missing_report_issues],
+        )
+
+    def test_complete_audit_rejects_weak_reconstructed_claim_and_diagnostic_only_evidence(self):
+        coverage = minimal_coverage(
+            [
+                {
+                    **complete_row(
+                        "FloatingPoint",
+                        current_status="parse_only",
+                        complete_ids=["theory:FloatingPoint:fp-add"],
+                    ),
+                    "parsed": "implemented",
+                    "translated": "parse_only",
+                    "solved": "parse_only",
+                    "reconstructed": "unsupported_diagnostic",
+                },
+                complete_row(
+                    "ArraysEx",
+                    complete_status="red",
+                    diagnostics=["source:diagnostic"],
+                ),
+            ]
+        )
+        cases = [
+            {
+                "id": "theory:FloatingPoint:fp-add",
+                "class": "theory",
+                "features": ["theory:FloatingPoint"],
+                "modes": ["z3-oracle"],
+                "expected": {"z3-oracle": {"status": "pass"}},
+            }
+        ]
+
+        issues = audit.audit_complete_coverage(coverage, cases, [], [])
+        codes = {issue.code for issue in issues}
+
+        self.assertIn("weak_current_status_for_reconstructed_required", codes)
+        self.assertIn("diagnostic_only_complete_evidence", codes)
+
+    def test_complete_audit_keeps_red_obligations_red(self):
+        coverage = minimal_coverage(
+            [
+                complete_row(
+                    "check-sat-assuming",
+                    complete_status="reconstructed",
+                    complete_ids=["command:check-sat-assuming"],
+                    red_ids=["command:check-sat-assuming:reconstruction"],
+                )
+            ]
+        )
+
+        issues = audit.audit_complete_coverage(coverage, [], [], [])
+        codes = {issue.code for issue in issues}
+
+        self.assertIn("red_obligation_not_red", codes)
+        self.assertIn("red_complete_obligation", codes)
+
+    def test_complete_audit_rejects_missing_real_proof_occurrence(self):
+        coverage = {
+            **minimal_coverage([]),
+            "z3_proof_rules": [
+                {
+                    **complete_row(
+                        "unit-resolution",
+                        complete_ids=["proof-rule:unit-resolution"],
+                    ),
+                    "class": "Z3 extension",
+                }
+            ],
+        }
+
+        missing = audit.audit_complete_coverage(coverage, [], [], [])
+        self.assertTrue(
+            any(issue.code == "missing_real_proof_occurrence" for issue in missing),
+            [issue.render() for issue in missing],
+        )
+
+        present = audit.audit_complete_coverage(
+            coverage,
+            [],
+            [],
+            [{"aggregate_rule_histogram": {"unit-resolution": 1}}],
+        )
+        self.assertFalse(
+            [issue for issue in present if issue.code == "missing_real_proof_occurrence"],
+            [issue.render() for issue in present],
+        )
+
+    def test_complete_audit_rejects_missing_accepted_logic_modes(self):
+        coverage = minimal_coverage([])
+        red_case = {
+            "id": "logic:QF_UF:unsat-proof",
+            "class": "logic",
+            "logic": "QF_UF",
+            "features": ["logic:QF_UF", "logic-case:unsat-proof"],
+            "modes": ["proof-parse", "proof-replay", "z3-tac"],
+            "expected": {
+                "proof-parse": {"status": "pass"},
+                "proof-replay": {"status": "red"},
+                "z3-tac": {"status": "red"},
+            },
+        }
+
+        issues = audit.audit_complete_coverage(coverage, [red_case], ["QF_UF"], [])
+
+        self.assertTrue(
+            any(issue.code == "missing_accepted_logic_mode_coverage" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+
+    def test_complete_audit_requires_outside_scope_reason(self):
+        coverage = {
+            **minimal_coverage([]),
+            "version_targets": [
+                {
+                    **row("SMT-LIB 3 language", "not_applicable"),
+                    "class": "SMT-LIB 3",
+                    "current_status": "not_applicable",
+                    "complete_required_status": "not_applicable",
+                    "complete_test_ids": [],
+                    "red_obligation_ids": [],
+                }
+            ],
+        }
+
+        issues = audit.audit_complete_coverage(coverage, [], [], [])
+
+        self.assertTrue(
+            any(issue.code == "missing_outside_complete_scope_reason" for issue in issues),
+            [issue.render() for issue in issues],
         )
 
 

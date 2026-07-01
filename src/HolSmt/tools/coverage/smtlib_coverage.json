@@ -38,7 +38,11 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_uf_core_operators_sat"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "SMT-LIB 3 language",
@@ -52,7 +56,12 @@
       "notes": "Tracked separately so future SMT-LIB 3 support does not get conflated with SMT-LIB 2.7.",
       "test_ids": [],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "not_applicable",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "SMT-LIB 3 deferred"
     },
     {
       "item": "Supported Z3 versions",
@@ -70,7 +79,11 @@
         "proof_version:4.13.0"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "Z3 4.x proof mode",
@@ -87,7 +100,11 @@
         "proof_version:4.13.0"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "Z3 pre-4 proof mode",
@@ -103,7 +120,11 @@
         "proof_version:2.19.1"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "cvc5 Alethe proof mode",
@@ -120,7 +141,12 @@
         "source:src/HolSmt/selftest.sml#expect_thm true"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     }
   ],
   "commands": [
@@ -138,7 +164,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:set-info",
+        "command:set-info:state"
+      ],
+      "red_obligation_ids": [
+        "command:set-info:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "set-logic",
@@ -154,7 +189,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:set-logic",
+        "command:set-logic:state"
+      ],
+      "red_obligation_ids": [
+        "command:set-logic:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "declare-sort",
@@ -170,7 +214,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:declare-sort",
+        "command:declare-sort:state"
+      ],
+      "red_obligation_ids": [
+        "command:declare-sort:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "declare-const",
@@ -186,7 +239,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:declare-const",
+        "command:declare-const:state"
+      ],
+      "red_obligation_ids": [
+        "command:declare-const:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "declare-fun",
@@ -202,7 +264,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:declare-fun",
+        "command:declare-fun:state"
+      ],
+      "red_obligation_ids": [
+        "command:declare-fun:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "define-fun",
@@ -218,7 +289,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:define-fun",
+        "command:define-fun:state"
+      ],
+      "red_obligation_ids": [
+        "command:define-fun:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "assert",
@@ -234,7 +314,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_stack_and_query_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:assert",
+        "command:assert:state"
+      ],
+      "red_obligation_ids": [
+        "command:assert:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "check-sat",
@@ -250,7 +339,16 @@
         "source:src/HolSmt/Unittest.sml#parse_file_query_commands_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:check-sat",
+        "command:check-sat:state"
+      ],
+      "red_obligation_ids": [
+        "command:check-sat:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "get-proof",
@@ -266,7 +364,16 @@
         "source:src/HolSmt/Unittest.sml#parse_file_query_commands_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:get-proof",
+        "command:get-proof:state"
+      ],
+      "red_obligation_ids": [
+        "command:get-proof:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "exit",
@@ -282,7 +389,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_stack_and_query_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:exit",
+        "command:exit:state"
+      ],
+      "red_obligation_ids": [
+        "command:exit:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "set-option",
@@ -298,7 +414,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:set-option",
+        "command:set-option:state"
+      ],
+      "red_obligation_ids": [
+        "command:set-option:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "get-info",
@@ -314,7 +439,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:get-info-get-option",
+        "command:get-info-get-option:state"
+      ],
+      "red_obligation_ids": [
+        "command:get-info-get-option:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "get-option",
@@ -330,7 +464,16 @@
         "source:src/HolSmt/Unittest.sml#script_ast_metadata_decls_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:get-info-get-option",
+        "command:get-info-get-option:state"
+      ],
+      "red_obligation_ids": [
+        "command:get-info-get-option:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "define-sort",
@@ -346,7 +489,16 @@
         "source:src/HolSmt/Unittest.sml#smtlib_indexed_parametric_sort_reconstruction_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:define-sort",
+        "command:define-sort:state"
+      ],
+      "red_obligation_ids": [
+        "command:define-sort:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "define-const",
@@ -362,7 +514,16 @@
         "source:src/HolSmt/Unittest.sml#smtlib_soundness_audit_scope_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:define-const",
+        "command:define-const:state"
+      ],
+      "red_obligation_ids": [
+        "command:define-const:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "define-fun-rec, define-funs-rec",
@@ -380,7 +541,16 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#smtlib_command_malformed_diagnostics"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec-define-funs-rec:state"
+      ],
+      "red_obligation_ids": [
+        "command:define-fun-rec-define-funs-rec:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "declare-datatype, declare-datatypes",
@@ -398,7 +568,20 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#parse_file_datatype_unsupported_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:datatypes:simple-enum",
+        "command:declare-datatype-declare-datatypes",
+        "command:declare-datatype-declare-datatypes:state"
+      ],
+      "red_obligation_ids": [
+        "command:datatypes:mutual-tree-forest",
+        "command:datatypes:parametric-box",
+        "command:datatypes:recursive-list",
+        "command:declare-datatype-declare-datatypes:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "push, pop",
@@ -414,7 +597,16 @@
         "source:src/HolSmt/Unittest.sml#parse_file_push_pop_assertion_scoping"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:push-pop",
+        "command:push-pop:state"
+      ],
+      "red_obligation_ids": [
+        "command:push-pop:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "reset, reset-assertions",
@@ -430,7 +622,16 @@
         "source:src/HolSmt/Unittest.sml#parse_file_reset_assertions_state"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:reset-reset-assertions",
+        "command:reset-reset-assertions:state"
+      ],
+      "red_obligation_ids": [
+        "command:reset-reset-assertions:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "check-sat-assuming",
@@ -448,7 +649,16 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/tests/test_run_conformance_suite.py#test_z3_tac_command_reports_success_and_expected_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:check-sat-assuming",
+        "command:check-sat-assuming:state"
+      ],
+      "red_obligation_ids": [
+        "command:check-sat-assuming:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "get-unsat-assumptions, get-unsat-core",
@@ -466,7 +676,16 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/tests/test_run_conformance_suite.py#test_z3_tac_command_reports_success_and_expected_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:get-unsat-assumptions-get-unsat-core",
+        "command:get-unsat-assumptions-get-unsat-core:state"
+      ],
+      "red_obligation_ids": [
+        "command:get-unsat-assumptions-get-unsat-core:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "get-model, get-value, get-assignment, get-assertions",
@@ -484,7 +703,16 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/tests/test_run_conformance_suite.py#test_z3_tac_command_reports_success_and_expected_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:get-model-get-value-get-assignment-get-assertions",
+        "command:get-model-get-value-get-assignment-get-assertions:state"
+      ],
+      "red_obligation_ids": [
+        "command:get-model-get-value-get-assignment-get-assertions:reconstruction"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "echo",
@@ -500,7 +728,16 @@
         "source:src/HolSmt/Unittest.sml#parse_file_echo_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "command:echo",
+        "command:echo:state"
+      ],
+      "red_obligation_ids": [
+        "command:echo:reconstruction"
+      ],
+      "complete_required_status": "red"
     }
   ],
   "theories": [
@@ -519,7 +756,57 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_uf_unsat_proof"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "theory:Core:and:boundary",
+        "theory:Core:and:sat",
+        "theory:Core:and:type-error",
+        "theory:Core:bool:boundary",
+        "theory:Core:bool:sat",
+        "theory:Core:bool:type-error",
+        "theory:Core:distinct:boundary",
+        "theory:Core:distinct:sat",
+        "theory:Core:distinct:type-error",
+        "theory:Core:eq:boundary",
+        "theory:Core:eq:sat",
+        "theory:Core:eq:type-error",
+        "theory:Core:false:boundary",
+        "theory:Core:false:sat",
+        "theory:Core:false:type-error",
+        "theory:Core:implies:boundary",
+        "theory:Core:implies:sat",
+        "theory:Core:implies:type-error",
+        "theory:Core:ite:boundary",
+        "theory:Core:ite:sat",
+        "theory:Core:ite:type-error",
+        "theory:Core:not:boundary",
+        "theory:Core:not:sat",
+        "theory:Core:not:type-error",
+        "theory:Core:or:boundary",
+        "theory:Core:or:sat",
+        "theory:Core:or:type-error",
+        "theory:Core:true:boundary",
+        "theory:Core:true:sat",
+        "theory:Core:true:type-error",
+        "theory:Core:xor:boundary",
+        "theory:Core:xor:sat",
+        "theory:Core:xor:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Core:and:unsat-proof",
+        "theory:Core:bool:unsat-proof",
+        "theory:Core:distinct:unsat-proof",
+        "theory:Core:eq:unsat-proof",
+        "theory:Core:false:unsat-proof",
+        "theory:Core:implies:unsat-proof",
+        "theory:Core:ite:unsat-proof",
+        "theory:Core:not:unsat-proof",
+        "theory:Core:or:unsat-proof",
+        "theory:Core:true:unsat-proof",
+        "theory:Core:xor:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Ints",
@@ -537,7 +824,73 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_nia_div_mod_audit"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "theory:Ints:abs:boundary",
+        "theory:Ints:abs:sat",
+        "theory:Ints:abs:type-error",
+        "theory:Ints:div:boundary",
+        "theory:Ints:div:sat",
+        "theory:Ints:div:type-error",
+        "theory:Ints:divisible:boundary",
+        "theory:Ints:divisible:sat",
+        "theory:Ints:divisible:type-error",
+        "theory:Ints:ge:boundary",
+        "theory:Ints:ge:sat",
+        "theory:Ints:ge:type-error",
+        "theory:Ints:gt:boundary",
+        "theory:Ints:gt:sat",
+        "theory:Ints:gt:type-error",
+        "theory:Ints:int:boundary",
+        "theory:Ints:int:sat",
+        "theory:Ints:int:type-error",
+        "theory:Ints:le:boundary",
+        "theory:Ints:le:sat",
+        "theory:Ints:le:type-error",
+        "theory:Ints:lt:boundary",
+        "theory:Ints:lt:sat",
+        "theory:Ints:lt:type-error",
+        "theory:Ints:mod:boundary",
+        "theory:Ints:mod:sat",
+        "theory:Ints:mod:type-error",
+        "theory:Ints:neg:boundary",
+        "theory:Ints:neg:sat",
+        "theory:Ints:neg:type-error",
+        "theory:Ints:numeral:boundary",
+        "theory:Ints:numeral:sat",
+        "theory:Ints:numeral:type-error",
+        "theory:Ints:plus:boundary",
+        "theory:Ints:plus:sat",
+        "theory:Ints:plus:type-error",
+        "theory:Ints:pow:boundary",
+        "theory:Ints:pow:sat",
+        "theory:Ints:pow:type-error",
+        "theory:Ints:sub:boundary",
+        "theory:Ints:sub:sat",
+        "theory:Ints:sub:type-error",
+        "theory:Ints:times:boundary",
+        "theory:Ints:times:sat",
+        "theory:Ints:times:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Ints:abs:unsat-proof",
+        "theory:Ints:div:unsat-proof",
+        "theory:Ints:divisible:unsat-proof",
+        "theory:Ints:ge:unsat-proof",
+        "theory:Ints:gt:unsat-proof",
+        "theory:Ints:int:unsat-proof",
+        "theory:Ints:le:unsat-proof",
+        "theory:Ints:lt:unsat-proof",
+        "theory:Ints:mod:unsat-proof",
+        "theory:Ints:neg:unsat-proof",
+        "theory:Ints:numeral:unsat-proof",
+        "theory:Ints:plus:unsat-proof",
+        "theory:Ints:pow:unsat-proof",
+        "theory:Ints:sub:unsat-proof",
+        "theory:Ints:times:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Reals",
@@ -557,7 +910,61 @@
         "source:src/HolSmt/Unittest.sml#smtlib_preprocessing_and_gap_diagnostics"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "theory:Reals:decimal:boundary",
+        "theory:Reals:decimal:sat",
+        "theory:Reals:decimal:type-error",
+        "theory:Reals:div:boundary",
+        "theory:Reals:div:sat",
+        "theory:Reals:div:type-error",
+        "theory:Reals:ge:boundary",
+        "theory:Reals:ge:sat",
+        "theory:Reals:ge:type-error",
+        "theory:Reals:gt:boundary",
+        "theory:Reals:gt:sat",
+        "theory:Reals:gt:type-error",
+        "theory:Reals:le:boundary",
+        "theory:Reals:le:sat",
+        "theory:Reals:le:type-error",
+        "theory:Reals:lt:boundary",
+        "theory:Reals:lt:sat",
+        "theory:Reals:lt:type-error",
+        "theory:Reals:neg:boundary",
+        "theory:Reals:neg:sat",
+        "theory:Reals:neg:type-error",
+        "theory:Reals:numeral:boundary",
+        "theory:Reals:numeral:sat",
+        "theory:Reals:numeral:type-error",
+        "theory:Reals:plus:boundary",
+        "theory:Reals:plus:sat",
+        "theory:Reals:plus:type-error",
+        "theory:Reals:real:boundary",
+        "theory:Reals:real:sat",
+        "theory:Reals:real:type-error",
+        "theory:Reals:sub:boundary",
+        "theory:Reals:sub:sat",
+        "theory:Reals:sub:type-error",
+        "theory:Reals:times:boundary",
+        "theory:Reals:times:sat",
+        "theory:Reals:times:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Reals:decimal:unsat-proof",
+        "theory:Reals:div:unsat-proof",
+        "theory:Reals:ge:unsat-proof",
+        "theory:Reals:gt:unsat-proof",
+        "theory:Reals:le:unsat-proof",
+        "theory:Reals:lt:unsat-proof",
+        "theory:Reals:neg:unsat-proof",
+        "theory:Reals:numeral:unsat-proof",
+        "theory:Reals:plus:unsat-proof",
+        "theory:Reals:real:unsat-proof",
+        "theory:Reals:sub:unsat-proof",
+        "theory:Reals:times:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Reals_Ints",
@@ -575,7 +982,25 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_lira_conversions_audit"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "theory:Reals_Ints:is-int:boundary",
+        "theory:Reals_Ints:is-int:sat",
+        "theory:Reals_Ints:is-int:type-error",
+        "theory:Reals_Ints:to-int:boundary",
+        "theory:Reals_Ints:to-int:sat",
+        "theory:Reals_Ints:to-int:type-error",
+        "theory:Reals_Ints:to-real:boundary",
+        "theory:Reals_Ints:to-real:sat",
+        "theory:Reals_Ints:to-real:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Reals_Ints:is-int:unsat-proof",
+        "theory:Reals_Ints:to-int:unsat-proof",
+        "theory:Reals_Ints:to-real:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "ArraysEx",
@@ -599,7 +1024,41 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#unsupported higher-order/function sort :bool -> bool",
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_alia_select_non_array_type_error",
         "source:src/HolSmt/Unittest.sml#smtlib_preprocessing_and_gap_diagnostics"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:ArraysEx:array:boundary",
+        "theory:ArraysEx:array:sat",
+        "theory:ArraysEx:array:type-error",
+        "theory:ArraysEx:extensionality:boundary",
+        "theory:ArraysEx:extensionality:sat",
+        "theory:ArraysEx:extensionality:type-error",
+        "theory:ArraysEx:mixed-index-value-sorts:boundary",
+        "theory:ArraysEx:mixed-index-value-sorts:sat",
+        "theory:ArraysEx:mixed-index-value-sorts:type-error",
+        "theory:ArraysEx:read-over-write:boundary",
+        "theory:ArraysEx:read-over-write:sat",
+        "theory:ArraysEx:read-over-write:type-error",
+        "theory:ArraysEx:select:boundary",
+        "theory:ArraysEx:select:sat",
+        "theory:ArraysEx:select:type-error",
+        "theory:ArraysEx:store:boundary",
+        "theory:ArraysEx:store:sat",
+        "theory:ArraysEx:store:type-error",
+        "theory:ArraysEx:write-over-write:boundary",
+        "theory:ArraysEx:write-over-write:sat",
+        "theory:ArraysEx:write-over-write:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:ArraysEx:array:unsat-proof",
+        "theory:ArraysEx:extensionality:unsat-proof",
+        "theory:ArraysEx:mixed-index-value-sorts:unsat-proof",
+        "theory:ArraysEx:read-over-write:unsat-proof",
+        "theory:ArraysEx:select:unsat-proof",
+        "theory:ArraysEx:store:unsat-proof",
+        "theory:ArraysEx:write-over-write:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "FixedSizeBitVectors",
@@ -623,7 +1082,209 @@
         "source:src/HolSmt/Unittest.sml#smtlib_term_translation_branch_matrix_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:boundary",
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:sat",
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:type-error",
+        "theory:Fixed_Size_BitVectors:bitvec:boundary",
+        "theory:Fixed_Size_BitVectors:bitvec:sat",
+        "theory:Fixed_Size_BitVectors:bitvec:type-error",
+        "theory:Fixed_Size_BitVectors:bvadd:boundary",
+        "theory:Fixed_Size_BitVectors:bvadd:sat",
+        "theory:Fixed_Size_BitVectors:bvadd:type-error",
+        "theory:Fixed_Size_BitVectors:bvand:boundary",
+        "theory:Fixed_Size_BitVectors:bvand:sat",
+        "theory:Fixed_Size_BitVectors:bvand:type-error",
+        "theory:Fixed_Size_BitVectors:bvashr:boundary",
+        "theory:Fixed_Size_BitVectors:bvashr:sat",
+        "theory:Fixed_Size_BitVectors:bvashr:type-error",
+        "theory:Fixed_Size_BitVectors:bvcomp:boundary",
+        "theory:Fixed_Size_BitVectors:bvcomp:sat",
+        "theory:Fixed_Size_BitVectors:bvcomp:type-error",
+        "theory:Fixed_Size_BitVectors:bvlshr:boundary",
+        "theory:Fixed_Size_BitVectors:bvlshr:sat",
+        "theory:Fixed_Size_BitVectors:bvlshr:type-error",
+        "theory:Fixed_Size_BitVectors:bvmul:boundary",
+        "theory:Fixed_Size_BitVectors:bvmul:sat",
+        "theory:Fixed_Size_BitVectors:bvmul:type-error",
+        "theory:Fixed_Size_BitVectors:bvnand:boundary",
+        "theory:Fixed_Size_BitVectors:bvnand:sat",
+        "theory:Fixed_Size_BitVectors:bvnand:type-error",
+        "theory:Fixed_Size_BitVectors:bvneg:boundary",
+        "theory:Fixed_Size_BitVectors:bvneg:sat",
+        "theory:Fixed_Size_BitVectors:bvneg:type-error",
+        "theory:Fixed_Size_BitVectors:bvnego:type-error",
+        "theory:Fixed_Size_BitVectors:bvnor:boundary",
+        "theory:Fixed_Size_BitVectors:bvnor:sat",
+        "theory:Fixed_Size_BitVectors:bvnor:type-error",
+        "theory:Fixed_Size_BitVectors:bvnot:boundary",
+        "theory:Fixed_Size_BitVectors:bvnot:sat",
+        "theory:Fixed_Size_BitVectors:bvnot:type-error",
+        "theory:Fixed_Size_BitVectors:bvor:boundary",
+        "theory:Fixed_Size_BitVectors:bvor:sat",
+        "theory:Fixed_Size_BitVectors:bvor:type-error",
+        "theory:Fixed_Size_BitVectors:bvsaddo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsdiv:boundary",
+        "theory:Fixed_Size_BitVectors:bvsdiv:sat",
+        "theory:Fixed_Size_BitVectors:bvsdiv:type-error",
+        "theory:Fixed_Size_BitVectors:bvsdivo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsge:boundary",
+        "theory:Fixed_Size_BitVectors:bvsge:sat",
+        "theory:Fixed_Size_BitVectors:bvsge:type-error",
+        "theory:Fixed_Size_BitVectors:bvsgt:boundary",
+        "theory:Fixed_Size_BitVectors:bvsgt:sat",
+        "theory:Fixed_Size_BitVectors:bvsgt:type-error",
+        "theory:Fixed_Size_BitVectors:bvshl:boundary",
+        "theory:Fixed_Size_BitVectors:bvshl:sat",
+        "theory:Fixed_Size_BitVectors:bvshl:type-error",
+        "theory:Fixed_Size_BitVectors:bvsle:boundary",
+        "theory:Fixed_Size_BitVectors:bvsle:sat",
+        "theory:Fixed_Size_BitVectors:bvsle:type-error",
+        "theory:Fixed_Size_BitVectors:bvslt:boundary",
+        "theory:Fixed_Size_BitVectors:bvslt:sat",
+        "theory:Fixed_Size_BitVectors:bvslt:type-error",
+        "theory:Fixed_Size_BitVectors:bvsmod:boundary",
+        "theory:Fixed_Size_BitVectors:bvsmod:sat",
+        "theory:Fixed_Size_BitVectors:bvsmod:type-error",
+        "theory:Fixed_Size_BitVectors:bvsmulo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsrem:boundary",
+        "theory:Fixed_Size_BitVectors:bvsrem:sat",
+        "theory:Fixed_Size_BitVectors:bvsrem:type-error",
+        "theory:Fixed_Size_BitVectors:bvssubo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsub:boundary",
+        "theory:Fixed_Size_BitVectors:bvsub:sat",
+        "theory:Fixed_Size_BitVectors:bvsub:type-error",
+        "theory:Fixed_Size_BitVectors:bvuaddo:type-error",
+        "theory:Fixed_Size_BitVectors:bvudiv:boundary",
+        "theory:Fixed_Size_BitVectors:bvudiv:sat",
+        "theory:Fixed_Size_BitVectors:bvudiv:type-error",
+        "theory:Fixed_Size_BitVectors:bvuge:boundary",
+        "theory:Fixed_Size_BitVectors:bvuge:sat",
+        "theory:Fixed_Size_BitVectors:bvuge:type-error",
+        "theory:Fixed_Size_BitVectors:bvugt:boundary",
+        "theory:Fixed_Size_BitVectors:bvugt:sat",
+        "theory:Fixed_Size_BitVectors:bvugt:type-error",
+        "theory:Fixed_Size_BitVectors:bvule:boundary",
+        "theory:Fixed_Size_BitVectors:bvule:sat",
+        "theory:Fixed_Size_BitVectors:bvule:type-error",
+        "theory:Fixed_Size_BitVectors:bvult:boundary",
+        "theory:Fixed_Size_BitVectors:bvult:sat",
+        "theory:Fixed_Size_BitVectors:bvult:type-error",
+        "theory:Fixed_Size_BitVectors:bvumulo:type-error",
+        "theory:Fixed_Size_BitVectors:bvurem:boundary",
+        "theory:Fixed_Size_BitVectors:bvurem:sat",
+        "theory:Fixed_Size_BitVectors:bvurem:type-error",
+        "theory:Fixed_Size_BitVectors:bvusubo:type-error",
+        "theory:Fixed_Size_BitVectors:bvxnor:boundary",
+        "theory:Fixed_Size_BitVectors:bvxnor:sat",
+        "theory:Fixed_Size_BitVectors:bvxnor:type-error",
+        "theory:Fixed_Size_BitVectors:bvxor:boundary",
+        "theory:Fixed_Size_BitVectors:bvxor:sat",
+        "theory:Fixed_Size_BitVectors:bvxor:type-error",
+        "theory:Fixed_Size_BitVectors:concat:boundary",
+        "theory:Fixed_Size_BitVectors:concat:sat",
+        "theory:Fixed_Size_BitVectors:concat:type-error",
+        "theory:Fixed_Size_BitVectors:decimal-literal:boundary",
+        "theory:Fixed_Size_BitVectors:decimal-literal:sat",
+        "theory:Fixed_Size_BitVectors:decimal-literal:type-error",
+        "theory:Fixed_Size_BitVectors:extract:boundary",
+        "theory:Fixed_Size_BitVectors:extract:sat",
+        "theory:Fixed_Size_BitVectors:extract:type-error",
+        "theory:Fixed_Size_BitVectors:int-to-bv:type-error",
+        "theory:Fixed_Size_BitVectors:repeat:boundary",
+        "theory:Fixed_Size_BitVectors:repeat:sat",
+        "theory:Fixed_Size_BitVectors:repeat:type-error",
+        "theory:Fixed_Size_BitVectors:rotate-left:boundary",
+        "theory:Fixed_Size_BitVectors:rotate-left:sat",
+        "theory:Fixed_Size_BitVectors:rotate-left:type-error",
+        "theory:Fixed_Size_BitVectors:rotate-right:boundary",
+        "theory:Fixed_Size_BitVectors:rotate-right:sat",
+        "theory:Fixed_Size_BitVectors:rotate-right:type-error",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:type-error",
+        "theory:Fixed_Size_BitVectors:sign-extend:boundary",
+        "theory:Fixed_Size_BitVectors:sign-extend:sat",
+        "theory:Fixed_Size_BitVectors:sign-extend:type-error",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:type-error",
+        "theory:Fixed_Size_BitVectors:zero-extend:boundary",
+        "theory:Fixed_Size_BitVectors:zero-extend:sat",
+        "theory:Fixed_Size_BitVectors:zero-extend:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bitvec:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvadd:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvand:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvashr:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvcomp:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvlshr:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvmul:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnand:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvneg:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnego:boundary",
+        "theory:Fixed_Size_BitVectors:bvnego:sat",
+        "theory:Fixed_Size_BitVectors:bvnego:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnot:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsaddo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsaddo:sat",
+        "theory:Fixed_Size_BitVectors:bvsaddo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsdiv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsdivo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsdivo:sat",
+        "theory:Fixed_Size_BitVectors:bvsdivo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsge:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsgt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvshl:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsle:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvslt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsmod:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsmulo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsmulo:sat",
+        "theory:Fixed_Size_BitVectors:bvsmulo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsrem:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvssubo:boundary",
+        "theory:Fixed_Size_BitVectors:bvssubo:sat",
+        "theory:Fixed_Size_BitVectors:bvssubo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsub:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvuaddo:boundary",
+        "theory:Fixed_Size_BitVectors:bvuaddo:sat",
+        "theory:Fixed_Size_BitVectors:bvuaddo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvudiv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvuge:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvugt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvule:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvult:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvumulo:boundary",
+        "theory:Fixed_Size_BitVectors:bvumulo:sat",
+        "theory:Fixed_Size_BitVectors:bvumulo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvurem:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvusubo:boundary",
+        "theory:Fixed_Size_BitVectors:bvusubo:sat",
+        "theory:Fixed_Size_BitVectors:bvusubo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvxnor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvxor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:concat:unsat-proof",
+        "theory:Fixed_Size_BitVectors:decimal-literal:unsat-proof",
+        "theory:Fixed_Size_BitVectors:extract:unsat-proof",
+        "theory:Fixed_Size_BitVectors:int-to-bv:boundary",
+        "theory:Fixed_Size_BitVectors:int-to-bv:sat",
+        "theory:Fixed_Size_BitVectors:int-to-bv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:repeat:unsat-proof",
+        "theory:Fixed_Size_BitVectors:rotate-left:unsat-proof",
+        "theory:Fixed_Size_BitVectors:rotate-right:unsat-proof",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:boundary",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:sat",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:unsat-proof",
+        "theory:Fixed_Size_BitVectors:sign-extend:unsat-proof",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:boundary",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:sat",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:unsat-proof",
+        "theory:Fixed_Size_BitVectors:zero-extend:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "FloatingPoint",
@@ -641,7 +1302,217 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=fp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:FloatingPoint:float128:type-error",
+        "theory:FloatingPoint:float16:type-error",
+        "theory:FloatingPoint:float32:type-error",
+        "theory:FloatingPoint:float64:type-error",
+        "theory:FloatingPoint:floatingpoint:type-error",
+        "theory:FloatingPoint:fp.abs:type-error",
+        "theory:FloatingPoint:fp.add:type-error",
+        "theory:FloatingPoint:fp.div:type-error",
+        "theory:FloatingPoint:fp.eq:type-error",
+        "theory:FloatingPoint:fp.fma:type-error",
+        "theory:FloatingPoint:fp.geq:type-error",
+        "theory:FloatingPoint:fp.gt:type-error",
+        "theory:FloatingPoint:fp.isinfinite:type-error",
+        "theory:FloatingPoint:fp.isnan:type-error",
+        "theory:FloatingPoint:fp.isnegative:type-error",
+        "theory:FloatingPoint:fp.isnormal:type-error",
+        "theory:FloatingPoint:fp.ispositive:type-error",
+        "theory:FloatingPoint:fp.issubnormal:type-error",
+        "theory:FloatingPoint:fp.iszero:type-error",
+        "theory:FloatingPoint:fp.leq:type-error",
+        "theory:FloatingPoint:fp.lt:type-error",
+        "theory:FloatingPoint:fp.max:type-error",
+        "theory:FloatingPoint:fp.min:type-error",
+        "theory:FloatingPoint:fp.mul:type-error",
+        "theory:FloatingPoint:fp.neg:type-error",
+        "theory:FloatingPoint:fp.rem:type-error",
+        "theory:FloatingPoint:fp.roundtointegral:type-error",
+        "theory:FloatingPoint:fp.sqrt:type-error",
+        "theory:FloatingPoint:fp.sub:type-error",
+        "theory:FloatingPoint:fp.to-real:type-error",
+        "theory:FloatingPoint:fp.to-sbv:type-error",
+        "theory:FloatingPoint:fp.to-ubv:type-error",
+        "theory:FloatingPoint:fp:type-error",
+        "theory:FloatingPoint:nan:type-error",
+        "theory:FloatingPoint:negative-infinity:type-error",
+        "theory:FloatingPoint:negative-zero:type-error",
+        "theory:FloatingPoint:positive-infinity:type-error",
+        "theory:FloatingPoint:positive-zero:type-error",
+        "theory:FloatingPoint:rna:type-error",
+        "theory:FloatingPoint:rne:type-error",
+        "theory:FloatingPoint:roundingmode:type-error",
+        "theory:FloatingPoint:roundnearesttiestoaway:type-error",
+        "theory:FloatingPoint:roundnearesttiestoeven:type-error",
+        "theory:FloatingPoint:roundtowardnegative:type-error",
+        "theory:FloatingPoint:roundtowardpositive:type-error",
+        "theory:FloatingPoint:roundtowardzero:type-error",
+        "theory:FloatingPoint:rtn:type-error",
+        "theory:FloatingPoint:rtp:type-error",
+        "theory:FloatingPoint:rtz:type-error",
+        "theory:FloatingPoint:to-fp-unsigned:type-error",
+        "theory:FloatingPoint:to-fp:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:FloatingPoint:float128:boundary",
+        "theory:FloatingPoint:float128:sat",
+        "theory:FloatingPoint:float128:unsat-proof",
+        "theory:FloatingPoint:float16:boundary",
+        "theory:FloatingPoint:float16:sat",
+        "theory:FloatingPoint:float16:unsat-proof",
+        "theory:FloatingPoint:float32:boundary",
+        "theory:FloatingPoint:float32:sat",
+        "theory:FloatingPoint:float32:unsat-proof",
+        "theory:FloatingPoint:float64:boundary",
+        "theory:FloatingPoint:float64:sat",
+        "theory:FloatingPoint:float64:unsat-proof",
+        "theory:FloatingPoint:floatingpoint:boundary",
+        "theory:FloatingPoint:floatingpoint:sat",
+        "theory:FloatingPoint:floatingpoint:unsat-proof",
+        "theory:FloatingPoint:fp.abs:boundary",
+        "theory:FloatingPoint:fp.abs:sat",
+        "theory:FloatingPoint:fp.abs:unsat-proof",
+        "theory:FloatingPoint:fp.add:boundary",
+        "theory:FloatingPoint:fp.add:sat",
+        "theory:FloatingPoint:fp.add:unsat-proof",
+        "theory:FloatingPoint:fp.div:boundary",
+        "theory:FloatingPoint:fp.div:sat",
+        "theory:FloatingPoint:fp.div:unsat-proof",
+        "theory:FloatingPoint:fp.eq:boundary",
+        "theory:FloatingPoint:fp.eq:sat",
+        "theory:FloatingPoint:fp.eq:unsat-proof",
+        "theory:FloatingPoint:fp.fma:boundary",
+        "theory:FloatingPoint:fp.fma:sat",
+        "theory:FloatingPoint:fp.fma:unsat-proof",
+        "theory:FloatingPoint:fp.geq:boundary",
+        "theory:FloatingPoint:fp.geq:sat",
+        "theory:FloatingPoint:fp.geq:unsat-proof",
+        "theory:FloatingPoint:fp.gt:boundary",
+        "theory:FloatingPoint:fp.gt:sat",
+        "theory:FloatingPoint:fp.gt:unsat-proof",
+        "theory:FloatingPoint:fp.isinfinite:boundary",
+        "theory:FloatingPoint:fp.isinfinite:sat",
+        "theory:FloatingPoint:fp.isinfinite:unsat-proof",
+        "theory:FloatingPoint:fp.isnan:boundary",
+        "theory:FloatingPoint:fp.isnan:sat",
+        "theory:FloatingPoint:fp.isnan:unsat-proof",
+        "theory:FloatingPoint:fp.isnegative:boundary",
+        "theory:FloatingPoint:fp.isnegative:sat",
+        "theory:FloatingPoint:fp.isnegative:unsat-proof",
+        "theory:FloatingPoint:fp.isnormal:boundary",
+        "theory:FloatingPoint:fp.isnormal:sat",
+        "theory:FloatingPoint:fp.isnormal:unsat-proof",
+        "theory:FloatingPoint:fp.ispositive:boundary",
+        "theory:FloatingPoint:fp.ispositive:sat",
+        "theory:FloatingPoint:fp.ispositive:unsat-proof",
+        "theory:FloatingPoint:fp.issubnormal:boundary",
+        "theory:FloatingPoint:fp.issubnormal:sat",
+        "theory:FloatingPoint:fp.issubnormal:unsat-proof",
+        "theory:FloatingPoint:fp.iszero:boundary",
+        "theory:FloatingPoint:fp.iszero:sat",
+        "theory:FloatingPoint:fp.iszero:unsat-proof",
+        "theory:FloatingPoint:fp.leq:boundary",
+        "theory:FloatingPoint:fp.leq:sat",
+        "theory:FloatingPoint:fp.leq:unsat-proof",
+        "theory:FloatingPoint:fp.lt:boundary",
+        "theory:FloatingPoint:fp.lt:sat",
+        "theory:FloatingPoint:fp.lt:unsat-proof",
+        "theory:FloatingPoint:fp.max:boundary",
+        "theory:FloatingPoint:fp.max:sat",
+        "theory:FloatingPoint:fp.max:unsat-proof",
+        "theory:FloatingPoint:fp.min:boundary",
+        "theory:FloatingPoint:fp.min:sat",
+        "theory:FloatingPoint:fp.min:unsat-proof",
+        "theory:FloatingPoint:fp.mul:boundary",
+        "theory:FloatingPoint:fp.mul:sat",
+        "theory:FloatingPoint:fp.mul:unsat-proof",
+        "theory:FloatingPoint:fp.neg:boundary",
+        "theory:FloatingPoint:fp.neg:sat",
+        "theory:FloatingPoint:fp.neg:unsat-proof",
+        "theory:FloatingPoint:fp.rem:boundary",
+        "theory:FloatingPoint:fp.rem:sat",
+        "theory:FloatingPoint:fp.rem:unsat-proof",
+        "theory:FloatingPoint:fp.roundtointegral:boundary",
+        "theory:FloatingPoint:fp.roundtointegral:sat",
+        "theory:FloatingPoint:fp.roundtointegral:unsat-proof",
+        "theory:FloatingPoint:fp.sqrt:boundary",
+        "theory:FloatingPoint:fp.sqrt:sat",
+        "theory:FloatingPoint:fp.sqrt:unsat-proof",
+        "theory:FloatingPoint:fp.sub:boundary",
+        "theory:FloatingPoint:fp.sub:sat",
+        "theory:FloatingPoint:fp.sub:unsat-proof",
+        "theory:FloatingPoint:fp.to-real:boundary",
+        "theory:FloatingPoint:fp.to-real:sat",
+        "theory:FloatingPoint:fp.to-real:unsat-proof",
+        "theory:FloatingPoint:fp.to-sbv:boundary",
+        "theory:FloatingPoint:fp.to-sbv:sat",
+        "theory:FloatingPoint:fp.to-sbv:unsat-proof",
+        "theory:FloatingPoint:fp.to-ubv:boundary",
+        "theory:FloatingPoint:fp.to-ubv:sat",
+        "theory:FloatingPoint:fp.to-ubv:unsat-proof",
+        "theory:FloatingPoint:fp:boundary",
+        "theory:FloatingPoint:fp:sat",
+        "theory:FloatingPoint:fp:unsat-proof",
+        "theory:FloatingPoint:nan:boundary",
+        "theory:FloatingPoint:nan:sat",
+        "theory:FloatingPoint:nan:unsat-proof",
+        "theory:FloatingPoint:negative-infinity:boundary",
+        "theory:FloatingPoint:negative-infinity:sat",
+        "theory:FloatingPoint:negative-infinity:unsat-proof",
+        "theory:FloatingPoint:negative-zero:boundary",
+        "theory:FloatingPoint:negative-zero:sat",
+        "theory:FloatingPoint:negative-zero:unsat-proof",
+        "theory:FloatingPoint:positive-infinity:boundary",
+        "theory:FloatingPoint:positive-infinity:sat",
+        "theory:FloatingPoint:positive-infinity:unsat-proof",
+        "theory:FloatingPoint:positive-zero:boundary",
+        "theory:FloatingPoint:positive-zero:sat",
+        "theory:FloatingPoint:positive-zero:unsat-proof",
+        "theory:FloatingPoint:rna:boundary",
+        "theory:FloatingPoint:rna:sat",
+        "theory:FloatingPoint:rna:unsat-proof",
+        "theory:FloatingPoint:rne:boundary",
+        "theory:FloatingPoint:rne:sat",
+        "theory:FloatingPoint:rne:unsat-proof",
+        "theory:FloatingPoint:roundingmode:boundary",
+        "theory:FloatingPoint:roundingmode:sat",
+        "theory:FloatingPoint:roundingmode:unsat-proof",
+        "theory:FloatingPoint:roundnearesttiestoaway:boundary",
+        "theory:FloatingPoint:roundnearesttiestoaway:sat",
+        "theory:FloatingPoint:roundnearesttiestoaway:unsat-proof",
+        "theory:FloatingPoint:roundnearesttiestoeven:boundary",
+        "theory:FloatingPoint:roundnearesttiestoeven:sat",
+        "theory:FloatingPoint:roundnearesttiestoeven:unsat-proof",
+        "theory:FloatingPoint:roundtowardnegative:boundary",
+        "theory:FloatingPoint:roundtowardnegative:sat",
+        "theory:FloatingPoint:roundtowardnegative:unsat-proof",
+        "theory:FloatingPoint:roundtowardpositive:boundary",
+        "theory:FloatingPoint:roundtowardpositive:sat",
+        "theory:FloatingPoint:roundtowardpositive:unsat-proof",
+        "theory:FloatingPoint:roundtowardzero:boundary",
+        "theory:FloatingPoint:roundtowardzero:sat",
+        "theory:FloatingPoint:roundtowardzero:unsat-proof",
+        "theory:FloatingPoint:rtn:boundary",
+        "theory:FloatingPoint:rtn:sat",
+        "theory:FloatingPoint:rtn:unsat-proof",
+        "theory:FloatingPoint:rtp:boundary",
+        "theory:FloatingPoint:rtp:sat",
+        "theory:FloatingPoint:rtp:unsat-proof",
+        "theory:FloatingPoint:rtz:boundary",
+        "theory:FloatingPoint:rtz:sat",
+        "theory:FloatingPoint:rtz:unsat-proof",
+        "theory:FloatingPoint:to-fp-unsigned:boundary",
+        "theory:FloatingPoint:to-fp-unsigned:sat",
+        "theory:FloatingPoint:to-fp-unsigned:unsat-proof",
+        "theory:FloatingPoint:to-fp:boundary",
+        "theory:FloatingPoint:to-fp:sat",
+        "theory:FloatingPoint:to-fp:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Strings and regular expressions",
@@ -660,7 +1531,161 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=regexp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:UnicodeStrings:re-concat:type-error",
+        "theory:UnicodeStrings:re-plus:type-error",
+        "theory:UnicodeStrings:re-power:type-error",
+        "theory:UnicodeStrings:re-star:type-error",
+        "theory:UnicodeStrings:re.all:type-error",
+        "theory:UnicodeStrings:re.allchar:type-error",
+        "theory:UnicodeStrings:re.diff:type-error",
+        "theory:UnicodeStrings:re.inter:type-error",
+        "theory:UnicodeStrings:re.loop:type-error",
+        "theory:UnicodeStrings:re.none:type-error",
+        "theory:UnicodeStrings:re.opt:type-error",
+        "theory:UnicodeStrings:re.range:type-error",
+        "theory:UnicodeStrings:re.union:type-error",
+        "theory:UnicodeStrings:reglan:type-error",
+        "theory:UnicodeStrings:str-concat:type-error",
+        "theory:UnicodeStrings:str-le:type-error",
+        "theory:UnicodeStrings:str-lt:type-error",
+        "theory:UnicodeStrings:str.at:type-error",
+        "theory:UnicodeStrings:str.contains:type-error",
+        "theory:UnicodeStrings:str.from-code:type-error",
+        "theory:UnicodeStrings:str.from-int:type-error",
+        "theory:UnicodeStrings:str.in-re:type-error",
+        "theory:UnicodeStrings:str.indexof:type-error",
+        "theory:UnicodeStrings:str.is-digit:type-error",
+        "theory:UnicodeStrings:str.len:type-error",
+        "theory:UnicodeStrings:str.prefixof:type-error",
+        "theory:UnicodeStrings:str.replace-all:type-error",
+        "theory:UnicodeStrings:str.replace-re-all:type-error",
+        "theory:UnicodeStrings:str.replace-re:type-error",
+        "theory:UnicodeStrings:str.replace:type-error",
+        "theory:UnicodeStrings:str.substr:type-error",
+        "theory:UnicodeStrings:str.suffixof:type-error",
+        "theory:UnicodeStrings:str.to-code:type-error",
+        "theory:UnicodeStrings:str.to-int:type-error",
+        "theory:UnicodeStrings:str.to-re:type-error",
+        "theory:UnicodeStrings:string:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:UnicodeStrings:re-concat:boundary",
+        "theory:UnicodeStrings:re-concat:sat",
+        "theory:UnicodeStrings:re-concat:unsat-proof",
+        "theory:UnicodeStrings:re-plus:boundary",
+        "theory:UnicodeStrings:re-plus:sat",
+        "theory:UnicodeStrings:re-plus:unsat-proof",
+        "theory:UnicodeStrings:re-power:boundary",
+        "theory:UnicodeStrings:re-power:sat",
+        "theory:UnicodeStrings:re-power:unsat-proof",
+        "theory:UnicodeStrings:re-star:boundary",
+        "theory:UnicodeStrings:re-star:sat",
+        "theory:UnicodeStrings:re-star:unsat-proof",
+        "theory:UnicodeStrings:re.all:boundary",
+        "theory:UnicodeStrings:re.all:sat",
+        "theory:UnicodeStrings:re.all:unsat-proof",
+        "theory:UnicodeStrings:re.allchar:boundary",
+        "theory:UnicodeStrings:re.allchar:sat",
+        "theory:UnicodeStrings:re.allchar:unsat-proof",
+        "theory:UnicodeStrings:re.diff:boundary",
+        "theory:UnicodeStrings:re.diff:sat",
+        "theory:UnicodeStrings:re.diff:unsat-proof",
+        "theory:UnicodeStrings:re.inter:boundary",
+        "theory:UnicodeStrings:re.inter:sat",
+        "theory:UnicodeStrings:re.inter:unsat-proof",
+        "theory:UnicodeStrings:re.loop:boundary",
+        "theory:UnicodeStrings:re.loop:sat",
+        "theory:UnicodeStrings:re.loop:unsat-proof",
+        "theory:UnicodeStrings:re.none:boundary",
+        "theory:UnicodeStrings:re.none:sat",
+        "theory:UnicodeStrings:re.none:unsat-proof",
+        "theory:UnicodeStrings:re.opt:boundary",
+        "theory:UnicodeStrings:re.opt:sat",
+        "theory:UnicodeStrings:re.opt:unsat-proof",
+        "theory:UnicodeStrings:re.range:boundary",
+        "theory:UnicodeStrings:re.range:sat",
+        "theory:UnicodeStrings:re.range:unsat-proof",
+        "theory:UnicodeStrings:re.union:boundary",
+        "theory:UnicodeStrings:re.union:sat",
+        "theory:UnicodeStrings:re.union:unsat-proof",
+        "theory:UnicodeStrings:reglan:boundary",
+        "theory:UnicodeStrings:reglan:sat",
+        "theory:UnicodeStrings:reglan:unsat-proof",
+        "theory:UnicodeStrings:str-concat:boundary",
+        "theory:UnicodeStrings:str-concat:sat",
+        "theory:UnicodeStrings:str-concat:unsat-proof",
+        "theory:UnicodeStrings:str-le:boundary",
+        "theory:UnicodeStrings:str-le:sat",
+        "theory:UnicodeStrings:str-le:unsat-proof",
+        "theory:UnicodeStrings:str-lt:boundary",
+        "theory:UnicodeStrings:str-lt:sat",
+        "theory:UnicodeStrings:str-lt:unsat-proof",
+        "theory:UnicodeStrings:str.at:boundary",
+        "theory:UnicodeStrings:str.at:sat",
+        "theory:UnicodeStrings:str.at:unsat-proof",
+        "theory:UnicodeStrings:str.contains:boundary",
+        "theory:UnicodeStrings:str.contains:sat",
+        "theory:UnicodeStrings:str.contains:unsat-proof",
+        "theory:UnicodeStrings:str.from-code:boundary",
+        "theory:UnicodeStrings:str.from-code:sat",
+        "theory:UnicodeStrings:str.from-code:unsat-proof",
+        "theory:UnicodeStrings:str.from-int:boundary",
+        "theory:UnicodeStrings:str.from-int:sat",
+        "theory:UnicodeStrings:str.from-int:unsat-proof",
+        "theory:UnicodeStrings:str.in-re:boundary",
+        "theory:UnicodeStrings:str.in-re:sat",
+        "theory:UnicodeStrings:str.in-re:unsat-proof",
+        "theory:UnicodeStrings:str.indexof:boundary",
+        "theory:UnicodeStrings:str.indexof:sat",
+        "theory:UnicodeStrings:str.indexof:unsat-proof",
+        "theory:UnicodeStrings:str.is-digit:boundary",
+        "theory:UnicodeStrings:str.is-digit:sat",
+        "theory:UnicodeStrings:str.is-digit:unsat-proof",
+        "theory:UnicodeStrings:str.len:boundary",
+        "theory:UnicodeStrings:str.len:sat",
+        "theory:UnicodeStrings:str.len:unsat-proof",
+        "theory:UnicodeStrings:str.prefixof:boundary",
+        "theory:UnicodeStrings:str.prefixof:sat",
+        "theory:UnicodeStrings:str.prefixof:unsat-proof",
+        "theory:UnicodeStrings:str.replace-all:boundary",
+        "theory:UnicodeStrings:str.replace-all:sat",
+        "theory:UnicodeStrings:str.replace-all:unsat-proof",
+        "theory:UnicodeStrings:str.replace-re-all:boundary",
+        "theory:UnicodeStrings:str.replace-re-all:sat",
+        "theory:UnicodeStrings:str.replace-re-all:unsat-proof",
+        "theory:UnicodeStrings:str.replace-re:boundary",
+        "theory:UnicodeStrings:str.replace-re:sat",
+        "theory:UnicodeStrings:str.replace-re:unsat-proof",
+        "theory:UnicodeStrings:str.replace:boundary",
+        "theory:UnicodeStrings:str.replace:sat",
+        "theory:UnicodeStrings:str.replace:unsat-proof",
+        "theory:UnicodeStrings:str.substr:boundary",
+        "theory:UnicodeStrings:str.substr:sat",
+        "theory:UnicodeStrings:str.substr:unsat-proof",
+        "theory:UnicodeStrings:str.suffixof:boundary",
+        "theory:UnicodeStrings:str.suffixof:sat",
+        "theory:UnicodeStrings:str.suffixof:unsat-proof",
+        "theory:UnicodeStrings:str.to-code:boundary",
+        "theory:UnicodeStrings:str.to-code:sat",
+        "theory:UnicodeStrings:str.to-code:unsat-proof",
+        "theory:UnicodeStrings:str.to-int:boundary",
+        "theory:UnicodeStrings:str.to-int:sat",
+        "theory:UnicodeStrings:str.to-int:unsat-proof",
+        "theory:UnicodeStrings:str.to-re:boundary",
+        "theory:UnicodeStrings:str.to-re:sat",
+        "theory:UnicodeStrings:str.to-re:unsat-proof",
+        "theory:UnicodeStrings:string-literal:boundary",
+        "theory:UnicodeStrings:string-literal:sat",
+        "theory:UnicodeStrings:string-literal:type-error",
+        "theory:UnicodeStrings:string-literal:unsat-proof",
+        "theory:UnicodeStrings:string:boundary",
+        "theory:UnicodeStrings:string:sat",
+        "theory:UnicodeStrings:string:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Datatypes",
@@ -678,7 +1703,23 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=datatype"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "command:datatypes:simple-enum",
+        "theory:Datatypes:simple-constructors-selectors-testers"
+      ],
+      "red_obligation_ids": [
+        "command:datatypes:mutual-tree-forest",
+        "command:datatypes:parametric-box",
+        "command:datatypes:recursive-list",
+        "theory:Datatypes:constructor-disjointness-replay",
+        "theory:Datatypes:mutual-datatypes",
+        "theory:Datatypes:parametric-datatype",
+        "theory:Datatypes:recursive-datatype",
+        "theory:Datatypes:selector-theorem-replay"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Sequences, sets, bags",
@@ -696,7 +1737,85 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=seq"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:Z3_Extensions:bag.count:type-error",
+        "theory:Z3_Extensions:bag.difference-subtract:type-error",
+        "theory:Z3_Extensions:bag.inter-min:type-error",
+        "theory:Z3_Extensions:bag.union-disjoint:type-error",
+        "theory:Z3_Extensions:bag.union-max:type-error",
+        "theory:Z3_Extensions:bag:type-error",
+        "theory:Z3_Extensions:seq-concat:type-error",
+        "theory:Z3_Extensions:seq.contains:type-error",
+        "theory:Z3_Extensions:seq.extract:type-error",
+        "theory:Z3_Extensions:seq.len:type-error",
+        "theory:Z3_Extensions:seq:type-error",
+        "theory:Z3_Extensions:set.insert:type-error",
+        "theory:Z3_Extensions:set.intersect:type-error",
+        "theory:Z3_Extensions:set.member:type-error",
+        "theory:Z3_Extensions:set.minus:type-error",
+        "theory:Z3_Extensions:set.subset:type-error",
+        "theory:Z3_Extensions:set.union:type-error",
+        "theory:Z3_Extensions:set:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Z3_Extensions:bag.count:boundary",
+        "theory:Z3_Extensions:bag.count:sat",
+        "theory:Z3_Extensions:bag.count:unsat-proof",
+        "theory:Z3_Extensions:bag.difference-subtract:boundary",
+        "theory:Z3_Extensions:bag.difference-subtract:sat",
+        "theory:Z3_Extensions:bag.difference-subtract:unsat-proof",
+        "theory:Z3_Extensions:bag.inter-min:boundary",
+        "theory:Z3_Extensions:bag.inter-min:sat",
+        "theory:Z3_Extensions:bag.inter-min:unsat-proof",
+        "theory:Z3_Extensions:bag.union-disjoint:boundary",
+        "theory:Z3_Extensions:bag.union-disjoint:sat",
+        "theory:Z3_Extensions:bag.union-disjoint:unsat-proof",
+        "theory:Z3_Extensions:bag.union-max:boundary",
+        "theory:Z3_Extensions:bag.union-max:sat",
+        "theory:Z3_Extensions:bag.union-max:unsat-proof",
+        "theory:Z3_Extensions:bag:boundary",
+        "theory:Z3_Extensions:bag:sat",
+        "theory:Z3_Extensions:bag:unsat-proof",
+        "theory:Z3_Extensions:seq-concat:boundary",
+        "theory:Z3_Extensions:seq-concat:sat",
+        "theory:Z3_Extensions:seq-concat:unsat-proof",
+        "theory:Z3_Extensions:seq.contains:boundary",
+        "theory:Z3_Extensions:seq.contains:sat",
+        "theory:Z3_Extensions:seq.contains:unsat-proof",
+        "theory:Z3_Extensions:seq.extract:boundary",
+        "theory:Z3_Extensions:seq.extract:sat",
+        "theory:Z3_Extensions:seq.extract:unsat-proof",
+        "theory:Z3_Extensions:seq.len:boundary",
+        "theory:Z3_Extensions:seq.len:sat",
+        "theory:Z3_Extensions:seq.len:unsat-proof",
+        "theory:Z3_Extensions:seq:boundary",
+        "theory:Z3_Extensions:seq:sat",
+        "theory:Z3_Extensions:seq:unsat-proof",
+        "theory:Z3_Extensions:set.insert:boundary",
+        "theory:Z3_Extensions:set.insert:sat",
+        "theory:Z3_Extensions:set.insert:unsat-proof",
+        "theory:Z3_Extensions:set.intersect:boundary",
+        "theory:Z3_Extensions:set.intersect:sat",
+        "theory:Z3_Extensions:set.intersect:unsat-proof",
+        "theory:Z3_Extensions:set.member:boundary",
+        "theory:Z3_Extensions:set.member:sat",
+        "theory:Z3_Extensions:set.member:unsat-proof",
+        "theory:Z3_Extensions:set.minus:boundary",
+        "theory:Z3_Extensions:set.minus:sat",
+        "theory:Z3_Extensions:set.minus:unsat-proof",
+        "theory:Z3_Extensions:set.subset:boundary",
+        "theory:Z3_Extensions:set.subset:sat",
+        "theory:Z3_Extensions:set.subset:unsat-proof",
+        "theory:Z3_Extensions:set.union:boundary",
+        "theory:Z3_Extensions:set.union:sat",
+        "theory:Z3_Extensions:set.union:unsat-proof",
+        "theory:Z3_Extensions:set:boundary",
+        "theory:Z3_Extensions:set:sat",
+        "theory:Z3_Extensions:set:unsat-proof"
+      ],
+      "complete_required_status": "red"
     }
   ],
   "logics": [
@@ -718,7 +1837,48 @@
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#unsupported higher-order/function sort :bool -> bool",
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_alia_select_non_array_type_error"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "logic:ALIA:boundary",
+        "logic:ALIA:sat",
+        "logic:ALIA:type-error",
+        "logic:ANIA:boundary",
+        "logic:ANIA:sat",
+        "logic:ANIA:type-error",
+        "logic:AUFLIA:boundary",
+        "logic:AUFLIA:sat",
+        "logic:AUFLIA:type-error",
+        "logic:QF_ALIA:boundary",
+        "logic:QF_ALIA:sat",
+        "logic:QF_ALIA:type-error",
+        "logic:QF_ANIA:boundary",
+        "logic:QF_ANIA:sat",
+        "logic:QF_ANIA:type-error",
+        "logic:QF_AUFLIA:boundary",
+        "logic:QF_AUFLIA:sat",
+        "logic:QF_AUFLIA:type-error",
+        "logic:QF_AUFNIA:boundary",
+        "logic:QF_AUFNIA:sat",
+        "logic:QF_AUFNIA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:ALIA:fragment-violation",
+        "logic:ALIA:unsat-proof",
+        "logic:ANIA:fragment-violation",
+        "logic:ANIA:unsat-proof",
+        "logic:AUFLIA:fragment-violation",
+        "logic:AUFLIA:unsat-proof",
+        "logic:QF_ALIA:fragment-violation",
+        "logic:QF_ALIA:unsat-proof",
+        "logic:QF_ANIA:fragment-violation",
+        "logic:QF_ANIA:unsat-proof",
+        "logic:QF_AUFLIA:fragment-violation",
+        "logic:QF_AUFLIA:unsat-proof",
+        "logic:QF_AUFNIA:fragment-violation",
+        "logic:QF_AUFNIA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "ALIRA, ANIRA, AUFLIRA, AUFNIRA, QF_ALRA, QF_ANRA, QF_AUFLIRA, QF_AUFNIRA",
@@ -737,7 +1897,53 @@
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#unsupported higher-order/function sort :bool -> bool",
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_alia_select_non_array_type_error"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "logic:ALIRA:boundary",
+        "logic:ALIRA:sat",
+        "logic:ALIRA:type-error",
+        "logic:ANIRA:boundary",
+        "logic:ANIRA:sat",
+        "logic:ANIRA:type-error",
+        "logic:AUFLIRA:boundary",
+        "logic:AUFLIRA:sat",
+        "logic:AUFLIRA:type-error",
+        "logic:AUFNIRA:boundary",
+        "logic:AUFNIRA:sat",
+        "logic:AUFNIRA:type-error",
+        "logic:QF_ALRA:boundary",
+        "logic:QF_ALRA:sat",
+        "logic:QF_ALRA:type-error",
+        "logic:QF_ANRA:boundary",
+        "logic:QF_ANRA:sat",
+        "logic:QF_ANRA:type-error",
+        "logic:QF_AUFLIRA:boundary",
+        "logic:QF_AUFLIRA:sat",
+        "logic:QF_AUFLIRA:type-error",
+        "logic:QF_AUFNIRA:boundary",
+        "logic:QF_AUFNIRA:sat",
+        "logic:QF_AUFNIRA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:ALIRA:fragment-violation",
+        "logic:ALIRA:unsat-proof",
+        "logic:ANIRA:fragment-violation",
+        "logic:ANIRA:unsat-proof",
+        "logic:AUFLIRA:fragment-violation",
+        "logic:AUFLIRA:unsat-proof",
+        "logic:AUFNIRA:fragment-violation",
+        "logic:AUFNIRA:unsat-proof",
+        "logic:QF_ALRA:fragment-violation",
+        "logic:QF_ALRA:unsat-proof",
+        "logic:QF_ANRA:fragment-violation",
+        "logic:QF_ANRA:unsat-proof",
+        "logic:QF_AUFLIRA:fragment-violation",
+        "logic:QF_AUFLIRA:unsat-proof",
+        "logic:QF_AUFNIRA:fragment-violation",
+        "logic:QF_AUFNIRA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "LRA, NRA, QF_LRA, QF_NRA, QF_RDL, QF_UFLRA, QF_UFNRA, UFLRA, UFNRA",
@@ -762,7 +1968,58 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_lra_unsat_proof"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "logic:LRA:boundary",
+        "logic:LRA:sat",
+        "logic:LRA:type-error",
+        "logic:NRA:boundary",
+        "logic:NRA:sat",
+        "logic:NRA:type-error",
+        "logic:QF_LRA:boundary",
+        "logic:QF_LRA:sat",
+        "logic:QF_LRA:type-error",
+        "logic:QF_NRA:boundary",
+        "logic:QF_NRA:sat",
+        "logic:QF_NRA:type-error",
+        "logic:QF_RDL:boundary",
+        "logic:QF_RDL:sat",
+        "logic:QF_RDL:type-error",
+        "logic:QF_UFLRA:boundary",
+        "logic:QF_UFLRA:sat",
+        "logic:QF_UFLRA:type-error",
+        "logic:QF_UFNRA:boundary",
+        "logic:QF_UFNRA:sat",
+        "logic:QF_UFNRA:type-error",
+        "logic:UFLRA:boundary",
+        "logic:UFLRA:sat",
+        "logic:UFLRA:type-error",
+        "logic:UFNRA:boundary",
+        "logic:UFNRA:sat",
+        "logic:UFNRA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:LRA:fragment-violation",
+        "logic:LRA:unsat-proof",
+        "logic:NRA:fragment-violation",
+        "logic:NRA:unsat-proof",
+        "logic:QF_LRA:fragment-violation",
+        "logic:QF_LRA:unsat-proof",
+        "logic:QF_NRA:fragment-violation",
+        "logic:QF_NRA:unsat-proof",
+        "logic:QF_RDL:fragment-violation",
+        "logic:QF_RDL:unsat-proof",
+        "logic:QF_UFLRA:fragment-violation",
+        "logic:QF_UFLRA:unsat-proof",
+        "logic:QF_UFNRA:fragment-violation",
+        "logic:QF_UFNRA:unsat-proof",
+        "logic:UFLRA:fragment-violation",
+        "logic:UFLRA:unsat-proof",
+        "logic:UFNRA:fragment-violation",
+        "logic:UFNRA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "BV, UFBV, QF_ABV, QF_AUFBV, QF_BV, QF_UFBV",
@@ -787,7 +2044,43 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_aufbv_mixed_array_bv_sat"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "logic:BV:boundary",
+        "logic:BV:sat",
+        "logic:BV:type-error",
+        "logic:QF_ABV:boundary",
+        "logic:QF_ABV:sat",
+        "logic:QF_ABV:type-error",
+        "logic:QF_AUFBV:boundary",
+        "logic:QF_AUFBV:sat",
+        "logic:QF_AUFBV:type-error",
+        "logic:QF_BV:boundary",
+        "logic:QF_BV:sat",
+        "logic:QF_BV:type-error",
+        "logic:QF_UFBV:boundary",
+        "logic:QF_UFBV:sat",
+        "logic:QF_UFBV:type-error",
+        "logic:UFBV:boundary",
+        "logic:UFBV:sat",
+        "logic:UFBV:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:BV:fragment-violation",
+        "logic:BV:unsat-proof",
+        "logic:QF_ABV:fragment-violation",
+        "logic:QF_ABV:unsat-proof",
+        "logic:QF_AUFBV:fragment-violation",
+        "logic:QF_AUFBV:unsat-proof",
+        "logic:QF_BV:fragment-violation",
+        "logic:QF_BV:unsat-proof",
+        "logic:QF_UFBV:fragment-violation",
+        "logic:QF_UFBV:unsat-proof",
+        "logic:UFBV:fragment-violation",
+        "logic:UFBV:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "LIA, NIA, UFIDL, UFLIA, UFNIA, QF_IDL, QF_LIA, QF_NIA, QF_UFIDL, QF_UFLIA",
@@ -813,7 +2106,63 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_lia_unsat_proof"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "logic:LIA:boundary",
+        "logic:LIA:sat",
+        "logic:LIA:type-error",
+        "logic:NIA:boundary",
+        "logic:NIA:sat",
+        "logic:NIA:type-error",
+        "logic:QF_IDL:boundary",
+        "logic:QF_IDL:sat",
+        "logic:QF_IDL:type-error",
+        "logic:QF_LIA:boundary",
+        "logic:QF_LIA:sat",
+        "logic:QF_LIA:type-error",
+        "logic:QF_NIA:boundary",
+        "logic:QF_NIA:sat",
+        "logic:QF_NIA:type-error",
+        "logic:QF_UFIDL:boundary",
+        "logic:QF_UFIDL:sat",
+        "logic:QF_UFIDL:type-error",
+        "logic:QF_UFLIA:boundary",
+        "logic:QF_UFLIA:sat",
+        "logic:QF_UFLIA:type-error",
+        "logic:UFIDL:boundary",
+        "logic:UFIDL:sat",
+        "logic:UFIDL:type-error",
+        "logic:UFLIA:boundary",
+        "logic:UFLIA:sat",
+        "logic:UFLIA:type-error",
+        "logic:UFNIA:boundary",
+        "logic:UFNIA:sat",
+        "logic:UFNIA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:LIA:fragment-violation",
+        "logic:LIA:unsat-proof",
+        "logic:NIA:fragment-violation",
+        "logic:NIA:unsat-proof",
+        "logic:QF_IDL:fragment-violation",
+        "logic:QF_IDL:unsat-proof",
+        "logic:QF_LIA:fragment-violation",
+        "logic:QF_LIA:unsat-proof",
+        "logic:QF_NIA:fragment-violation",
+        "logic:QF_NIA:unsat-proof",
+        "logic:QF_UFIDL:fragment-violation",
+        "logic:QF_UFIDL:unsat-proof",
+        "logic:QF_UFLIA:fragment-violation",
+        "logic:QF_UFLIA:unsat-proof",
+        "logic:UFIDL:fragment-violation",
+        "logic:UFIDL:unsat-proof",
+        "logic:UFLIA:fragment-violation",
+        "logic:UFLIA:unsat-proof",
+        "logic:UFNIA:fragment-violation",
+        "logic:UFNIA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "QF_AX",
@@ -834,7 +2183,18 @@
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#unsupported higher-order/function sort :bool -> bool",
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_alia_select_non_array_type_error"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "logic:QF_AX:boundary",
+        "logic:QF_AX:sat",
+        "logic:QF_AX:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:QF_AX:fragment-violation",
+        "logic:QF_AX:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "UF, QF_UF",
@@ -856,7 +2216,23 @@
         "source:src/HolSmt/Unittest.sml#smtlib_term_translation_branch_matrix_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "logic:QF_UF:boundary",
+        "logic:QF_UF:sat",
+        "logic:QF_UF:type-error",
+        "logic:UF:boundary",
+        "logic:UF:sat",
+        "logic:UF:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:QF_UF:fragment-violation",
+        "logic:QF_UF:unsat-proof",
+        "logic:UF:fragment-violation",
+        "logic:UF:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "QF_LIRA, QF_NIRA, QF_UFLIRA, QF_UFNIRA",
@@ -876,7 +2252,33 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_lira_unsat_proof"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [
+        "logic:QF_LIRA:boundary",
+        "logic:QF_LIRA:sat",
+        "logic:QF_LIRA:type-error",
+        "logic:QF_NIRA:boundary",
+        "logic:QF_NIRA:sat",
+        "logic:QF_NIRA:type-error",
+        "logic:QF_UFLIRA:boundary",
+        "logic:QF_UFLIRA:sat",
+        "logic:QF_UFLIRA:type-error",
+        "logic:QF_UFNIRA:boundary",
+        "logic:QF_UFNIRA:sat",
+        "logic:QF_UFNIRA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:QF_LIRA:fragment-violation",
+        "logic:QF_LIRA:unsat-proof",
+        "logic:QF_NIRA:fragment-violation",
+        "logic:QF_NIRA:unsat-proof",
+        "logic:QF_UFLIRA:fragment-violation",
+        "logic:QF_UFLIRA:unsat-proof",
+        "logic:QF_UFNIRA:fragment-violation",
+        "logic:QF_UFNIRA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "QF_S, QF_SLIA, QF_SNIA",
@@ -894,7 +2296,28 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=regexp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "logic:QF_S:boundary",
+        "logic:QF_S:sat",
+        "logic:QF_S:type-error",
+        "logic:QF_SLIA:boundary",
+        "logic:QF_SLIA:sat",
+        "logic:QF_SLIA:type-error",
+        "logic:QF_SNIA:boundary",
+        "logic:QF_SNIA:sat",
+        "logic:QF_SNIA:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:QF_S:fragment-violation",
+        "logic:QF_S:unsat-proof",
+        "logic:QF_SLIA:fragment-violation",
+        "logic:QF_SLIA:unsat-proof",
+        "logic:QF_SNIA:fragment-violation",
+        "logic:QF_SNIA:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "QF_FP, QF_FPBV, QF_BVFP, QF_UFFP, QF_UFBVFP",
@@ -912,7 +2335,38 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=fp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "logic:QF_BVFP:boundary",
+        "logic:QF_BVFP:sat",
+        "logic:QF_BVFP:type-error",
+        "logic:QF_FP:boundary",
+        "logic:QF_FP:sat",
+        "logic:QF_FP:type-error",
+        "logic:QF_FPBV:boundary",
+        "logic:QF_FPBV:sat",
+        "logic:QF_FPBV:type-error",
+        "logic:QF_UFBVFP:boundary",
+        "logic:QF_UFBVFP:sat",
+        "logic:QF_UFBVFP:type-error",
+        "logic:QF_UFFP:boundary",
+        "logic:QF_UFFP:sat",
+        "logic:QF_UFFP:type-error"
+      ],
+      "red_obligation_ids": [
+        "logic:QF_BVFP:fragment-violation",
+        "logic:QF_BVFP:unsat-proof",
+        "logic:QF_FP:fragment-violation",
+        "logic:QF_FP:unsat-proof",
+        "logic:QF_FPBV:fragment-violation",
+        "logic:QF_FPBV:unsat-proof",
+        "logic:QF_UFBVFP:fragment-violation",
+        "logic:QF_UFBVFP:unsat-proof",
+        "logic:QF_UFFP:fragment-violation",
+        "logic:QF_UFFP:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "ALL",
@@ -931,7 +2385,11 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#z3_th_lemma_advanced_unsupported_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "SMT-LIB 3 logics",
@@ -945,7 +2403,12 @@
       "notes": "Tracked separately from the SMT-LIB 2.7 baseline.",
       "test_ids": [],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "not_applicable",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "SMT-LIB 3 deferred"
     }
   ],
   "z3_proof_rules": [
@@ -963,7 +2426,11 @@
         "source:src/HolSmt/Unittest.sml#(\"and-elim\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "asserted",
@@ -980,7 +2447,13 @@
         "source:src/HolSmt/Unittest.sml#z3_core_proof_rule_replay_minimal_raw_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [
+        "proof-rule:asserted"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "commutativity",
@@ -996,7 +2469,11 @@
         "source:src/HolSmt/Unittest.sml#(\"commutativity\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "def-axiom, elim-unused, hypothesis, intro-def, sk, true-axiom",
@@ -1017,7 +2494,11 @@
         "source:src/HolSmt/Unittest.sml#(\"true-axiom\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "iff-false, iff-true",
@@ -1034,7 +2515,11 @@
         "source:src/HolSmt/Unittest.sml#(\"iff-true\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "lemma",
@@ -1050,7 +2535,11 @@
         "source:src/HolSmt/Unittest.sml#(\"lemma\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "monotonicity",
@@ -1066,7 +2555,11 @@
         "source:src/HolSmt/Unittest.sml#(\"monotonicity\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "mp, mp~",
@@ -1084,7 +2577,11 @@
         "source:src/HolSmt/Unittest.sml#z3_proof_parser_normalizes_rule_alias_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "nnf-neg, nnf-pos",
@@ -1101,7 +2598,11 @@
         "source:src/HolSmt/Unittest.sml#(\"nnf-pos\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "not-or-elim",
@@ -1117,7 +2618,11 @@
         "source:src/HolSmt/Unittest.sml#(\"not-or-elim\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "quant-inst, quant-intro",
@@ -1134,7 +2639,11 @@
         "source:src/HolSmt/Unittest.sml#(\"quant-intro\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "refl, symm, trans, trans*",
@@ -1153,7 +2662,11 @@
         "source:src/HolSmt/Unittest.sml#(\"trans*\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "rewrite",
@@ -1169,7 +2682,11 @@
         "source:src/HolSmt/Unittest.sml#(\"rewrite\""
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "th-lemma-arith collected subkinds",
@@ -1186,7 +2703,11 @@
         "source:src/HolSmt/Unittest.sml#arith/triangle-eq"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "th-lemma-array collected subkinds",
@@ -1203,7 +2724,11 @@
         "source:src/HolSmt/Unittest.sml#array/extensionality"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "th-lemma-basic collected subkinds",
@@ -1221,7 +2746,13 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#unsupported th-lemma shape"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [],
+      "red_obligation_ids": [
+        "proof-rule:th-lemma-basic"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "th-lemma-bv collected subkinds",
@@ -1237,7 +2768,11 @@
         "source:src/HolSmt/Unittest.sml#bv/bit-blast"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "th-lemma advanced theory families",
@@ -1255,7 +2790,19 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#proof-format limitation"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [],
+      "red_obligation_ids": [
+        "proof-rule:th-lemma-basic",
+        "proof-rule:th-lemma-datatype",
+        "proof-rule:th-lemma-fp",
+        "proof-rule:th-lemma-nonlinear-arith",
+        "proof-rule:th-lemma-regexp",
+        "proof-rule:th-lemma-seq",
+        "proof-rule:th-lemma-string"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "unit-resolution",
@@ -1272,7 +2819,11 @@
         "source:src/HolSmt/Unittest.sml#z3_core_proof_rule_replay_minimal_raw_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "proof-bind",
@@ -1289,7 +2840,11 @@
         "source:src/HolSmt/tools/tests/test_record_z3_proof_corpus.py#test_parse_only_rule_is_recorded_but_not_replay_unknown"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "parse_only",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "unknown or future Z3 proof rules",
@@ -1309,7 +2864,11 @@
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#z3_proof_parser_unknown_rule_diagnostic",
         "source:src/HolSmt/Unittest.sml#z3_proof_replay_failure_diagnostic"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     }
   ],
   "selftest_categories": [
@@ -1329,7 +2888,12 @@
         "source:src/HolSmt/Unittest.sml#bool-sort-and-equality"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Numerals: num, int, real",
@@ -1346,7 +2910,12 @@
         "source:src/HolSmt/Unittest.sml#smtlib_translation_shape_matrix_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Arithmetic operators and inequalities",
@@ -1366,7 +2935,12 @@
         "source:src/HolSmt/Unittest.sml#int-linear-arithmetic"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Numeric conversions",
@@ -1383,7 +2957,12 @@
         "source:src/HolSmt/Unittest.sml#smtlib_term_translation_branch_matrix_success"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Uninterpreted functions and predicates",
@@ -1403,7 +2982,12 @@
         "source:src/HolSmt/Unittest.sml#function-uninterpreted-symbols"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Quantifiers",
@@ -1420,7 +3004,12 @@
         "source:src/HolSmt/Unittest.sml#quantifier-binder"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Let binders and lambda abstractions",
@@ -1438,7 +3027,12 @@
         "source:src/HolSmt/Unittest.sml#let/lambda/beta validation"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Higher-order logic",
@@ -1455,7 +3049,12 @@
         "source:src/HolSmt/Unittest.sml#smtlib_higher_order_translation_rejection_diagnostic"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Tuples, FST, SND",
@@ -1473,7 +3072,12 @@
         "source:src/HolSmt/Unittest.sml#pair selector simplification validation"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Words / bit-vectors",
@@ -1491,7 +3095,12 @@
         "source:src/HolSmt/Unittest.sml#word-casts"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Named bit-vector regressions",
@@ -1508,7 +3117,12 @@
         "source:src/HolSmt/Unittest.sml#word-casts"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "HOL datatypes",
@@ -1525,7 +3139,12 @@
         "source:src/HolSmt/Unittest.sml#datatype-constructor-current-uf"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Records",
@@ -1542,7 +3161,12 @@
         "source:src/HolSmt/selftest.sml#(* records: field updates *)"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Sets as predicates",
@@ -1559,7 +3183,12 @@
         "source:src/HolSmt/Unittest.sml#sets-as-predicates-current-uf"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Euclidean div/mod and regressions",
@@ -1576,7 +3205,12 @@
         "source:src/HolSmt/Unittest.sml#integer-ediv-emod"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     }
   ],
   "soundness_audit": [
@@ -1595,7 +3229,14 @@
         "source:src/HolSmt/tools/tests/test_run_conformance_suite.py#test_z3_tac_oracle_tag_output_is_a_failure"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [
+        "soundness-audit:soundness-oracle-tag-boundary"
+      ],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Replay assumptions and theorem shape",
@@ -1612,7 +3253,12 @@
         "source:src/HolSmt/selftest.sml#expect_thm"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "non-SMT-LIB extension"
     },
     {
       "item": "Binders, shadowing, quoted identifiers, and local definitions",
@@ -1628,7 +3274,11 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#uf_quantified_shadowing_sat"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "Indexed and parametric sort reconstruction",
@@ -1645,7 +3295,11 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_bv_width1_xor_zero_unsat"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "Integer and real division by zero",
@@ -1662,7 +3316,11 @@
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_nra_real_division_audit"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "red"
     },
     {
       "item": "Bit-vector division, remainder and overflow edge cases",
@@ -1681,7 +3339,209 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#Z3_ProofReplay.rewrite: Z3 proof replay failure"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:boundary",
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:sat",
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:type-error",
+        "theory:Fixed_Size_BitVectors:bitvec:boundary",
+        "theory:Fixed_Size_BitVectors:bitvec:sat",
+        "theory:Fixed_Size_BitVectors:bitvec:type-error",
+        "theory:Fixed_Size_BitVectors:bvadd:boundary",
+        "theory:Fixed_Size_BitVectors:bvadd:sat",
+        "theory:Fixed_Size_BitVectors:bvadd:type-error",
+        "theory:Fixed_Size_BitVectors:bvand:boundary",
+        "theory:Fixed_Size_BitVectors:bvand:sat",
+        "theory:Fixed_Size_BitVectors:bvand:type-error",
+        "theory:Fixed_Size_BitVectors:bvashr:boundary",
+        "theory:Fixed_Size_BitVectors:bvashr:sat",
+        "theory:Fixed_Size_BitVectors:bvashr:type-error",
+        "theory:Fixed_Size_BitVectors:bvcomp:boundary",
+        "theory:Fixed_Size_BitVectors:bvcomp:sat",
+        "theory:Fixed_Size_BitVectors:bvcomp:type-error",
+        "theory:Fixed_Size_BitVectors:bvlshr:boundary",
+        "theory:Fixed_Size_BitVectors:bvlshr:sat",
+        "theory:Fixed_Size_BitVectors:bvlshr:type-error",
+        "theory:Fixed_Size_BitVectors:bvmul:boundary",
+        "theory:Fixed_Size_BitVectors:bvmul:sat",
+        "theory:Fixed_Size_BitVectors:bvmul:type-error",
+        "theory:Fixed_Size_BitVectors:bvnand:boundary",
+        "theory:Fixed_Size_BitVectors:bvnand:sat",
+        "theory:Fixed_Size_BitVectors:bvnand:type-error",
+        "theory:Fixed_Size_BitVectors:bvneg:boundary",
+        "theory:Fixed_Size_BitVectors:bvneg:sat",
+        "theory:Fixed_Size_BitVectors:bvneg:type-error",
+        "theory:Fixed_Size_BitVectors:bvnego:type-error",
+        "theory:Fixed_Size_BitVectors:bvnor:boundary",
+        "theory:Fixed_Size_BitVectors:bvnor:sat",
+        "theory:Fixed_Size_BitVectors:bvnor:type-error",
+        "theory:Fixed_Size_BitVectors:bvnot:boundary",
+        "theory:Fixed_Size_BitVectors:bvnot:sat",
+        "theory:Fixed_Size_BitVectors:bvnot:type-error",
+        "theory:Fixed_Size_BitVectors:bvor:boundary",
+        "theory:Fixed_Size_BitVectors:bvor:sat",
+        "theory:Fixed_Size_BitVectors:bvor:type-error",
+        "theory:Fixed_Size_BitVectors:bvsaddo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsdiv:boundary",
+        "theory:Fixed_Size_BitVectors:bvsdiv:sat",
+        "theory:Fixed_Size_BitVectors:bvsdiv:type-error",
+        "theory:Fixed_Size_BitVectors:bvsdivo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsge:boundary",
+        "theory:Fixed_Size_BitVectors:bvsge:sat",
+        "theory:Fixed_Size_BitVectors:bvsge:type-error",
+        "theory:Fixed_Size_BitVectors:bvsgt:boundary",
+        "theory:Fixed_Size_BitVectors:bvsgt:sat",
+        "theory:Fixed_Size_BitVectors:bvsgt:type-error",
+        "theory:Fixed_Size_BitVectors:bvshl:boundary",
+        "theory:Fixed_Size_BitVectors:bvshl:sat",
+        "theory:Fixed_Size_BitVectors:bvshl:type-error",
+        "theory:Fixed_Size_BitVectors:bvsle:boundary",
+        "theory:Fixed_Size_BitVectors:bvsle:sat",
+        "theory:Fixed_Size_BitVectors:bvsle:type-error",
+        "theory:Fixed_Size_BitVectors:bvslt:boundary",
+        "theory:Fixed_Size_BitVectors:bvslt:sat",
+        "theory:Fixed_Size_BitVectors:bvslt:type-error",
+        "theory:Fixed_Size_BitVectors:bvsmod:boundary",
+        "theory:Fixed_Size_BitVectors:bvsmod:sat",
+        "theory:Fixed_Size_BitVectors:bvsmod:type-error",
+        "theory:Fixed_Size_BitVectors:bvsmulo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsrem:boundary",
+        "theory:Fixed_Size_BitVectors:bvsrem:sat",
+        "theory:Fixed_Size_BitVectors:bvsrem:type-error",
+        "theory:Fixed_Size_BitVectors:bvssubo:type-error",
+        "theory:Fixed_Size_BitVectors:bvsub:boundary",
+        "theory:Fixed_Size_BitVectors:bvsub:sat",
+        "theory:Fixed_Size_BitVectors:bvsub:type-error",
+        "theory:Fixed_Size_BitVectors:bvuaddo:type-error",
+        "theory:Fixed_Size_BitVectors:bvudiv:boundary",
+        "theory:Fixed_Size_BitVectors:bvudiv:sat",
+        "theory:Fixed_Size_BitVectors:bvudiv:type-error",
+        "theory:Fixed_Size_BitVectors:bvuge:boundary",
+        "theory:Fixed_Size_BitVectors:bvuge:sat",
+        "theory:Fixed_Size_BitVectors:bvuge:type-error",
+        "theory:Fixed_Size_BitVectors:bvugt:boundary",
+        "theory:Fixed_Size_BitVectors:bvugt:sat",
+        "theory:Fixed_Size_BitVectors:bvugt:type-error",
+        "theory:Fixed_Size_BitVectors:bvule:boundary",
+        "theory:Fixed_Size_BitVectors:bvule:sat",
+        "theory:Fixed_Size_BitVectors:bvule:type-error",
+        "theory:Fixed_Size_BitVectors:bvult:boundary",
+        "theory:Fixed_Size_BitVectors:bvult:sat",
+        "theory:Fixed_Size_BitVectors:bvult:type-error",
+        "theory:Fixed_Size_BitVectors:bvumulo:type-error",
+        "theory:Fixed_Size_BitVectors:bvurem:boundary",
+        "theory:Fixed_Size_BitVectors:bvurem:sat",
+        "theory:Fixed_Size_BitVectors:bvurem:type-error",
+        "theory:Fixed_Size_BitVectors:bvusubo:type-error",
+        "theory:Fixed_Size_BitVectors:bvxnor:boundary",
+        "theory:Fixed_Size_BitVectors:bvxnor:sat",
+        "theory:Fixed_Size_BitVectors:bvxnor:type-error",
+        "theory:Fixed_Size_BitVectors:bvxor:boundary",
+        "theory:Fixed_Size_BitVectors:bvxor:sat",
+        "theory:Fixed_Size_BitVectors:bvxor:type-error",
+        "theory:Fixed_Size_BitVectors:concat:boundary",
+        "theory:Fixed_Size_BitVectors:concat:sat",
+        "theory:Fixed_Size_BitVectors:concat:type-error",
+        "theory:Fixed_Size_BitVectors:decimal-literal:boundary",
+        "theory:Fixed_Size_BitVectors:decimal-literal:sat",
+        "theory:Fixed_Size_BitVectors:decimal-literal:type-error",
+        "theory:Fixed_Size_BitVectors:extract:boundary",
+        "theory:Fixed_Size_BitVectors:extract:sat",
+        "theory:Fixed_Size_BitVectors:extract:type-error",
+        "theory:Fixed_Size_BitVectors:int-to-bv:type-error",
+        "theory:Fixed_Size_BitVectors:repeat:boundary",
+        "theory:Fixed_Size_BitVectors:repeat:sat",
+        "theory:Fixed_Size_BitVectors:repeat:type-error",
+        "theory:Fixed_Size_BitVectors:rotate-left:boundary",
+        "theory:Fixed_Size_BitVectors:rotate-left:sat",
+        "theory:Fixed_Size_BitVectors:rotate-left:type-error",
+        "theory:Fixed_Size_BitVectors:rotate-right:boundary",
+        "theory:Fixed_Size_BitVectors:rotate-right:sat",
+        "theory:Fixed_Size_BitVectors:rotate-right:type-error",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:type-error",
+        "theory:Fixed_Size_BitVectors:sign-extend:boundary",
+        "theory:Fixed_Size_BitVectors:sign-extend:sat",
+        "theory:Fixed_Size_BitVectors:sign-extend:type-error",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:type-error",
+        "theory:Fixed_Size_BitVectors:zero-extend:boundary",
+        "theory:Fixed_Size_BitVectors:zero-extend:sat",
+        "theory:Fixed_Size_BitVectors:zero-extend:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:Fixed_Size_BitVectors:binary-hex-literal:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bitvec:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvadd:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvand:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvashr:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvcomp:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvlshr:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvmul:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnand:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvneg:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnego:boundary",
+        "theory:Fixed_Size_BitVectors:bvnego:sat",
+        "theory:Fixed_Size_BitVectors:bvnego:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvnot:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsaddo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsaddo:sat",
+        "theory:Fixed_Size_BitVectors:bvsaddo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsdiv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsdivo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsdivo:sat",
+        "theory:Fixed_Size_BitVectors:bvsdivo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsge:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsgt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvshl:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsle:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvslt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsmod:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsmulo:boundary",
+        "theory:Fixed_Size_BitVectors:bvsmulo:sat",
+        "theory:Fixed_Size_BitVectors:bvsmulo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsrem:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvssubo:boundary",
+        "theory:Fixed_Size_BitVectors:bvssubo:sat",
+        "theory:Fixed_Size_BitVectors:bvssubo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvsub:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvuaddo:boundary",
+        "theory:Fixed_Size_BitVectors:bvuaddo:sat",
+        "theory:Fixed_Size_BitVectors:bvuaddo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvudiv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvuge:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvugt:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvule:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvult:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvumulo:boundary",
+        "theory:Fixed_Size_BitVectors:bvumulo:sat",
+        "theory:Fixed_Size_BitVectors:bvumulo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvurem:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvusubo:boundary",
+        "theory:Fixed_Size_BitVectors:bvusubo:sat",
+        "theory:Fixed_Size_BitVectors:bvusubo:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvxnor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:bvxor:unsat-proof",
+        "theory:Fixed_Size_BitVectors:concat:unsat-proof",
+        "theory:Fixed_Size_BitVectors:decimal-literal:unsat-proof",
+        "theory:Fixed_Size_BitVectors:extract:unsat-proof",
+        "theory:Fixed_Size_BitVectors:int-to-bv:boundary",
+        "theory:Fixed_Size_BitVectors:int-to-bv:sat",
+        "theory:Fixed_Size_BitVectors:int-to-bv:unsat-proof",
+        "theory:Fixed_Size_BitVectors:repeat:unsat-proof",
+        "theory:Fixed_Size_BitVectors:rotate-left:unsat-proof",
+        "theory:Fixed_Size_BitVectors:rotate-right:unsat-proof",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:boundary",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:sat",
+        "theory:Fixed_Size_BitVectors:sbv-to-int:unsat-proof",
+        "theory:Fixed_Size_BitVectors:sign-extend:unsat-proof",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:boundary",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:sat",
+        "theory:Fixed_Size_BitVectors:ubv-to-int:unsat-proof",
+        "theory:Fixed_Size_BitVectors:zero-extend:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "Floating-point NaN, infinity and rounding-mode semantics",
@@ -1699,7 +3559,217 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=fp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:FloatingPoint:float128:type-error",
+        "theory:FloatingPoint:float16:type-error",
+        "theory:FloatingPoint:float32:type-error",
+        "theory:FloatingPoint:float64:type-error",
+        "theory:FloatingPoint:floatingpoint:type-error",
+        "theory:FloatingPoint:fp.abs:type-error",
+        "theory:FloatingPoint:fp.add:type-error",
+        "theory:FloatingPoint:fp.div:type-error",
+        "theory:FloatingPoint:fp.eq:type-error",
+        "theory:FloatingPoint:fp.fma:type-error",
+        "theory:FloatingPoint:fp.geq:type-error",
+        "theory:FloatingPoint:fp.gt:type-error",
+        "theory:FloatingPoint:fp.isinfinite:type-error",
+        "theory:FloatingPoint:fp.isnan:type-error",
+        "theory:FloatingPoint:fp.isnegative:type-error",
+        "theory:FloatingPoint:fp.isnormal:type-error",
+        "theory:FloatingPoint:fp.ispositive:type-error",
+        "theory:FloatingPoint:fp.issubnormal:type-error",
+        "theory:FloatingPoint:fp.iszero:type-error",
+        "theory:FloatingPoint:fp.leq:type-error",
+        "theory:FloatingPoint:fp.lt:type-error",
+        "theory:FloatingPoint:fp.max:type-error",
+        "theory:FloatingPoint:fp.min:type-error",
+        "theory:FloatingPoint:fp.mul:type-error",
+        "theory:FloatingPoint:fp.neg:type-error",
+        "theory:FloatingPoint:fp.rem:type-error",
+        "theory:FloatingPoint:fp.roundtointegral:type-error",
+        "theory:FloatingPoint:fp.sqrt:type-error",
+        "theory:FloatingPoint:fp.sub:type-error",
+        "theory:FloatingPoint:fp.to-real:type-error",
+        "theory:FloatingPoint:fp.to-sbv:type-error",
+        "theory:FloatingPoint:fp.to-ubv:type-error",
+        "theory:FloatingPoint:fp:type-error",
+        "theory:FloatingPoint:nan:type-error",
+        "theory:FloatingPoint:negative-infinity:type-error",
+        "theory:FloatingPoint:negative-zero:type-error",
+        "theory:FloatingPoint:positive-infinity:type-error",
+        "theory:FloatingPoint:positive-zero:type-error",
+        "theory:FloatingPoint:rna:type-error",
+        "theory:FloatingPoint:rne:type-error",
+        "theory:FloatingPoint:roundingmode:type-error",
+        "theory:FloatingPoint:roundnearesttiestoaway:type-error",
+        "theory:FloatingPoint:roundnearesttiestoeven:type-error",
+        "theory:FloatingPoint:roundtowardnegative:type-error",
+        "theory:FloatingPoint:roundtowardpositive:type-error",
+        "theory:FloatingPoint:roundtowardzero:type-error",
+        "theory:FloatingPoint:rtn:type-error",
+        "theory:FloatingPoint:rtp:type-error",
+        "theory:FloatingPoint:rtz:type-error",
+        "theory:FloatingPoint:to-fp-unsigned:type-error",
+        "theory:FloatingPoint:to-fp:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:FloatingPoint:float128:boundary",
+        "theory:FloatingPoint:float128:sat",
+        "theory:FloatingPoint:float128:unsat-proof",
+        "theory:FloatingPoint:float16:boundary",
+        "theory:FloatingPoint:float16:sat",
+        "theory:FloatingPoint:float16:unsat-proof",
+        "theory:FloatingPoint:float32:boundary",
+        "theory:FloatingPoint:float32:sat",
+        "theory:FloatingPoint:float32:unsat-proof",
+        "theory:FloatingPoint:float64:boundary",
+        "theory:FloatingPoint:float64:sat",
+        "theory:FloatingPoint:float64:unsat-proof",
+        "theory:FloatingPoint:floatingpoint:boundary",
+        "theory:FloatingPoint:floatingpoint:sat",
+        "theory:FloatingPoint:floatingpoint:unsat-proof",
+        "theory:FloatingPoint:fp.abs:boundary",
+        "theory:FloatingPoint:fp.abs:sat",
+        "theory:FloatingPoint:fp.abs:unsat-proof",
+        "theory:FloatingPoint:fp.add:boundary",
+        "theory:FloatingPoint:fp.add:sat",
+        "theory:FloatingPoint:fp.add:unsat-proof",
+        "theory:FloatingPoint:fp.div:boundary",
+        "theory:FloatingPoint:fp.div:sat",
+        "theory:FloatingPoint:fp.div:unsat-proof",
+        "theory:FloatingPoint:fp.eq:boundary",
+        "theory:FloatingPoint:fp.eq:sat",
+        "theory:FloatingPoint:fp.eq:unsat-proof",
+        "theory:FloatingPoint:fp.fma:boundary",
+        "theory:FloatingPoint:fp.fma:sat",
+        "theory:FloatingPoint:fp.fma:unsat-proof",
+        "theory:FloatingPoint:fp.geq:boundary",
+        "theory:FloatingPoint:fp.geq:sat",
+        "theory:FloatingPoint:fp.geq:unsat-proof",
+        "theory:FloatingPoint:fp.gt:boundary",
+        "theory:FloatingPoint:fp.gt:sat",
+        "theory:FloatingPoint:fp.gt:unsat-proof",
+        "theory:FloatingPoint:fp.isinfinite:boundary",
+        "theory:FloatingPoint:fp.isinfinite:sat",
+        "theory:FloatingPoint:fp.isinfinite:unsat-proof",
+        "theory:FloatingPoint:fp.isnan:boundary",
+        "theory:FloatingPoint:fp.isnan:sat",
+        "theory:FloatingPoint:fp.isnan:unsat-proof",
+        "theory:FloatingPoint:fp.isnegative:boundary",
+        "theory:FloatingPoint:fp.isnegative:sat",
+        "theory:FloatingPoint:fp.isnegative:unsat-proof",
+        "theory:FloatingPoint:fp.isnormal:boundary",
+        "theory:FloatingPoint:fp.isnormal:sat",
+        "theory:FloatingPoint:fp.isnormal:unsat-proof",
+        "theory:FloatingPoint:fp.ispositive:boundary",
+        "theory:FloatingPoint:fp.ispositive:sat",
+        "theory:FloatingPoint:fp.ispositive:unsat-proof",
+        "theory:FloatingPoint:fp.issubnormal:boundary",
+        "theory:FloatingPoint:fp.issubnormal:sat",
+        "theory:FloatingPoint:fp.issubnormal:unsat-proof",
+        "theory:FloatingPoint:fp.iszero:boundary",
+        "theory:FloatingPoint:fp.iszero:sat",
+        "theory:FloatingPoint:fp.iszero:unsat-proof",
+        "theory:FloatingPoint:fp.leq:boundary",
+        "theory:FloatingPoint:fp.leq:sat",
+        "theory:FloatingPoint:fp.leq:unsat-proof",
+        "theory:FloatingPoint:fp.lt:boundary",
+        "theory:FloatingPoint:fp.lt:sat",
+        "theory:FloatingPoint:fp.lt:unsat-proof",
+        "theory:FloatingPoint:fp.max:boundary",
+        "theory:FloatingPoint:fp.max:sat",
+        "theory:FloatingPoint:fp.max:unsat-proof",
+        "theory:FloatingPoint:fp.min:boundary",
+        "theory:FloatingPoint:fp.min:sat",
+        "theory:FloatingPoint:fp.min:unsat-proof",
+        "theory:FloatingPoint:fp.mul:boundary",
+        "theory:FloatingPoint:fp.mul:sat",
+        "theory:FloatingPoint:fp.mul:unsat-proof",
+        "theory:FloatingPoint:fp.neg:boundary",
+        "theory:FloatingPoint:fp.neg:sat",
+        "theory:FloatingPoint:fp.neg:unsat-proof",
+        "theory:FloatingPoint:fp.rem:boundary",
+        "theory:FloatingPoint:fp.rem:sat",
+        "theory:FloatingPoint:fp.rem:unsat-proof",
+        "theory:FloatingPoint:fp.roundtointegral:boundary",
+        "theory:FloatingPoint:fp.roundtointegral:sat",
+        "theory:FloatingPoint:fp.roundtointegral:unsat-proof",
+        "theory:FloatingPoint:fp.sqrt:boundary",
+        "theory:FloatingPoint:fp.sqrt:sat",
+        "theory:FloatingPoint:fp.sqrt:unsat-proof",
+        "theory:FloatingPoint:fp.sub:boundary",
+        "theory:FloatingPoint:fp.sub:sat",
+        "theory:FloatingPoint:fp.sub:unsat-proof",
+        "theory:FloatingPoint:fp.to-real:boundary",
+        "theory:FloatingPoint:fp.to-real:sat",
+        "theory:FloatingPoint:fp.to-real:unsat-proof",
+        "theory:FloatingPoint:fp.to-sbv:boundary",
+        "theory:FloatingPoint:fp.to-sbv:sat",
+        "theory:FloatingPoint:fp.to-sbv:unsat-proof",
+        "theory:FloatingPoint:fp.to-ubv:boundary",
+        "theory:FloatingPoint:fp.to-ubv:sat",
+        "theory:FloatingPoint:fp.to-ubv:unsat-proof",
+        "theory:FloatingPoint:fp:boundary",
+        "theory:FloatingPoint:fp:sat",
+        "theory:FloatingPoint:fp:unsat-proof",
+        "theory:FloatingPoint:nan:boundary",
+        "theory:FloatingPoint:nan:sat",
+        "theory:FloatingPoint:nan:unsat-proof",
+        "theory:FloatingPoint:negative-infinity:boundary",
+        "theory:FloatingPoint:negative-infinity:sat",
+        "theory:FloatingPoint:negative-infinity:unsat-proof",
+        "theory:FloatingPoint:negative-zero:boundary",
+        "theory:FloatingPoint:negative-zero:sat",
+        "theory:FloatingPoint:negative-zero:unsat-proof",
+        "theory:FloatingPoint:positive-infinity:boundary",
+        "theory:FloatingPoint:positive-infinity:sat",
+        "theory:FloatingPoint:positive-infinity:unsat-proof",
+        "theory:FloatingPoint:positive-zero:boundary",
+        "theory:FloatingPoint:positive-zero:sat",
+        "theory:FloatingPoint:positive-zero:unsat-proof",
+        "theory:FloatingPoint:rna:boundary",
+        "theory:FloatingPoint:rna:sat",
+        "theory:FloatingPoint:rna:unsat-proof",
+        "theory:FloatingPoint:rne:boundary",
+        "theory:FloatingPoint:rne:sat",
+        "theory:FloatingPoint:rne:unsat-proof",
+        "theory:FloatingPoint:roundingmode:boundary",
+        "theory:FloatingPoint:roundingmode:sat",
+        "theory:FloatingPoint:roundingmode:unsat-proof",
+        "theory:FloatingPoint:roundnearesttiestoaway:boundary",
+        "theory:FloatingPoint:roundnearesttiestoaway:sat",
+        "theory:FloatingPoint:roundnearesttiestoaway:unsat-proof",
+        "theory:FloatingPoint:roundnearesttiestoeven:boundary",
+        "theory:FloatingPoint:roundnearesttiestoeven:sat",
+        "theory:FloatingPoint:roundnearesttiestoeven:unsat-proof",
+        "theory:FloatingPoint:roundtowardnegative:boundary",
+        "theory:FloatingPoint:roundtowardnegative:sat",
+        "theory:FloatingPoint:roundtowardnegative:unsat-proof",
+        "theory:FloatingPoint:roundtowardpositive:boundary",
+        "theory:FloatingPoint:roundtowardpositive:sat",
+        "theory:FloatingPoint:roundtowardpositive:unsat-proof",
+        "theory:FloatingPoint:roundtowardzero:boundary",
+        "theory:FloatingPoint:roundtowardzero:sat",
+        "theory:FloatingPoint:roundtowardzero:unsat-proof",
+        "theory:FloatingPoint:rtn:boundary",
+        "theory:FloatingPoint:rtn:sat",
+        "theory:FloatingPoint:rtn:unsat-proof",
+        "theory:FloatingPoint:rtp:boundary",
+        "theory:FloatingPoint:rtp:sat",
+        "theory:FloatingPoint:rtp:unsat-proof",
+        "theory:FloatingPoint:rtz:boundary",
+        "theory:FloatingPoint:rtz:sat",
+        "theory:FloatingPoint:rtz:unsat-proof",
+        "theory:FloatingPoint:to-fp-unsigned:boundary",
+        "theory:FloatingPoint:to-fp-unsigned:sat",
+        "theory:FloatingPoint:to-fp-unsigned:unsat-proof",
+        "theory:FloatingPoint:to-fp:boundary",
+        "theory:FloatingPoint:to-fp:sat",
+        "theory:FloatingPoint:to-fp:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "HOL strings versus SMT-LIB UnicodeStrings and regex",
@@ -1719,7 +3789,161 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
         "source:src/HolSmt/Unittest.sml#theory=regexp"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:UnicodeStrings:re-concat:type-error",
+        "theory:UnicodeStrings:re-plus:type-error",
+        "theory:UnicodeStrings:re-power:type-error",
+        "theory:UnicodeStrings:re-star:type-error",
+        "theory:UnicodeStrings:re.all:type-error",
+        "theory:UnicodeStrings:re.allchar:type-error",
+        "theory:UnicodeStrings:re.diff:type-error",
+        "theory:UnicodeStrings:re.inter:type-error",
+        "theory:UnicodeStrings:re.loop:type-error",
+        "theory:UnicodeStrings:re.none:type-error",
+        "theory:UnicodeStrings:re.opt:type-error",
+        "theory:UnicodeStrings:re.range:type-error",
+        "theory:UnicodeStrings:re.union:type-error",
+        "theory:UnicodeStrings:reglan:type-error",
+        "theory:UnicodeStrings:str-concat:type-error",
+        "theory:UnicodeStrings:str-le:type-error",
+        "theory:UnicodeStrings:str-lt:type-error",
+        "theory:UnicodeStrings:str.at:type-error",
+        "theory:UnicodeStrings:str.contains:type-error",
+        "theory:UnicodeStrings:str.from-code:type-error",
+        "theory:UnicodeStrings:str.from-int:type-error",
+        "theory:UnicodeStrings:str.in-re:type-error",
+        "theory:UnicodeStrings:str.indexof:type-error",
+        "theory:UnicodeStrings:str.is-digit:type-error",
+        "theory:UnicodeStrings:str.len:type-error",
+        "theory:UnicodeStrings:str.prefixof:type-error",
+        "theory:UnicodeStrings:str.replace-all:type-error",
+        "theory:UnicodeStrings:str.replace-re-all:type-error",
+        "theory:UnicodeStrings:str.replace-re:type-error",
+        "theory:UnicodeStrings:str.replace:type-error",
+        "theory:UnicodeStrings:str.substr:type-error",
+        "theory:UnicodeStrings:str.suffixof:type-error",
+        "theory:UnicodeStrings:str.to-code:type-error",
+        "theory:UnicodeStrings:str.to-int:type-error",
+        "theory:UnicodeStrings:str.to-re:type-error",
+        "theory:UnicodeStrings:string:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:UnicodeStrings:re-concat:boundary",
+        "theory:UnicodeStrings:re-concat:sat",
+        "theory:UnicodeStrings:re-concat:unsat-proof",
+        "theory:UnicodeStrings:re-plus:boundary",
+        "theory:UnicodeStrings:re-plus:sat",
+        "theory:UnicodeStrings:re-plus:unsat-proof",
+        "theory:UnicodeStrings:re-power:boundary",
+        "theory:UnicodeStrings:re-power:sat",
+        "theory:UnicodeStrings:re-power:unsat-proof",
+        "theory:UnicodeStrings:re-star:boundary",
+        "theory:UnicodeStrings:re-star:sat",
+        "theory:UnicodeStrings:re-star:unsat-proof",
+        "theory:UnicodeStrings:re.all:boundary",
+        "theory:UnicodeStrings:re.all:sat",
+        "theory:UnicodeStrings:re.all:unsat-proof",
+        "theory:UnicodeStrings:re.allchar:boundary",
+        "theory:UnicodeStrings:re.allchar:sat",
+        "theory:UnicodeStrings:re.allchar:unsat-proof",
+        "theory:UnicodeStrings:re.diff:boundary",
+        "theory:UnicodeStrings:re.diff:sat",
+        "theory:UnicodeStrings:re.diff:unsat-proof",
+        "theory:UnicodeStrings:re.inter:boundary",
+        "theory:UnicodeStrings:re.inter:sat",
+        "theory:UnicodeStrings:re.inter:unsat-proof",
+        "theory:UnicodeStrings:re.loop:boundary",
+        "theory:UnicodeStrings:re.loop:sat",
+        "theory:UnicodeStrings:re.loop:unsat-proof",
+        "theory:UnicodeStrings:re.none:boundary",
+        "theory:UnicodeStrings:re.none:sat",
+        "theory:UnicodeStrings:re.none:unsat-proof",
+        "theory:UnicodeStrings:re.opt:boundary",
+        "theory:UnicodeStrings:re.opt:sat",
+        "theory:UnicodeStrings:re.opt:unsat-proof",
+        "theory:UnicodeStrings:re.range:boundary",
+        "theory:UnicodeStrings:re.range:sat",
+        "theory:UnicodeStrings:re.range:unsat-proof",
+        "theory:UnicodeStrings:re.union:boundary",
+        "theory:UnicodeStrings:re.union:sat",
+        "theory:UnicodeStrings:re.union:unsat-proof",
+        "theory:UnicodeStrings:reglan:boundary",
+        "theory:UnicodeStrings:reglan:sat",
+        "theory:UnicodeStrings:reglan:unsat-proof",
+        "theory:UnicodeStrings:str-concat:boundary",
+        "theory:UnicodeStrings:str-concat:sat",
+        "theory:UnicodeStrings:str-concat:unsat-proof",
+        "theory:UnicodeStrings:str-le:boundary",
+        "theory:UnicodeStrings:str-le:sat",
+        "theory:UnicodeStrings:str-le:unsat-proof",
+        "theory:UnicodeStrings:str-lt:boundary",
+        "theory:UnicodeStrings:str-lt:sat",
+        "theory:UnicodeStrings:str-lt:unsat-proof",
+        "theory:UnicodeStrings:str.at:boundary",
+        "theory:UnicodeStrings:str.at:sat",
+        "theory:UnicodeStrings:str.at:unsat-proof",
+        "theory:UnicodeStrings:str.contains:boundary",
+        "theory:UnicodeStrings:str.contains:sat",
+        "theory:UnicodeStrings:str.contains:unsat-proof",
+        "theory:UnicodeStrings:str.from-code:boundary",
+        "theory:UnicodeStrings:str.from-code:sat",
+        "theory:UnicodeStrings:str.from-code:unsat-proof",
+        "theory:UnicodeStrings:str.from-int:boundary",
+        "theory:UnicodeStrings:str.from-int:sat",
+        "theory:UnicodeStrings:str.from-int:unsat-proof",
+        "theory:UnicodeStrings:str.in-re:boundary",
+        "theory:UnicodeStrings:str.in-re:sat",
+        "theory:UnicodeStrings:str.in-re:unsat-proof",
+        "theory:UnicodeStrings:str.indexof:boundary",
+        "theory:UnicodeStrings:str.indexof:sat",
+        "theory:UnicodeStrings:str.indexof:unsat-proof",
+        "theory:UnicodeStrings:str.is-digit:boundary",
+        "theory:UnicodeStrings:str.is-digit:sat",
+        "theory:UnicodeStrings:str.is-digit:unsat-proof",
+        "theory:UnicodeStrings:str.len:boundary",
+        "theory:UnicodeStrings:str.len:sat",
+        "theory:UnicodeStrings:str.len:unsat-proof",
+        "theory:UnicodeStrings:str.prefixof:boundary",
+        "theory:UnicodeStrings:str.prefixof:sat",
+        "theory:UnicodeStrings:str.prefixof:unsat-proof",
+        "theory:UnicodeStrings:str.replace-all:boundary",
+        "theory:UnicodeStrings:str.replace-all:sat",
+        "theory:UnicodeStrings:str.replace-all:unsat-proof",
+        "theory:UnicodeStrings:str.replace-re-all:boundary",
+        "theory:UnicodeStrings:str.replace-re-all:sat",
+        "theory:UnicodeStrings:str.replace-re-all:unsat-proof",
+        "theory:UnicodeStrings:str.replace-re:boundary",
+        "theory:UnicodeStrings:str.replace-re:sat",
+        "theory:UnicodeStrings:str.replace-re:unsat-proof",
+        "theory:UnicodeStrings:str.replace:boundary",
+        "theory:UnicodeStrings:str.replace:sat",
+        "theory:UnicodeStrings:str.replace:unsat-proof",
+        "theory:UnicodeStrings:str.substr:boundary",
+        "theory:UnicodeStrings:str.substr:sat",
+        "theory:UnicodeStrings:str.substr:unsat-proof",
+        "theory:UnicodeStrings:str.suffixof:boundary",
+        "theory:UnicodeStrings:str.suffixof:sat",
+        "theory:UnicodeStrings:str.suffixof:unsat-proof",
+        "theory:UnicodeStrings:str.to-code:boundary",
+        "theory:UnicodeStrings:str.to-code:sat",
+        "theory:UnicodeStrings:str.to-code:unsat-proof",
+        "theory:UnicodeStrings:str.to-int:boundary",
+        "theory:UnicodeStrings:str.to-int:sat",
+        "theory:UnicodeStrings:str.to-int:unsat-proof",
+        "theory:UnicodeStrings:str.to-re:boundary",
+        "theory:UnicodeStrings:str.to-re:sat",
+        "theory:UnicodeStrings:str.to-re:unsat-proof",
+        "theory:UnicodeStrings:string-literal:boundary",
+        "theory:UnicodeStrings:string-literal:sat",
+        "theory:UnicodeStrings:string-literal:type-error",
+        "theory:UnicodeStrings:string-literal:unsat-proof",
+        "theory:UnicodeStrings:string:boundary",
+        "theory:UnicodeStrings:string:sat",
+        "theory:UnicodeStrings:string:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "ArraysEx select/store versus HOL function encoding",
@@ -1741,7 +3965,41 @@
       "diagnostic_test_ids": [
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#unsupported higher-order/function sort :bool -> bool",
         "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#qf_alia_select_non_array_type_error"
-      ]
+      ],
+      "current_status": "unsupported_diagnostic",
+      "complete_test_ids": [
+        "theory:ArraysEx:array:boundary",
+        "theory:ArraysEx:array:sat",
+        "theory:ArraysEx:array:type-error",
+        "theory:ArraysEx:extensionality:boundary",
+        "theory:ArraysEx:extensionality:sat",
+        "theory:ArraysEx:extensionality:type-error",
+        "theory:ArraysEx:mixed-index-value-sorts:boundary",
+        "theory:ArraysEx:mixed-index-value-sorts:sat",
+        "theory:ArraysEx:mixed-index-value-sorts:type-error",
+        "theory:ArraysEx:read-over-write:boundary",
+        "theory:ArraysEx:read-over-write:sat",
+        "theory:ArraysEx:read-over-write:type-error",
+        "theory:ArraysEx:select:boundary",
+        "theory:ArraysEx:select:sat",
+        "theory:ArraysEx:select:type-error",
+        "theory:ArraysEx:store:boundary",
+        "theory:ArraysEx:store:sat",
+        "theory:ArraysEx:store:type-error",
+        "theory:ArraysEx:write-over-write:boundary",
+        "theory:ArraysEx:write-over-write:sat",
+        "theory:ArraysEx:write-over-write:type-error"
+      ],
+      "red_obligation_ids": [
+        "theory:ArraysEx:array:unsat-proof",
+        "theory:ArraysEx:extensionality:unsat-proof",
+        "theory:ArraysEx:mixed-index-value-sorts:unsat-proof",
+        "theory:ArraysEx:read-over-write:unsat-proof",
+        "theory:ArraysEx:select:unsat-proof",
+        "theory:ArraysEx:store:unsat-proof",
+        "theory:ArraysEx:write-over-write:unsat-proof"
+      ],
+      "complete_required_status": "red"
     },
     {
       "item": "sat and unknown solver results",
@@ -1758,7 +4016,12 @@
         "source:src/HolSmt/Unittest.sml#holsmt_solver_result_negative_diagnostics"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": []
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
+      "complete_test_ids": [],
+      "red_obligation_ids": [],
+      "complete_required_status": "not_applicable",
+      "outside_complete_scope_reason": "solver result SAT/UNKNOWN not proof-producing"
     }
   ]
 }

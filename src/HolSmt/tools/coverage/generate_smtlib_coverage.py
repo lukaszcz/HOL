@@ -16,6 +16,9 @@ ROOT = Path(__file__).resolve().parents[4]
 COVERAGE_DIR = ROOT / "src" / "HolSmt" / "tools" / "coverage"
 DATA_PATH = COVERAGE_DIR / "smtlib_coverage.json"
 MANIFEST_PATH = COVERAGE_DIR / "coverage_manifest.json"
+COMPLETE_MANIFEST_PATH = (
+    ROOT / "src" / "HolSmt" / "tools" / "conformance-corpus" / "v2" / "manifest.json"
+)
 DEFAULT_PROOF_REPORT = (
     ROOT / "src" / "HolSmt" / "tools" / "proof-corpus" / "supported_versions" / "summary.json"
 )
@@ -186,10 +189,12 @@ def verify_manifest_evidence(
 def enrich_rows_with_manifest_evidence(
     data: dict,
     manifest: dict,
+    complete_manifest: dict,
     conformance_reports: list[object],
     proof_reports: list[object],
 ) -> dict:
     entries = audit_coverage_manifest.validate_manifest(manifest, data)
+    complete_cases = audit_coverage_manifest.validate_complete_manifest(complete_manifest)
     verify_manifest_evidence(entries, conformance_reports, proof_reports)
 
     by_row: dict[tuple[str, str, str], list[dict[str, object]]] = {}
@@ -220,6 +225,7 @@ def enrich_rows_with_manifest_evidence(
             row["last_verified_by"] = "coverage_manifest.json" if row_entries else "unverified"
             row["diagnostic_test_ids"] = diagnostic_test_ids
 
+    audit_coverage_manifest.enrich_complete_metadata(data, complete_cases)
     return data
 
 
@@ -258,6 +264,31 @@ def validate(data: dict, manifest: dict | None = None, release: bool = False) ->
           if "diagnostic_test_ids" not in row:
               raise SystemExit(
                   f"{section_name} row {item!r} is missing diagnostic_test_ids"
+              )
+          for complete_field in (
+              "current_status",
+              "complete_required_status",
+              "red_obligation_ids",
+              "complete_test_ids",
+          ):
+              if complete_field not in row:
+                  raise SystemExit(
+                      f"{section_name} row {item!r} is missing {complete_field}"
+                  )
+          if row["complete_required_status"] not in audit_coverage_manifest.COMPLETE_REQUIRED_STATUSES:
+              raise SystemExit(
+                  f"{section_name} row {item!r} has invalid complete_required_status: "
+                  f"{row['complete_required_status']!r}"
+              )
+          if not isinstance(row["red_obligation_ids"], list):
+              raise SystemExit(f"{section_name} row {item!r} has invalid red_obligation_ids")
+          if not isinstance(row["complete_test_ids"], list):
+              raise SystemExit(f"{section_name} row {item!r} has invalid complete_test_ids")
+          if row["complete_required_status"] == "not_applicable" and not row.get(
+              "outside_complete_scope_reason"
+          ):
+              raise SystemExit(
+                  f"{section_name} row {item!r} is outside COMPLETE scope without a reason"
               )
 
     if release:
@@ -391,6 +422,11 @@ def row_values(row: dict) -> list[str]:
     return [
         row["item"],
         row["class"],
+        status(row.get("current_status", "")),
+        status(row.get("complete_required_status", "")),
+        "<br>".join(row.get("complete_test_ids", [])),
+        "<br>".join(row.get("red_obligation_ids", [])),
+        row.get("outside_complete_scope_reason", ""),
         *[status(row[column]) for column in STATUS_COLUMNS],
         "<br>".join(row.get("test_ids", [])),
         "<br>".join(row.get("diagnostic_test_ids", [])),
@@ -413,6 +449,11 @@ def render(data: dict) -> str:
         "",
         metadata["scope_note"],
         "",
+        "Current coverage records the implementation state observed in source and executable tests. "
+        "COMPLETE-required coverage records the stricter target: rows are `reconstructed` "
+        "only when real complete evidence exists, `red` while implementation obligations remain, "
+        "and `not_applicable` only with an explicit scope reason.",
+        "",
         "## Status Legend",
         "",
     ]
@@ -431,6 +472,11 @@ def render(data: dict) -> str:
     headers = (
         "Item",
         "Class",
+        "Current Status",
+        "Complete Required Status",
+        "Complete Test IDs",
+        "Red Obligation IDs",
+        "Outside COMPLETE Scope Reason",
         "Parsed",
         "Translated",
         "Solved",
@@ -456,6 +502,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--coverage", type=Path, default=DATA_PATH)
     parser.add_argument("--manifest", type=Path, default=MANIFEST_PATH)
+    parser.add_argument("--complete-manifest", type=Path, default=COMPLETE_MANIFEST_PATH)
     parser.add_argument("--report", type=Path, default=REPORT_PATH)
     parser.add_argument("--conformance-report", action="append", type=Path, default=[])
     parser.add_argument("--proof-report", action="append", type=Path, default=[DEFAULT_PROOF_REPORT])
@@ -474,15 +521,19 @@ def main(argv: list[str] | None = None) -> int:
     try:
         data = load_json(args.coverage)
         manifest = load_json(args.manifest)
+        complete_manifest = load_json(args.complete_manifest)
         if not isinstance(data, dict):
             raise CoverageGenerationError("coverage JSON root must be an object")
         if not isinstance(manifest, dict):
             raise CoverageGenerationError("manifest JSON root must be an object")
+        if not isinstance(complete_manifest, dict):
+            raise CoverageGenerationError("complete manifest JSON root must be an object")
         conformance_reports = [load_json(path) for path in args.conformance_report]
         proof_reports = [load_json(path) for path in args.proof_report]
         data = enrich_rows_with_manifest_evidence(
             data,
             manifest,
+            complete_manifest,
             conformance_reports,
             proof_reports,
         )

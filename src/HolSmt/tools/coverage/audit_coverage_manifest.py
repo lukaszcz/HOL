@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,9 +19,26 @@ DEFAULT_MANIFEST = COVERAGE_DIR / "coverage_manifest.json"
 DEFAULT_PROOF_REPORT = (
     ROOT / "src" / "HolSmt" / "tools" / "proof-corpus" / "supported_versions" / "summary.json"
 )
+DEFAULT_COMPLETE_MANIFEST = (
+    ROOT / "src" / "HolSmt" / "tools" / "conformance-corpus" / "v2" / "manifest.json"
+)
+DEFAULT_LOGIC_SOURCE = ROOT / "src" / "HolSmt" / "SmtLib_Logics.sml"
+DEFAULT_COMPLETE_PROOF_REPORT = (
+    ROOT / "src" / "HolSmt" / "tools" / "proof-corpus" / "complete" / "summary.json"
+)
 SCHEMA = "holsmt-coverage-manifest-v1"
 STATUS_COLUMNS = ("parsed", "translated", "solved", "reconstructed", "tested")
 IGNORED_COVERAGE_KEYS = {"metadata", "status_legend", "source_classes"}
+COMPLETE_REQUIRED_CLASSES = {"SMT-LIB 2.7", "Z3 extension"}
+COMPLETE_REQUIRED_STATUSES = {"reconstructed", "red", "not_applicable"}
+COMPLETE_WEAK_CURRENT_STATUSES = {
+    "parse_only",
+    "unsupported_diagnostic",
+    "untested",
+    "unknown",
+    "not_applicable",
+}
+UNSAT_REQUIRED_MODES = {"proof-parse", "proof-replay", "z3-tac"}
 OBLIGATION_STATUSES = {
     "implemented",
     "parse_only",
@@ -28,6 +46,45 @@ OBLIGATION_STATUSES = {
     "untested",
     "unknown",
     "not_applicable",
+}
+THEORY_FEATURE_ALIASES = {
+    "FixedSizeBitVectors": ["theory:Fixed_Size_BitVectors"],
+    "Strings and regular expressions": ["theory:UnicodeStrings"],
+    "Sequences, sets, bags": ["theory:Z3_Extensions"],
+}
+PROOF_RULE_FEATURE_ALIASES = {
+    "def-axiom, elim-unused, hypothesis, intro-def, sk, true-axiom": [
+        "proof-rule:def-axiom",
+        "proof-rule:elim-unused",
+        "proof-rule:hypothesis",
+        "proof-rule:intro-def",
+        "proof-rule:sk",
+        "proof-rule:true-axiom",
+    ],
+    "mp, mp~": ["proof-rule:mp", "proof-rule:mp~"],
+    "nnf-neg, nnf-pos": ["proof-rule:nnf-neg", "proof-rule:nnf-pos"],
+    "refl, symm, trans, trans*": [
+        "proof-rule:refl",
+        "proof-rule:symm",
+        "proof-rule:trans",
+        "proof-rule:trans*",
+    ],
+    "th-lemma-arith collected subkinds": ["proof-rule:th-lemma-arith"],
+    "th-lemma-array collected subkinds": ["proof-rule:th-lemma-array"],
+    "th-lemma-basic collected subkinds": ["proof-rule:th-lemma-basic"],
+    "th-lemma-bv collected subkinds": ["proof-rule:th-lemma-bv"],
+    "th-lemma advanced theory families": ["proof-rule-family:th-lemma"],
+}
+SOUNDNESS_FEATURE_ALIASES = {
+    "Z3_TAC oracle-tag boundary": ["soundness:oracle-tag-boundary"],
+    "Replay assumptions and theorem shape": ["soundness:theorem-shape"],
+    "Bit-vector division, remainder and overflow edge cases": [
+        "theory:Fixed_Size_BitVectors",
+        "soundness:bit-vector-edge-cases",
+    ],
+    "Floating-point NaN, infinity and rounding-mode semantics": ["theory:FloatingPoint"],
+    "HOL strings versus SMT-LIB UnicodeStrings and regex": ["theory:UnicodeStrings"],
+    "ArraysEx select/store versus HOL function encoding": ["theory:ArraysEx"],
 }
 
 
@@ -102,6 +159,30 @@ def validate_evidence_list(entry_label: str, field: str, value: object) -> None:
                     isinstance(item[string_field], str),
                     f"{entry_label} {field}[{index}].{string_field} must be a string",
                 )
+
+
+def validate_complete_manifest(manifest: object) -> list[dict[str, object]]:
+    require(isinstance(manifest, dict), "complete manifest root must be an object")
+    require(manifest.get("schema_version") == "2", "complete manifest schema_version must be 2")
+    cases = manifest.get("cases")
+    require(isinstance(cases, list), "complete manifest cases must be a list")
+    result: list[dict[str, object]] = []
+    seen: set[str] = set()
+    for index, case in enumerate(cases, 1):
+        label = f"complete manifest case {index}"
+        require(isinstance(case, dict), f"{label} must be an object")
+        for field in ("id", "class", "features", "modes", "expected"):
+            require(field in case, f"{label} is missing {field}")
+        case_id = case["id"]
+        require(isinstance(case_id, str) and bool(case_id), f"{label}.id must be a string")
+        require(case_id not in seen, f"{label}.id duplicates an earlier case")
+        seen.add(case_id)
+        require(isinstance(case["class"], str) and bool(case["class"]), f"{label}.class must be a string")
+        require(isinstance(case["features"], list), f"{label}.features must be a list")
+        require(isinstance(case["modes"], list), f"{label}.modes must be a list")
+        require(isinstance(case["expected"], dict), f"{label}.expected must be an object")
+        result.append(case)
+    return result
 
 
 def validate_manifest(
@@ -182,6 +263,355 @@ def validate_manifest(
         validated_entries.append(entry)
 
     return validated_entries
+
+
+def current_status(row: dict[str, object]) -> str:
+    values = [str(row.get(column)) for column in STATUS_COLUMNS if isinstance(row.get(column), str)]
+    for value in ("unknown", "untested", "unsupported_diagnostic", "parse_only", "implemented"):
+        if value in values:
+            return value
+    return "not_applicable"
+
+
+def complete_case_statuses(case: dict[str, object]) -> set[str]:
+    expected = case.get("expected")
+    if not isinstance(expected, dict):
+        return set()
+    return {
+        str(result.get("status"))
+        for result in expected.values()
+        if isinstance(result, dict) and isinstance(result.get("status"), str)
+    }
+
+
+def is_red_case(case: dict[str, object]) -> bool:
+    return "red" in complete_case_statuses(case)
+
+
+def is_complete_evidence_case(case: dict[str, object]) -> bool:
+    statuses = complete_case_statuses(case)
+    return "pass" in statuses and "red" not in statuses
+
+
+def split_item_names(item: object) -> list[str]:
+    return [part.strip() for part in str(item).split(",") if part.strip()]
+
+
+def feature_slug(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "-", value.lower()).strip("-")
+
+
+def row_feature_tokens(section: str, row: dict[str, object]) -> set[str]:
+    item = str(row.get("item", ""))
+    tokens = {item.lower(), feature_slug(item)}
+    if section == "commands":
+        commands = row.get("commands")
+        names = commands if isinstance(commands, list) else split_item_names(item)
+        for command in names:
+            if isinstance(command, str) and command:
+                tokens.add(f"command:{command.lower()}")
+    elif section == "theories":
+        aliases = THEORY_FEATURE_ALIASES.get(item, [])
+        for name in split_item_names(item):
+            tokens.add(f"theory:{name}")
+            tokens.add(f"theory:{name.replace(' ', '_')}")
+        tokens.update(alias.lower() for alias in aliases)
+    elif section == "logics":
+        for logic in split_item_names(item):
+            tokens.add(f"logic:{logic}")
+            tokens.add(logic.lower())
+    elif section == "z3_proof_rules":
+        aliases = PROOF_RULE_FEATURE_ALIASES.get(item, [])
+        for rule in split_item_names(item):
+            tokens.add(f"proof-rule:{rule}")
+        tokens.update(alias.lower() for alias in aliases)
+    elif section == "soundness_audit":
+        tokens.update(alias.lower() for alias in SOUNDNESS_FEATURE_ALIASES.get(item, []))
+    return {token.lower() for token in tokens}
+
+
+def case_feature_tokens(case: dict[str, object]) -> set[str]:
+    tokens = {str(case.get("id", "")).lower(), feature_slug(str(case.get("id", "")))}
+    logic = case.get("logic")
+    if isinstance(logic, str) and logic:
+        tokens.add(f"logic:{logic}".lower())
+        tokens.add(logic.lower())
+    features = case.get("features")
+    if isinstance(features, list):
+        for feature in features:
+            if isinstance(feature, str):
+                tokens.add(feature.lower())
+                tokens.add(feature_slug(feature))
+    return tokens
+
+
+def complete_case_matches_row(section: str, row: dict[str, object], case: dict[str, object]) -> bool:
+    row_tokens = row_feature_tokens(section, row)
+    case_tokens = case_feature_tokens(case)
+    if section == "commands":
+        return case.get("class") == "command" and bool(row_tokens & case_tokens)
+    if section == "logics":
+        return case.get("class") == "logic" and bool(row_tokens & case_tokens)
+    if section == "z3_proof_rules":
+        return case.get("class") == "proof-rule" and bool(row_tokens & case_tokens)
+    return bool(row_tokens & case_tokens)
+
+
+def complete_case_ids_for_row(
+    section: str,
+    row: dict[str, object],
+    cases: Iterable[dict[str, object]],
+    predicate,
+) -> list[str]:
+    result: list[str] = []
+    for case in cases:
+        if predicate(case) and complete_case_matches_row(section, row, case):
+            result.append(str(case["id"]))
+    return sorted(set(result))
+
+
+def outside_complete_scope_reason(row: dict[str, object]) -> str:
+    row_class = str(row.get("class", ""))
+    item = str(row.get("item", ""))
+    lowered = item.lower()
+    if row_class == "SMT-LIB 3":
+        return "SMT-LIB 3 deferred"
+    if "sat and unknown" in lowered:
+        return "solver result SAT/UNKNOWN not proof-producing"
+    if any(name in lowered for name in ("get-model", "get-value", "get-assignment", "get-assertions")):
+        return "model-producing command not theorem-producing"
+    if row_class == "HolSmt":
+        return "non-SMT-LIB extension"
+    return ""
+
+
+def enrich_complete_metadata(
+    coverage_data: dict[str, object],
+    complete_cases: list[dict[str, object]],
+) -> dict[str, object]:
+    for section, row in coverage_rows(coverage_data).items():
+        section_name = section[0]
+        row["current_status"] = current_status(row)
+        row["complete_test_ids"] = complete_case_ids_for_row(
+            section_name, row, complete_cases, is_complete_evidence_case
+        )
+        row["red_obligation_ids"] = complete_case_ids_for_row(
+            section_name, row, complete_cases, is_red_case
+        )
+        if str(row.get("class")) not in COMPLETE_REQUIRED_CLASSES:
+            row["complete_required_status"] = "not_applicable"
+            row["outside_complete_scope_reason"] = outside_complete_scope_reason(row)
+        elif row["red_obligation_ids"] or not row["complete_test_ids"]:
+            row["complete_required_status"] = "red"
+            row.pop("outside_complete_scope_reason", None)
+        else:
+            row["complete_required_status"] = "reconstructed"
+            row.pop("outside_complete_scope_reason", None)
+    return coverage_data
+
+
+def parse_accepted_logics(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        r"fun\s+parsedicts_of_logic\s*\([^)]*\)\s*=\s*case\s+logic\s+of(?P<body>.*?)"
+        r"\n\s*\(\*\s*returns the symbol metadata",
+        text,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise ManifestError(f"could not find parsedicts_of_logic case expression in {path}")
+    logics = re.findall(r'"([A-Z][A-Z0-9_]*)"\s*=>', match.group("body"))
+    require(bool(logics), f"no accepted logic names found in {path}")
+    return sorted(set(logics))
+
+
+def proof_report_rules(reports: Iterable[object]) -> set[str]:
+    rules: set[str] = set()
+    for report in reports:
+        if not isinstance(report, dict):
+            continue
+        discovered = report.get("discovered_rules")
+        if isinstance(discovered, list):
+            rules.update(str(rule) for rule in discovered if isinstance(rule, str))
+        histogram = report.get("aggregate_rule_histogram")
+        if isinstance(histogram, dict):
+            rules.update(str(rule) for rule in histogram)
+        rules_by_version = report.get("rules_by_version")
+        if isinstance(rules_by_version, list):
+            for item in rules_by_version:
+                if isinstance(item, dict) and isinstance(item.get("rules"), list):
+                    rules.update(str(rule) for rule in item["rules"] if isinstance(rule, str))
+    return rules
+
+
+def row_proof_rules(row: dict[str, object]) -> set[str]:
+    return {
+        token.removeprefix("proof-rule:")
+        for token in row_feature_tokens("z3_proof_rules", row)
+        if token.startswith("proof-rule:")
+    }
+
+
+def accepted_logic_has_complete_modes(logic: str, cases: Iterable[dict[str, object]]) -> bool:
+    for case in cases:
+        if case.get("class") != "logic" or case.get("logic") != logic:
+            continue
+        statuses = complete_case_statuses(case)
+        if "red" in statuses:
+            continue
+        modes = {str(mode) for mode in case.get("modes", []) if isinstance(mode, str)}
+        expected = case.get("expected")
+        expected_modes = set(str(mode) for mode in expected) if isinstance(expected, dict) else set()
+        if UNSAT_REQUIRED_MODES <= modes and UNSAT_REQUIRED_MODES <= expected_modes:
+            return True
+    return False
+
+
+def audit_complete_coverage(
+    coverage_data: dict[str, object],
+    complete_cases: list[dict[str, object]],
+    accepted_logics: list[str],
+    complete_proof_reports: list[object],
+) -> list[Issue]:
+    issues: list[Issue] = []
+    real_rules = proof_report_rules(complete_proof_reports)
+
+    for (section, item, row_class), row in sorted(coverage_rows(coverage_data).items()):
+        missing_fields = [
+            field
+            for field in (
+                "current_status",
+                "complete_required_status",
+                "red_obligation_ids",
+                "complete_test_ids",
+            )
+            if field not in row
+        ]
+        if missing_fields:
+            issues.append(
+                Issue(
+                    "missing_complete_metadata",
+                    section,
+                    item,
+                    row_class,
+                    "",
+                    "coverage row is missing complete metadata field(s): "
+                    + ", ".join(missing_fields),
+                )
+            )
+            continue
+
+        complete_required_status = row.get("complete_required_status")
+        current = row.get("current_status")
+        red_ids = row.get("red_obligation_ids")
+        complete_ids = row.get("complete_test_ids")
+        if complete_required_status not in COMPLETE_REQUIRED_STATUSES:
+            issues.append(
+                Issue(
+                    "invalid_complete_required_status",
+                    section,
+                    item,
+                    row_class,
+                    "",
+                    f"complete_required_status must be one of {sorted(COMPLETE_REQUIRED_STATUSES)}",
+                )
+            )
+            continue
+        if not isinstance(red_ids, list) or not all(isinstance(value, str) for value in red_ids):
+            issues.append(Issue("invalid_red_obligation_ids", section, item, row_class, "", "red_obligation_ids must be a list of strings"))
+            continue
+        if not isinstance(complete_ids, list) or not all(isinstance(value, str) for value in complete_ids):
+            issues.append(Issue("invalid_complete_test_ids", section, item, row_class, "", "complete_test_ids must be a list of strings"))
+            continue
+        if complete_required_status == "not_applicable":
+            reason = row.get("outside_complete_scope_reason")
+            if not isinstance(reason, str) or not reason:
+                issues.append(
+                    Issue(
+                        "missing_outside_complete_scope_reason",
+                        section,
+                        item,
+                        row_class,
+                        "",
+                        "rows outside COMPLETE scope must say why",
+                    )
+                )
+            continue
+
+        if red_ids:
+            if complete_required_status != "red":
+                issues.append(
+                    Issue(
+                        "red_obligation_not_red",
+                        section,
+                        item,
+                        row_class,
+                        "",
+                        "row has red obligations but complete_required_status is not red",
+                    )
+                )
+            issues.append(
+                Issue(
+                    "red_complete_obligation",
+                    section,
+                    item,
+                    row_class,
+                    "",
+                    "complete-required row still has red obligation IDs: " + ", ".join(red_ids[:8]),
+                )
+            )
+        if not complete_ids:
+            code = "diagnostic_only_complete_evidence" if row.get("diagnostic_test_ids") else "missing_complete_evidence"
+            issues.append(
+                Issue(
+                    code,
+                    section,
+                    item,
+                    row_class,
+                    "",
+                    "complete-required row lacks real complete evidence",
+                )
+            )
+        if complete_required_status == "reconstructed" and current in COMPLETE_WEAK_CURRENT_STATUSES:
+            issues.append(
+                Issue(
+                    "weak_current_status_for_reconstructed_required",
+                    section,
+                    item,
+                    row_class,
+                    "",
+                    f"current_status={current!r} cannot satisfy complete_required_status='reconstructed'",
+                )
+            )
+
+        if section == "z3_proof_rules":
+            required_rules = row_proof_rules(row)
+            if required_rules and required_rules.isdisjoint(real_rules):
+                issues.append(
+                    Issue(
+                        "missing_real_proof_occurrence",
+                        section,
+                        item,
+                        row_class,
+                        "",
+                        "required proof-rule row lacks a real Z3 proof-corpus occurrence",
+                    )
+                )
+
+    for logic in accepted_logics:
+        if not accepted_logic_has_complete_modes(logic, complete_cases):
+            issues.append(
+                Issue(
+                    "missing_accepted_logic_mode_coverage",
+                    "logics",
+                    logic,
+                    "SMT-LIB 2.7",
+                    "",
+                    "accepted logic lacks complete proof-parse/proof-replay/z3-tac mode coverage",
+                )
+            )
+
+    return issues
 
 
 def read_source_evidence(evidence: dict[str, object], root: Path) -> str | None:
@@ -499,6 +929,19 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--conformance-report", action="append", type=Path, default=[])
     parser.add_argument("--proof-report", action="append", type=Path, default=[DEFAULT_PROOF_REPORT])
+    parser.add_argument("--complete-manifest", type=Path, default=DEFAULT_COMPLETE_MANIFEST)
+    parser.add_argument("--logic-source", type=Path, default=DEFAULT_LOGIC_SOURCE)
+    parser.add_argument(
+        "--complete-proof-report",
+        action="append",
+        type=Path,
+        default=[DEFAULT_COMPLETE_PROOF_REPORT],
+    )
+    parser.add_argument(
+        "--complete",
+        action="store_true",
+        help="enforce COMPLETE conformance coverage semantics and red obligations",
+    )
     parser.add_argument(
         "--enforce",
         action="store_true",
@@ -523,6 +966,20 @@ def main(argv: list[str]) -> int:
             proof_reports,
             ROOT,
         )
+        if args.complete:
+            complete_cases = validate_complete_manifest(load_json(args.complete_manifest))
+            accepted_logics = parse_accepted_logics(args.logic_source)
+            complete_proof_reports = [
+                load_json(path) for path in args.complete_proof_report if path.exists()
+            ]
+            issues.extend(
+                audit_complete_coverage(
+                    coverage_data,
+                    complete_cases,
+                    accepted_logics,
+                    complete_proof_reports,
+                )
+            )
     except (OSError, json.JSONDecodeError, ManifestError) as exc:
         print(f"coverage manifest audit validation failed: {exc}", file=sys.stderr)
         return 2
