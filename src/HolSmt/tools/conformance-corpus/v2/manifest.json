@@ -105,7 +105,7 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "command-reconstruction:assert",
@@ -300,7 +300,7 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "command-reconstruction:check-sat-assuming",
@@ -901,7 +901,7 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "command-reconstruction:declare-datatype-declare-datatypes",
@@ -1060,8 +1060,8 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Translate.sml",
-          "src/HolSmt/SmtLib_TypeCheck.sml"
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
         ],
         "feature": "command-reconstruction:declare-fun",
         "test_ids": [
@@ -1218,8 +1218,8 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
         ],
         "feature": "command-reconstruction:declare-sort",
         "test_ids": [
@@ -1376,7 +1376,7 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "command-reconstruction:define-const",
@@ -1574,8 +1574,8 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
         ],
         "feature": "command-reconstruction:define-fun-rec-define-funs-rec",
         "test_ids": [
@@ -1696,7 +1696,7 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "command-reconstruction:define-fun",
@@ -1854,8 +1854,8 @@
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Translate.sml",
-          "src/HolSmt/SmtLib_TypeCheck.sml"
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
         ],
         "feature": "command-reconstruction:define-sort",
         "test_ids": [

@@ -727,33 +727,30 @@ in
   | _ => die "datatype/recursive script parsed to the wrong command count"
 end
 
-fun parse_file_datatype_unsupported_diagnostic () =
+fun parse_file_datatype_command_success () =
   let
-    fun expect_datatype_error label expected script =
-      (parse_smtlib_assertions script;
-       die ("legacy benchmark parser accepted " ^ label))
-      handle Feedback.HOL_ERR holerr =>
-        let val msg = Feedback.message_of holerr
-        in
-          assert (contains expected msg,
-            label ^ " diagnostic was not explicit: " ^ msg)
-        end
-    val _ = expect_datatype_error "recursive datatype"
-      "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+    fun expect_datatype_success label script =
+      let
+        val state = SmtLib_Parser.typecheck_script_string script
+      in
+        assert (#logic state = "ALL", label ^ " script changed logic");
+        assert (List.null (#assertions state),
+          label ^ " command-only script produced assertions")
+      end
+    val _ = expect_datatype_success "recursive datatype"
       ("(set-logic ALL)\n" ^
-       "(declare-datatype List ((nil) (cons (tail List))))\n" ^
-       "(exit)\n")
-    val _ = expect_datatype_error "parametric datatype"
-      "unsupported parametric datatype declaration"
+       "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n" ^
+       "(check-sat)\n")
+    val _ = expect_datatype_success "parametric datatype"
       ("(set-logic ALL)\n" ^
        "(declare-datatype Box (par (T) ((box (value T)))))\n" ^
-       "(exit)\n")
-    val _ = expect_datatype_error "mutual datatype"
-      "unsupported command 'declare-datatypes'"
-      ("(set-logic QF_UF)\n" ^
-       "(declare-datatypes ((Tree 1) (Forest 1)) " ^
-       "((par (T) ((leaf (value T)))) (par (T) ((empty)))))\n" ^
-       "(exit)\n")
+       "(check-sat)\n")
+    val _ = expect_datatype_success "mutual datatype"
+      ("(set-logic ALL)\n" ^
+       "(declare-datatypes ((Tree 0) (Forest 0))\n" ^
+       "  (((leaf) (node (children Forest)))\n" ^
+       "   ((nilF) (consF (head Tree) (tail Forest)))))\n" ^
+       "(check-sat)\n")
   in
     ()
   end
@@ -1045,11 +1042,9 @@ fun smtlib_command_malformed_diagnostics () =
       (typecheck
         ("(set-logic QF_LIA)\n" ^
          "(define-funs-rec ((f ((x Int)) Int)) ())\n"));
-    expect_hol_error_contains "mutual datatype"
-      "unsupported command 'declare-datatypes'"
-      (typecheck
-        ("(set-logic ALL)\n" ^
-         "(declare-datatypes ((T 0) (U 0)) (((mkT)) ((mkU))))\n"));
+    typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-datatypes ((T 0) (U 0)) (((mkT)) ((mkU))))\n") ();
     expect_hol_error_contains "check-sat-assuming sort"
       "command 'check-sat-assuming'"
       (typecheck
@@ -2105,8 +2100,8 @@ let
     ("script_ast_stack_and_query_success", script_ast_stack_and_query_success),
     ("script_ast_datatype_recursive_remaining_success",
       script_ast_datatype_recursive_remaining_success),
-    ("parse_file_datatype_unsupported_diagnostic",
-      parse_file_datatype_unsupported_diagnostic),
+    ("parse_file_datatype_command_success",
+      parse_file_datatype_command_success),
     ("parse_file_datatype_dictionary_success",
       parse_file_datatype_dictionary_success),
     ("parse_file_echo_success", parse_file_echo_success),

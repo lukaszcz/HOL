@@ -11,6 +11,7 @@ import unittest
 
 TOOLS_DIR = pathlib.Path(__file__).resolve().parents[1]
 CORPUS_DIR = TOOLS_DIR / "conformance-corpus" / "v2"
+REPO_ROOT = TOOLS_DIR.parents[2]
 sys.path.insert(0, str(TOOLS_DIR))
 sys.path.insert(0, str(CORPUS_DIR))
 
@@ -124,10 +125,20 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertTrue(
             any(
                 "datatype-command:parametric" in case["features"]
-                and case["expected"]["typecheck-only"]["status"] == "red"
+                and case["expected"]["typecheck-only"]["status"] == "pass"
                 for case in datatype_cases
             )
         )
+
+        reconstruction_cases = [
+            case for case in cases
+            if "command-case:reconstruction" in case["features"]
+        ]
+        for case in reconstruction_cases:
+            obligation = case["implementation_obligation"]
+            self.assertIsNotNone(obligation, case)
+            for filename in obligation["files"]:
+                self.assertTrue((REPO_ROOT / filename).exists(), filename)
 
     def test_logics_subcommand_emits_six_case_packet_per_packet_logic(self):
         stdout = io.StringIO()
