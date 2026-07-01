@@ -60,3 +60,16 @@ python3 -m jsonschema \
 If the `jsonschema` module is unavailable in another environment, install it
 for the active Python environment or run an equivalent Draft 2020-12 JSON
 Schema validator against the same schema and manifest files.
+
+Run the complete conformance foundation auditor with:
+
+```sh
+python3 src/HolSmt/tools/audit_complete_conformance.py \
+  --json-output complete-conformance-audit.json
+```
+
+The auditor validates this v2 manifest, extracts accepted logic names from
+`src/HolSmt/SmtLib_Logics.sml`, reads the current coverage rows when present,
+and reports missing complete evidence as failures.  Exit code `1` means the
+corpus is still red or incomplete; exit code `2` means an infrastructure error
+such as malformed JSON or invalid manifest structure.
