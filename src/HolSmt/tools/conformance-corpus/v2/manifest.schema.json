@@ -1,0 +1,408 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://hol-theorem-prover.org/holsmt/conformance-corpus/v2/manifest.schema.json",
+  "title": "HolSmt SMT-LIB complete conformance corpus manifest v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "cases"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "2"
+    },
+    "cases": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/case"
+      },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "file",
+        "logic",
+        "standard",
+        "class",
+        "features",
+        "modes",
+        "versions",
+        "expected",
+        "implementation_obligation",
+        "source"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9_.:-]*$"
+        },
+        "file": {
+          "type": "string",
+          "pattern": "^cases/(commands|theories|logics|proof_rules|soundness|external)/[^/].*[.]smt2$"
+        },
+        "logic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "standard": {
+          "enum": [
+            "SMT-LIB-2.7",
+            "SMT-LIB-3",
+            "Z3-extension"
+          ]
+        },
+        "class": {
+          "enum": [
+            "command",
+            "theory",
+            "logic",
+            "proof-rule",
+            "soundness-audit",
+            "external-benchmark"
+          ]
+        },
+        "features": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "modes": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/mode"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "versions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/z3_version"
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "expected": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/mode"
+          },
+          "additionalProperties": {
+            "$ref": "#/$defs/expected_result"
+          },
+          "minProperties": 1
+        },
+        "implementation_obligation": {
+          "oneOf": [
+            {
+              "type": "null"
+            },
+            {
+              "$ref": "#/$defs/implementation_obligation"
+            }
+          ]
+        },
+        "source": {
+          "$ref": "#/$defs/source"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "parser-only": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "parser-only"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "typecheck-only": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "typecheck-only"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "z3-oracle": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "z3-oracle"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "proof-parse": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "proof-parse"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "proof-replay": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "proof-replay"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "expected": {
+                "properties": {
+                  "z3-tac": {
+                    "$ref": "#/$defs/red_expected_result"
+                  }
+                },
+                "required": [
+                  "z3-tac"
+                ]
+              }
+            }
+          },
+          "then": {
+            "properties": {
+              "implementation_obligation": {
+                "$ref": "#/$defs/implementation_obligation"
+              }
+            }
+          }
+        }
+      ]
+    },
+    "mode": {
+      "enum": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ]
+    },
+    "z3_version": {
+      "enum": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ]
+    },
+    "expected_result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "status"
+      ],
+      "properties": {
+        "status": {
+          "enum": [
+            "pass",
+            "fail",
+            "red"
+          ]
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
+        },
+        "theorem_shape": {
+          "type": "string",
+          "minLength": 1
+        },
+        "proof_rule_histogram": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "red_expected_result": {
+      "type": "object",
+      "properties": {
+        "status": {
+          "const": "red"
+        }
+      },
+      "required": [
+        "status"
+      ]
+    },
+    "implementation_obligation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "files",
+        "feature",
+        "test_ids",
+        "failure_phase"
+      ],
+      "properties": {
+        "files": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "feature": {
+          "type": "string",
+          "minLength": 1
+        },
+        "test_ids": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "minLength": 1
+          },
+          "minItems": 1,
+          "uniqueItems": true
+        },
+        "failure_phase": {
+          "enum": [
+            "parser",
+            "typecheck",
+            "translation",
+            "solver",
+            "proof-parse",
+            "proof-replay",
+            "theorem-shape",
+            "oracle-tag",
+            "version-drift"
+          ]
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "reference"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "SMT-LIB-standard",
+            "SMT-LIB-theory",
+            "SMT-LIB-logic",
+            "Z3-extension",
+            "Z3-proof",
+            "external-benchmark",
+            "HolSmt-internal"
+          ]
+        },
+        "reference": {
+          "type": "string",
+          "minLength": 1
+        },
+        "url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "notes": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
