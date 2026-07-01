@@ -169,6 +169,75 @@ class ConformanceSuiteTests(unittest.TestCase):
                 0,
             )
 
+    def test_v2_corpus_red_rows_are_expected_implementation_gaps(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            corpus = root / "v2"
+            cases = corpus / "cases"
+            cases.mkdir(parents=True)
+            (cases / "red.smt2").write_text(
+                "(set-logic QF_UF)\n(assert true)\n(check-sat)\n",
+                encoding="utf-8",
+            )
+            (corpus / "manifest.json").write_text(
+                json.dumps(
+                    {
+                        "schema_version": "2",
+                        "cases": [
+                            {
+                                "id": "command:red",
+                                "file": "cases/red.smt2",
+                                "logic": "QF_UF",
+                                "class": "command",
+                                "features": ["command:red"],
+                                "modes": [conformance.MODE_PARSER],
+                                "expected": {
+                                    conformance.MODE_PARSER: {
+                                        "status": "red",
+                                        "diagnostic": "parser evidence is intentionally red",
+                                    }
+                                },
+                                "implementation_obligation": {
+                                    "feature": "command:red",
+                                    "failure_phase": "parser",
+                                    "files": ["src/HolSmt/SmtLib_Parser.sml"],
+                                    "test_ids": ["command:red"],
+                                },
+                                "source": {"kind": "test", "reference": "unit"},
+                            }
+                        ],
+                    }
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--corpus-dir",
+                    str(corpus),
+                    "--mode",
+                    conformance.MODE_PARSER,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 0)
+            self.assertEqual(
+                report["classification_counts"][
+                    conformance.CLASSIFICATION_EXPECTED_IMPLEMENTATION_GAP
+                ],
+                1,
+            )
+            result = report["results"][0]
+            self.assertTrue(result["red_obligation"])
+            self.assertEqual(result["expected_status"], "red")
+            self.assertIn("class:command", report["cases"][0]["tags"])
+
     def test_external_benchmark_dir_and_unsupported_mode_are_reported(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = pathlib.Path(tmp)

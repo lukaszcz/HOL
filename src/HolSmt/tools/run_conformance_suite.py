@@ -50,13 +50,15 @@ ALL_MODES = [
 PASS = "pass"
 FAIL = "fail"
 UNSUPPORTED = "unsupported"
-VALID_EXPECTED_STATUSES = {PASS, FAIL, UNSUPPORTED}
+RED = "red"
+VALID_EXPECTED_STATUSES = {PASS, FAIL, UNSUPPORTED, RED}
 
 CLASSIFICATION_ACCEPTED = "accepted"
 CLASSIFICATION_MATCHED = "matched"
 CLASSIFICATION_UNEXPECTED_FAILURE = "unexpected-failure"
 CLASSIFICATION_UNEXPECTED_STATUS = "unexpected-status"
 CLASSIFICATION_DIAGNOSTIC_MISMATCH = "diagnostic-mismatch"
+CLASSIFICATION_EXPECTED_IMPLEMENTATION_GAP = "expected-implementation-gap"
 
 # This mirrors SmtLib_Logics.sml.  ALL is HolSmt's aggregate pseudo-logic, not
 # an official SMT-LIB logic, so it is tracked separately in reports.
@@ -430,8 +432,12 @@ def load_corpus_manifest(corpus_dir: pathlib.Path) -> dict[str, object]:
         manifest = json.load(infile)
     if not isinstance(manifest, dict):
         raise ValueError(f"{manifest_path}: corpus manifest root must be an object")
-    if manifest.get("schema") != CORPUS_SCHEMA:
-        raise ValueError(f"{manifest_path}: corpus manifest schema must be {CORPUS_SCHEMA}")
+    is_v1 = manifest.get("schema") == CORPUS_SCHEMA
+    is_v2 = manifest.get("schema_version") == "2"
+    if not is_v1 and not is_v2:
+        raise ValueError(
+            f"{manifest_path}: corpus manifest schema must be {CORPUS_SCHEMA} or schema_version 2"
+        )
     cases = manifest.get("cases")
     if not isinstance(cases, list) or not cases:
         raise ValueError(f"{manifest_path}: corpus manifest cases must be a non-empty list")
@@ -466,14 +472,17 @@ def corpus_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | None
             case_path = (corpus_dir / file_name).resolve()
             text = case_path.read_text(encoding="utf-8")
             observed_logic = find_set_logic(text)
-            if observed_logic != logic:
+            if logic != "ALL" and observed_logic is not None and observed_logic != logic:
                 raise ValueError(
                     f"{context}: file set-logic {observed_logic!r} does not match manifest logic {logic!r}"
                 )
 
-            tags_value = entry.get("tags", [])
+            tags_value = entry.get("tags", entry.get("features", []))
             if not isinstance(tags_value, list) or not all(isinstance(tag, str) for tag in tags_value):
-                raise ValueError(f"{context}: tags must be a list of strings")
+                raise ValueError(f"{context}: tags/features must be a list of strings")
+            row_class = entry.get("class")
+            if isinstance(row_class, str) and row_class:
+                tags_value = [f"class:{row_class}", *tags_value]
             modes_value = entry.get("modes", ALL_MODES)
             if not isinstance(modes_value, list) or not modes_value:
                 raise ValueError(f"{context}: modes must be a non-empty list")
@@ -502,7 +511,7 @@ def corpus_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | None
                     name=case_id,
                     logic=logic,
                     text=text,
-                    origin=f"corpus:{manifest.get('version', corpus_dir.name)}",
+                    origin=f"corpus:{manifest.get('version', manifest.get('schema_version', corpus_dir.name))}",
                     tags=("corpus", *tuple(tags_value)),
                     modes=tuple(modes),
                     source_path=case_path,
@@ -594,6 +603,12 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
     )
     item["diagnostic_match"] = diagnostic_match
 
+    if expected.status == RED:
+        item["red_obligation"] = True
+        item["conformance_status"] = PASS
+        item["classification"] = CLASSIFICATION_EXPECTED_IMPLEMENTATION_GAP
+        return item
+
     if actual_status != expected.status:
         item["conformance_status"] = FAIL
         item["classification"] = CLASSIFICATION_UNEXPECTED_STATUS
@@ -612,6 +627,8 @@ def failure_class(item: dict[str, object]) -> str | None:
     mode = str(item.get("mode"))
     expected_status = item.get("expected_status")
 
+    if expected_status == RED:
+        return "expected implementation gap"
     if expected_status == UNSUPPORTED and status == UNSUPPORTED:
         return "expected unsupported diagnostic"
     if status == UNSUPPORTED and mode == MODE_Z3_ORACLE:
@@ -640,8 +657,15 @@ def parser_check(case: Case) -> dict[str, object]:
         return result(case, MODE_PARSER, FAIL, str(exc))
     logic = find_set_logic(case.text)
     if logic is None:
+        if case.logic == "ALL":
+            return result(
+                case,
+                MODE_PARSER,
+                PASS,
+                "SMT-LIB S-expression parse succeeded without a concrete set-logic",
+            )
         return result(case, MODE_PARSER, FAIL, "missing set-logic command")
-    if case.logic != "UNKNOWN" and logic != case.logic:
+    if case.logic not in {"UNKNOWN", "ALL"} and logic != case.logic:
         return result(
             case,
             MODE_PARSER,
