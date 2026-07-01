@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_FP)
+(assert (not (= roundTowardZero roundTowardZero)))
+(check-sat)
+(get-proof)

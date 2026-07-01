@@ -1,0 +1,8 @@
+(set-option :produce-proofs true)
+(set-logic QF_FP)
+(declare-const x Float32)
+(declare-const y Float32)
+(declare-const z Float32)
+(assert (not (= (fp.roundToIntegral RNE x) (fp.roundToIntegral RNE x))))
+(check-sat)
+(get-proof)

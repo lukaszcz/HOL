@@ -1438,6 +1438,13 @@ BITVECTOR_RECONSTRUCTION_FILES = (
     "src/HolSmt/Z3_ProofReplay.sml",
 )
 
+FLOATINGPOINT_RECONSTRUCTION_FILES = (
+    "src/HolSmt/SmtLib_Theories.sml",
+    "src/HolSmt/SmtLib.sml",
+    "src/HolSmt/HolSmtScript.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
 Z3_UNSUPPORTED_BITVECTOR_OPERATORS = {
     "ubv_to_int",
     "sbv_to_int",
@@ -1766,10 +1773,250 @@ BITVECTOR_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
 )
 
 
+FLOATINGPOINT_WIDTHS = ((5, 11), (8, 24), (11, 53), (15, 113))
+
+
+def fp_body(
+    assertion: str,
+    *,
+    declarations: str | None = None,
+) -> str:
+    default_declarations = (
+        "(declare-const x Float32)\n"
+        "(declare-const y Float32)\n"
+        "(declare-const z Float32)\n"
+    )
+    return (default_declarations if declarations is None else declarations) + f"(assert {assertion})\n"
+
+
+def fp_self_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(or {term} (not {term}))"
+    return f"(= {term} {term})"
+
+
+def fp_unsat_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(and {term} (not {term}))"
+    return f"(not (= {term} {term}))"
+
+
+def fp_type_error_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(= {term} x)"
+    return term
+
+
+def floatingpoint_boundary_body(extra_assertions: str = "") -> str:
+    declarations = "".join(
+        f"(declare-const f{eb}_{sb} (_ FloatingPoint {eb} {sb}))\n"
+        for eb, sb in FLOATINGPOINT_WIDTHS
+    )
+    assertions = "".join(
+        f"(assert (= f{eb}_{sb} f{eb}_{sb}))\n"
+        for eb, sb in FLOATINGPOINT_WIDTHS
+    )
+    return (
+        declarations
+        + assertions
+        + "(assert (= (_ +zero 8 24) (_ +zero 8 24)))\n"
+        + "(assert (= (_ -zero 8 24) (_ -zero 8 24)))\n"
+        + "(assert (fp.isInfinite (_ +oo 8 24)))\n"
+        + "(assert (fp.isInfinite (_ -oo 8 24)))\n"
+        + "(assert (fp.isNaN (_ NaN 8 24)))\n"
+        + "(assert (= (fp #b0 #xff #b00000000000000000000000) (_ +oo 8 24)))\n"
+        + "(assert (= ((_ to_fp 8 24) RNE #x3f800000) ((_ to_fp 8 24) RNE #x3f800000)))\n"
+        + extra_assertions
+    )
+
+
+def fp_symbol(
+    slug_name: str,
+    name: str,
+    declarations: tuple[str, ...],
+    term: str,
+    result_sort: str,
+    behavior_features: tuple[str, ...],
+    *,
+    kind: str = "term",
+    sat_declarations: str | None = None,
+    type_error_assertion: str | None = None,
+    boundary_assertion: str | None = None,
+) -> TheorySymbol:
+    sat_body = fp_body(
+        fp_self_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    unsat_body = fp_body(
+        fp_unsat_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    type_error_body = fp_body(
+        type_error_assertion
+        if type_error_assertion is not None
+        else fp_type_error_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    boundary_body = floatingpoint_boundary_body(
+        "" if boundary_assertion is None else f"(assert {boundary_assertion})\n"
+    )
+    return TheorySymbol(
+        "FloatingPoint",
+        slug_name,
+        kind,
+        name,
+        "QF_FP",
+        declarations,
+        check_sat_script("QF_FP", sat_body),
+        proof_script("QF_FP", unsat_body),
+        check_sat_script("QF_FP", type_error_body),
+        check_sat_script("QF_FP", boundary_body),
+        (
+            "theory-behavior:floatingpoint",
+            "theory-behavior:z3-unsupported",
+            *behavior_features,
+        ),
+    )
+
+
+def fp_sort(slug_name: str, name: str, declaration: str, sat_decl: str) -> TheorySymbol:
+    return TheorySymbol(
+        "FloatingPoint",
+        slug_name,
+        "sort",
+        name,
+        "QF_FP",
+        (declaration,),
+        check_sat_script("QF_FP", f"{sat_decl}\n(assert (= fpv fpv))\n"),
+        proof_script("QF_FP", f"{sat_decl}\n(assert (not (= fpv fpv)))\n"),
+        check_sat_script("QF_FP", "(declare-const bad (FloatingPoint))\n"),
+        check_sat_script("QF_FP", floatingpoint_boundary_body()),
+        (
+            "theory-behavior:floatingpoint",
+            "theory-behavior:z3-unsupported",
+            "theory-behavior:sort-arity",
+            "theory-behavior:indexed-sort" if name == "FloatingPoint" else "theory-behavior:standard-sort",
+        ),
+    )
+
+
+def fp_constant(slug_name: str, name: str, term: str, extra_features: tuple[str, ...]) -> TheorySymbol:
+    return fp_symbol(
+        slug_name,
+        name,
+        (f"((_ {name} eb sb) (_ FloatingPoint eb sb))",),
+        term,
+        "Float32",
+        ("theory-behavior:indexed", "theory-behavior:special-value", *extra_features),
+        sat_declarations="",
+        type_error_assertion=f"((_ {name} 8))",
+        boundary_assertion=f"(= {term} {term})",
+    )
+
+
+FLOATINGPOINT_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    fp_sort("roundingmode", "RoundingMode", "(RoundingMode 0)", "(declare-const fpv RoundingMode)"),
+    fp_sort(
+        "floatingpoint",
+        "FloatingPoint",
+        "((_ FloatingPoint eb sb) 0)",
+        "(declare-const fpv (_ FloatingPoint 8 24))",
+    ),
+    fp_sort("float16", "Float16", "(Float16 0)", "(declare-const fpv Float16)"),
+    fp_sort("float32", "Float32", "(Float32 0)", "(declare-const fpv Float32)"),
+    fp_sort("float64", "Float64", "(Float64 0)", "(declare-const fpv Float64)"),
+    fp_sort("float128", "Float128", "(Float128 0)", "(declare-const fpv Float128)"),
+    *(
+        fp_symbol(
+            name.lower().replace("_", "-"),
+            name,
+            (f"({name} RoundingMode)",),
+            name,
+            "RoundingMode",
+            ("theory-behavior:rounding-mode",),
+            sat_declarations="",
+            type_error_assertion=f"({name})",
+            boundary_assertion=f"(= {name} {name})",
+        )
+        for name in (
+            "roundNearestTiesToEven",
+            "RNE",
+            "roundNearestTiesToAway",
+            "RNA",
+            "roundTowardPositive",
+            "RTP",
+            "roundTowardNegative",
+            "RTN",
+            "roundTowardZero",
+            "RTZ",
+        )
+    ),
+    fp_constant("positive-zero", "+zero", "(_ +zero 8 24)", ("theory-behavior:signed-zero",)),
+    fp_constant("negative-zero", "-zero", "(_ -zero 8 24)", ("theory-behavior:signed-zero",)),
+    fp_constant("positive-infinity", "+oo", "(_ +oo 8 24)", ("theory-behavior:infinity",)),
+    fp_constant("negative-infinity", "-oo", "(_ -oo 8 24)", ("theory-behavior:infinity",)),
+    fp_constant("nan", "NaN", "(_ NaN 8 24)", ("theory-behavior:nan",)),
+    fp_symbol(
+        "fp",
+        "fp",
+        ("(fp (_ BitVec 1) (_ BitVec eb) (_ BitVec (- sb 1)) (_ FloatingPoint eb sb))",),
+        "(fp #b0 #x7f #b00000000000000000000000)",
+        "Float32",
+        ("theory-behavior:constructor", "theory-behavior:bitvector-encoding"),
+        sat_declarations="",
+        type_error_assertion="(fp #b0 #x7f #b0)",
+        boundary_assertion="(= (fp #b1 #x00 #b00000000000000000000000) (_ -zero 8 24))",
+    ),
+    fp_symbol("fp.add", "fp.add", ("(fp.add RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.add RNE x y)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:rounding-mode")),
+    fp_symbol("fp.sub", "fp.sub", ("(fp.sub RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.sub RNE x y)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:rounding-mode")),
+    fp_symbol("fp.mul", "fp.mul", ("(fp.mul RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.mul RNE x y)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:rounding-mode")),
+    fp_symbol("fp.div", "fp.div", ("(fp.div RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.div RNE x y)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:division", "theory-behavior:rounding-mode")),
+    fp_symbol("fp.fma", "fp.fma", ("(fp.fma RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.fma RNE x y z)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:fused", "theory-behavior:rounding-mode"), type_error_assertion="(fp.fma RNE x y)"),
+    fp_symbol("fp.sqrt", "fp.sqrt", ("(fp.sqrt RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.sqrt RNE x)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:rounding-mode")),
+    fp_symbol("fp.roundtointegral", "fp.roundToIntegral", ("(fp.roundToIntegral RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.roundToIntegral RNE x)", "Float32", ("theory-behavior:rounding-mode",)),
+    fp_symbol("fp.rem", "fp.rem", ("(fp.rem (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.rem x y)", "Float32", ("theory-behavior:arithmetic", "theory-behavior:remainder")),
+    fp_symbol("fp.min", "fp.min", ("(fp.min (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.min x y)", "Float32", ("theory-behavior:min-max", "theory-behavior:nan")),
+    fp_symbol("fp.max", "fp.max", ("(fp.max (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.max x y)", "Float32", ("theory-behavior:min-max", "theory-behavior:nan")),
+    fp_symbol("fp.abs", "fp.abs", ("(fp.abs (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.abs x)", "Float32", ("theory-behavior:unary", "theory-behavior:signed-zero")),
+    fp_symbol("fp.neg", "fp.neg", ("(fp.neg (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",), "(fp.neg x)", "Float32", ("theory-behavior:unary", "theory-behavior:signed-zero")),
+    fp_symbol("fp.leq", "fp.leq", ("(fp.leq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",), "(fp.leq x y)", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable"), boundary_assertion="(fp.leq (_ -zero 8 24) (_ +zero 8 24) (_ +oo 8 24))"),
+    fp_symbol("fp.lt", "fp.lt", ("(fp.lt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",), "(fp.lt x y)", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable"), boundary_assertion="(fp.lt (_ -oo 8 24) (_ +oo 8 24))"),
+    fp_symbol("fp.geq", "fp.geq", ("(fp.geq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",), "(fp.geq x y)", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable"), boundary_assertion="(fp.geq (_ +oo 8 24) (_ -zero 8 24) (_ +zero 8 24))"),
+    fp_symbol("fp.gt", "fp.gt", ("(fp.gt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",), "(fp.gt x y)", "Bool", ("theory-behavior:comparison", "theory-behavior:chainable"), boundary_assertion="(fp.gt (_ +oo 8 24) (_ -oo 8 24))"),
+    fp_symbol("fp.eq", "fp.eq", ("(fp.eq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool)",), "(fp.eq x y)", "Bool", ("theory-behavior:comparison", "theory-behavior:signed-zero", "theory-behavior:nan")),
+    *(
+        fp_symbol(
+            name.lower(),
+            name,
+            (f"({name} (_ FloatingPoint eb sb) Bool)",),
+            f"({name} x)",
+            "Bool",
+            ("theory-behavior:predicate", *features),
+            boundary_assertion=boundary,
+        )
+        for name, features, boundary in (
+            ("fp.isNormal", ("theory-behavior:classification",), "(not (fp.isNormal (_ NaN 8 24)))"),
+            ("fp.isSubnormal", ("theory-behavior:classification",), "(not (fp.isSubnormal (_ +oo 8 24)))"),
+            ("fp.isZero", ("theory-behavior:signed-zero",), "(and (fp.isZero (_ +zero 8 24)) (fp.isZero (_ -zero 8 24)))"),
+            ("fp.isInfinite", ("theory-behavior:infinity",), "(and (fp.isInfinite (_ +oo 8 24)) (fp.isInfinite (_ -oo 8 24)))"),
+            ("fp.isNaN", ("theory-behavior:nan",), "(fp.isNaN (_ NaN 8 24))"),
+            ("fp.isNegative", ("theory-behavior:signed-zero",), "(fp.isNegative (_ -zero 8 24))"),
+            ("fp.isPositive", ("theory-behavior:signed-zero",), "(fp.isPositive (_ +zero 8 24))"),
+        )
+    ),
+    fp_symbol("to-fp", "to_fp", ("((_ to_fp eb sb) ... (_ FloatingPoint eb sb))",), "((_ to_fp 8 24) RNE 1.0)", "Float32", ("theory-behavior:conversion", "theory-behavior:indexed", "theory-behavior:rounding-mode"), sat_declarations="", type_error_assertion="((_ to_fp 8 24) true)", boundary_assertion="(= ((_ to_fp 8 24) RNE #x3f800000) ((_ to_fp 8 24) RNE #x3f800000))"),
+    fp_symbol("to-fp-unsigned", "to_fp_unsigned", ("((_ to_fp_unsigned eb sb) ... (_ FloatingPoint eb sb))",), "((_ to_fp_unsigned 8 24) RNE #x00000001)", "Float32", ("theory-behavior:conversion", "theory-behavior:indexed", "theory-behavior:rounding-mode", "theory-behavior:unsigned"), sat_declarations="", type_error_assertion="((_ to_fp_unsigned 8 24) RNE 1.0)", boundary_assertion="(= ((_ to_fp_unsigned 8 24) RNE #xff) ((_ to_fp_unsigned 8 24) RNE #xff))"),
+    fp_symbol("fp.to-ubv", "fp.to_ubv", ("((_ fp.to_ubv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))",), "((_ fp.to_ubv 8) RNE x)", "BitVec", ("theory-behavior:conversion", "theory-behavior:indexed", "theory-behavior:rounding-mode", "theory-behavior:unsigned"), type_error_assertion="((_ fp.to_ubv 8) x)"),
+    fp_symbol("fp.to-sbv", "fp.to_sbv", ("((_ fp.to_sbv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))",), "((_ fp.to_sbv 8) RNE x)", "BitVec", ("theory-behavior:conversion", "theory-behavior:indexed", "theory-behavior:rounding-mode", "theory-behavior:signed"), type_error_assertion="((_ fp.to_sbv 8) x)"),
+    fp_symbol("fp.to-real", "fp.to_real", ("(fp.to_real (_ FloatingPoint eb sb) Real)",), "(fp.to_real x)", "Real", ("theory-behavior:conversion",), boundary_assertion="(= (fp.to_real (_ +zero 8 24)) 0.0)"),
+)
+
+
 ALL_THEORY_SYMBOLS = (
     *CORE_ARITHMETIC_THEORY_SYMBOLS,
     *ARRAY_THEORY_SYMBOLS,
     *BITVECTOR_THEORY_SYMBOLS,
+    *FLOATINGPOINT_THEORY_SYMBOLS,
 )
 
 
@@ -1791,6 +2038,8 @@ def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_pha
         files = ARRAY_RECONSTRUCTION_FILES
     elif symbol.theory == "Fixed_Size_BitVectors":
         files = BITVECTOR_RECONSTRUCTION_FILES
+    elif symbol.theory == "FloatingPoint":
+        files = FLOATINGPOINT_RECONSTRUCTION_FILES
     return implementation_obligation(
         files=files,
         feature=f"theory-symbol:{symbol.theory}:{symbol.slug}:{kind}",
@@ -1810,7 +2059,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported else "pass",
-                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector operator is incomplete"
+                diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory symbol is incomplete"
                 if z3_unsupported else None,
                 failure_phase="solver" if z3_unsupported else None,
             ),
@@ -1829,7 +2078,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported else "pass",
-                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector operator is incomplete"
+                diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory symbol is incomplete"
                 if z3_unsupported else None,
                 failure_phase="solver" if z3_unsupported else None,
             ),
@@ -1879,7 +2128,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported else "pass",
-                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector boundary case is incomplete"
+                diagnostic="Z3 oracle support for this SMT-LIB 2.7 theory boundary case is incomplete"
                 if z3_unsupported else None,
                 failure_phase="solver" if z3_unsupported else None,
             ),

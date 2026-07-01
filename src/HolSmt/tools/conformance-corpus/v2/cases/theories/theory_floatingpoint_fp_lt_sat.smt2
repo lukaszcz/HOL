@@ -1,0 +1,6 @@
+(set-logic QF_FP)
+(declare-const x Float32)
+(declare-const y Float32)
+(declare-const z Float32)
+(assert (or (fp.lt x y) (not (fp.lt x y))))
+(check-sat)

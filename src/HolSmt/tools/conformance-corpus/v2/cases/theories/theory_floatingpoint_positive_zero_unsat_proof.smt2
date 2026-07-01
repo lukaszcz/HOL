@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_FP)
+(assert (not (= (_ +zero 8 24) (_ +zero 8 24))))
+(check-sat)
+(get-proof)

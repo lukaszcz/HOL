@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic QF_FP)
+(declare-const fpv RoundingMode)
+(assert (not (= fpv fpv)))
+(check-sat)
+(get-proof)

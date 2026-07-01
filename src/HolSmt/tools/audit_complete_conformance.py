@@ -44,7 +44,7 @@ WEAK_COVERAGE_STATUSES = {
 }
 UNRESOLVED_COVERAGE_STATUSES = {"unknown", "untested"}
 
-REQUIRED_ARRAY_BITVECTOR_METADATA: dict[str, dict[str, set[str]]] = {
+REQUIRED_ARRAY_BITVECTOR_FLOATINGPOINT_METADATA: dict[str, dict[str, set[str]]] = {
     "ArraysEx": {
         "sort": {"Array"},
         "term": {"select", "store"},
@@ -101,6 +101,56 @@ REQUIRED_ARRAY_BITVECTOR_METADATA: dict[str, dict[str, set[str]]] = {
             "bvusubo",
             "bvssubo",
             "bvsdivo",
+        },
+    },
+    "FloatingPoint": {
+        "sort": {"RoundingMode", "FloatingPoint", "Float16", "Float32", "Float64", "Float128"},
+        "term": {
+            "roundNearestTiesToEven",
+            "RNE",
+            "roundNearestTiesToAway",
+            "RNA",
+            "roundTowardPositive",
+            "RTP",
+            "roundTowardNegative",
+            "RTN",
+            "roundTowardZero",
+            "RTZ",
+            "+zero",
+            "-zero",
+            "+oo",
+            "-oo",
+            "NaN",
+            "fp",
+            "fp.add",
+            "fp.sub",
+            "fp.mul",
+            "fp.div",
+            "fp.fma",
+            "fp.sqrt",
+            "fp.roundToIntegral",
+            "fp.rem",
+            "fp.min",
+            "fp.max",
+            "fp.abs",
+            "fp.neg",
+            "fp.leq",
+            "fp.lt",
+            "fp.geq",
+            "fp.gt",
+            "fp.eq",
+            "fp.isNormal",
+            "fp.isSubnormal",
+            "fp.isZero",
+            "fp.isInfinite",
+            "fp.isNaN",
+            "fp.isNegative",
+            "fp.isPositive",
+            "to_fp",
+            "to_fp_unsigned",
+            "fp.to_ubv",
+            "fp.to_sbv",
+            "fp.to_real",
         },
     },
 }
@@ -517,6 +567,10 @@ def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> s
         "=>": "implies",
         "=": "eq",
         "+": "plus",
+        "+zero": "positive-zero",
+        "-zero": "negative-zero",
+        "+oo": "positive-infinity",
+        "-oo": "negative-infinity",
         "*": "times",
         "**": "pow",
         "/": "div",
@@ -550,11 +604,68 @@ def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> s
     return symbol_slugs.get(name, name.lower().replace("_", "-"))
 
 
+FLOATINGPOINT_MANUAL_TERMS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("roundNearestTiesToEven", ("(roundNearestTiesToEven RoundingMode)",)),
+    ("RNE", ("(RNE RoundingMode)",)),
+    ("roundNearestTiesToAway", ("(roundNearestTiesToAway RoundingMode)",)),
+    ("RNA", ("(RNA RoundingMode)",)),
+    ("roundTowardPositive", ("(roundTowardPositive RoundingMode)",)),
+    ("RTP", ("(RTP RoundingMode)",)),
+    ("roundTowardNegative", ("(roundTowardNegative RoundingMode)",)),
+    ("RTN", ("(RTN RoundingMode)",)),
+    ("roundTowardZero", ("(roundTowardZero RoundingMode)",)),
+    ("RTZ", ("(RTZ RoundingMode)",)),
+    ("+zero", ("((_ +zero eb sb) (_ FloatingPoint eb sb))",)),
+    ("-zero", ("((_ -zero eb sb) (_ FloatingPoint eb sb))",)),
+    ("+oo", ("((_ +oo eb sb) (_ FloatingPoint eb sb))",)),
+    ("-oo", ("((_ -oo eb sb) (_ FloatingPoint eb sb))",)),
+    ("NaN", ("((_ NaN eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp", ("(fp (_ BitVec 1) (_ BitVec eb) (_ BitVec (- sb 1)) (_ FloatingPoint eb sb))",)),
+    ("fp.add", ("(fp.add RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.sub", ("(fp.sub RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.mul", ("(fp.mul RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.div", ("(fp.div RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.fma", ("(fp.fma RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.sqrt", ("(fp.sqrt RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.roundToIntegral", ("(fp.roundToIntegral RoundingMode (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.rem", ("(fp.rem (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.min", ("(fp.min (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.max", ("(fp.max (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.abs", ("(fp.abs (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.neg", ("(fp.neg (_ FloatingPoint eb sb) (_ FloatingPoint eb sb))",)),
+    ("fp.leq", ("(fp.leq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",)),
+    ("fp.lt", ("(fp.lt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",)),
+    ("fp.geq", ("(fp.geq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",)),
+    ("fp.gt", ("(fp.gt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)",)),
+    ("fp.eq", ("(fp.eq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isNormal", ("(fp.isNormal (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isSubnormal", ("(fp.isSubnormal (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isZero", ("(fp.isZero (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isInfinite", ("(fp.isInfinite (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isNaN", ("(fp.isNaN (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isNegative", ("(fp.isNegative (_ FloatingPoint eb sb) Bool)",)),
+    ("fp.isPositive", ("(fp.isPositive (_ FloatingPoint eb sb) Bool)",)),
+    ("to_fp", ("((_ to_fp eb sb) ... (_ FloatingPoint eb sb))",)),
+    ("to_fp_unsigned", ("((_ to_fp_unsigned eb sb) ... (_ FloatingPoint eb sb))",)),
+    ("fp.to_ubv", ("((_ fp.to_ubv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))",)),
+    ("fp.to_sbv", ("((_ fp.to_sbv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))",)),
+    ("fp.to_real", ("(fp.to_real (_ FloatingPoint eb sb) Real)",)),
+)
+
+
+def floatingpoint_terms_from_body(body: str) -> list[tuple[str, tuple[str, ...]]]:
+    entries: list[tuple[str, tuple[str, ...]]] = []
+    for name, declarations in FLOATINGPOINT_MANUAL_TERMS:
+        if name in body:
+            entries.append((name, declarations))
+    return entries
+
+
 def parse_dictionary_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
     text = path.read_text(encoding="utf-8")
     symbols: dict[tuple[str, str], TheoryMetadataSymbol] = {}
 
-    for theory in ("Core", "Ints", "Reals", "ArraysEx", "Fixed_Size_BitVectors"):
+    for theory in ("Core", "Ints", "Reals", "ArraysEx", "Fixed_Size_BitVectors", "FloatingPoint"):
         body = extract_structure_body(text, theory)
         for kind, list_name in (("sort", "tyentries"), ("term", "tmentries")):
             for name, declarations in official_entries_from_region(extract_entry_region(body, list_name)):
@@ -562,6 +673,16 @@ def parse_dictionary_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
                     theory=theory,
                     slug=theory_symbol_slug(kind, name, declarations),
                     kind=kind,
+                    name=name,
+                    declarations=declarations,
+                )
+                symbols[symbol.key] = symbol
+        if theory == "FloatingPoint":
+            for name, declarations in floatingpoint_terms_from_body(body):
+                symbol = TheoryMetadataSymbol(
+                    theory="FloatingPoint",
+                    slug=theory_symbol_slug("term", name, declarations),
+                    kind="term",
                     name=name,
                     declarations=declarations,
                 )
@@ -689,13 +810,13 @@ def audit_theory_symbols(cases: list[dict[str, object]], symbols: list[TheoryMet
     return issues
 
 
-def audit_required_array_bitvector_metadata(symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
+def audit_required_array_bitvector_floatingpoint_metadata(symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
     issues: list[Issue] = []
     actual = {
         (symbol.theory, symbol.kind, symbol.name)
         for symbol in symbols
     }
-    for theory, by_kind in sorted(REQUIRED_ARRAY_BITVECTOR_METADATA.items()):
+    for theory, by_kind in sorted(REQUIRED_ARRAY_BITVECTOR_FLOATINGPOINT_METADATA.items()):
         for kind, names in sorted(by_kind.items()):
             missing = sorted(
                 name
@@ -708,7 +829,7 @@ def audit_required_array_bitvector_metadata(symbols: list[TheoryMetadataSymbol])
                         code="missing_theory_dictionary_metadata",
                         category="missing_complete_evidence",
                         subject=f"theory/{theory}/{kind}",
-                        message="required array or bitvector theory dictionary metadata is absent",
+                        message="required array, bitvector, or floating-point theory dictionary metadata is absent",
                         details={
                             "theory": theory,
                             "kind": kind,
@@ -1044,6 +1165,58 @@ def audit_coverage(rows: list[CoverageRow], cases: list[dict[str, object]]) -> l
     return issues
 
 
+def audit_floatingpoint_solver_proof_evidence(cases: list[dict[str, object]]) -> list[Issue]:
+    issues: list[Issue] = []
+    fp_cases = [
+        case
+        for case in cases
+        if case.get("class") == "theory"
+        and "theory:FloatingPoint" in {feature for feature in case.get("features", []) if isinstance(feature, str)}
+    ]
+    for case in fp_cases:
+        case_id = str(case.get("id", ""))
+        features = {feature for feature in case.get("features", []) if isinstance(feature, str)}
+        case_kinds = [feature.removeprefix("theory-case:") for feature in features if feature.startswith("theory-case:")]
+        if not case_kinds:
+            continue
+        kind = case_kinds[0]
+        if kind == "sat":
+            required_modes = {"z3-oracle", "z3-tac"}
+        elif kind == "unsat-proof":
+            required_modes = {"z3-oracle", "proof-parse", "proof-replay", "z3-tac"}
+        elif kind == "boundary":
+            required_modes = {"z3-oracle"}
+        elif kind == "type-error":
+            required_modes = {"typecheck-only", "z3-tac"}
+        else:
+            continue
+        if not case_has_expected_modes(case, required_modes):
+            issues.append(
+                Issue(
+                    code="floatingpoint_parser_only_evidence",
+                    category="missing_complete_evidence",
+                    subject=case_id,
+                    message="FloatingPoint theory case lacks required solver/proof modes; parser/typecheck-only FP evidence is not complete conformance evidence",
+                    details={
+                        "case_kind": kind,
+                        "required_modes": sorted(required_modes),
+                    },
+                )
+            )
+            continue
+        if kind in {"sat", "unsat-proof", "boundary"} and "red" not in case_expected_statuses(case):
+            issues.append(
+                Issue(
+                    code="floatingpoint_missing_red_obligation",
+                    category="missing_complete_evidence",
+                    subject=case_id,
+                    message="FloatingPoint solver/proof case must remain red until HOL translation, solver behavior, proof replay, and theorem reconstruction are implemented",
+                    details={"case_kind": kind},
+                )
+            )
+    return issues
+
+
 def build_report(
     *,
     manifest_path: Path,
@@ -1072,8 +1245,9 @@ def build_report(
             ]
     coverage_rows = load_coverage_rows(coverage_path, coverage_manifest_path)
     issues = audit_cases(cases, packet_logics)
-    issues.extend(audit_required_array_bitvector_metadata(theory_symbols))
+    issues.extend(audit_required_array_bitvector_floatingpoint_metadata(theory_symbols))
     issues.extend(audit_theory_symbols(cases, theory_symbols))
+    issues.extend(audit_floatingpoint_solver_proof_evidence(cases))
     issues.extend(audit_coverage(coverage_rows, cases))
 
     category_counts: dict[str, int] = {}

@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic QF_FP)
+(declare-const fpv Float32)
+(assert (not (= fpv fpv)))
+(check-sat)
+(get-proof)
