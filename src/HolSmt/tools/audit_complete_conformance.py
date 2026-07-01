@@ -15,6 +15,7 @@ from typing import Iterable
 ROOT = Path(__file__).resolve().parents[3]
 TOOLS_DIR = ROOT / "src" / "HolSmt" / "tools"
 DEFAULT_MANIFEST = TOOLS_DIR / "conformance-corpus" / "v2" / "manifest.json"
+DEFAULT_LOGICS_JSON = TOOLS_DIR / "conformance-corpus" / "v2" / "logics.json"
 DEFAULT_LOGIC_SOURCE = ROOT / "src" / "HolSmt" / "SmtLib_Logics.sml"
 DEFAULT_COVERAGE = TOOLS_DIR / "coverage" / "smtlib_coverage.json"
 DEFAULT_COVERAGE_MANIFEST = TOOLS_DIR / "coverage" / "coverage_manifest.json"
@@ -312,6 +313,44 @@ def parse_accepted_logics(path: Path) -> list[str]:
     return sorted(set(logics))
 
 
+def validate_logic_inventory(data: object, accepted_logics: list[str]) -> list[str]:
+    require(isinstance(data, dict), "logic inventory root must be an object")
+    required = {"schema_version", "source", "accepted_logics", "excluded_logics"}
+    extra = sorted(set(data) - required)
+    missing = sorted(required - set(data))
+    require(not extra, f"logic inventory has unknown field(s): {', '.join(extra)}")
+    require(not missing, f"logic inventory is missing required field(s): {', '.join(missing)}")
+    require(data.get("schema_version") == MANIFEST_SCHEMA_VERSION, "logic inventory schema_version must be 2")
+    require_string(data["source"], "logic inventory source")
+    packet_logics = require_string_list(data["accepted_logics"], "logic inventory accepted_logics")
+    excluded_raw = data["excluded_logics"]
+    require(isinstance(excluded_raw, list), "logic inventory excluded_logics must be a list")
+
+    excluded: list[str] = []
+    for index, item in enumerate(excluded_raw, 1):
+        label = f"logic inventory excluded_logics[{index}]"
+        require(isinstance(item, dict), f"{label} must be an object")
+        required_item = {"logic", "category", "reason"}
+        extra_item = sorted(set(item) - required_item)
+        missing_item = sorted(required_item - set(item))
+        require(not extra_item, f"{label} has unknown field(s): {', '.join(extra_item)}")
+        require(not missing_item, f"{label} is missing required field(s): {', '.join(missing_item)}")
+        excluded.append(require_string(item["logic"], f"{label}.logic"))
+        require_string(item["category"], f"{label}.category")
+        require_string(item["reason"], f"{label}.reason")
+
+    require(len(set(packet_logics)) == len(packet_logics), "logic inventory accepted_logics has duplicates")
+    require(len(set(excluded)) == len(excluded), "logic inventory excluded_logics has duplicates")
+    overlap = sorted(set(packet_logics) & set(excluded))
+    require(not overlap, f"logic inventory accepted/excluded overlap: {', '.join(overlap)}")
+    documented = sorted(set(packet_logics) | set(excluded))
+    require(
+        documented == sorted(accepted_logics),
+        "logic inventory does not exactly match SmtLib_Logics.sml accepted names plus exclusions",
+    )
+    return sorted(packet_logics)
+
+
 def case_expected_statuses(case: dict[str, object]) -> set[str]:
     expected = case.get("expected")
     if not isinstance(expected, dict):
@@ -342,6 +381,44 @@ def is_unsat_case(case: dict[str, object]) -> bool:
             ):
                 return True
     return False
+
+
+def is_logic_case_kind(case: dict[str, object], logic: str, kind: str) -> bool:
+    if case.get("class") != "logic" or case.get("logic") != logic:
+        return False
+    expected_feature = f"logic-case:{kind}"
+    return any(feature == expected_feature for feature in case.get("features", []) if isinstance(feature, str))
+
+
+def case_has_expected_modes(case: dict[str, object], modes: set[str]) -> bool:
+    case_modes = {str(mode) for mode in case.get("modes", [])}
+    expected_modes = set()
+    expected = case.get("expected")
+    if isinstance(expected, dict):
+        expected_modes = {str(mode) for mode in expected}
+    return modes <= case_modes and modes <= expected_modes
+
+
+def case_has_all_supported_versions(case: dict[str, object]) -> bool:
+    return set(str(version) for version in case.get("versions", [])) == {
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3",
+    }
+
+
+def case_has_sat_no_theorem_diagnostic(case: dict[str, object]) -> bool:
+    expected = case.get("expected")
+    if not isinstance(expected, dict):
+        return False
+    z3_tac = expected.get("z3-tac")
+    if not isinstance(z3_tac, dict):
+        return False
+    diagnostic = str(z3_tac.get("diagnostic", "")).lower()
+    return z3_tac.get("status") == "fail" and "no" in diagnostic and "theorem" in diagnostic
 
 
 def add_coverage_row(rows: dict[tuple[str, str, str], CoverageRow], row: CoverageRow) -> None:
@@ -470,6 +547,24 @@ def audit_cases(cases: list[dict[str, object]], accepted_logics: list[str]) -> l
         if case.get("class") == "logic":
             logic_cases.setdefault(str(case["logic"]), []).append(case)
 
+    manifest_logics = set(logic_cases)
+    expected_logics = set(accepted_logics)
+    missing_manifest_logics = sorted(expected_logics - manifest_logics)
+    extra_manifest_logics = sorted(manifest_logics - expected_logics)
+    if missing_manifest_logics or extra_manifest_logics:
+        issues.append(
+            Issue(
+                code="logic_manifest_mismatch",
+                category="missing_complete_evidence",
+                subject="logic-manifest",
+                message="accepted logic names and v2 manifest logic names differ",
+                details={
+                    "missing": missing_manifest_logics,
+                    "extra": extra_manifest_logics,
+                },
+            )
+        )
+
     for logic in accepted_logics:
         if logic not in logic_cases:
             issues.append(
@@ -478,6 +573,74 @@ def audit_cases(cases: list[dict[str, object]], accepted_logics: list[str]) -> l
                     category="missing_complete_evidence",
                     subject=f"logic/{logic}",
                     message="accepted logic has no v2 manifest logic evidence",
+                    details={"logic": logic},
+                )
+            )
+            issues.append(
+                Issue(
+                    code="missing_logic_unsat_proof_case",
+                    category="missing_complete_evidence",
+                    subject=f"logic/{logic}",
+                    message="accepted logic lacks an UNSAT proof case for the supported Z3 version matrix",
+                    details={"logic": logic},
+                )
+            )
+            issues.append(
+                Issue(
+                    code="missing_sat_no_theorem_diagnostic",
+                    category="missing_complete_evidence",
+                    subject=f"logic/{logic}",
+                    message="accepted logic lacks a SAT case with a checked no-theorem diagnostic expectation",
+                    details={"logic": logic},
+                )
+            )
+            continue
+
+        unsat_cases = [
+            case for case in logic_cases[logic]
+            if is_logic_case_kind(case, logic, "unsat-proof")
+        ]
+        if not unsat_cases:
+            issues.append(
+                Issue(
+                    code="missing_logic_unsat_proof_case",
+                    category="missing_complete_evidence",
+                    subject=f"logic/{logic}",
+                    message="accepted logic lacks an UNSAT proof case for the supported Z3 version matrix",
+                    details={"logic": logic},
+                )
+            )
+        else:
+            complete_unsat_cases = [
+                case for case in unsat_cases
+                if case_has_expected_modes(case, UNSAT_REQUIRED_MODES)
+                and case_has_all_supported_versions(case)
+            ]
+            if not complete_unsat_cases:
+                issues.append(
+                    Issue(
+                        code="logic_unsat_proof_schedule_mismatch",
+                        category="missing_complete_evidence",
+                        subject=f"logic/{logic}",
+                        message="logic UNSAT proof case is not scheduled for required proof modes and all supported Z3 versions",
+                        details={
+                            "logic": logic,
+                            "case_ids": [str(case["id"]) for case in unsat_cases],
+                        },
+                    )
+                )
+
+        sat_cases = [
+            case for case in logic_cases[logic]
+            if is_logic_case_kind(case, logic, "sat")
+        ]
+        if not any(case_has_sat_no_theorem_diagnostic(case) for case in sat_cases):
+            issues.append(
+                Issue(
+                    code="missing_sat_no_theorem_diagnostic",
+                    category="missing_complete_evidence",
+                    subject=f"logic/{logic}",
+                    message="accepted logic lacks a SAT case with a checked no-theorem diagnostic expectation",
                     details={"logic": logic},
                 )
             )
@@ -586,14 +749,28 @@ def build_report(
     *,
     manifest_path: Path,
     logic_source: Path,
+    logics_json_path: Path | None,
     coverage_path: Path | None,
     coverage_manifest_path: Path | None,
 ) -> dict[str, object]:
     manifest = load_json(manifest_path)
     cases = validate_v2_manifest(manifest)
     accepted_logics = parse_accepted_logics(logic_source)
+    packet_logics = accepted_logics
+    excluded_logics: list[str] = []
+    if logics_json_path is not None and logics_json_path.exists():
+        logics_json = load_json(logics_json_path)
+        packet_logics = validate_logic_inventory(logics_json, accepted_logics)
+        assert isinstance(logics_json, dict)
+        excluded_raw = logics_json.get("excluded_logics", [])
+        if isinstance(excluded_raw, list):
+            excluded_logics = [
+                str(item["logic"])
+                for item in excluded_raw
+                if isinstance(item, dict) and isinstance(item.get("logic"), str)
+            ]
     coverage_rows = load_coverage_rows(coverage_path, coverage_manifest_path)
-    issues = audit_cases(cases, accepted_logics)
+    issues = audit_cases(cases, packet_logics)
     issues.extend(audit_coverage(coverage_rows, cases))
 
     category_counts: dict[str, int] = {}
@@ -605,11 +782,13 @@ def build_report(
         "inputs": {
             "manifest": str(manifest_path),
             "logic_source": str(logic_source),
+            "logics_json": str(logics_json_path) if logics_json_path is not None else None,
             "coverage": str(coverage_path) if coverage_path is not None else None,
             "coverage_manifest": str(coverage_manifest_path) if coverage_manifest_path is not None else None,
         },
         "summary": {
             "accepted_logic_count": len(accepted_logics),
+            "logic_packet_count": len(packet_logics),
             "v2_case_count": len(cases),
             "coverage_row_count": len({row.key for row in coverage_rows}),
             "issue_count": len(issues),
@@ -617,6 +796,8 @@ def build_report(
             "passed": not issues,
         },
         "accepted_logics": accepted_logics,
+        "logic_packet_logics": packet_logics,
+        "excluded_logics": excluded_logics,
         "issues": [issue.to_json() for issue in issues],
     }
 
@@ -626,6 +807,8 @@ def print_text_summary(report: dict[str, object]) -> None:
     assert isinstance(summary, dict)
     print("complete conformance audit")
     print(f"accepted logics: {summary['accepted_logic_count']}")
+    if "logic_packet_count" in summary:
+        print(f"logic packet logics: {summary['logic_packet_count']}")
     print(f"v2 cases: {summary['v2_case_count']}")
     print(f"coverage rows: {summary['coverage_row_count']}")
     print(f"issues: {summary['issue_count']}")
@@ -648,6 +831,7 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     )
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--logic-source", type=Path, default=DEFAULT_LOGIC_SOURCE)
+    parser.add_argument("--logics-json", type=Path, default=DEFAULT_LOGICS_JSON)
     parser.add_argument("--coverage", type=Path, default=DEFAULT_COVERAGE)
     parser.add_argument("--coverage-manifest", type=Path, default=DEFAULT_COVERAGE_MANIFEST)
     parser.add_argument(
@@ -669,10 +853,14 @@ def main(argv: list[str]) -> int:
     args = parse_args(argv)
     coverage_path = None if args.no_coverage else args.coverage
     coverage_manifest_path = None if args.no_coverage else args.coverage_manifest
+    logics_json_path = args.logics_json
+    if args.logic_source != DEFAULT_LOGIC_SOURCE and args.logics_json == DEFAULT_LOGICS_JSON:
+        logics_json_path = None
     try:
         report = build_report(
             manifest_path=args.manifest,
             logic_source=args.logic_source,
+            logics_json_path=logics_json_path,
             coverage_path=coverage_path,
             coverage_manifest_path=coverage_manifest_path,
         )

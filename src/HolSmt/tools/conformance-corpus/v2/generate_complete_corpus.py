@@ -15,6 +15,8 @@ from typing import Iterable, Mapping, Sequence
 CORPUS_DIR = Path(__file__).resolve().parent
 TOOLS_DIR = CORPUS_DIR.parents[1]
 DEFAULT_MANIFEST = CORPUS_DIR / "manifest.json"
+DEFAULT_LOGIC_SOURCE = TOOLS_DIR.parent / "SmtLib_Logics.sml"
+DEFAULT_LOGICS_JSON = CORPUS_DIR / "logics.json"
 MANIFEST_SCHEMA_VERSION = "2"
 
 SUPPORTED_Z3_VERSIONS = (
@@ -83,6 +85,45 @@ DOMAIN_CLASSES = {
     "proof-rules": "proof-rule",
     "soundness": "soundness-audit",
     "external": "external-benchmark",
+}
+
+EXCLUDED_ACCEPTED_LOGICS = {
+    "ALL": {
+        "category": "HolSmt-internal",
+        "reason": "Aggregate parse dictionary accepted by HolSmt, not an SMT-LIB logic packet target.",
+    },
+}
+
+UNDERREPRESENTED_LOGICS = {
+    "ALIRA",
+    "ANIA",
+    "ANIRA",
+    "AUFLIA",
+    "AUFLIRA",
+    "AUFNIRA",
+    "BV",
+    "QF_ABV",
+    "QF_ALRA",
+    "QF_ANIA",
+    "QF_ANRA",
+    "QF_AUFLIA",
+    "QF_AUFNIA",
+    "QF_AUFNIRA",
+    "QF_BVFP",
+    "QF_FPBV",
+    "QF_SNIA",
+    "QF_UFBV",
+    "QF_UFBVFP",
+    "QF_UFFP",
+    "UFBV",
+}
+
+SPARSE_LOGICS = {
+    "QF_AUFBV",
+    "QF_AUFLIRA",
+    "QF_FP",
+    "QF_S",
+    "QF_SLIA",
 }
 
 
@@ -227,6 +268,43 @@ def source(kind: str, reference: str, *, url: str | None = None, notes: str | No
     if notes is not None:
         result["notes"] = notes
     return result
+
+
+def parse_accepted_logics(path: Path) -> list[str]:
+    text = path.read_text(encoding="utf-8")
+    match = re.search(
+        r"fun\s+parsedicts_of_logic\s*\([^)]*\)\s*=\s*case\s+logic\s+of(?P<body>.*?)"
+        r"\n\s*\(\*\s*returns the symbol metadata",
+        text,
+        flags=re.DOTALL,
+    )
+    if match is None:
+        raise GeneratorError(f"could not find parsedicts_of_logic case expression in {path}")
+    logics = re.findall(r'"([A-Z][A-Z0-9_]*)"\s*=>', match.group("body"))
+    if not logics:
+        raise GeneratorError(f"no accepted logic names found in {path}")
+    return sorted(set(logics))
+
+
+def logic_packet_logics(logic_source: Path = DEFAULT_LOGIC_SOURCE) -> list[str]:
+    accepted = parse_accepted_logics(logic_source)
+    return [logic for logic in accepted if logic not in EXCLUDED_ACCEPTED_LOGICS]
+
+
+def logics_manifest(logic_source: Path = DEFAULT_LOGIC_SOURCE) -> dict[str, object]:
+    accepted = parse_accepted_logics(logic_source)
+    packet_logics = [logic for logic in accepted if logic not in EXCLUDED_ACCEPTED_LOGICS]
+    excluded = [
+        {"logic": logic, **EXCLUDED_ACCEPTED_LOGICS[logic]}
+        for logic in accepted
+        if logic in EXCLUDED_ACCEPTED_LOGICS
+    ]
+    return {
+        "schema_version": MANIFEST_SCHEMA_VERSION,
+        "source": "src/HolSmt/SmtLib_Logics.sml",
+        "accepted_logics": packet_logics,
+        "excluded_logics": excluded,
+    }
 
 
 def manifest_entry(
@@ -788,6 +866,257 @@ def command_cases() -> list[GeneratedCase]:
     return cases
 
 
+def logic_features(logic: str, kind: str) -> list[str]:
+    features = [f"logic:{logic}", f"logic-case:{kind}"]
+    if logic in UNDERREPRESENTED_LOGICS:
+        features.append("logic-inventory:underrepresented-v1")
+    if logic in SPARSE_LOGICS:
+        features.append("logic-inventory:sparse-v1")
+    return features
+
+
+def logic_source(logic: str) -> dict[str, object]:
+    return source("SMT-LIB-logic", f"SMT-LIB 2.7 logic packet: {logic}")
+
+
+def logic_obligation(logic: str, kind: str, case_id: str, failure_phase: str) -> dict[str, object]:
+    return implementation_obligation(
+        files=("src/HolSmt/SmtLib_Logics.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        feature=f"logic-packet:{logic}:{kind}",
+        test_ids=[case_id],
+        failure_phase=failure_phase,
+        notes=GENERATED_OBLIGATION_NOTES,
+    )
+
+
+def logic_case(
+    *,
+    logic: str,
+    kind: str,
+    script: str,
+    modes: Sequence[str],
+    expected: Mapping[str, Mapping[str, object]],
+    implementation: Mapping[str, object] | None = None,
+) -> GeneratedCase:
+    case_id = f"logic:{logic}:{kind}"
+    entry = manifest_entry(
+        case_id=case_id,
+        file=deterministic_case_file("logic", case_id),
+        logic=logic,
+        standard="SMT-LIB-2.7",
+        row_class="logic",
+        features=logic_features(logic, kind),
+        modes=modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=expected,
+        implementation_obligation=implementation,
+        source=logic_source(logic),
+    )
+    return GeneratedCase(entry=entry, script=script)
+
+
+def logic_fragment_violation_script(logic: str) -> str:
+    if logic.startswith("QF_"):
+        return (
+            f"(set-logic {logic})\n"
+            "(assert (forall ((p Bool)) p))\n"
+            "(check-sat)\n"
+        )
+    if any(token in logic for token in ("LIA", "IDL", "NIA")):
+        return (
+            f"(set-logic {logic})\n"
+            "(declare-const x Int)\n"
+            "(declare-const y Int)\n"
+            "(assert (= (* x y) 1))\n"
+            "(check-sat)\n"
+        )
+    if any(token in logic for token in ("LRA", "NRA", "LIRA", "NIRA")):
+        return (
+            f"(set-logic {logic})\n"
+            "(declare-const x Real)\n"
+            "(declare-const y Real)\n"
+            "(assert (= (* x y) 1.0))\n"
+            "(check-sat)\n"
+        )
+    return (
+        f"(set-logic {logic})\n"
+        "(declare-const outside_fragment Int)\n"
+        "(assert (= outside_fragment 0))\n"
+        "(check-sat)\n"
+    )
+
+
+def logic_packet_cases(
+    logic_source_path: Path = DEFAULT_LOGIC_SOURCE,
+) -> list[GeneratedCase]:
+    cases: list[GeneratedCase] = []
+    for logic in logic_packet_logics(logic_source_path):
+        sat_script = (
+            f"(set-logic {logic})\n"
+            "(declare-const p Bool)\n"
+            "(assert p)\n"
+            "(check-sat)\n"
+        )
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="sat",
+                script=sat_script,
+                modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+                expected={
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result("pass"),
+                    "z3-oracle": expected_result("pass"),
+                    "z3-tac": expected_result(
+                        "fail",
+                        diagnostic="SAT result has no HOL theorem to reconstruct",
+                        failure_phase="theorem-shape",
+                    ),
+                },
+            )
+        )
+
+        unsat_case_id = f"logic:{logic}:unsat-proof"
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="unsat-proof",
+                script=(
+                    "(set-option :produce-proofs true)\n"
+                    f"(set-logic {logic})\n"
+                    "(assert false)\n"
+                    "(check-sat)\n"
+                    "(get-proof)\n"
+                ),
+                modes=(
+                    "parser-only",
+                    "typecheck-only",
+                    "z3-oracle",
+                    "proof-parse",
+                    "proof-replay",
+                    "z3-tac",
+                ),
+                expected={
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result("pass"),
+                    "z3-oracle": expected_result("pass"),
+                    "proof-parse": expected_result(
+                        "red",
+                        diagnostic="logic proof parsing evidence is incomplete",
+                        failure_phase="proof-parse",
+                        proof_rule_histogram={"asserted": 1},
+                    ),
+                    "proof-replay": expected_result(
+                        "red",
+                        diagnostic="logic proof replay evidence is incomplete",
+                        failure_phase="proof-replay",
+                        proof_rule_histogram={"asserted": 1},
+                    ),
+                    "z3-tac": expected_result(
+                        "red",
+                        diagnostic="checked Z3_TAC reconstruction for logic packet is incomplete",
+                        failure_phase="proof-replay",
+                        theorem_shape="closed theorem without oracle tags",
+                    ),
+                },
+                implementation=logic_obligation(logic, "unsat-proof", unsat_case_id, "proof-replay"),
+            )
+        )
+
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="type-error",
+                script=(
+                    f"(set-logic {logic})\n"
+                    "(declare-fun f (Bool) Bool)\n"
+                    "(assert (f true false))\n"
+                    "(check-sat)\n"
+                ),
+                modes=("parser-only", "typecheck-only", "z3-tac"),
+                expected={
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result(
+                        "fail",
+                        diagnostic="function arity mismatch",
+                        failure_phase="typecheck",
+                    ),
+                    "z3-tac": expected_result(
+                        "fail",
+                        diagnostic="function arity mismatch",
+                        failure_phase="typecheck",
+                    ),
+                },
+            )
+        )
+
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="malformed",
+                script=f"(set-logic {logic}\n(check-sat)\n",
+                modes=("parser-only",),
+                expected={
+                    "parser-only": expected_result(
+                        "fail",
+                        diagnostic="malformed set-logic command",
+                        failure_phase="parser",
+                    )
+                },
+            )
+        )
+
+        fragment_case_id = f"logic:{logic}:fragment-violation"
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="fragment-violation",
+                script=logic_fragment_violation_script(logic),
+                modes=("parser-only", "typecheck-only", "z3-tac"),
+                expected={
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result(
+                        "red",
+                        diagnostic="logic fragment restrictions are not completely enforced",
+                        failure_phase="typecheck",
+                    ),
+                    "z3-tac": expected_result(
+                        "red",
+                        diagnostic="checked mode must reject logic fragment violations before reconstruction",
+                        failure_phase="typecheck",
+                    ),
+                },
+                implementation=logic_obligation(
+                    logic,
+                    "fragment-violation",
+                    fragment_case_id,
+                    "typecheck",
+                ),
+            )
+        )
+
+        cases.append(
+            logic_case(
+                logic=logic,
+                kind="boundary",
+                script=(
+                    f"(set-logic {logic})\n"
+                    "(push 1)\n"
+                    "(assert true)\n"
+                    "(pop 1)\n"
+                    "(check-sat)\n"
+                ),
+                modes=("parser-only", "typecheck-only", "z3-oracle"),
+                expected={
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result("pass"),
+                    "z3-oracle": expected_result("pass"),
+                },
+            )
+        )
+    return cases
+
+
 def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
     requested = tuple(classes)
     for row_class in requested:
@@ -875,6 +1204,8 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
 def cases_for_domain(domain: str) -> list[GeneratedCase]:
     if domain == "commands":
         return command_cases()
+    if domain == "logics":
+        return logic_packet_cases()
     return sample_cases((DOMAIN_CLASSES[domain],))
 
 
@@ -945,9 +1276,18 @@ def write_generated_cases(case_root: Path, cases: Sequence[GeneratedCase]) -> No
         output.write_text(case.script, encoding="utf-8")
 
 
+def write_logics_json(path: Path, logic_source: Path) -> None:
+    write_json(path, logics_manifest(logic_source))
+
+
 def generate(classes: Iterable[str], manifest_path: Path, *, write: bool) -> dict[str, object]:
     requested = tuple(classes)
-    cases = command_cases() if requested == ("command",) else sample_cases(requested)
+    if requested == ("command",):
+        cases = command_cases()
+    elif requested == ("logic",):
+        cases = logic_packet_cases()
+    else:
+        cases = sample_cases(requested)
     manifest = manifest_for_cases(cases)
     if write:
         manifest = merge_manifest(load_manifest(manifest_path), cases)
@@ -972,6 +1312,18 @@ def parse_args(argv: Sequence[str]) -> argparse.Namespace:
         type=Path,
         default=DEFAULT_MANIFEST,
         help="manifest path (default: v2/manifest.json)",
+    )
+    parser.add_argument(
+        "--logic-source",
+        type=Path,
+        default=DEFAULT_LOGIC_SOURCE,
+        help="SmtLib_Logics.sml path used to generate logic packets",
+    )
+    parser.add_argument(
+        "--logics-json",
+        type=Path,
+        default=DEFAULT_LOGICS_JSON,
+        help="logic inventory JSON path written by the logics generator",
     )
     subparsers = parser.add_subparsers(dest="command")
 
@@ -1006,6 +1358,8 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         if command == "samples":
             cases = sample_cases(CASE_CLASSES)
+        elif command == "logics":
+            cases = logic_packet_cases(args.logic_source)
         else:
             cases = cases_for_domain(command)
         if getattr(args, "write", False):
@@ -1013,6 +1367,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             validate_manifest(manifest)
             write_generated_cases(args.manifest.parent / "cases", cases)
             write_json(args.manifest, manifest)
+            if command == "logics":
+                write_logics_json(args.logics_json, args.logic_source)
         else:
             manifest = manifest_for_cases(cases)
             validate_manifest(manifest)

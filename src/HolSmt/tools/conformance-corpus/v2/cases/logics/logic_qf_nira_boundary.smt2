@@ -1,0 +1,5 @@
+(set-logic QF_NIRA)
+(push 1)
+(assert true)
+(pop 1)
+(check-sat)

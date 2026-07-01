@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_ANIA)
+(assert false)
+(check-sat)
+(get-proof)

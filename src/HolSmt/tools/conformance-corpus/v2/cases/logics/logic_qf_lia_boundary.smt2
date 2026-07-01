@@ -1,4 +1,5 @@
 (set-logic QF_LIA)
-(declare-const x Int)
-(assert (> x 0))
+(push 1)
+(assert true)
+(pop 1)
 (check-sat)

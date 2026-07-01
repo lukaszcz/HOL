@@ -72,13 +72,112 @@ def v2_case(case_id, logic="QF_UF", *, features=None, modes=None, expected=None,
     }
 
 
+def logic_inventory(required=("QF_UF", "QF_LIA"), excluded=()):
+    return {
+        "schema_version": "2",
+        "source": "src/HolSmt/SmtLib_Logics.sml",
+        "accepted_logics": list(required),
+        "excluded_logics": [
+            {
+                "logic": logic,
+                "category": "HolSmt-internal",
+                "reason": "test exclusion",
+            }
+            for logic in excluded
+        ],
+    }
+
+
 class CompleteConformanceAuditTests(unittest.TestCase):
     def test_missing_accepted_logic_evidence_is_an_error(self):
         cases = [v2_case("qf_uf_smoke", logic="QF_UF")]
         issues = audit.audit_cases(cases, ["QF_UF", "QF_LIA"])
 
         self.assertTrue(
+            any(issue.code == "logic_manifest_mismatch" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+        self.assertTrue(
             any(issue.code == "missing_logic_evidence" and issue.details["logic"] == "QF_LIA" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+
+    def test_logic_inventory_must_match_source_plus_documented_exclusions(self):
+        accepted = ["ALL", "QF_LIA", "QF_UF"]
+        required = audit.validate_logic_inventory(
+            logic_inventory(required=("QF_LIA", "QF_UF"), excluded=("ALL",)),
+            accepted,
+        )
+        self.assertEqual(required, ["QF_LIA", "QF_UF"])
+
+        with self.assertRaisesRegex(audit.AuditError, "does not exactly match"):
+            audit.validate_logic_inventory(
+                logic_inventory(required=("QF_UF",), excluded=("ALL",)),
+                accepted,
+            )
+
+    def test_logic_manifest_extra_logic_is_an_error(self):
+        cases = [
+            v2_case("logic_qf_uf_sat", logic="QF_UF", features=["logic-case:sat"]),
+            v2_case("logic_all_sat", logic="ALL", features=["logic-case:sat"]),
+        ]
+        issues = audit.audit_cases(cases, ["QF_UF"])
+
+        mismatch = [issue for issue in issues if issue.code == "logic_manifest_mismatch"]
+        self.assertEqual(len(mismatch), 1, [issue.render() for issue in issues])
+        self.assertEqual(mismatch[0].details["extra"], ["ALL"])
+
+    def test_logic_packet_requires_unsat_schedule_and_sat_no_theorem(self):
+        unsat = v2_case(
+            "logic_qf_uf_unsat_proof",
+            logic="QF_UF",
+            features=["logic-case:unsat-proof"],
+            modes=["parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac"],
+            expected={
+                "parser-only": {"status": "pass"},
+                "typecheck-only": {"status": "pass"},
+                "z3-oracle": {"status": "pass"},
+                "proof-parse": {"status": "red"},
+                "proof-replay": {"status": "red"},
+                "z3-tac": {"status": "red"},
+            },
+            impl=obligation("logic unsat"),
+        )
+        unsat["versions"] = [
+            "2.19.1",
+            "4.11.2",
+            "4.12.4",
+            "4.13.0",
+            "4.14.1",
+            "4.15.3",
+        ]
+        sat = v2_case(
+            "logic_qf_uf_sat",
+            logic="QF_UF",
+            features=["logic-case:sat"],
+            modes=["parser-only", "typecheck-only", "z3-oracle", "z3-tac"],
+            expected={
+                "parser-only": {"status": "pass"},
+                "typecheck-only": {"status": "pass"},
+                "z3-oracle": {"status": "pass"},
+                "z3-tac": {
+                    "status": "fail",
+                    "diagnostic": "SAT result has no HOL theorem to reconstruct",
+                    "failure_phase": "theorem-shape",
+                },
+            },
+        )
+
+        issues = audit.audit_cases([sat, unsat], ["QF_UF"])
+        self.assertFalse(
+            [
+                issue for issue in issues
+                if issue.code in {
+                    "missing_logic_unsat_proof_case",
+                    "logic_unsat_proof_schedule_mismatch",
+                    "missing_sat_no_theorem_diagnostic",
+                }
+            ],
             [issue.render() for issue in issues],
         )
 
@@ -279,7 +378,9 @@ class CompleteConformanceAuditTests(unittest.TestCase):
             self.assertIn("complete conformance audit", stdout.getvalue())
             data = json.loads(report.read_text(encoding="utf-8"))
             self.assertFalse(data["summary"]["passed"])
-            self.assertEqual(data["issues"][0]["code"], "missing_logic_evidence")
+            issue_codes = {issue["code"] for issue in data["issues"]}
+            self.assertIn("logic_manifest_mismatch", issue_codes)
+            self.assertIn("missing_logic_evidence", issue_codes)
 
     def test_main_uses_distinct_exit_code_for_infrastructure_errors(self):
         with tempfile.TemporaryDirectory() as tmp:

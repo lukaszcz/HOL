@@ -108,6 +108,69 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 self.assertIn("diagnostic", result)
                 self.assertIn("failure_phase", result)
 
+    def test_logics_subcommand_emits_six_case_packet_per_packet_logic(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(generator.main(["logics"]), 0)
+
+        manifest = json.loads(stdout.getvalue())
+        cases = audit.validate_v2_manifest(manifest)
+        packet_logics = generator.logic_packet_logics()
+        self.assertEqual(len(cases), 6 * len(packet_logics))
+        self.assertEqual({case["class"] for case in cases}, {"logic"})
+        self.assertNotIn("ALL", {case["logic"] for case in cases})
+
+        by_logic = {}
+        for case in cases:
+            by_logic.setdefault(case["logic"], []).append(case)
+        self.assertEqual(set(by_logic), set(packet_logics))
+        for logic, logic_cases in by_logic.items():
+            kinds = {
+                feature
+                for case in logic_cases
+                for feature in case["features"]
+                if feature.startswith("logic-case:")
+            }
+            self.assertEqual(
+                kinds,
+                {
+                    "logic-case:sat",
+                    "logic-case:unsat-proof",
+                    "logic-case:type-error",
+                    "logic-case:malformed",
+                    "logic-case:fragment-violation",
+                    "logic-case:boundary",
+                },
+                logic,
+            )
+            unsat = [
+                case for case in logic_cases
+                if "logic-case:unsat-proof" in case["features"]
+            ][0]
+            self.assertEqual(unsat["versions"], list(generator.SUPPORTED_Z3_VERSIONS))
+            for mode in ("proof-parse", "proof-replay", "z3-tac"):
+                self.assertIn(mode, unsat["modes"])
+                self.assertIn(mode, unsat["expected"])
+
+            sat = [
+                case for case in logic_cases
+                if "logic-case:sat" in case["features"]
+            ][0]
+            self.assertEqual(sat["expected"]["z3-tac"]["status"], "fail")
+            self.assertIn("no HOL theorem", sat["expected"]["z3-tac"]["diagnostic"])
+
+    def test_logics_manifest_documents_internal_all_exclusion(self):
+        inventory = generator.logics_manifest()
+        required = set(inventory["accepted_logics"])
+        excluded = {item["logic"] for item in inventory["excluded_logics"]}
+
+        self.assertIn("ALL", excluded)
+        self.assertNotIn("ALL", required)
+        self.assertEqual(
+            required | excluded,
+            set(generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE)),
+        )
+
     def test_manifest_entry_preserves_red_obligation_contract(self):
         case_id = generator.deterministic_case_id("command", "command:future")
         common = {
@@ -168,6 +231,40 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             self.assertEqual(first_files, second_files)
             self.assertEqual(len(first_files), len(generator.CASE_CLASSES))
             audit.validate_v2_manifest(json.loads(second_manifest))
+
+    def test_logics_write_mode_is_idempotent_and_writes_inventory(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp) / "corpus"
+            manifest_path = root / "manifest.json"
+            logics_json = root / "logics.json"
+
+            args = [
+                "--manifest",
+                str(manifest_path),
+                "--logics-json",
+                str(logics_json),
+                "logics",
+                "--write",
+            ]
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(generator.main(args), 0)
+            first_manifest = manifest_path.read_text(encoding="utf-8")
+            first_inventory = logics_json.read_text(encoding="utf-8")
+
+            with contextlib.redirect_stdout(io.StringIO()):
+                self.assertEqual(generator.main(args), 0)
+            second_manifest = manifest_path.read_text(encoding="utf-8")
+            second_inventory = logics_json.read_text(encoding="utf-8")
+
+            self.assertEqual(first_manifest, second_manifest)
+            self.assertEqual(first_inventory, second_inventory)
+            cases = audit.validate_v2_manifest(json.loads(second_manifest))
+            inventory = json.loads(second_inventory)
+            packet_logics = audit.validate_logic_inventory(
+                inventory,
+                generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE),
+            )
+            self.assertEqual(len(cases), 6 * len(packet_logics))
 
     def test_audit_subcommand_validates_existing_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
