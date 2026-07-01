@@ -6,7 +6,6 @@ script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../../.." && pwd)
 out_dir=".holsmt-ci"
 include_docker=false
-skip_z3_version_matrix=false
 clean_first=true
 allow_unsupported_z3=false
 supported_z3_versions="2.19.1, or 4.11.2 through 4.15.x"
@@ -23,8 +22,6 @@ Options:
   --allow-unsupported-z3
                       Run even when z3 is outside the supported version matrix
   --include-docker   Also run the Docker selftest matrix from src/HolSmt/README
-  --skip-z3-version-matrix
-                      Do not auto-run discovered versioned Z3 binaries
   -h, --help         Show this help
 
 If HOL4_Z3_EXECUTABLE is unset, the script resolves z3 from PATH and exports
@@ -107,10 +104,6 @@ discover_z3_versions() {
     version=$(z3_version_number "$output" || true)
     [ -n "$version" ] || continue
     is_supported_z3_version "$output" || continue
-    case "$version" in
-      4.*) ;;
-      *) continue ;;
-    esac
     if [[ " ${detected_z3_matrix_versions[*]} " == *" $version "* ]]; then
       continue
     fi
@@ -128,10 +121,6 @@ while [ "$#" -gt 0 ]; do
       ;;
     --include-docker)
       include_docker=true
-      shift
-      ;;
-    --skip-z3-version-matrix)
-      skip_z3_version_matrix=true
       shift
       ;;
     --no-clean)
@@ -263,18 +252,11 @@ run "Run live Z3 proof rule gate" \
     --fail-on-unknown-rules \
     src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2
 
-if [[ "$z3_version" == 4.* ]]; then
-  run "Run focused checked Z3 replay smoke for configured executable" \
-    src/HolSmt/tools/verify_z3_versions.sh \
-      --versions "$z3_version" \
-      --z3 "$z3_version:$HOL4_Z3_EXECUTABLE" \
-      --skip-selftest \
-      --timeout 120 \
-      --out-dir "$out_dir/z3-version-current"
-else
-  printf '\n==> Skip focused checked Z3 replay smoke for non-v4 Z3 %s\n' \
-    "${z3_version:-unknown}"
-fi
+run "Run full Z3 verifier for configured executable" \
+  src/HolSmt/tools/verify_z3_versions.sh \
+    --versions "$z3_version" \
+    --z3 "$z3_version:$HOL4_Z3_EXECUTABLE" \
+    --out-dir "$out_dir/z3-version-current"
 
 run "Run HOL typecheck driver conformance" \
   python3 src/HolSmt/tools/run_conformance_suite.py \
@@ -298,20 +280,17 @@ run "Audit coverage manifest against conformance reports" \
     --conformance-report "$typecheck_out/conformance.json" \
     --conformance-report "$z3_tac_out/conformance.json"
 
-if ! "$skip_z3_version_matrix"; then
-  discover_z3_versions
+discover_z3_versions
 
-  if [ "${#detected_z3_matrix_versions[@]}" -gt 0 ]; then
-    run "Run focused checked Z3 replay matrix (${detected_z3_matrix_versions[*]})" \
-      src/HolSmt/tools/verify_z3_versions.sh \
-        --versions "${detected_z3_matrix_versions[*]}" \
-        "${z3_matrix_args[@]}" \
-        --skip-selftest \
-        --timeout 120 \
-        --out-dir "$out_dir/z3-version-matrix"
-  else
-    printf '\n==> Skip focused checked Z3 replay matrix; no supported executable z3-* matrix binaries found in ~/.local/bin or PATH\n'
-  fi
+if [ "${#detected_z3_matrix_versions[@]}" -gt 0 ]; then
+  run "Run full Z3 version matrix with local binaries (${detected_z3_matrix_versions[*]})" \
+    src/HolSmt/tools/verify_z3_versions.sh \
+      "${z3_matrix_args[@]}" \
+      --out-dir "$out_dir/z3-version-matrix"
+else
+  run "Run full Z3 version matrix" \
+    src/HolSmt/tools/verify_z3_versions.sh \
+      --out-dir "$out_dir/z3-version-matrix"
 fi
 
 if "$include_docker"; then

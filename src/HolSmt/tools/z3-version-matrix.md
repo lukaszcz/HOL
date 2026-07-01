@@ -8,15 +8,15 @@ tool is:
 src/HolSmt/tools/verify_z3_versions.sh
 ```
 
-By default it tests representative modern Z3 releases:
+By default it tests the representative supported Z3 releases:
 
 ```text
-4.11.2 4.12.4 4.13.0 4.14.1 4.15.3
+2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3
 ```
 
 The tool downloads compatible official release binaries when available, runs
-the minimal proof-corpus gate, runs a focused checked nonlinear replay smoke
-test, runs `src/HolSmt/selftest.exe`, and writes:
+the minimal proof-corpus gate, runs a checked nonlinear replay smoke test, runs
+the full `src/HolSmt/selftest.exe`, and writes:
 
 ```text
 .holsmt-z3-version-matrix/report.json
@@ -30,14 +30,14 @@ src/HolSmt/tools/verify_z3_versions.sh \
   --z3 4.11.2:/home/lukasz/.opam/default/bin/z3
 ```
 
-To build the representative source releases locally, including the TPTP
+To build the representative modern source releases locally, including the TPTP
 frontend, run:
 
 ```sh
 src/HolSmt/tools/build_z3_versions.sh
 ```
 
-This installs versioned binaries under `~/.local/bin`:
+This installs modern versioned binaries under `~/.local/bin`:
 
 ```text
 z3-4.11.2      z3_tptp-4.11.2
@@ -47,30 +47,36 @@ z3-4.14.1      z3_tptp-4.14.1
 z3-4.15.3      z3_tptp-4.15.3
 ```
 
-## Locally Verified Source Builds
+The verifier downloads the legacy 2.19.1 binary on compatible hosts or accepts
+it through `--z3 2.19.1:PATH`.
+
+## Local Source Build Notes
 
 On 2026-06-30 and 2026-07-01, the following source-built Z3 versions were
-verified on `Linux-aarch64` using versioned binaries in `~/.local/bin`:
+checked on `Linux-aarch64` using versioned binaries in `~/.local/bin`:
 
 ```text
-4.11.2  pass  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
-4.12.4  pass  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
-4.13.0  pass  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
-4.14.1  pass  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
-4.15.3  pass  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
+2.19.1  not-run     no local Linux-aarch64 legacy binary
+4.11.2  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
+4.12.4  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
+4.13.0  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
+4.14.1  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
+4.15.3  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
 ```
 
-The proof-corpus and nonlinear replay smoke report was generated with:
+Those checks did not include the broad HolSmt selftest for every version and
+therefore are not a passing version matrix.  A valid version matrix must run
+the verifier without suppressing any phase:
 
 ```sh
 src/HolSmt/tools/verify_z3_versions.sh \
-  --versions "4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
+  --versions "2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
+  --z3 2.19.1:$HOME/.local/bin/z3-2.19.1 \
   --z3 4.11.2:$HOME/.local/bin/z3-4.11.2 \
   --z3 4.12.4:$HOME/.local/bin/z3-4.12.4 \
   --z3 4.13.0:$HOME/.local/bin/z3-4.13.0 \
   --z3 4.14.1:$HOME/.local/bin/z3-4.14.1 \
   --z3 4.15.3:$HOME/.local/bin/z3-4.15.3 \
-  --skip-selftest \
   --out-dir .holsmt-z3-version-matrix-source-built
 ```
 
@@ -82,8 +88,8 @@ fof(goal, conjecture, p).
 ```
 
 Each `z3_tptp-<version>` returned `% SZS status Theorem` when invoked with
-`-file:<path>`.  Full `selftest.exe` replay is a separate check; nonlinear
-real-arithmetic replay requires CSDP to be available.
+`-file:<path>`.  Nonlinear real-arithmetic replay requires CSDP to be
+available.
 
 A full verifier run on the source-built `z3-4.11.2` binary completed the unit
 tests and then reported:
@@ -128,32 +134,31 @@ timed out after 300 seconds while checking the Z3 proof:
 4.15.3  pass
 ```
 
-After the replay fix, the proof-corpus plus nonlinear replay smoke verifier
-passed for all five source-built versions with:
+After the replay fix, the proof-corpus plus nonlinear replay smoke checks
+passed for all five source-built versions, but that run still did not include
+the full selftest and is not a passing version matrix.  The required command is:
 
 ```sh
 src/HolSmt/tools/verify_z3_versions.sh \
-  --versions "4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
+  --versions "2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
+  --z3 2.19.1:$HOME/.local/bin/z3-2.19.1 \
   --z3 4.11.2:$HOME/.local/bin/z3-4.11.2 \
   --z3 4.12.4:$HOME/.local/bin/z3-4.12.4 \
   --z3 4.13.0:$HOME/.local/bin/z3-4.13.0 \
   --z3 4.14.1:$HOME/.local/bin/z3-4.14.1 \
   --z3 4.15.3:$HOME/.local/bin/z3-4.15.3 \
-  --skip-selftest \
-  --timeout 120 \
   --out-dir .holsmt-z3-version-matrix-source-built-replay-fixed
 ```
 
-This confirms CSDP is no longer the blocker and that the checked nonlinear
-proof-reconstruction smoke case passes across the representative
-4.11.2--4.15.x range.  The broad `src/HolSmt/selftest.exe` also exercises
-non-proof Z3 oracle paths and is not the canonical version-matrix gate for
-checked proof reconstruction.
+This command must pass every requested Z3 version.  If the broad selftest fails
+for any version, the matrix status is failed or blocked and the support claim
+must say so explicitly.
 
 Report statuses:
 
 ```text
-pass      The proof-corpus gate and selected HolSmt checks passed.
+pass      The proof-corpus gate, checked replay smoke test and full HolSmt
+          selftest passed.
 fail      HolSmt ran and exposed a parser/replay/version incompatibility.
 blocked   A local prerequisite is missing, such as CSDP for nonlinear real
           arithmetic replay.

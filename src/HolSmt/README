@@ -66,13 +66,13 @@ Supported Z3 versions:
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
 The checked-in proof corpus and CI jobs use exact representative versions from
-the supported ranges.  The current modern source-built matrix is 4.11.2,
-4.12.4, 4.13.0, 4.14.1 and 4.15.3.  The local contract runner accepts any
-discovered Z3 version in the supported ranges.
+the supported ranges.  The current full matrix is 2.19.1, 4.11.2, 4.12.4,
+4.13.0, 4.14.1 and 4.15.3.  The local contract runner accepts any discovered
+Z3 version in the supported ranges.
 Use `src/HolSmt/tools/verify_z3_versions.sh` to download representative Z3
-releases, run the proof-corpus gate, focused nonlinear replay smoke test and
-selftest checks, and record the exact versions verified in a JSON report.  Full
-nonlinear real replay checks require CSDP (`coinor-csdp`, or
+releases, run the proof-corpus gate, checked nonlinear replay smoke test and
+full `src/HolSmt/selftest.exe` checks, and record the exact versions verified
+in a JSON report.  Full nonlinear real replay checks require CSDP (`coinor-csdp`, or
 `HOL4_CSDP_EXECUTABLE`) just as the Docker CI jobs do.
 On platforms without trustworthy compatible Z3 release binaries, use
 `src/HolSmt/tools/build_z3_versions.sh` to build representative source
@@ -294,16 +294,17 @@ Local CI contract commands:
   # Run the local contract checks below, resolving z3 from PATH when
   # HOL4_Z3_EXECUTABLE is not already set.  The script fails fast if that
   # executable is outside the supported Z3 ranges; pass --allow-unsupported-z3
-  # to investigate proof-format drift intentionally.  The script also discovers
-  # supported versioned z3-* binaries under ~/.local/bin or PATH and runs the
-  # focused checked replay matrix by default; pass --skip-z3-version-matrix to
-  # skip it.
+  # to investigate proof-format drift intentionally.  The script also runs the
+  # full representative Z3 version matrix by default, using supported versioned
+  # z3-* binaries discovered under ~/.local/bin or PATH when available.
   src/HolSmt/tools/run_holsmt_tests.sh
 
   # Download representative Z3 releases for the supported range, run the
-  # proof-corpus gate and selftest against each executable, and write
-  # .holsmt-z3-version-matrix/report.json.  Use --z3 VERSION:PATH for locally
-  # installed versions when no compatible official binary exists for the host.
+  # proof-corpus gate, checked replay smoke test and full selftest against
+  # each executable, and write .holsmt-z3-version-matrix/report.json.  The
+  # command exits nonzero unless every requested version passes.  Use
+  # --z3 VERSION:PATH for locally installed versions when no compatible
+  # official binary exists for the host.
   src/HolSmt/tools/verify_z3_versions.sh
 
   # Build representative Z3 source releases with TPTP support and install
@@ -435,8 +436,9 @@ Updating the Z3 version matrix:
      `build_z3_versions.sh`.
   3. Build the source releases with TPTP support and install the versioned
      binaries under `~/.local/bin`.
-  4. Run `run_holsmt_tests.sh` or `verify_z3_versions.sh` so the detected
-     matrix records the exact executables that passed.
+  4. Run `run_holsmt_tests.sh` or `verify_z3_versions.sh` so the matrix records
+     the exact executables that passed the proof-corpus gate, checked replay
+     smoke test and full HolSmt selftest.
   5. If proof options, aliases or unsupported diagnostics changed, update the
      proof-rule registry, replay tests and expected-rule manifests first.
   6. Update `src/HolSmt/tools/coverage/smtlib_coverage.json` and the coverage

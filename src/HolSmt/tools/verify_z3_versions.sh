@@ -5,12 +5,9 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../../.." && pwd)
 
-versions=(4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
+versions=(2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
 out_dir=".holsmt-z3-version-matrix"
 download_dir=""
-run_selftest=true
-run_proof_corpus=true
-run_replay_smoke=true
 timeout_seconds=900
 declare -a local_z3s=()
 
@@ -24,16 +21,14 @@ were verified.
 
 Options:
   --versions LIST       Space/comma-separated Z3 versions to test
-                        (default: 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
+                        (default: 2.19.1 4.11.2 4.12.4 4.13.0
+                         4.14.1 4.15.3)
   --z3 VERSION:PATH     Use an existing local Z3 executable for VERSION.
                         Repeatable; useful when GitHub has no binary for the
                         local architecture.
   --out-dir DIR         Output directory (default: .holsmt-z3-version-matrix)
   --download-dir DIR    Download/cache directory (default: OUT_DIR/downloads)
   --timeout SECONDS     Per-version selftest timeout (default: 900)
-  --skip-selftest       Do not run src/HolSmt/selftest.exe
-  --skip-proof-corpus   Do not run the minimal proof-corpus rule gate
-  --skip-replay-smoke   Do not run the focused checked Z3_TAC replay smoke test
   -h, --help            Show this help
 
 The report is written to OUT_DIR/report.json.  Per-version stdout/stderr and
@@ -85,18 +80,6 @@ while [ "$#" -gt 0 ]; do
       timeout_seconds=$2
       shift 2
       ;;
-    --skip-selftest)
-      run_selftest=false
-      shift
-      ;;
-    --skip-proof-corpus)
-      run_proof_corpus=false
-      shift
-      ;;
-    --skip-replay-smoke)
-      run_replay_smoke=false
-      shift
-      ;;
     -h|--help)
       usage
       exit 0
@@ -111,6 +94,7 @@ cd "$repo_root"
 
 need_cmd curl
 need_cmd jq
+need_cmd tar
 need_cmd unzip
 need_cmd timeout
 need_cmd python3
@@ -183,6 +167,23 @@ download_z3() {
   fi
 
   mkdir -p "$version_dir"
+  if [ "$version" = "2.19.1" ]; then
+    url="https://github.com/Z3Prover/bin/raw/master/legacy/z3-2.19.1.tar.gz"
+    zip="$version_dir/z3-2.19.1.tar.gz"
+    printf 'Trying %s\n' "$url" >&2
+    if curl -fL --retry 3 --connect-timeout 20 -o "$zip"; then
+      tar -xzf "$zip" -C "$version_dir"
+      for z3_path in $(find "$version_dir" -path '*/bin/z3' -type f -perm -u+x 2>/dev/null | sort); do
+        if is_usable_z3 "$z3_path"; then
+          printf '%s\n' "$z3_path"
+          return 0
+        fi
+        printf 'Ignoring unusable downloaded Z3 binary: %s\n' "$z3_path" >&2
+      done
+    fi
+    return 1
+  fi
+
   while IFS= read -r asset; do
     [ -n "$asset" ] || continue
     url="https://github.com/Z3Prover/z3/releases/download/z3-${version}/${asset}"
@@ -226,6 +227,7 @@ write_result() {
 
 run_version() {
   local version=$1 result_dir result_json z3_path z3_output phase detail
+  local -a z3_opts
   result_dir="$results_dir/$version"
   result_json="$result_dir/result.json"
   mkdir -p "$result_dir"
@@ -243,7 +245,12 @@ run_version() {
   z3_output=$("$z3_path" -version 2>&1 || true)
   printf '%s\n' "$z3_output" > "$result_dir/z3-version.txt"
 
-  "$z3_path" proof=true pp.simplify_implies=false -smt2 \
+  case "$version" in
+    4.*) z3_opts=(proof=true pp.simplify_implies=false) ;;
+    *) z3_opts=(PROOF_MODE=2) ;;
+  esac
+
+  "$z3_path" "${z3_opts[@]}" -smt2 \
     -file:src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2 \
     > "$result_dir/minimal-proof.stdout" \
     2> "$result_dir/minimal-proof.stderr" || {
@@ -252,25 +259,22 @@ run_version() {
       return 0
     }
 
-  if "$run_proof_corpus"; then
-    if ! python3 src/HolSmt/tools/record_z3_proof_corpus.py \
-        --z3 "$z3_path" \
-        --out "$result_dir/proof-corpus" \
-        --expected-rules src/HolSmt/tools/proof-corpus/minimal_expected_rules.json \
-        --fail-on-unseen-rules \
-        --fail-on-unknown-rules \
-        src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2 \
-        > "$result_dir/proof-corpus.stdout" \
-        2> "$result_dir/proof-corpus.stderr"; then
-      detail=$(tail -n 40 "$result_dir/proof-corpus.stderr" "$result_dir/proof-corpus.stdout" 2>/dev/null)
-      write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" "proof-corpus" "$detail"
-      return 0
-    fi
+  if ! python3 src/HolSmt/tools/record_z3_proof_corpus.py \
+      --z3 "$z3_path" \
+      --out "$result_dir/proof-corpus" \
+      --expected-rules src/HolSmt/tools/proof-corpus/minimal_expected_rules.json \
+      --fail-on-unseen-rules \
+      --fail-on-unknown-rules \
+      src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2 \
+      > "$result_dir/proof-corpus.stdout" \
+      2> "$result_dir/proof-corpus.stderr"; then
+    detail=$(tail -n 40 "$result_dir/proof-corpus.stderr" "$result_dir/proof-corpus.stdout" 2>/dev/null)
+    write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" "proof-corpus" "$detail"
+    return 0
   fi
 
-  if "$run_replay_smoke"; then
-    replay_smoke_script="$result_dir/nonlinear-replay.sml"
-    cat > "$replay_smoke_script" <<'EOF'
+  replay_smoke_script="$result_dir/nonlinear-replay.sml"
+  cat > "$replay_smoke_script" <<'EOF'
 open HolKernel Parse boolLib bossLib;
 val _ = load "HolSmtLib";
 val _ = Feedback.set_trace "PP.avoid_unicode" 1;
@@ -282,40 +286,37 @@ val _ = OS.Process.exit
    else
      OS.Process.failure);
 EOF
-    replay_smoke_script=$(cd "$(dirname "$replay_smoke_script")" && pwd)/$(basename "$replay_smoke_script")
-    if ! (cd src/HolSmt && timeout "$timeout_seconds" env HOL4_Z3_EXECUTABLE="$z3_path" \
-        ../../bin/hol < "$replay_smoke_script") \
-        > "$result_dir/nonlinear-replay.stdout" \
-        2> "$result_dir/nonlinear-replay.stderr"; then
-      detail=$(tail -n 80 "$result_dir/nonlinear-replay.stderr" \
-        "$result_dir/nonlinear-replay.stdout" 2>/dev/null)
-      if grep -q "CSDP not found" "$result_dir/nonlinear-replay.stdout" \
-          "$result_dir/nonlinear-replay.stderr"; then
-        write_result "$result_json" "$version" "blocked" "$z3_path" "$z3_output" \
-          "nonlinear-replay-dependency" "$detail"
-      else
-        write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" \
-          "nonlinear-replay" "$detail"
-      fi
-      return 0
+  replay_smoke_script=$(cd "$(dirname "$replay_smoke_script")" && pwd)/$(basename "$replay_smoke_script")
+  if ! (cd src/HolSmt && timeout "$timeout_seconds" env HOL4_Z3_EXECUTABLE="$z3_path" \
+      ../../bin/hol < "$replay_smoke_script") \
+      > "$result_dir/nonlinear-replay.stdout" \
+      2> "$result_dir/nonlinear-replay.stderr"; then
+    detail=$(tail -n 80 "$result_dir/nonlinear-replay.stderr" \
+      "$result_dir/nonlinear-replay.stdout" 2>/dev/null)
+    if grep -q "CSDP not found" "$result_dir/nonlinear-replay.stdout" \
+        "$result_dir/nonlinear-replay.stderr"; then
+      write_result "$result_json" "$version" "blocked" "$z3_path" "$z3_output" \
+        "nonlinear-replay-dependency" "$detail"
+    else
+      write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" \
+        "nonlinear-replay" "$detail"
     fi
+    return 0
   fi
 
-  if "$run_selftest"; then
-    if ! (cd src/HolSmt && timeout "$timeout_seconds" env HOL4_Z3_EXECUTABLE="$z3_path" \
-        ./selftest.exe) \
-        > "$result_dir/selftest.stdout" \
-        2> "$result_dir/selftest.stderr"; then
-      phase="selftest"
-      detail=$(tail -n 80 "$result_dir/selftest.stderr" "$result_dir/selftest.stdout" 2>/dev/null)
-      if grep -q "CSDP not found" "$result_dir/selftest.stdout" "$result_dir/selftest.stderr"; then
-        write_result "$result_json" "$version" "blocked" "$z3_path" "$z3_output" \
-          "selftest-dependency" "$detail"
-      else
-        write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" "$phase" "$detail"
-      fi
-      return 0
+  if ! (cd src/HolSmt && timeout "$timeout_seconds" env HOL4_Z3_EXECUTABLE="$z3_path" \
+      ./selftest.exe) \
+      > "$result_dir/selftest.stdout" \
+      2> "$result_dir/selftest.stderr"; then
+    phase="selftest"
+    detail=$(tail -n 80 "$result_dir/selftest.stderr" "$result_dir/selftest.stdout" 2>/dev/null)
+    if grep -q "CSDP not found" "$result_dir/selftest.stdout" "$result_dir/selftest.stderr"; then
+      write_result "$result_json" "$version" "blocked" "$z3_path" "$z3_output" \
+        "selftest-dependency" "$detail"
+    else
+      write_result "$result_json" "$version" "fail" "$z3_path" "$z3_output" "$phase" "$detail"
     fi
+    return 0
   fi
 
   write_result "$result_json" "$version" "pass" "$z3_path" "$z3_output" "" ""
@@ -340,3 +341,12 @@ jq -s \
   "$results_dir"/*/result.json > "$out_dir/report.json"
 
 printf '\nWrote %s\n' "$out_dir/report.json"
+
+if ! jq -e 'all(.versions[]; .status == "pass")' "$out_dir/report.json" >/dev/null; then
+  printf '\nZ3 version matrix failed; non-passing rows:\n' >&2
+  jq -r '.versions[] | select(.status != "pass") |
+    "Z3 \(.version): \(.status)" +
+    (if .failed_phase then " (" + .failed_phase + ")" else "" end)' \
+    "$out_dir/report.json" >&2
+  exit 1
+fi
