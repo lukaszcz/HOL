@@ -344,6 +344,25 @@ def audit(
 ) -> list[Issue]:
     issues: list[Issue] = []
 
+    def proof_rule_obligation_details(rule_name: str) -> dict[str, object]:
+        manifest_row = manifest_rows.get(rule_name, {})
+        files = manifest_row.get("implementation_files", [])
+        if not files:
+            files = [
+                "src/HolSmt/Z3_Proof.sml",
+                "src/HolSmt/Z3_ProofParser.sml",
+                "src/HolSmt/Z3_ProofReplay.sml",
+            ]
+        test_ids = manifest_row.get("case_ids", [])
+        if not test_ids:
+            test_ids = [f"proof-rule:{rule_name}"]
+        return {
+            "failure_phase": "proof-replay",
+            "feature": rule_name,
+            "files": sorted(str(item) for item in files),
+            "test_ids": sorted(str(item) for item in test_ids),
+        }
+
     for rule in rules:
         if synthetic_coverage_names(rule).isdisjoint(synthetic_rules):
             issues.append(
@@ -383,6 +402,7 @@ def audit(
                     message="diagnostic-only th-lemma family lacks a red proof-rule obligation row",
                     severity="red",
                     blocking=True,
+                    details=proof_rule_obligation_details(rule),
                 )
             )
 
@@ -410,6 +430,9 @@ def audit(
                     "src/HolSmt/Z3_ProofParser.sml",
                     "src/HolSmt/Z3_ProofReplay.sml",
                 ]
+            case_ids = manifest_row.get("case_ids", [])
+            if not case_ids:
+                case_ids = [f"proof-rule:{rule.name}:real-proof-occurrence"]
             issues.append(
                 Issue(
                     code="missing_real_proof_occurrence",
@@ -420,9 +443,13 @@ def audit(
                     blocking=False,
                     details={
                         "aliases": list(rule.aliases),
-                        "case_ids": manifest_row.get("case_ids", []),
+                        "case_ids": case_ids,
                         "coverage_row": coverage_row,
+                        "failure_phase": "proof-parse",
+                        "feature": f"real-proof-occurrence:{rule.name}",
+                        "files": implementation_files,
                         "implementation_files": implementation_files,
+                        "test_ids": case_ids,
                     },
                 )
             )

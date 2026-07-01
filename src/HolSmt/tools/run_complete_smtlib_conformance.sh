@@ -306,6 +306,20 @@ import sys
 report_dir = pathlib.Path(sys.argv[1])
 steps_file = pathlib.Path(sys.argv[2])
 manifest_path = pathlib.Path(sys.argv[3])
+repo_root = pathlib.Path.cwd().resolve()
+
+def display_path(path: object) -> str:
+    value = pathlib.Path(str(path))
+    try:
+        return value.resolve().relative_to(repo_root).as_posix()
+    except ValueError:
+        return str(path)
+
+def display_entry_paths(entry: dict[str, object]) -> dict[str, object]:
+    for key in ("report", "stdout", "stderr", "summary", "missing_report"):
+        if isinstance(entry.get(key), str):
+            entry[key] = display_path(entry[key])
+    return entry
 
 def load_json(path: pathlib.Path):
     with path.open(encoding="utf-8") as infile:
@@ -315,7 +329,7 @@ steps = []
 if steps_file.exists():
     for line in steps_file.read_text(encoding="utf-8").splitlines():
         if line.strip():
-            steps.append(json.loads(line))
+            steps.append(display_entry_paths(json.loads(line)))
 
 manifest = load_json(manifest_path)
 manifest_red = []
@@ -369,7 +383,7 @@ for pattern in (
         except (OSError, json.JSONDecodeError) as exc:
             unexpected_results.append(
                 {
-                    "report": str(path),
+                    "report": display_path(path),
                     "kind": "report-read-error",
                     "detail": str(exc),
                 }
@@ -377,7 +391,7 @@ for pattern in (
             continue
         conformance_reports.append(
             {
-                "path": str(path),
+                "path": display_path(path),
                 "case_count": report.get("case_count"),
                 "result_count": report.get("result_count"),
                 "status_counts": report.get("status_counts", {}),
@@ -390,7 +404,7 @@ for pattern in (
             if isinstance(result, dict) and result.get("conformance_status") == "fail":
                 unexpected_results.append(
                     {
-                        "report": str(path),
+                        "report": display_path(path),
                         "case": result.get("case"),
                         "logic": result.get("logic"),
                         "mode": result.get("mode"),
@@ -404,7 +418,7 @@ for pattern in (
             if isinstance(counts, dict) and counts.get("fail"):
                 unexpected_results.append(
                     {
-                        "report": str(path),
+                        "report": display_path(path),
                         "kind": "metamorphic-failure",
                         "count": counts.get("fail"),
                     }
@@ -422,7 +436,7 @@ for proof_dir in sorted((report_dir / "proofs").glob("z3-*")):
             {
                 "version": proof_dir.name.removeprefix("z3-"),
                 "status": "recorded",
-                "summary": str(summary_path),
+                "summary": display_path(summary_path),
                 "entry_count": summary.get("entry_count"),
                 "proof_count": summary.get("proof_count"),
                 "malformed_fragment_count": summary.get("malformed_fragment_count"),
@@ -444,12 +458,12 @@ for step in steps:
         mode = str(step.get("name", "")).removeprefix("conformance-")
         expected = report_dir / "conformance" / mode / f"conformance-{mode}.json"
         if not expected.exists():
-            infrastructure_errors.append({**step, "missing_report": str(expected)})
+            infrastructure_errors.append({**step, "missing_report": display_path(expected)})
     if code != 0 and kind == "external-conformance":
         mode = str(step.get("name", "")).removeprefix("external-")
         expected = report_dir / "external" / mode / f"external-{mode}.json"
         if not expected.exists():
-            infrastructure_errors.append({**step, "missing_report": str(expected)})
+            infrastructure_errors.append({**step, "missing_report": display_path(expected)})
 
 audit_blocking = []
 if isinstance(proof_audit, dict):
@@ -472,30 +486,41 @@ with red_summary_path.open("w", encoding="utf-8") as outfile:
     json.dump(red_summary, outfile, indent=2, sort_keys=True)
     outfile.write("\n")
 
+def md_cell(value: object) -> str:
+    text = "" if value is None else str(value)
+    return text.replace("|", "\\|").replace("\n", " ")
+
+def md_list(values: object) -> str:
+    if isinstance(values, list):
+        return ", ".join(str(value) for value in values)
+    return "" if values is None else str(values)
+
 red_md = [
     "# HolSmt Red Obligation Summary",
     "",
     f"- Manifest red rows: {len(manifest_red)}",
     f"- Complete-audit red rows: {len(complete_audit_red)}",
     f"- Proof-audit red rows: {len(proof_audit_red)}",
+    "- Full machine-readable obligation rows are in `red-obligations.json`.",
     "",
-    "| Case | Mode | Class | Logic | Feature |",
-    "| --- | --- | --- | --- | --- |",
+    "| Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- |",
 ]
 for item in manifest_red[:200]:
-    features = item.get("features") or []
-    feature = features[0] if features else ""
+    obligation = item.get("implementation_obligation")
+    if not isinstance(obligation, dict):
+        obligation = {}
     red_md.append(
-        f"| `{item.get('case')}` | `{item.get('mode')}` | `{item.get('class')}` | `{item.get('logic')}` | `{feature}` |"
+        f"| `{md_cell(item.get('case'))}` | `{md_cell(item.get('mode'))}` | `{md_cell(item.get('class'))}` | `{md_cell(item.get('logic'))}` | `{md_cell(obligation.get('feature'))}` | `{md_cell(obligation.get('failure_phase'))}` | {md_cell(md_list(obligation.get('files')))} | {md_cell(md_list(obligation.get('test_ids')))} |"
     )
 if len(manifest_red) > 200:
-    red_md.append(f"| ... | ... | ... | ... | {len(manifest_red) - 200} more |")
+    red_md.append(f"| ... | ... | ... | ... | ... | ... | ... | {len(manifest_red) - 200} more in JSON |")
 (report_dir / "RED_OBLIGATIONS.md").write_text("\n".join(red_md) + "\n", encoding="utf-8")
 
 red_count = len(manifest_red) + len(proof_audit_red)
 summary = {
     "schema": "holsmt-complete-conformance-run-v1",
-    "report_dir": str(report_dir),
+    "report_dir": display_path(report_dir),
     "status": "pass",
     "red_obligation_count": red_count,
     "unexpected_regression_count": len(unexpected_results) + len(audit_blocking),
@@ -517,14 +542,14 @@ complete = {
     "conformance_reports": conformance_reports,
     "proof_reports": proof_reports,
     "audits": {
-        "complete_conformance": str(report_dir / "audits" / "complete-conformance-audit.json"),
-        "proof_completeness": str(report_dir / "audits" / "proof-completeness-audit.json"),
+        "complete_conformance": display_path(report_dir / "audits" / "complete-conformance-audit.json"),
+        "proof_completeness": display_path(report_dir / "audits" / "proof-completeness-audit.json"),
     },
     "red_obligations": red_summary,
     "unexpected_regressions": unexpected_results,
     "audit_blocking_issues": audit_blocking,
     "infrastructure_errors": infrastructure_errors,
-    "minimized_repros": str(report_dir / "minimized-repros"),
+    "minimized_repros": display_path(report_dir / "minimized-repros"),
 }
 with (report_dir / "complete-conformance.json").open("w", encoding="utf-8") as outfile:
     json.dump(complete, outfile, indent=2, sort_keys=True)
