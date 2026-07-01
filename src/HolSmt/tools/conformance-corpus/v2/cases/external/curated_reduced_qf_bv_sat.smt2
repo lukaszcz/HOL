@@ -1,0 +1,6 @@
+(set-info :smt-lib-version 2.7)
+(set-logic QF_BV)
+(set-info :status sat)
+(declare-const x (_ BitVec 4))
+(assert (= (bvand x #b1111) x))
+(check-sat)

@@ -3486,15 +3486,15 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
         ),
         red_sample(
             row_class="external-benchmark",
-            feature="external:reduced-qf-uf-smoke",
+            feature="external:missing-pinned-benchmark-evidence",
             logic="QF_UF",
             standard="SMT-LIB-2.7",
             modes=("parser-only", "z3-oracle"),
-            files=("src/HolSmt/tools/external-benchmarks",),
+            files=("src/HolSmt/tools/import_external_benchmarks.py", "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"),
             failure_phase="solver",
-            source_info=source("external-benchmark", "pinned reduced QF_UF benchmark smoke"),
+            source_info=source("external-benchmark", "pinned external benchmark importer missing evidence seed"),
             script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n",
-            diagnostic="complete external benchmark row is still an implementation obligation",
+            diagnostic="pinned external benchmark evidence is still an implementation obligation",
         ),
     ]
     return [case for case in samples if str(case.entry["class"]) in requested]

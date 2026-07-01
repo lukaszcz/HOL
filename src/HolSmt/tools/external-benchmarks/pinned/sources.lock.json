@@ -1,0 +1,26 @@
+{
+  "schema_version": "holsmt-external-benchmark-sources-lock-v1",
+  "sources": [
+    {
+      "id": "smt-lib-benchmark-submission",
+      "kind": "official-smtlib-benchmark-submission",
+      "url": "https://github.com/SMT-LIB/benchmark-submission",
+      "pin": "1772eef151db13b52d7be37cc689f574f43b4361",
+      "pin_type": "git-commit"
+    },
+    {
+      "id": "z3-upstream",
+      "kind": "z3-upstream-proof-regression-source",
+      "url": "https://github.com/Z3Prover/z3",
+      "pin": "32d806d500c8c1be4aacdd1541226a5b9bce7c77",
+      "pin_type": "git-commit"
+    },
+    {
+      "id": "curated-reduced",
+      "kind": "holsmt-curated-reduced-cases",
+      "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced",
+      "pin": "TASK-013",
+      "pin_type": "repository-task"
+    }
+  ]
+}

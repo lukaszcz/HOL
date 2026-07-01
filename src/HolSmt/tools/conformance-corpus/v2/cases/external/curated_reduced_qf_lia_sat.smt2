@@ -1,0 +1,7 @@
+(set-info :smt-lib-version 2.7)
+(set-logic QF_LIA)
+(set-info :status sat)
+(declare-const x Int)
+(assert (<= 0 x))
+(assert (<= x 3))
+(check-sat)

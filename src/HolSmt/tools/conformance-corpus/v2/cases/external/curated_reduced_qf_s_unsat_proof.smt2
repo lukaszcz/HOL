@@ -1,0 +1,6 @@
+(set-info :smt-lib-version 2.7)
+(set-logic QF_S)
+(set-info :status unsat)
+(assert (not (= (str.++ "a" "b") "ab")))
+(check-sat)
+(get-proof)

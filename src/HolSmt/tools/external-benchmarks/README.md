@@ -19,6 +19,18 @@ curated or scheduled benchmark runs.  Refreshing a large suite should update the
 pin first, then preserve any failing input as a minimized `.smt2` under a local
 regression directory.
 
+`pinned/manifest.json` is the reduced mandatory checked-in slice.  Refresh it
+with:
+
+```sh
+python3 src/HolSmt/tools/import_external_benchmarks.py
+```
+
+The importer verifies each pinned SHA256 before writing the case file or merging
+the `class = external-benchmark` row into the v2 conformance manifest.  It keeps
+large upstream archives out of the repository; only the reduced imported `.smt2`
+cases are checked in.
+
 The conformance report keeps external benchmark evidence separate from focused
 row-level coverage evidence.  Benchmark runs may support a row, but they must
 not replace the manifest's required positive tests, exact unsupported
