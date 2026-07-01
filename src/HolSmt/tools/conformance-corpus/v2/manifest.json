@@ -857,7 +857,7 @@
           "command:declare-datatype-declare-datatypes:reconstruction"
         ],
         "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC translation still lacks native datatype constructor replay evidence."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -1016,7 +1016,7 @@
           "command:declare-fun:reconstruction"
         ],
         "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "First-order declarations are typechecked, but checked reconstruction for function-sort and higher-order declarations remains outside the current translator."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -1504,7 +1504,7 @@
           "command:define-fun-rec-define-funs-rec:reconstruction"
         ],
         "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Recursive definition commands are parsed and bounded-state checked, but recursive semantics are not translated for checked Z3_TAC replay."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -2061,7 +2061,7 @@
           "command:exit:reconstruction"
         ],
         "failure_phase": "theorem-shape",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Exit has parser/state behavior only; it does not correspond to a theorem-producing checked Z3_TAC query."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -2222,7 +2222,7 @@
           "command:get-info-get-option:reconstruction"
         ],
         "failure_phase": "theorem-shape",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Information queries are recorded for parser/state coverage, but checked Z3_TAC does not reconstruct response objects for get-info/get-option."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -2390,7 +2390,7 @@
           "command:get-model-get-value-get-assignment-get-assertions:reconstruction"
         ],
         "failure_phase": "theorem-shape",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Model/value/assertion queries are recorded and explicitly unsupported by checked Z3_TAC because they do not produce unsat proof theorems."
       },
       "source": {
         "kind": "SMT-LIB-standard",
@@ -2699,7 +2699,7 @@
           "command:get-unsat-assumptions-get-unsat-core:reconstruction"
         ],
         "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
+        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but checked extraction/replay evidence is not implemented."
       },
       "source": {
         "kind": "SMT-LIB-standard",
