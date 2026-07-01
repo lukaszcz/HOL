@@ -2,13 +2,368 @@
   "schema_version": "2",
   "cases": [
     {
-      "id": "command:set-logic",
-      "file": "cases/commands/command_set_logic.smt2",
+      "id": "command:assert",
+      "file": "cases/commands/command_assert.smt2",
       "logic": "QF_UF",
       "standard": "SMT-LIB-2.7",
       "class": "command",
       "features": [
-        "command:set-logic"
+        "command-case:positive",
+        "command-group:assert",
+        "command:assert"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: assert"
+      }
+    },
+    {
+      "id": "command:assert:negative",
+      "file": "cases/commands/command_assert_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:assert",
+        "command:assert"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "assert term must have Bool sort",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: assert"
+      }
+    },
+    {
+      "id": "command:assert:reconstruction",
+      "file": "cases/commands/command_assert_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:assert",
+        "command:assert"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "assertion replay coverage for command corpus is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:assert",
+        "test_ids": [
+          "command:assert:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: assert"
+      }
+    },
+    {
+      "id": "command:assert:state",
+      "file": "cases/commands/command_assert_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:assert",
+        "command:assert"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: assert"
+      }
+    },
+    {
+      "id": "command:check-sat",
+      "file": "cases/commands/command_check_sat.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:check-sat",
+        "command:check-sat"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat"
+      }
+    },
+    {
+      "id": "command:check-sat-assuming",
+      "file": "cases/commands/command_check_sat_assuming.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:check-sat-assuming",
+        "command:check-sat-assuming"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
+      }
+    },
+    {
+      "id": "command:check-sat-assuming:negative",
+      "file": "cases/commands/command_check_sat_assuming_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:check-sat-assuming",
+        "command:check-sat-assuming"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "assumption literal must have Bool sort",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
+      }
+    },
+    {
+      "id": "command:check-sat-assuming:reconstruction",
+      "file": "cases/commands/command_check_sat_assuming_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:check-sat-assuming",
+        "command:check-sat-assuming"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked theorem reconstruction with assumptions is not implemented",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:check-sat-assuming",
+        "test_ids": [
+          "command:check-sat-assuming:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
+      }
+    },
+    {
+      "id": "command:check-sat-assuming:state",
+      "file": "cases/commands/command_check_sat_assuming_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:check-sat-assuming",
+        "command:check-sat-assuming"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
+      }
+    },
+    {
+      "id": "command:check-sat:negative",
+      "file": "cases/commands/command_check_sat_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:check-sat",
+        "command:check-sat"
       ],
       "modes": [
         "parser-only"
@@ -23,24 +378,3139 @@
       ],
       "expected": {
         "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed check-sat",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat"
+      }
+    },
+    {
+      "id": "command:check-sat:reconstruction",
+      "file": "cases/commands/command_check_sat_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:check-sat",
+        "command:check-sat"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
           "status": "red",
-          "diagnostic": "complete command corpus row is still an implementation obligation"
+          "diagnostic": "check-sat proof reconstruction matrix is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": {
         "files": [
-          "src/HolSmt/SmtLib_Parser.sml"
+          "src/HolSmt/SolverSpec.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
-        "feature": "command:set-logic",
+        "feature": "command-reconstruction:check-sat",
         "test_ids": [
-          "command:set-logic"
+          "command:check-sat:reconstruction"
         ],
-        "failure_phase": "parser",
+        "failure_phase": "proof-replay",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
         "kind": "SMT-LIB-standard",
-        "reference": "SMT-LIB 2.7 set-logic command"
+        "reference": "SMT-LIB 2.7 command group: check-sat"
+      }
+    },
+    {
+      "id": "command:check-sat:state",
+      "file": "cases/commands/command_check_sat_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:check-sat",
+        "command:check-sat"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: check-sat"
+      }
+    },
+    {
+      "id": "command:declare-const",
+      "file": "cases/commands/command_declare_const.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:declare-const",
+        "command:declare-const"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-const"
+      }
+    },
+    {
+      "id": "command:declare-const:negative",
+      "file": "cases/commands/command_declare_const_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:declare-const",
+        "command:declare-const"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "duplicate declaration",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-const"
+      }
+    },
+    {
+      "id": "command:declare-const:reconstruction",
+      "file": "cases/commands/command_declare_const_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:declare-const",
+        "command:declare-const"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "declare-const checked replay matrix is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:declare-const",
+        "test_ids": [
+          "command:declare-const:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-const"
+      }
+    },
+    {
+      "id": "command:declare-const:state",
+      "file": "cases/commands/command_declare_const_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:declare-const",
+        "command:declare-const"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-const"
+      }
+    },
+    {
+      "id": "command:declare-datatype-declare-datatypes",
+      "file": "cases/commands/command_declare_datatype_declare_datatypes.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatype",
+        "command:declare-datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-datatype, declare-datatypes"
+      }
+    },
+    {
+      "id": "command:declare-datatype-declare-datatypes:negative",
+      "file": "cases/commands/command_declare_datatype_declare_datatypes_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatype",
+        "command:declare-datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "recursive datatype",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-datatype, declare-datatypes"
+      }
+    },
+    {
+      "id": "command:declare-datatype-declare-datatypes:reconstruction",
+      "file": "cases/commands/command_declare_datatype_declare_datatypes_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatype",
+        "command:declare-datatypes"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "datatype constructor replay is incomplete",
+          "failure_phase": "translation",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:declare-datatype-declare-datatypes",
+        "test_ids": [
+          "command:declare-datatype-declare-datatypes:reconstruction"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-datatype, declare-datatypes"
+      }
+    },
+    {
+      "id": "command:declare-datatype-declare-datatypes:state",
+      "file": "cases/commands/command_declare_datatype_declare_datatypes_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatype",
+        "command:declare-datatypes"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-datatype, declare-datatypes"
+      }
+    },
+    {
+      "id": "command:declare-fun",
+      "file": "cases/commands/command_declare_fun.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:declare-fun",
+        "command:declare-fun"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-fun"
+      }
+    },
+    {
+      "id": "command:declare-fun:negative",
+      "file": "cases/commands/command_declare_fun_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:declare-fun",
+        "command:declare-fun"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "function arity mismatch",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-fun"
+      }
+    },
+    {
+      "id": "command:declare-fun:reconstruction",
+      "file": "cases/commands/command_declare_fun_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:declare-fun",
+        "command:declare-fun"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "function-sort and higher-order command replay is incomplete",
+          "failure_phase": "translation",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Translate.sml",
+          "src/HolSmt/SmtLib_TypeCheck.sml"
+        ],
+        "feature": "command-reconstruction:declare-fun",
+        "test_ids": [
+          "command:declare-fun:reconstruction"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-fun"
+      }
+    },
+    {
+      "id": "command:declare-fun:state",
+      "file": "cases/commands/command_declare_fun_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:declare-fun",
+        "command:declare-fun"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-fun"
+      }
+    },
+    {
+      "id": "command:declare-sort",
+      "file": "cases/commands/command_declare_sort.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:declare-sort",
+        "command:declare-sort"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-sort"
+      }
+    },
+    {
+      "id": "command:declare-sort:negative",
+      "file": "cases/commands/command_declare_sort_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:declare-sort",
+        "command:declare-sort"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "declare-sort arity",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-sort"
+      }
+    },
+    {
+      "id": "command:declare-sort:reconstruction",
+      "file": "cases/commands/command_declare_sort_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:declare-sort",
+        "command:declare-sort"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "abstract sort reconstruction coverage is incomplete",
+          "failure_phase": "translation",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "command-reconstruction:declare-sort",
+        "test_ids": [
+          "command:declare-sort:reconstruction"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-sort"
+      }
+    },
+    {
+      "id": "command:declare-sort:state",
+      "file": "cases/commands/command_declare_sort_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:declare-sort",
+        "command:declare-sort"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: declare-sort"
+      }
+    },
+    {
+      "id": "command:define-const",
+      "file": "cases/commands/command_define_const.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:define-const",
+        "command:define-const"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-const"
+      }
+    },
+    {
+      "id": "command:define-const:negative",
+      "file": "cases/commands/command_define_const_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:define-const",
+        "command:define-const"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "duplicate define-const",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-const"
+      }
+    },
+    {
+      "id": "command:define-const:reconstruction",
+      "file": "cases/commands/command_define_const_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:define-const",
+        "command:define-const"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "define-const replay evidence is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:define-const",
+        "test_ids": [
+          "command:define-const:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-const"
+      }
+    },
+    {
+      "id": "command:define-const:state",
+      "file": "cases/commands/command_define_const_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:define-const",
+        "command:define-const"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-const"
+      }
+    },
+    {
+      "id": "command:define-fun",
+      "file": "cases/commands/command_define_fun.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:define-fun",
+        "command:define-fun"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun"
+      }
+    },
+    {
+      "id": "command:define-fun-rec-define-funs-rec",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
+      "id": "command:define-fun-rec-define-funs-rec:negative",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed recursive definition block",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
+      "id": "command:define-fun-rec-define-funs-rec:reconstruction",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "recursive definition semantics are not implemented for checked replay",
+          "failure_phase": "translation",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "command-reconstruction:define-fun-rec-define-funs-rec",
+        "test_ids": [
+          "command:define-fun-rec-define-funs-rec:reconstruction"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
+      "id": "command:define-fun-rec-define-funs-rec:state",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
+      "id": "command:define-fun:negative",
+      "file": "cases/commands/command_define_fun_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:define-fun",
+        "command:define-fun"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "recursive self-reference",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun"
+      }
+    },
+    {
+      "id": "command:define-fun:reconstruction",
+      "file": "cases/commands/command_define_fun_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:define-fun",
+        "command:define-fun"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "define-fun replay coverage is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_TypeCheck.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:define-fun",
+        "test_ids": [
+          "command:define-fun:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun"
+      }
+    },
+    {
+      "id": "command:define-fun:state",
+      "file": "cases/commands/command_define_fun_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:define-fun",
+        "command:define-fun"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun"
+      }
+    },
+    {
+      "id": "command:define-sort",
+      "file": "cases/commands/command_define_sort.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:define-sort",
+        "command:define-sort"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-sort"
+      }
+    },
+    {
+      "id": "command:define-sort:negative",
+      "file": "cases/commands/command_define_sort_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:define-sort",
+        "command:define-sort"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "recursive sort alias",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-sort"
+      }
+    },
+    {
+      "id": "command:define-sort:reconstruction",
+      "file": "cases/commands/command_define_sort_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:define-sort",
+        "command:define-sort"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "define-sort alias replay evidence is incomplete",
+          "failure_phase": "translation",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Translate.sml",
+          "src/HolSmt/SmtLib_TypeCheck.sml"
+        ],
+        "feature": "command-reconstruction:define-sort",
+        "test_ids": [
+          "command:define-sort:reconstruction"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-sort"
+      }
+    },
+    {
+      "id": "command:define-sort:state",
+      "file": "cases/commands/command_define_sort_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:define-sort",
+        "command:define-sort"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-sort"
+      }
+    },
+    {
+      "id": "command:echo",
+      "file": "cases/commands/command_echo.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:echo",
+        "command:echo"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: echo"
+      }
+    },
+    {
+      "id": "command:echo:negative",
+      "file": "cases/commands/command_echo_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:echo",
+        "command:echo"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "echo requires a string literal",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: echo"
+      }
+    },
+    {
+      "id": "command:echo:reconstruction",
+      "file": "cases/commands/command_echo_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:echo",
+        "command:echo"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "echo response behavior is not represented in theorem reconstruction",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/tools/conformance-corpus"
+        ],
+        "feature": "command-reconstruction:echo",
+        "test_ids": [
+          "command:echo:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: echo"
+      }
+    },
+    {
+      "id": "command:echo:state",
+      "file": "cases/commands/command_echo_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:echo",
+        "command:echo"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: echo"
+      }
+    },
+    {
+      "id": "command:exit",
+      "file": "cases/commands/command_exit.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:exit",
+        "command:exit"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: exit"
+      }
+    },
+    {
+      "id": "command:exit:negative",
+      "file": "cases/commands/command_exit_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:exit",
+        "command:exit"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed exit",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: exit"
+      }
+    },
+    {
+      "id": "command:exit:reconstruction",
+      "file": "cases/commands/command_exit_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:exit",
+        "command:exit"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "exit finalization behavior is not represented in theorem reconstruction",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/tools/conformance-corpus"
+        ],
+        "feature": "command-reconstruction:exit",
+        "test_ids": [
+          "command:exit:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: exit"
+      }
+    },
+    {
+      "id": "command:exit:state",
+      "file": "cases/commands/command_exit_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:exit",
+        "command:exit"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: exit"
+      }
+    },
+    {
+      "id": "command:get-info-get-option",
+      "file": "cases/commands/command_get_info_get_option.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:get-info-get-option",
+        "command:get-info",
+        "command:get-option"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-info, get-option"
+      }
+    },
+    {
+      "id": "command:get-info-get-option:negative",
+      "file": "cases/commands/command_get_info_get_option_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:get-info-get-option",
+        "command:get-info",
+        "command:get-option"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed get-option",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-info, get-option"
+      }
+    },
+    {
+      "id": "command:get-info-get-option:reconstruction",
+      "file": "cases/commands/command_get_info_get_option_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:get-info-get-option",
+        "command:get-info",
+        "command:get-option"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "get-info/get-option response semantics are not reconstructed",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/tools/conformance-corpus"
+        ],
+        "feature": "command-reconstruction:get-info-get-option",
+        "test_ids": [
+          "command:get-info-get-option:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-info, get-option"
+      }
+    },
+    {
+      "id": "command:get-info-get-option:state",
+      "file": "cases/commands/command_get_info_get_option_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:get-info-get-option",
+        "command:get-info",
+        "command:get-option"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-info, get-option"
+      }
+    },
+    {
+      "id": "command:get-model-get-value-get-assignment-get-assertions",
+      "file": "cases/commands/command_get_model_get_value_get_assignment_get_assertions.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:get-model-get-value-get-assignment-get-assertions",
+        "command:get-assertions",
+        "command:get-assignment",
+        "command:get-model",
+        "command:get-value"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-model, get-value, get-assignment, get-assertions"
+      }
+    },
+    {
+      "id": "command:get-model-get-value-get-assignment-get-assertions:negative",
+      "file": "cases/commands/command_get_model_get_value_get_assignment_get_assertions_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:get-model-get-value-get-assignment-get-assertions",
+        "command:get-assertions",
+        "command:get-assignment",
+        "command:get-model",
+        "command:get-value"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed get-value",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-model, get-value, get-assignment, get-assertions"
+      }
+    },
+    {
+      "id": "command:get-model-get-value-get-assignment-get-assertions:reconstruction",
+      "file": "cases/commands/command_get_model_get_value_get_assignment_get_assertions_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:get-model-get-value-get-assignment-get-assertions",
+        "command:get-assertions",
+        "command:get-assignment",
+        "command:get-model",
+        "command:get-value"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "model/value response objects are not produced by checked reconstruction",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/tools/conformance-corpus"
+        ],
+        "feature": "command-reconstruction:get-model-get-value-get-assignment-get-assertions",
+        "test_ids": [
+          "command:get-model-get-value-get-assignment-get-assertions:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-model, get-value, get-assignment, get-assertions"
+      }
+    },
+    {
+      "id": "command:get-model-get-value-get-assignment-get-assertions:state",
+      "file": "cases/commands/command_get_model_get_value_get_assignment_get_assertions_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:get-model-get-value-get-assignment-get-assertions",
+        "command:get-assertions",
+        "command:get-assignment",
+        "command:get-model",
+        "command:get-value"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-model, get-value, get-assignment, get-assertions"
+      }
+    },
+    {
+      "id": "command:get-proof",
+      "file": "cases/commands/command_get_proof.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:get-proof",
+        "command:get-proof"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-proof"
+      }
+    },
+    {
+      "id": "command:get-proof:negative",
+      "file": "cases/commands/command_get_proof_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:get-proof",
+        "command:get-proof"
+      ],
+      "modes": [
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-oracle": {
+          "status": "fail",
+          "diagnostic": "get-proof before unsat check-sat",
+          "failure_phase": "solver"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-proof"
+      }
+    },
+    {
+      "id": "command:get-proof:reconstruction",
+      "file": "cases/commands/command_get_proof_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:get-proof",
+        "command:get-proof"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "get-proof parse/replay evidence is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:get-proof",
+        "test_ids": [
+          "command:get-proof:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-proof"
+      }
+    },
+    {
+      "id": "command:get-proof:state",
+      "file": "cases/commands/command_get_proof_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:get-proof",
+        "command:get-proof"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-proof"
+      }
+    },
+    {
+      "id": "command:get-unsat-assumptions-get-unsat-core",
+      "file": "cases/commands/command_get_unsat_assumptions_get_unsat_core.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:get-unsat-assumptions-get-unsat-core",
+        "command:get-unsat-assumptions",
+        "command:get-unsat-core"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"
+      }
+    },
+    {
+      "id": "command:get-unsat-assumptions-get-unsat-core:negative",
+      "file": "cases/commands/command_get_unsat_assumptions_get_unsat_core_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:get-unsat-assumptions-get-unsat-core",
+        "command:get-unsat-assumptions",
+        "command:get-unsat-core"
+      ],
+      "modes": [
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-oracle": {
+          "status": "fail",
+          "diagnostic": "unsat core requested before unsat result",
+          "failure_phase": "solver"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"
+      }
+    },
+    {
+      "id": "command:get-unsat-assumptions-get-unsat-core:reconstruction",
+      "file": "cases/commands/command_get_unsat_assumptions_get_unsat_core_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:get-unsat-assumptions-get-unsat-core",
+        "command:get-unsat-assumptions",
+        "command:get-unsat-core"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "unsat-core and unsat-assumption extraction is not implemented",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
+        "test_ids": [
+          "command:get-unsat-assumptions-get-unsat-core:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"
+      }
+    },
+    {
+      "id": "command:get-unsat-assumptions-get-unsat-core:state",
+      "file": "cases/commands/command_get_unsat_assumptions_get_unsat_core_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:get-unsat-assumptions-get-unsat-core",
+        "command:get-unsat-assumptions",
+        "command:get-unsat-core"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"
+      }
+    },
+    {
+      "id": "command:push-pop",
+      "file": "cases/commands/command_push_pop.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:push-pop",
+        "command:pop",
+        "command:push"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: push, pop"
+      }
+    },
+    {
+      "id": "command:push-pop:negative",
+      "file": "cases/commands/command_push_pop_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:push-pop",
+        "command:pop",
+        "command:push"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "pop scope underflow",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: push, pop"
+      }
+    },
+    {
+      "id": "command:push-pop:reconstruction",
+      "file": "cases/commands/command_push_pop_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:push-pop",
+        "command:pop",
+        "command:push"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "scoped assertion proof replay is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:push-pop",
+        "test_ids": [
+          "command:push-pop:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: push, pop"
+      }
+    },
+    {
+      "id": "command:push-pop:state",
+      "file": "cases/commands/command_push_pop_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:push-pop",
+        "command:pop",
+        "command:push"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: push, pop"
+      }
+    },
+    {
+      "id": "command:reset-reset-assertions",
+      "file": "cases/commands/command_reset_reset_assertions.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:reset-reset-assertions",
+        "command:reset",
+        "command:reset-assertions"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: reset, reset-assertions"
+      }
+    },
+    {
+      "id": "command:reset-reset-assertions:negative",
+      "file": "cases/commands/command_reset_reset_assertions_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:reset-reset-assertions",
+        "command:reset",
+        "command:reset-assertions"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed reset",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: reset, reset-assertions"
+      }
+    },
+    {
+      "id": "command:reset-reset-assertions:reconstruction",
+      "file": "cases/commands/command_reset_reset_assertions_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:reset-reset-assertions",
+        "command:reset",
+        "command:reset-assertions"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "reset/reset-assertions replay semantics are incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/SolverSpec.sml"
+        ],
+        "feature": "command-reconstruction:reset-reset-assertions",
+        "test_ids": [
+          "command:reset-reset-assertions:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: reset, reset-assertions"
+      }
+    },
+    {
+      "id": "command:reset-reset-assertions:state",
+      "file": "cases/commands/command_reset_reset_assertions_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:reset-reset-assertions",
+        "command:reset",
+        "command:reset-assertions"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: reset, reset-assertions"
+      }
+    },
+    {
+      "id": "command:set-info",
+      "file": "cases/commands/command_set_info.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:set-info",
+        "command:set-info"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-info"
+      }
+    },
+    {
+      "id": "command:set-info:negative",
+      "file": "cases/commands/command_set_info_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:set-info",
+        "command:set-info"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "fail",
+          "diagnostic": "malformed set-info attribute",
+          "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-info"
+      }
+    },
+    {
+      "id": "command:set-info:reconstruction",
+      "file": "cases/commands/command_set_info_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:set-info",
+        "command:set-info"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "set-info has no theorem reconstruction result object",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/tools/conformance-corpus"
+        ],
+        "feature": "command-reconstruction:set-info",
+        "test_ids": [
+          "command:set-info:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-info"
+      }
+    },
+    {
+      "id": "command:set-info:state",
+      "file": "cases/commands/command_set_info_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:set-info",
+        "command:set-info"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: false"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-info"
+      }
+    },
+    {
+      "id": "command:set-logic",
+      "file": "cases/commands/command_set_logic.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:set-logic",
+        "command:set-logic"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-logic"
+      }
+    },
+    {
+      "id": "command:set-logic:negative",
+      "file": "cases/commands/command_set_logic_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:set-logic",
+        "command:set-logic"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "duplicate set-logic",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-logic"
+      }
+    },
+    {
+      "id": "command:set-logic:reconstruction",
+      "file": "cases/commands/command_set_logic_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:set-logic",
+        "command:set-logic"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked reconstruction evidence for set-logic state is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Logics.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:set-logic",
+        "test_ids": [
+          "command:set-logic:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-logic"
+      }
+    },
+    {
+      "id": "command:set-logic:state",
+      "file": "cases/commands/command_set_logic_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:set-logic",
+        "command:set-logic"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-logic"
+      }
+    },
+    {
+      "id": "command:set-option",
+      "file": "cases/commands/command_set_option.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:positive",
+        "command-group:set-option",
+        "command:set-option"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-option"
+      }
+    },
+    {
+      "id": "command:set-option:negative",
+      "file": "cases/commands/command_set_option_negative.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:negative",
+        "command-group:set-option",
+        "command:set-option"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "set-option after logic or assertions",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-option"
+      }
+    },
+    {
+      "id": "command:set-option:reconstruction",
+      "file": "cases/commands/command_set_option_reconstruction.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:reconstruction",
+        "command-group:set-option",
+        "command:set-option"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked proof option reconstruction matrix is incomplete",
+          "failure_phase": "proof-replay",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3.sml"
+        ],
+        "feature": "command-reconstruction:set-option",
+        "test_ids": [
+          "command:set-option:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-option"
+      }
+    },
+    {
+      "id": "command:set-option:state",
+      "file": "cases/commands/command_set_option_state.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:state",
+        "command-group:set-option",
+        "command:set-option"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        },
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: set-option"
       }
     },
     {

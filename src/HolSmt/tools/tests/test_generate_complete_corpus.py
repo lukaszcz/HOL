@@ -60,6 +60,54 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertIn("proof-parse", cases[0]["expected"])
         self.assertIn("proof-replay", cases[0]["expected"])
 
+    def test_commands_subcommand_emits_four_cases_per_command_group(self):
+        stdout = io.StringIO()
+        with contextlib.redirect_stdout(stdout):
+            self.assertEqual(generator.main(["commands"]), 0)
+
+        manifest = json.loads(stdout.getvalue())
+        cases = audit.validate_v2_manifest(manifest)
+        self.assertEqual(len(cases), 4 * len(generator.COMMAND_GROUPS))
+        self.assertEqual({case["class"] for case in cases}, {"command"})
+
+        by_group = {}
+        for case in cases:
+            group_features = [
+                feature
+                for feature in case["features"]
+                if feature.startswith("command-group:")
+            ]
+            self.assertEqual(len(group_features), 1, case)
+            by_group.setdefault(group_features[0], []).append(case)
+
+        self.assertEqual(len(by_group), len(generator.COMMAND_GROUPS))
+        for group_cases in by_group.values():
+            kinds = {
+                feature
+                for case in group_cases
+                for feature in case["features"]
+                if feature.startswith("command-case:")
+            }
+            self.assertEqual(
+                kinds,
+                {
+                    "command-case:positive",
+                    "command-case:negative",
+                    "command-case:state",
+                    "command-case:reconstruction",
+                },
+            )
+            negative_cases = [
+                case
+                for case in group_cases
+                if "command-case:negative" in case["features"]
+            ]
+            self.assertEqual(len(negative_cases), 1)
+            for result in negative_cases[0]["expected"].values():
+                self.assertEqual(result["status"], "fail")
+                self.assertIn("diagnostic", result)
+                self.assertIn("failure_phase", result)
+
     def test_manifest_entry_preserves_red_obligation_contract(self):
         case_id = generator.deterministic_case_id("command", "command:future")
         common = {

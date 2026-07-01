@@ -1,0 +1,5 @@
+(set-logic QF_UF)
+(declare-fun pred (Int) Bool)
+(declare-const x Int)
+(assert (pred x))
+(check-sat)

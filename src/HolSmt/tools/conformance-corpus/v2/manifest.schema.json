@@ -295,6 +295,19 @@
           "type": "string",
           "minLength": 1
         },
+        "failure_phase": {
+          "enum": [
+            "parser",
+            "typecheck",
+            "translation",
+            "solver",
+            "proof-parse",
+            "proof-replay",
+            "theorem-shape",
+            "oracle-tag",
+            "version-drift"
+          ]
+        },
         "theorem_shape": {
           "type": "string",
           "minLength": 1

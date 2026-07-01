@@ -1,0 +1,6 @@
+(set-option :produce-unsat-cores true)
+(set-logic QF_UF)
+(assert (! false :named bad))
+(check-sat)
+(get-unsat-core)
+(get-unsat-assumptions)

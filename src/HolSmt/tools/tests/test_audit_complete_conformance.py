@@ -150,6 +150,84 @@ class CompleteConformanceAuditTests(unittest.TestCase):
         issues = audit.audit_coverage(rows, [])
 
         self.assertTrue(
+            any(issue.code == "missing_command_v2_evidence" for issue in issues),
+            [issue.render() for issue in issues],
+        )
+
+    def test_command_coverage_rows_require_v2_command_cases(self):
+        rows = [
+            audit.CoverageRow(
+                section="commands",
+                item="check-sat-assuming",
+                row_class="SMT-LIB 2.7",
+                statuses={"implemented"},
+                positive_evidence=1,
+                complete_required=True,
+            )
+        ]
+        cases = [
+            v2_case(
+                "check_sat_assuming_logic_smoke",
+                features=["command:check-sat-assuming"],
+                row_class="logic",
+            )
+        ]
+
+        issues = audit.audit_coverage(rows, cases)
+
+        self.assertTrue(
+            any(
+                issue.code == "missing_command_v2_evidence"
+                and issue.details["missing_commands"] == ["check-sat-assuming"]
+                for issue in issues
+            ),
+            [issue.render() for issue in issues],
+        )
+
+    def test_command_coverage_rows_accept_complete_v2_command_cases(self):
+        rows = [
+            audit.CoverageRow(
+                section="commands",
+                item="get-unsat-assumptions, get-unsat-core",
+                row_class="SMT-LIB 2.7",
+                statuses={"implemented"},
+                positive_evidence=1,
+                complete_required=True,
+            )
+        ]
+        case = v2_case(
+            "command_get_unsat_core",
+            features=["command:get-unsat-assumptions", "command:get-unsat-core"],
+            row_class="command",
+        )
+        case["file"] = "cases/commands/command_get_unsat_core.smt2"
+        case["source"] = {
+            "kind": "SMT-LIB-standard",
+            "reference": "SMT-LIB 2.7 unsat core commands",
+        }
+
+        issues = audit.audit_coverage(rows, [case])
+
+        self.assertFalse(
+            [issue for issue in issues if issue.code == "missing_command_v2_evidence"],
+            [issue.render() for issue in issues],
+        )
+
+    def test_complete_required_row_cannot_be_only_parse_or_unsupported_evidence_non_command(self):
+        rows = [
+            audit.CoverageRow(
+                section="theories",
+                item="future-theory",
+                row_class="SMT-LIB 2.7",
+                statuses={"parse_only", "unsupported_diagnostic"},
+                diagnostic_evidence=2,
+                complete_required=True,
+            )
+        ]
+
+        issues = audit.audit_coverage(rows, [])
+
+        self.assertTrue(
             any(issue.code == "weak_complete_required_evidence" for issue in issues),
             [issue.render() for issue in issues],
         )
@@ -157,8 +235,8 @@ class CompleteConformanceAuditTests(unittest.TestCase):
     def test_complete_required_row_cannot_be_diagnostic_only_evidence(self):
         rows = [
             audit.CoverageRow(
-                section="commands",
-                item="future-command",
+                section="theories",
+                item="future-theory",
                 row_class="SMT-LIB 2.7",
                 statuses={"implemented"},
                 positive_evidence=0,

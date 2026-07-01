@@ -104,6 +104,22 @@ class GeneratedCase:
         return str(self.entry["file"])
 
 
+@dataclass(frozen=True)
+class CommandGroup:
+    slug: str
+    commands: tuple[str, ...]
+    positive_script: str
+    negative_script: str
+    state_script: str
+    reconstruction_script: str
+    negative_diagnostic: str
+    negative_phase: str
+    reconstruction_applies: bool
+    reconstruction_diagnostic: str
+    reconstruction_phase: str
+    obligation_files: tuple[str, ...]
+
+
 def slug(value: str) -> str:
     result = re.sub(r"[^A-Za-z0-9]+", "_", value.lower()).strip("_")
     result = re.sub(r"_+", "_", result)
@@ -154,6 +170,7 @@ def expected_result(
     status: str,
     *,
     diagnostic: str | None = None,
+    failure_phase: str | None = None,
     theorem_shape: str | None = None,
     proof_rule_histogram: Mapping[str, int] | None = None,
     notes: str | None = None,
@@ -162,6 +179,8 @@ def expected_result(
     result: dict[str, object] = {"status": status}
     if diagnostic is not None:
         result["diagnostic"] = require_string(diagnostic, "diagnostic")
+    if failure_phase is not None:
+        result["failure_phase"] = require_choice(failure_phase, "failure_phase", FAILURE_PHASES)
     if theorem_shape is not None:
         result["theorem_shape"] = require_string(theorem_shape, "theorem_shape")
     if proof_rule_histogram is not None:
@@ -336,6 +355,439 @@ def red_sample(
     return GeneratedCase(entry=entry, script=script)
 
 
+COMMAND_GROUPS: tuple[CommandGroup, ...] = (
+    CommandGroup(
+        slug="set-logic",
+        commands=("set-logic",),
+        positive_script="(set-logic QF_UF)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(set-logic QF_LIA)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(check-sat)\n",
+        negative_diagnostic="duplicate set-logic",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="checked reconstruction evidence for set-logic state is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Logics.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="set-info",
+        commands=("set-info",),
+        positive_script='(set-logic QF_UF)\n(set-info :source "command corpus")\n(check-sat)\n',
+        negative_script="(set-logic QF_UF)\n(set-info :source)\n",
+        state_script='(set-logic QF_UF)\n(set-info :category "crafted")\n(declare-const p Bool)\n(check-sat)\n',
+        reconstruction_script='(set-logic QF_UF)\n(set-info :source "no theorem effect")\n(assert false)\n(check-sat)\n',
+        negative_diagnostic="malformed set-info attribute",
+        negative_phase="parser",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="set-info has no theorem reconstruction result object",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
+    ),
+    CommandGroup(
+        slug="set-option",
+        commands=("set-option",),
+        positive_script="(set-option :produce-proofs true)\n(set-option :produce-models true)\n(set-logic QF_UF)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(set-option :produce-proofs true)\n",
+        state_script="(set-option :global-declarations true)\n(set-logic QF_UF)\n(declare-const p Bool)\n(check-sat)\n",
+        reconstruction_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        negative_diagnostic="set-option after logic or assertions",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="checked proof option reconstruction matrix is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3.sml"),
+    ),
+    CommandGroup(
+        slug="get-info-get-option",
+        commands=("get-info", "get-option"),
+        positive_script="(set-logic QF_UF)\n(get-info :name)\n(get-option :produce-proofs)\n",
+        negative_script="(set-logic QF_UF)\n(get-option)\n",
+        state_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(get-option :produce-proofs)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(get-info :version)\n(get-option :print-success)\n(check-sat)\n",
+        negative_diagnostic="malformed get-option",
+        negative_phase="parser",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="get-info/get-option response semantics are not reconstructed",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
+    ),
+    CommandGroup(
+        slug="declare-sort",
+        commands=("declare-sort",),
+        positive_script="(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(declare-sort U 1)\n",
+        state_script="(set-logic QF_UF)\n(declare-sort U 0)\n(push 1)\n(declare-const a U)\n(pop 1)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(assert (= a a))\n(check-sat)\n",
+        negative_diagnostic="declare-sort arity",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="abstract sort reconstruction coverage is incomplete",
+        reconstruction_phase="translation",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Translate.sml"),
+    ),
+    CommandGroup(
+        slug="define-sort",
+        commands=("define-sort",),
+        positive_script="(set-logic QF_UF)\n(define-sort UAlias () Bool)\n(declare-const p UAlias)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(define-sort Bad () Bad)\n",
+        state_script="(set-logic QF_UF)\n(define-sort Pair (A B) Bool)\n(declare-const p Bool)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(define-sort UAlias () Bool)\n(assert true)\n(check-sat)\n",
+        negative_diagnostic="recursive sort alias",
+        negative_phase="typecheck",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="define-sort alias replay evidence is incomplete",
+        reconstruction_phase="translation",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/SmtLib_Translate.sml"),
+    ),
+    CommandGroup(
+        slug="declare-const",
+        commands=("declare-const",),
+        positive_script="(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const i Int)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(declare-const p Bool)\n(declare-const p Int)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert (not p))\n(check-sat)\n",
+        negative_diagnostic="duplicate declaration",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="declare-const checked replay matrix is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="declare-fun",
+        commands=("declare-fun",),
+        positive_script="(set-logic QF_UF)\n(declare-fun f (Bool Bool) Bool)\n(declare-const p Bool)\n(assert (f p p))\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(declare-fun f (Bool) Bool)\n(assert (f true false))\n",
+        state_script="(set-logic QF_UF)\n(declare-fun pred (Int) Bool)\n(declare-const x Int)\n(assert (pred x))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-fun h ((-> Bool Bool)) Bool)\n(check-sat)\n",
+        negative_diagnostic="function arity mismatch",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="function-sort and higher-order command replay is incomplete",
+        reconstruction_phase="translation",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/SmtLib_Translate.sml"),
+    ),
+    CommandGroup(
+        slug="define-const",
+        commands=("define-const",),
+        positive_script="(set-logic QF_UF)\n(define-const p Bool true)\n(assert p)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(define-const p Bool true)\n(define-const p Bool false)\n",
+        state_script="(set-logic QF_UF)\n(define-const p Bool true)\n(push 1)\n(assert p)\n(pop 1)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(define-const p Bool false)\n(assert p)\n(check-sat)\n",
+        negative_diagnostic="duplicate define-const",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="define-const replay evidence is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="define-fun",
+        commands=("define-fun",),
+        positive_script="(set-logic QF_UF)\n(define-fun id ((p Bool)) Bool p)\n(assert (id true))\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(define-fun loop ((p Bool)) Bool (loop p))\n",
+        state_script="(set-logic QF_UF)\n(define-fun both ((p Bool) (q Bool)) Bool (and p q))\n(assert (both true true))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(define-fun bad () Bool false)\n(assert bad)\n(check-sat)\n",
+        negative_diagnostic="recursive self-reference",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="define-fun replay coverage is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="define-fun-rec-define-funs-rec",
+        commands=("define-fun-rec", "define-funs-rec"),
+        positive_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool p)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(define-funs-rec ((f ((p Bool)) Bool)) ())\n",
+        state_script="(set-logic QF_UF)\n(define-funs-rec ((f ((p Bool)) Bool)) ((not p)))\n(assert (f false))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool (f p))\n(check-sat)\n",
+        negative_diagnostic="malformed recursive definition block",
+        negative_phase="parser",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="recursive definition semantics are not implemented for checked replay",
+        reconstruction_phase="translation",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib_Translate.sml"),
+    ),
+    CommandGroup(
+        slug="declare-datatype-declare-datatypes",
+        commands=("declare-datatype", "declare-datatypes"),
+        positive_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(declare-datatypes ((Tree 0)) (((node (left Tree) (right Tree)))))\n",
+        state_script="(set-logic QF_UF)\n(declare-datatypes ((Color 0)) (((red) (blue))))\n(declare-const c Color)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (not (= red blue)))\n(check-sat)\n",
+        negative_diagnostic="recursive datatype",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="datatype constructor replay is incomplete",
+        reconstruction_phase="translation",
+        obligation_files=("src/HolSmt/SmtLib_Datatypes.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="assert",
+        commands=("assert",),
+        positive_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named named_p))\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(declare-const x Int)\n(assert x)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(push 1)\n(assert p)\n(pop 1)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        negative_diagnostic="assert term must have Bool sort",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="assertion replay coverage for command corpus is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="check-sat",
+        commands=("check-sat",),
+        positive_script="(set-logic QF_UF)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(check-sat true)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n(assert (not p))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        negative_diagnostic="malformed check-sat",
+        negative_phase="parser",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="check-sat proof reconstruction matrix is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SolverSpec.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="check-sat-assuming",
+        commands=("check-sat-assuming",),
+        positive_script="(set-logic QF_UF)\n(declare-const p Bool)\n(check-sat-assuming (p))\n",
+        negative_script="(set-logic QF_UF)\n(declare-const x Int)\n(check-sat-assuming (x))\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(push 1)\n(check-sat-assuming (p))\n(pop 1)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named p_name))\n(check-sat-assuming ((not p)))\n",
+        negative_diagnostic="assumption literal must have Bool sort",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="checked theorem reconstruction with assumptions is not implemented",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_TypeCheck.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="get-proof",
+        commands=("get-proof",),
+        positive_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        negative_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(get-proof)\n",
+        state_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        reconstruction_script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
+        negative_diagnostic="get-proof before unsat check-sat",
+        negative_phase="solver",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="get-proof parse/replay evidence is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/Z3_ProofParser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="get-unsat-assumptions-get-unsat-core",
+        commands=("get-unsat-assumptions", "get-unsat-core"),
+        positive_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n(get-unsat-assumptions)\n",
+        negative_script="(set-logic QF_UF)\n(get-unsat-core)\n",
+        state_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n",
+        reconstruction_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n",
+        negative_diagnostic="unsat core requested before unsat result",
+        negative_phase="solver",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="unsat-core and unsat-assumption extraction is not implemented",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="get-model-get-value-get-assignment-get-assertions",
+        commands=("get-model", "get-value", "get-assignment", "get-assertions"),
+        positive_script="(set-option :produce-models true)\n(set-logic QF_UF)\n(declare-const p Bool)\n(check-sat)\n(get-model)\n(get-value (p))\n(get-assignment)\n(get-assertions)\n",
+        negative_script="(set-logic QF_UF)\n(get-value)\n",
+        state_script="(set-option :produce-models true)\n(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(check-sat)\n(get-value (p))\n",
+        reconstruction_script="(set-option :produce-models true)\n(set-logic QF_UF)\n(declare-const p Bool)\n(check-sat)\n(get-model)\n",
+        negative_diagnostic="malformed get-value",
+        negative_phase="parser",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="model/value response objects are not produced by checked reconstruction",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
+    ),
+    CommandGroup(
+        slug="push-pop",
+        commands=("push", "pop"),
+        positive_script="(set-logic QF_UF)\n(push 1)\n(pop 1)\n(check-sat)\n",
+        negative_script="(set-logic QF_UF)\n(pop 1)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(push 1)\n(assert p)\n(pop 1)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(push 1)\n(assert false)\n(check-sat)\n(pop 1)\n",
+        negative_diagnostic="pop scope underflow",
+        negative_phase="typecheck",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="scoped assertion proof replay is incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+    ),
+    CommandGroup(
+        slug="reset-reset-assertions",
+        commands=("reset", "reset-assertions"),
+        positive_script="(set-logic QF_UF)\n(declare-const p Bool)\n(reset-assertions)\n(check-sat)\n(reset)\n",
+        negative_script="(set-logic QF_UF)\n(reset true)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert p)\n(reset-assertions)\n(assert (not p))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(reset-assertions)\n(check-sat)\n",
+        negative_diagnostic="malformed reset",
+        negative_phase="parser",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="reset/reset-assertions replay semantics are incomplete",
+        reconstruction_phase="proof-replay",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SolverSpec.sml"),
+    ),
+    CommandGroup(
+        slug="echo",
+        commands=("echo",),
+        positive_script='(set-logic QF_UF)\n(echo "hello command corpus")\n(check-sat)\n',
+        negative_script="(set-logic QF_UF)\n(echo hello)\n",
+        state_script='(set-logic QF_UF)\n(echo "state is unchanged")\n(declare-const p Bool)\n(check-sat)\n',
+        reconstruction_script='(set-logic QF_UF)\n(echo "no theorem effect")\n(assert false)\n(check-sat)\n',
+        negative_diagnostic="echo requires a string literal",
+        negative_phase="parser",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="echo response behavior is not represented in theorem reconstruction",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
+    ),
+    CommandGroup(
+        slug="exit",
+        commands=("exit",),
+        positive_script="(set-logic QF_UF)\n(exit)\n",
+        negative_script="(set-logic QF_UF)\n(exit true)\n",
+        state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(exit)\n(assert p)\n",
+        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(exit)\n(check-sat)\n",
+        negative_diagnostic="malformed exit",
+        negative_phase="parser",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="exit finalization behavior is not represented in theorem reconstruction",
+        reconstruction_phase="theorem-shape",
+        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/tools/conformance-corpus"),
+    ),
+)
+
+
+def command_features(group: CommandGroup) -> list[str]:
+    return [*(f"command:{command}" for command in group.commands), f"command-group:{group.slug}"]
+
+
+def command_case(
+    group: CommandGroup,
+    kind: str,
+    script: str,
+    modes: Sequence[str],
+    expected: Mapping[str, Mapping[str, object]],
+    *,
+    implementation: Mapping[str, object] | None = None,
+) -> GeneratedCase:
+    case_id = f"command:{group.slug}" if kind == "positive" else f"command:{group.slug}:{kind}"
+    entry = manifest_entry(
+        case_id=case_id,
+        file=deterministic_case_file("command", case_id),
+        logic="QF_UF",
+        standard="SMT-LIB-2.7",
+        row_class="command",
+        features=command_features(group) + [f"command-case:{kind}"],
+        modes=modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=expected,
+        implementation_obligation=implementation,
+        source=source(
+            "SMT-LIB-standard",
+            "SMT-LIB 2.7 command group: " + ", ".join(group.commands),
+        ),
+    )
+    return GeneratedCase(entry=entry, script=script)
+
+
+def mode_for_failure_phase(failure_phase: str) -> str:
+    require_choice(failure_phase, "failure_phase", FAILURE_PHASES)
+    if failure_phase == "parser":
+        return "parser-only"
+    if failure_phase in {"typecheck", "translation"}:
+        return "typecheck-only"
+    if failure_phase == "solver":
+        return "z3-oracle"
+    if failure_phase in {"proof-parse", "proof-replay"}:
+        return failure_phase
+    return "z3-tac"
+
+
+def command_cases() -> list[GeneratedCase]:
+    cases: list[GeneratedCase] = []
+    for group in COMMAND_GROUPS:
+        cases.append(
+            command_case(
+                group,
+                "positive",
+                group.positive_script,
+                ("parser-only", "typecheck-only"),
+                {
+                    "parser-only": expected_result("pass"),
+                    "typecheck-only": expected_result("pass"),
+                },
+            )
+        )
+        cases.append(
+            command_case(
+                group,
+                "negative",
+                group.negative_script,
+                (mode_for_failure_phase(group.negative_phase),),
+                {
+                    mode_for_failure_phase(group.negative_phase): expected_result(
+                        "fail",
+                        diagnostic=group.negative_diagnostic,
+                        failure_phase=group.negative_phase,
+                    )
+                },
+            )
+        )
+        cases.append(
+            command_case(
+                group,
+                "state",
+                group.state_script,
+                ("typecheck-only", "z3-oracle"),
+                {
+                    "typecheck-only": expected_result(
+                        "pass",
+                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+                    ),
+                    "z3-oracle": expected_result(
+                        "pass",
+                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+                    ),
+                },
+            )
+        )
+        reconstruction_case_id = f"command:{group.slug}:reconstruction"
+        cases.append(
+            command_case(
+                group,
+                "reconstruction",
+                group.reconstruction_script,
+                ("z3-tac",),
+                {
+                    "z3-tac": expected_result(
+                        "red",
+                        diagnostic=group.reconstruction_diagnostic,
+                        failure_phase=group.reconstruction_phase,
+                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+                    )
+                },
+                implementation=implementation_obligation(
+                    files=group.obligation_files,
+                    feature=f"command-reconstruction:{group.slug}",
+                    test_ids=[reconstruction_case_id],
+                    failure_phase=group.reconstruction_phase,
+                    notes=GENERATED_OBLIGATION_NOTES,
+                ),
+            )
+        )
+    return cases
+
+
 def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
     requested = tuple(classes)
     for row_class in requested:
@@ -420,6 +872,12 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
     return [case for case in samples if str(case.entry["class"]) in requested]
 
 
+def cases_for_domain(domain: str) -> list[GeneratedCase]:
+    if domain == "commands":
+        return command_cases()
+    return sample_cases((DOMAIN_CLASSES[domain],))
+
+
 def manifest_for_cases(cases: Sequence[GeneratedCase]) -> dict[str, object]:
     entries = sorted((case.entry for case in cases), key=lambda entry: str(entry["id"]))
     return {"schema_version": MANIFEST_SCHEMA_VERSION, "cases": entries}
@@ -444,6 +902,7 @@ def merge_manifest(existing: Mapping[str, object], generated: Sequence[Generated
     if not isinstance(existing_cases, list):
         raise GeneratorError("existing manifest cases must be a list")
     generated_by_id = {case.case_id: case.entry for case in generated}
+    generated_classes = {str(case.entry["class"]) for case in generated}
     retained = []
     for case in existing_cases:
         if not isinstance(case, Mapping):
@@ -452,7 +911,11 @@ def merge_manifest(existing: Mapping[str, object], generated: Sequence[Generated
         if str(case.get("id")) in generated_by_id:
             continue
         obligation = case.get("implementation_obligation")
-        if isinstance(obligation, Mapping) and obligation.get("notes") == GENERATED_OBLIGATION_NOTES:
+        if (
+            isinstance(obligation, Mapping)
+            and obligation.get("notes") == GENERATED_OBLIGATION_NOTES
+            and str(case.get("class")) in generated_classes
+        ):
             continue
         retained.append(case)
     merged = retained + list(generated_by_id.values())
@@ -483,7 +946,8 @@ def write_generated_cases(case_root: Path, cases: Sequence[GeneratedCase]) -> No
 
 
 def generate(classes: Iterable[str], manifest_path: Path, *, write: bool) -> dict[str, object]:
-    cases = sample_cases(classes)
+    requested = tuple(classes)
+    cases = command_cases() if requested == ("command",) else sample_cases(requested)
     manifest = manifest_for_cases(cases)
     if write:
         manifest = merge_manifest(load_manifest(manifest_path), cases)
@@ -541,12 +1005,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
 
         if command == "samples":
-            classes = CASE_CLASSES
+            cases = sample_cases(CASE_CLASSES)
         else:
-            classes = (DOMAIN_CLASSES[command],)
-        manifest = generate(classes, args.manifest, write=bool(getattr(args, "write", False)))
+            cases = cases_for_domain(command)
         if getattr(args, "write", False):
-            print(f"wrote {len(sample_cases(classes))} generated case(s) into {args.manifest}")
+            manifest = merge_manifest(load_manifest(args.manifest), cases)
+            validate_manifest(manifest)
+            write_generated_cases(args.manifest.parent / "cases", cases)
+            write_json(args.manifest, manifest)
+        else:
+            manifest = manifest_for_cases(cases)
+            validate_manifest(manifest)
+        if getattr(args, "write", False):
+            print(f"wrote {len(cases)} generated case(s) into {args.manifest}")
         else:
             sys.stdout.write(render_manifest(manifest))
         return 0

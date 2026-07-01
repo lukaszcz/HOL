@@ -143,7 +143,7 @@ def validate_implementation_obligation(value: object, label: str) -> None:
 
 def validate_expected_result(value: object, label: str) -> str:
     require(isinstance(value, dict), f"{label} must be an object")
-    allowed = {"status", "diagnostic", "theorem_shape", "proof_rule_histogram", "notes"}
+    allowed = {"status", "diagnostic", "failure_phase", "theorem_shape", "proof_rule_histogram", "notes"}
     extra = sorted(set(value) - allowed)
     require(not extra, f"{label} has unknown field(s): {', '.join(extra)}")
     require("status" in value, f"{label} is missing status")
@@ -152,6 +152,22 @@ def validate_expected_result(value: object, label: str) -> str:
     for string_field in ("diagnostic", "theorem_shape", "notes"):
         if string_field in value:
             require_string(value[string_field], f"{label}.{string_field}", allow_empty=string_field == "notes")
+    if "failure_phase" in value:
+        require(
+            value["failure_phase"]
+            in {
+                "parser",
+                "typecheck",
+                "translation",
+                "solver",
+                "proof-parse",
+                "proof-replay",
+                "theorem-shape",
+                "oracle-tag",
+                "version-drift",
+            },
+            f"{label}.failure_phase is invalid",
+        )
     if "proof_rule_histogram" in value:
         histogram = value["proof_rule_histogram"]
         require(isinstance(histogram, dict), f"{label}.proof_rule_histogram must be an object")
@@ -413,7 +429,30 @@ def normalized_feature_tokens(case: dict[str, object]) -> set[str]:
     return tokens
 
 
+def command_names_from_coverage_item(item: str) -> list[str]:
+    return [part.strip().lower() for part in item.split(",") if part.strip()]
+
+
+def case_has_complete_command_evidence(case: dict[str, object], command: str) -> bool:
+    if case.get("class") != "command" or not is_case_complete_evidence(case):
+        return False
+    tokens = normalized_feature_tokens(case)
+    return command in tokens or f"command:{command}" in tokens
+
+
+def missing_v2_command_evidence(row: CoverageRow, cases: Iterable[dict[str, object]]) -> list[str]:
+    commands = command_names_from_coverage_item(row.item)
+    case_list = list(cases)
+    return [
+        command
+        for command in commands
+        if not any(case_has_complete_command_evidence(case, command) for case in case_list)
+    ]
+
+
 def row_has_v2_evidence(row: CoverageRow, cases: Iterable[dict[str, object]]) -> bool:
+    if row.section == "commands":
+        return not missing_v2_command_evidence(row, cases)
     item = row.item.lower()
     for case in cases:
         if not is_case_complete_evidence(case):
@@ -493,6 +532,19 @@ def audit_coverage(rows: list[CoverageRow], cases: list[dict[str, object]]) -> l
     for row in sorted(combined.values(), key=lambda item: item.key):
         if not row.complete_required:
             continue
+        if row.section == "commands":
+            missing_commands = missing_v2_command_evidence(row, cases)
+            if missing_commands:
+                issues.append(
+                    Issue(
+                        code="missing_command_v2_evidence",
+                        category="missing_complete_evidence",
+                        subject=f"{row.section}/{row.item} ({row.row_class})",
+                        message="complete-required command row has no v2 command test evidence",
+                        details={"missing_commands": missing_commands},
+                    )
+                )
+                continue
         statuses = row.statuses
         if statuses & UNRESOLVED_COVERAGE_STATUSES:
             issues.append(

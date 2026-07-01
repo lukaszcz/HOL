@@ -1,0 +1,6 @@
+(set-logic QF_UF)
+(declare-sort U 0)
+(push 1)
+(declare-const a U)
+(pop 1)
+(check-sat)

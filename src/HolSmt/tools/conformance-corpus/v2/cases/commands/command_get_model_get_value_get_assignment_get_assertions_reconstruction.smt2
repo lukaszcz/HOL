@@ -1,0 +1,5 @@
+(set-option :produce-models true)
+(set-logic QF_UF)
+(declare-const p Bool)
+(check-sat)
+(get-model)
