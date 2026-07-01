@@ -1702,7 +1702,7 @@ local
         (case frames of
            _ :: rest =>
              if List.null rest then
-               raise ERR "pop" "cannot pop the base assertion scope"
+               raise ERR "pop" "pop scope underflow: cannot pop the base assertion scope"
              else
                pop_frames (n - 1)
                  {logic = logic, frames = rest, queries = queries}
@@ -2252,7 +2252,7 @@ local
         (case frames of
            _ :: rest =>
              if List.null rest then
-               raise ERR "pop" "cannot pop the base assertion scope"
+               raise ERR "pop" "pop scope underflow: cannot pop the base assertion scope"
              else
                pop_typecheck_frames (n - 1)
                  {logic = logic, frames = rest, queries = queries}
@@ -2287,12 +2287,9 @@ local
   fun reject_duplicate_signature context loc name domain range sigdict =
     case peek_signatures (sigdict, name) of
       NONE => ()
-    | SOME signatures =>
-        if List.exists (same_signature domain range) signatures then
-          type_error "reject_duplicate_signature" context loc NONE NONE
-            ("duplicate declaration for symbol '" ^ name ^ "'")
-        else
-          ()
+    | SOME _ =>
+        type_error "reject_duplicate_signature" context loc NONE NONE
+          ("duplicate declaration for symbol '" ^ name ^ "'")
 
   fun make_decl_parsefn name tm args_count token indices args =
     if List.null indices andalso List.length args = args_count then
@@ -2389,7 +2386,8 @@ local
     in
       case arity_matches of
         [] =>
-          "wrong number of arguments for '" ^ name ^ "': actual sorts " ^
+          "function arity mismatch: wrong number of arguments for '" ^ name ^
+          "': actual sorts " ^
           sort_list_to_string arg_sorts
       | {domain, ...} :: _ =>
           "argument sort mismatch for '" ^ name ^ "': expected sorts " ^
@@ -2549,7 +2547,7 @@ local
 
   fun typecheck_define_sort context tydict name params body =
     let
-      fun add_param (param, tydict) =
+      fun add_param (param, (tydict, param_tys)) =
         let
           val pname = located_string_node param
           val ty = Type.mk_vartype ("'" ^ pname)
@@ -2557,12 +2555,40 @@ local
             if List.null indices andalso List.null args then ty
             else raise ERR ("<" ^ pname ^ ">") "wrong number of arguments"
         in
-          Library.extend_dict ((pname, parsefn), tydict)
+          (Library.extend_dict ((pname, parsefn), tydict),
+           (pname, ty) :: param_tys)
         end
-      val temp_tydict = List.foldl add_param tydict params
-      val _ = typecheck_sort context temp_tydict body
+      val alias_name = located_string_node name
+      fun sort_mentions_alias sort =
+        case node_of sort of
+          SortIdentifier n => n = alias_name
+        | SortIndexed (head, _) => located_string_node head = alias_name
+        | SortApply (head, args) =>
+            located_string_node head = alias_name orelse
+            List.exists sort_mentions_alias args
+      val _ =
+        if sort_mentions_alias body then
+          type_error "typecheck_define_sort" context (loc_of body) NONE NONE
+            "recursive sort alias"
+        else ()
+      val (temp_tydict, param_tys) =
+        List.foldl add_param (tydict, []) params
+      val param_tys = List.rev param_tys
+      val body_ty = typecheck_sort context temp_tydict body
+      fun parsefn token indices args =
+        if List.null indices andalso List.length args = List.length param_tys then
+          let
+            val subst = ListPair.map
+              (fn ((_, param_ty), arg_ty) =>
+                {redex = param_ty, residue = arg_ty})
+              (param_tys, args)
+          in
+            Type.type_subst subst body_ty
+          end
+        else
+          raise ERR ("<" ^ alias_name ^ ">") "wrong number of arguments"
     in
-      tydict
+      Library.extend_dict ((alias_name, parsefn), tydict)
     end
 
   fun typecheck_declare_sort context name arity tydict =
@@ -2573,7 +2599,7 @@ local
         if arity_text = "0" then ()
         else type_error "typecheck_declare_sort" context (loc_of arity)
           NONE NONE
-          ("unsupported sort arity for '" ^ sort_name ^
+          ("declare-sort arity: unsupported sort arity for '" ^ sort_name ^
            "': expected 0, actual " ^ arity_text)
       val ty = Type.mk_vartype ("'" ^ sort_name)
       fun parsefn token indices args =
@@ -2665,8 +2691,16 @@ local
             "unsupported parametric datatype declaration"
     end
 
-  fun define_typechecked_fun name vars range_type definiens (tmdict, sigdict) =
+  fun define_typechecked_fun context loc name vars range_type definiens
+      (tmdict, sigdict) =
     let
+      val _ =
+        case peek_signatures (sigdict, name) of
+          NONE => ()
+        | SOME _ =>
+            type_error "define_typechecked_fun" context loc NONE NONE
+              ("duplicate define-const/define-fun declaration for symbol '" ^
+               name ^ "'")
       val domain_types = List.map (Term.type_of o Lib.snd) vars
       val (tm, tmdict, sigdict) =
         add_value_signature name domain_types range_type (tmdict, sigdict)
@@ -2679,13 +2713,15 @@ local
 
   fun typecheck_define_const context name sort body (tydict, tmdict, sigdict) =
     let
+      val name_loc = loc_of name
       val name = located_string_node name
       val range_type = typecheck_sort context tydict sort
       val body_checked = typecheck_term context (tydict, tmdict, sigdict) body
       val body_term = expect_checked_sort "typecheck_define_const" context
         (loc_of body) range_type body_checked
       val (tmdict, sigdict, definition) =
-        define_typechecked_fun name [] range_type body_term (tmdict, sigdict)
+        define_typechecked_fun context name_loc name [] range_type body_term
+          (tmdict, sigdict)
     in
       (tmdict, sigdict, definition)
     end
@@ -2693,7 +2729,27 @@ local
   fun typecheck_define_fun context name sorted_vars range body
       (tydict, tmdict, sigdict) =
     let
+      val name_loc = loc_of name
       val name = located_string_node name
+      fun term_mentions_name term =
+        case node_of term of
+          TermIdentifier n => n = name
+        | TermIndexed (head, indices) =>
+            located_string_node head = name orelse
+            List.exists term_mentions_name indices
+        | TermApply (head, args) =>
+            term_mentions_name head orelse List.exists term_mentions_name args
+        | TermLet (bindings, body) =>
+            List.exists (term_mentions_name o Lib.snd) bindings orelse
+            term_mentions_name body
+        | TermForall (_, body) => term_mentions_name body
+        | TermExists (_, body) => term_mentions_name body
+        | TermAnnotated (term, _) => term_mentions_name term
+      val _ =
+        if term_mentions_name body then
+          type_error "typecheck_define_fun" context (loc_of body) NONE NONE
+            "recursive self-reference"
+        else ()
       val range_type = typecheck_sort context tydict range
       val vars = List.map (typecheck_sorted_var context tydict) sorted_vars
       val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
@@ -2708,7 +2764,8 @@ local
       val body_term = expect_checked_sort "typecheck_define_fun" context
         (loc_of body) range_type body_checked
       val (tmdict, sigdict, definition) =
-        define_typechecked_fun name vars range_type body_term (tmdict, sigdict)
+        define_typechecked_fun context name_loc name vars range_type
+          body_term (tmdict, sigdict)
     in
       (tmdict, sigdict, definition)
     end
@@ -2738,21 +2795,57 @@ local
       let
         val checked = typecheck_term context env term
       in
-        expect_checked_sort fn_name context (loc_of term) Type.bool checked
+        if checked_sort checked = Type.bool then checked_term checked
+        else
+          type_error fn_name context (loc_of term) (SOME Type.bool)
+            (SOME (checked_sort checked))
+            "assumption literal must have Bool sort"
       end) terms
 
   fun typecheck_command command state =
     let
       val context = command_context
       fun finish state = SOME state
+      fun typecheck_define_fun_command command_name name vars range body state =
+        let
+          val command_state = dest_typecheck_state command_name state
+          val (tydict, tmdict, sigdict) =
+            current_typecheck_dicts command_state
+          val (tmdict, sigdict, def) =
+            typecheck_define_fun (context command_name) name vars range body
+              (tydict, tmdict, sigdict)
+          val command_state = update_current_typecheck_dicts
+            (tydict, tmdict, sigdict) command_state
+        in
+          finish (add_typechecked_definition def command_state)
+        end
+      fun typecheck_define_funs_rec sigs bodies state =
+        let
+          val _ =
+            if List.length sigs = List.length bodies then ()
+            else raise ERR "typecheck_script"
+              "malformed recursive definition block: function signature count does not match body count"
+          fun one (sig_ast, body, state) =
+            case node_of sig_ast of
+              FunctionSignature (name, vars, range) =>
+                typecheck_define_fun_command "define-funs-rec"
+                  name vars range body state
+        in
+          ListPair.foldl one state (sigs, bodies)
+        end
     in
       case node_of command of
         CmdSetInfo _ => state
-      | CmdSetOption _ => state
+      | CmdSetOption _ =>
+          if Option.isSome state then
+            raise ERR "typecheck_script"
+              "set-option after logic or assertions"
+          else state
       | CmdSetLogic logic =>
           let
             val _ = not (Option.isSome state) orelse
-              raise ERR "typecheck_script" "set-logic issued more than once"
+              raise ERR "typecheck_script"
+                "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
             val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic_name
           in
@@ -2833,25 +2926,11 @@ local
             finish (add_typechecked_definition def command_state)
           end
       | CmdDefineFun (name, vars, range, body) =>
-          let
-            val command_state =
-              dest_typecheck_state "define-fun" state
-            val (tydict, tmdict, sigdict) =
-              current_typecheck_dicts command_state
-            val (tmdict, sigdict, def) =
-              typecheck_define_fun (context "define-fun") name vars range body
-                (tydict, tmdict, sigdict)
-            val command_state = update_current_typecheck_dicts
-              (tydict, tmdict, sigdict) command_state
-          in
-            finish (add_typechecked_definition def command_state)
-          end
-      | CmdDefineFunRec _ =>
-          raise ERR "typecheck_script"
-            "unsupported command 'define-fun-rec': recursive definitions are parsed by the script AST but not expanded into HOL definitions"
-      | CmdDefineFunsRec _ =>
-          raise ERR "typecheck_script"
-            "unsupported command 'define-funs-rec': mutually recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+          typecheck_define_fun_command "define-fun" name vars range body state
+      | CmdDefineFunRec (name, vars, range, body) =>
+          typecheck_define_fun_command "define-fun-rec" name vars range body state
+      | CmdDefineFunsRec (sigs, bodies) =>
+          typecheck_define_funs_rec sigs bodies state
       | CmdDeclareDatatype (name, decl) =>
           let
             val command_state =
@@ -2866,16 +2945,46 @@ local
               (tydict, tmdict, sigdict) command_state)
           end
       | CmdDeclareDatatypes _ =>
-          raise ERR "typecheck_script"
-            "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+          (case node_of command of
+             CmdDeclareDatatypes ([binding], [decl]) =>
+               (case node_of binding of
+                  DatatypeBinding (name, arity) =>
+                    let
+                      val command_state =
+                        dest_typecheck_state "declare-datatypes" state
+                      val (tydict, tmdict, sigdict) =
+                        current_typecheck_dicts command_state
+                      val _ =
+                        if located_string_node arity = "0" then ()
+                        else type_error "typecheck_declare_datatypes"
+                          (context "declare-datatypes") (loc_of arity)
+                          NONE NONE
+                          ("declare-datatypes arity for '" ^
+                           located_string_node name ^ "': expected 0, actual " ^
+                           located_string_node arity)
+                      val (tydict, tmdict, sigdict) =
+                        typecheck_declare_datatype
+                          (context "declare-datatypes")
+                          name decl (tydict, tmdict, sigdict)
+                    in
+                      finish (update_current_typecheck_dicts
+                        (tydict, tmdict, sigdict) command_state)
+                    end)
+           | _ =>
+               raise ERR "typecheck_script"
+                 "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary")
       | CmdAssert term =>
           let
             val command_state = dest_typecheck_state "assert" state
             val env = current_typecheck_dicts command_state
             val (term, name) = split_assertion_term term
             val checked = typecheck_term (context "assert") env term
-            val assertion = expect_checked_sort "typecheck_assert"
-              (context "assert") (loc_of term) Type.bool checked
+            val assertion =
+              if checked_sort checked = Type.bool then checked_term checked
+              else
+                type_error "typecheck_assert" (context "assert") (loc_of term)
+                  (SOME Type.bool) (SOME (checked_sort checked))
+                  "assert term must have Bool sort"
           in
             finish (add_typechecked_assertion assertion name command_state)
           end
@@ -2895,7 +3004,14 @@ local
           in
             finish (pop_typecheck_frames count command_state)
           end
-      | CmdReset => NONE
+      | CmdReset =>
+          let
+            val command_state = dest_typecheck_state "reset" state
+            val logic = #logic command_state
+            val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic
+          in
+            finish (new_typecheck_state logic tydict tmdict)
+          end
       | CmdResetAssertions =>
           let
             val command_state =

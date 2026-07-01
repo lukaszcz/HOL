@@ -19,8 +19,11 @@ from dataclasses import dataclass, field
 from typing import Iterable, Mapping
 
 from record_z3_proof_corpus import (
+    Atom,
+    ListNode,
     build_summary as build_proof_corpus_summary,
     detect_solver_result,
+    line_col,
     parse_sexps,
     proof_options_for,
     record_one as record_proof_corpus_entry,
@@ -651,9 +654,94 @@ def failure_class(item: dict[str, object]) -> str | None:
     return mode
 
 
+def parser_command_error(text: str, node: object, message: str) -> ValueError:
+    offset = getattr(node, "start", 0)
+    pos = line_col(text, offset)
+    return ValueError(f"{message} at line {pos['line']}, column {pos['column']}")
+
+
+def atom_text(node: object) -> str | None:
+    return node.text if isinstance(node, Atom) else None
+
+
+def expect_command_len(text: str, node: ListNode, command: str, length: int, diagnostic: str) -> None:
+    if len(node.items) != length:
+        raise parser_command_error(text, node, diagnostic)
+
+
+def expect_command_list_arg(text: str, node: ListNode, index: int, diagnostic: str) -> None:
+    if len(node.items) <= index or not isinstance(node.items[index], ListNode):
+        raise parser_command_error(text, node, diagnostic)
+
+
+def validate_smtlib_command_shapes(text: str, nodes: list[object]) -> None:
+    for node in nodes:
+        if not isinstance(node, ListNode) or not node.items:
+            raise parser_command_error(text, node, "malformed command")
+        command = atom_text(node.items[0])
+        if command is None:
+            raise parser_command_error(text, node, "malformed command")
+
+        if command in {"check-sat", "reset", "reset-assertions", "exit",
+                       "get-proof", "get-unsat-assumptions", "get-unsat-core",
+                       "get-model", "get-assignment", "get-assertions"}:
+            labels = {
+                "check-sat": "malformed check-sat",
+                "reset": "malformed reset",
+                "reset-assertions": "malformed reset-assertions",
+                "exit": "malformed exit",
+            }
+            expect_command_len(text, node, command, 1, labels.get(command, f"malformed {command}"))
+        elif command in {"set-logic", "get-info", "get-option", "assert"}:
+            labels = {"get-option": "malformed get-option"}
+            expect_command_len(text, node, command, 2, labels.get(command, f"malformed {command}"))
+        elif command in {"declare-sort", "declare-const", "set-option"}:
+            expect_command_len(text, node, command, 3, f"malformed {command}")
+        elif command == "set-info":
+            if len(node.items) < 2 or len(node.items) > 3:
+                raise parser_command_error(text, node, "malformed set-info attribute")
+            if atom_text(node.items[1]) == ":source" and len(node.items) != 3:
+                raise parser_command_error(text, node, "malformed set-info attribute")
+        elif command in {"declare-fun", "define-sort"}:
+            expect_command_len(text, node, command, 4, f"malformed {command}")
+            expect_command_list_arg(text, node, 2, f"malformed {command}")
+        elif command == "define-const":
+            expect_command_len(text, node, command, 4, f"malformed {command}")
+        elif command == "declare-datatype":
+            expect_command_len(text, node, command, 3, "malformed declare-datatype")
+        elif command in {"define-fun", "define-fun-rec"}:
+            expect_command_len(text, node, command, 5, f"malformed {command}")
+            expect_command_list_arg(text, node, 2, f"malformed {command}")
+        elif command == "define-funs-rec":
+            expect_command_len(text, node, command, 3, "malformed recursive definition block")
+            expect_command_list_arg(text, node, 1, "malformed recursive definition block")
+            expect_command_list_arg(text, node, 2, "malformed recursive definition block")
+            signatures = node.items[1].items  # type: ignore[union-attr]
+            bodies = node.items[2].items  # type: ignore[union-attr]
+            if len(signatures) != len(bodies):
+                raise parser_command_error(text, node, "malformed recursive definition block")
+        elif command == "declare-datatypes":
+            expect_command_len(text, node, command, 3, "malformed declare-datatypes")
+            expect_command_list_arg(text, node, 1, "malformed declare-datatypes")
+            expect_command_list_arg(text, node, 2, "malformed declare-datatypes")
+        elif command in {"push", "pop"}:
+            if len(node.items) not in {1, 2}:
+                raise parser_command_error(text, node, f"malformed {command}")
+        elif command in {"check-sat-assuming", "get-value"}:
+            label = "malformed get-value" if command == "get-value" else "malformed check-sat-assuming"
+            expect_command_len(text, node, command, 2, label)
+            expect_command_list_arg(text, node, 1, label)
+        elif command == "echo":
+            expect_command_len(text, node, command, 2, "echo requires a string literal")
+            msg = atom_text(node.items[1])
+            if msg is None or not (msg.startswith('"') and msg.endswith('"')):
+                raise parser_command_error(text, node, "echo requires a string literal")
+
+
 def parser_check(case: Case) -> dict[str, object]:
     try:
-        parse_sexps(case.text)
+        sexps = parse_sexps(case.text)
+        validate_smtlib_command_shapes(case.text, sexps)
     except Exception as exc:  # SexpParseError comes from the recorder module.
         return result(case, MODE_PARSER, FAIL, str(exc))
     logic = find_set_logic(case.text)
