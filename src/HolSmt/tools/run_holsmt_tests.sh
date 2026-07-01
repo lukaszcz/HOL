@@ -166,22 +166,41 @@ fi
 
 run() {
   printf '\n==> %s\n' "$1"
+  local name=$1
   shift
-  "$@"
+  if "$@"; then
+    printf 'PASS: %s\n' "$name"
+  else
+    local exit_code=$?
+    printf 'FAIL: %s (exit %s)\n' "$name" "$exit_code" >&2
+    failed_steps+=("$name (exit $exit_code)")
+    overall_status=1
+  fi
 }
 
 run_in_dir() {
   printf '\n==> %s\n' "$1"
+  local name=$1
   shift
   local dir=$1
   shift
-  (cd "$dir" && "$@")
+  if (cd "$dir" && "$@"); then
+    printf 'PASS: %s\n' "$name"
+  else
+    local exit_code=$?
+    printf 'FAIL: %s (exit %s)\n' "$name" "$exit_code" >&2
+    failed_steps+=("$name (exit $exit_code)")
+    overall_status=1
+  fi
 }
 
 parser_out="$out_dir/conformance/parser"
 z3_out="$out_dir/conformance/z3"
 typecheck_out="$out_dir/conformance/typecheck"
 z3_tac_out="$out_dir/conformance/z3-tac"
+complete_out="$out_dir/complete-conformance"
+overall_status=0
+failed_steps=()
 
 printf 'Using HOL4_Z3_EXECUTABLE=%s\n' "$HOL4_Z3_EXECUTABLE"
 printf 'Using %s\n' "$z3_version_output"
@@ -282,6 +301,11 @@ run "Audit coverage manifest against conformance reports" \
     --conformance-report "$typecheck_out/conformance.json" \
     --conformance-report "$z3_tac_out/conformance.json"
 
+run "Run complete SMT-LIB conformance suite" \
+  src/HolSmt/tools/run_complete_smtlib_conformance.sh \
+    --out-dir "$complete_out" \
+    --z3 "$HOL4_Z3_EXECUTABLE"
+
 discover_z3_versions
 
 if [ "${#detected_z3_matrix_versions[@]}" -gt 0 ]; then
@@ -326,6 +350,13 @@ if "$include_docker"; then
       docker run --rm "holsmt-z3:$z3_version" \
         sh -lc '"$HOL4_Z3_EXECUTABLE" -version && src/HolSmt/selftest.exe'
   done
+fi
+
+if [ "$overall_status" -ne 0 ]; then
+  printf '\nHolSmt tests failed. Failed steps:\n' >&2
+  printf '  - %s\n' "${failed_steps[@]}" >&2
+  printf '\nComplete conformance reports, when produced, are under %s\n' "$complete_out" >&2
+  exit "$overall_status"
 fi
 
 printf '\nHolSmt tests completed successfully.\n'

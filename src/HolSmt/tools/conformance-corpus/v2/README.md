@@ -117,3 +117,26 @@ The auditor validates this v2 manifest, extracts accepted logic names from
 and reports missing complete evidence as failures.  Exit code `1` means the
 corpus is still red or incomplete; exit code `2` means an infrastructure error
 such as malformed JSON or invalid manifest structure.
+
+The complete conformance runner is also part of the mandatory local HolSmt
+test path:
+
+```sh
+src/HolSmt/tools/run_holsmt_tests.sh
+```
+
+That integrated path writes the complete suite report directory under
+`.holsmt-ci/complete-conformance` by default.  Use
+`src/HolSmt/tools/run_holsmt_tests.sh --out-dir DIR` to put both the existing
+HolSmt conformance reports and the complete suite reports under another
+directory.  The complete suite intentionally exits nonzero while red
+implementation obligations remain; inspect these files first:
+
+- `DIR/complete-conformance/complete-conformance.json`
+- `DIR/complete-conformance/COMPLETE_CONFORMANCE.md`
+- `DIR/complete-conformance/red-obligations.json`
+- `DIR/complete-conformance/RED_OBLIGATIONS.md`
+
+The main runner does not provide a bypass for complete conformance.  Existing
+HolSmt test failures and complete-suite red obligations are collected in the
+same invocation, then the script exits nonzero if any mandatory step failed.

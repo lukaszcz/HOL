@@ -12,6 +12,7 @@ import pathlib
 import re
 import shutil
 import shlex
+import signal
 import subprocess
 import sys
 from dataclasses import dataclass, field
@@ -681,6 +682,27 @@ def executable_available(executable: str) -> bool:
     return shutil.which(executable) is not None
 
 
+def run_shell_command(command: str, timeout: int) -> subprocess.CompletedProcess[str]:
+    process = subprocess.Popen(
+        command,
+        shell=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired as exc:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        stdout, stderr = process.communicate()
+        raise subprocess.TimeoutExpired(command, timeout, output=stdout, stderr=stderr) from exc
+    return subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+
+
 def run_z3_oracle(case: Case, input_path: pathlib.Path, z3: str, timeout: int, version: str) -> dict[str, object]:
     command = [z3, "-smt2", str(input_path)]
     if not executable_available(z3):
@@ -837,14 +859,7 @@ def run_command_mode(
         name=case.name,
     )
     try:
-        completed = subprocess.run(
-            command,
-            shell=True,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        completed = run_shell_command(command, timeout)
     except subprocess.TimeoutExpired as exc:
         return result(
             case,
@@ -920,14 +935,7 @@ def run_z3_tac_mode(
         name=case.name,
     )
     try:
-        completed = subprocess.run(
-            command,
-            shell=True,
-            check=False,
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-        )
+        completed = run_shell_command(command, timeout)
     except subprocess.TimeoutExpired as exc:
         return result(
             case,

@@ -3,10 +3,12 @@
 import json
 import os
 import pathlib
+import shlex
 import stat
 import sys
 import tempfile
 import textwrap
+import time
 import unittest
 
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
@@ -921,6 +923,56 @@ class ConformanceSuiteTests(unittest.TestCase):
             qf_uf = report["summary"]["by_logic_mode"]["QF_UF"][conformance.MODE_TYPECHECK]
             self.assertGreater(qf_uf["pass"], 0)
             self.assertEqual(qf_uf["fail"], 0)
+
+    def test_configured_command_timeout_kills_child_processes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            pid_file = root / "child.pid"
+            launcher = root / "launcher.py"
+            launcher.write_text(
+                textwrap.dedent(
+                    """\
+                    import pathlib
+                    import subprocess
+                    import sys
+
+                    child = subprocess.Popen([
+                        sys.executable,
+                        "-c",
+                        "import time; time.sleep(60)",
+                    ])
+                    pathlib.Path(sys.argv[1]).write_text(str(child.pid), encoding="utf-8")
+                    child.wait()
+                    """
+                ),
+                encoding="utf-8",
+            )
+            case = conformance.Case(
+                name="timeout_case",
+                logic="QF_UF",
+                text="(set-logic QF_UF)\n(check-sat)\n",
+                origin="test",
+                tags=(),
+            )
+            command = f"{shlex.quote(sys.executable)} {shlex.quote(str(launcher))} {shlex.quote(str(pid_file))}"
+
+            item = conformance.run_command_mode(
+                case,
+                conformance.MODE_TYPECHECK,
+                root / "input.smt2",
+                command,
+                timeout=1,
+            )
+
+            self.assertEqual(item["status"], conformance.FAIL)
+            self.assertIn("timed out", item["detail"])
+            child_pid = int(pid_file.read_text(encoding="utf-8"))
+            child_proc = pathlib.Path(f"/proc/{child_pid}")
+            for _ in range(20):
+                if not child_proc.exists():
+                    break
+                time.sleep(0.1)
+            self.assertFalse(child_proc.exists())
 
 
 if __name__ == "__main__":
