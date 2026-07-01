@@ -1,0 +1,8 @@
+(set-option :produce-proofs true)
+(set-logic AUFLIA)
+(declare-const a (Array Int Bool))
+(declare-const b (Array Int Bool))
+(assert (forall ((i Int)) (= (select a i) (select b i))))
+(assert (not (= a b)))
+(check-sat)
+(get-proof)

@@ -1,0 +1,6 @@
+(set-logic QF_AX)
+(declare-sort I 0)
+(declare-sort E 0)
+(declare-const nested (Array I (Array I E)))
+(assert (= nested nested))
+(check-sat)

@@ -44,6 +44,67 @@ WEAK_COVERAGE_STATUSES = {
 }
 UNRESOLVED_COVERAGE_STATUSES = {"unknown", "untested"}
 
+REQUIRED_ARRAY_BITVECTOR_METADATA: dict[str, dict[str, set[str]]] = {
+    "ArraysEx": {
+        "sort": {"Array"},
+        "term": {"select", "store"},
+    },
+    "Fixed_Size_BitVectors": {
+        "sort": {"BitVec"},
+        "term": {
+            "_",
+            "concat",
+            "extract",
+            "bvnot",
+            "bvneg",
+            "bvand",
+            "bvor",
+            "bvxor",
+            "bvxnor",
+            "bvadd",
+            "bvmul",
+            "bvudiv",
+            "bvurem",
+            "bvsub",
+            "bvnand",
+            "bvnor",
+            "bvcomp",
+            "bvsdiv",
+            "bvsrem",
+            "bvsmod",
+            "bvshl",
+            "bvlshr",
+            "bvashr",
+            "repeat",
+            "zero_extend",
+            "sign_extend",
+            "rotate_left",
+            "rotate_right",
+            "bvredand",
+            "bvredor",
+            "bvult",
+            "bvule",
+            "bvugt",
+            "bvuge",
+            "bvslt",
+            "bvsle",
+            "bvsgt",
+            "bvsge",
+            "ubv_to_int",
+            "sbv_to_int",
+            "int_to_bv",
+            "bvnego",
+            "bvuaddo",
+            "bvsaddo",
+            "bvumulo",
+            "bvsmulo",
+            "bvusubo",
+            "bvssubo",
+            "bvsdivo",
+        },
+    },
+}
+
 
 class AuditError(ValueError):
     pass
@@ -394,19 +455,62 @@ def extract_entry_region(body: str, list_name: str) -> str:
 
 def official_entries_from_region(region: str) -> list[tuple[str, tuple[str, ...]]]:
     entries: list[tuple[str, tuple[str, ...]]] = []
-    pattern = re.compile(
-        r'official_entry\s+"(?P<name>[^"]+)".*?\[(?P<declarations>(?:\s*"[^"]+"\s*,?)+)\]',
-        flags=re.DOTALL,
-    )
+    pattern = re.compile(r'official_entry\s+"(?P<name>[^"]+)"')
+
+    def matching_bracket(start: int) -> int:
+        depth = 0
+        in_string = False
+        escaped = False
+        for index in range(start, len(region)):
+            char = region[index]
+            if in_string:
+                if escaped:
+                    escaped = False
+                elif char == "\\":
+                    escaped = True
+                elif char == '"':
+                    in_string = False
+                continue
+            if char == '"':
+                in_string = True
+            elif char == "[":
+                depth += 1
+            elif char == "]":
+                depth -= 1
+                if depth == 0:
+                    return index
+        return -1
+
+    def looks_like_declaration_list(strings: tuple[str, ...]) -> bool:
+        return any(
+            item.startswith("(")
+            or item.startswith("#")
+            or item.startswith("<")
+            for item in strings
+        )
+
     for match in pattern.finditer(region):
-        declarations = tuple(re.findall(r'"([^"]+)"', match.group("declarations")))
-        if declarations:
-            entries.append((match.group("name"), declarations))
+        name = match.group("name")
+        search_from = match.end()
+        while True:
+            start = region.find("[", search_from)
+            if start < 0:
+                break
+            end = matching_bracket(start)
+            if end < 0:
+                break
+            declarations = tuple(re.findall(r'"([^"]+)"', region[start:end + 1]))
+            if declarations and looks_like_declaration_list(declarations):
+                entries.append((name, declarations))
+                break
+            search_from = end + 1
     return entries
 
 
 def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> str:
     if kind == "sort":
+        if name == "BitVec":
+            return "bitvec"
         return name.lower().replace("_", "-")
     declaration = declarations[0] if declarations else ""
     symbol_slugs = {
@@ -423,10 +527,21 @@ def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> s
         "to_real": "to-real",
         "to_int": "to-int",
         "is_int": "is-int",
+        "zero_extend": "zero-extend",
+        "sign_extend": "sign-extend",
+        "rotate_left": "rotate-left",
+        "rotate_right": "rotate-right",
+        "ubv_to_int": "ubv-to-int",
+        "sbv_to_int": "sbv-to-int",
+        "int_to_bv": "int-to-bv",
     }
     if name == "_":
         if declaration == "<decimal>":
             return "decimal"
+        if declaration == "#b<binary>":
+            return "binary-hex-literal"
+        if declaration.startswith("((_ bv<numeral>"):
+            return "decimal-literal"
         return "numeral"
     if name == "-":
         if re.match(r"^\(- (Int|Real) \1\)$", declaration):
@@ -435,11 +550,11 @@ def theory_symbol_slug(kind: str, name: str, declarations: tuple[str, ...]) -> s
     return symbol_slugs.get(name, name.lower().replace("_", "-"))
 
 
-def parse_core_arithmetic_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
+def parse_dictionary_theory_symbols(path: Path) -> list[TheoryMetadataSymbol]:
     text = path.read_text(encoding="utf-8")
     symbols: dict[tuple[str, str], TheoryMetadataSymbol] = {}
 
-    for theory in ("Core", "Ints", "Reals"):
+    for theory in ("Core", "Ints", "Reals", "ArraysEx", "Fixed_Size_BitVectors"):
         body = extract_structure_body(text, theory)
         for kind, list_name in (("sort", "tyentries"), ("term", "tmentries")):
             for name, declarations in official_entries_from_region(extract_entry_region(body, list_name)):
@@ -571,6 +686,37 @@ def audit_theory_symbols(cases: list[dict[str, object]], symbols: list[TheoryMet
                     },
                 )
             )
+    return issues
+
+
+def audit_required_array_bitvector_metadata(symbols: list[TheoryMetadataSymbol]) -> list[Issue]:
+    issues: list[Issue] = []
+    actual = {
+        (symbol.theory, symbol.kind, symbol.name)
+        for symbol in symbols
+    }
+    for theory, by_kind in sorted(REQUIRED_ARRAY_BITVECTOR_METADATA.items()):
+        for kind, names in sorted(by_kind.items()):
+            missing = sorted(
+                name
+                for name in names
+                if (theory, kind, name) not in actual
+            )
+            if missing:
+                issues.append(
+                    Issue(
+                        code="missing_theory_dictionary_metadata",
+                        category="missing_complete_evidence",
+                        subject=f"theory/{theory}/{kind}",
+                        message="required array or bitvector theory dictionary metadata is absent",
+                        details={
+                            "theory": theory,
+                            "kind": kind,
+                            "missing_names": missing,
+                            "files": ["src/HolSmt/SmtLib_Theories.sml"],
+                        },
+                    )
+                )
     return issues
 
 
@@ -910,7 +1056,7 @@ def build_report(
     manifest = load_json(manifest_path)
     cases = validate_v2_manifest(manifest)
     accepted_logics = parse_accepted_logics(logic_source)
-    theory_symbols = parse_core_arithmetic_theory_symbols(theory_source)
+    theory_symbols = parse_dictionary_theory_symbols(theory_source)
     packet_logics = accepted_logics
     excluded_logics: list[str] = []
     if logics_json_path is not None and logics_json_path.exists():
@@ -926,12 +1072,18 @@ def build_report(
             ]
     coverage_rows = load_coverage_rows(coverage_path, coverage_manifest_path)
     issues = audit_cases(cases, packet_logics)
+    issues.extend(audit_required_array_bitvector_metadata(theory_symbols))
     issues.extend(audit_theory_symbols(cases, theory_symbols))
     issues.extend(audit_coverage(coverage_rows, cases))
 
     category_counts: dict[str, int] = {}
     for issue in issues:
         category_counts[issue.category] = category_counts.get(issue.category, 0) + 1
+    core_arithmetic_theory_symbol_count = sum(
+        1
+        for symbol in theory_symbols
+        if symbol.theory in {"Core", "Ints", "Reals", "Reals_Ints"}
+    )
 
     return {
         "schema": SCHEMA,
@@ -946,7 +1098,8 @@ def build_report(
         "summary": {
             "accepted_logic_count": len(accepted_logics),
             "logic_packet_count": len(packet_logics),
-            "core_arithmetic_theory_symbol_count": len(theory_symbols),
+            "dictionary_theory_symbol_count": len(theory_symbols),
+            "core_arithmetic_theory_symbol_count": core_arithmetic_theory_symbol_count,
             "v2_case_count": len(cases),
             "coverage_row_count": len({row.key for row in coverage_rows}),
             "issue_count": len(issues),
@@ -967,7 +1120,9 @@ def print_text_summary(report: dict[str, object]) -> None:
     print(f"accepted logics: {summary['accepted_logic_count']}")
     if "logic_packet_count" in summary:
         print(f"logic packet logics: {summary['logic_packet_count']}")
-    if "core_arithmetic_theory_symbol_count" in summary:
+    if "dictionary_theory_symbol_count" in summary:
+        print(f"dictionary theory symbols: {summary['dictionary_theory_symbol_count']}")
+    elif "core_arithmetic_theory_symbol_count" in summary:
         print(f"core arithmetic theory symbols: {summary['core_arithmetic_theory_symbol_count']}")
     print(f"v2 cases: {summary['v2_case_count']}")
     print(f"coverage rows: {summary['coverage_row_count']}")

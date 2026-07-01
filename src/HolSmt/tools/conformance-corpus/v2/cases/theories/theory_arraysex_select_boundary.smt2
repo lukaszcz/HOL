@@ -1,0 +1,7 @@
+(set-logic QF_AX)
+(declare-sort I 0)
+(declare-sort E 0)
+(declare-const outer (Array I (Array I E)))
+(declare-const i I)
+(assert (= (select (select outer i) i) (select (select outer i) i)))
+(check-sat)

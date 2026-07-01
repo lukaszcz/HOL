@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_BV)
+(assert (not (= ((_ zero_extend 2) #b10) ((_ zero_extend 2) #b10))))
+(check-sat)
+(get-proof)

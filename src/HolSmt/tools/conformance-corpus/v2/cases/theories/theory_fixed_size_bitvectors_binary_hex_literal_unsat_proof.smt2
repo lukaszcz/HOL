@@ -1,0 +1,5 @@
+(set-option :produce-proofs true)
+(set-logic QF_BV)
+(assert (not (= #x0f #x0f)))
+(check-sat)
+(get-proof)

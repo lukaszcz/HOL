@@ -885,6 +885,10 @@ def proof_script(logic: str, body: str) -> str:
     return f"(set-option :produce-proofs true)\n(set-logic {logic})\n{body}(check-sat)\n(get-proof)\n"
 
 
+def check_sat_script(logic: str, body: str) -> str:
+    return f"(set-logic {logic})\n{body}(check-sat)\n"
+
+
 CORE_ARITHMETIC_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
     TheorySymbol(
         "Core",
@@ -1422,6 +1426,353 @@ CORE_ARITHMETIC_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
 )
 
 
+ARRAY_RECONSTRUCTION_FILES = (
+    "src/HolSmt/SmtLib_Theories.sml",
+    "src/HolSmt/HolSmtScript.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
+BITVECTOR_RECONSTRUCTION_FILES = (
+    "src/HolSmt/SmtLib_Theories.sml",
+    "src/HolSmt/SmtLib.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
+Z3_UNSUPPORTED_BITVECTOR_OPERATORS = {
+    "ubv_to_int",
+    "sbv_to_int",
+    "int_to_bv",
+    "bvnego",
+    "bvuaddo",
+    "bvsaddo",
+    "bvumulo",
+    "bvsmulo",
+    "bvusubo",
+    "bvssubo",
+    "bvsdivo",
+}
+
+
+def array_symbol(
+    slug_name: str,
+    kind: str,
+    name: str,
+    declarations: tuple[str, ...],
+    sat_body: str,
+    unsat_body: str,
+    type_error_body: str,
+    boundary_body: str,
+    behavior_features: tuple[str, ...],
+    *,
+    logic: str = "QF_AX",
+    proof_logic: str | None = None,
+) -> TheorySymbol:
+    proof_logic = logic if proof_logic is None else proof_logic
+    return TheorySymbol(
+        "ArraysEx",
+        slug_name,
+        kind,
+        name,
+        logic,
+        declarations,
+        check_sat_script(logic, sat_body),
+        proof_script(proof_logic, unsat_body),
+        check_sat_script(logic, type_error_body),
+        check_sat_script(logic, boundary_body),
+        ("theory-behavior:array", *behavior_features),
+    )
+
+
+ARRAY_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    array_symbol(
+        "array",
+        "sort",
+        "Array",
+        ("(Array Index Element)",),
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(assert (= a a))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(assert (not (= a a)))\n",
+        "(declare-sort I 0)\n(declare-const bad (Array I))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const nested (Array I (Array I E)))\n(assert (= nested nested))\n",
+        ("theory-behavior:parametric-sort", "theory-behavior:nested-arrays"),
+    ),
+    array_symbol(
+        "select",
+        "term",
+        "select",
+        ("(par (Index Element) (select (Array Index Element) Index Element))",),
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(assert (= (select a i) (select a i)))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(assert (not (= (select a i) (select a i))))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const e E)\n(assert (= (select a e) e))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const outer (Array I (Array I E)))\n(declare-const i I)\n(assert (= (select (select outer i) i) (select (select outer i) i)))\n",
+        ("theory-behavior:select-store", "theory-behavior:nested-arrays"),
+    ),
+    array_symbol(
+        "store",
+        "term",
+        "store",
+        ("(par (Index Element) (store (Array Index Element) Index Element Element (Array Index Element)))",),
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e E)\n(assert (= (store a i e) (store a i e)))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e E)\n(assert (not (= (store a i e) (store a i e))))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(assert (= (store a i i) a))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const outer (Array I (Array I E)))\n(declare-const inner (Array I E))\n(declare-const i I)\n(assert (= (store outer i inner) (store outer i inner)))\n",
+        ("theory-behavior:select-store", "theory-behavior:nested-arrays"),
+    ),
+    array_symbol(
+        "read-over-write",
+        "behavior",
+        "read-over-write",
+        ("select", "store"),
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e E)\n(assert (= (select (store a i e) i) e))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e E)\n(assert (not (= (select (store a i e) i) e)))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(assert (= (select (store a i i) i) i))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const j I)\n(declare-const e E)\n(assert (=> (not (= i j)) (= (select (store a i e) j) (select a j))))\n",
+        ("theory-behavior:read-over-write", "theory-behavior:select-store"),
+    ),
+    array_symbol(
+        "write-over-write",
+        "behavior",
+        "write-over-write",
+        ("store",),
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e1 E)\n(declare-const e2 E)\n(assert (= (store (store a i e1) i e2) (store a i e2)))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const e1 E)\n(declare-const e2 E)\n(assert (not (= (store (store a i e1) i e2) (store a i e2))))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(assert (= (store (store a i i) i i) a))\n",
+        "(declare-sort I 0)\n(declare-sort E 0)\n(declare-const a (Array I E))\n(declare-const i I)\n(declare-const j I)\n(declare-const e1 E)\n(declare-const e2 E)\n(assert (= (select (store (store a i e1) j e2) j) e2))\n",
+        ("theory-behavior:write-over-write", "theory-behavior:select-store"),
+    ),
+    array_symbol(
+        "extensionality",
+        "behavior",
+        "extensionality",
+        ("Array", "select"),
+        "(declare-const a (Array Int Bool))\n(declare-const b (Array Int Bool))\n(assert (forall ((i Int)) (= (select a i) (select b i))))\n(assert (= a b))\n",
+        "(declare-const a (Array Int Bool))\n(declare-const b (Array Int Bool))\n(assert (forall ((i Int)) (= (select a i) (select b i))))\n(assert (not (= a b)))\n",
+        "(declare-const a (Array Int Bool))\n(assert (forall ((i Bool)) (= (select a i) true)))\n",
+        "(declare-const a (Array Int Bool))\n(declare-const b (Array Int Bool))\n(declare-const i Int)\n(assert (not (= a b)))\n(assert (not (= (select a i) (select b i))))\n",
+        ("theory-behavior:array-extensionality",),
+        logic="AUFLIA",
+    ),
+    array_symbol(
+        "mixed-index-value-sorts",
+        "behavior",
+        "mixed-index-value-sorts",
+        ("Array", "select", "store"),
+        "(declare-const a (Array (_ BitVec 8) (_ BitVec 4)))\n(assert (= (select (store a #x00 #b1010) #x00) #b1010))\n",
+        "(declare-const a (Array (_ BitVec 8) (_ BitVec 4)))\n(assert (not (= (select (store a #x00 #b1010) #x00) #b1010)))\n",
+        "(declare-const a (Array (_ BitVec 8) Bool))\n(assert (= (select a true) true))\n",
+        "(declare-const a (Array (_ BitVec 1) (_ BitVec 16)))\n(assert (= (select (store a #b0 #x0001) #b0) #x0001))\n",
+        ("theory-behavior:mixed-index-value-sorts", "theory-behavior:bitvector-index"),
+        logic="QF_AUFBV",
+    ),
+)
+
+
+BITVECTOR_WIDTHS = (1, 2, 3, 4, 8, 16, 32, 64, 128)
+
+
+def bv_body(
+    assertion: str,
+    *,
+    width: int = 8,
+    declarations: str | None = None,
+) -> str:
+    default_declarations = (
+        f"(declare-const a (_ BitVec {width}))\n"
+        f"(declare-const b (_ BitVec {width}))\n"
+    )
+    return (default_declarations if declarations is None else declarations) + f"(assert {assertion})\n"
+
+
+def bv_self_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(or {term} (not {term}))"
+    return f"(= {term} {term})"
+
+
+def bv_unsat_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(and {term} (not {term}))"
+    return f"(not (= {term} {term}))"
+
+
+def bv_type_error_assertion(term: str, result_sort: str) -> str:
+    if result_sort == "Bool":
+        return f"(= {term} a)"
+    return term
+
+
+def bitvector_width_boundary_body(extra_assertions: str = "") -> str:
+    declarations = "".join(
+        f"(declare-const w{width} (_ BitVec {width}))\n"
+        for width in BITVECTOR_WIDTHS
+    )
+    assertions = "".join(f"(assert (= w{width} w{width}))\n" for width in BITVECTOR_WIDTHS)
+    return (
+        declarations
+        + assertions
+        + "(assert (= (bvshl #x01 #x08) (bvshl #x01 #x08)))\n"
+        + "(assert (= (bvlshr #x80 #x08) (bvlshr #x80 #x08)))\n"
+        + "(assert (= (bvashr #x80 #x08) (bvashr #x80 #x08)))\n"
+        + "(assert (= (bvudiv #xff #x00) (bvudiv #xff #x00)))\n"
+        + "(assert (= (bvurem #xff #x00) (bvurem #xff #x00)))\n"
+        + "(assert (= (bvsdiv #x80 #xff) (bvsdiv #x80 #xff)))\n"
+        + "(assert (= (concat ((_ extract 7 4) #xab) ((_ extract 3 0) #xab)) #xab))\n"
+        + "(assert (= ((_ repeat 2) #b10) #b1010))\n"
+        + "(assert (= ((_ zero_extend 2) #b10) #b0010))\n"
+        + "(assert (= ((_ sign_extend 2) #b10) #b1110))\n"
+        + "(assert (= ((_ rotate_left 1) #b1001) #b0011))\n"
+        + "(assert (= ((_ rotate_right 1) #b1001) #b1100))\n"
+        + extra_assertions
+    )
+
+
+def bv_symbol(
+    slug_name: str,
+    name: str,
+    declarations: tuple[str, ...],
+    term: str,
+    result_sort: str,
+    behavior_features: tuple[str, ...],
+    *,
+    kind: str = "term",
+    sat_declarations: str | None = None,
+    type_error_assertion: str | None = None,
+    boundary_assertion: str | None = None,
+) -> TheorySymbol:
+    features = (
+        "theory-behavior:bitvector",
+        *(f"theory-width:{width}" for width in BITVECTOR_WIDTHS),
+        *behavior_features,
+    )
+    if name in Z3_UNSUPPORTED_BITVECTOR_OPERATORS:
+        features = (*features, "theory-behavior:z3-unsupported")
+    sat_body = bv_body(
+        bv_self_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    unsat_body = bv_body(
+        bv_unsat_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    type_error_body = bv_body(
+        type_error_assertion
+        if type_error_assertion is not None
+        else bv_type_error_assertion(term, result_sort),
+        declarations=sat_declarations,
+    )
+    boundary_body = bitvector_width_boundary_body(
+        "" if boundary_assertion is None else f"(assert {boundary_assertion})\n"
+    )
+    return TheorySymbol(
+        "Fixed_Size_BitVectors",
+        slug_name,
+        kind,
+        name,
+        "QF_BV",
+        declarations,
+        check_sat_script("QF_BV", sat_body),
+        proof_script("QF_BV", unsat_body),
+        check_sat_script("QF_BV", type_error_body),
+        check_sat_script("QF_BV", boundary_body),
+        features,
+    )
+
+
+BITVECTOR_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
+    TheorySymbol(
+        "Fixed_Size_BitVectors",
+        "bitvec",
+        "sort",
+        "BitVec",
+        "QF_BV",
+        ("((_ BitVec m) 0)",),
+        check_sat_script("QF_BV", "(declare-const a (_ BitVec 8))\n(assert (= a a))\n"),
+        proof_script("QF_BV", "(declare-const a (_ BitVec 8))\n(assert (not (= a a)))\n"),
+        check_sat_script("QF_BV", "(declare-const bad (_ BitVec 0))\n(assert (= bad bad))\n"),
+        check_sat_script("QF_BV", bitvector_width_boundary_body()),
+        (
+            "theory-behavior:bitvector",
+            "theory-behavior:indexed-sort",
+            *(f"theory-width:{width}" for width in BITVECTOR_WIDTHS),
+        ),
+    ),
+    bv_symbol(
+        "binary-hex-literal",
+        "_",
+        ("#b<binary>", "#x<hexadecimal>"),
+        "#x0f",
+        "BitVec",
+        ("theory-behavior:literal", "theory-behavior:binary-literal", "theory-behavior:hex-literal"),
+        sat_declarations="",
+        type_error_assertion="(= #b1 #b00)",
+        boundary_assertion="(and (= #b1 #b1) (= #b10 #b10) (= #xffffffffffffffffffffffffffffffff #xffffffffffffffffffffffffffffffff))",
+    ),
+    bv_symbol(
+        "decimal-literal",
+        "_",
+        ("((_ bv<numeral> m) (_ BitVec m))",),
+        "(_ bv15 8)",
+        "BitVec",
+        ("theory-behavior:literal", "theory-behavior:decimal-literal"),
+        sat_declarations="",
+        type_error_assertion="(_ bv1 0)",
+        boundary_assertion="(and (= (_ bv1 1) #b1) (= (_ bv255 8) #xff) (= (_ bv0 128) (_ bv0 128)))",
+    ),
+    bv_symbol("concat", "concat", ("(par (m n) (concat (_ BitVec m) (_ BitVec n) (_ BitVec (+ m n))))",), "(concat #b1010 #b0101)", "BitVec", ("theory-behavior:concat",), sat_declarations="", boundary_assertion="(= (concat #b1 #b0) #b10)"),
+    bv_symbol("extract", "extract", ("((_ extract i j) (_ BitVec m) (_ BitVec (- i j -1)))",), "((_ extract 3 0) a)", "BitVec", ("theory-behavior:extract", "theory-behavior:indexed"), type_error_assertion="((_ extract 8 0) a)", boundary_assertion="(= ((_ extract 0 0) #b1) #b1)"),
+    bv_symbol("bvnot", "bvnot", ("(bvnot (_ BitVec m) (_ BitVec m))",), "(bvnot a)", "BitVec", ("theory-behavior:bitwise", "theory-behavior:unary")),
+    bv_symbol("bvneg", "bvneg", ("(bvneg (_ BitVec m) (_ BitVec m))",), "(bvneg a)", "BitVec", ("theory-behavior:arithmetic", "theory-behavior:signed-min-value")),
+    bv_symbol("bvand", "bvand", ("(bvand (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)",), "(bvand a b)", "BitVec", ("theory-behavior:bitwise", "theory-behavior:left-associative")),
+    bv_symbol("bvor", "bvor", ("(bvor (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)",), "(bvor a b)", "BitVec", ("theory-behavior:bitwise", "theory-behavior:left-associative")),
+    bv_symbol("bvxor", "bvxor", ("(bvxor (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)",), "(bvxor a b)", "BitVec", ("theory-behavior:bitwise", "theory-behavior:left-associative")),
+    bv_symbol("bvxnor", "bvxnor", ("(bvxnor (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvxnor a b)", "BitVec", ("theory-behavior:bitwise",)),
+    bv_symbol("bvadd", "bvadd", ("(bvadd (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)",), "(bvadd a b)", "BitVec", ("theory-behavior:arithmetic", "theory-behavior:left-associative", "theory-behavior:overflow")),
+    bv_symbol("bvmul", "bvmul", ("(bvmul (_ BitVec m) (_ BitVec m) (_ BitVec m) :left-assoc)",), "(bvmul a b)", "BitVec", ("theory-behavior:arithmetic", "theory-behavior:left-associative", "theory-behavior:overflow")),
+    bv_symbol("bvudiv", "bvudiv", ("(bvudiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit",), "(bvudiv a b)", "BitVec", ("theory-behavior:division", "theory-behavior:division-by-zero", "theory-behavior:soundness-audit"), boundary_assertion="(= (bvudiv #xff #x00) (bvudiv #xff #x00))"),
+    bv_symbol("bvurem", "bvurem", ("(bvurem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit",), "(bvurem a b)", "BitVec", ("theory-behavior:remainder", "theory-behavior:division-by-zero", "theory-behavior:soundness-audit"), boundary_assertion="(= (bvurem #xff #x00) (bvurem #xff #x00))"),
+    bv_symbol("bvsub", "bvsub", ("(bvsub (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvsub a b)", "BitVec", ("theory-behavior:arithmetic", "theory-behavior:overflow")),
+    bv_symbol("bvnand", "bvnand", ("(bvnand (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvnand a b)", "BitVec", ("theory-behavior:bitwise",)),
+    bv_symbol("bvnor", "bvnor", ("(bvnor (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvnor a b)", "BitVec", ("theory-behavior:bitwise",)),
+    bv_symbol("bvcomp", "bvcomp", ("(bvcomp (_ BitVec m) (_ BitVec m) (_ BitVec 1))",), "(bvcomp a b)", "BitVec", ("theory-behavior:comparison",)),
+    bv_symbol("bvsdiv", "bvsdiv", ("(bvsdiv (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit",), "(bvsdiv a b)", "BitVec", ("theory-behavior:division", "theory-behavior:signed", "theory-behavior:division-by-zero", "theory-behavior:signed-min-value", "theory-behavior:soundness-audit"), boundary_assertion="(= (bvsdiv #x80 #xff) (bvsdiv #x80 #xff))"),
+    bv_symbol("bvsrem", "bvsrem", ("(bvsrem (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit",), "(bvsrem a b)", "BitVec", ("theory-behavior:remainder", "theory-behavior:signed", "theory-behavior:division-by-zero", "theory-behavior:soundness-audit"), boundary_assertion="(= (bvsrem #x80 #x00) (bvsrem #x80 #x00))"),
+    bv_symbol("bvsmod", "bvsmod", ("(bvsmod (_ BitVec m) (_ BitVec m) (_ BitVec m)); division-by-zero semantics require soundness audit",), "(bvsmod a b)", "BitVec", ("theory-behavior:remainder", "theory-behavior:signed", "theory-behavior:division-by-zero", "theory-behavior:soundness-audit"), boundary_assertion="(= (bvsmod #x80 #x00) (bvsmod #x80 #x00))"),
+    bv_symbol("bvshl", "bvshl", ("(bvshl (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvshl a b)", "BitVec", ("theory-behavior:shift", "theory-behavior:boundary-shift"), boundary_assertion="(= (bvshl #x01 #x08) (bvshl #x01 #x08))"),
+    bv_symbol("bvlshr", "bvlshr", ("(bvlshr (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvlshr a b)", "BitVec", ("theory-behavior:shift", "theory-behavior:boundary-shift"), boundary_assertion="(= (bvlshr #x80 #x08) (bvlshr #x80 #x08))"),
+    bv_symbol("bvashr", "bvashr", ("(bvashr (_ BitVec m) (_ BitVec m) (_ BitVec m))",), "(bvashr a b)", "BitVec", ("theory-behavior:shift", "theory-behavior:boundary-shift", "theory-behavior:signed"), boundary_assertion="(= (bvashr #x80 #x08) (bvashr #x80 #x08))"),
+    bv_symbol("repeat", "repeat", ("((_ repeat i) (_ BitVec m) (_ BitVec (* i m)))",), "((_ repeat 2) #b10)", "BitVec", ("theory-behavior:repeat", "theory-behavior:indexed"), sat_declarations="", boundary_assertion="(= ((_ repeat 4) #b1) #b1111)"),
+    bv_symbol("zero-extend", "zero_extend", ("((_ zero_extend i) (_ BitVec m) (_ BitVec (+ m i)))",), "((_ zero_extend 2) #b10)", "BitVec", ("theory-behavior:extend", "theory-behavior:zero-extend", "theory-behavior:indexed"), sat_declarations="", boundary_assertion="(= ((_ zero_extend 0) #b1) #b1)"),
+    bv_symbol("sign-extend", "sign_extend", ("((_ sign_extend i) (_ BitVec m) (_ BitVec (+ m i)))",), "((_ sign_extend 2) #b10)", "BitVec", ("theory-behavior:extend", "theory-behavior:sign-extend", "theory-behavior:indexed"), sat_declarations="", boundary_assertion="(= ((_ sign_extend 3) #b1) #b1111)"),
+    bv_symbol("rotate-left", "rotate_left", ("((_ rotate_left i) (_ BitVec m) (_ BitVec m))",), "((_ rotate_left 1) a)", "BitVec", ("theory-behavior:rotate", "theory-behavior:indexed"), boundary_assertion="(= ((_ rotate_left 4) #xab) #xab)"),
+    bv_symbol("rotate-right", "rotate_right", ("((_ rotate_right i) (_ BitVec m) (_ BitVec m))",), "((_ rotate_right 1) a)", "BitVec", ("theory-behavior:rotate", "theory-behavior:indexed"), boundary_assertion="(= ((_ rotate_right 4) #xab) #xab)"),
+    bv_symbol("bvult", "bvult", ("(bvult (_ BitVec m) (_ BitVec m) Bool)",), "(bvult a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:unsigned")),
+    bv_symbol("bvule", "bvule", ("(bvule (_ BitVec m) (_ BitVec m) Bool)",), "(bvule a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:unsigned")),
+    bv_symbol("bvugt", "bvugt", ("(bvugt (_ BitVec m) (_ BitVec m) Bool)",), "(bvugt a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:unsigned")),
+    bv_symbol("bvuge", "bvuge", ("(bvuge (_ BitVec m) (_ BitVec m) Bool)",), "(bvuge a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:unsigned")),
+    bv_symbol("bvslt", "bvslt", ("(bvslt (_ BitVec m) (_ BitVec m) Bool)",), "(bvslt a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:signed")),
+    bv_symbol("bvsle", "bvsle", ("(bvsle (_ BitVec m) (_ BitVec m) Bool)",), "(bvsle a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:signed")),
+    bv_symbol("bvsgt", "bvsgt", ("(bvsgt (_ BitVec m) (_ BitVec m) Bool)",), "(bvsgt a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:signed")),
+    bv_symbol("bvsge", "bvsge", ("(bvsge (_ BitVec m) (_ BitVec m) Bool)",), "(bvsge a b)", "Bool", ("theory-behavior:comparison", "theory-behavior:signed")),
+    bv_symbol("ubv-to-int", "ubv_to_int", ("(ubv_to_int (_ BitVec m) Int)",), "(ubv_to_int a)", "Int", ("theory-behavior:conversion", "theory-behavior:unsigned")),
+    bv_symbol("sbv-to-int", "sbv_to_int", ("(sbv_to_int (_ BitVec m) Int)",), "(sbv_to_int a)", "Int", ("theory-behavior:conversion", "theory-behavior:signed")),
+    bv_symbol("int-to-bv", "int_to_bv", ("((_ int_to_bv m) Int (_ BitVec m))",), "((_ int_to_bv 8) 3)", "BitVec", ("theory-behavior:conversion", "theory-behavior:indexed"), sat_declarations="", boundary_assertion="(= ((_ int_to_bv 1) 3) #b1)"),
+    bv_symbol("bvnego", "bvnego", ("(bvnego (_ BitVec m) Bool)",), "(bvnego a)", "Bool", ("theory-behavior:overflow", "theory-behavior:signed-min-value")),
+    bv_symbol("bvuaddo", "bvuaddo", ("(bvuaddo (_ BitVec m) (_ BitVec m) Bool)",), "(bvuaddo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:unsigned")),
+    bv_symbol("bvsaddo", "bvsaddo", ("(bvsaddo (_ BitVec m) (_ BitVec m) Bool)",), "(bvsaddo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:signed")),
+    bv_symbol("bvumulo", "bvumulo", ("(bvumulo (_ BitVec m) (_ BitVec m) Bool)",), "(bvumulo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:unsigned")),
+    bv_symbol("bvsmulo", "bvsmulo", ("(bvsmulo (_ BitVec m) (_ BitVec m) Bool)",), "(bvsmulo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:signed")),
+    bv_symbol("bvusubo", "bvusubo", ("(bvusubo (_ BitVec m) (_ BitVec m) Bool)",), "(bvusubo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:unsigned")),
+    bv_symbol("bvssubo", "bvssubo", ("(bvssubo (_ BitVec m) (_ BitVec m) Bool)",), "(bvssubo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:signed")),
+    bv_symbol("bvsdivo", "bvsdivo", ("(bvsdivo (_ BitVec m) (_ BitVec m) Bool)",), "(bvsdivo a b)", "Bool", ("theory-behavior:overflow", "theory-behavior:signed", "theory-behavior:division")),
+)
+
+
+ALL_THEORY_SYMBOLS = (
+    *CORE_ARITHMETIC_THEORY_SYMBOLS,
+    *ARRAY_THEORY_SYMBOLS,
+    *BITVECTOR_THEORY_SYMBOLS,
+)
+
+
 def theory_features(symbol: TheorySymbol, kind: str) -> list[str]:
     return [
         f"theory:{symbol.theory}",
@@ -1435,8 +1786,13 @@ def theory_features(symbol: TheorySymbol, kind: str) -> list[str]:
 
 
 def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_phase: str) -> dict[str, object]:
+    files = ("src/HolSmt/SmtLib_Theories.sml", "src/HolSmt/Z3_ProofReplay.sml")
+    if symbol.theory == "ArraysEx":
+        files = ARRAY_RECONSTRUCTION_FILES
+    elif symbol.theory == "Fixed_Size_BitVectors":
+        files = BITVECTOR_RECONSTRUCTION_FILES
     return implementation_obligation(
-        files=("src/HolSmt/SmtLib_Theories.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        files=files,
         feature=f"theory-symbol:{symbol.theory}:{symbol.slug}:{kind}",
         test_ids=[case_id],
         failure_phase=failure_phase,
@@ -1446,45 +1802,60 @@ def theory_obligation(symbol: TheorySymbol, kind: str, case_id: str, failure_pha
 
 def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
     case_id = f"theory:{symbol.theory}:{symbol.slug}:{kind}"
+    z3_unsupported = "theory-behavior:z3-unsupported" in symbol.behavior_features
     if kind == "sat":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
         expected = {
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
-            "z3-oracle": expected_result("pass"),
+            "z3-oracle": expected_result(
+                "red" if z3_unsupported else "pass",
+                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector operator is incomplete"
+                if z3_unsupported else None,
+                failure_phase="solver" if z3_unsupported else None,
+            ),
             "z3-tac": expected_result(
-                "fail",
-                diagnostic="SAT result has no HOL theorem to reconstruct",
-                failure_phase="theorem-shape",
+                "red" if z3_unsupported else "fail",
+                diagnostic="checked Z3_TAC cannot reach SAT no-theorem diagnostic until solver support exists"
+                if z3_unsupported else "SAT result has no HOL theorem to reconstruct",
+                failure_phase="solver" if z3_unsupported else "theorem-shape",
             ),
         }
-        implementation = None
+        implementation = theory_obligation(symbol, kind, case_id, "solver") if z3_unsupported else None
     elif kind == "unsat-proof":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "proof-parse", "proof-replay", "z3-tac")
         expected = {
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
-            "z3-oracle": expected_result("pass"),
+            "z3-oracle": expected_result(
+                "red" if z3_unsupported else "pass",
+                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector operator is incomplete"
+                if z3_unsupported else None,
+                failure_phase="solver" if z3_unsupported else None,
+            ),
             "proof-parse": expected_result(
                 "red",
-                diagnostic="theory proof parsing evidence is incomplete",
-                failure_phase="proof-parse",
+                diagnostic="Z3 proof is unavailable until solver support for this theory symbol exists"
+                if z3_unsupported else "theory proof parsing evidence is incomplete",
+                failure_phase="solver" if z3_unsupported else "proof-parse",
                 proof_rule_histogram={"asserted": 1},
             ),
             "proof-replay": expected_result(
                 "red",
-                diagnostic="theory proof replay evidence is incomplete",
-                failure_phase="proof-replay",
+                diagnostic="Z3 proof replay is unavailable until solver support for this theory symbol exists"
+                if z3_unsupported else "theory proof replay evidence is incomplete",
+                failure_phase="solver" if z3_unsupported else "proof-replay",
                 proof_rule_histogram={"asserted": 1},
             ),
             "z3-tac": expected_result(
                 "red",
-                diagnostic="checked Z3_TAC reconstruction for theory symbol is incomplete",
-                failure_phase="proof-replay",
+                diagnostic="checked Z3_TAC reconstruction is blocked by missing solver support"
+                if z3_unsupported else "checked Z3_TAC reconstruction for theory symbol is incomplete",
+                failure_phase="solver" if z3_unsupported else "proof-replay",
                 theorem_shape="closed theorem without oracle tags",
             ),
         }
-        implementation = theory_obligation(symbol, kind, case_id, "proof-replay")
+        implementation = theory_obligation(symbol, kind, case_id, "solver" if z3_unsupported else "proof-replay")
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
         expected = {
@@ -1506,9 +1877,14 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
         expected = {
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
-            "z3-oracle": expected_result("pass"),
+            "z3-oracle": expected_result(
+                "red" if z3_unsupported else "pass",
+                diagnostic="Z3 oracle support for SMT-LIB 2.7 bitvector boundary case is incomplete"
+                if z3_unsupported else None,
+                failure_phase="solver" if z3_unsupported else None,
+            ),
         }
-        implementation = None
+        implementation = theory_obligation(symbol, kind, case_id, "solver") if z3_unsupported else None
     else:
         raise GeneratorError(f"unknown theory case kind: {kind}")
 
@@ -1530,7 +1906,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
 
 def theory_cases() -> list[GeneratedCase]:
     cases: list[GeneratedCase] = []
-    for symbol in CORE_ARITHMETIC_THEORY_SYMBOLS:
+    for symbol in ALL_THEORY_SYMBOLS:
         cases.append(theory_case(symbol, "sat", symbol.sat_script))
         cases.append(theory_case(symbol, "unsat-proof", symbol.unsat_proof_script))
         cases.append(theory_case(symbol, "type-error", symbol.type_error_script))

@@ -1,0 +1,6 @@
+(set-option :produce-proofs true)
+(set-logic QF_BV)
+(declare-const a (_ BitVec 8))
+(assert (not (= a a)))
+(check-sat)
+(get-proof)
