@@ -1,4 +1,278 @@
 {
   "schema_version": "2",
-  "cases": []
+  "cases": [
+    {
+      "id": "command:set-logic",
+      "file": "cases/commands/command_set_logic.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command:set-logic"
+      ],
+      "modes": [
+        "parser-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "complete command corpus row is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "command:set-logic",
+        "test_ids": [
+          "command:set-logic"
+        ],
+        "failure_phase": "parser",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 set-logic command"
+      }
+    },
+    {
+      "id": "external-benchmark:external-reduced-qf-uf-smoke",
+      "file": "cases/external/external_benchmark_external_reduced_qf_uf_smoke.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external:reduced-qf-uf-smoke"
+      ],
+      "modes": [
+        "parser-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "complete external benchmark row is still an implementation obligation"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "complete external benchmark row is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/tools/external-benchmarks"
+        ],
+        "feature": "external:reduced-qf-uf-smoke",
+        "test_ids": [
+          "external-benchmark:external-reduced-qf-uf-smoke"
+        ],
+        "failure_phase": "solver",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "pinned reduced QF_UF benchmark smoke"
+      }
+    },
+    {
+      "id": "logic:qf-lia-boundary",
+      "file": "cases/logics/logic_qf_lia_boundary.smt2",
+      "logic": "QF_LIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic:QF_LIA:boundary"
+      ],
+      "modes": [
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "complete logic packet row is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Logics.sml",
+          "src/HolSmt/SmtLib_Translate.sml"
+        ],
+        "feature": "logic:QF_LIA:boundary",
+        "test_ids": [
+          "logic:qf-lia-boundary"
+        ],
+        "failure_phase": "translation",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 QF_LIA logic"
+      }
+    },
+    {
+      "id": "proof-rule:asserted",
+      "file": "cases/proof_rules/proof_rule_asserted.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule:asserted"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "complete proof-rule row is still an implementation obligation",
+          "proof_rule_histogram": {
+            "asserted": 1
+          }
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "complete proof-rule row is still an implementation obligation",
+          "proof_rule_histogram": {
+            "asserted": 1
+          }
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "proof-rule:asserted",
+        "test_ids": [
+          "proof-rule:asserted"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule asserted"
+      }
+    },
+    {
+      "id": "soundness-audit:soundness-oracle-tag-boundary",
+      "file": "cases/soundness/soundness_audit_soundness_oracle_tag_boundary.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "soundness-audit",
+      "features": [
+        "soundness:oracle-tag-boundary"
+      ],
+      "modes": [
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "complete soundness audit row is still an implementation obligation",
+          "theorem_shape": "closed theorem without oracle tags"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "soundness:oracle-tag-boundary",
+        "test_ids": [
+          "soundness-audit:soundness-oracle-tag-boundary"
+        ],
+        "failure_phase": "oracle-tag",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "HolSmt-internal",
+        "reference": "checked Z3_TAC oracle-tag boundary"
+      }
+    },
+    {
+      "id": "theory:core-distinct",
+      "file": "cases/theories/theory_core_distinct.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "theory:Core:distinct"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "complete theory corpus row is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Theories.sml",
+          "src/HolSmt/SmtLib_TypeCheck.sml"
+        ],
+        "feature": "theory:Core:distinct",
+        "test_ids": [
+          "theory:core-distinct"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-theory",
+        "reference": "SMT-LIB 2.7 Core theory"
+      }
+    }
+  ]
 }

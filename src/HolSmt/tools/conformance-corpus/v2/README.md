@@ -49,6 +49,50 @@ Generated and imported SMT-LIB scripts are organized under:
   semantic soundness audits.
 - `cases/external/` for pinned reduced external benchmarks.
 
+`generate_complete_corpus.py` is the shared generator framework for the v2
+corpus.  With no subcommand it performs a deterministic dry run and prints a
+sample manifest containing one red seed row for each class:
+
+```sh
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py
+```
+
+Focused dry-run subcommands are available for the planned domains:
+
+```sh
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py commands
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py theories
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py logics
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py proof-rules
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py soundness
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py external
+```
+
+Use `--write` with `samples` or a focused subcommand to update
+`manifest.json` and write the generated SMT-LIB scripts.  The write path is
+idempotent: generated case IDs are replaced deterministically and unrelated
+manifest entries are preserved.
+
+```sh
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py samples --write
+```
+
+Use audit-only mode in CI when the checked-in manifest should be validated
+without writing files:
+
+```sh
+python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py audit
+```
+
+The generator centralizes the supported Z3 versions:
+
+- `2.19.1`
+- `4.11.2`
+- `4.12.4`
+- `4.13.0`
+- `4.14.1`
+- `4.15.3`
+
 Validate the seed manifest with the locally available JSON schema validator:
 
 ```sh
