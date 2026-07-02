@@ -1434,27 +1434,25 @@ in
   expect_logic "QF_LIA" ``(x:int) <= x + 1``;
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
-  expect_logic "QF_UF" ``(P:'a -> bool) x``;
-  (* HOL function application is currently emitted as UF, not SMT Array
-     select/store. This is the stable approximation until the emitter gains
-     first-class array encoding. *)
-  expect_logic "QF_UF" ``(f:'a -> 'b) x = f x``
+  expect_logic "QF_AX" ``(P:'a -> bool) x``;
+  expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``
 end
 
 fun smtlib_translation_records_success () =
 let
   val (logic, _, records, translation) = inferred_logic ``(P:'a -> bool) x``
-  val _ = assert (logic = "QF_UF", "record test expected QF_UF")
+  val _ = assert (logic = "QF_AX", "record test expected QF_AX")
   val has_logic =
-    List.exists (fn SmtLib.LogicSelection {logic = "QF_UF", ...} => true
+    List.exists (fn SmtLib.LogicSelection {logic = "QF_AX", ...} => true
       | _ => false) records
   val has_type_decl =
     List.exists (fn SmtLib.TypeDeclaration {smt_name, ...} =>
         String.isPrefix "t" smt_name
       | _ => false) records
   val has_term_decl =
-    List.exists (fn SmtLib.TermDeclaration {arity = 1, smt_name, ...} =>
+    List.exists (fn SmtLib.TermDeclaration {arity = 0, smt_name, range_sort, ...} =>
         String.isPrefix "v" smt_name
+        andalso String.isPrefix "(Array " range_sort
       | _ => false) records
   val has_encoded_symbol =
     List.exists (fn SmtLib.EncodedSymbol {smt_symbol = "not", ...} => true
@@ -1464,7 +1462,7 @@ let
 in
   assert (has_logic, "translation records did not include selected logic");
   assert (has_type_decl, "translation records did not include type declaration");
-  assert (has_term_decl, "translation records did not include term declaration");
+  assert (has_term_decl, "translation records did not include array term declaration");
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
@@ -1519,22 +1517,23 @@ fun smtlib_higher_order_translation_abstraction_success () =
 let
   val (logic, _, records, translation) =
     inferred_logic ``(H:('a -> 'b) -> bool) f``
-  val has_function_sort_decl =
+  val has_array_sort_decl =
     List.exists
-      (fn SmtLib.TypeDeclaration {hol_type, ...} =>
-            Lib.can Type.dom_rng hol_type
+      (fn SmtLib.TermDeclaration {arity = 0, range_sort, hol_term, ...} =>
+            term_is_var_named "H" hol_term andalso
+            String.isPrefix "(Array (Array " range_sort
         | _ => false) records
   val has_h_decl =
     List.exists
-      (fn SmtLib.TermDeclaration {arity = 1, hol_term, ...} =>
+      (fn SmtLib.TermDeclaration {arity = 0, hol_term, ...} =>
             term_is_var_named "H" hol_term
         | _ => false) records
   val _ = SmtLib.parser_dicts_for_translation translation
 in
-  assert (logic = "QF_UF",
-    "higher-order abstraction expected QF_UF, got " ^ logic);
-  assert (has_function_sort_decl,
-    "higher-order abstraction lacked a function-sort declaration");
+  assert (logic = "QF_AX",
+    "higher-order abstraction expected QF_AX, got " ^ logic);
+  assert (has_array_sort_decl,
+    "higher-order abstraction lacked nested array sort declaration");
   assert (has_h_decl,
     "higher-order abstraction lacked a declaration for H")
 end
@@ -1576,18 +1575,19 @@ let
        ``CONS (x:int) xs = CONS y ys``),
       ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)\n",
        "(declare-fun v0 (Int t0) t0)"]),
-    ("function-uninterpreted-symbols", ([],
+    ("function-application-arrays", ([],
        ``(f:'a -> 'b) x = g y``),
-      ["(set-logic QF_UF)\n", "(declare-fun v0 (t0) t1)",
-       "(declare-fun v2 (t2) t1)"]),
+      ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
+       "(declare-fun v2 () (Array t2 t1))",
+       "(= (select v0 v1) (select v2 v3))"]),
     ("tuple-selector-current-uf", ([],
        ``FST (p:int # bool) <= FST p + 1``),
       ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)",
        "(declare-fun v0 (t0) Int)"]),
     ("sets-as-predicates-current-uf", ([],
        ``(s:'a -> bool) x``),
-      ["(set-logic QF_UF)\n", "(declare-fun v0 (t0) Bool)",
-       "(assert (not (v0 v1)))"])
+      ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 Bool))",
+       "(assert (not (select v0 v1)))"])
   ]
 in
   List.app expect_shape cases
@@ -1608,7 +1608,8 @@ let
   val cases = [
     ("variables-constants-applications", ([],
        ``(P:'a -> bool) x /\ T /\ ~F``),
-      ["(declare-fun v0 (t0) Bool)", "(and (v0 v1) (and true (not false)))"]),
+      ["(declare-fun v0 () (Array t0 Bool))",
+       "(and (select v0 v1) (and true (not false)))"]),
     ("quantifier-binder", ([], ``!x:int. x <= x + 1``),
       ["(set-logic LIA)\n", "(forall ((b0 Int)) (<= b0 (+ b0 1)))"]),
     ("let-binder", ([],
@@ -1721,7 +1722,7 @@ in
     ``(f:'a -> 'b) x = g y``);
   roundtrip "core-xor" ([],
     ``HolSmt$xor p q``);
-  roundtrip "function-application-current-encoding" ([],
+  roundtrip "function-application-array-encoding" ([],
     ``(f:'a -> 'b) x = f x``);
   roundtrip "mixed-int-word-uf" ([``(x:int) <= y``],
     ``((x:int) + 1 <= y + 2) /\ ((w:word8) + 1w = w + 1w) /\
@@ -1737,12 +1738,8 @@ let
      status = "round-trips through parser_dicts_for_translation"},
     {encoding = "uninterpreted functions/equality",
      status = "round-trips through parser_dicts_for_translation"},
-    {encoding = "HOL function application",
-     status = "currently emitted as uninterpreted functions"},
     {encoding = "SMT ArraysEx select/store",
-     status = "known gap: parser maps select/store to HOL application/update, \
-              \but HOL translation currently emits function application as UF \
-              \rather than SMT array select/store"},
+     status = "round-trips through native SMT ArraysEx select/store"},
     {encoding = "strings/UnicodeStrings",
      status = "HOL string sort and selected string operations translate with \
               \native SMT-LIB records; replay remains unsupported"},
@@ -1752,7 +1749,7 @@ let
   ]
   fun has_array_gap {encoding, status} =
     encoding = "SMT ArraysEx select/store" andalso
-    String.isSubstring "known gap" status andalso
+    String.isSubstring "round-trips" status andalso
     String.isSubstring "select/store" status
   fun has_advanced_gap {encoding, status} =
     encoding = "floating point, regex, datatypes, sequences, sets, bags" andalso
@@ -1760,7 +1757,7 @@ let
     String.isSubstring "replay remains false" status
 in
   assert (List.exists has_array_gap matrix,
-    "round-trip matrix lacks explicit ArraysEx select/store diagnostic");
+    "round-trip matrix lacks explicit ArraysEx select/store support row");
   assert (List.exists has_advanced_gap matrix,
     "round-trip matrix lacks explicit advanced-theory diagnostic")
 end

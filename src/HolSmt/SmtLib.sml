@@ -370,10 +370,21 @@ local
     Option.isSome (first_success (fn (_, f) => f ty)
       (TypeNet.match (builtin_types, ty)))
 
+  fun is_function_type ty = Lib.can Type.dom_rng ty
+
   fun smt_sort_of_type tydict ty =
-    case first_success (fn (_, f) => f ty) (TypeNet.match (builtin_types, ty)) of
-      SOME name => name
-    | NONE => Redblackmap.find (tydict, ty)
+    if is_function_type ty then
+      let
+        val (dom, rng) = Type.dom_rng ty
+      in
+        "(Array " ^ smt_sort_of_type tydict dom ^ " " ^
+        smt_sort_of_type tydict rng ^ ")"
+      end
+    else
+      case first_success (fn (_, f) => f ty)
+          (TypeNet.match (builtin_types, ty)) of
+        SOME name => name
+      | NONE => Redblackmap.find (tydict, ty)
 
   fun type_contains pred ty =
     pred ty orelse
@@ -393,6 +404,9 @@ local
   fun type_contains_string ty =
     type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
       ty
+
+  fun type_contains_function ty =
+    type_contains is_function_type ty
 
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
 
@@ -542,17 +556,21 @@ local
             "AUFNIRA"
           else if nonlinear then qf ^ "NIRA" else qf ^ "LIRA"
         else if integers then
-          if uninterpreted orelse arrays then
+          if arrays then
+            qf ^ "AUF" ^ (if nonlinear then "NIA" else "LIA")
+          else if uninterpreted then
             qf ^ "UF" ^ (if nonlinear then "NIA" else "LIA")
           else
             qf ^ (if nonlinear then "NIA" else "LIA")
         else if reals then
-          if uninterpreted orelse arrays then
+          if arrays then
+            qf ^ "AUF" ^ (if nonlinear then "NRA" else "LRA")
+          else if uninterpreted then
             qf ^ "UF" ^ (if nonlinear then "NRA" else "LRA")
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if uninterpreted then qf ^ "AUFBV" else qf ^ "AX"
+          qf ^ "AX"
         else
           qf ^ "UF"
       val logic =
@@ -634,12 +652,19 @@ local
       fun term_needs_uf ((tm, arity), _) =
         arity > 0 orelse
         (arity = 0 andalso
-         not (has_type_builtin (range_after arity (Term.type_of tm))))
+         not (has_type_builtin (range_after arity (Term.type_of tm))) andalso
+         not (is_function_type (range_after arity (Term.type_of tm))))
       val uninterpreted =
         has_uninterpreted_type orelse
         Redblackmap.foldl (fn (key, value, b) =>
           b orelse term_needs_uf (key, value)) false tmdict
-      val arrays = false
+      val arrays =
+        List.exists (fn tm =>
+          (Term.is_var tm andalso type_contains_function (Term.type_of tm))
+          orelse combinSyntax.is_update_comb tm) all_subterms orelse
+        Redblackmap.foldl (fn ((tm, arity), _, b) =>
+          b orelse (arity = 0 andalso type_contains_function (Term.type_of tm)))
+          false tmdict
     in
       LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
@@ -768,13 +793,25 @@ local
      given type *)
   fun translate_type (tydict, ty) =
   let
-    val name =
-      case first_success (fn (_, f) => f ty)
-          (TypeNet.match (builtin_types, ty)) of
-        SOME name => name
-      | NONE => Redblackmap.find (tydict, ty)
+    val (tydict, (decls, name)) =
+      if is_function_type ty then
+        let
+          val (dom, rng) = Type.dom_rng ty
+          val (tydict, (domdecls, domname)) = translate_type (tydict, dom)
+          val (tydict, (rngdecls, rngname)) = translate_type (tydict, rng)
+        in
+          (tydict, (domdecls @ rngdecls, "(Array " ^ domname ^ " " ^
+            rngname ^ ")"))
+        end
+      else
+        (tydict,
+          ([],
+            case first_success (fn (_, f) => f ty)
+                (TypeNet.match (builtin_types, ty)) of
+              SOME name => name
+            | NONE => Redblackmap.find (tydict, ty)))
   in
-    (tydict, ([], name))
+    (tydict, (decls, name))
   end
   handle Redblackmap.NotFound =>
     (* uninterpreted types *)
@@ -901,6 +938,42 @@ local
         builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
+    handle Feedback.HOL_ERR _ =>
+
+      (* arrays are represented by HOL functions: function application is
+         SMT-LIB select, and UPDATE application is SMT-LIB store. *)
+      let
+        val ((index, value), array) = combinSyntax.dest_update_comb tm
+        val (acc, (arraydecls, arrayname)) =
+          translate_term (acc, (bounds, array))
+        val (acc, (indexdecls, indexname)) =
+          translate_term (acc, (bounds, index))
+        val (acc, (valuedecls, valuename)) =
+          translate_term (acc, (bounds, value))
+      in
+        (acc, (arraydecls @ indexdecls @ valuedecls,
+          sexpr "store" [arrayname, indexname, valuename]))
+      end
+    handle Feedback.HOL_ERR _ =>
+
+      let
+        val (function, argument) = Term.dest_comb tm
+        val _ = Type.dom_rng (Term.type_of function)
+        val (head, _) = boolSyntax.strip_comb tm
+        val _ =
+          if Term.is_const head andalso
+             not (combinSyntax.is_update_comb function) then
+            raise ERR "translate_term" "HOL constants are emitted as functions"
+          else
+            ()
+        val (acc, (functiondecls, functionname)) =
+          translate_term (acc, (bounds, function))
+        val (acc, (argumentdecls, argumentname)) =
+          translate_term (acc, (bounds, argument))
+      in
+        (acc, (functiondecls @ argumentdecls,
+          sexpr "select" [functionname, argumentname]))
+      end
     handle Feedback.HOL_ERR _ =>
 
       let
