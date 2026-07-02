@@ -449,6 +449,16 @@ in
   fun set_ty elem_ty = Type.--> (elem_ty, Type.bool)
   fun bag_ty elem_ty = Type.--> (elem_ty, numSyntax.num)
 
+  fun function_ty tys =
+    case tys of
+      [] => raise ERR "<HO_Core.->>"
+        "function sort expects at least one domain sort and one range sort"
+    | [_] => raise ERR "<HO_Core.->>"
+        "function sort expects at least one domain sort and one range sort"
+    | _ =>
+        let val (domains, range) = Lib.front_last tys
+        in boolSyntax.list_mk_fun (domains, range) end
+
   fun unary_decl name dom rng =
     "(" ^ name ^ " " ^ dom ^ " " ^ rng ^ ")"
 
@@ -840,6 +850,30 @@ in
     val metadata =
       metadata_of_entries "Z3_Extensions" "sort" tyentries @
       metadata_of_entries "Z3_Extensions" "term" tmentries
+
+  end
+
+  (* HO-Core *)
+
+  structure HO_Core =
+  struct
+
+    val tyentries = [
+      official_entry "->" (parametric_attributes ["A", "B"])
+        ["(-> A B)"] (fn _ => fn indices => fn args =>
+          if List.null indices then
+            function_ty args
+          else
+            raise ERR "<HO_Core.->>" "no indices expected")
+    ]
+
+    val tmentries : Term.term symbol_entry list = []
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "HO_Core" "sort" tyentries @
+      metadata_of_entries "HO_Core" "term" tmentries
 
   end
 

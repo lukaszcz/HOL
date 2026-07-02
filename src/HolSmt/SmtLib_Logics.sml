@@ -78,14 +78,15 @@ local
   structure ALL =
   struct
     val tydict = union_dicts [Core.tydict, Ints.tydict, Reals.tydict,
-      Reals_Ints.tydict, ArraysEx.tydict, Fixed_Size_BitVectors.tydict,
-      FloatingPoint.tydict, UnicodeStrings.tydict, Z3_Extensions.tydict]
+      Reals_Ints.tydict, HO_Core.tydict, ArraysEx.tydict,
+      Fixed_Size_BitVectors.tydict, FloatingPoint.tydict,
+      UnicodeStrings.tydict, Z3_Extensions.tydict]
     val tmdict = union_dicts [Core.tmdict, Ints.tmdict, Reals.tmdict,
-      Reals_Ints.tmdict, ArraysEx.tmdict, Fixed_Size_BitVectors.tmdict,
-      FloatingPoint.tmdict, UnicodeStrings.tmdict, Z3_Extensions.tmdict,
-      BV_extension_tmdict]
+      Reals_Ints.tmdict, HO_Core.tmdict, ArraysEx.tmdict,
+      Fixed_Size_BitVectors.tmdict, FloatingPoint.tmdict,
+      UnicodeStrings.tmdict, Z3_Extensions.tmdict, BV_extension_tmdict]
     val metadata = union_metadata [Core.metadata, Ints.metadata,
-      Reals.metadata, Reals_Ints.metadata, ArraysEx.metadata,
+      Reals.metadata, Reals_Ints.metadata, HO_Core.metadata, ArraysEx.metadata,
       Fixed_Size_BitVectors.metadata, FloatingPoint.metadata,
       UnicodeStrings.metadata, Z3_Extensions.metadata, BV_extension_metadata]
   end
