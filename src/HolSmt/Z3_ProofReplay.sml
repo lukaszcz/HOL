@@ -1411,14 +1411,46 @@ local
       SOME s => List.exists (Lib.equal s) subkinds
     | NONE => false
 
+  fun advanced_th_lemma_obligation_theory ({theory, ...}
+      : th_lemma_metadata) =
+    case theory of
+      "floating-point" => "fp"
+    | "fpa" => "fp"
+    | "sequence" => "seq"
+    | "sequences" => "seq"
+    | "strings" => "string"
+    | "str" => "string"
+    | "regex" => "regexp"
+    | "re" => "regexp"
+    | "datatypes" => "datatype"
+    | "dt" => "datatype"
+    | other => other
+
+  fun advanced_th_lemma_obligation metadata =
+  let
+    val theory = advanced_th_lemma_obligation_theory metadata
+    val feature_suffix =
+      if theory = "nonlinear-arith" then "nonlinear-arith" else theory
+    val feature = "proof-rule:th-lemma-" ^ feature_suffix
+  in
+    {missing_feature = feature, failing_case_ids = [feature]}
+  end
+
   fun unsupported_advanced_th_lemma_message (state : state)
       (metadata : th_lemma_metadata) t =
+  let
+    val {missing_feature, failing_case_ids} =
+      advanced_th_lemma_obligation metadata
+  in
     "unsupported th-lemma shape: " ^
     th_lemma_metadata_to_string metadata ^
     "; z3_version=" ^ #z3_version state ^
+    "; missing feature: " ^ missing_feature ^
+    "; failing case IDs: " ^ String.concatWith ", " failing_case_ids ^
     "; proof-format limitation=Z3 does not emit a checked certificate " ^
     "for HolSmt replay of this advanced theory family; conclusion=" ^
     Library.term_to_string t
+  end
 
   fun z3_th_lemma_advanced_unsupported metadata =
     th_lemma_wrapper ("advanced:" ^ #theory metadata) (fn (state, t) =>

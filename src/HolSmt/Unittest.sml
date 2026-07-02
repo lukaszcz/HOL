@@ -2041,7 +2041,8 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
         "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
     end
 
-fun expect_advanced_th_lemma_diagnostic (name, proof_text, theory_text) =
+fun expect_advanced_th_lemma_diagnostic
+    (name, proof_text, theory_text, obligation_id) =
   (ignore (replay_z3_proof_string proof_text);
    die ("FAIL: unsupported advanced th-lemma " ^ name ^
      " replayed successfully"))
@@ -2057,6 +2058,12 @@ fun expect_advanced_th_lemma_diagnostic (name, proof_text, theory_text) =
       assert (String.isSubstring "proof-format limitation" msg,
         "advanced th-lemma diagnostic did not explain proof-format limit for " ^
         name ^ ": " ^ msg);
+      assert (String.isSubstring ("missing feature: " ^ obligation_id) msg,
+        "advanced th-lemma diagnostic did not include missing feature for " ^
+        name ^ ": " ^ msg);
+      assert (String.isSubstring ("failing case IDs: " ^ obligation_id) msg,
+        "advanced th-lemma diagnostic did not include failing case ID for " ^
+        name ^ ": " ^ msg);
       assert (String.isSubstring "parsed HOL conclusion: F" msg,
         "advanced th-lemma diagnostic did not include conclusion for " ^
         name ^ ": " ^ msg)
@@ -2067,22 +2074,28 @@ let
   val cases = [
     ("floating-point",
       "((proof ((_ th-lemma fp eq-propagate 1) false)))",
-      "theory=fp"),
+      "theory=fp",
+      "proof-rule:th-lemma-fp"),
     ("sequence",
       "((proof ((_ th-lemma seq eq-propagate 2) false)))",
-      "theory=seq"),
+      "theory=seq",
+      "proof-rule:th-lemma-seq"),
     ("string",
       "((proof ((_ th-lemma string eq-propagate 3) false)))",
-      "theory=string"),
+      "theory=string",
+      "proof-rule:th-lemma-string"),
     ("regexp",
       "((proof ((_ th-lemma regexp eq-propagate 4) false)))",
-      "theory=regexp"),
+      "theory=regexp",
+      "proof-rule:th-lemma-regexp"),
     ("datatype",
       "((proof ((_ th-lemma datatype eq-propagate 5) false)))",
-      "theory=datatype"),
+      "theory=datatype",
+      "proof-rule:th-lemma-datatype"),
     ("nonlinear-arith",
       "((proof ((_ th-lemma arith nla 6) false)))",
-      "theory=nonlinear-arith")
+      "theory=nonlinear-arith",
+      "proof-rule:th-lemma-nonlinear-arith")
   ]
 in
   List.app expect_advanced_th_lemma_diagnostic cases
