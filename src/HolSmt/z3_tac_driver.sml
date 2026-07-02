@@ -103,16 +103,16 @@ fun z3_tac_checked_prove goal =
         "Z3_TAC prover returned UNSAT without a checked theorem"
   | SolverSpec.SAT NONE =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "solver reports negated term to be satisfiable"
+        "SAT result has no HOL theorem to reconstruct"
   | SolverSpec.SAT (SOME _) =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "solver reports negated term to be satisfiable with a model"
+        "SAT result has no HOL theorem to reconstruct"
   | SolverSpec.UNKNOWN NONE =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "solver reports unknown"
+        "UNKNOWN result has no HOL theorem to reconstruct"
   | SolverSpec.UNKNOWN (SOME message) =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        ("solver reports unknown: " ^ message)
+        ("UNKNOWN result has no HOL theorem to reconstruct: " ^ message)
 
 fun z3_tac_ok path expected_logic =
 let
