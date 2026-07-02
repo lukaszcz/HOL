@@ -23843,7 +23843,7 @@
       "class": "theory",
       "features": [
         "theory-behavior:mutual-datatype",
-        "theory-case:type-error",
+        "theory-case:sat",
         "theory-entry:Datatypes:mutual-datatypes",
         "theory:Datatypes"
       ],
@@ -23864,23 +23864,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "unsupported command 'declare-datatypes'",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:mutual-datatypes",
-        "test_ids": [
-          "theory:Datatypes:mutual-datatypes"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Datatypes theory mutual datatypes"
@@ -23894,7 +23881,7 @@
       "class": "theory",
       "features": [
         "theory-behavior:parametric-datatype",
-        "theory-case:type-error",
+        "theory-case:sat",
         "theory-entry:Datatypes:parametric-datatype",
         "theory:Datatypes"
       ],
@@ -23915,23 +23902,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "unsupported parametric datatype declaration",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:parametric-datatype",
-        "test_ids": [
-          "theory:Datatypes:parametric-datatype"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Datatypes theory parametric datatype"
@@ -23945,7 +23919,7 @@
       "class": "theory",
       "features": [
         "theory-behavior:recursive-datatype",
-        "theory-case:type-error",
+        "theory-case:sat",
         "theory-entry:Datatypes:recursive-datatype",
         "theory:Datatypes"
       ],
@@ -23966,23 +23940,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-reconstruction:recursive-datatype",
-        "test_ids": [
-          "theory:Datatypes:recursive-datatype"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Datatypes theory recursive datatype"
