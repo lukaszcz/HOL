@@ -1964,6 +1964,10 @@ let
       "((proof ((_ th-lemma basic eq-propagate 0) true)))"),
     ("basic/equality",
       "((proof ((_ th-lemma basic eq-propagate 1) (= false false))))"),
+    ("basic/int-equality-symmetry",
+      "((declare-fun x () Int) (declare-fun y () Int) \
+        \(proof ((_ th-lemma basic eq-propagate 2) \
+        \(implies (= x y) (= y x)))))"),
     ("bv/bit-blast",
       "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
   ]

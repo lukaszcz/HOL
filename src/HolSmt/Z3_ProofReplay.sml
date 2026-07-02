@@ -1365,6 +1365,8 @@ local
     let
       val thm = profile "th_lemma[basic](3)(TAUT_PROVE)"
         tautLib.TAUT_PROVE t
+        handle Feedback.HOL_ERR _ =>
+          profile "th_lemma[basic](4)(METIS)" metis_prove ([], t)
     in
       (* cache 'thm' *)
       (state_cache_thm state thm, thm)
