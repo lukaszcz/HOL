@@ -22046,24 +22046,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Core:distinct:unsat-proof",
-        "test_ids": [
-          "theory:Core:distinct:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Core theory: distinct"
@@ -30239,25 +30225,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Fixed_Size_BitVectors:bvsmod:unsat-proof",
-        "test_ids": [
-          "theory:Fixed_Size_BitVectors:bvsmod:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Fixed_Size_BitVectors theory: bvsmod"
