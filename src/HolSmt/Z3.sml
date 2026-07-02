@@ -163,6 +163,18 @@ structure Z3 = struct
     check_reconstructed_theorem "Z3_SMT_Prover"
       (goal, direct_contradiction_thm (Lib.snd goal))
 
+  fun prove_simplified_goal goal =
+    let
+      val thm = Tactical.TAC_PROOF (goal,
+        Tactical.THEN (SmtLib.SIMP_TAC true, intLib.ARITH_TAC))
+    in
+      check_reconstructed_theorem "Z3_SMT_Prover" (goal, thm)
+    end
+
+  fun prove_without_external_solver goal =
+    prove_direct_contradiction goal
+    handle Feedback.HOL_ERR _ => prove_simplified_goal goal
+
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover_external =
     mk_Z3_fun "Z3_SMT_Prover"
@@ -211,7 +223,7 @@ structure Z3 = struct
           end)
 
   fun Z3_SMT_Prover goal =
-    SolverSpec.UNSAT (SOME (prove_direct_contradiction goal))
+    SolverSpec.UNSAT (SOME (prove_without_external_solver goal))
     handle Feedback.HOL_ERR _ => Z3_SMT_Prover_external goal
 
 end

@@ -1253,7 +1253,9 @@ in
          the simpler goals. *)
       pairTheory.PAIR_EQ, pairTheory.FST, pairTheory.SND,
       combinTheory.UPDATE_APPLY1, combinTheory.APPLY_UPDATE_THM,
-      combinTheory.UPDATE_EQ, boolTheory.REFL_CLAUSE
+      combinTheory.UPDATE_EQ, boolTheory.REFL_CLAUSE,
+      HolSmtTheory.ALL_DISTINCT_NIL, HolSmtTheory.ALL_DISTINCT_CONS,
+      listTheory.MEM
     ] THEN
     SIMP_TAC pureSimps.pure_ss [
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
