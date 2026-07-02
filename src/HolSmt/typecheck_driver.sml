@@ -25,6 +25,13 @@ fun typecheck_count_queries
     (state: SmtLib_Parser.command_state_snapshot) =
   List.length (#queries state)
 
+fun typecheck_query_fragment_terms queries =
+  List.concat (List.map (fn query =>
+    case query of
+      SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} =>
+        assertions @ assumptions
+    | _ => []) queries)
+
 fun typecheck_ok path expected_logic =
 let
   val _ = Library.trace := 0
@@ -33,7 +40,7 @@ let
   val observed_logic = #logic state
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
-      (#assertions state)
+      (typecheck_query_fragment_terms (#queries state))
 in
   if observed_logic <> expected_logic then
     typecheck_die
