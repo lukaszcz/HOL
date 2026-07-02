@@ -466,6 +466,43 @@ def red_sample(
     return GeneratedCase(entry=entry, script=script)
 
 
+def pass_sample(
+    *,
+    row_class: str,
+    feature: str,
+    logic: str,
+    standard: str,
+    modes: Sequence[str],
+    source_info: Mapping[str, object],
+    script: str,
+    theorem_shape: str | None = None,
+    proof_rule_histogram: Mapping[str, int] | None = None,
+) -> GeneratedCase:
+    case_id = deterministic_case_id(row_class, feature)
+    expected = {
+        mode: expected_result(
+            "pass",
+            theorem_shape=theorem_shape if mode == "z3-tac" else None,
+            proof_rule_histogram=proof_rule_histogram if mode in {"proof-parse", "proof-replay"} else None,
+        )
+        for mode in modes
+    }
+    entry = manifest_entry(
+        case_id=case_id,
+        file=deterministic_case_file(row_class, case_id),
+        logic=logic,
+        standard=standard,
+        row_class=row_class,
+        features=[feature],
+        modes=modes,
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=expected,
+        implementation_obligation=None,
+        source=source_info,
+    )
+    return GeneratedCase(entry=entry, script=script)
+
+
 PROOF_RULE_SCRIPT = (
     "(set-option :produce-proofs true)\n"
     "(set-logic QF_UF)\n"
@@ -3898,17 +3935,14 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
             diagnostic="complete logic packet row is still an implementation obligation",
         ),
         th_lemma_proof_rule_case(TH_LEMMA_PROOF_RULE_OBLIGATIONS[0]),
-        red_sample(
+        pass_sample(
             row_class="soundness-audit",
             feature="soundness:oracle-tag-boundary",
             logic="QF_UF",
             standard="Z3-extension",
             modes=("z3-tac",),
-            files=("src/HolSmt/Z3.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-            failure_phase="oracle-tag",
             source_info=source("HolSmt-internal", "checked Z3_TAC oracle-tag boundary"),
             script="(set-logic QF_UF)\n(assert false)\n(check-sat)\n",
-            diagnostic="complete soundness audit row is still an implementation obligation",
             theorem_shape="closed theorem without oracle tags",
         ),
         red_sample(

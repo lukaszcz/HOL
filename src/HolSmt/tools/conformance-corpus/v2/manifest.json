@@ -19836,23 +19836,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "complete soundness audit row is still an implementation obligation",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/Z3.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "soundness:oracle-tag-boundary",
-        "test_ids": [
-          "soundness-audit:soundness-oracle-tag-boundary"
-        ],
-        "failure_phase": "oracle-tag",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "HolSmt-internal",
         "reference": "checked Z3_TAC oracle-tag boundary"

@@ -6,10 +6,10 @@
   },
   "conformance_reports": [
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 5,
-        "matched": 1184
+        "expected-implementation-gap": 1,
+        "matched": 1188
       },
       "conformance_status_counts": {
         "fail": 0,
@@ -24,64 +24,65 @@
       }
     },
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 29,
-        "matched": 232
+        "expected-implementation-gap": 33,
+        "matched": 235
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 261
+        "pass": 268
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/proof-parse/conformance-proof-parse.json",
-      "result_count": 261,
+      "result_count": 268,
       "status_counts": {
         "fail": 0,
-        "pass": 236,
+        "pass": 243,
         "unsupported": 25
       }
     },
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 29,
-        "matched": 232
+        "expected-implementation-gap": 33,
+        "matched": 235
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 261
+        "pass": 268
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/proof-replay/conformance-proof-replay.json",
-      "result_count": 261,
+      "result_count": 268,
       "status_counts": {
         "fail": 0,
-        "pass": 236,
+        "pass": 243,
         "unsupported": 25
       }
     },
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 613,
-        "matched": 546
+        "expected-implementation-gap": 608,
+        "matched": 547,
+        "unexpected-status": 4
       },
       "conformance_status_counts": {
-        "fail": 0,
-        "pass": 1159
+        "fail": 4,
+        "pass": 1155
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
       "result_count": 1159,
       "status_counts": {
-        "fail": 413,
-        "pass": 746,
+        "fail": 371,
+        "pass": 788,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 190,
-        "matched": 618
+        "expected-implementation-gap": 187,
+        "matched": 621
       },
       "conformance_status_counts": {
         "fail": 0,
@@ -96,21 +97,22 @@
       }
     },
     {
-      "case_count": 1249,
+      "case_count": 1256,
       "classification_counts": {
-        "expected-implementation-gap": 497,
-        "matched": 416
+        "expected-implementation-gap": 483,
+        "matched": 408,
+        "unexpected-status": 29
       },
       "conformance_status_counts": {
-        "fail": 0,
-        "pass": 913
+        "fail": 29,
+        "pass": 891
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
-      "result_count": 913,
+      "result_count": 920,
       "status_counts": {
-        "fail": 635,
-        "pass": 271,
-        "unsupported": 7
+        "fail": 342,
+        "pass": 524,
+        "unsupported": 54
       }
     },
     {
@@ -170,17 +172,17 @@
       "case_count": 7,
       "classification_counts": {
         "accepted": 6,
-        "matched": 1
+        "unexpected-status": 1
       },
       "conformance_status_counts": {
-        "fail": 0,
-        "pass": 7
+        "fail": 1,
+        "pass": 6
       },
       "path": "src/HolSmt/tools/complete-conformance-out/external/typecheck-only/external-typecheck-only.json",
       "result_count": 7,
       "status_counts": {
-        "fail": 1,
-        "pass": 6,
+        "fail": 0,
+        "pass": 7,
         "unsupported": 0
       }
     },
@@ -205,17 +207,18 @@
       "case_count": 7,
       "classification_counts": {
         "accepted": 3,
-        "matched": 4
+        "matched": 2,
+        "unexpected-status": 2
       },
       "conformance_status_counts": {
-        "fail": 0,
-        "pass": 7
+        "fail": 2,
+        "pass": 5
       },
       "path": "src/HolSmt/tools/complete-conformance-out/external/z3-tac/external-z3-tac.json",
       "result_count": 7,
       "status_counts": {
-        "fail": 3,
-        "pass": 3,
+        "fail": 1,
+        "pass": 5,
         "unsupported": 1
       }
     }
@@ -271,332 +274,8 @@
     }
   ],
   "red_obligations": {
-    "complete_audit_red_count": 1366,
+    "complete_audit_red_count": 1345,
     "complete_audit_red_obligations": [
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_AUFLIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-auflia-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_AUFLIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-auflia-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_AUFLIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-auflia-unsat-proof:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_BV",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-bv-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_BV",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-bv-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_BV",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-bv-unsat-proof:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lia-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lia-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LIA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lia-unsat-proof:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LRA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lra-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LRA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lra-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_LRA",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-lra-unsat-proof:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_S",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-s-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_S",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-s-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_S",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-s-unsat-proof:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_UF",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-uf-unsat-proof:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_UF",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-uf-unsat-proof:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-proof:QF_UF",
-        "severity": "error",
-        "subject": "case/external-benchmark:curated-reduced-qf-uf-unsat-proof:z3-tac"
-      },
       {
         "category": "implementation_obligation",
         "code": "red_implementation_obligation",
@@ -630,40 +309,6 @@
         "message": "red expected row requires implementation work for external:missing-pinned-benchmark-evidence",
         "severity": "error",
         "subject": "case/external-benchmark:external-missing-pinned-benchmark-evidence:z3-oracle"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "parser",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:z3-upstream-horn3-fixedpoint"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-z3-fixedpoint-regression-parser",
-        "severity": "error",
-        "subject": "case/external-benchmark:z3-upstream-horn3-fixedpoint:parser-only"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "parser",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "test_ids": [
-            "external-benchmark:z3-upstream-horn5-fixedpoint"
-          ]
-        },
-        "message": "red expected row requires implementation work for external-z3-fixedpoint-regression-parser",
-        "severity": "error",
-        "subject": "case/external-benchmark:z3-upstream-horn5-fixedpoint:parser-only"
       },
       {
         "category": "implementation_obligation",
@@ -2858,23 +2503,6 @@
         "message": "red expected row requires implementation work for proof-rule:th-lemma-string",
         "severity": "error",
         "subject": "case/proof-rule:th-lemma-string:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "oracle-tag",
-          "files": [
-            "src/HolSmt/Z3.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "soundness-audit:soundness-oracle-tag-boundary"
-          ]
-        },
-        "message": "red expected row requires implementation work for soundness:oracle-tag-boundary",
-        "severity": "error",
-        "subject": "case/soundness-audit:soundness-oracle-tag-boundary:z3-tac"
       },
       {
         "category": "implementation_obligation",
@@ -25551,458 +25179,8 @@
         "subject": "case/theory:Z3_Extensions:set:unsat-proof:typecheck-only"
       }
     ],
-    "manifest_red_count": 1366,
+    "manifest_red_count": 1345,
     "manifest_red_obligations": [
-      {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_AUFLIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_AUFLIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_AUFLIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_AUFLIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_AUFLIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_AUFLIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_BV",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_BV",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "logic": "QF_BV",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_BV",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_BV",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "logic": "QF_BV",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_BV",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_BV",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-          ]
-        },
-        "logic": "QF_BV",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_LIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "logic": "QF_LIA",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_LIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "logic": "QF_LIA",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_LIA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LIA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-          ]
-        },
-        "logic": "QF_LIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_LRA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LRA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "logic": "QF_LRA",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_LRA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LRA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "logic": "QF_LRA",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_LRA",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_LRA",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-          ]
-        },
-        "logic": "QF_LRA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_S",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_S",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "logic": "QF_S",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_S",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_S",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "logic": "QF_S",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_S",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_S",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-s-unsat-proof"
-          ]
-        },
-        "logic": "QF_S",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
-        "features": [
-          "external-logic-family:QF_UF",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_UF",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_UF",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_UF",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
-        "features": [
-          "external-logic-family:QF_UF",
-          "external-source:curated-reduced",
-          "external-status:unsat-proof"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "external-proof:QF_UF",
-          "files": [
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned external UNSAT proof benchmark; keep red until proof parsing and replay are executable evidence.",
-          "test_ids": [
-            "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "z3-tac"
-      },
       {
         "case": "external-benchmark:external-missing-pinned-benchmark-evidence",
         "class": "external-benchmark",
@@ -26048,54 +25226,6 @@
         "mode": "z3-oracle"
       },
       {
-        "case": "external-benchmark:z3-upstream-horn3-fixedpoint",
-        "class": "external-benchmark",
-        "diagnostic": "Z3 fixedpoint declare-rel/rule/query scripts are outside the SMT-LIB 2.7 parser subset",
-        "features": [
-          "external-logic-family:Z3_FIXEDPOINT",
-          "external-obligation:z3-fixedpoint-parser",
-          "external-source:z3-upstream"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "parser",
-          "feature": "external-z3-fixedpoint-regression-parser",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned Z3 upstream regression/proof-style input; keep red until this Z3 extension syntax has explicit support or exclusion diagnostics.",
-          "test_ids": [
-            "external-benchmark:z3-upstream-horn3-fixedpoint"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "parser-only"
-      },
-      {
-        "case": "external-benchmark:z3-upstream-horn5-fixedpoint",
-        "class": "external-benchmark",
-        "diagnostic": "Z3 fixedpoint declare-rel/rule/query scripts are outside the SMT-LIB 2.7 parser subset",
-        "features": [
-          "external-logic-family:Z3_FIXEDPOINT",
-          "external-obligation:z3-fixedpoint-parser",
-          "external-source:z3-upstream"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "parser",
-          "feature": "external-z3-fixedpoint-regression-parser",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-          ],
-          "notes": "Pinned Z3 upstream regression/proof-style input; keep red until this Z3 extension syntax has explicit support or exclusion diagnostics.",
-          "test_ids": [
-            "external-benchmark:z3-upstream-horn5-fixedpoint"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "parser-only"
-      },
-      {
         "case": "logic:ALIA:fragment-violation",
         "class": "logic",
         "diagnostic": "logic fragment restrictions are not completely enforced",
@@ -29122,28 +28252,6 @@
           "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added.",
           "test_ids": [
             "proof-rule:th-lemma-string"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "soundness-audit:soundness-oracle-tag-boundary",
-        "class": "soundness-audit",
-        "diagnostic": "complete soundness audit row is still an implementation obligation",
-        "features": [
-          "soundness:oracle-tag-boundary"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "oracle-tag",
-          "feature": "soundness:oracle-tag-boundary",
-          "files": [
-            "src/HolSmt/Z3.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "soundness-audit:soundness-oracle-tag-boundary"
           ]
         },
         "logic": "QF_UF",
@@ -70877,312 +69985,6 @@
     ],
     "obligations": [
       {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "external-proof:QF_AUFLIA",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "external-proof:QF_AUFLIA",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "external-proof:QF_AUFLIA",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-auflia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_BV",
-        "missing_feature": "external-proof:QF_BV",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_BV",
-        "missing_feature": "external-proof:QF_BV",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-bv-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_BV",
-        "missing_feature": "external-proof:QF_BV",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-bv-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LIA",
-        "missing_feature": "external-proof:QF_LIA",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LIA",
-        "missing_feature": "external-proof:QF_LIA",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lia-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LIA",
-        "missing_feature": "external-proof:QF_LIA",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lia-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LRA",
-        "missing_feature": "external-proof:QF_LRA",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LRA",
-        "missing_feature": "external-proof:QF_LRA",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-lra-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_LRA",
-        "missing_feature": "external-proof:QF_LRA",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-lra-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_S",
-        "missing_feature": "external-proof:QF_S",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-s-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_S",
-        "missing_feature": "external-proof:QF_S",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-s-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-s-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_S",
-        "missing_feature": "external-proof:QF_S",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-s-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "external-proof:QF_UF",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "external-proof:QF_UF",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-        ]
-      },
-      {
-        "case": "external-benchmark:curated-reduced-qf-uf-unsat-proof",
-        "class": "external-benchmark",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "external-proof:QF_UF",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:curated-reduced-qf-uf-unsat-proof"
-        ]
-      },
-      {
         "case": "external-benchmark:external-missing-pinned-benchmark-evidence",
         "class": "external-benchmark",
         "failure_phase": "solver",
@@ -71215,38 +70017,6 @@
         ]
       },
       {
-        "case": "external-benchmark:z3-upstream-horn3-fixedpoint",
-        "class": "external-benchmark",
-        "failure_phase": "parser",
-        "implementation_files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "ALL",
-        "missing_feature": "external-z3-fixedpoint-regression-parser",
-        "mode": "parser-only",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:z3-upstream-horn3-fixedpoint"
-        ]
-      },
-      {
-        "case": "external-benchmark:z3-upstream-horn5-fixedpoint",
-        "class": "external-benchmark",
-        "failure_phase": "parser",
-        "implementation_files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
-        ],
-        "logic": "ALL",
-        "missing_feature": "external-z3-fixedpoint-regression-parser",
-        "mode": "parser-only",
-        "source": "manifest",
-        "test_ids": [
-          "external-benchmark:z3-upstream-horn5-fixedpoint"
-        ]
-      },
-      {
         "case": "logic:ALIA:fragment-violation",
         "class": "logic",
         "failure_phase": "typecheck",
@@ -73310,22 +72080,6 @@
         "source": "manifest",
         "test_ids": [
           "proof-rule:th-lemma-string"
-        ]
-      },
-      {
-        "case": "soundness-audit:soundness-oracle-tag-boundary",
-        "class": "soundness-audit",
-        "failure_phase": "oracle-tag",
-        "implementation_files": [
-          "src/HolSmt/Z3.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "soundness:oracle-tag-boundary",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "soundness-audit:soundness-oracle-tag-boundary"
         ]
       },
       {
@@ -96602,7 +95356,7 @@
       "arrays": 15,
       "check-sat-assuming": 0,
       "datatypes": 13,
-      "external benchmarks": 22,
+      "external benchmarks": 2,
       "function sorts": 0,
       "missing logic packets": 110,
       "real proof occurrences": 36,
@@ -96696,10 +95450,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-parser-only.stdout"
     },
     {
-      "exit_code": 0,
+      "exit_code": 1,
       "kind": "conformance",
       "name": "conformance-typecheck-only",
-      "status": "pass",
+      "status": "fail",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/conformance-typecheck-only.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-typecheck-only.stdout"
     },
@@ -96728,10 +95482,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-proof-replay.stdout"
     },
     {
-      "exit_code": 0,
+      "exit_code": 1,
       "kind": "conformance",
       "name": "conformance-z3-tac",
-      "status": "pass",
+      "status": "fail",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/conformance-z3-tac.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-z3-tac.stdout"
     },
@@ -96744,10 +95498,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/external-parser-only.stdout"
     },
     {
-      "exit_code": 0,
+      "exit_code": 1,
       "kind": "external-conformance",
       "name": "external-typecheck-only",
-      "status": "pass",
+      "status": "fail",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/external-typecheck-only.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/external-typecheck-only.stdout"
     },
@@ -96776,10 +95530,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/external-proof-replay.stdout"
     },
     {
-      "exit_code": 0,
+      "exit_code": 1,
       "kind": "external-conformance",
       "name": "external-z3-tac",
-      "status": "pass",
+      "status": "fail",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/external-z3-tac.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/external-z3-tac.stdout"
     },
@@ -96851,19 +95605,310 @@
   "summary": {
     "classification_counts": {
       "accepted": 27,
-      "expected-implementation-gap": 1363,
-      "matched": 3243
+      "expected-implementation-gap": 1345,
+      "matched": 3246,
+      "unexpected-status": 36
     },
     "infrastructure_error_count": 0,
     "nonzero_exit_reasons": [
-      "red-obligations"
+      "red-obligations",
+      "unexpected-regressions"
     ],
-    "red_obligation_count": 1402,
+    "red_obligation_count": 1381,
     "report_dir": "src/HolSmt/tools/complete-conformance-out",
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "red-obligations",
     "step_count": 29,
-    "unexpected_regression_count": 0
+    "unexpected_regression_count": 36
   },
-  "unexpected_regressions": []
+  "unexpected_regressions": [
+    {
+      "case": "command:define-fun",
+      "classification": "unexpected-status",
+      "detail": "typecheck-only command failed",
+      "logic": "QF_UF",
+      "mode": "typecheck-only",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
+    },
+    {
+      "case": "command:define-fun-rec-define-funs-rec",
+      "classification": "unexpected-status",
+      "detail": "typecheck-only command failed",
+      "logic": "QF_UF",
+      "mode": "typecheck-only",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
+    },
+    {
+      "case": "command:define-fun-rec-define-funs-rec:state",
+      "classification": "unexpected-status",
+      "detail": "typecheck-only command failed",
+      "logic": "QF_UF",
+      "mode": "typecheck-only",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
+    },
+    {
+      "case": "command:define-fun:state",
+      "classification": "unexpected-status",
+      "detail": "typecheck-only command failed",
+      "logic": "QF_UF",
+      "mode": "typecheck-only",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
+    },
+    {
+      "case": "theory:Core:distinct:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:abs:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:div:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:divisible:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:ge:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:gt:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:int:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:le:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:lt:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:mod:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:neg:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:plus:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:pow:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:sub:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Ints:times:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:decimal:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:div:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:ge:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:gt:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:le:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:lt:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:neg:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:plus:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:real:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:sub:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_LRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals:times:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals_Ints:is-int:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NIRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals_Ints:to-int:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NIRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "theory:Reals_Ints:to-real:sat",
+      "classification": "unexpected-status",
+      "detail": "z3-tac command timed out after 30s",
+      "logic": "QF_NIRA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json"
+    },
+    {
+      "case": "strings-qf_s_concat",
+      "classification": "unexpected-status",
+      "detail": "typecheck-only command succeeded",
+      "logic": "QF_S",
+      "mode": "typecheck-only",
+      "report": "src/HolSmt/tools/complete-conformance-out/external/typecheck-only/external-typecheck-only.json"
+    },
+    {
+      "case": "arrays-qf_auflia_select_store",
+      "classification": "unexpected-status",
+      "detail": "checked Z3_TAC theorem proved",
+      "logic": "QF_AUFLIA",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/external/z3-tac/external-z3-tac.json"
+    },
+    {
+      "case": "strings-qf_s_concat",
+      "classification": "unexpected-status",
+      "detail": "checked Z3_TAC solver result sat",
+      "logic": "QF_S",
+      "mode": "z3-tac",
+      "report": "src/HolSmt/tools/complete-conformance-out/external/z3-tac/external-z3-tac.json"
+    }
+  ]
 }
