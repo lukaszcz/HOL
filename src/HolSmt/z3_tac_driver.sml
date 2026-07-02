@@ -135,12 +135,19 @@ let
   val observed_logic = #logic state
   val queries = #queries state
   val assertions = z3_tac_query_assertions queries
+  val fragment_diagnostic =
+    SmtLib_Logics.fragment_violation_diagnostic observed_logic assertions
 in
   if observed_logic <> expected_logic then
     z3_tac_die "Z3_TAC_FAIL"
       ["logic=" ^ expected_logic,
        "diagnostic=set-logic " ^ observed_logic ^
        " does not match requested logic " ^ expected_logic]
+  else if Option.isSome fragment_diagnostic then
+    z3_tac_die "Z3_TAC_UNSUPPORTED"
+      ["logic=" ^ observed_logic,
+       "diagnostic=checked mode must reject logic fragment violations before reconstruction: " ^
+         valOf fragment_diagnostic]
   else
     case z3_tac_query_diagnostic queries of
       SOME diagnostic =>

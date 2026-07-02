@@ -338,6 +338,115 @@ in
   structure QF_UFLIRA = QF_LIRA
   structure QF_UFNIRA = QF_LIRA
 
+  fun type_contains pred ty =
+    pred ty orelse
+    (let val (dom, rng) = Type.dom_rng ty
+     in type_contains pred dom orelse type_contains pred rng end
+     handle _ => false)
+
+  fun type_contains_int ty =
+    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
+
+  fun type_contains_real ty =
+    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
+
+  fun type_contains_word ty =
+    type_contains (Lib.can wordsSyntax.dest_word_type) ty
+
+  fun type_contains_string ty =
+    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
+      ty
+
+  fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
+
+  fun subterms tm =
+    tm ::
+    (let
+       val (rator, rand) = Term.dest_comb tm
+     in
+       subterms rator @ subterms rand
+     end
+     handle _ =>
+       (let val (_, body) = Term.dest_abs tm
+        in subterms body end
+        handle _ => []))
+
+  fun has_quantifier tm =
+    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
+    (let
+       val (rator, rand) = Term.dest_comb tm
+     in
+       has_quantifier rator orelse has_quantifier rand
+     end
+     handle _ =>
+       (let val (_, body) = Term.dest_abs tm
+        in has_quantifier body end
+        handle _ => false))
+
+  fun is_numeric_literal tm =
+    Lib.can intSyntax.int_of_term tm orelse
+    Lib.can realSyntax.int_of_term tm
+
+  fun is_nonlinear_product tm =
+    let val (rator, rands) = boolSyntax.strip_comb tm
+    in
+      (same_const intSyntax.mult_tm rator orelse
+       same_const realSyntax.mult_tm rator) andalso
+      (case rands of
+         [x, y] => not (is_numeric_literal x orelse is_numeric_literal y)
+       | _ => true)
+    end
+    handle _ => false
+
+  fun is_linear_arith_logic logic =
+    List.exists (fn linear_logic => logic = linear_logic)
+      ["ALIA", "ALIRA", "AUFLIA", "AUFLIRA", "LIA", "LRA",
+       "QF_ALIA", "QF_ALRA", "QF_AUFLIA", "QF_AUFLIRA",
+       "QF_IDL", "QF_LIA", "QF_LIRA", "QF_LRA", "QF_RDL",
+       "QF_UFIDL", "QF_UFLIA", "QF_UFLIRA", "QF_UFLRA",
+       "UFIDL", "UFLIA", "UFLRA"]
+
+  fun is_pure_uf_logic logic =
+    List.exists (fn uf_logic => logic = uf_logic) ["UF", "QF_UF"]
+
+  fun is_pure_bv_logic logic =
+    List.exists (fn bv_logic => logic = bv_logic) ["BV", "UFBV"]
+
+  fun term_type_contains pred tm = type_contains pred (Term.type_of tm)
+
+  fun fragment_violation_diagnostic logic assertions =
+    let
+      val all_subterms = List.concat (List.map subterms assertions)
+      fun some_subterm p = List.exists p all_subterms
+      fun qf_violation () =
+        String.isPrefix "QF_" logic andalso List.exists has_quantifier assertions
+      fun uf_theory_violation () =
+        is_pure_uf_logic logic andalso
+        some_subterm (fn tm =>
+          term_type_contains type_contains_int tm orelse
+          term_type_contains type_contains_real tm orelse
+          term_type_contains type_contains_word tm orelse
+          term_type_contains type_contains_string tm)
+      fun bv_theory_violation () =
+        is_pure_bv_logic logic andalso
+        some_subterm (term_type_contains type_contains_int) andalso
+        not (some_subterm (term_type_contains type_contains_word))
+    in
+      if qf_violation () then
+        SOME ("quantified formula is outside logic fragment " ^ logic)
+      else if is_linear_arith_logic logic andalso
+              some_subterm is_nonlinear_product then
+        SOME ("nonlinear arithmetic product is outside logic fragment " ^
+              logic)
+      else if uf_theory_violation () then
+        SOME ("non-UF term sort is outside logic fragment " ^ logic)
+      else if bv_theory_violation () then
+        SOME ("integer-only term is outside bit-vector logic fragment " ^
+              logic)
+      else
+        NONE
+    end
+
   (* returns a type dictionary and a term dictionary that can be used
      to parse types/terms of the given SMT-LIB 2 logic *)
   fun parsedicts_of_logic (logic : string) =

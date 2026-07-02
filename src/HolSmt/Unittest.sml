@@ -1087,6 +1087,41 @@ fun smtlib_command_malformed_diagnostics () =
       (parse_state "(set-logic QF_UF)\n(pop 1)\n")
   end
 
+fun smtlib_logic_fragment_diagnostics () =
+  let
+    fun fragment logic text =
+      let
+        val state = parse_smtlib_state text
+      in
+        SmtLib_Logics.fragment_violation_diagnostic logic (#assertions state)
+      end
+    fun expect_fragment label logic text expected =
+      case fragment logic text of
+        SOME msg =>
+          assert (contains expected msg,
+            label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
+      | NONE => die (label ^ " fragment violation was not detected")
+  in
+    expect_fragment "QF quantifier" "QF_UF"
+      ("(set-logic QF_UF)\n" ^
+       "(assert (forall ((p Bool)) p))\n" ^
+       "(check-sat)\n")
+      "quantified formula";
+    expect_fragment "linear arithmetic product" "ALIA"
+      ("(set-logic ALIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(declare-const y Int)\n" ^
+       "(assert (= (* x y) 1))\n" ^
+       "(check-sat)\n")
+      "nonlinear arithmetic product";
+    expect_fragment "pure bit-vector integer-only term" "UFBV"
+      ("(set-logic UFBV)\n" ^
+       "(declare-const outside_fragment Int)\n" ^
+       "(assert (= outside_fragment 0))\n" ^
+       "(check-sat)\n")
+      "integer-only term"
+  end
+
 fun smtlib_typecheck_overloaded_and_indexed_success () =
 let
   val assertions =
@@ -2245,6 +2280,8 @@ let
       smtlib_typecheck_declared_function_mismatch_diagnostic),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
+    ("smtlib_logic_fragment_diagnostics",
+      smtlib_logic_fragment_diagnostics),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
     ("smtlib_core_symbol_metadata_success",

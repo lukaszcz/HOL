@@ -31,6 +31,9 @@ let
   val state: SmtLib_Parser.command_state_snapshot =
     SmtLib_Parser.parse_file_state path
   val observed_logic = #logic state
+  val fragment_diagnostic =
+    SmtLib_Logics.fragment_violation_diagnostic observed_logic
+      (#assertions state)
 in
   if observed_logic <> expected_logic then
     typecheck_die
@@ -38,6 +41,12 @@ in
        "logic=" ^ expected_logic ^ "\n" ^
        "diagnostic=set-logic " ^ observed_logic ^
        " does not match requested logic " ^ expected_logic)
+  else if Option.isSome fragment_diagnostic then
+    typecheck_die
+      ("TYPECHECK_FAIL\n" ^
+       "logic=" ^ observed_logic ^ "\n" ^
+       "diagnostic=logic fragment restrictions are not completely enforced: " ^
+       valOf fragment_diagnostic)
   else
     (print
        ("TYPECHECK_PASS\n" ^
