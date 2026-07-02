@@ -32,6 +32,7 @@ struct
 
   datatype term_ast =
       TermIdentifier of string
+    | TermString of string
     | TermIndexed of string located * term_ast located list
     | TermApply of term_ast located * term_ast located list
     | TermLet of (string located * term_ast located) list * term_ast located
@@ -161,9 +162,16 @@ local
 
   fun located loc node = Located {loc = loc, node = node}
 
-  datatype located_token = Token of {text: string, loc: source_span}
+  datatype token_kind = AtomToken | StringToken
+
+  datatype located_token = Token of {
+    text: string,
+    kind: token_kind,
+    loc: source_span
+  }
 
   fun token_text (Token {text, ...}) = text
+  fun token_kind (Token {kind, ...}) = kind
   fun token_loc (Token {loc, ...}) = loc
 
   fun syntax_error fn_name loc msg =
@@ -207,31 +215,36 @@ local
       | SOME #";" => (skip_comment (); skip_space_and_comments ())
       | _ => ()
 
-    fun token start chars =
+    fun token kind start chars =
       Token {text = String.implode (List.rev chars),
+             kind = kind,
              loc = SourceSpan {start = start, stop = pos ()}}
 
     fun atom start chars =
       case peek () of
-        NONE => token start chars
+        NONE => token AtomToken start chars
       | SOME c =>
           if c = #" " orelse c = #"\t" orelse c = #"\n" orelse
              c = #"\r" orelse c = #"(" orelse c = #")" orelse c = #";"
-          then token start chars
+          then token AtomToken start chars
           else (ignore (advance ()); atom start (c :: chars))
 
     fun quoted_symbol start chars =
       case advance () of
         NONE => syntax_error "get_token" (mk_point_span (pos ()))
           "unterminated quoted symbol"
-      | SOME #"|" => token start chars
+      | SOME #"|" => token AtomToken start chars
       | SOME c => quoted_symbol start (c :: chars)
 
     fun string_lit start chars =
       case advance () of
         NONE => syntax_error "get_token" (mk_point_span (pos ()))
           "unterminated string literal"
-      | SOME #"\"" => token start chars
+      | SOME #"\"" =>
+          (case peek () of
+             SOME #"\"" =>
+               (ignore (advance ()); string_lit start (#"\"" :: chars))
+           | _ => token StringToken start chars)
       | SOME #"\\" =>
           (case advance () of
              NONE => syntax_error "get_token" (mk_point_span (pos ()))
@@ -246,11 +259,11 @@ local
        | SOME #"(" =>
            let val start = pos ()
                val _ = advance ()
-           in SOME (token start [#"("]) end
+           in SOME (token AtomToken start [#"("]) end
        | SOME #")" =>
            let val start = pos ()
                val _ = advance ()
-           in SOME (token start [#")"]) end
+           in SOME (token AtomToken start [#")"]) end
        | SOME #"|" =>
            let val start = pos ()
                val _ = advance ()
@@ -386,6 +399,8 @@ local
         parse_term_list tok
       else if token_text tok = ")" then
         syntax_error "parse_term" (token_loc tok) "unexpected ')'"
+      else if token_kind tok = StringToken then
+        located (token_loc tok) (TermString (token_text tok))
       else
         located (token_loc tok) (TermIdentifier (token_text tok))
 
@@ -2386,6 +2401,9 @@ local
                 term_ast
               handle Feedback.HOL_ERR _ =>
                 Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
+      | TermString _ =>
+          checked_term (typecheck_term context (tydict, tmdict, sigdict)
+            term_ast)
       | _ => checked_term (typecheck_term context (tydict, tmdict, sigdict) term_ast)
     end
 
@@ -2566,6 +2584,8 @@ local
       case node_of term_ast of
         TermIdentifier name =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
+      | TermString value =>
+          checked_term_of (stringSyntax.fromMLstring value)
       | TermIndexed (name, indices) =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env
             (located_string_node name) (List.map check_index indices) []
@@ -2889,6 +2909,7 @@ local
       fun term_mentions_name term =
         case node_of term of
           TermIdentifier n => n = name
+        | TermString _ => false
         | TermIndexed (head, indices) =>
             located_string_node head = name orelse
             List.exists term_mentions_name indices

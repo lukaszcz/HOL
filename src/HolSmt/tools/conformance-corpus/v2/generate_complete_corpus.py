@@ -854,6 +854,7 @@ RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:Core:not:unsat-proof",
     "theory:Core:or:unsat-proof",
     "theory:Core:true:unsat-proof",
+    "theory:UnicodeStrings:string-literal:unsat-proof",
     "theory:Fixed_Size_BitVectors:binary-hex-literal:unsat-proof",
     "theory:Fixed_Size_BitVectors:bitvec:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvadd:unsat-proof",
@@ -2461,7 +2462,13 @@ def string_symbol(
     sat_declarations: str = "",
     type_error_assertion: str | None = None,
     boundary_assertion: str | None = None,
+    frontend_gap: bool = True,
 ) -> TheorySymbol:
+    gap_features = (
+        ("theory-behavior:translation-gap", "theory-behavior:proof-gap")
+        if frontend_gap
+        else ()
+    )
     return TheorySymbol(
         "UnicodeStrings",
         slug_name,
@@ -2492,8 +2499,7 @@ def string_symbol(
         ),
         (
             "theory-behavior:string",
-            "theory-behavior:translation-gap",
-            "theory-behavior:proof-gap",
+            *gap_features,
             *behavior_features,
         ),
     )
@@ -2529,10 +2535,11 @@ UNICODE_STRING_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
         ("<string literal token>",),
         "\"abc\"",
         "String",
-        ("theory-behavior:literal", "theory-behavior:parser-gap"),
+        ("theory-behavior:literal",),
         kind="literal",
         type_error_assertion="(= \"abc\" 3)",
         boundary_assertion="(= \"line\" \"line\")",
+        frontend_gap=False,
     ),
     string_symbol("str-concat", "str.++", ("(str.++ String String String :left-assoc)",), "(str.++ \"a\" \"b\")", "String", ("theory-behavior:left-associative", "theory-behavior:concat")),
     string_symbol("str.len", "str.len", ("(str.len String Int)",), "(str.len \"abc\")", "Int", ("theory-behavior:length", "theory-behavior:string-int")),
@@ -3315,26 +3322,42 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             implementation = theory_obligation(symbol, kind, case_id, phase)
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
-        expected = {
-            "parser-only": expected_result(
-                "red" if parser_gap else "pass",
-                diagnostic=blocked_by_parser if parser_gap else None,
-                failure_phase="parser" if parser_gap else None,
-            ),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic=blocked_by_parser
-                if parser_gap else "negative theory sort/type diagnostics are incomplete",
-                failure_phase="parser" if parser_gap else "typecheck",
-            ),
-            "z3-tac": expected_result(
-                "red",
-                diagnostic=blocked_by_parser
-                if parser_gap else "negative theory sort/type diagnostics are incomplete",
-                failure_phase="parser" if parser_gap else "typecheck",
-            ),
-        }
-        implementation = theory_obligation(symbol, kind, case_id, "parser" if parser_gap else "typecheck")
+        if symbol.theory == "UnicodeStrings" and symbol.slug == "string-literal":
+            expected = {
+                "parser-only": expected_result("pass"),
+                "typecheck-only": expected_result(
+                    "fail",
+                    diagnostic="actual sorts [:string, :int]",
+                    failure_phase="typecheck",
+                ),
+                "z3-tac": expected_result(
+                    "fail",
+                    diagnostic="actual sorts [:string, :int]",
+                    failure_phase="typecheck",
+                ),
+            }
+            implementation = None
+        else:
+            expected = {
+                "parser-only": expected_result(
+                    "red" if parser_gap else "pass",
+                    diagnostic=blocked_by_parser if parser_gap else None,
+                    failure_phase="parser" if parser_gap else None,
+                ),
+                "typecheck-only": expected_result(
+                    "red",
+                    diagnostic=blocked_by_parser
+                    if parser_gap else "negative theory sort/type diagnostics are incomplete",
+                    failure_phase="parser" if parser_gap else "typecheck",
+                ),
+                "z3-tac": expected_result(
+                    "red",
+                    diagnostic=blocked_by_parser
+                    if parser_gap else "negative theory sort/type diagnostics are incomplete",
+                    failure_phase="parser" if parser_gap else "typecheck",
+                ),
+            }
+            implementation = theory_obligation(symbol, kind, case_id, "parser" if parser_gap else "typecheck")
     elif kind == "boundary":
         modes = (
             ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
