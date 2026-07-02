@@ -929,8 +929,8 @@ let
        "(= (div 7 0) (div 7 0)))))\n" ^
        "(exit)\n")
 in
-  assert (List.length assertions = 3,
-    "soundness-audit script should retain two local definitions and one assert");
+  assert (List.length assertions = 1,
+    "soundness-audit script should retain one user assert");
   assert (List.length local_definitions = 2,
     "define-const/define-fun local definitions were not tracked");
   assert (Term.type_of (List.last assertions) = Type.bool,

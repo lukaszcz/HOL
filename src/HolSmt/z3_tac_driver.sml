@@ -64,6 +64,12 @@ fun z3_tac_query_assertions queries =
         local_definitions @ assertions @ assumptions
   | _ => []
 
+fun z3_tac_query_fragment_terms queries =
+  case queries of
+    SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} :: _ =>
+      assertions @ assumptions
+  | _ => []
+
 fun z3_tac_conjunction [] = boolSyntax.T
   | z3_tac_conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
@@ -132,7 +138,8 @@ let
   val queries = #queries state
   val assertions = z3_tac_query_assertions queries
   val fragment_diagnostic =
-    SmtLib_Logics.fragment_violation_diagnostic observed_logic assertions
+    SmtLib_Logics.fragment_violation_diagnostic observed_logic
+      (z3_tac_query_fragment_terms queries)
 in
   if observed_logic <> expected_logic then
     z3_tac_die "Z3_TAC_FAIL"

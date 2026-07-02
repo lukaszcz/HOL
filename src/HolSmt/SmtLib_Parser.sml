@@ -1672,7 +1672,7 @@ local
       (fn frame => {
         tydict = frame_tydict frame,
         tmdict = frame_tmdict frame,
-        assertions = assertion :: frame_assertions frame,
+        assertions = frame_assertions frame,
         named_assertions = frame_named_assertions frame,
         local_definitions = assertion :: frame_local_definitions frame
       }) state
@@ -2220,7 +2220,7 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        assertions = assertion :: typecheck_frame_assertions frame,
+        assertions = typecheck_frame_assertions frame,
         named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = assertion :: typecheck_frame_local_definitions frame
       }) state
