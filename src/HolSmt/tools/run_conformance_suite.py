@@ -996,6 +996,26 @@ def command_output_field(stdout: str, stderr: str, field: str) -> str | None:
     return None
 
 
+def z3_tac_unsound_success_diagnostic(stdout: str, stderr: str) -> str | None:
+    diagnostic = command_output_field(stdout, stderr, "diagnostic")
+    if diagnostic is not None:
+        diagnostic_lower = diagnostic.lower()
+        if "satisfiable" in diagnostic_lower:
+            return diagnostic
+        if "unknown" in diagnostic_lower:
+            return diagnostic
+
+    for line in stdout.splitlines() + stderr.splitlines():
+        normalized = line.strip().lower()
+        if normalized in {"sat", "unknown", "status=sat", "status=unknown"}:
+            return f"checked Z3_TAC reported {normalized} on a theorem-producing path"
+        if "solver reports negated term to be satisfiable" in normalized:
+            return line.strip()
+        if "solver reports unknown" in normalized:
+            return line.strip()
+    return None
+
+
 def default_z3_tac_command() -> str:
     return DEFAULT_Z3_TAC_COMMAND
 
@@ -1046,6 +1066,16 @@ def run_z3_tac_mode(
 
     combined = f"{stdout}\n{stderr}"
     if "Z3_TAC_PASS" in combined and completed.returncode == 0:
+        unsound_success = z3_tac_unsound_success_diagnostic(stdout, stderr)
+        if unsound_success is not None:
+            return result(
+                case,
+                MODE_Z3_TAC,
+                FAIL,
+                unsound_success,
+                artifact=artifact,
+                version=version,
+            )
         return result(
             case,
             MODE_Z3_TAC,
