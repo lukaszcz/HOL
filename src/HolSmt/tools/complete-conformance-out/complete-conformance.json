@@ -98,8 +98,8 @@
     {
       "case_count": 1249,
       "classification_counts": {
-        "expected-implementation-gap": 502,
-        "matched": 411
+        "expected-implementation-gap": 500,
+        "matched": 413
       },
       "conformance_status_counts": {
         "fail": 0,
@@ -108,9 +108,9 @@
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
       "result_count": 913,
       "status_counts": {
-        "fail": 655,
-        "pass": 254,
-        "unsupported": 4
+        "fail": 651,
+        "pass": 253,
+        "unsupported": 9
       }
     },
     {
@@ -271,13 +271,13 @@
     }
   ],
   "red_obligations": {
-    "complete_audit_red_count": 1368,
+    "complete_audit_red_count": 1366,
     "complete_audit_red_obligations": [
       {
         "category": "implementation_obligation",
         "code": "red_implementation_obligation",
         "details": {
-          "failure_phase": "proof-replay",
+          "failure_phase": "theorem-shape",
           "files": [
             "src/HolSmt/SmtLib_Parser.sml",
             "src/HolSmt/Z3_ProofReplay.sml"
@@ -289,23 +289,6 @@
         "message": "red expected row requires implementation work for command-reconstruction:check-sat-assuming",
         "severity": "error",
         "subject": "case/command:check-sat-assuming:reconstruction:z3-tac"
-      },
-      {
-        "category": "datatypes-reconstruction",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "theorem-shape",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "command:declare-datatype-declare-datatypes:reconstruction"
-          ]
-        },
-        "message": "red expected row requires implementation work for command-reconstruction:declare-datatype-declare-datatypes",
-        "severity": "error",
-        "subject": "case/command:declare-datatype-declare-datatypes:reconstruction:z3-tac"
       },
       {
         "category": "implementation_obligation",
@@ -323,23 +306,6 @@
         "message": "red expected row requires implementation work for command-reconstruction:declare-fun",
         "severity": "error",
         "subject": "case/command:declare-fun:reconstruction:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "typecheck",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "test_ids": [
-            "command:define-fun-rec-define-funs-rec:reconstruction"
-          ]
-        },
-        "message": "red expected row requires implementation work for command-reconstruction:define-fun-rec-define-funs-rec",
-        "severity": "error",
-        "subject": "case/command:define-fun-rec-define-funs-rec:reconstruction:z3-tac"
       },
       {
         "category": "implementation_obligation",
@@ -25594,19 +25560,19 @@
         "subject": "case/theory:Z3_Extensions:set:unsat-proof:z3-tac"
       }
     ],
-    "manifest_red_count": 1368,
+    "manifest_red_count": 1366,
     "manifest_red_obligations": [
       {
         "case": "command:check-sat-assuming:reconstruction",
         "class": "command",
-        "diagnostic": "checked theorem reconstruction with assumptions is not implemented",
+        "diagnostic": "check-sat-assuming is outside checked Z3_TAC command-line entry point",
         "features": [
           "command-case:reconstruction",
           "command-group:check-sat-assuming",
           "command:check-sat-assuming"
         ],
         "implementation_obligation": {
-          "failure_phase": "proof-replay",
+          "failure_phase": "theorem-shape",
           "feature": "command-reconstruction:check-sat-assuming",
           "files": [
             "src/HolSmt/SmtLib_Parser.sml",
@@ -25615,31 +25581,6 @@
           "notes": "Generated red seed row; keep red until executable evidence is added.",
           "test_ids": [
             "command:check-sat-assuming:reconstruction"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "command:declare-datatype-declare-datatypes:reconstruction",
-        "class": "command",
-        "diagnostic": "solver reports negated term to be satisfiable",
-        "features": [
-          "command-case:reconstruction",
-          "command-group:declare-datatype-declare-datatypes",
-          "command:declare-datatype",
-          "command:declare-datatypes"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "theorem-shape",
-          "feature": "command-reconstruction:declare-datatype-declare-datatypes",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC translation still lacks native datatype constructor replay evidence.",
-          "test_ids": [
-            "command:declare-datatype-declare-datatypes:reconstruction"
           ]
         },
         "logic": "QF_UF",
@@ -25664,31 +25605,6 @@
           "notes": "First-order declarations are typechecked, but checked reconstruction for function-sort and higher-order declarations remains outside the current translator.",
           "test_ids": [
             "command:declare-fun:reconstruction"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "command:define-fun-rec-define-funs-rec:reconstruction",
-        "class": "command",
-        "diagnostic": "recursive self-reference",
-        "features": [
-          "command-case:reconstruction",
-          "command-group:define-fun-rec-define-funs-rec",
-          "command:define-fun-rec",
-          "command:define-funs-rec"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "typecheck",
-          "feature": "command-reconstruction:define-fun-rec-define-funs-rec",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Parser.sml"
-          ],
-          "notes": "Recursive definition commands are parsed and bounded-state checked, but recursive semantics are not translated for checked Z3_TAC replay.",
-          "test_ids": [
-            "command:define-fun-rec-define-funs-rec:reconstruction"
           ]
         },
         "logic": "QF_UF",
@@ -71218,7 +71134,7 @@
       {
         "case": "command:check-sat-assuming:reconstruction",
         "class": "command",
-        "failure_phase": "proof-replay",
+        "failure_phase": "theorem-shape",
         "implementation_files": [
           "src/HolSmt/SmtLib_Parser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
@@ -71229,22 +71145,6 @@
         "source": "manifest",
         "test_ids": [
           "command:check-sat-assuming:reconstruction"
-        ]
-      },
-      {
-        "case": "command:declare-datatype-declare-datatypes:reconstruction",
-        "class": "command",
-        "failure_phase": "theorem-shape",
-        "implementation_files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "command-reconstruction:declare-datatype-declare-datatypes",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "command:declare-datatype-declare-datatypes:reconstruction"
         ]
       },
       {
@@ -71261,22 +71161,6 @@
         "source": "manifest",
         "test_ids": [
           "command:declare-fun:reconstruction"
-        ]
-      },
-      {
-        "case": "command:define-fun-rec-define-funs-rec:reconstruction",
-        "class": "command",
-        "failure_phase": "typecheck",
-        "implementation_files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "command-reconstruction:define-fun-rec-define-funs-rec",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "command:define-fun-rec-define-funs-rec:reconstruction"
         ]
       },
       {
@@ -97237,7 +97121,7 @@
       "advanced theory lemmas": 14,
       "arrays": 22,
       "check-sat-assuming": 1,
-      "datatypes": 12,
+      "datatypes": 11,
       "external benchmarks": 2,
       "function sorts": 6,
       "missing logic packets": 110,
@@ -97487,14 +97371,14 @@
   "summary": {
     "classification_counts": {
       "accepted": 27,
-      "expected-implementation-gap": 1368,
-      "matched": 3238
+      "expected-implementation-gap": 1366,
+      "matched": 3240
     },
     "infrastructure_error_count": 0,
     "nonzero_exit_reasons": [
       "red-obligations"
     ],
-    "red_obligation_count": 1411,
+    "red_obligation_count": 1409,
     "report_dir": "src/HolSmt/tools/complete-conformance-out",
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "red-obligations",

@@ -688,6 +688,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_diagnostic="check-sat-assuming is outside checked Z3_TAC command-line entry point",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        red_when_reconstruction_not_applicable=True,
     ),
     CommandGroup(
         slug="get-proof",
@@ -720,6 +721,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
             "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked "
             "Z3_TAC entry point does not implement extraction/replay response objects."
         ),
+        red_when_reconstruction_not_applicable=True,
     ),
     CommandGroup(
         slug="get-model-get-value-get-assignment-get-assertions",
