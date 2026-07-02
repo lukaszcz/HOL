@@ -1898,6 +1898,10 @@ let
       "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
         \(proof (rewrite (= (bvcomp a b) (ite (= a b) #b1 #b0)))))",
       ``word_compare (a:word8) b = if a = b then 1w else 0w:word1``),
+    ("rewrite/bvsmod_i",
+      "((declare-fun a () (_ BitVec 8)) (declare-fun b () (_ BitVec 8)) \
+        \(proof (rewrite (= (bvsmod a b) (bvsmod_i a b)))))",
+      ``word_smod (a:word8) b = word_smod a b``),
     ("sk",
       "((declare-fun z () Bool) (proof (sk (= (exists ((x Bool)) x) z))))",
       ``(?x:bool. x) = z``),

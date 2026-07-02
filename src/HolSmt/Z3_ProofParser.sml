@@ -338,6 +338,7 @@ local
         raise ERR "<z3_builtin_dict._>" "not extract<m> n")),
     ("bvudiv_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_div),
     ("bvurem_i", SmtLib_Theories.K_zero_two wordsSyntax.mk_word_mod),
+    ("bvsmod_i", SmtLib_Theories.K_zero_two integer_wordSyntax.mk_word_smod),
     (* bvudiv0 t *)
     ("bvudiv0", SmtLib_Theories.K_zero_one (fn t =>
       let

@@ -1146,6 +1146,19 @@ local
     (state, Thm.ALPHA lhs rhs)
   end
 
+  fun rewrite_word_compare (l, r) =
+    if wordsSyntax.is_word_compare l then
+      let
+        val thm = Conv.REWR_CONV wordsTheory.word_compare_def l
+        val (_, rhs) = boolSyntax.dest_eq (Thm.concl thm)
+      in
+        if rhs ~~ r then thm else raise ERR "rewrite_word_compare" ""
+      end
+    else if wordsSyntax.is_word_compare r then
+      Thm.SYM (rewrite_word_compare (r, l))
+    else
+      raise ERR "rewrite_word_compare" ""
+
   fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
@@ -1198,7 +1211,10 @@ local
             handle Conv.UNCHANGED => raise ERR "" "") ()
         handle Feedback.HOL_ERR _ =>
 
-        profile "rewrite(09.1)(word_compare_def)"
+        profile "rewrite(09.1)(word_compare)" rewrite_word_compare (l, r)
+        handle Feedback.HOL_ERR _ =>
+
+        profile "rewrite(09.2)(word_compare_def)"
           (simpLib.SIMP_PROVE
             (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss))
             [wordsTheory.word_compare_def]) t
