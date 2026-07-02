@@ -1198,6 +1198,12 @@ local
             handle Conv.UNCHANGED => raise ERR "" "") ()
         handle Feedback.HOL_ERR _ =>
 
+        profile "rewrite(09.1)(word_compare_def)"
+          (simpLib.SIMP_PROVE
+            (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss))
+            [wordsTheory.word_compare_def]) t
+        handle Feedback.HOL_ERR _ =>
+
         (profile "rewrite(10)(BBLAST)" (Feedback.trace("print blast counterexamples", 0) blastLib.BBLAST_PROVE) t
 
         handle Feedback.HOL_ERR _ =>

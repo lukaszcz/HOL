@@ -1037,6 +1037,7 @@ RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:Fixed_Size_BitVectors:bvadd:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvand:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvashr:unsat-proof",
+    "theory:Fixed_Size_BitVectors:bvcomp:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvlshr:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvmul:unsat-proof",
     "theory:Fixed_Size_BitVectors:bvnand:unsat-proof",
