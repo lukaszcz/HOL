@@ -36,8 +36,14 @@ fun z3_tac_query_name query =
 
 fun z3_tac_query_diagnostic queries =
   case queries of
-    [SmtLib_Parser.QueryCheckSat _] => NONE
-  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetProof] => NONE
+    [SmtLib_Parser.QueryCheckSat {assumptions = [], ...}] => NONE
+  | [SmtLib_Parser.QueryCheckSat {assumptions = [], ...},
+     SmtLib_Parser.QueryGetProof] => NONE
+  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...}] =>
+      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
+  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...},
+     SmtLib_Parser.QueryGetProof] =>
+      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | SmtLib_Parser.QueryCheckSat _ :: query :: _ =>
@@ -60,6 +66,30 @@ fun z3_tac_conjunction [] = boolSyntax.T
 
 fun z3_tac_goal assertions =
   boolSyntax.mk_neg (z3_tac_conjunction assertions)
+
+fun z3_tac_unsupported_command_diagnostic command =
+  case SmtLib_Parser.node_of command of
+    SmtLib_Parser.CmdCheckSatAssuming _ =>
+      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
+  | SmtLib_Parser.CmdDefineFunRec _ =>
+      SOME "recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point"
+  | SmtLib_Parser.CmdDefineFunsRec _ =>
+      SOME "recursive definition command define-funs-rec is outside checked Z3_TAC command-line entry point"
+  | SmtLib_Parser.CmdDeclareDatatype _ =>
+      SOME "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point"
+  | SmtLib_Parser.CmdDeclareDatatypes _ =>
+      SOME "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
+  | _ => NONE
+
+fun z3_tac_script_diagnostic path =
+  let
+    val script = SmtLib_Parser.parse_script_file path
+    val diagnostics = List.map z3_tac_unsupported_command_diagnostic script
+  in
+    case List.find Option.isSome diagnostics of
+      SOME (SOME diagnostic) => SOME diagnostic
+    | _ => NONE
+  end
 
 fun z3_tac_checked_prove goal =
   case Z3.Z3_SMT_Prover ([], goal) of
@@ -85,6 +115,14 @@ fun z3_tac_checked_prove goal =
 fun z3_tac_ok path expected_logic =
 let
   val _ = Library.trace := 0
+  val script_diagnostic = z3_tac_script_diagnostic path
+  val _ =
+    case script_diagnostic of
+      SOME diagnostic =>
+        z3_tac_die "Z3_TAC_UNSUPPORTED"
+          ["logic=" ^ expected_logic,
+           "diagnostic=" ^ diagnostic]
+    | NONE => ()
   val state: SmtLib_Parser.command_state_snapshot =
     SmtLib_Parser.parse_file_state path
   val observed_logic = #logic state

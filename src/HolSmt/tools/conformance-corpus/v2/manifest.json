@@ -279,24 +279,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked theorem reconstruction with assumptions is not implemented",
-          "failure_phase": "proof-replay",
-          "notes": "theorem reconstruction applies: true"
+          "status": "unsupported",
+          "diagnostic": "check-sat-assuming is outside checked Z3_TAC command-line entry point",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "command-reconstruction:check-sat-assuming",
-        "test_ids": [
-          "command:check-sat-assuming:reconstruction"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
@@ -328,11 +317,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         }
       },
       "implementation_obligation": null,
@@ -854,24 +843,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "solver reports negated term to be satisfiable",
+          "status": "unsupported",
+          "diagnostic": "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
           "failure_phase": "theorem-shape",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "command-reconstruction:declare-datatype-declare-datatypes",
-        "test_ids": [
-          "command:declare-datatype-declare-datatypes:reconstruction"
-        ],
-        "failure_phase": "theorem-shape",
-        "notes": "Parser/typecheck state installs bounded datatype symbols, but checked Z3_TAC translation still lacks native datatype constructor replay evidence."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: declare-datatype, declare-datatypes"
@@ -904,11 +882,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         }
       },
       "implementation_obligation": null,
@@ -1501,24 +1479,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "recursive self-reference",
-          "failure_phase": "typecheck",
-          "notes": "theorem reconstruction applies: true"
+          "status": "unsupported",
+          "diagnostic": "recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point",
+          "failure_phase": "theorem-shape",
+          "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "command-reconstruction:define-fun-rec-define-funs-rec",
-        "test_ids": [
-          "command:define-fun-rec-define-funs-rec:reconstruction"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Recursive definition commands are parsed and bounded-state checked, but recursive semantics are not translated for checked Z3_TAC replay."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
@@ -1551,11 +1518,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: true"
+          "notes": "theorem reconstruction applies: false"
         }
       },
       "implementation_obligation": null,
@@ -2099,8 +2066,10 @@
           "notes": "theorem reconstruction applies: false"
         },
         "z3-oracle": {
-          "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "status": "fail",
+          "diagnostic": "Z3 did not print a solver result",
+          "failure_phase": "solver",
+          "notes": "exit terminates the script before a check-sat query"
         }
       },
       "implementation_obligation": null,
@@ -2663,25 +2632,13 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
+          "status": "unsupported",
           "diagnostic": "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
           "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
-        "test_ids": [
-          "command:get-unsat-assumptions-get-unsat-core:reconstruction"
-        ],
-        "failure_phase": "theorem-shape",
-        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked Z3_TAC entry point does not implement extraction/replay response objects."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"

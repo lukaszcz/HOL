@@ -620,9 +620,9 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool (f p))\n(check-sat)\n",
         negative_diagnostic="malformed recursive definition block",
         negative_phase="parser",
-        reconstruction_applies=True,
-        reconstruction_diagnostic="recursive self-reference",
-        reconstruction_phase="typecheck",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point",
+        reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
         obligation_notes=(
             "Recursive definition commands are parsed and bounded-state checked, but "
@@ -638,8 +638,8 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (= red blue))\n(check-sat)\n",
         negative_diagnostic="declare-datatypes arity for 'Tree'",
         negative_phase="typecheck",
-        reconstruction_applies=True,
-        reconstruction_diagnostic="solver reports negated term to be satisfiable",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
         obligation_notes=(
@@ -684,9 +684,9 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named p_name))\n(check-sat-assuming ((not p)))\n",
         negative_diagnostic="assumption literal must have Bool sort",
         negative_phase="typecheck",
-        reconstruction_applies=True,
-        reconstruction_diagnostic="checked theorem reconstruction with assumptions is not implemented",
-        reconstruction_phase="proof-replay",
+        reconstruction_applies=False,
+        reconstruction_diagnostic="check-sat-assuming is outside checked Z3_TAC command-line entry point",
+        reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
     ),
     CommandGroup(
@@ -720,7 +720,6 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
             "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked "
             "Z3_TAC entry point does not implement extraction/replay response objects."
         ),
-        red_when_reconstruction_not_applicable=True,
     ),
     CommandGroup(
         slug="get-model-get-value-get-assignment-get-assertions",
