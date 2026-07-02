@@ -2884,6 +2884,32 @@ local
       (tmdict, sigdict, definition)
     end
 
+  fun add_sorted_vars_to_env vars (tmdict, sigdict) =
+    List.foldl
+      (fn ((vname, var), (tmdict, sigdict)) =>
+        add_value_term_signature vname var [] (Term.type_of var)
+          (tmdict, sigdict))
+      (tmdict, sigdict) vars
+
+  fun typecheck_definition_body context loc body
+      (tydict, tmdict, sigdict) vars range_type =
+    let
+      val (body_tmdict, body_sigdict) =
+        add_sorted_vars_to_env vars (tmdict, sigdict)
+      val body_checked =
+        typecheck_term context (tydict, body_tmdict, body_sigdict) body
+    in
+      expect_checked_sort "typecheck_definition_body" context loc range_type
+        body_checked
+    end
+
+  fun mk_definition tm vars definiens =
+    let val vars = List.map Lib.snd vars
+    in
+      boolSyntax.list_mk_forall (vars,
+        boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
+    end
+
   fun typecheck_define_const context name sort body (tydict, tmdict, sigdict) =
     let
       val name_loc = loc_of name
@@ -2929,21 +2955,76 @@ local
       val range_type = typecheck_sort context tydict range
       val vars = List.map (typecheck_sorted_var context tydict) sorted_vars
       val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
-      val (body_tmdict, body_sigdict) =
-        List.foldl
-          (fn ((vname, var), (tmdict, sigdict)) =>
-            add_value_term_signature vname var [] (Term.type_of var)
-              (tmdict, sigdict))
-          (tmdict, sigdict) vars
-      val body_checked =
-        typecheck_term context (tydict, body_tmdict, body_sigdict) body
-      val body_term = expect_checked_sort "typecheck_define_fun" context
-        (loc_of body) range_type body_checked
+      val body_term = typecheck_definition_body context (loc_of body) body
+        (tydict, tmdict, sigdict) vars range_type
       val (tmdict, sigdict, definition) =
         define_typechecked_fun context name_loc name vars range_type
           body_term (tmdict, sigdict)
     in
       (tmdict, sigdict, definition)
+    end
+
+  fun typecheck_define_fun_rec context name sorted_vars range body
+      (tydict, tmdict, sigdict) =
+    let
+      val name_loc = loc_of name
+      val name = located_string_node name
+      val _ = reject_duplicate_definition context name_loc name sigdict
+      val range_type = typecheck_sort context tydict range
+      val vars = List.map (typecheck_sorted_var context tydict) sorted_vars
+      val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+      val domain_types = List.map (Term.type_of o Lib.snd) vars
+      val (tm, tmdict, sigdict) =
+        add_value_signature name domain_types range_type (tmdict, sigdict)
+      val body_term = typecheck_definition_body context (loc_of body) body
+        (tydict, tmdict, sigdict) vars range_type
+      val definition = mk_definition tm vars body_term
+    in
+      (tmdict, sigdict, definition)
+    end
+
+  fun typecheck_define_funs_rec context sigs bodies (tydict, tmdict, sigdict) =
+    let
+      val _ =
+        if List.length sigs = List.length bodies then ()
+        else raise ERR "typecheck_script"
+          "malformed recursive definition block: function signature count does not match body count"
+
+      fun add_signature_from_ast (sig_ast, (tmdict, sigdict, specs)) =
+        case node_of sig_ast of
+          FunctionSignature (name, sorted_vars, range) =>
+            let
+              val name_loc = loc_of name
+              val name = located_string_node name
+              val _ = reject_duplicate_definition context name_loc name sigdict
+              val range_type = typecheck_sort context tydict range
+              val vars =
+                List.map (typecheck_sorted_var context tydict) sorted_vars
+              val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+              val domain_types = List.map (Term.type_of o Lib.snd) vars
+              val (tm, tmdict, sigdict) =
+                add_value_signature name domain_types range_type
+                  (tmdict, sigdict)
+            in
+              (tmdict, sigdict,
+               {tm = tm, vars = vars, range = range_type} :: specs)
+            end
+
+      val (tmdict, sigdict, specs) =
+        List.foldl add_signature_from_ast (tmdict, sigdict, []) sigs
+      val specs = List.rev specs
+
+      fun make_def ({tm, vars, range, ...}, body) =
+        let
+          val body_term = typecheck_definition_body context (loc_of body) body
+            (tydict, tmdict, sigdict) vars range
+        in
+          mk_definition tm vars body_term
+        end
+
+      val definitions = ListPair.map make_def (specs, bodies)
+    in
+      (tmdict, sigdict, definitions)
     end
 
   fun named_attribute attrs =
@@ -2995,20 +3076,10 @@ local
         in
           finish (add_typechecked_definition def command_state)
         end
-      fun typecheck_define_funs_rec sigs bodies state =
-        let
-          val _ =
-            if List.length sigs = List.length bodies then ()
-            else raise ERR "typecheck_script"
-              "malformed recursive definition block: function signature count does not match body count"
-          fun one (sig_ast, body, state) =
-            case node_of sig_ast of
-              FunctionSignature (name, vars, range) =>
-                typecheck_define_fun_command "define-funs-rec"
-                  name vars range body state
-        in
-          ListPair.foldl one state (sigs, bodies)
-        end
+      fun add_definitions definitions command_state =
+        List.foldl
+          (fn (def, state) => add_typechecked_definition def state)
+          command_state definitions
     in
       case node_of command of
       CmdSetInfo _ => state
@@ -3116,9 +3187,31 @@ local
       | CmdDefineFun (name, vars, range, body) =>
           typecheck_define_fun_command "define-fun" name vars range body state
       | CmdDefineFunRec (name, vars, range, body) =>
-          typecheck_define_fun_command "define-fun-rec" name vars range body state
+          let
+            val command_state = dest_typecheck_state "define-fun-rec" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tmdict, sigdict, def) =
+              typecheck_define_fun_rec (context "define-fun-rec")
+                name vars range body (tydict, tmdict, sigdict)
+            val command_state = update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state
+          in
+            finish (add_typechecked_definition def command_state)
+          end
       | CmdDefineFunsRec (sigs, bodies) =>
-          typecheck_define_funs_rec sigs bodies state
+          let
+            val command_state = dest_typecheck_state "define-funs-rec" state
+            val (tydict, tmdict, sigdict) =
+              current_typecheck_dicts command_state
+            val (tmdict, sigdict, definitions) =
+              typecheck_define_funs_rec (context "define-funs-rec")
+                sigs bodies (tydict, tmdict, sigdict)
+            val command_state = update_current_typecheck_dicts
+              (tydict, tmdict, sigdict) command_state
+          in
+            finish (add_definitions definitions command_state)
+          end
       | CmdDeclareDatatype (name, decl) =>
           let
             val command_state =
@@ -3323,11 +3416,11 @@ in
      get-model, get-value, get-assignment, get-assertions, echo, and exit.
      Solver query commands update parser state, but model/value/core output
      is not produced by this parser or by proof reconstruction mode.
-     Recursive definitions are represented by the script AST but rejected
-     here with explicit unsupported-command diagnostics.  Datatype commands
-     install uninterpreted datatype sorts plus constructor, selector, and
-     tester symbols for bounded command-state checking.  Any other command is
-     rejected with "unknown command". *)
+     Recursive definition commands predeclare their recursive signatures for
+     bounded state/typechecking; checked Z3_TAC rejects them before theorem
+     construction.  Datatype commands install uninterpreted datatype sorts
+     plus constructor, selector, and tester symbols for bounded command-state
+     checking.  Any other command is rejected with "unknown command". *)
 
   fun parse_file_state (path : string) : command_state_snapshot =
   let

@@ -1055,16 +1055,20 @@ fun smtlib_command_malformed_diagnostics () =
       (typecheck
         ("(set-logic QF_UF)\n" ^
          "(set-option :produce-proofs true)\n"));
-    expect_hol_error_contains "recursive define-fun"
-      "recursive self-reference"
-      (typecheck
-        ("(set-logic QF_LIA)\n" ^
-         "(define-fun-rec f ((x Int)) Int (f x))\n"));
+    typecheck
+      ("(set-logic QF_LIA)\n" ^
+       "(define-fun-rec f ((x Int)) Int (f x))\n" ^
+       "(assert (= (f 0) (f 0)))\n") ();
     expect_hol_error_contains "mutual recursive define-fun"
       "malformed recursive definition block"
       (typecheck
         ("(set-logic QF_LIA)\n" ^
          "(define-funs-rec ((f ((x Int)) Int)) ())\n"));
+    typecheck
+      ("(set-logic QF_LIA)\n" ^
+       "(define-funs-rec ((even ((x Int)) Bool) (odd ((x Int)) Bool))\n" ^
+       "  ((odd x) (even x)))\n" ^
+       "(assert (= (even 0) (even 0)))\n") ();
     typecheck
       ("(set-logic ALL)\n" ^
        "(declare-datatypes ((T 0) (U 0)) (((mkT)) ((mkU))))\n") ();
