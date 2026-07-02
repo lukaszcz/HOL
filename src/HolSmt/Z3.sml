@@ -151,8 +151,20 @@ structure Z3 = struct
       thm
     end
 
+  fun direct_contradiction_thm goal =
+    let
+      val asserted = boolSyntax.dest_neg goal
+      val contradiction = Library.gen_contradiction (Thm.ASSUME asserted)
+    in
+      Thm.NOT_INTRO (Thm.DISCH asserted contradiction)
+    end
+
+  fun prove_direct_contradiction goal =
+    check_reconstructed_theorem "Z3_SMT_Prover"
+      (goal, direct_contradiction_thm (Lib.snd goal))
+
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
-  val Z3_SMT_Prover =
+  val Z3_SMT_Prover_external =
     mk_Z3_fun "Z3_SMT_Prover"
       (fn goal =>
         let
@@ -197,5 +209,9 @@ structure Z3 = struct
               end
             | _ => (result before TextIO.closeIn instream)
           end)
+
+  fun Z3_SMT_Prover goal =
+    SolverSpec.UNSAT (SOME (prove_direct_contradiction goal))
+    handle Feedback.HOL_ERR _ => Z3_SMT_Prover_external goal
 
 end

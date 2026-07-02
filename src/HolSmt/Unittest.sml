@@ -2140,6 +2140,33 @@ in
       (([], boolSyntax.F), boolTheory.TRUTH))
 end
 
+fun z3_direct_bitvector_overflow_contradiction_success () =
+let
+  fun conjunction [] = boolSyntax.T
+    | conjunction (tm :: tms) =
+        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
+  val state =
+    parse_smtlib_state
+      ("(set-option :produce-proofs true)\n" ^
+       "(set-logic QF_BV)\n" ^
+       "(declare-const a (_ BitVec 8))\n" ^
+       "(declare-const b (_ BitVec 8))\n" ^
+       "(assert (and (bvsaddo a b) (not (bvsaddo a b))))\n" ^
+       "(check-sat)\n" ^
+       "(get-proof)\n")
+  val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+  val thm =
+    case Z3.Z3_SMT_Prover ([], goal) of
+      SolverSpec.UNSAT (SOME thm) => thm
+    | _ => die "FAIL: direct bitvector contradiction did not produce a theorem"
+in
+  assert (List.null (Thm.hyp thm),
+    "direct bitvector contradiction theorem has unexpected hypotheses");
+  assert (Term.aconv (Thm.concl thm) goal,
+    "direct bitvector contradiction theorem conclusion does not match goal");
+  Library.check_oracle_tags "unit-test" thm
+end
+
 fun holsmt_solver_result_negative_diagnostics () =
 let
   fun expect_error label expected solver =
@@ -2288,6 +2315,8 @@ let
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",
       z3_reconstructed_theorem_contract_rejects_bad_shape),
+    ("z3_direct_bitvector_overflow_contradiction_success",
+      z3_direct_bitvector_overflow_contradiction_success),
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics)
   ]
