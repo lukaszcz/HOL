@@ -3914,14 +3914,21 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
             diagnostic="complete logic packet row is still an implementation obligation",
         ),
         th_lemma_proof_rule_case(TH_LEMMA_PROOF_RULE_OBLIGATIONS[0]),
-        pass_sample(
+        red_sample(
             row_class="soundness-audit",
             feature="soundness:oracle-tag-boundary",
             logic="QF_UF",
             standard="Z3-extension",
             modes=("z3-tac",),
+            files=(
+                "src/HolSmt/Z3_ProofReplay.sml",
+                "src/HolSmt/z3_tac_driver.sml",
+                "src/HolSmt/tools/audit_complete_conformance.py",
+            ),
+            failure_phase="theorem-shape",
             source_info=source("HolSmt-internal", "checked Z3_TAC oracle-tag boundary"),
             script="(set-logic QF_UF)\n(assert false)\n(check-sat)\n",
+            diagnostic="checked theorem-shape evidence for the oracle-tag boundary is still an implementation obligation",
             theorem_shape="closed theorem without oracle tags",
         ),
         red_sample(
