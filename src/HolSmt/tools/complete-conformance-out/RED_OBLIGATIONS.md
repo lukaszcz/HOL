@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1366
-- Complete-audit red rows: 1366
+- Manifest red rows: 1363
+- Complete-audit red rows: 1363
 - Proof-audit red rows: 43
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -9,7 +9,7 @@
 
 | Category | Red rows |
 | --- | ---: |
-| function sorts | 6 |
+| function sorts | 5 |
 | arrays | 22 |
 | FP | 464 |
 | strings/regex | 349 |
@@ -17,8 +17,8 @@
 | seq/set/bag | 165 |
 | th-lemma-basic | 2 |
 | advanced theory lemmas | 14 |
-| check-sat-assuming | 1 |
-| unsat core/assumptions | 1 |
+| check-sat-assuming | 0 |
+| unsat core/assumptions | 0 |
 | missing logic packets | 110 |
 | real proof occurrences | 36 |
 | external benchmarks | 2 |
@@ -27,9 +27,6 @@
 
 | Source | Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `manifest` | `command:check-sat-assuming:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:check-sat-assuming` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml | command:check-sat-assuming:reconstruction |
-| `manifest` | `command:declare-fun:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:declare-fun` | `translation` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Parser.sml | command:declare-fun:reconstruction |
-| `manifest` | `command:get-unsat-assumptions-get-unsat-core:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:get-unsat-assumptions-get-unsat-core` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml, src/HolSmt/z3_tac_driver.sml | command:get-unsat-assumptions-get-unsat-core:reconstruction |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `parser-only` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `z3-oracle` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `logic:ALIA:fragment-violation` | `typecheck-only` | `logic` | `ALIA` | `logic-packet:ALIA:fragment-violation` | `typecheck` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:ALIA:fragment-violation |
@@ -327,4 +324,7 @@
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
-| ... | ... | ... | ... | ... | ... | ... | ... | 1109 more in JSON |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:type-error` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `proof-parse` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:unsat-proof |
+| ... | ... | ... | ... | ... | ... | ... | ... | 1106 more in JSON |
