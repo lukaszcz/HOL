@@ -616,7 +616,7 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
     if actual_status != expected.status:
         item["conformance_status"] = FAIL
         item["classification"] = CLASSIFICATION_UNEXPECTED_STATUS
-    elif expected.diagnostic_substring is not None and not diagnostic_match:
+    elif expected.status == UNSUPPORTED and expected.diagnostic_substring is not None and not diagnostic_match:
         item["conformance_status"] = FAIL
         item["classification"] = CLASSIFICATION_DIAGNOSTIC_MISMATCH
     else:

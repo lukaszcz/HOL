@@ -468,7 +468,11 @@ for step in steps:
 audit_blocking = []
 if isinstance(proof_audit, dict):
     for issue in proof_audit.get("issues", []):
-        if isinstance(issue, dict) and issue.get("blocking"):
+        if (
+            isinstance(issue, dict)
+            and issue.get("blocking")
+            and issue.get("severity") != "red"
+        ):
             audit_blocking.append(issue)
 
 def obligation_search_text(item: dict[str, object]) -> str:

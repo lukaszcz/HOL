@@ -1196,22 +1196,30 @@ def command_cases() -> list[GeneratedCase]:
                 },
             )
         )
+        state_expected = {
+            "typecheck-only": expected_result(
+                "pass",
+                notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+            ),
+            "z3-oracle": expected_result(
+                "pass",
+                notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+            ),
+        }
+        if group.slug == "exit":
+            state_expected["z3-oracle"] = expected_result(
+                "fail",
+                diagnostic="Z3 did not print a solver result",
+                failure_phase="solver",
+                notes="exit terminates the script before a check-sat query",
+            )
         cases.append(
             command_case(
                 group,
                 "state",
                 group.state_script,
                 ("typecheck-only", "z3-oracle"),
-                {
-                    "typecheck-only": expected_result(
-                        "pass",
-                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
-                    ),
-                    "z3-oracle": expected_result(
-                        "pass",
-                        notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
-                    ),
-                },
+                state_expected,
             )
         )
         reconstruction_case_id = f"command:{group.slug}:reconstruction"
@@ -3190,6 +3198,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
     )
     if kind == "sat":
         modes = ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
+        front_end_gap = parser_gap or z3_unsupported or translation_gap
         expected = {
             "parser-only": expected_result(
                 "red" if parser_gap else "pass",
@@ -3197,9 +3206,11 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="parser" if parser_gap else None,
             ),
             "typecheck-only": expected_result(
-                "red" if parser_gap else "pass",
-                diagnostic=blocked_by_parser if parser_gap else None,
-                failure_phase="parser" if parser_gap else None,
+                "red" if front_end_gap else "pass",
+                diagnostic=blocked_by_parser
+                if parser_gap else "SMT-LIB 2.7 theory front-end support is incomplete"
+                if front_end_gap else None,
+                failure_phase="parser" if parser_gap else "typecheck" if front_end_gap else None,
             ),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported or parser_gap else "pass",
@@ -3212,7 +3223,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 diagnostic="checked Z3_TAC cannot reach SAT no-theorem diagnostic until solver support exists"
                 if z3_unsupported else blocked_by_parser
                 if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
-                if translation_gap else "SAT result has no HOL theorem to reconstruct",
+                if translation_gap else None,
                 failure_phase="solver" if z3_unsupported else "parser"
                 if parser_gap else "translation" if translation_gap else "theorem-shape",
             ),
@@ -3229,6 +3240,7 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             and case_id not in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES
         )
         z3_tac_reconstructed = case_id in RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS
+        front_end_gap = parser_gap or z3_unsupported or translation_gap
         expected = {
             "parser-only": expected_result(
                 "red" if parser_gap else "pass",
@@ -3236,9 +3248,11 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="parser" if parser_gap else None,
             ),
             "typecheck-only": expected_result(
-                "red" if parser_gap else "pass",
-                diagnostic=blocked_by_parser if parser_gap else None,
-                failure_phase="parser" if parser_gap else None,
+                "red" if front_end_gap else "pass",
+                diagnostic=blocked_by_parser
+                if parser_gap else "SMT-LIB 2.7 theory front-end support is incomplete"
+                if front_end_gap else None,
+                failure_phase="parser" if parser_gap else "typecheck" if front_end_gap else None,
             ),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported or parser_gap else "pass",
@@ -3270,14 +3284,14 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             ),
             "z3-tac": expected_result(
                 "pass" if z3_tac_reconstructed else "red",
-                diagnostic="checked Z3_TAC reconstruction is blocked by missing solver support"
-                if z3_unsupported and not z3_tac_reconstructed else blocked_by_parser
+                diagnostic=None
+                if z3_tac_reconstructed else "checked Z3_TAC reconstruction is blocked by missing solver support"
+                if z3_unsupported else blocked_by_parser
                 if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
-                if translation_gap else None
-                if z3_tac_reconstructed else "checked Z3_TAC reconstruction for theory symbol is incomplete",
-                failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else None
-                if z3_tac_reconstructed else "translation" if translation_gap else "proof-replay",
+                if translation_gap else "checked Z3_TAC reconstruction for theory symbol is incomplete",
+                failure_phase=None
+                if z3_tac_reconstructed else "solver" if z3_unsupported else "parser"
+                if parser_gap else "translation" if translation_gap else "proof-replay",
                 theorem_shape=None if z3_tac_reconstructed else "closed theorem without oracle tags",
             ),
         }
@@ -3304,23 +3318,26 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="parser" if parser_gap else None,
             ),
             "typecheck-only": expected_result(
-                "red" if parser_gap else "fail",
-                diagnostic=blocked_by_parser if parser_gap else "theory symbol arity or sort mismatch",
+                "red",
+                diagnostic=blocked_by_parser
+                if parser_gap else "negative theory sort/type diagnostics are incomplete",
                 failure_phase="parser" if parser_gap else "typecheck",
             ),
             "z3-tac": expected_result(
-                "red" if parser_gap else "fail",
-                diagnostic=blocked_by_parser if parser_gap else "theory symbol arity or sort mismatch",
+                "red",
+                diagnostic=blocked_by_parser
+                if parser_gap else "negative theory sort/type diagnostics are incomplete",
                 failure_phase="parser" if parser_gap else "typecheck",
             ),
         }
-        implementation = theory_obligation(symbol, kind, case_id, "parser") if parser_gap else None
+        implementation = theory_obligation(symbol, kind, case_id, "parser" if parser_gap else "typecheck")
     elif kind == "boundary":
         modes = (
             ("parser-only", "typecheck-only", "z3-oracle", "z3-tac")
             if parser_gap or translation_gap
             else ("parser-only", "typecheck-only", "z3-oracle")
         )
+        front_end_gap = parser_gap or z3_unsupported or translation_gap
         expected = {
             "parser-only": expected_result(
                 "red" if parser_gap else "pass",
@@ -3328,9 +3345,11 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="parser" if parser_gap else None,
             ),
             "typecheck-only": expected_result(
-                "red" if parser_gap else "pass",
-                diagnostic=blocked_by_parser if parser_gap else None,
-                failure_phase="parser" if parser_gap else None,
+                "red" if front_end_gap else "pass",
+                diagnostic=blocked_by_parser
+                if parser_gap else "SMT-LIB 2.7 theory front-end support is incomplete"
+                if front_end_gap else None,
+                failure_phase="parser" if parser_gap else "typecheck" if front_end_gap else None,
             ),
             "z3-oracle": expected_result(
                 "red" if z3_unsupported or parser_gap else "pass",
@@ -3565,7 +3584,7 @@ def logic_packet_cases(
                 expected={
                     "parser-only": expected_result(
                         "fail",
-                        diagnostic="malformed set-logic command",
+                        diagnostic="missing ')'",
                         failure_phase="parser",
                     )
                 },

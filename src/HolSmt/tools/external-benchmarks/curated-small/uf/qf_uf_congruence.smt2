@@ -1,4 +1,5 @@
 ; family: uf
+; holsmt-expected: {"proof-parse": {"status": "fail", "diagnostic": "Z3 did not emit a raw proof"}, "proof-replay": {"status": "fail", "diagnostic": "Z3 did not emit a raw proof"}}
 (set-logic QF_UF)
 (declare-sort U 0)
 (declare-fun f (U) U)
