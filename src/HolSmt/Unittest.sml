@@ -1101,12 +1101,26 @@ fun smtlib_logic_fragment_diagnostics () =
           assert (contains expected msg,
             label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
       | NONE => die (label ^ " fragment violation was not detected")
+    fun expect_no_fragment label logic text =
+      case fragment logic text of
+        SOME msg =>
+          die (label ^ " reported a spurious fragment violation: " ^ msg)
+      | NONE => ()
   in
     expect_fragment "QF quantifier" "QF_UF"
       ("(set-logic QF_UF)\n" ^
        "(assert (forall ((p Bool)) p))\n" ^
        "(check-sat)\n")
       "quantified formula";
+    expect_no_fragment "QF define-fun local definition" "QF_UF"
+      ("(set-logic QF_UF)\n" ^
+       "(define-fun id ((p Bool)) Bool p)\n" ^
+       "(assert (id true))\n" ^
+       "(check-sat)\n");
+    expect_no_fragment "QF recursive local definition" "QF_UF"
+      ("(set-logic QF_UF)\n" ^
+       "(define-fun-rec f ((p Bool)) Bool p)\n" ^
+       "(check-sat)\n");
     expect_fragment "linear arithmetic product" "ALIA"
       ("(set-logic ALIA)\n" ^
        "(declare-const x Int)\n" ^
