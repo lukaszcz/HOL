@@ -231,7 +231,7 @@ class ProofCompletenessAuditTests(unittest.TestCase):
             for issue in report["issues"]
             if issue["code"] == "missing_th_lemma_red_obligation"
         }
-        self.assertEqual(missing, {"th-lemma-basic", "th-lemma-fp"})
+        self.assertEqual(missing, {"th-lemma-fp"})
         self.assertFalse(report["summary"]["passed"])
 
     def test_checked_in_sources_have_synthetic_mapping_for_every_registry_rule(self):

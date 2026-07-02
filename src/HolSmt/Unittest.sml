@@ -2008,7 +2008,15 @@ let
   ]
 in
   List.app (fn (name, proof_text) =>
-    (ignore (replay_z3_proof_string proof_text)
+    (let
+       val thm = replay_z3_proof_string proof_text
+       val _ = assert (List.null (Thm.hyp thm),
+         "th-lemma " ^ name ^ " replayed with unexpected hypotheses: " ^
+         Library.thm_to_string thm)
+       val _ = Library.check_oracle_tags ("th-lemma " ^ name) thm
+     in
+       ()
+     end
       handle Feedback.HOL_ERR holerr =>
         die ("FAIL: th-lemma " ^ name ^ " did not replay: " ^
           Feedback.message_of holerr))) cases

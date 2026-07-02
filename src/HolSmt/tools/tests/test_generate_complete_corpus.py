@@ -60,8 +60,8 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertEqual({case["class"] for case in cases}, {"proof-rule"})
         case_ids = {case["id"] for case in cases}
         self.assertIn("proof-rule:asserted", case_ids)
-        self.assertIn("proof-rule:th-lemma-basic", case_ids)
         self.assertIn("proof-rule:th-lemma-fp", case_ids)
+        self.assertNotIn("proof-rule:th-lemma-basic", case_ids)
         for case in cases:
             self.assertIn("proof-parse", case["expected"])
             self.assertIn("proof-replay", case["expected"])

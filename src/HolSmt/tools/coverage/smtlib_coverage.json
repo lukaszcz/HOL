@@ -2736,22 +2736,22 @@
       "parsed": "implemented",
       "translated": "not_applicable",
       "solved": "not_applicable",
-      "reconstructed": "unsupported_diagnostic",
+      "reconstructed": "implemented",
       "tested": "implemented",
-      "evidence": "Z3_Proof.TH_LEMMA_BASIC, Z3_ProofParser indexed metadata preservation, Z3_ProofReplay diagnostic path, and src/HolSmt/Unittest.sml z3_th_lemma_basic_unsupported_diagnostic.",
-      "notes": "Collected existing subkind shape is eq-propagate. It fails with the exact unsupported-shape diagnostic until checked Boolean/equality simplification replay is implemented.",
+      "evidence": "Z3_Proof.TH_LEMMA_BASIC, Z3_ProofParser indexed metadata preservation, Z3_ProofReplay checked Boolean/equality simplification dispatch, and src/HolSmt/Unittest.sml z3_th_lemma_existing_theory_replay_minimal_success.",
+      "notes": "Collected existing subkind shape is eq-propagate. Supported Boolean tautology/equality simplification shapes route through checked TAUT/METIS replay and are asserted to have no extra hypotheses or oracle tags; unsupported non-tautological shapes keep an explicit diagnostic.",
       "test_ids": [
-        "source:src/HolSmt/Unittest.sml#z3_th_lemma_basic_unsupported_diagnostic"
+        "source:src/HolSmt/Unittest.sml#basic/true",
+        "source:src/HolSmt/Unittest.sml#basic/equality",
+        "source:src/HolSmt/Unittest.sml#basic/int-equality-symmetry"
       ],
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
-        "source:src/HolSmt/Unittest.sml#unsupported th-lemma shape"
+        "source:src/HolSmt/Unittest.sml#z3_th_lemma_basic_unsupported_diagnostic"
       ],
-      "current_status": "unsupported_diagnostic",
+      "current_status": "implemented",
       "complete_test_ids": [],
-      "red_obligation_ids": [
-        "proof-rule:th-lemma-basic"
-      ],
+      "red_obligation_ids": [],
       "complete_required_status": "red"
     },
     {
@@ -2794,7 +2794,6 @@
       "current_status": "unsupported_diagnostic",
       "complete_test_ids": [],
       "red_obligation_ids": [
-        "proof-rule:th-lemma-basic",
         "proof-rule:th-lemma-datatype",
         "proof-rule:th-lemma-fp",
         "proof-rule:th-lemma-nonlinear-arith",

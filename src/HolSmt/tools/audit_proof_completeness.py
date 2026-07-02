@@ -53,7 +53,6 @@ ADVANCED_TH_LEMMA_THEORY_TO_RULE = {
 }
 
 TH_LEMMA_OBLIGATION_RULES = {
-    "th-lemma-basic",
     "th-lemma-fp",
     "th-lemma-seq",
     "th-lemma-string",

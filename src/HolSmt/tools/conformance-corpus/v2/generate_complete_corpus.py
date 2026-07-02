@@ -486,17 +486,6 @@ class ProofRuleObligation:
 
 TH_LEMMA_PROOF_RULE_OBLIGATIONS: tuple[ProofRuleObligation, ...] = (
     ProofRuleObligation(
-        rule="th-lemma-basic",
-        file_slug="th_lemma_basic",
-        diagnostic="non-tautological basic th-lemma replay is incomplete",
-        notes=(
-            "Tautological Boolean/equality synthetic coverage is checked; keep "
-            "this row red until non-tautological basic th-lemma shapes and real "
-            "proof-corpus evidence are added."
-        ),
-        behavior="partial-checked-replay",
-    ),
-    ProofRuleObligation(
         rule="th-lemma-datatype",
         file_slug="th_lemma_datatype",
         diagnostic="datatype th-lemma replay is diagnostic-only",
@@ -607,12 +596,7 @@ def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
         ),
         "z3-tac": expected_result(
             "red",
-            diagnostic=(
-                "non-tautological basic th-lemma shapes have no reconstructed "
-                "HOL theorem yet"
-                if obligation.rule == "th-lemma-basic"
-                else "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet"
-            ),
+            diagnostic="diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
             failure_phase="proof-replay",
             theorem_shape="closed theorem without oracle tags",
             proof_rule_histogram={obligation.rule: 1},

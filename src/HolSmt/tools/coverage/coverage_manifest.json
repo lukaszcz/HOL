@@ -2276,7 +2276,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "z3_th_lemma_basic_unsupported_diagnostic"
+          "match": "z3_th_lemma_existing_theory_replay_minimal_success"
         }
       ],
       "negative_tests": [],
@@ -2288,7 +2288,7 @@
           "match": "mk_rule (\"th-lemma-basic\""
         }
       ],
-      "notes": "Basic th-lemma labels are parsed and classified; replay remains diagnostic-only."
+      "notes": "Basic th-lemma labels are parsed, classified, and checked for supported Boolean tautology/equality simplification shapes."
     },
     {
       "section": "z3_proof_rules",
@@ -2317,13 +2317,19 @@
       "phases": [
         "reconstructed"
       ],
-      "expected_status": "unsupported_diagnostic",
-      "positive_tests": [],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/Unittest.sml",
+          "match": "basic/int-equality-symmetry"
+        }
+      ],
       "negative_tests": [
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "unsupported th-lemma shape"
+          "match": "z3_th_lemma_basic_unsupported_diagnostic"
         }
       ],
       "z3_versions": [],
@@ -2331,10 +2337,10 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Z3_ProofReplay.sml",
-          "match": "unsupported th-lemma shape"
+          "match": "z3_th_lemma_basic"
         }
       ],
-      "notes": "Basic th-lemma replay fails with a checked unsupported-shape diagnostic."
+      "notes": "Supported basic th-lemma Boolean/equality simplification shapes replay to closed checked HOL theorems; unsupported non-tautological shapes retain an explicit diagnostic."
     },
     {
       "section": "z3_proof_rules",
