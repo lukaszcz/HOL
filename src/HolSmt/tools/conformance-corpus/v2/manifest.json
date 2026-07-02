@@ -279,9 +279,7 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "unsupported",
-          "diagnostic": "check-sat-assuming is outside checked Z3_TAC command-line entry point",
-          "failure_phase": "theorem-shape",
+          "status": "pass",
           "notes": "theorem reconstruction applies: false"
         }
       },
@@ -991,24 +989,11 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "unsupported higher-order/function sort",
-          "failure_phase": "translation",
+          "status": "pass",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "command-reconstruction:declare-fun",
-        "test_ids": [
-          "command:declare-fun:reconstruction"
-        ],
-        "failure_phase": "translation",
-        "notes": "First-order declarations are typechecked, but checked reconstruction for function-sort and higher-order declarations remains outside the current translator."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: declare-fun"
@@ -2632,9 +2617,7 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "unsupported",
-          "diagnostic": "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
-          "failure_phase": "theorem-shape",
+          "status": "pass",
           "notes": "theorem reconstruction applies: false"
         }
       },

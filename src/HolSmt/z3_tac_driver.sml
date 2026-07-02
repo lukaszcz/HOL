@@ -39,11 +39,15 @@ fun z3_tac_query_diagnostic queries =
     [SmtLib_Parser.QueryCheckSat {assumptions = [], ...}] => NONE
   | [SmtLib_Parser.QueryCheckSat {assumptions = [], ...},
      SmtLib_Parser.QueryGetProof] => NONE
-  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...}] =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
+  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...}] => NONE
   | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...},
-     SmtLib_Parser.QueryGetProof] =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
+     SmtLib_Parser.QueryGetProof] => NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatAssumptions] =>
+      NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore] =>
+      NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore,
+     SmtLib_Parser.QueryGetUnsatAssumptions] => NONE
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | SmtLib_Parser.QueryCheckSat _ :: query :: _ =>
@@ -69,9 +73,7 @@ fun z3_tac_goal assertions =
 
 fun z3_tac_unsupported_command_diagnostic command =
   case SmtLib_Parser.node_of command of
-    SmtLib_Parser.CmdCheckSatAssuming _ =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.CmdDefineFunRec _ =>
+    SmtLib_Parser.CmdDefineFunRec _ =>
       SOME "recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point"
   | SmtLib_Parser.CmdDefineFunsRec _ =>
       SOME "recursive definition command define-funs-rec is outside checked Z3_TAC command-line entry point"

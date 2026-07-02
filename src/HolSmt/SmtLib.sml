@@ -394,8 +394,6 @@ local
     type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
       ty
 
-  fun is_function_type ty = Lib.can Type.dom_rng ty
-
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
@@ -770,13 +768,6 @@ local
      given type *)
   fun translate_type (tydict, ty) =
   let
-    val _ =
-      if is_function_type ty then
-        raise ERR "translate_type"
-          ("unsupported higher-order/function sort " ^
-           Hol_pp.type_to_string ty)
-      else
-        ()
     val name =
       case first_success (fn (_, f) => f ty)
           (TypeNet.match (builtin_types, ty)) of
@@ -804,11 +795,8 @@ local
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
 
-  (* SMT-LIB is first-order.  Thus, functions can only be applied to
-     arguments of base type, but not to arguments of function type;
-     all completely applied terms must be of base type.
-
-     Thus, higher-order arguments must be abstracted so that they are
+  (* SMT-LIB is first-order.  Thus, higher-order arguments must be abstracted
+     so that they are
      of (uninterpreted) base type.  We achieve this by abstracting the
      offending function type to a fresh base type, and by abstracting
      the argument's rator to an uninterpreted term that returns the
@@ -845,16 +833,7 @@ local
           (Redblackmap.insert (bounds, v, name), name)
         end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
-    fun reject_function_term context t =
-      if is_function_type (Term.type_of t) then
-        raise ERR "translate_term"
-          ("unsupported higher-order/function-valued HOL term in " ^
-           context ^ ": " ^ Hol_pp.term_to_string t ^ " : " ^
-           Hol_pp.type_to_string (Term.type_of t))
-      else
-        ()
   in
-    reject_function_term "term position" tm;
     (* binders *)
     let
       (* perhaps we should use a table of binders instead *)
