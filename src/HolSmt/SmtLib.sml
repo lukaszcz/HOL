@@ -1251,7 +1251,12 @@ in
          as facts/assumptions will be useless in most circumstances. We try to
          use these theorems in simplification here but this only helps solving
          the simpler goals. *)
-      pairTheory.PAIR_EQ, pairTheory.FST, pairTheory.SND
+      pairTheory.PAIR_EQ, pairTheory.FST, pairTheory.SND,
+      combinTheory.UPDATE_APPLY1, combinTheory.APPLY_UPDATE_THM,
+      combinTheory.UPDATE_EQ, boolTheory.REFL_CLAUSE
+    ] THEN
+    SIMP_TAC pureSimps.pure_ss [
+      boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
     ] THEN
     Library.WORD_SIMP_TAC THEN
     Library.SET_SIMP_TAC THEN

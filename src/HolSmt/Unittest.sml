@@ -1627,14 +1627,23 @@ let
       val rendered = String.concatWith "\n"
         (List.map (fn (_, t) => term_with_types t) subgoals)
     in
-      assert (not (List.null subgoals),
-        label ^ " preprocessing unexpectedly solved all goals");
       List.app
         (fn snippet =>
           assert (not (contains snippet rendered),
             label ^ " preprocessing left '" ^ snippet ^
             "' in subgoals:\n" ^ rendered))
         forbidden
+    end
+    handle Feedback.HOL_ERR holerr =>
+      die (label ^ " simplification/preprocessing tactic failed: " ^
+        Feedback.message_of holerr)
+  fun preprocessing_solves label term =
+    let
+      val (subgoals, _) = SmtLib.SIMP_TAC true ([], term)
+    in
+      assert (List.null subgoals,
+        label ^ " preprocessing left " ^
+        Int.toString (List.length subgoals) ^ " subgoal(s)")
     end
     handle Feedback.HOL_ERR holerr =>
       die (label ^ " simplification/preprocessing tactic failed: " ^
@@ -1652,7 +1661,13 @@ in
   preprocessing_removes "let/lambda/beta validation"
     ``(let f = (\x:int. x + 1) in f 2) = 3`` ["let", "\\"];
   preprocessing_removes "pair selector simplification validation"
-    ``FST ((x:int), p) = x`` ["FST"]
+    ``FST ((x:int), p) = x`` ["FST"];
+  preprocessing_solves "array read-over-write preprocessing"
+    ``((i =+ e) (a:'i -> 'e)) i = e``;
+  preprocessing_solves "array write-over-write preprocessing"
+    ``(i =+ e2) ((i =+ e1) (a:'i -> 'e)) = (i =+ e2) a``;
+  preprocessing_removes "array extensionality preprocessing"
+    ``(!i:int. (a:int -> bool) i = b i) ==> (a = b)`` ["a = b"]
 end
 
 fun smtlib_roundtrip_current_theories_success () =
