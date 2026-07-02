@@ -1,4 +1,5 @@
 (set-logic QF_UF)
 (assert false)
 (exit)
+(declare-datatype Color ((red) (blue)))
 (check-sat)

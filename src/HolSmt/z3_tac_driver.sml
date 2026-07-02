@@ -86,11 +86,16 @@ fun z3_tac_unsupported_command_diagnostic command =
 fun z3_tac_script_diagnostic path =
   let
     val script = SmtLib_Parser.parse_script_file path
-    val diagnostics = List.map z3_tac_unsupported_command_diagnostic script
+    fun scan [] = NONE
+      | scan (command :: rest) =
+          (case SmtLib_Parser.node_of command of
+             SmtLib_Parser.CmdExit => NONE
+           | _ =>
+             case z3_tac_unsupported_command_diagnostic command of
+               SOME diagnostic => SOME diagnostic
+             | NONE => scan rest)
   in
-    case List.find Option.isSome diagnostics of
-      SOME (SOME diagnostic) => SOME diagnostic
-    | _ => NONE
+    scan script
   end
 
 fun z3_tac_checked_prove goal =

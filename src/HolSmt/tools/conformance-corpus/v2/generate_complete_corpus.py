@@ -785,7 +785,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         positive_script="(set-logic QF_UF)\n(exit)\n",
         negative_script="(set-logic QF_UF)\n(exit true)\n",
         state_script="(set-logic QF_UF)\n(declare-const p Bool)\n(exit)\n(assert p)\n",
-        reconstruction_script="(set-logic QF_UF)\n(assert false)\n(exit)\n(check-sat)\n",
+        reconstruction_script=(
+            "(set-logic QF_UF)\n(assert false)\n(exit)\n"
+            "(declare-datatype Color ((red) (blue)))\n(check-sat)\n"
+        ),
         negative_diagnostic="malformed exit",
         negative_phase="parser",
         reconstruction_applies=False,
