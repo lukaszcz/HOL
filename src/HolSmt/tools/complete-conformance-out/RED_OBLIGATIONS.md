@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1371
-- Complete-audit red rows: 1371
+- Manifest red rows: 1366
+- Complete-audit red rows: 1366
 - Proof-audit red rows: 36
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -9,8 +9,8 @@
 
 | Category | Red rows |
 | --- | ---: |
-| function sorts | 5 |
-| arrays | 16 |
+| function sorts | 0 |
+| arrays | 15 |
 | FP | 466 |
 | strings/regex | 335 |
 | datatypes | 13 |
@@ -327,4 +327,4 @@
 | `manifest` | `theory:Fixed_Size_BitVectors:bvuaddo:boundary` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvuaddo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvuaddo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvuaddo:boundary` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvuaddo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvuaddo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvuaddo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvuaddo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvuaddo:sat |
-| ... | ... | ... | ... | ... | ... | ... | ... | 1107 more in JSON |
+| ... | ... | ... | ... | ... | ... | ... | ... | 1102 more in JSON |

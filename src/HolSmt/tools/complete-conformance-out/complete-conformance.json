@@ -271,7 +271,7 @@
     }
   ],
   "red_obligations": {
-    "complete_audit_red_count": 1371,
+    "complete_audit_red_count": 1366,
     "complete_audit_red_obligations": [
       {
         "category": "implementation_obligation",
@@ -16016,91 +16016,6 @@
         "subject": "case/theory:FloatingPoint:to-fp:unsat-proof:z3-oracle"
       },
       {
-        "category": "higher-order/function-sort",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "translation",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "test_ids": [
-            "theory:HO_Core:function-argument-sort"
-          ]
-        },
-        "message": "red expected row requires implementation work for higher-order/function-sort:function-argument",
-        "severity": "error",
-        "subject": "case/theory:HO_Core:function-argument-sort:z3-tac"
-      },
-      {
-        "category": "higher-order/function-sort",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "translation",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "test_ids": [
-            "theory:HO_Core:function-result-sort"
-          ]
-        },
-        "message": "red expected row requires implementation work for higher-order/function-sort:function-result",
-        "severity": "error",
-        "subject": "case/theory:HO_Core:function-result-sort:z3-tac"
-      },
-      {
-        "category": "higher-order/function-sort",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "translation",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "test_ids": [
-            "theory:HO_Core:function-valued-array-declaration"
-          ]
-        },
-        "message": "red expected row requires implementation work for higher-order/function-sort:translate-type-array-declaration",
-        "severity": "error",
-        "subject": "case/theory:HO_Core:function-valued-array-declaration:z3-tac"
-      },
-      {
-        "category": "higher-order/function-sort",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "translation",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "theory:HO_Core:higher-order-equality"
-          ]
-        },
-        "message": "red expected row requires implementation work for higher-order/function-sort:higher-order-equality",
-        "severity": "error",
-        "subject": "case/theory:HO_Core:higher-order-equality:z3-tac"
-      },
-      {
-        "category": "higher-order/function-sort",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "typecheck",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/SmtLib_Theories.sml"
-          ],
-          "test_ids": [
-            "theory:HO_Core:native-function-sort"
-          ]
-        },
-        "message": "red expected row requires implementation work for higher-order/function-sort:native-hocore-function-sort",
-        "severity": "error",
-        "subject": "case/theory:HO_Core:native-function-sort:typecheck-only"
-      },
-      {
         "category": "implementation_obligation",
         "code": "red_implementation_obligation",
         "details": {
@@ -25636,7 +25551,7 @@
         "subject": "case/theory:Z3_Extensions:set:unsat-proof:typecheck-only"
       }
     ],
-    "manifest_red_count": 1371,
+    "manifest_red_count": 1366,
     "manifest_red_obligations": [
       {
         "case": "external-benchmark:curated-reduced-qf-auflia-unsat-proof",
@@ -53932,142 +53847,6 @@
         },
         "logic": "QF_FP",
         "mode": "z3-oracle"
-      },
-      {
-        "case": "theory:HO_Core:function-argument-sort",
-        "class": "theory",
-        "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-        "features": [
-          "higher-order/function-sort",
-          "theory-behavior:function-argument",
-          "theory-behavior:function-sort",
-          "theory-case:sat",
-          "theory-entry:HO_Core:function-argument-sort",
-          "theory:HO_Core"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "translation",
-          "feature": "higher-order/function-sort:function-argument",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "theory:HO_Core:function-argument-sort"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "theory:HO_Core:function-result-sort",
-        "class": "theory",
-        "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-        "features": [
-          "higher-order/function-sort",
-          "theory-behavior:function-result",
-          "theory-behavior:function-sort",
-          "theory-case:sat",
-          "theory-entry:HO_Core:function-result-sort",
-          "theory:HO_Core"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "translation",
-          "feature": "higher-order/function-sort:function-result",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "theory:HO_Core:function-result-sort"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "theory:HO_Core:function-valued-array-declaration",
-        "class": "theory",
-        "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-        "features": [
-          "higher-order/function-sort",
-          "theory-behavior:function-sort",
-          "theory-behavior:higher-order",
-          "theory-behavior:translate-type-rejection",
-          "theory-case:sat",
-          "theory-entry:HO_Core:function-valued-array-declaration",
-          "theory:HO_Core"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "translation",
-          "feature": "higher-order/function-sort:translate-type-array-declaration",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/SmtLib_Translate.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "theory:HO_Core:function-valued-array-declaration"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "theory:HO_Core:higher-order-equality",
-        "class": "theory",
-        "diagnostic": "higher-order equality over function sorts is not reconstructed",
-        "features": [
-          "higher-order/function-sort",
-          "theory-behavior:function-sort",
-          "theory-behavior:higher-order-equality",
-          "theory-case:sat",
-          "theory-entry:HO_Core:higher-order-equality",
-          "theory:HO_Core"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "translation",
-          "feature": "higher-order/function-sort:higher-order-equality",
-          "files": [
-            "src/HolSmt/SmtLib.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "theory:HO_Core:higher-order-equality"
-          ]
-        },
-        "logic": "QF_AUFLIA",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "theory:HO_Core:native-function-sort",
-        "class": "theory",
-        "diagnostic": "native HO-Core function sort syntax is not installed in the SMT-LIB type dictionary",
-        "features": [
-          "higher-order/function-sort",
-          "theory-behavior:function-sort",
-          "theory-behavior:hocore-native-function-sort",
-          "theory-case:type-error",
-          "theory-entry:HO_Core:native-function-sort",
-          "theory:HO_Core"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "typecheck",
-          "feature": "higher-order/function-sort:native-hocore-function-sort",
-          "files": [
-            "src/HolSmt/SmtLib_Parser.sml",
-            "src/HolSmt/SmtLib_Theories.sml"
-          ],
-          "notes": "Generated red seed row; keep red until executable evidence is added.",
-          "test_ids": [
-            "theory:HO_Core:native-function-sort"
-          ]
-        },
-        "logic": "ALL",
-        "mode": "typecheck-only"
       },
       {
         "case": "theory:Ints:abs:type-error",
@@ -85983,86 +85762,6 @@
         ]
       },
       {
-        "case": "theory:HO_Core:function-argument-sort",
-        "class": "theory",
-        "failure_phase": "translation",
-        "implementation_files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "higher-order/function-sort:function-argument",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "theory:HO_Core:function-argument-sort"
-        ]
-      },
-      {
-        "case": "theory:HO_Core:function-result-sort",
-        "class": "theory",
-        "failure_phase": "translation",
-        "implementation_files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "higher-order/function-sort:function-result",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "theory:HO_Core:function-result-sort"
-        ]
-      },
-      {
-        "case": "theory:HO_Core:function-valued-array-declaration",
-        "class": "theory",
-        "failure_phase": "translation",
-        "implementation_files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "higher-order/function-sort:translate-type-array-declaration",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "theory:HO_Core:function-valued-array-declaration"
-        ]
-      },
-      {
-        "case": "theory:HO_Core:higher-order-equality",
-        "class": "theory",
-        "failure_phase": "translation",
-        "implementation_files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_AUFLIA",
-        "missing_feature": "higher-order/function-sort:higher-order-equality",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "theory:HO_Core:higher-order-equality"
-        ]
-      },
-      {
-        "case": "theory:HO_Core:native-function-sort",
-        "class": "theory",
-        "failure_phase": "typecheck",
-        "implementation_files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/SmtLib_Theories.sml"
-        ],
-        "logic": "ALL",
-        "missing_feature": "higher-order/function-sort:native-hocore-function-sort",
-        "mode": "typecheck-only",
-        "source": "manifest",
-        "test_ids": [
-          "theory:HO_Core:native-function-sort"
-        ]
-      },
-      {
         "case": "theory:Ints:abs:type-error",
         "class": "theory",
         "failure_phase": "typecheck",
@@ -96900,11 +96599,11 @@
     "required_first_red_category_counts": {
       "FP": 466,
       "advanced theory lemmas": 26,
-      "arrays": 16,
+      "arrays": 15,
       "check-sat-assuming": 0,
       "datatypes": 13,
       "external benchmarks": 22,
-      "function sorts": 5,
+      "function sorts": 0,
       "missing logic packets": 110,
       "real proof occurrences": 36,
       "seq/set/bag": 166,
@@ -97159,7 +96858,7 @@
     "nonzero_exit_reasons": [
       "red-obligations"
     ],
-    "red_obligation_count": 1407,
+    "red_obligation_count": 1402,
     "report_dir": "src/HolSmt/tools/complete-conformance-out",
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "red-obligations",

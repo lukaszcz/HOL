@@ -51761,23 +51761,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-          "failure_phase": "translation"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "feature": "higher-order/function-sort:function-argument",
-        "test_ids": [
-          "theory:HO_Core:function-argument-sort"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB HO-Core function argument sort"
@@ -51822,23 +51809,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-          "failure_phase": "translation"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "feature": "higher-order/function-sort:function-result",
-        "test_ids": [
-          "theory:HO_Core:function-result-sort"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB HO-Core function result sort"
@@ -51854,7 +51828,6 @@
         "higher-order/function-sort",
         "theory-behavior:function-sort",
         "theory-behavior:higher-order",
-        "theory-behavior:translate-type-rejection",
         "theory-case:sat",
         "theory-entry:HO_Core:function-valued-array-declaration",
         "theory:HO_Core"
@@ -51884,23 +51857,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "SmtLib.translate_type rejects unsupported higher-order/function sort",
-          "failure_phase": "translation"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Translate.sml"
-        ],
-        "feature": "higher-order/function-sort:translate-type-array-declaration",
-        "test_ids": [
-          "theory:HO_Core:function-valued-array-declaration"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB HO-Core function-valued declaration represented by HOL Array/function sort"
@@ -51945,23 +51905,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "higher-order equality over function sorts is not reconstructed",
-          "failure_phase": "translation"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "higher-order/function-sort:higher-order-equality",
-        "test_ids": [
-          "theory:HO_Core:higher-order-equality"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB HO-Core higher-order equality"
@@ -52041,23 +51988,10 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "native HO-Core function sort syntax is not installed in the SMT-LIB type dictionary",
-          "failure_phase": "typecheck"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/SmtLib_Theories.sml"
-        ],
-        "feature": "higher-order/function-sort:native-hocore-function-sort",
-        "test_ids": [
-          "theory:HO_Core:native-function-sort"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 3 HO-Core native function sort"

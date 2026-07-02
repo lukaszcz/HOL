@@ -358,16 +358,16 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertTrue(
             any("theory-behavior:disjointness" in case["features"] for case in datatype_cases)
         )
-        translate_type_cases = [
+        function_sort_cases = [
             case for case in hocore_cases
-            if "theory-behavior:translate-type-rejection" in case["features"]
+            if "higher-order/function-sort" in case["features"]
         ]
-        self.assertEqual(len(translate_type_cases), 1)
-        self.assertEqual(translate_type_cases[0]["expected"]["z3-tac"]["status"], "red")
-        self.assertIn(
-            "SmtLib.translate_type",
-            translate_type_cases[0]["expected"]["z3-tac"]["diagnostic"],
-        )
+        self.assertEqual(len(function_sort_cases), 5)
+        for case in function_sort_cases:
+            self.assertIsNone(case["implementation_obligation"], case)
+            self.assertNotIn("theory-behavior:translate-type-rejection", case["features"])
+            for mode in case["modes"]:
+                self.assertEqual(case["expected"][mode]["status"], "pass", case)
 
     def test_manifest_entry_preserves_red_obligation_contract(self):
         case_id = generator.deterministic_case_id("command", "command:future")
