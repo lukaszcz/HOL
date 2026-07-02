@@ -466,6 +466,180 @@ def red_sample(
     return GeneratedCase(entry=entry, script=script)
 
 
+PROOF_RULE_SCRIPT = (
+    "(set-option :produce-proofs true)\n"
+    "(set-logic QF_UF)\n"
+    "(assert false)\n"
+    "(check-sat)\n"
+    "(get-proof)\n"
+)
+
+
+@dataclass(frozen=True)
+class ProofRuleObligation:
+    rule: str
+    file_slug: str
+    diagnostic: str
+    notes: str
+    behavior: str
+
+
+TH_LEMMA_PROOF_RULE_OBLIGATIONS: tuple[ProofRuleObligation, ...] = (
+    ProofRuleObligation(
+        rule="th-lemma-basic",
+        file_slug="th_lemma_basic",
+        diagnostic="non-tautological basic th-lemma replay is incomplete",
+        notes=(
+            "Tautological Boolean/equality synthetic coverage is checked; keep "
+            "this row red until non-tautological basic th-lemma shapes and real "
+            "proof-corpus evidence are added."
+        ),
+        behavior="partial-checked-replay",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-datatype",
+        file_slug="th_lemma_datatype",
+        diagnostic="datatype th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-fp",
+        file_slug="th_lemma_fp",
+        diagnostic="floating-point th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-nonlinear-arith",
+        file_slug="th_lemma_nonlinear_arith",
+        diagnostic="nonlinear arithmetic th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-regexp",
+        file_slug="th_lemma_regexp",
+        diagnostic="regular-expression th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-seq",
+        file_slug="th_lemma_seq",
+        diagnostic="sequence th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+    ProofRuleObligation(
+        rule="th-lemma-string",
+        file_slug="th_lemma_string",
+        diagnostic="string th-lemma replay is diagnostic-only",
+        notes=(
+            "Diagnostic-only synthetic coverage exists; keep this row red until "
+            "checked replay and real proof-corpus evidence are added."
+        ),
+        behavior="diagnostic-only",
+    ),
+)
+
+
+def proof_rule_asserted_case() -> GeneratedCase:
+    return red_sample(
+        row_class="proof-rule",
+        feature="proof-rule:asserted",
+        logic="QF_UF",
+        standard="Z3-extension",
+        modes=("proof-parse", "proof-replay"),
+        files=("src/HolSmt/Z3_ProofParser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
+        failure_phase="proof-replay",
+        source_info=source("Z3-proof", "Z3 proof rule asserted"),
+        script=PROOF_RULE_SCRIPT,
+        diagnostic="complete proof-rule row is still an implementation obligation",
+        proof_rule_histogram={"asserted": 1},
+    )
+
+
+def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
+    feature = f"proof-rule:{obligation.rule}"
+    expected = {
+        "proof-parse": expected_result(
+            "red",
+            diagnostic=obligation.diagnostic,
+            failure_phase="proof-parse",
+            proof_rule_histogram={obligation.rule: 1},
+        ),
+        "proof-replay": expected_result(
+            "red",
+            diagnostic=obligation.diagnostic,
+            failure_phase="proof-replay",
+            proof_rule_histogram={obligation.rule: 1},
+        ),
+        "z3-tac": expected_result(
+            "red",
+            diagnostic=(
+                "non-tautological basic th-lemma shapes have no reconstructed "
+                "HOL theorem yet"
+                if obligation.rule == "th-lemma-basic"
+                else "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet"
+            ),
+            failure_phase="proof-replay",
+            theorem_shape="closed theorem without oracle tags",
+            proof_rule_histogram={obligation.rule: 1},
+        ),
+    }
+    entry = manifest_entry(
+        case_id=feature,
+        file=f"cases/proof_rules/proof_rule_{obligation.file_slug}.smt2",
+        logic="QF_UF",
+        standard="Z3-extension",
+        row_class="proof-rule",
+        features=[
+            feature,
+            "proof-rule-family:th-lemma",
+            f"proof-rule-behavior:{obligation.behavior}",
+        ],
+        modes=("proof-parse", "proof-replay", "z3-tac"),
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected=expected,
+        implementation_obligation=implementation_obligation(
+            files=(
+                "src/HolSmt/Z3_ProofParser.sml",
+                "src/HolSmt/Z3_ProofReplay.sml",
+                "src/HolSmt/Unittest.sml",
+            ),
+            feature=feature,
+            test_ids=[feature],
+            failure_phase="proof-replay",
+            notes=obligation.notes,
+        ),
+        source=source("Z3-proof", f"Z3 proof rule {obligation.rule}"),
+    )
+    return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
+
+
+def proof_rule_cases() -> list[GeneratedCase]:
+    return [proof_rule_asserted_case()] + [
+        th_lemma_proof_rule_case(obligation)
+        for obligation in TH_LEMMA_PROOF_RULE_OBLIGATIONS
+    ]
+
+
 COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         slug="set-logic",
@@ -3714,19 +3888,7 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
             script="(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n",
             diagnostic="complete logic packet row is still an implementation obligation",
         ),
-        red_sample(
-            row_class="proof-rule",
-            feature="proof-rule:asserted",
-            logic="QF_UF",
-            standard="Z3-extension",
-            modes=("proof-parse", "proof-replay"),
-            files=("src/HolSmt/Z3_ProofParser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-            failure_phase="proof-replay",
-            source_info=source("Z3-proof", "Z3 proof rule asserted"),
-            script="(set-option :produce-proofs true)\n(set-logic QF_UF)\n(assert false)\n(check-sat)\n(get-proof)\n",
-            diagnostic="complete proof-rule row is still an implementation obligation",
-            proof_rule_histogram={"asserted": 1},
-        ),
+        proof_rule_asserted_case(),
         red_sample(
             row_class="soundness-audit",
             feature="soundness:oracle-tag-boundary",
@@ -3763,6 +3925,8 @@ def cases_for_domain(domain: str) -> list[GeneratedCase]:
         return theory_cases()
     if domain == "logics":
         return logic_packet_cases()
+    if domain == "proof-rules":
+        return proof_rule_cases()
     return sample_cases((DOMAIN_CLASSES[domain],))
 
 

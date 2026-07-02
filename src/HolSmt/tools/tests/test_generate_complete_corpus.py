@@ -56,10 +56,26 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
 
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
-        self.assertEqual(len(cases), 1)
-        self.assertEqual(cases[0]["class"], "proof-rule")
-        self.assertIn("proof-parse", cases[0]["expected"])
-        self.assertIn("proof-replay", cases[0]["expected"])
+        self.assertEqual(len(cases), 1 + len(generator.TH_LEMMA_PROOF_RULE_OBLIGATIONS))
+        self.assertEqual({case["class"] for case in cases}, {"proof-rule"})
+        case_ids = {case["id"] for case in cases}
+        self.assertIn("proof-rule:asserted", case_ids)
+        self.assertIn("proof-rule:th-lemma-basic", case_ids)
+        self.assertIn("proof-rule:th-lemma-fp", case_ids)
+        for case in cases:
+            self.assertIn("proof-parse", case["expected"])
+            self.assertIn("proof-replay", case["expected"])
+            if case["id"].startswith("proof-rule:th-lemma-"):
+                self.assertIn("z3-tac", case["expected"])
+                self.assertEqual(case["expected"]["z3-tac"]["failure_phase"], "proof-replay")
+                self.assertEqual(
+                    case["expected"]["z3-tac"]["theorem_shape"],
+                    "closed theorem without oracle tags",
+                )
+                self.assertEqual(
+                    case["implementation_obligation"]["test_ids"],
+                    [case["id"]],
+                )
 
     def test_commands_subcommand_emits_command_groups_and_datatype_corpus_cases(self):
         stdout = io.StringIO()
@@ -266,9 +282,19 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             case for case in string_cases
             if "theory-entry:UnicodeStrings:string-literal" in case["features"]
         ]
-        self.assertTrue(literal_cases)
-        self.assertTrue(
-            any(result["status"] == "red" for result in literal_cases[0]["expected"].values())
+        self.assertEqual(
+            {
+                feature
+                for case in literal_cases
+                for feature in case["features"]
+                if feature.startswith("theory-case:")
+            },
+            {
+                "theory-case:boundary",
+                "theory-case:sat",
+                "theory-case:type-error",
+                "theory-case:unsat-proof",
+            },
         )
 
     def test_theories_subcommand_emits_datatypes_and_hocore_cases(self):

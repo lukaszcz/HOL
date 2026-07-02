@@ -20746,9 +20746,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-basic",
+        "proof-rule-behavior:partial-checked-replay",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:partial-checked-replay"
+        "proof-rule:th-lemma-basic"
       ],
       "modes": [
         "proof-parse",
@@ -20792,9 +20792,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-basic",
         "test_ids": [
@@ -20815,9 +20815,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-datatype",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-datatype"
       ],
       "modes": [
         "proof-parse",
@@ -20861,9 +20861,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-datatype",
         "test_ids": [
@@ -20884,9 +20884,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-fp",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-fp"
       ],
       "modes": [
         "proof-parse",
@@ -20930,9 +20930,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-fp",
         "test_ids": [
@@ -20953,9 +20953,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-nonlinear-arith",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-nonlinear-arith"
       ],
       "modes": [
         "proof-parse",
@@ -20999,9 +20999,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-nonlinear-arith",
         "test_ids": [
@@ -21022,9 +21022,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-regexp",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-regexp"
       ],
       "modes": [
         "proof-parse",
@@ -21068,9 +21068,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-regexp",
         "test_ids": [
@@ -21091,9 +21091,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-seq",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-seq"
       ],
       "modes": [
         "proof-parse",
@@ -21137,9 +21137,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-seq",
         "test_ids": [
@@ -21160,9 +21160,9 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule:th-lemma-string",
+        "proof-rule-behavior:diagnostic-only",
         "proof-rule-family:th-lemma",
-        "proof-rule-behavior:diagnostic-only"
+        "proof-rule:th-lemma-string"
       ],
       "modes": [
         "proof-parse",
@@ -21206,9 +21206,9 @@
       },
       "implementation_obligation": {
         "files": [
+          "src/HolSmt/Unittest.sml",
           "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/Unittest.sml"
+          "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "feature": "proof-rule:th-lemma-string",
         "test_ids": [

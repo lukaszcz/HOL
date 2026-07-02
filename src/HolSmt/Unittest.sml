@@ -1480,18 +1480,29 @@ in
     "translation records lacked sequence/set/bag matrix row")
 end
 
-fun smtlib_higher_order_translation_rejection_diagnostic () =
-  let
-    val _ = inferred_logic ``(H:('a -> 'b) -> bool) f``
-  in
-    die "higher-order HOL translation unexpectedly succeeded"
-  end
-  handle Feedback.HOL_ERR holerr =>
-    let val msg = Feedback.message_of holerr
-    in
-      assert (contains "unsupported higher-order/function" msg,
-        "higher-order diagnostic was not explicit: " ^ msg)
-    end
+fun smtlib_higher_order_translation_abstraction_success () =
+let
+  val (logic, _, records, translation) =
+    inferred_logic ``(H:('a -> 'b) -> bool) f``
+  val has_function_sort_decl =
+    List.exists
+      (fn SmtLib.TypeDeclaration {hol_type, ...} =>
+            Lib.can Type.dom_rng hol_type
+        | _ => false) records
+  val has_h_decl =
+    List.exists
+      (fn SmtLib.TermDeclaration {arity = 1, hol_term, ...} =>
+            term_is_var_named "H" hol_term
+        | _ => false) records
+  val _ = SmtLib.parser_dicts_for_translation translation
+in
+  assert (logic = "QF_UF",
+    "higher-order abstraction expected QF_UF, got " ^ logic);
+  assert (has_function_sort_decl,
+    "higher-order abstraction lacked a function-sort declaration");
+  assert (has_h_decl,
+    "higher-order abstraction lacked a declaration for H")
+end
 
 fun smtlib_translation_shape_matrix_success () =
 let
@@ -1630,13 +1641,11 @@ let
         Feedback.message_of holerr)
   val rdiv_thm = Hol_pp.thm_to_string HolSmtTheory.real_div_smt_rdiv
 in
-  expect_translation_error "higher-order argument"
-    ``(H:('a -> 'b) -> bool) f`` "unsupported higher-order/function";
-  expect_translation_error "function-valued equality"
-    ``(f:int -> bool) = g`` "unsupported higher-order/function sort";
+  ignore (inferred_logic ``(H:('a -> 'b) -> bool) f``);
+  ignore (inferred_logic ``(f:int -> bool) = g``);
   expect_translation_error "datatype case selector current gap"
     ``(case (opt:int option) of NONE => 0i | SOME x => x) = 0i``
-    "unsupported higher-order/function sort";
+    "unsupported higher-order rator expression";
   assert (contains "if y = 0 then 0 else smt_rdiv x y" rdiv_thm,
     "real division preprocessing theorem did not expose smt_rdiv shape: " ^
     rdiv_thm);
@@ -2079,6 +2088,31 @@ fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
         "oracle gate diagnostic did not mention unexpected tags: " ^ msg)
     end
 
+fun z3_reconstructed_theorem_contract_success () =
+  ignore (Z3.check_reconstructed_theorem "unit-test"
+    (([], boolSyntax.T), boolTheory.TRUTH))
+
+fun z3_reconstructed_theorem_contract_rejects_bad_shape () =
+let
+  fun expect_failure label expected thunk =
+    (ignore (thunk ());
+     die ("FAIL: theorem contract accepted " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      let val msg = Feedback.message_of holerr
+      in
+        assert (String.isSubstring expected msg,
+          "theorem contract diagnostic for " ^ label ^
+          " did not include " ^ expected ^ ": " ^ msg)
+      end
+in
+  expect_failure "extra hypothesis" "extra hypotheses" (fn () =>
+    Z3.check_reconstructed_theorem "unit-test"
+      (([], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  expect_failure "conclusion mismatch" "parsed assertion-negation goal" (fn () =>
+    Z3.check_reconstructed_theorem "unit-test"
+      (([], boolSyntax.F), boolTheory.TRUTH))
+end
+
 fun holsmt_solver_result_negative_diagnostics () =
 let
   fun expect_error label expected solver =
@@ -2185,8 +2219,8 @@ let
       smtlib_translation_records_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
-    ("smtlib_higher_order_translation_rejection_diagnostic",
-      smtlib_higher_order_translation_rejection_diagnostic),
+    ("smtlib_higher_order_translation_abstraction_success",
+      smtlib_higher_order_translation_abstraction_success),
     ("smtlib_translation_shape_matrix_success",
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",
@@ -2223,6 +2257,10 @@ let
       z3_proof_replay_malformed_premise_diagnostics),
     ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
       z3_tac_oracle_tag_gate_rejects_oracle_thm),
+    ("z3_reconstructed_theorem_contract_success",
+      z3_reconstructed_theorem_contract_success),
+    ("z3_reconstructed_theorem_contract_rejects_bad_shape",
+      z3_reconstructed_theorem_contract_rejects_bad_shape),
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics)
   ]

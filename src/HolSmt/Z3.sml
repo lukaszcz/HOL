@@ -126,19 +126,45 @@ structure Z3 = struct
        "Z3 command: " ^ command_string cmd_stem ^ "\n" ^
        "underlying HOL_ERR: " ^ hol_err_string holerr)
 
+  fun check_reconstructed_theorem name ((As, g), thm) =
+    let
+      val allowed_hyps = HOLset.fromList Term.compare As
+      val extra_hyps = HOLset.difference (Thm.hypset thm, allowed_hyps)
+      val () =
+        if HOLset.isEmpty extra_hyps then
+          ()
+        else
+          raise Feedback.mk_HOL_ERR "Z3" "check_reconstructed_theorem"
+            ("solver '" ^ name ^ "' produced theorem with extra hypotheses: " ^
+             Library.thm_to_string thm)
+      val () =
+        if Term.aconv (Thm.concl thm) g then
+          ()
+        else
+          raise Feedback.mk_HOL_ERR "Z3" "check_reconstructed_theorem"
+            ("solver '" ^ name ^ "' produced theorem with conclusion " ^
+             Library.term_to_string (Thm.concl thm) ^
+             ", expected parsed assertion-negation goal " ^
+             Library.term_to_string g)
+      val () = Library.check_oracle_tags name thm
+    in
+      thm
+    end
+
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover =
     mk_Z3_fun "Z3_SMT_Prover"
       (fn goal =>
         let
+          val original_goal = goal
           val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
           val (translation, strings) =
             SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
         in
-          (((goal, validation), translation), strings)
+          (((original_goal, goal, validation), translation), strings)
         end)
       proof_cmd_stem
-      (fn ((goal, validation), translation) =>
+      (fn ((original_goal, goal, validation), translation) =>
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
@@ -164,8 +190,8 @@ structure Z3 = struct
                       proof_cmd_stem holerr
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
-                val () = Library.check_oracle_tags
-                  (Option.getOpt (Thm.getCT (), "-")) "Z3_SMT_Prover" thm
+                val thm = check_reconstructed_theorem "Z3_SMT_Prover"
+                  (original_goal, thm)
               in
                 SolverSpec.UNSAT (SOME thm)
               end
