@@ -471,11 +471,69 @@ if isinstance(proof_audit, dict):
         if isinstance(issue, dict) and issue.get("blocking"):
             audit_blocking.append(issue)
 
+def obligation_search_text(item: dict[str, object]) -> str:
+    values: list[str] = []
+
+    def visit(value: object) -> None:
+        if isinstance(value, str):
+            values.append(value)
+        elif isinstance(value, dict):
+            for child in value.values():
+                visit(child)
+        elif isinstance(value, list):
+            for child in value:
+                visit(child)
+
+    visit(item)
+    return " ".join(values).lower()
+
+def first_red_category_counts(
+    manifest_items: list[dict[str, object]],
+    proof_items: list[dict[str, object]],
+) -> dict[str, int]:
+    all_items = manifest_items + proof_items
+    categories: dict[str, tuple[str, ...]] = {
+        "function sorts": ("function-sort", "function-valued"),
+        "arrays": ("array", "arraysex"),
+        "FP": ("floatingpoint", "fp.", "float16", "float32", "float64", "float128", "th-lemma-fp"),
+        "strings/regex": ("unicodestrings", "string", "regex", "regexp", "str.", "re."),
+        "datatypes": ("datatype",),
+        "seq/set/bag": ("seq", "set.", "bag", "z3_extensions"),
+        "th-lemma-basic": ("th-lemma-basic",),
+        "advanced theory lemmas": (
+            "th-lemma-array",
+            "th-lemma-bv",
+            "th-lemma-datatype",
+            "th-lemma-fp",
+            "th-lemma-nonlinear-arith",
+            "th-lemma-regexp",
+            "th-lemma-seq",
+            "th-lemma-string",
+        ),
+        "check-sat-assuming": ("check-sat-assuming",),
+        "unsat core/assumptions": ("get-unsat-assumptions", "get-unsat-core", "unsat-assumptions", "unsat-core"),
+        "missing logic packets": ("logic-packet",),
+        "real proof occurrences": ("real-proof-occurrence", "missing_real_proof_occurrence"),
+        "external benchmarks": ("external-benchmark", "external:"),
+    }
+    counts: dict[str, int] = {}
+    for category, needles in categories.items():
+        count = 0
+        for item in all_items:
+            text = obligation_search_text(item)
+            if any(needle in text for needle in needles):
+                count += 1
+        counts[category] = count
+    return counts
+
+first_red_counts = first_red_category_counts(manifest_red, proof_audit_red)
+
 red_summary = {
     "schema": "holsmt-red-obligation-summary-v1",
     "manifest_red_count": len(manifest_red),
     "complete_audit_red_count": len(complete_audit_red),
     "proof_audit_red_count": len(proof_audit_red),
+    "required_first_red_category_counts": first_red_counts,
     "manifest_red_obligations": manifest_red,
     "complete_audit_red_obligations": complete_audit_red,
     "proof_audit_red_obligations": proof_audit_red,
@@ -503,9 +561,20 @@ red_md = [
     f"- Proof-audit red rows: {len(proof_audit_red)}",
     "- Full machine-readable obligation rows are in `red-obligations.json`.",
     "",
+    "## Required First Red Categories",
+    "",
+    "| Category | Red rows |",
+    "| --- | ---: |",
+]
+for category, count in first_red_counts.items():
+    red_md.append(f"| {md_cell(category)} | {count} |")
+red_md.extend([
+    "",
+    "## Manifest Red Rows",
+    "",
     "| Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |",
     "| --- | --- | --- | --- | --- | --- | --- | --- |",
-]
+])
 for item in manifest_red[:200]:
     obligation = item.get("implementation_obligation")
     if not isinstance(obligation, dict):
@@ -528,6 +597,14 @@ summary = {
     "step_count": len(steps),
     "classification_counts": dict(sorted(classification_counts.items())),
 }
+nonzero_exit_reasons = []
+if red_count:
+    nonzero_exit_reasons.append("red-obligations")
+if unexpected_results or audit_blocking:
+    nonzero_exit_reasons.append("unexpected-regressions")
+if infrastructure_errors:
+    nonzero_exit_reasons.append("infrastructure-errors")
+summary["nonzero_exit_reasons"] = nonzero_exit_reasons
 if summary["infrastructure_error_count"]:
     summary["status"] = "infrastructure-error"
 elif summary["unexpected_regression_count"]:
@@ -562,6 +639,7 @@ md = [
     f"- Red obligations: {summary['red_obligation_count']}",
     f"- Unexpected regressions: {summary['unexpected_regression_count']}",
     f"- Infrastructure errors: {summary['infrastructure_error_count']}",
+    f"- Nonzero exit reasons: {', '.join(summary['nonzero_exit_reasons']) or 'none'}",
     f"- Steps: {summary['step_count']}",
     "",
     "## Artifacts",

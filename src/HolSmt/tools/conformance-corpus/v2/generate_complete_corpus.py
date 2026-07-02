@@ -797,7 +797,6 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
 RECONSTRUCTED_COMMAND_GROUPS = {
     "assert",
     "check-sat",
-    "check-sat-assuming",
     "declare-const",
     "declare-sort",
     "define-const",

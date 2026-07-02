@@ -1,9 +1,10 @@
 # HolSmt Complete SMT-LIB Conformance
 
 - Status: `unexpected-regression`
-- Red obligations: 1338
-- Unexpected regressions: 776
+- Red obligations: 659
+- Unexpected regressions: 785
 - Infrastructure errors: 0
+- Nonzero exit reasons: red-obligations, unexpected-regressions
 - Steps: 29
 
 ## Artifacts
@@ -108,11 +109,6 @@
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:UFLRA:malformed` | `parser-only` | missing ')' |
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:UFNIA:malformed` | `parser-only` | missing ')' |
 | `src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json` | `logic:UFNRA:malformed` | `parser-only` | missing ')' |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:assert:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:check-sat-assuming:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-const` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-const:negative` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:declare-fun:state` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:array:type-error` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:extensionality:type-error` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:ArraysEx:mixed-index-value-sorts:type-error` | `typecheck-only` | typecheck-only command failed |
@@ -153,3 +149,8 @@
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvshl:type-error` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsle:type-error` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvslt:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsmod:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsmulo:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsrem:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvssubo:type-error` | `typecheck-only` | typecheck-only command failed |
+| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `theory:Fixed_Size_BitVectors:bvsub:type-error` | `typecheck-only` | typecheck-only command failed |

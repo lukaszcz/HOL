@@ -279,11 +279,24 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "pass",
+          "status": "red",
+          "diagnostic": "checked theorem reconstruction with assumptions is not implemented",
+          "failure_phase": "proof-replay",
           "notes": "theorem reconstruction applies: true"
         }
       },
-      "implementation_obligation": null,
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:check-sat-assuming",
+        "test_ids": [
+          "command:check-sat-assuming:reconstruction"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
