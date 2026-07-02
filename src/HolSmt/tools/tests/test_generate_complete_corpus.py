@@ -65,6 +65,19 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         for case in cases:
             self.assertIn("proof-parse", case["expected"])
             self.assertIn("proof-replay", case["expected"])
+            if case["id"] == "proof-rule:asserted":
+                self.assertIsNone(case["implementation_obligation"])
+                self.assertEqual(case["expected"]["proof-parse"]["status"], "pass")
+                self.assertEqual(case["expected"]["proof-replay"]["status"], "pass")
+                self.assertEqual(case["expected"]["z3-tac"]["status"], "pass")
+                self.assertEqual(
+                    case["expected"]["z3-tac"]["theorem_shape"],
+                    "closed theorem without oracle tags",
+                )
+                self.assertEqual(
+                    case["expected"]["proof-replay"]["proof_rule_histogram"],
+                    {"asserted": 1},
+                )
             if case["id"].startswith("proof-rule:th-lemma-"):
                 self.assertIn("z3-tac", case["expected"])
                 self.assertEqual(case["expected"]["z3-tac"]["failure_phase"], "proof-replay")
@@ -295,6 +308,21 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 "theory-case:type-error",
                 "theory-case:unsat-proof",
             },
+        )
+
+        checked_unsat_ids = {
+            "theory:ArraysEx:array:unsat-proof",
+            "theory:ArraysEx:store:unsat-proof",
+            "theory:Core:xor:unsat-proof",
+            "theory:Z3_Extensions:set:unsat-proof",
+        }
+        by_id = {case["id"]: case for case in cases}
+        for case_id in checked_unsat_ids:
+            self.assertEqual(by_id[case_id]["expected"]["z3-tac"]["status"], "pass")
+            self.assertNotIn("theorem_shape", by_id[case_id]["expected"]["z3-tac"])
+        self.assertEqual(
+            by_id["theory:Z3_Extensions:set:unsat-proof"]["implementation_obligation"]["failure_phase"],
+            "typecheck",
         )
 
     def test_theories_subcommand_emits_datatypes_and_hocore_cases(self):

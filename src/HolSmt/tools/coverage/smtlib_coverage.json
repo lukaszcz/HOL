@@ -2449,11 +2449,11 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [],
       "current_status": "implemented",
-      "complete_test_ids": [],
-      "red_obligation_ids": [
+      "complete_test_ids": [
         "proof-rule:asserted"
       ],
-      "complete_required_status": "red"
+      "red_obligation_ids": [],
+      "complete_required_status": "reconstructed"
     },
     {
       "item": "commutativity",

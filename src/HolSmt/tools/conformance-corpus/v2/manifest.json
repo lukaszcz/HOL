@@ -4139,6 +4139,54 @@
       }
     },
     {
+      "id": "external-benchmark:external-missing-pinned-benchmark-evidence",
+      "file": "cases/external/external_benchmark_external_missing_pinned_benchmark_evidence.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external:missing-pinned-benchmark-evidence"
+      ],
+      "modes": [
+        "parser-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json",
+          "src/HolSmt/tools/import_external_benchmarks.py"
+        ],
+        "feature": "external:missing-pinned-benchmark-evidence",
+        "test_ids": [
+          "external-benchmark:external-missing-pinned-benchmark-evidence"
+        ],
+        "failure_phase": "solver",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "pinned external benchmark importer missing evidence seed"
+      }
+    },
+    {
       "id": "external-benchmark:official-smtlib-uflia-n-queens-sat",
       "file": "cases/external/official_smtlib_uflia_n_queens_sat.smt2",
       "logic": "UFLIA",
@@ -4423,7 +4471,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -4560,40 +4608,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ALIA:unsat-proof",
-        "test_ids": [
-          "logic:ALIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ALIA"
@@ -4721,7 +4745,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -4861,40 +4885,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ALIRA:unsat-proof",
-        "test_ids": [
-          "logic:ALIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ALIRA"
@@ -5022,7 +5022,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -5162,40 +5162,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ANIA:unsat-proof",
-        "test_ids": [
-          "logic:ANIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ANIA"
@@ -5323,7 +5299,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -5463,40 +5439,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ANIRA:unsat-proof",
-        "test_ids": [
-          "logic:ANIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ANIRA"
@@ -5624,7 +5576,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -5764,40 +5716,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFLIA:unsat-proof",
-        "test_ids": [
-          "logic:AUFLIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFLIA"
@@ -5925,7 +5853,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -6065,40 +5993,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFLIRA:unsat-proof",
-        "test_ids": [
-          "logic:AUFLIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFLIRA"
@@ -6226,7 +6130,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -6366,40 +6270,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFNIRA:unsat-proof",
-        "test_ids": [
-          "logic:AUFNIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFNIRA"
@@ -6527,7 +6407,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -6667,40 +6547,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:BV:unsat-proof",
-        "test_ids": [
-          "logic:BV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: BV"
@@ -6825,7 +6681,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -6962,40 +6818,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:LIA:unsat-proof",
-        "test_ids": [
-          "logic:LIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: LIA"
@@ -7120,7 +6952,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -7257,40 +7089,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:LRA:unsat-proof",
-        "test_ids": [
-          "logic:LRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: LRA"
@@ -7415,7 +7223,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -7552,40 +7360,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:NIA:unsat-proof",
-        "test_ids": [
-          "logic:NIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: NIA"
@@ -7710,7 +7494,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -7847,40 +7631,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:NRA:unsat-proof",
-        "test_ids": [
-          "logic:NRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: NRA"
@@ -8008,7 +7768,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -8148,40 +7908,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ABV:unsat-proof",
-        "test_ids": [
-          "logic:QF_ABV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ABV"
@@ -8306,7 +8042,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -8443,40 +8179,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ALIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_ALIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ALIA"
@@ -8604,7 +8316,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -8744,40 +8456,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ALRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_ALRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ALRA"
@@ -8905,7 +8593,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -9045,40 +8733,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ANIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_ANIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ANIA"
@@ -9206,7 +8870,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -9346,40 +9010,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ANRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_ANRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ANRA"
@@ -9507,7 +9147,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -9647,40 +9287,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFBV:unsat-proof",
-        "test_ids": [
-          "logic:QF_AUFBV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFBV"
@@ -9808,7 +9424,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -9948,40 +9564,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFLIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_AUFLIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFLIA"
@@ -10109,7 +9701,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -10249,40 +9841,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFLIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_AUFLIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFLIRA"
@@ -10410,7 +9978,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -10550,40 +10118,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFNIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_AUFNIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFNIA"
@@ -10711,7 +10255,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -10851,40 +10395,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFNIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_AUFNIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFNIRA"
@@ -11009,7 +10529,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -11146,40 +10666,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AX:unsat-proof",
-        "test_ids": [
-          "logic:QF_AX:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AX"
@@ -11304,7 +10800,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -11441,40 +10937,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_BV:unsat-proof",
-        "test_ids": [
-          "logic:QF_BV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_BV"
@@ -11602,7 +11074,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -11742,40 +11214,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_BVFP:unsat-proof",
-        "test_ids": [
-          "logic:QF_BVFP:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_BVFP"
@@ -11903,7 +11351,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -12043,40 +11491,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_FP:unsat-proof",
-        "test_ids": [
-          "logic:QF_FP:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_FP"
@@ -12204,7 +11628,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -12344,40 +11768,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_FPBV:unsat-proof",
-        "test_ids": [
-          "logic:QF_FPBV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_FPBV"
@@ -12502,7 +11902,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -12639,40 +12039,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_IDL:unsat-proof",
-        "test_ids": [
-          "logic:QF_IDL:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_IDL"
@@ -12797,7 +12173,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -12934,40 +12310,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_LIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LIA"
@@ -13092,7 +12444,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -13229,40 +12581,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_LIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LIRA"
@@ -13387,7 +12715,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -13524,40 +12852,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_LRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LRA"
@@ -13682,7 +12986,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -13819,40 +13123,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_NIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NIA"
@@ -13977,7 +13257,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -14114,40 +13394,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_NIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NIRA"
@@ -14272,7 +13528,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -14409,40 +13665,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_NRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NRA"
@@ -14567,7 +13799,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -14704,40 +13936,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_RDL:unsat-proof",
-        "test_ids": [
-          "logic:QF_RDL:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_RDL"
@@ -14865,7 +14073,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -15005,40 +14213,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_S:unsat-proof",
-        "test_ids": [
-          "logic:QF_S:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_S"
@@ -15166,7 +14350,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -15306,40 +14490,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_SLIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_SLIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_SLIA"
@@ -15467,7 +14627,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -15607,40 +14767,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_SNIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_SNIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_SNIA"
@@ -15765,7 +14901,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -15902,40 +15038,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UF:unsat-proof",
-        "test_ids": [
-          "logic:QF_UF:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UF"
@@ -16063,7 +15175,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -16203,40 +15315,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFBV:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFBV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFBV"
@@ -16364,7 +15452,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -16504,40 +15592,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFBVFP:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFBVFP:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFBVFP"
@@ -16665,7 +15729,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -16805,40 +15869,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFFP:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFFP:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFFP"
@@ -16963,7 +16003,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -17100,40 +16140,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFIDL:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFIDL:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFIDL"
@@ -17258,7 +16274,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -17395,40 +16411,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLIA:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFLIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLIA"
@@ -17553,7 +16545,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -17690,40 +16682,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFLIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLIRA"
@@ -17848,7 +16816,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -17985,40 +16953,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFLRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLRA"
@@ -18143,7 +17087,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -18280,40 +17224,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFNIRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFNIRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFNIRA"
@@ -18438,7 +17358,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -18575,40 +17495,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFNRA:unsat-proof",
-        "test_ids": [
-          "logic:QF_UFNRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFNRA"
@@ -18733,7 +17629,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -18870,40 +17766,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UF:unsat-proof",
-        "test_ids": [
-          "logic:UF:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UF"
@@ -19031,7 +17903,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -19171,40 +18043,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFBV:unsat-proof",
-        "test_ids": [
-          "logic:UFBV:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFBV"
@@ -19329,7 +18177,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -19466,40 +18314,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFIDL:unsat-proof",
-        "test_ids": [
-          "logic:UFIDL:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFIDL"
@@ -19624,7 +18448,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -19761,40 +18585,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFLIA:unsat-proof",
-        "test_ids": [
-          "logic:UFLIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFLIA"
@@ -19919,7 +18719,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -20056,40 +18856,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFLRA:unsat-proof",
-        "test_ids": [
-          "logic:UFLRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFLRA"
@@ -20214,7 +18990,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -20351,40 +19127,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFNIA:unsat-proof",
-        "test_ids": [
-          "logic:UFNIA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFNIA"
@@ -20509,7 +19261,7 @@
       "expected": {
         "parser-only": {
           "status": "fail",
-          "diagnostic": "malformed set-logic command",
+          "diagnostic": "missing ')'",
           "failure_phase": "parser"
         }
       },
@@ -20646,40 +19398,16 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "logic proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "logic proof replay evidence is incomplete",
-          "failure_phase": "proof-replay",
-          "proof_rule_histogram": {
-            "asserted": 1
-          }
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for logic packet is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFNRA:unsat-proof",
-        "test_ids": [
-          "logic:UFNRA:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFNRA"
@@ -20696,7 +19424,8 @@
       ],
       "modes": [
         "proof-parse",
-        "proof-replay"
+        "proof-replay",
+        "z3-tac"
       ],
       "versions": [
         "2.19.1",
@@ -20708,32 +19437,23 @@
       ],
       "expected": {
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "complete proof-rule row is still an implementation obligation",
+          "status": "pass",
           "proof_rule_histogram": {
             "asserted": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "complete proof-rule row is still an implementation obligation",
+          "status": "pass",
           "proof_rule_histogram": {
             "asserted": 1
           }
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "proof-rule:asserted",
-        "test_ids": [
-          "proof-rule:asserted"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 proof rule asserted"
@@ -21478,25 +20198,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:array:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:array:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: Array"
@@ -22655,25 +21360,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:store:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:store:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: store"
@@ -25288,24 +23978,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Core:xor:unsat-proof",
-        "test_ids": [
-          "theory:Core:xor:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Core theory: xor"
@@ -28557,7 +27233,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvnego:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -29647,7 +28323,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvsaddo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -30240,7 +28916,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvsdivo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -32125,7 +30801,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvsmulo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -32713,7 +31389,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvssubo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -33290,7 +31966,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvuaddo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -34899,7 +33575,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvumulo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -35480,7 +34156,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:bvusubo:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -37077,7 +35753,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:int-to-bv:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -38168,7 +36844,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:sbv-to-int:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -38749,7 +37425,7 @@
         "test_ids": [
           "theory:Fixed_Size_BitVectors:ubv-to-int:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -39290,7 +37966,7 @@
         "test_ids": [
           "theory:FloatingPoint:float128:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -39570,7 +38246,7 @@
         "test_ids": [
           "theory:FloatingPoint:float16:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -39850,7 +38526,7 @@
         "test_ids": [
           "theory:FloatingPoint:float32:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -40130,7 +38806,7 @@
         "test_ids": [
           "theory:FloatingPoint:float64:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -40413,7 +39089,7 @@
         "test_ids": [
           "theory:FloatingPoint:floatingpoint:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -40693,7 +39369,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.abs:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -40973,7 +39649,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.add:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -41257,7 +39933,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.div:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -41541,7 +40217,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.eq:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -41825,7 +40501,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.fma:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -42105,7 +40781,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.geq:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -42385,7 +41061,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.gt:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -42665,7 +41341,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.isinfinite:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -42945,7 +41621,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.isnan:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -43225,7 +41901,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.isnegative:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -43505,7 +42181,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.isnormal:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -43785,7 +42461,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.ispositive:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -44065,7 +42741,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.issubnormal:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -44345,7 +43021,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.iszero:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -44625,7 +43301,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.leq:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -44905,7 +43581,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.lt:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -45185,7 +43861,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.max:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -45465,7 +44141,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.min:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -45745,7 +44421,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.mul:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -46025,7 +44701,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.neg:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -46305,7 +44981,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.rem:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -46581,7 +45257,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.roundtointegral:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -46861,7 +45537,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.sqrt:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -47141,7 +45817,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.sub:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -47417,7 +46093,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.to-real:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -47708,7 +46384,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.to-sbv:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -47999,7 +46675,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp.to-ubv:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -48279,7 +46955,7 @@
         "test_ids": [
           "theory:FloatingPoint:fp:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -48563,7 +47239,7 @@
         "test_ids": [
           "theory:FloatingPoint:nan:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -48847,7 +47523,7 @@
         "test_ids": [
           "theory:FloatingPoint:negative-infinity:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -49131,7 +47807,7 @@
         "test_ids": [
           "theory:FloatingPoint:negative-zero:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -49415,7 +48091,7 @@
         "test_ids": [
           "theory:FloatingPoint:positive-infinity:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -49699,7 +48375,7 @@
         "test_ids": [
           "theory:FloatingPoint:positive-zero:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -49975,7 +48651,7 @@
         "test_ids": [
           "theory:FloatingPoint:rna:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -50251,7 +48927,7 @@
         "test_ids": [
           "theory:FloatingPoint:rne:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -50531,7 +49207,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundingmode:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -50807,7 +49483,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundnearesttiestoaway:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -51083,7 +49759,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundnearesttiestoeven:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -51359,7 +50035,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundtowardnegative:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -51635,7 +50311,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundtowardpositive:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -51911,7 +50587,7 @@
         "test_ids": [
           "theory:FloatingPoint:roundtowardzero:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -52187,7 +50863,7 @@
         "test_ids": [
           "theory:FloatingPoint:rtn:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -52463,7 +51139,7 @@
         "test_ids": [
           "theory:FloatingPoint:rtp:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -52739,7 +51415,7 @@
         "test_ids": [
           "theory:FloatingPoint:rtz:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -53027,7 +51703,7 @@
         "test_ids": [
           "theory:FloatingPoint:to-fp-unsigned:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -53311,7 +51987,7 @@
         "test_ids": [
           "theory:FloatingPoint:to-fp:unsat-proof"
         ],
-        "failure_phase": "solver",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -54328,7 +53004,7 @@
         "test_ids": [
           "theory:Ints:divisible:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "proof-parse",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -56509,7 +55185,7 @@
         "test_ids": [
           "theory:Ints:pow:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "proof-parse",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -60524,7 +59200,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re-concat:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -60809,7 +59485,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re-plus:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -61098,7 +59774,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re-power:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -61383,7 +60059,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re-star:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -61665,7 +60341,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.all:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -61947,7 +60623,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.allchar:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -62232,7 +60908,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.diff:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -62521,7 +61197,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.inter:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -62810,7 +61486,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.loop:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -63092,7 +61768,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.none:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -63377,7 +62053,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.opt:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -63662,7 +62338,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.range:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -63951,7 +62627,7 @@
         "test_ids": [
           "theory:UnicodeStrings:re.union:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -64229,7 +62905,7 @@
         "test_ids": [
           "theory:UnicodeStrings:reglan:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -64514,7 +63190,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str-concat:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -64799,7 +63475,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str-le:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -65084,7 +63760,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str-lt:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -65369,7 +64045,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.at:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -65654,7 +64330,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.contains:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -65936,7 +64612,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.from-code:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -66218,7 +64894,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.from-int:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -66503,7 +65179,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.in-re:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -66788,7 +65464,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.indexof:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -67070,7 +65746,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.is-digit:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -67355,7 +66031,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.len:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -67640,7 +66316,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.prefixof:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -67925,7 +66601,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.replace-all:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -68214,7 +66890,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.replace-re-all:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -68499,7 +67175,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.replace-re:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -68780,7 +67456,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.replace:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -69065,7 +67741,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.substr:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -69350,7 +68026,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.suffixof:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -69635,7 +68311,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.to-code:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -69917,7 +68593,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.to-int:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -70202,7 +68878,7 @@
         "test_ids": [
           "theory:UnicodeStrings:str.to-re:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -70685,7 +69361,7 @@
         "test_ids": [
           "theory:UnicodeStrings:string:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -70980,7 +69656,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag.count:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -71275,7 +69951,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag.difference-subtract:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -71574,7 +70250,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag.inter-min:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -71873,7 +70549,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag.union-disjoint:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -72172,7 +70848,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag.union-max:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -72463,7 +71139,7 @@
         "test_ids": [
           "theory:Z3_Extensions:bag:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -72749,7 +71425,7 @@
         "test_ids": [
           "theory:Z3_Extensions:seq-concat:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -73031,7 +71707,7 @@
         "test_ids": [
           "theory:Z3_Extensions:seq.contains:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -73313,7 +71989,7 @@
         "test_ids": [
           "theory:Z3_Extensions:seq.extract:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -73595,7 +72271,7 @@
         "test_ids": [
           "theory:Z3_Extensions:seq.len:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -73873,7 +72549,7 @@
         "test_ids": [
           "theory:Z3_Extensions:seq:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -74168,7 +72844,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.insert:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -74467,7 +73143,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.intersect:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -74762,7 +73438,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.member:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -75057,7 +73733,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.minus:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -75352,7 +74028,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.subset:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -75651,7 +74327,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set.union:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -75915,10 +74591,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "SMT-LIB string/regex or Z3-extension translation is incomplete",
-          "failure_phase": "translation",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
       "implementation_obligation": {
@@ -75932,7 +74605,7 @@
         "test_ids": [
           "theory:Z3_Extensions:set:unsat-proof"
         ],
-        "failure_phase": "proof-replay",
+        "failure_phase": "typecheck",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {

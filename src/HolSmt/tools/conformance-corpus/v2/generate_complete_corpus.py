@@ -560,19 +560,34 @@ TH_LEMMA_PROOF_RULE_OBLIGATIONS: tuple[ProofRuleObligation, ...] = (
 
 
 def proof_rule_asserted_case() -> GeneratedCase:
-    return red_sample(
-        row_class="proof-rule",
-        feature="proof-rule:asserted",
+    feature = "proof-rule:asserted"
+    entry = manifest_entry(
+        case_id=feature,
+        file="cases/proof_rules/proof_rule_asserted.smt2",
         logic="QF_UF",
         standard="Z3-extension",
-        modes=("proof-parse", "proof-replay"),
-        files=("src/HolSmt/Z3_ProofParser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-        failure_phase="proof-replay",
-        source_info=source("Z3-proof", "Z3 proof rule asserted"),
-        script=PROOF_RULE_SCRIPT,
-        diagnostic="complete proof-rule row is still an implementation obligation",
-        proof_rule_histogram={"asserted": 1},
+        row_class="proof-rule",
+        features=[feature],
+        modes=("proof-parse", "proof-replay", "z3-tac"),
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected={
+            "proof-parse": expected_result(
+                "pass",
+                proof_rule_histogram={"asserted": 1},
+            ),
+            "proof-replay": expected_result(
+                "pass",
+                proof_rule_histogram={"asserted": 1},
+            ),
+            "z3-tac": expected_result(
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
+            ),
+        },
+        implementation_obligation=None,
+        source=source("Z3-proof", "Z3 proof rule asserted"),
     )
+    return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
 
 
 def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
@@ -1021,7 +1036,9 @@ UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES = {
 }
 
 RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
+    "theory:ArraysEx:array:unsat-proof",
     "theory:ArraysEx:select:unsat-proof",
+    "theory:ArraysEx:store:unsat-proof",
     "theory:Core:and:unsat-proof",
     "theory:Core:bool:unsat-proof",
     "theory:Core:eq:unsat-proof",
@@ -1031,6 +1048,7 @@ RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:Core:not:unsat-proof",
     "theory:Core:or:unsat-proof",
     "theory:Core:true:unsat-proof",
+    "theory:Core:xor:unsat-proof",
     "theory:UnicodeStrings:string-literal:unsat-proof",
     "theory:Fixed_Size_BitVectors:binary-hex-literal:unsat-proof",
     "theory:Fixed_Size_BitVectors:bitvec:unsat-proof",
@@ -1166,6 +1184,7 @@ RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:Z3_Extensions:seq.extract:unsat-proof",
     "theory:Z3_Extensions:seq.len:unsat-proof",
     "theory:Z3_Extensions:seq:unsat-proof",
+    "theory:Z3_Extensions:set:unsat-proof",
 }
 
 
@@ -1347,6 +1366,18 @@ def mode_for_failure_phase(failure_phase: str) -> str:
     if failure_phase in {"proof-parse", "proof-replay"}:
         return failure_phase
     return "z3-tac"
+
+
+def first_red_failure_phase(expected: Mapping[str, Mapping[str, object]]) -> str:
+    for mode in MODES:
+        result = expected.get(mode)
+        if result is None or result.get("status") != "red":
+            continue
+        phase = result.get("failure_phase")
+        if not isinstance(phase, str):
+            raise GeneratorError(f"red expected result for {mode} is missing failure_phase")
+        return require_choice(phase, "failure_phase", FAILURE_PHASES)
+    raise GeneratorError("expected results contain no red failure phase")
 
 
 def command_cases() -> list[GeneratedCase]:
@@ -3486,17 +3517,8 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
         }
         if not any(result["status"] == "red" for result in expected.values()):
             implementation = None
-        elif z3_unsupported:
-            phase = "solver"
-        elif parser_gap:
-            phase = "parser"
-        elif proof_gap:
-            phase = "proof-replay"
-        elif translation_gap:
-            phase = "translation"
         else:
-            phase = "proof-replay"
-        if any(result["status"] == "red" for result in expected.values()):
+            phase = first_red_failure_phase(expected)
             implementation = theory_obligation(symbol, kind, case_id, phase)
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
@@ -3889,7 +3911,7 @@ def sample_cases(classes: Iterable[str] = CASE_CLASSES) -> list[GeneratedCase]:
             script="(set-logic QF_LIA)\n(declare-const x Int)\n(assert (> x 0))\n(check-sat)\n",
             diagnostic="complete logic packet row is still an implementation obligation",
         ),
-        proof_rule_asserted_case(),
+        th_lemma_proof_rule_case(TH_LEMMA_PROOF_RULE_OBLIGATIONS[0]),
         red_sample(
             row_class="soundness-audit",
             feature="soundness:oracle-tag-boundary",
