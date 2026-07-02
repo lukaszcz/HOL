@@ -528,12 +528,60 @@ def first_red_category_counts(
 
 first_red_counts = first_red_category_counts(manifest_red, proof_audit_red)
 
+def manifest_obligation_row(item: dict[str, object]) -> dict[str, object]:
+    obligation = item.get("implementation_obligation")
+    if not isinstance(obligation, dict):
+        obligation = {}
+    return {
+        "source": "manifest",
+        "case": item.get("case"),
+        "mode": item.get("mode"),
+        "class": item.get("class"),
+        "logic": item.get("logic"),
+        "missing_feature": obligation.get("feature"),
+        "failure_phase": obligation.get("failure_phase"),
+        "implementation_files": obligation.get("files", []),
+        "test_ids": obligation.get("test_ids", []),
+    }
+
+def proof_audit_obligation_row(item: dict[str, object]) -> dict[str, object]:
+    details = item.get("details")
+    if not isinstance(details, dict):
+        details = {}
+    test_ids = details.get("test_ids", details.get("case_ids", []))
+    files = details.get("files", details.get("implementation_files", []))
+    return {
+        "source": "proof-audit",
+        "case": item.get("subject"),
+        "mode": "proof-corpus",
+        "class": item.get("category"),
+        "logic": "ALL",
+        "missing_feature": details.get("feature", item.get("subject")),
+        "failure_phase": details.get("failure_phase"),
+        "implementation_files": files,
+        "test_ids": test_ids,
+    }
+
+flat_obligations = [
+    *(manifest_obligation_row(item) for item in manifest_red),
+    *(proof_audit_obligation_row(item) for item in proof_audit_red),
+]
+flat_obligations.sort(
+    key=lambda item: (
+        str(item.get("source")),
+        str(item.get("case")),
+        str(item.get("mode")),
+        str(item.get("missing_feature")),
+    )
+)
+
 red_summary = {
     "schema": "holsmt-red-obligation-summary-v1",
     "manifest_red_count": len(manifest_red),
     "complete_audit_red_count": len(complete_audit_red),
     "proof_audit_red_count": len(proof_audit_red),
     "required_first_red_category_counts": first_red_counts,
+    "obligations": flat_obligations,
     "manifest_red_obligations": manifest_red,
     "complete_audit_red_obligations": complete_audit_red,
     "proof_audit_red_obligations": proof_audit_red,
@@ -570,20 +618,17 @@ for category, count in first_red_counts.items():
     red_md.append(f"| {md_cell(category)} | {count} |")
 red_md.extend([
     "",
-    "## Manifest Red Rows",
+    "## Red Rows",
     "",
-    "| Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |",
-    "| --- | --- | --- | --- | --- | --- | --- | --- |",
+    "| Source | Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |",
+    "| --- | --- | --- | --- | --- | --- | --- | --- | --- |",
 ])
-for item in manifest_red[:200]:
-    obligation = item.get("implementation_obligation")
-    if not isinstance(obligation, dict):
-        obligation = {}
+for item in flat_obligations[:300]:
     red_md.append(
-        f"| `{md_cell(item.get('case'))}` | `{md_cell(item.get('mode'))}` | `{md_cell(item.get('class'))}` | `{md_cell(item.get('logic'))}` | `{md_cell(obligation.get('feature'))}` | `{md_cell(obligation.get('failure_phase'))}` | {md_cell(md_list(obligation.get('files')))} | {md_cell(md_list(obligation.get('test_ids')))} |"
+        f"| `{md_cell(item.get('source'))}` | `{md_cell(item.get('case'))}` | `{md_cell(item.get('mode'))}` | `{md_cell(item.get('class'))}` | `{md_cell(item.get('logic'))}` | `{md_cell(item.get('missing_feature'))}` | `{md_cell(item.get('failure_phase'))}` | {md_cell(md_list(item.get('implementation_files')))} | {md_cell(md_list(item.get('test_ids')))} |"
     )
-if len(manifest_red) > 200:
-    red_md.append(f"| ... | ... | ... | ... | ... | ... | ... | {len(manifest_red) - 200} more in JSON |")
+if len(flat_obligations) > 300:
+    red_md.append(f"| ... | ... | ... | ... | ... | ... | ... | ... | {len(flat_obligations) - 300} more in JSON |")
 (report_dir / "RED_OBLIGATIONS.md").write_text("\n".join(red_md) + "\n", encoding="utf-8")
 
 red_count = len(manifest_red) + len(proof_audit_red)
@@ -607,10 +652,10 @@ if infrastructure_errors:
 summary["nonzero_exit_reasons"] = nonzero_exit_reasons
 if summary["infrastructure_error_count"]:
     summary["status"] = "infrastructure-error"
-elif summary["unexpected_regression_count"]:
-    summary["status"] = "unexpected-regression"
 elif summary["red_obligation_count"]:
     summary["status"] = "red-obligations"
+elif summary["unexpected_regression_count"]:
+    summary["status"] = "unexpected-regression"
 
 complete = {
     "schema": "holsmt-complete-conformance-report-v1",

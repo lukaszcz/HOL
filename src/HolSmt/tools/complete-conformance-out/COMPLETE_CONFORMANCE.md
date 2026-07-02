@@ -1,6 +1,6 @@
 # HolSmt Complete SMT-LIB Conformance
 
-- Status: `unexpected-regression`
+- Status: `red-obligations`
 - Red obligations: 659
 - Unexpected regressions: 785
 - Infrastructure errors: 0
