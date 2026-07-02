@@ -1021,8 +1021,12 @@ UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES = {
 
 RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:ArraysEx:array:unsat-proof",
+    "theory:ArraysEx:extensionality:unsat-proof",
+    "theory:ArraysEx:mixed-index-value-sorts:unsat-proof",
+    "theory:ArraysEx:read-over-write:unsat-proof",
     "theory:ArraysEx:select:unsat-proof",
     "theory:ArraysEx:store:unsat-proof",
+    "theory:ArraysEx:write-over-write:unsat-proof",
     "theory:Core:and:unsat-proof",
     "theory:Core:bool:unsat-proof",
     "theory:Core:eq:unsat-proof",
@@ -3423,13 +3427,13 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
             "z3-tac": expected_result(
-                "red" if z3_unsupported or parser_gap or translation_gap else "fail",
+                "red" if z3_unsupported or parser_gap or translation_gap else "pass",
                 diagnostic="checked Z3_TAC cannot reach SAT no-theorem diagnostic until solver support exists"
                 if z3_unsupported else blocked_by_parser
                 if parser_gap else "SMT-LIB string/regex or Z3-extension translation is incomplete"
                 if translation_gap else None,
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else "translation" if translation_gap else "theorem-shape",
+                if parser_gap else "translation" if translation_gap else None,
             ),
         }
         if z3_unsupported or parser_gap or translation_gap:
@@ -3713,11 +3717,7 @@ def logic_packet_cases(
                     "parser-only": expected_result("pass"),
                     "typecheck-only": expected_result("pass"),
                     "z3-oracle": expected_result("pass"),
-                    "z3-tac": expected_result(
-                        "fail",
-                        diagnostic="SAT result has no HOL theorem to reconstruct",
-                        failure_phase="theorem-shape",
-                    ),
+                    "z3-tac": expected_result("pass"),
                 },
             )
         )

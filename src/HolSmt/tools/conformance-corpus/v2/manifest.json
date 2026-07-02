@@ -4516,9 +4516,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4791,9 +4789,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -5068,9 +5064,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -5345,9 +5339,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -5622,9 +5614,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -5899,9 +5889,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -6176,9 +6164,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -6453,9 +6439,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -6726,9 +6710,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -6997,9 +6979,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -7268,9 +7248,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -7539,9 +7517,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -7814,9 +7790,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -8087,9 +8061,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -8362,9 +8334,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -8639,9 +8609,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -8916,9 +8884,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -9193,9 +9159,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -9470,9 +9434,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -9747,9 +9709,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -10024,9 +9984,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -10301,9 +10259,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -10574,9 +10530,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -10845,9 +10799,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -11120,9 +11072,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -11397,9 +11347,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -11674,9 +11622,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -11947,9 +11893,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -12218,9 +12162,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -12489,9 +12431,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -12760,9 +12700,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -13031,9 +12969,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -13302,9 +13238,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -13573,9 +13507,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -13844,9 +13776,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -14119,9 +14049,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -14396,9 +14324,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -14673,9 +14599,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -14946,9 +14870,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -15221,9 +15143,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -15498,9 +15418,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -15775,9 +15693,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -16048,9 +15964,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -16319,9 +16233,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -16590,9 +16502,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -16861,9 +16771,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -17132,9 +17040,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -17403,9 +17309,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -17674,9 +17578,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -17949,9 +17851,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -18222,9 +18122,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -18493,9 +18391,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -18764,9 +18660,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -19035,9 +18929,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -19306,9 +19198,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT result has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -20006,8 +19896,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -20227,8 +20116,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -20350,25 +20238,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:extensionality:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:extensionality:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: extensionality"
@@ -20467,8 +20340,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -20594,25 +20466,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:mixed-index-value-sorts:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:mixed-index-value-sorts:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: mixed-index-value-sorts"
@@ -20709,8 +20566,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -20834,25 +20690,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:read-over-write:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:read-over-write:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: read-over-write"
@@ -20947,8 +20788,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -21168,8 +21008,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -21389,8 +21228,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -21512,25 +21350,10 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:write-over-write:unsat-proof",
-        "test_ids": [
-          "theory:ArraysEx:write-over-write:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: write-over-write"
@@ -21623,8 +21446,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -21837,8 +21659,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -22053,8 +21874,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -22287,8 +22107,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -22503,8 +22322,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -22717,8 +22535,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -22933,8 +22750,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -23147,8 +22963,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -23361,8 +23176,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -23575,8 +23389,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -23789,8 +23602,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -24385,8 +24197,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -24644,8 +24455,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -24901,8 +24711,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -25160,8 +24969,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -25419,8 +25227,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -25676,8 +25483,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -25931,8 +25737,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -26190,8 +25995,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -26447,8 +26251,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -26702,8 +26505,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -27277,8 +27079,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -27532,8 +27333,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -27789,8 +27589,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -28375,8 +28174,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -28962,8 +28760,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -29219,8 +29016,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -29476,8 +29272,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -29733,8 +29528,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -29990,8 +29784,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -30251,8 +30044,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -30851,8 +30643,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -31435,8 +31226,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -32014,8 +31804,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -32273,8 +32062,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -32530,8 +32318,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -32787,8 +32574,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -33044,8 +32830,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -33623,8 +33408,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -34200,8 +33984,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -34455,8 +34238,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -34710,8 +34492,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -34965,8 +34746,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -35222,8 +35002,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -35799,8 +35578,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -36056,8 +35834,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -36313,8 +36090,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -36892,8 +36668,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -37473,8 +37248,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -52354,8 +52128,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -52572,8 +52345,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -52790,8 +52562,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -53030,8 +52801,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -53246,8 +53016,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -53462,8 +53231,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -53678,8 +53446,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -53894,8 +53661,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -54112,8 +53878,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -54330,8 +54095,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -54544,8 +54308,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -54760,8 +54523,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -54976,8 +54738,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -55211,8 +54972,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -55429,8 +55189,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -55645,8 +55404,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -55877,8 +55635,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -56111,8 +55868,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -56327,8 +56083,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -56543,8 +56298,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -56759,8 +56513,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -56975,8 +56728,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -57189,8 +56941,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -57405,8 +57156,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -57623,8 +57373,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -57839,8 +57588,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -58057,8 +57805,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -58275,8 +58022,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -58505,8 +58251,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -58723,8 +58468,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -68904,8 +68648,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,

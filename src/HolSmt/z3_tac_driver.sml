@@ -98,26 +98,22 @@ fun z3_tac_script_diagnostic path =
     scan script
   end
 
-fun z3_tac_checked_prove goal =
+datatype z3_tac_checked_result =
+    Z3_TAC_UNSAT of Thm.thm
+  | Z3_TAC_SAT
+  | Z3_TAC_UNKNOWN of string option
+
+fun z3_tac_checked_result goal =
   case Z3.Z3_SMT_Prover ([], goal) of
     SolverSpec.UNSAT (SOME thm) =>
       let val () = Library.check_oracle_tags "Z3_TAC conformance driver" thm
-      in thm end
+      in Z3_TAC_UNSAT thm end
   | SolverSpec.UNSAT NONE =>
       raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
         "Z3_TAC prover returned UNSAT without a checked theorem"
-  | SolverSpec.SAT NONE =>
-      raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "SAT result has no HOL theorem to reconstruct"
-  | SolverSpec.SAT (SOME _) =>
-      raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "SAT result has no HOL theorem to reconstruct"
-  | SolverSpec.UNKNOWN NONE =>
-      raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        "UNKNOWN result has no HOL theorem to reconstruct"
-  | SolverSpec.UNKNOWN (SOME message) =>
-      raise Feedback.mk_HOL_ERR "Z3_TAC_Driver" "z3_tac_checked_prove"
-        ("UNKNOWN result has no HOL theorem to reconstruct: " ^ message)
+  | SolverSpec.SAT NONE => Z3_TAC_SAT
+  | SolverSpec.SAT (SOME _) => Z3_TAC_SAT
+  | SolverSpec.UNKNOWN message => Z3_TAC_UNKNOWN message
 
 fun z3_tac_ok path expected_logic =
 let
@@ -158,15 +154,33 @@ in
     | NONE =>
       let
         val goal = z3_tac_goal assertions
-        val thm = z3_tac_checked_prove goal
-      in
-        z3_tac_emit "Z3_TAC_PASS"
+        val result = z3_tac_checked_result goal
+        val common_fields =
           ["logic=" ^ observed_logic,
            "assertions=" ^ Int.toString (List.length (#assertions state)),
            "local_definitions=" ^ Int.toString (List.length (#local_definitions state)),
            "queries=" ^ Int.toString (List.length queries),
-           "z3_version=" ^ Z3.version_string (),
-           "theorem=" ^ Library.thm_to_string thm];
+           "z3_version=" ^ Z3.version_string ()]
+      in
+        case result of
+          Z3_TAC_UNSAT thm =>
+            z3_tac_emit "Z3_TAC_PASS"
+              (common_fields @
+               ["result=unsat",
+                "theorem=" ^ Library.thm_to_string thm])
+        | Z3_TAC_SAT =>
+            z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
+        | Z3_TAC_UNKNOWN NONE =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["result=unknown",
+                "diagnostic=UNKNOWN result has no HOL theorem to reconstruct"])
+        | Z3_TAC_UNKNOWN (SOME message) =>
+            z3_tac_die "Z3_TAC_UNSUPPORTED"
+              (common_fields @
+               ["result=unknown",
+                "diagnostic=UNKNOWN result has no HOL theorem to reconstruct: " ^
+                  message]);
         OS.Process.exit OS.Process.success
       end
 end

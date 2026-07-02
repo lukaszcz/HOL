@@ -1591,12 +1591,6 @@
       ]
     },
     {
-      "expected": {
-        "z3-tac": {
-          "diagnostic": "unsupported higher-order/function sort :bool -> bool",
-          "status": "fail"
-        }
-      },
       "file": "cases/arrays/qf_ax_read_over_write_unsat_proof.smt2",
       "id": "qf_ax_read_over_write_unsat_proof",
       "logic": "QF_AX",
@@ -1613,18 +1607,10 @@
         "unsat",
         "proof",
         "read-over-write",
-        "qf_ax",
-        "diagnostic",
-        "z3-tac-gap"
+        "qf_ax"
       ]
     },
     {
-      "expected": {
-        "z3-tac": {
-          "diagnostic": "unsupported higher-order/function sort :bool -> bool",
-          "status": "fail"
-        }
-      },
       "file": "cases/arrays/qf_ax_extensionality_unsat_proof.smt2",
       "id": "qf_ax_extensionality_unsat_proof",
       "logic": "QF_AX",
@@ -1641,9 +1627,7 @@
         "unsat",
         "proof",
         "extensionality",
-        "qf_ax",
-        "diagnostic",
-        "z3-tac-gap"
+        "qf_ax"
       ]
     },
     {

@@ -1063,6 +1063,7 @@ def run_z3_tac_mode(
     }
     diagnostic = command_output_field(stdout, stderr, "diagnostic")
     version = command_output_field(stdout, stderr, "z3_version")
+    solver_result = command_output_field(stdout, stderr, "result")
 
     combined = f"{stdout}\n{stderr}"
     if "Z3_TAC_PASS" in combined and completed.returncode == 0:
@@ -1073,6 +1074,15 @@ def run_z3_tac_mode(
                 MODE_Z3_TAC,
                 FAIL,
                 unsound_success,
+                artifact=artifact,
+                version=version,
+            )
+        if solver_result == "sat":
+            return result(
+                case,
+                MODE_Z3_TAC,
+                PASS,
+                f"checked Z3_TAC solver result {solver_result}",
                 artifact=artifact,
                 version=version,
             )
