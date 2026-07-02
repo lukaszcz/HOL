@@ -2,7 +2,7 @@
 
 - Status: `red-obligations`
 - Red obligations: 1381
-- Unexpected regressions: 36
+- Unexpected regressions: 32
 - Infrastructure errors: 0
 - Nonzero exit reasons: red-obligations, unexpected-regressions
 - Steps: 29
@@ -30,7 +30,7 @@
 | `import-external-benchmarks` | `external-import` | `pass` | 0 |
 | `validate-v2-manifest` | `validation` | `pass` | 0 |
 | `conformance-parser-only` | `conformance` | `pass` | 0 |
-| `conformance-typecheck-only` | `conformance` | `fail` | 1 |
+| `conformance-typecheck-only` | `conformance` | `pass` | 0 |
 | `conformance-z3-oracle` | `conformance` | `pass` | 0 |
 | `conformance-proof-parse` | `conformance` | `pass` | 0 |
 | `conformance-proof-replay` | `conformance` | `pass` | 0 |
@@ -54,10 +54,6 @@
 
 | Report | Case | Mode | Detail |
 | --- | --- | --- | --- |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun-rec-define-funs-rec` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun-rec-define-funs-rec:state` | `typecheck-only` | typecheck-only command failed |
-| `src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json` | `command:define-fun:state` | `typecheck-only` | typecheck-only command failed |
 | `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Core:distinct:sat` | `z3-tac` | z3-tac command timed out after 30s |
 | `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:abs:sat` | `z3-tac` | z3-tac command timed out after 30s |
 | `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:div:sat` | `z3-tac` | z3-tac command timed out after 30s |

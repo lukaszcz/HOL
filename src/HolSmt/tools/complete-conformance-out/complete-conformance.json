@@ -63,18 +63,18 @@
       "case_count": 1256,
       "classification_counts": {
         "expected-implementation-gap": 608,
-        "matched": 547,
-        "unexpected-status": 4
+        "matched": 551,
+        "unexpected-status": 0
       },
       "conformance_status_counts": {
-        "fail": 4,
-        "pass": 1155
+        "fail": 0,
+        "pass": 1159
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
       "result_count": 1159,
       "status_counts": {
-        "fail": 371,
-        "pass": 788,
+        "fail": 367,
+        "pass": 792,
         "unsupported": 0
       }
     },
@@ -95450,10 +95450,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-parser-only.stdout"
     },
     {
-      "exit_code": 1,
+      "exit_code": 0,
       "kind": "conformance",
       "name": "conformance-typecheck-only",
-      "status": "fail",
+      "status": "pass",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/conformance-typecheck-only.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-typecheck-only.stdout"
     },
@@ -95606,8 +95606,8 @@
     "classification_counts": {
       "accepted": 27,
       "expected-implementation-gap": 1345,
-      "matched": 3246,
-      "unexpected-status": 36
+      "matched": 3250,
+      "unexpected-status": 32
     },
     "infrastructure_error_count": 0,
     "nonzero_exit_reasons": [
@@ -95619,41 +95619,9 @@
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "red-obligations",
     "step_count": 29,
-    "unexpected_regression_count": 36
+    "unexpected_regression_count": 32
   },
   "unexpected_regressions": [
-    {
-      "case": "command:define-fun",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun-rec-define-funs-rec",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun-rec-define-funs-rec:state",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
-    {
-      "case": "command:define-fun:state",
-      "classification": "unexpected-status",
-      "detail": "typecheck-only command failed",
-      "logic": "QF_UF",
-      "mode": "typecheck-only",
-      "report": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json"
-    },
     {
       "case": "theory:Core:distinct:sat",
       "classification": "unexpected-status",
