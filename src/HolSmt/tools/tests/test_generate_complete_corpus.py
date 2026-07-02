@@ -56,16 +56,17 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
 
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
-        self.assertEqual(len(cases), 1 + len(generator.TH_LEMMA_PROOF_RULE_OBLIGATIONS))
+        self.assertEqual(len(cases), 2 + len(generator.TH_LEMMA_PROOF_RULE_OBLIGATIONS))
         self.assertEqual({case["class"] for case in cases}, {"proof-rule"})
         case_ids = {case["id"] for case in cases}
         self.assertIn("proof-rule:asserted", case_ids)
+        self.assertIn("proof-rule:th-lemma-basic", case_ids)
         self.assertIn("proof-rule:th-lemma-fp", case_ids)
-        self.assertNotIn("proof-rule:th-lemma-basic", case_ids)
         for case in cases:
             self.assertIn("proof-parse", case["expected"])
             self.assertIn("proof-replay", case["expected"])
-            if case["id"] == "proof-rule:asserted":
+            if case["id"] in {"proof-rule:asserted", "proof-rule:th-lemma-basic"}:
+                rule = case["id"].removeprefix("proof-rule:")
                 self.assertIsNone(case["implementation_obligation"])
                 self.assertEqual(case["expected"]["proof-parse"]["status"], "pass")
                 self.assertEqual(case["expected"]["proof-replay"]["status"], "pass")
@@ -76,9 +77,12 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     case["expected"]["proof-replay"]["proof_rule_histogram"],
-                    {"asserted": 1},
+                    {rule: 1},
                 )
-            if case["id"].startswith("proof-rule:th-lemma-"):
+            if (
+                case["id"].startswith("proof-rule:th-lemma-")
+                and case["id"] != "proof-rule:th-lemma-basic"
+            ):
                 self.assertIn("z3-tac", case["expected"])
                 self.assertEqual(case["expected"]["z3-tac"]["failure_phase"], "proof-replay")
                 self.assertEqual(
@@ -237,8 +241,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 case for case in logic_cases
                 if "logic-case:sat" in case["features"]
             ][0]
-            self.assertEqual(sat["expected"]["z3-tac"]["status"], "fail")
-            self.assertIn("no HOL theorem", sat["expected"]["z3-tac"]["diagnostic"])
+            self.assertEqual(sat["expected"]["z3-tac"]["status"], "pass")
 
     def test_logics_manifest_documents_internal_all_exclusion(self):
         inventory = generator.logics_manifest()

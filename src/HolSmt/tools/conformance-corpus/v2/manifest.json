@@ -19350,6 +19350,57 @@
       }
     },
     {
+      "id": "proof-rule:th-lemma-basic",
+      "file": "cases/proof_rules/proof_rule_th_lemma_basic.smt2",
+      "logic": "QF_UF",
+      "standard": "Z3-extension",
+      "class": "proof-rule",
+      "features": [
+        "proof-rule-behavior:checked-replay",
+        "proof-rule-family:th-lemma",
+        "proof-rule:th-lemma-basic"
+      ],
+      "modes": [
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-parse": {
+          "status": "pass",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        },
+        "proof-replay": {
+          "status": "pass",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags",
+          "proof_rule_histogram": {
+            "th-lemma-basic": 1
+          }
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "Z3-proof",
+        "reference": "Z3 proof rule th-lemma-basic"
+      }
+    },
+    {
       "id": "proof-rule:th-lemma-datatype",
       "file": "cases/proof_rules/proof_rule_th_lemma_datatype.smt2",
       "logic": "QF_UF",

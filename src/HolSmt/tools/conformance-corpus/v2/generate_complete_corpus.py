@@ -579,6 +579,42 @@ def proof_rule_asserted_case() -> GeneratedCase:
     return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
 
 
+def proof_rule_th_lemma_basic_case() -> GeneratedCase:
+    feature = "proof-rule:th-lemma-basic"
+    entry = manifest_entry(
+        case_id=feature,
+        file="cases/proof_rules/proof_rule_th_lemma_basic.smt2",
+        logic="QF_UF",
+        standard="Z3-extension",
+        row_class="proof-rule",
+        features=[
+            feature,
+            "proof-rule-family:th-lemma",
+            "proof-rule-behavior:checked-replay",
+        ],
+        modes=("proof-parse", "proof-replay", "z3-tac"),
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected={
+            "proof-parse": expected_result(
+                "pass",
+                proof_rule_histogram={"th-lemma-basic": 1},
+            ),
+            "proof-replay": expected_result(
+                "pass",
+                proof_rule_histogram={"th-lemma-basic": 1},
+            ),
+            "z3-tac": expected_result(
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
+                proof_rule_histogram={"th-lemma-basic": 1},
+            ),
+        },
+        implementation_obligation=None,
+        source=source("Z3-proof", "Z3 proof rule th-lemma-basic"),
+    )
+    return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
+
+
 def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
     feature = f"proof-rule:{obligation.rule}"
     expected = {
@@ -633,7 +669,7 @@ def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
 
 
 def proof_rule_cases() -> list[GeneratedCase]:
-    return [proof_rule_asserted_case()] + [
+    return [proof_rule_asserted_case(), proof_rule_th_lemma_basic_case()] + [
         th_lemma_proof_rule_case(obligation)
         for obligation in TH_LEMMA_PROOF_RULE_OBLIGATIONS
     ]
