@@ -772,6 +772,22 @@ in
     "datatype dictionary assertion did not parse as Bool")
 end
 
+fun parse_file_parametric_datatype_dictionary_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype Box (par (T) ((box (value T)))))\n" ^
+       "(declare-const bi (Box Int))\n" ^
+       "(assert (and (= (value (box 1)) 1) ((_ is box) bi)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length assertions = 1,
+    "parametric datatype dictionary script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "parametric datatype assertion did not parse as Bool")
+end
+
 fun parse_legacy_datatype_mutual_dictionary_success () =
 let
   val (_, _, _, assertions) =
@@ -2392,6 +2408,8 @@ let
       parse_file_datatype_command_success),
     ("parse_file_datatype_dictionary_success",
       parse_file_datatype_dictionary_success),
+    ("parse_file_parametric_datatype_dictionary_success",
+      parse_file_parametric_datatype_dictionary_success),
     ("parse_legacy_datatype_mutual_dictionary_success",
       parse_legacy_datatype_mutual_dictionary_success),
     ("parse_file_echo_success", parse_file_echo_success),

@@ -2551,6 +2551,22 @@ local
       SortedVar (name, sort) =>
         (located_string_node name, typecheck_sort context tydict sort)
 
+  and instantiate_signature arg_sorts
+      ({tm, domain, range}: function_signature) =
+    let
+      fun match_one ((expected, actual), subst) =
+        let
+          val expected = Type.type_subst subst expected
+          val more = Type.match_type expected actual
+        in
+          more @ subst
+        end
+      val subst = List.foldl match_one [] (ListPair.zip (domain, arg_sorts))
+    in
+      SOME {tm = Term.inst subst tm, range = Type.type_subst subst range}
+    end
+    handle Feedback.HOL_ERR _ => NONE
+
   and function_signature_mismatch_detail name arg_sorts signatures =
     let
       val arity_matches =
@@ -2570,18 +2586,18 @@ local
           sort_list_to_string arg_sorts
     end
 
-  and signature_applies arg_sorts ({domain, ...}: function_signature) =
-    List.length domain = List.length arg_sorts andalso
-    List.all (fn (expected, actual) => expected = actual)
-      (ListPair.zip (domain, arg_sorts))
-
   and apply_user_signature fn_name context loc name args signatures =
     let
       val arg_terms = List.map checked_term args
       val arg_sorts = List.map checked_sort args
+      val arity_matches =
+        List.filter
+          (fn {domain, ...}: function_signature =>
+            List.length domain = List.length arg_sorts)
+          signatures
     in
-      case List.find (signature_applies arg_sorts) signatures of
-        SOME {tm, range, ...} =>
+      case Lib.get_first (instantiate_signature arg_sorts) arity_matches of
+        SOME {tm, range} =>
           CheckedTerm {term = Term.list_mk_comb (tm, arg_terms), sort = range}
       | NONE =>
           let
@@ -2786,8 +2802,16 @@ local
       Library.extend_dict ((sort_name, parsefn), tydict)
     end
 
-  fun datatype_type datatype_name =
-    Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
+  fun datatype_type datatype_name args =
+    let
+      val tag_ty = Type.mk_vartype ("'smtlib_dt_" ^ datatype_name)
+    in
+      case args of
+        [] => tag_ty
+      | _ => List.foldl
+          (fn (arg, acc) => Type.mk_type ("prod", [acc, arg]))
+          tag_ty args
+    end
 
   fun datatype_arity context loc datatype_name arity_text =
     case Int.fromString arity_text of
@@ -2805,9 +2829,9 @@ local
   fun extend_datatype_sort context name arity tydict =
     let
       val datatype_name = located_string_node name
-      val datatype_ty = datatype_type datatype_name
       fun parse_ty token indices args =
-        if List.null indices andalso List.length args = arity then datatype_ty
+        if List.null indices andalso List.length args = arity then
+          datatype_type datatype_name args
         else raise ERR ("<" ^ datatype_name ^ ">") "wrong number of arguments"
     in
       Library.extend_dict ((datatype_name, parse_ty), tydict)
@@ -2831,12 +2855,17 @@ local
       (tydict, tmdict, sigdict) =
     let
       val datatype_name_s = located_string_node datatype_name
-      val datatype_ty = datatype_type datatype_name_s
+      fun param_type param =
+        Type.mk_vartype ("'" ^ located_string_node param)
 
       fun add_constructor tydict (ctor, (tmdict, sigdict)) =
         case node_of ctor of
           DatatypeConstructor (ctor_name, _, selectors) =>
             let
+              val datatype_ty =
+                case node_of decl of
+                  DatatypeDecl (params, _) =>
+                    datatype_type datatype_name_s (List.map param_type params)
               val ctor_name_s = located_string_node ctor_name
               fun selector_info selector =
                 case node_of selector of
@@ -2868,11 +2897,13 @@ local
                   ([index], [arg]) =>
                     let
                       val index_name = Lib.fst (Term.dest_var index)
+                      val subst = Type.match_type datatype_ty (Term.type_of arg)
                     in
                       if index_name = ctor_name_s then
                         Term.list_mk_comb
                           (Term.mk_var ("is_" ^ ctor_name_s,
-                             Type.--> (datatype_ty, Type.bool)),
+                             Type.--> (Type.type_subst subst datatype_ty,
+                               Type.bool)),
                            [arg])
                       else
                         raise ERR ("<is " ^ ctor_name_s ^ ">")
