@@ -24,8 +24,8 @@ Options:
   --include-docker   Also run the Docker selftest matrix from src/HolSmt/README
   -h, --help         Show this help
 
-If HOL4_Z3_EXECUTABLE is unset, the script resolves z3 from PATH and exports
-HOL4_Z3_EXECUTABLE before running any tests.
+If HOL4_Z3_EXECUTABLE is unset or names a command without a slash, the script
+resolves z3 from PATH and exports HOL4_Z3_EXECUTABLE before running any tests.
 EOF
 }
 
@@ -67,6 +67,23 @@ z3_version_number() {
     return 0
   fi
   return 1
+}
+
+resolve_executable() {
+  local name=$1
+  local value=$2
+  local resolved
+
+  if [[ "$value" == */* ]]; then
+    [ -x "$value" ] || die "$name is not executable: $value"
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  resolved=$(command -v "$value" || true)
+  [ -n "$resolved" ] || die "$name is not on PATH or executable: $value"
+  [ -x "$resolved" ] || die "$name resolved to a non-executable path: $resolved"
+  printf '%s\n' "$resolved"
 }
 
 discover_z3_versions() {
@@ -147,11 +164,11 @@ cd "$repo_root"
 [ -x bin/hol ] || die "bin/hol is missing or not executable; build HOL first"
 
 if [ -n "${HOL4_Z3_EXECUTABLE:-}" ]; then
-  [ -x "$HOL4_Z3_EXECUTABLE" ] || die "HOL4_Z3_EXECUTABLE is not executable: $HOL4_Z3_EXECUTABLE"
+  HOL4_Z3_EXECUTABLE=$(resolve_executable HOL4_Z3_EXECUTABLE "$HOL4_Z3_EXECUTABLE")
+  export HOL4_Z3_EXECUTABLE
 else
-  z3_path=$(command -v z3 || true)
-  [ -n "$z3_path" ] || die "z3 is not on PATH; install Z3 or set HOL4_Z3_EXECUTABLE"
-  export HOL4_Z3_EXECUTABLE=$z3_path
+  HOL4_Z3_EXECUTABLE=$(resolve_executable z3 z3)
+  export HOL4_Z3_EXECUTABLE
 fi
 
 z3_version_output=$("$HOL4_Z3_EXECUTABLE" -version 2>&1 || true)

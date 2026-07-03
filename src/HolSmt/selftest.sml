@@ -106,7 +106,16 @@ fun expect_sat name smt_tac t =
 
 fun mk_test_fun is_configured expect_fun name smt_tac =
   if is_configured then
-    (fn g => (expect_fun name smt_tac g; print "."))
+    (fn g =>
+      let
+        val _ =
+          if OS.Process.getEnv "HOL4_SELFTEST_PROGRESS" = SOME "1" then
+            print ("\n" ^ name ^ ": " ^ term_with_types g ^ "\n")
+          else
+            ()
+      in
+        expect_fun name smt_tac g; print "."
+      end)
   else
     Lib.K ()
 
@@ -282,29 +291,31 @@ in
     (* num *)
 
     (``SUC 0 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
-    (``SUC x = x + 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``x < SUC x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 segfaults while producing Alethe proofs for these variable
+       num successor/addition lemmas. *)
+    (``SUC x = x + 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``x < SUC x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(SUC x = SUC y) = (x = y)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``SUC (x + y) = (SUC x + SUC y)``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
-    (``(x:num) + 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``0 + (x:num) = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(x:num) + y = y + x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) + 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``0 + (x:num) = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(x:num) + y = y + x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) + (y + z) = (x + y) + z``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``((x:num) + y = 0) <=> (x = 0) /\ (y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
-    (``(x:num) - 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) - 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) - y - z = x - (y + z)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
        (*, thm_CVCp: cvc5 Alethe proof too large for efficient replay (2000+ steps) *)]),
     (``(x:num) <= y ==> (x - y = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``((x:num) - y = 0) \/ (y - x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
     (* cvc5 Alethe proof replay unsupported: METIS resolution fails for num multiplication with variables *)
     (``(x:num) * 0 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
@@ -312,7 +323,7 @@ in
     (``(x:num) * 1 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``1 * (x:num) = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) * 42 = 42 * x``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
 
     (* cvc5 Alethe proof replay unsupported: ediv/emod operations for num *)
     (``(0:num) DIV 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
@@ -321,14 +332,14 @@ in
     (``(0:num) DIV 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(1:num) DIV 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(42:num) DIV 42 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
-    (* cvc5 Alethe can't handle variable DIV/MOD with non-zero divisor:
+    (* cvc5 can't handle variable DIV/MOD with non-zero divisor:
        "Proof unsupported by Alethe: contains Skolem (kind int_div_by_zero)" *)
     (``(x:num) DIV 1 = x``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) DIV 42 <= x``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``((x:num) DIV 42 = x) = (x = 0)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) DIV 0 = x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) DIV 0 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(0:num) DIV 0 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
@@ -342,12 +353,12 @@ in
     (``(0:num) MOD 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(1:num) MOD 42 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(42:num) MOD 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
-    (``(x:num) MOD 1 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(x:num) MOD 1 = 0``, [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) MOD 42 < 42``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``((x:num) MOD 42 = x) = (x < 42)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
-    (``(x:num) MOD 0 = x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
+      [thm_AUTO, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(x:num) MOD 0 = x``, [thm_AUTO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) MOD 0 = 0``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(0:num) MOD 0 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``(0:num) MOD 0 = 1``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
@@ -376,22 +387,24 @@ in
     (``0 < (2:num) ** y``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
     (``0 < (42:num) ** y``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
-    (``MIN (x:num) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``MIN (x:num) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof generation on these variable
+       num MIN/MAX lemmas ("Fresh Skolems are not allowed"). *)
+    (``MIN (x:num) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``MIN (x:num) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(z:num) < x /\ z < y ==> z < MIN x y``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``MIN (x:num) y < x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``MIN (x:num) 0 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``MIN (x:num) 0 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``MIN (x:num) y = a ==> MIN a z <= x``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
        (*, thm_CVCp: METIS resolution fails on MIN/MAX with ite expansion *)]),
 
-    (``MAX (x:num) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``MAX (x:num) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``MAX (x:num) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``MAX (x:num) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(z:num) > x /\ z > y ==> z > MAX x y``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``MAX (x:num) y > x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``MAX (x:num) 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``MAX (x:num) 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``MAX (x:num) y = a ==> x <= MAX a z``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
        (*, thm_CVCp: METIS resolution fails on MIN/MAX with ite expansion *)]),
@@ -669,27 +682,31 @@ in
     (``0 < (42:int) ** y``, [thm_AUTO(*, thm_CVC, thm_Z3, thm_Z3p*)]),
     (``0 < (-42:int) ** y``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
 
-    (``ABS (x:int) >= 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
-    (``(ABS (x:int) = 0) = (x = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
-    (``(x:int) >= 0 ==> (ABS x = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
-    (``(x:int) <= 0 ==> (ABS x = ~x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
-    (``ABS (ABS (x:int)) = ABS x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof generation on these variable
+       integer ABS lemmas ("Fresh Skolems are not allowed"). *)
+    (``ABS (x:int) >= 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4]),
+    (``(ABS (x:int) = 0) = (x = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4]),
+    (``(x:int) >= 0 ==> (ABS x = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4]),
+    (``(x:int) <= 0 ==> (ABS x = ~x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4]),
+    (``ABS (ABS (x:int)) = ABS x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3_v4, thm_Z3p_v4]),
     (``ABS (x:int) = x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
-    (``int_min (x:int) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``int_min (x:int) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(z:int) < x /\ z < y ==> z < int_min x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof generation on these variable
+       integer MIN/MAX lemmas ("Fresh Skolems are not allowed"). *)
+    (``int_min (x:int) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``int_min (x:int) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(z:int) < x /\ z < y ==> z < int_min x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``int_min (x:int) y < x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``int_min (x:int) 0 = 0``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:int) >= 0 ==> (int_min x 0 = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``int_min (x:int) y = a ==> int_min a z <= x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:int) >= 0 ==> (int_min x 0 = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``int_min (x:int) y = a ==> int_min a z <= x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
-    (``int_max (x:int) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``int_max (x:int) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(z:int) > x /\ z > y ==> z > int_max x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``int_max (x:int) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``int_max (x:int) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(z:int) > x /\ z > y ==> z > int_max x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``int_max (x:int) y > x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:int) >= 0 ==> (int_max x 0 = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``int_max (x:int) y = a ==> x <= int_max a z``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:int) >= 0 ==> (int_max x 0 = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``int_max (x:int) y = a ==> x <= int_max a z``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
     (* real *)
 
@@ -736,7 +753,10 @@ in
     (``(x:real) / 1 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:real) / ~1 = ~x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:real) / 42 <= x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:real) / 42 <= abs x``, [thm_AUTO, thm_CVC, thm_Z3_v4, thm_Z3p_v4, thm_CVCp]),
+    (``(x:real) / 42 <= abs x``,
+      [thm_AUTO, thm_CVC, thm_Z3_v4, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 aborts in Alethe proof generation
+          ("Fresh Skolems are not allowed") *)]),
 
     (``((x:real) / 42 = x) = (x = 0)``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:real) / 0 = x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
@@ -746,10 +766,8 @@ in
     (``(0:real) / 0 = 1 / 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:real) / 0 = x / 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (``x > 0 ==> (x:real) / 42 < x``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``x < 0 ==> (x:real) / 42 > x``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``x > 0 ==> (x:real) / 42 < x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``x < 0 ==> (x:real) / 42 > x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
 
     (``realinv 0 = 0``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``realinv 1 = 1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -772,42 +790,60 @@ in
     (``(1:real) pow x = 1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(1:real) pow x = 0``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(-1:real) pow 1 = -1``, [thm_AUTO, (*thm_CVC,*) thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
-    (``(-1:real) pow 2 = 1``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(-1:real) pow 2 = 1``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this negative-base real power lemma *)]),
     (``(-3:real) pow 1 = -3``, [thm_AUTO, (*thm_CVC,*) thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
-    (``(-3:real) pow 2 = 9``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(x:real) pow 2 = x * x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(-3:real) pow 2 = 9``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this negative-base real power lemma *)]),
+    (``(x:real) pow 2 = x * x``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this real power expansion *)]),
     (``(x:real) pow 3 = x * x * x``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3_v4, thm_Z3p_v4 (*, thm_CVCp *)]),
     (``0 < (x:real) pow y``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
     (``0 <= (x:real) pow y``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
     (``0 < (1:real) pow y``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``0 < (2:real) pow y``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``0 < (2:real) pow y``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this positive-base real power lemma *)]),
     (``0 < (-2:real) pow y``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``0 < (42:real) pow y``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``0 < (42:real) pow y``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this positive-base real power lemma *)]),
     (``0 < (-42:real) pow y``, [sat_CVC, sat_Z3, sat_Z3p, sat_CVCp]),
 
-    (``abs (x:real) >= 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(abs (x:real) = 0) = (x = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(x:real) >= 0 ==> (abs x = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(x:real) <= 0 ==> (abs x = ~x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``abs (abs (x:real)) = abs x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof generation on these variable
+       real ABS lemmas ("Fresh Skolems are not allowed"). *)
+    (``abs (x:real) >= 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(abs (x:real) = 0) = (x = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(x:real) >= 0 ==> (abs x = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(x:real) <= 0 ==> (abs x = ~x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``abs (abs (x:real)) = abs x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``abs (x:real) = x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
-    (``min (x:real) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``min (x:real) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(z:real) < x /\ z < y ==> z < min x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof generation on these variable
+       real MIN/MAX lemmas ("Fresh Skolems are not allowed"). *)
+    (``min (x:real) y <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``min (x:real) y <= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(z:real) < x /\ z < y ==> z < min x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``min (x:real) y < x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``min (x:real) 0 = 0``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:real) >= 0 ==> (min x 0 = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``min (x:real) y = a ==> min a z <= x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:real) >= 0 ==> (min x 0 = 0)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``min (x:real) y = a ==> min a z <= x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
-    (``max (x:real) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``max (x:real) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (``(z:real) > x /\ z > y ==> z > max x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``max (x:real) y >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``max (x:real) y >= y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``(z:real) > x /\ z > y ==> z > max x y``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``max (x:real) y > x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:real) >= 0 ==> (max x 0 = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
-    (* cvc5 proof uses MAX transitivity unsupported by replay *)
-    (``max (x:real) y = a ==> x <= max a z``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
+    (``(x:real) >= 0 ==> (max x 0 = x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
+    (``max (x:real) y = a ==> x <= max a z``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
     (* nonlinear arithmetic *)
 
@@ -838,7 +874,10 @@ in
 
     (``0n <= 1n``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``1n <= 0n``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:num) <= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) <= x``,
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num reflexivity lemma *)]),
     (``(x:num) <= y ==> 42 * x <= 42 * y``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
 
@@ -850,24 +889,40 @@ in
 
     (``1n >= 0n``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``0n >= 1n``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
-    (``(x:num) >= x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) >= x``,
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num reflexivity lemma *)]),
     (``(x:num) >= y ==> 42 * x >= 42 * y``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
 
     (``((x:num) < y) = (y > x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``((x:num) <= y) = (y >= x)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) < y /\ y <= z ==> x < z``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num transitivity lemma *)]),
     (``(x:num) <= y /\ y <= z ==> x <= z``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num transitivity lemma *)]),
     (``(x:num) > y /\ y >= z ==> x > z``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num transitivity lemma *)]),
     (``(x:num) >= y /\ y >= z ==> x >= z``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num transitivity lemma *)]),
 
-    (``(x:num) >= 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) >= 0``,
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num nonnegativity lemma *)]),
     (``0 < (x:num) /\ x <= 1 ==> (x = 1)``,
-      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this variable num interval lemma *)]),
 
     (* int *)
 
@@ -950,67 +1005,106 @@ in
 
     (* conversions between numeric types *)
 
-    (``(x:num) < 42 ==> &x < (42:int)``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``(x:num) < 42 ==> &x < (42:int)``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this num-to-int monotonicity lemma *)]),
     (``(x:num) < 42 ==> &x < (42:real)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
+      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this num-to-real monotonicity lemma *)]),
     (``(42:int) < x ==> (42:num) < Num x``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this int-to-num monotonicity lemma *)]),
     (``(x:int) < 42 ==> real_of_int x < (42:real)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*), thm_CVCp]),
     (``(x:int) < -42 ==> real_of_int x < (-42:real)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*), thm_CVCp]),
 
     (``flr (42:real) = (42:num)``,
       [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``flr (-42:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this flr-to-num lemma *)]),
     (``flr (4/3:real) = (1:num)``,
       [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``flr (-4/3:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this flr-to-num lemma *)]),
     (``flr (0:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this flr-to-num lemma *)]),
     (``(x:real) < 0 ==> flr x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this flr-to-num lemma *)]),
     (``(x:real) <= 0 ==> flr x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this flr-to-num lemma *)]),
 
     (``clg (42:real) = (42:num)``,
       [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``clg (-42:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clg-to-num lemma *)]),
     (``clg (4/3:real) = (2:num)``,
       [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``clg (-4/3:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clg-to-num lemma *)]),
     (``clg (0:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clg-to-num lemma *)]),
     (``(x:real) < 0 ==> clg x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clg-to-num lemma *)]),
     (``(x:real) <= 0 ==> clg x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clg-to-num lemma *)]),
 
     (``flrtoks (42:real) = (42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
     (``flrtoks (-42:real) = (-42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
     (``flrtoks (4/3:real) = (1:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 aborts while producing an Alethe proof:
+          Fresh Skolems are not allowed *)]),
     (``flrtoks (-4/3:real) = (-2:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 aborts while producing an Alethe proof:
+          Fresh Skolems are not allowed *)]),
     (``0 < (x:real) ==> ((flrtoks x): int) = &((flr x): num)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``0 <= (x:real) ==> ((flrtoks x): int) = &((flr x): num)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
 
     (``clgtoks (42:real) = (42:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clgtoks lemma *)]),
     (``clgtoks (-42:real) = (-42:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this clgtoks lemma *)]),
     (``clgtoks (4/3:real) = (2:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 aborts while producing an Alethe proof:
+          Fresh Skolems are not allowed *)]),
     (``clgtoks (-4/3:real) = (-1:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 aborts while producing an Alethe proof:
+          Fresh Skolems are not allowed *)]),
     (``0 < (x:real) ==> ((clgtoks x): int) = &((clg x): num)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``0 <= (x:real) ==> ((clgtoks x): int) = &((clg x): num)``,
@@ -1039,7 +1133,10 @@ in
     (* Yices 1.0.28 reports `unknown' for the next goal, while Z3 2.13
        (somewhat surprisingly, as SMT-LIB does not seem to require
        non-empty sorts) can prove it *)
-    (``?x. x = x``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (``?x. x = x``,
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.1.2 segfaults while producing an
+          Alethe proof for this existential over an uninterpreted sort *)]),
     (``(?y. !x. P x y) ==> (!x. ?y. P x y)``,
       [thm_AUTO, (*thm_CVC,*) thm_YO, thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
     (* CVC5 1.0.8 and Yices 1.0.28 report `unknown' for the next goal *)
@@ -1063,8 +1160,8 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(\x. x (\x. x)) = (\y. y (\x. x))``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
-    (* Yices 1.0.29 fails to decide this one *)
-    (``(\x. x (\x. x)) = (\y. y x)``, [sat_CVC, (*sat_YO,*) sat_Z3, sat_Z3p, sat_CVCp]),
+    (* Higher-order rator expression unsupported by the SMT-LIB translator. *)
+    (``(\x. x (\x. x)) = (\y. y x)``, [(*sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp*)]),
     (``f x = (\x. f x) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``f x = (\y. f y) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
@@ -1502,7 +1599,9 @@ in
     (``!(n:num) z y a. (3 * n + 1) * z <= y * a ==> 3 * (n * z) <= 2 * (y * a)``,
       [thm_AUTO, (*thm_CVC,*) thm_Z3(*, thm_Z3p*)]),
 
-    (``Abbrev ((x:num) = 5) ==> x = 5``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* cvc5 1.1.2 aborts in Alethe proof production:
+       "Fresh Skolems are not allowed". *)
+    (``Abbrev ((x:num) = 5) ==> x = 5``, [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4]),
 
     (``!(x:real). 2 <= x /\ x <= 3 ==>
       0 < x - (x pow 3) / 6 + (x pow 5) / 120 - (x pow 7) / 5040``,

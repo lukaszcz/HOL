@@ -52,6 +52,7 @@ struct
     "th_lemma[" ^ th_lemma_metadata_to_string metadata ^ "]"
 
   datatype proofterm = AND_ELIM of proofterm * Term.term
+                     | APPLY_DEF of proofterm * Term.term
                      | ASSERTED of Term.term
                      | COMMUTATIVITY of Term.term
                      | DEF_AXIOM of Term.term
@@ -124,6 +125,7 @@ struct
 
   val proof_rule_registry : proof_rule list = [
     mk_rule ("and-elim", [], OnePremise, "and_elim"),
+    mk_rule ("apply-def", [], OnePremise, "apply_def"),
     mk_rule ("asserted", [], ZeroPremises, "asserted"),
     mk_rule ("commutativity", [], ZeroPremises, "commutativity"),
     mk_rule ("def-axiom", [], ZeroPremises, "def_axiom"),

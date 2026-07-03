@@ -851,6 +851,34 @@ local
   fun z3_hypothesis (state, t) =
       (state, Thm.ASSUME t)
 
+  (* `apply-def` unfolds a name introduced by `intro-def`.
+
+     Z3 documents this rule as deriving ``F ~ n`` from a proof that ``n`` is a
+     name for ``F``.  This parser represents equivalence modulo naming (``~``)
+     as HOL equality, and `z3_intro_def` records the underlying definitional
+     equality as a hypothesis. *)
+  fun z3_apply_def (state, thm, t) =
+  let
+    fun oriented_def def =
+      let
+        val def_thm = Thm.ASSUME def
+      in
+        if Thm.concl def_thm ~~ t then
+          def_thm
+        else
+          let val sym_def_thm = Thm.SYM def_thm
+          in
+            if Thm.concl sym_def_thm ~~ t then
+              sym_def_thm
+            else
+              raise ERR "z3_apply_def" "definition has wrong orientation"
+          end
+      end
+    val def_thm = Lib.tryfind oriented_def (HOLset.listItems (Thm.hypset thm))
+  in
+    (state, def_thm)
+  end
+
   (*   ... |- ~p
      ------------
      ... |- p = F *)
@@ -1540,6 +1568,7 @@ local
     ]
 
   fun proofterm_replay_handler (AND_ELIM _) = "and_elim"
+    | proofterm_replay_handler (APPLY_DEF _) = "apply_def"
     | proofterm_replay_handler (ASSERTED _) = "asserted"
     | proofterm_replay_handler (COMMUTATIVITY _) = "commutativity"
     | proofterm_replay_handler (DEF_AXIOM _) = "def_axiom"
@@ -1785,6 +1814,8 @@ local
 
   and thm_of_proofterm (state_proof, AND_ELIM x) continuation =
         one_prem state_proof "and_elim" z3_and_elim x continuation
+    | thm_of_proofterm (state_proof, APPLY_DEF x) continuation =
+        one_prem state_proof "apply_def" z3_apply_def x continuation
     | thm_of_proofterm (state_proof, ASSERTED x) continuation =
         zero_prems state_proof "asserted" z3_asserted x continuation
     | thm_of_proofterm (state_proof, COMMUTATIVITY x) continuation =

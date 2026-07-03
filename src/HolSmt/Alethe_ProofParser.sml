@@ -510,6 +510,9 @@ in
         case try_parse_rational token of
           SOME t => t
         | NONE =>
+          (* cvc5 may print real literals as decimals such as 0.0. *)
+          (SmtLib_Theories.real_of_decimal token
+          handle Feedback.HOL_ERR _ =>
           (* Try negative integer literal like "-1", "-42" *)
           if String.size token > 1 andalso String.sub (token, 0) = #"-" then
             let val num_str = String.extract (token, 1, NONE)
@@ -524,7 +527,7 @@ in
           (* Unknown identifier — create a free bool variable as placeholder.
              This handles bound variable names (b0, b1, ...) and other names
              that appear in cvc5 proofs but not in the inverted dictionary. *)
-          else Term.mk_var (token, Type.bool)
+          else Term.mk_var (token, Type.bool))
       else if List.null indices then
         (* Applied to arguments: create a function variable *)
         let val arg_tys = List.map Term.type_of args

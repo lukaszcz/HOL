@@ -570,7 +570,7 @@ local
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          qf ^ "AX"
+          if quantifiers then "ALL" else "QF_AX"
         else
           qf ^ "UF"
       val logic =

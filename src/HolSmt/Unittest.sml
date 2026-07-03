@@ -1592,7 +1592,8 @@ in
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
-  expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``
+  expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
+  expect_logic "ALL" ``!(x:'a). (P:'a -> bool) x``
 end
 
 fun smtlib_translation_records_success () =
@@ -2040,6 +2041,10 @@ let
     ("and-elim",
       "((proof (and-elim (asserted (and false true)) false)))",
       ``F``),
+    ("apply-def",
+      "((declare-fun z () Bool) \
+        \(proof (apply-def (intro-def (= z false)) (= false z))))",
+      ``F = (z:bool)``),
     ("asserted",
       "((proof (asserted false)))",
       ``F``),

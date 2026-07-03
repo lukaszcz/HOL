@@ -93,11 +93,45 @@ local
      dynamic (its contents change as theories are loaded), which is
      undesirable in a decision procedure. real_ss is static and covers
      most real-number simplification; we add REAL_ADD_LINV/RINV for
-     goals like -(1*x) + x = 0 that arise from Alethe proofs. *)
+     goals like -(1*x) + x = 0 that arise from Alethe proofs.  We also
+     include HOL's real division-by-zero definition so quantified
+     instantiation clauses over SMT real division replay without relying on
+     preprocessing to add local facts. *)
   val alethe_ss =
-    simpLib.++ (realSimps.real_ss,
+    simpLib.++ (simpLib.++ (realSimps.real_ss, wordsLib.SIZES_ss),
     simpLib.rewrites [realTheory.REAL_ADD_LINV, realTheory.REAL_ADD_RINV,
-                      realTheory.POW_ONE])
+                      realTheory.POW_ONE, realaxTheory.real_div,
+                      realTheory.REAL_INV_0, realTheory.REAL_MUL_RZERO,
+                      intrealTheory.real_of_int_neg,
+                      intrealTheory.real_of_int_num,
+                      wordsTheory.WORD_AND_IDEM,
+                      wordsTheory.WORD_OR_IDEM,
+                      wordsTheory.WORD_AND_COMM,
+                      wordsTheory.WORD_OR_COMM,
+                      wordsTheory.WORD_XOR_COMM,
+                      wordsTheory.WORD_AND_ASSOC,
+                      wordsTheory.WORD_OR_ASSOC,
+                      wordsTheory.WORD_XOR_ASSOC,
+                      wordsTheory.WORD_XOR_CLAUSES,
+                      wordsTheory.WORD_AND_CLAUSES,
+                      wordsTheory.WORD_OR_CLAUSES,
+                      wordsTheory.WORD_NOT_NOT,
+                      wordsTheory.WORD_ADD_0,
+                      wordsTheory.WORD_SUB_REFL,
+                      wordsTheory.WORD_SUB_RZERO,
+                      wordsTheory.WORD_MULT_CLAUSES,
+                      wordsTheory.WORD_NEG_0,
+                      wordsTheory.WORD_NEG_NEG,
+                      wordsTheory.word_lsl_bv_def,
+                      wordsTheory.word_lsr_bv_def,
+                      wordsTheory.word_asr_bv_def,
+                      wordsTheory.w2n_n2w,
+                      wordsTheory.LSL_LIMIT,
+                      wordsTheory.LSR_LIMIT,
+                      wordsTheory.ASR_LIMIT])
+
+  fun replay_progress_enabled () =
+    OS.Process.getEnv "HOL4_ALETHE_REPLAY_PROGRESS" = SOME "1"
 
   (* prove |- t by trying various automation *)
   fun auto_prove name t =
@@ -117,24 +151,79 @@ local
     raise ERR name ("failed to prove: " ^ Hol_pp.term_to_string t)
 
   (* prove an arithmetic tautology *)
-  fun arith_prove t =
+  fun arith_prove_raw t =
     intLib.ARITH_PROVE t
     handle Feedback.HOL_ERR _ =>
     RealField.REAL_ARITH t
     handle Feedback.HOL_ERR _ =>
     (* nonlinear arithmetic fallback *)
     if Library.is_nonlinear t then Library.nla_prove t
-    else raise ERR "arith_prove" ("failed: " ^ Hol_pp.term_to_string t)
+    else raise ERR "arith_prove_raw" ("failed: " ^ Hol_pp.term_to_string t)
+
+  fun arith_prove t =
+    let
+      val _ =
+        if replay_progress_enabled () then
+          print ("\nAlethe arith normalize: " ^ Library.term_to_string t ^ "\n")
+        else
+          ()
+      val t_eq_t' =
+        simpLib.SIMP_CONV alethe_ss [] t
+        handle Conv.UNCHANGED => Thm.REFL t
+      val t' = boolSyntax.rhs (Thm.concl t_eq_t')
+      val _ =
+        if replay_progress_enabled () then
+          print ("\nAlethe arith normalized: " ^ Library.term_to_string t' ^ "\n")
+        else
+          ()
+    in
+      if Term.aconv t t' then
+        (if replay_progress_enabled () then
+           print ("\nAlethe arith raw: " ^ Library.term_to_string t ^ "\n")
+         else
+           ();
+         arith_prove_raw t)
+      else
+        Thm.EQ_MP (Thm.SYM t_eq_t') (arith_prove_raw t')
+    end
+
+  fun prove_arith_from_prems prems target =
+  let
+    val hyps = List.map Thm.concl prems
+    val imp_thm = arith_prove (boolSyntax.list_mk_imp (hyps, target))
+  in
+    List.foldl (fn (prem, th) => Thm.MP th prem) imp_thm prems
+  end
 
   (* try to prove a tautology by METIS *)
   (* METIS with a time/inference limit to avoid non-termination *)
   val metis_limit : mlibMeter.limit = {time = SOME 0.2, infs = SOME 500}
 
   fun metis_prove thms t =
-    Lib.with_flag (metisTools.limit, metis_limit)
-      (fn () => metisLib.METIS_PROVE thms t) ()
+    Feedback.trace ("metis", 0)
+      (fn () =>
+        Lib.with_flag (metisTools.limit, metis_limit)
+          (fn () => metisLib.METIS_PROVE thms t) ()) ()
     handle Feedback.HOL_ERR _ =>
     raise ERR "metis_prove" ("failed: " ^ Hol_pp.term_to_string t)
+
+  val intreal_order_bridge_metis_limit : mlibMeter.limit =
+    {time = SOME 1.0, infs = SOME 5000}
+
+  fun prove_intreal_order_bridge t =
+    Feedback.trace ("metis", 0)
+      (fn () =>
+        Lib.with_flag (metisTools.limit, intreal_order_bridge_metis_limit)
+          (fn () =>
+            metisLib.METIS_PROVE
+              [realTheory.real_ge, realTheory.real_lte,
+               integerTheory.int_ge,
+               intrealTheory.real_of_int_le, intrealTheory.real_of_int_lt,
+               intrealTheory.real_of_int_neg, intrealTheory.real_of_int_num] t)
+          ()) ()
+    handle Feedback.HOL_ERR _ =>
+    raise ERR "prove_intreal_order_bridge" ("failed: " ^
+      Hol_pp.term_to_string t)
 
   (* Direct clause resolution, adapted from Z3_ProofReplay.unit_resolution.
      Given thms = [clause, unit1, unit2, ...], derives t by resolving
@@ -667,6 +756,23 @@ local
   (* --- forall_inst --- *)
   (* Alethe forall_inst: ¬(∀x1...xn. P) ∨ P[t1/x1,...,tn/xn]
      from :args (t1 ... tn) *)
+  fun spec_forall_with_args forall_tm args =
+    List.foldl (fn (arg, th) => Thm.SPEC arg th)
+      (Thm.ASSUME forall_tm) args
+
+  fun spec_forall_from_literal forall_tm lit =
+  let
+    val (qvars, body) = boolSyntax.strip_forall forall_tm
+    val (tmsubst, _) = Term.match_term body lit
+    fun arg_of v =
+      case Lib.subst_assoc (fn redex => Term.aconv redex v) tmsubst of
+        SOME arg => arg
+      | NONE => raise ERR "spec_forall_from_literal"
+                  "clause literal does not instantiate every bound variable"
+  in
+    spec_forall_with_args forall_tm (List.map arg_of qvars)
+  end
+
   fun replay_forall_inst (s : state) (id : string)
                          (clause : Term.term list) (args : Term.term list) =
   let
@@ -682,25 +788,39 @@ local
             let val inner = boolSyntax.dest_neg d
                 val _ = boolSyntax.dest_forall inner
             in (d, inner) end) disjs
-        (* Instantiate: ∀x1...xn. P ⊢ P[t1/x1,...,tn/xn] *)
-        val spec_thm = List.foldl (fn (arg, th) => Thm.SPEC arg th)
-                         (Thm.ASSUME forall_tm) args
-        val body_inst = Thm.concl spec_thm
-        (* Build ⊢ ¬∀_tm ∨ body_inst via excluded middle *)
-        val em = Thm.SPEC forall_tm boolTheory.EXCLUDED_MIDDLE
-        val right = Thm.DISJ2 neg_forall spec_thm
-        val left = Thm.DISJ1 (Thm.ASSUME neg_forall) body_inst
-        val result = Thm.DISJ_CASES em right left
-      in
-        if Term.aconv (Thm.concl result) target then result
-        else
-          (* SPEC result may differ from parser's body_inst;
-             use resolution to bridge the gap *)
-          let val imp = tautLib.TAUT_PROVE
-                (boolSyntax.mk_imp (Thm.concl result, target))
-          in Thm.MP imp result end
+        fun build_result spec_thm =
+        let
+          val body_inst = Thm.concl spec_thm
+          (* Build ⊢ ¬∀_tm ∨ body_inst via excluded middle *)
+          val em = Thm.SPEC forall_tm boolTheory.EXCLUDED_MIDDLE
+          val right = Thm.DISJ2 neg_forall spec_thm
+          val left = Thm.DISJ1 (Thm.ASSUME neg_forall) body_inst
+        in
+          Thm.DISJ_CASES em right left
+        end
+        fun bridge_result result =
+          if Term.aconv (Thm.concl result) target then result
+          else
+            (* SPEC result may differ from parser's body_inst;
+               use propositional reasoning to bridge the gap *)
+            let val imp = tautLib.TAUT_PROVE
+                  (boolSyntax.mk_imp (Thm.concl result, target))
+            in Thm.MP imp result end
+        fun result_from_args () =
+          bridge_result (build_result (spec_forall_with_args forall_tm args))
+        fun result_from_clause () =
+          Lib.tryfind (fn d =>
+            if Term.aconv d neg_forall then
+              raise ERR "replay_forall_inst" "skipping negated forall"
+            else
+              bridge_result (build_result (spec_forall_from_literal forall_tm d)))
+            disjs
+        val result =
+          result_from_args ()
           handle Feedback.HOL_ERR _ =>
-          auto_prove "replay_forall_inst" target
+          result_from_clause ()
+      in
+        result
       end
       handle Feedback.HOL_ERR _ =>
       auto_prove "replay_forall_inst" target
@@ -732,6 +852,11 @@ local
     (cache_step s id thm, thm)
   end
 
+  (* Check if any free variable or subterm has a word type. *)
+  fun has_word_type tm =
+    Lib.can (HolKernel.find_term
+      (fn t => wordsSyntax.is_word_type (Term.type_of t))) tm
+
   (* --- rewrite --- *)
   fun replay_rewrite (s : state) (id : string) (clause : Term.term list) =
   let
@@ -746,14 +871,32 @@ local
       (let val (l, r) = boolSyntax.dest_eq target
        in Thm.ALPHA l r end)
       handle Feedback.HOL_ERR _ =>
+      (* Arithmetic simplification rules normalize comparisons, signs, and
+         small algebraic contexts.  Discharge those with the arithmetic prover
+         before trying broader rewrite libraries. *)
+      arith_prove target
+      handle Feedback.HOL_ERR _ =>
+      (* cvc5 all_simplify emits bitvector equalities for word identities and
+         fixed-width shift simplifications.  Use HOL's word decision procedure
+         for those obligations instead of putting associative and commutative
+         word arithmetic rewrites into the general simpset. *)
+      (if has_word_type target then wordsLib.WORD_DECIDE target
+       else raise ERR "" "")
+      handle Feedback.HOL_ERR _ =>
+      (* Alethe simplification rules normalize literals, Boolean connectives,
+         and theory definitions such as SMT real division. *)
+      simpLib.SIMP_PROVE alethe_ss [] target
+      handle Feedback.HOL_ERR _ =>
+      (* cvc5's all_simplify can bridge integer comparisons embedded in reals,
+         e.g. real_of_int x >= 42r = x >= 42i.  Keep this targeted so the
+         replay rule does not become a general-purpose rewrite search. *)
+      prove_intreal_order_bridge target
+      handle Feedback.HOL_ERR _ =>
       (* Try proforma theorems *)
       Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms target
       handle Feedback.HOL_ERR _ =>
       (* Try TAUT *)
       tautLib.TAUT_PROVE target
-      handle Feedback.HOL_ERR _ =>
-      (* Try arithmetic *)
-      arith_prove target
       handle Feedback.HOL_ERR _ =>
       (* Try EVAL *)
       Drule.EQT_ELIM (bossLib.EVAL target)
@@ -776,13 +919,13 @@ local
         handle Feedback.HOL_ERR _ =>
         prove_tautology clause
       else
-        metis_prove prems target
+        (* Alethe arithmetic rules justify their clauses by arithmetic over
+           the premise clauses.  Build that implication directly before
+           falling back to generic premise search, which can be expensive on
+           nonlinear real side conditions. *)
+        prove_arith_from_prems prems target
         handle Feedback.HOL_ERR _ =>
-        let val hyps = List.map Thm.concl prems
-            val imp_thm = arith_prove (boolSyntax.list_mk_imp (hyps, target))
-            val thm = Lib.funpow (List.length prems) (fn th =>
-                Thm.MP th (List.hd prems)) imp_thm
-        in thm end
+        metis_prove prems target
         handle Feedback.HOL_ERR _ =>
         raise ERR "replay_arith" ("failed: " ^
           Library.term_to_string target)
@@ -928,11 +1071,6 @@ local
       strip_match lhs rhs
     end
 
-  (* Check if any free variable or subterm has a word type *)
-  fun has_word_type tm =
-    Lib.can (HolKernel.find_term
-      (fn t => wordsSyntax.is_word_type (Term.type_of t))) tm
-
   fun replay_hole (s : state) (id : string)
                   (prems : Thm.thm list) (clause : Term.term list) =
     replay_rewrite s id clause
@@ -1010,6 +1148,13 @@ local
   let
     val {id, clause, rule, premises, args, discharge} = step
     val prems = lookup_premises s premises
+    val _ =
+      if replay_progress_enabled () then
+        print ("\nAlethe step " ^ id ^ " rule=" ^ rule ^
+          " premises=[" ^ String.concatWith "," premises ^ "] clause=" ^
+          Library.term_to_string (clause_to_disj clause) ^ "\n")
+      else
+        ()
     val _ = if !Library.trace > 2 then
               Feedback.HOL_MESG ("Alethe: replaying step '" ^ id ^
                 "' rule='" ^ rule ^ "' premises=[" ^

@@ -468,6 +468,7 @@ local
          concl))
 
   and proofterm_maker version "and_elim" = one_prem_pt version AND_ELIM
+    | proofterm_maker version "apply_def" = one_prem_pt version APPLY_DEF
     | proofterm_maker version "asserted" = zero_prems_pt ASSERTED
     | proofterm_maker version "commutativity" = zero_prems_pt COMMUTATIVITY
     | proofterm_maker version "def_axiom" = zero_prems_pt DEF_AXIOM
