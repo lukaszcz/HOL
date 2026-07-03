@@ -1431,23 +1431,34 @@ local
   val parse_declare_const = parse_declare_const_fun false
   val parse_declare_fun = parse_declare_const_fun true
 
-  fun parse_declare_datatype get_token (tydict, tmdict) =
+  fun legacy_datatype_type name =
+    Type.mk_vartype ("'smtlib_dt_" ^ name)
+
+  fun legacy_extend_datatype_sort command name arity_text tydict =
   let
-    val name = get_token ()
-    val datatype_ty = Type.mk_vartype ("'smtlib_dt_" ^ name)
-    fun reject_recursive selector_ty =
-      if selector_ty = datatype_ty then
-        raise ERR "declare-datatype"
-          "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
-      else
-        ()
+    val arity =
+      case Int.fromString arity_text of
+        SOME n => n
+      | NONE => raise ERR command
+          ("declare-datatypes arity for '" ^ name ^
+           "' must be a numeral, got '" ^ arity_text ^ "'")
+    val _ =
+      if arity = 0 then ()
+      else raise ERR command
+        ("declare-datatypes arity for '" ^ name ^
+         "': unsupported legacy parser arity " ^ arity_text)
+    val datatype_ty = legacy_datatype_type name
     fun parse_ty token indices args =
       if List.null indices andalso List.null args then
         datatype_ty
       else
         raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
-    val tydict = Library.extend_dict ((name, parse_ty), tydict)
+  in
+    Library.extend_dict ((name, parse_ty), tydict)
+  end
 
+  fun parse_datatype_decl_body get_token command name datatype_ty tydict tmdict =
+  let
     fun add_constructor (ctor_name, selectors, tmdict) =
       let
         val arg_tys = List.map Lib.snd selectors
@@ -1499,7 +1510,6 @@ local
       let
         val selector_name = get_token ()
         val selector_ty = parse_type get_token tydict
-        val _ = reject_recursive selector_ty
         val _ = Library.expect_token ")" (get_token ())
       in
         (selector_name, selector_ty) :: selectors
@@ -1526,7 +1536,7 @@ local
     val first = get_token ()
     val _ =
       if first = "par" then
-        raise ERR "declare-datatype"
+        raise ERR command
           "parametric datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
       else
         Library.expect_token "(" first
@@ -1544,6 +1554,70 @@ local
       end
 
     val tmdict = constructors tmdict
+  in
+    tmdict
+  end
+
+  fun parse_declare_datatype get_token (tydict, tmdict) =
+  let
+    val name = get_token ()
+    val datatype_ty = legacy_datatype_type name
+    val tydict = legacy_extend_datatype_sort "declare-datatype" name "0" tydict
+    val tmdict = parse_datatype_decl_body get_token "declare-datatype"
+      name datatype_ty tydict tmdict
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    (tydict, tmdict)
+  end
+
+  fun parse_declare_datatypes get_token (tydict, tmdict) =
+  let
+    fun parse_binding acc =
+      let
+        val token = get_token ()
+      in
+        if token = ")" then
+          List.rev acc
+        else
+          let
+            val _ = Library.expect_token "(" token
+            val name = get_token ()
+            val arity = get_token ()
+            val _ = Library.expect_token ")" (get_token ())
+          in
+            parse_binding ((name, arity) :: acc)
+          end
+      end
+
+    val _ = Library.expect_token "(" (get_token ())
+    val bindings = parse_binding []
+    val _ =
+      if List.null bindings then
+        raise ERR "declare-datatypes" "empty declare-datatypes command"
+      else ()
+    val tydict =
+      List.foldl
+        (fn ((name, arity), tydict) =>
+          legacy_extend_datatype_sort "declare-datatypes" name arity tydict)
+        tydict bindings
+
+    fun parse_decls [] tmdict =
+      let val token = get_token ()
+      in
+        Library.expect_token ")" token;
+        tmdict
+      end
+      | parse_decls ((name, _) :: rest) tmdict =
+        let
+          val datatype_ty = legacy_datatype_type name
+          val tmdict = parse_datatype_decl_body get_token "declare-datatypes"
+            name datatype_ty tydict tmdict
+        in
+          parse_decls rest tmdict
+        end
+
+    val _ = Library.expect_token "(" (get_token ())
+    val tmdict = parse_decls bindings tmdict
     val _ = Library.expect_token ")" (get_token ())
   in
     (tydict, tmdict)
@@ -1912,8 +1986,15 @@ local
           (SOME (update_current_dicts (tydict, tmdict) command_state))
       end
     | "declare-datatypes" =>
-      raise ERR "parse_commands"
-        "unsupported command 'declare-datatypes': mutual datatype declarations are parsed by the script AST but not installed in the HOL dictionary"
+      let
+        val command_state = dest_state "declare-datatypes" state
+        val (tydict, tmdict) = current_dicts command_state
+        val (tydict, tmdict) = parse_declare_datatypes get_token
+          (tydict, tmdict)
+      in
+        parse_commands get_token
+          (SOME (update_current_dicts (tydict, tmdict) command_state))
+      end
     | "assert" =>
       let
         val command_state = dest_state "assert" state
@@ -3401,6 +3482,7 @@ in
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list
+  val parse_benchmark = parse_benchmark
 
   (* 'parse_file' parses an SMT-LIB 2 benchmark, returning the
      benchmark's logic, two dictionaries containing all types and

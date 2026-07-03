@@ -560,14 +560,15 @@
       "solved": "not_applicable",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; simple declare-datatype installs parser/typecheck dictionaries; mutual/parametric datatype paths and datatype replay are covered by explicit diagnostics in src/HolSmt/Unittest.sml.",
-      "notes": "Simple datatype declarations are parse/typecheck embeddings. Mutual datatype declarations are not installed into the HOL dictionary, and Z3 datatype theory replay remains explicitly unsupported.",
+      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; declare-datatype and arity-0 declare-datatypes install parser/typecheck dictionaries; checked Z3_TAC rejects datatype reconstruction with explicit diagnostics.",
+      "notes": "Datatype declarations are parse/typecheck embeddings. Parametric legacy benchmark parsing and Z3 datatype theory replay remain explicitly unsupported.",
       "test_ids": [
         "source:src/HolSmt/Unittest.sml#parse_file_datatype_dictionary_success"
       ],
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [
-        "source:src/HolSmt/Unittest.sml#parse_file_datatype_unsupported_diagnostic"
+        "source:src/HolSmt/z3_tac_driver.sml#datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
+        "source:src/HolSmt/z3_tac_driver.sml#datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
       ],
       "current_status": "unsupported_diagnostic",
       "complete_test_ids": [

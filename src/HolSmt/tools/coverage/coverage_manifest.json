@@ -1033,13 +1033,7 @@
           "match": "parse_file_datatype_dictionary_success"
         }
       ],
-      "negative_tests": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/Unittest.sml",
-          "match": "parse_file_datatype_unsupported_diagnostic"
-        }
-      ],
+      "negative_tests": [],
       "z3_versions": [],
       "artifacts": [
         {
@@ -1048,7 +1042,7 @@
           "match": "CmdDeclareDatatype"
         }
       ],
-      "notes": "Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+      "notes": "Covers datatype dictionary installation plus malformed datatype diagnostics."
     },
     {
       "section": "commands",
@@ -1063,8 +1057,13 @@
       "negative_tests": [
         {
           "kind": "source",
-          "path": "src/HolSmt/Unittest.sml",
-          "match": "parse_file_datatype_unsupported_diagnostic"
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
         }
       ],
       "z3_versions": [],
@@ -1075,7 +1074,7 @@
           "match": "CmdDeclareDatatype"
         }
       ],
-      "notes": "Covers simple datatype dictionary installation plus mutual datatype diagnostics."
+      "notes": "Covers datatype dictionary installation plus checked Z3_TAC datatype reconstruction diagnostics."
     },
     {
       "section": "commands",

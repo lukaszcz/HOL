@@ -772,6 +772,25 @@ in
     "datatype dictionary assertion did not parse as Bool")
 end
 
+fun parse_legacy_datatype_mutual_dictionary_success () =
+let
+  val (_, _, _, assertions) =
+    SmtLib_Parser.parse_benchmark
+      (Library.get_token (string_get_char
+        ("(set-logic ALL)\n" ^
+         "(declare-datatypes ((Tree 0) (Forest 0))\n" ^
+         "  (((leaf) (node (children Forest)))\n" ^
+         "   ((nilF) (consF (head Tree) (tail Forest)))))\n" ^
+         "(assert (and ((_ is node) (node nilF)) " ^
+         "(= (head (consF leaf nilF)) leaf)))\n" ^
+         "(exit)\n")))
+in
+  assert (List.length assertions = 1,
+    "legacy datatype parser produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "legacy datatype parser assertion did not parse as Bool")
+end
+
 fun parse_file_echo_success () =
 let
   val assertions =
@@ -2346,6 +2365,8 @@ let
       parse_file_datatype_command_success),
     ("parse_file_datatype_dictionary_success",
       parse_file_datatype_dictionary_success),
+    ("parse_legacy_datatype_mutual_dictionary_success",
+      parse_legacy_datatype_mutual_dictionary_success),
     ("parse_file_echo_success", parse_file_echo_success),
     ("parse_file_push_pop_assertion_scoping",
       parse_file_push_pop_assertion_scoping),
