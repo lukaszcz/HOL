@@ -2323,6 +2323,27 @@ in
   Library.check_oracle_tags "unit-test" thm
 end
 
+fun z3_direct_bitvector_overflow_tautology_sat_success () =
+let
+  fun conjunction [] = boolSyntax.T
+    | conjunction (tm :: tms) =
+        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
+  val state =
+    parse_smtlib_state
+      ("(set-logic QF_BV)\n" ^
+       "(declare-const a (_ BitVec 8))\n" ^
+       "(declare-const b (_ BitVec 8))\n" ^
+       "(assert (or (bvumulo a b) (not (bvumulo a b))))\n" ^
+       "(check-sat)\n")
+  val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+in
+  case Z3.Z3_SMT_Prover ([], goal) of
+    SolverSpec.SAT NONE => ()
+  | SolverSpec.SAT (SOME _) =>
+      die "FAIL: direct bitvector tautology SAT produced a theorem"
+  | _ => die "FAIL: direct bitvector tautology was not reported SAT"
+end
+
 fun z3_direct_distinct_contradiction_success () =
 let
   fun conjunction [] = boolSyntax.T
@@ -2508,6 +2529,8 @@ let
       z3_reconstructed_theorem_contract_rejects_bad_shape),
     ("z3_direct_bitvector_overflow_contradiction_success",
       z3_direct_bitvector_overflow_contradiction_success),
+    ("z3_direct_bitvector_overflow_tautology_sat_success",
+      z3_direct_bitvector_overflow_tautology_sat_success),
     ("z3_direct_distinct_contradiction_success",
       z3_direct_distinct_contradiction_success),
     ("holsmt_solver_result_negative_diagnostics",

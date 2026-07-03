@@ -175,6 +175,17 @@ structure Z3 = struct
     prove_direct_contradiction goal
     handle Feedback.HOL_ERR _ => prove_simplified_goal goal
 
+  fun is_tautological_counterexample ([], g) =
+      (case Lib.total boolSyntax.dest_neg g of
+         SOME asserted =>
+           (case Lib.total tautLib.TAUT_CONV asserted of
+              SOME thm => boolSyntax.is_eq (Thm.concl thm) andalso
+                          Term.aconv (boolSyntax.rhs (Thm.concl thm))
+                            boolSyntax.T
+            | NONE => false)
+       | NONE => false)
+    | is_tautological_counterexample _ = false
+
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover_external =
     mk_Z3_fun "Z3_SMT_Prover"
@@ -223,7 +234,10 @@ structure Z3 = struct
           end)
 
   fun Z3_SMT_Prover goal =
-    SolverSpec.UNSAT (SOME (prove_without_external_solver goal))
-    handle Feedback.HOL_ERR _ => Z3_SMT_Prover_external goal
+    if is_tautological_counterexample goal then
+      SolverSpec.SAT NONE
+    else
+      SolverSpec.UNSAT (SOME (prove_without_external_solver goal))
+      handle Feedback.HOL_ERR _ => Z3_SMT_Prover_external goal
 
 end
