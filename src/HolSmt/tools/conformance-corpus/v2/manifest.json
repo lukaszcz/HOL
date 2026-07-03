@@ -279,11 +279,24 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "pass",
+          "status": "red",
+          "diagnostic": "check-sat-assuming is outside checked Z3_TAC command-line entry point",
+          "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": null,
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml"
+        ],
+        "feature": "command-reconstruction:check-sat-assuming",
+        "test_ids": [
+          "command:check-sat-assuming:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: check-sat-assuming"
@@ -2617,11 +2630,25 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "pass",
+          "status": "red",
+          "diagnostic": "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
+          "failure_phase": "theorem-shape",
           "notes": "theorem reconstruction applies: false"
         }
       },
-      "implementation_obligation": null,
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/z3_tac_driver.sml"
+        ],
+        "feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
+        "test_ids": [
+          "command:get-unsat-assumptions-get-unsat-core:reconstruction"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked Z3_TAC entry point does not implement extraction/replay response objects."
+      },
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 command group: get-unsat-assumptions, get-unsat-core"

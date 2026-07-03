@@ -39,15 +39,15 @@ fun z3_tac_query_diagnostic queries =
     [SmtLib_Parser.QueryCheckSat {assumptions = [], ...}] => NONE
   | [SmtLib_Parser.QueryCheckSat {assumptions = [], ...},
      SmtLib_Parser.QueryGetProof] => NONE
-  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...}] => NONE
-  | [SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...},
-     SmtLib_Parser.QueryGetProof] => NONE
+  | SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...} :: _ =>
+      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
   | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatAssumptions] =>
-      NONE
+      SOME "raw SMT-LIB query get-unsat-assumptions is outside checked Z3_TAC command-line entry point"
   | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore] =>
-      NONE
+      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
   | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore,
-     SmtLib_Parser.QueryGetUnsatAssumptions] => NONE
+     SmtLib_Parser.QueryGetUnsatAssumptions] =>
+      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | SmtLib_Parser.QueryCheckSat _ :: query :: _ =>
@@ -108,14 +108,14 @@ fun z3_tac_script_query_diagnostic query_names =
   case query_names of
     ["check-sat"] => NONE
   | ["check-sat", "get-proof"] => NONE
-  | ["check-sat-assuming"] => NONE
-  | ["check-sat-assuming", "get-proof"] => NONE
-  | ["check-sat", "get-unsat-assumptions"] => NONE
-  | ["check-sat", "get-unsat-core"] => NONE
-  | ["check-sat", "get-unsat-core", "get-unsat-assumptions"] => NONE
-  | ["check-sat-assuming", "get-unsat-assumptions"] => NONE
-  | ["check-sat-assuming", "get-unsat-core"] => NONE
-  | ["check-sat-assuming", "get-unsat-core", "get-unsat-assumptions"] => NONE
+  | "check-sat-assuming" :: _ =>
+      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
+  | ["check-sat", "get-unsat-assumptions"] =>
+      SOME "raw SMT-LIB query get-unsat-assumptions is outside checked Z3_TAC command-line entry point"
+  | ["check-sat", "get-unsat-core"] =>
+      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
+  | ["check-sat", "get-unsat-core", "get-unsat-assumptions"] =>
+      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | "check-sat" :: query :: _ =>
