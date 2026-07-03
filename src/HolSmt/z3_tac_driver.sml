@@ -181,6 +181,9 @@ let
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
       (z3_tac_query_fragment_terms queries)
+  val replay_diagnostic =
+    SmtLib_Logics.checked_replay_unsupported_diagnostic observed_logic
+      (z3_tac_query_fragment_terms queries)
 in
   if observed_logic <> expected_logic then
     z3_tac_die "Z3_TAC_FAIL"
@@ -192,6 +195,10 @@ in
       ["logic=" ^ observed_logic,
        "diagnostic=checked mode must reject logic fragment violations before reconstruction: " ^
          valOf fragment_diagnostic]
+  else if Option.isSome replay_diagnostic then
+    z3_tac_die "Z3_TAC_UNSUPPORTED"
+      ["logic=" ^ observed_logic,
+       "diagnostic=" ^ valOf replay_diagnostic]
   else
     case z3_tac_query_diagnostic queries of
       SOME diagnostic =>

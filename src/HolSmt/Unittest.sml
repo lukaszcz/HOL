@@ -1225,6 +1225,60 @@ fun smtlib_logic_fragment_diagnostics () =
       "integer-only term"
   end
 
+fun smtlib_checked_replay_gap_diagnostics () =
+  let
+    fun replay_gap logic text =
+      let
+        val state = parse_smtlib_state text
+      in
+        SmtLib_Logics.checked_replay_unsupported_diagnostic logic
+          (#assertions state)
+      end
+    fun expect_gap label logic text expected =
+      case replay_gap logic text of
+        SOME msg =>
+          assert (contains expected msg,
+            label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
+      | NONE => die (label ^ " checked replay gap was not detected")
+    fun expect_no_gap label logic text =
+      case replay_gap logic text of
+        SOME msg =>
+          die (label ^ " reported a spurious checked replay gap: " ^ msg)
+      | NONE => ()
+  in
+    expect_gap "UnicodeStrings replay" "QF_SLIA"
+      ("(set-logic QF_SLIA)\n" ^
+       "(declare-const s String)\n" ^
+       "(assert (str.prefixof s (str.++ s s)))\n" ^
+       "(check-sat)\n")
+      "theory:UnicodeStrings:checked-replay";
+    expect_gap "RegLan replay" "QF_SLIA"
+      ("(set-logic QF_SLIA)\n" ^
+       "(declare-const s String)\n" ^
+       "(assert (str.in_re s (str.to_re s)))\n" ^
+       "(check-sat)\n")
+      "theory:UnicodeStrings:RegLan:checked-replay";
+    expect_gap "Z3 set replay" "ALL"
+      ("(set-logic ALL)\n" ^
+       "(declare-const x Int)\n" ^
+       "(declare-const xs (Set Int))\n" ^
+       "(assert (set.member x xs))\n" ^
+       "(check-sat)\n")
+      "theory:Z3_Extensions:seq-set-bag:checked-replay";
+    expect_gap "nonlinear arithmetic replay" "NIA"
+      ("(set-logic NIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(declare-const y Int)\n" ^
+       "(assert (= (* x y) 1))\n" ^
+       "(check-sat)\n")
+      "proof-rule:th-lemma-nonlinear-arith";
+    expect_no_gap "integer equality replay" "QF_LIA"
+      ("(set-logic QF_LIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(assert (= x x))\n" ^
+       "(check-sat)\n")
+  end
+
 fun smtlib_typecheck_overloaded_and_indexed_success () =
 let
   val assertions =
@@ -2457,6 +2511,8 @@ let
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",
       smtlib_logic_fragment_diagnostics),
+    ("smtlib_checked_replay_gap_diagnostics",
+      smtlib_checked_replay_gap_diagnostics),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
     ("smtlib_core_symbol_metadata_success",

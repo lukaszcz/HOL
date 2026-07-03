@@ -415,6 +415,81 @@ in
 
   fun term_type_contains pred tm = type_contains pred (Term.type_of tm)
 
+  fun symbol_name tm =
+    let val (rator, _) = boolSyntax.strip_comb tm
+    in
+      if Term.is_var rator then SOME (Lib.fst (Term.dest_var rator))
+      else if Term.is_const rator then
+        SOME (#Name (Term.dest_thy_const rator))
+      else NONE
+    end
+    handle _ => NONE
+
+  fun symbol_name_is_prefix prefix tm =
+    case symbol_name tm of
+      SOME name => String.isPrefix prefix name
+    | NONE => false
+
+  fun type_contains_vartype_prefix prefix =
+    type_contains (fn ty =>
+      Type.is_vartype ty andalso
+      String.isPrefix prefix (Type.dest_vartype ty))
+
+  fun term_mentions_reglan tm =
+    term_type_contains (type_contains_vartype_prefix "'smtlib_RegLan") tm
+    orelse symbol_name_is_prefix "smtlib_re_" tm
+    orelse symbol_name_is_prefix "smtlib_str_in_re" tm
+    orelse symbol_name_is_prefix "smtlib_str_replace_re" tm
+    orelse symbol_name_is_prefix "smtlib_str_to_re" tm
+
+  fun term_mentions_z3_sequence_set_bag tm =
+    symbol_name_is_prefix "smtlib_seq_" tm orelse
+    symbol_name_is_prefix "smtlib_set_" tm orelse
+    symbol_name_is_prefix "smtlib_bag_" tm
+
+  fun term_mentions_floatingpoint tm =
+    term_type_contains (type_contains_vartype_prefix "'smtlib_FloatingPoint") tm
+    orelse term_type_contains
+      (type_contains_vartype_prefix "'smtlib_RoundingMode") tm
+    orelse symbol_name_is_prefix "smtlib_fp" tm
+    orelse symbol_name_is_prefix "fp." tm
+    orelse symbol_name_is_prefix "to_fp" tm
+
+  fun checked_replay_gap_message logic family missing_feature case_ids =
+    "checked Z3_TAC replay for " ^ family ^
+    " is not implemented for logic " ^ logic ^
+    "; missing feature: " ^ missing_feature ^
+    "; failing case IDs: " ^ String.concatWith ", " case_ids
+
+  fun checked_replay_unsupported_diagnostic logic assertions =
+    let
+      val all_subterms = List.concat (List.map subterms assertions)
+      fun some_subterm p = List.exists p all_subterms
+    in
+      if some_subterm term_mentions_reglan then
+        SOME (checked_replay_gap_message logic "regular expressions"
+          "theory:UnicodeStrings:RegLan:checked-replay"
+          ["theory:UnicodeStrings:regex", "proof-rule:th-lemma-regexp"])
+      else if some_subterm (term_type_contains type_contains_string) then
+        SOME (checked_replay_gap_message logic "UnicodeStrings"
+          "theory:UnicodeStrings:checked-replay"
+          ["theory:UnicodeStrings:string", "proof-rule:th-lemma-string"])
+      else if some_subterm term_mentions_z3_sequence_set_bag then
+        SOME (checked_replay_gap_message logic "Z3 sequence/set/bag extensions"
+          "theory:Z3_Extensions:seq-set-bag:checked-replay"
+          ["theory:Z3_Extensions:seq", "theory:Z3_Extensions:set",
+           "theory:Z3_Extensions:bag", "proof-rule:th-lemma-seq"])
+      else if some_subterm is_nonlinear_product then
+        SOME (checked_replay_gap_message logic "nonlinear arithmetic"
+          "proof-rule:th-lemma-nonlinear-arith"
+          ["proof-rule:th-lemma-nonlinear-arith"])
+      else if some_subterm term_mentions_floatingpoint then
+        SOME (checked_replay_gap_message logic "FloatingPoint"
+          "theory:FloatingPoint:checked-replay"
+          ["theory:FloatingPoint", "proof-rule:th-lemma-fp"])
+      else NONE
+    end
+
   fun fragment_violation_diagnostic logic assertions =
     let
       val all_subterms = List.concat (List.map subterms assertions)
