@@ -89,19 +89,60 @@ fun z3_tac_unsupported_command_diagnostic command =
       SOME "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
   | _ => NONE
 
+fun z3_tac_command_query_name command =
+  case SmtLib_Parser.node_of command of
+    SmtLib_Parser.CmdCheckSat => SOME "check-sat"
+  | SmtLib_Parser.CmdCheckSatAssuming _ => SOME "check-sat-assuming"
+  | SmtLib_Parser.CmdGetProof => SOME "get-proof"
+  | SmtLib_Parser.CmdGetUnsatAssumptions => SOME "get-unsat-assumptions"
+  | SmtLib_Parser.CmdGetUnsatCore => SOME "get-unsat-core"
+  | SmtLib_Parser.CmdGetModel => SOME "get-model"
+  | SmtLib_Parser.CmdGetValue _ => SOME "get-value"
+  | SmtLib_Parser.CmdGetAssignment => SOME "get-assignment"
+  | SmtLib_Parser.CmdGetAssertions => SOME "get-assertions"
+  | SmtLib_Parser.CmdGetInfo _ => SOME "get-info"
+  | SmtLib_Parser.CmdGetOption _ => SOME "get-option"
+  | _ => NONE
+
+fun z3_tac_script_query_diagnostic query_names =
+  case query_names of
+    ["check-sat"] => NONE
+  | ["check-sat", "get-proof"] => NONE
+  | ["check-sat-assuming"] => NONE
+  | ["check-sat-assuming", "get-proof"] => NONE
+  | ["check-sat", "get-unsat-assumptions"] => NONE
+  | ["check-sat", "get-unsat-core"] => NONE
+  | ["check-sat", "get-unsat-core", "get-unsat-assumptions"] => NONE
+  | ["check-sat-assuming", "get-unsat-assumptions"] => NONE
+  | ["check-sat-assuming", "get-unsat-core"] => NONE
+  | ["check-sat-assuming", "get-unsat-core", "get-unsat-assumptions"] => NONE
+  | [] =>
+      SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
+  | "check-sat" :: query :: _ =>
+      SOME ("raw SMT-LIB query " ^ query ^
+            " is outside checked Z3_TAC command-line entry point")
+  | query :: _ =>
+      SOME ("raw SMT-LIB query " ^ query ^
+            " is outside checked Z3_TAC command-line entry point")
+
 fun z3_tac_script_diagnostic path =
   let
     val script = SmtLib_Parser.parse_script_file path
-    fun scan [] = NONE
-      | scan (command :: rest) =
+    fun scan [] query_names =
+          z3_tac_script_query_diagnostic (List.rev query_names)
+      | scan (command :: rest) query_names =
           (case SmtLib_Parser.node_of command of
              SmtLib_Parser.CmdExit => NONE
            | _ =>
              case z3_tac_unsupported_command_diagnostic command of
                SOME diagnostic => SOME diagnostic
-             | NONE => scan rest)
+             | NONE =>
+                 scan rest
+                   (case z3_tac_command_query_name command of
+                      SOME name => name :: query_names
+                    | NONE => query_names))
   in
-    scan script
+    scan script []
   end
 
 datatype z3_tac_checked_result =
