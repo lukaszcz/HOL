@@ -2345,6 +2345,14 @@ in
   expect_failure "extra hypothesis" "extra hypotheses" (fn () =>
     Z3.check_reconstructed_theorem "unit-test"
       (([], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  expect_failure "extra hypothesis details" "unexpected hypotheses: [T]"
+    (fn () =>
+      Z3.check_reconstructed_theorem "unit-test"
+        (([], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  expect_failure "allowed hypothesis details" "allowed hypotheses: []"
+    (fn () =>
+      Z3.check_reconstructed_theorem "unit-test"
+        (([], boolSyntax.T), Thm.ASSUME boolSyntax.T));
   expect_failure "conclusion mismatch" "parsed assertion-negation goal" (fn () =>
     Z3.check_reconstructed_theorem "unit-test"
       (([], boolSyntax.F), boolTheory.TRUTH))

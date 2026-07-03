@@ -128,6 +128,9 @@ structure Z3 = struct
 
   fun check_reconstructed_theorem name ((As, g), thm) =
     let
+      fun terms_to_string terms =
+        "[" ^ String.concatWith ", " (List.map Library.term_to_string terms) ^
+        "]"
       val allowed_hyps = HOLset.fromList Term.compare As
       val extra_hyps = HOLset.difference (Thm.hypset thm, allowed_hyps)
       val () =
@@ -135,7 +138,12 @@ structure Z3 = struct
           ()
         else
           raise Feedback.mk_HOL_ERR "Z3" "check_reconstructed_theorem"
-            ("solver '" ^ name ^ "' produced theorem with extra hypotheses: " ^
+            ("solver '" ^ name ^ "' produced theorem with extra hypotheses; " ^
+             "unexpected hypotheses: " ^
+             terms_to_string (HOLset.listItems extra_hyps) ^
+             "; allowed hypotheses: " ^
+             terms_to_string (HOLset.listItems allowed_hyps) ^
+             "; theorem: " ^
              Library.thm_to_string thm)
       val () =
         if Term.aconv (Thm.concl thm) g then
