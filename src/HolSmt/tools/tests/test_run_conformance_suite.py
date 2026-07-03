@@ -666,6 +666,32 @@ class ConformanceSuiteTests(unittest.TestCase):
                 ),
                 encoding="utf-8",
             )
+            (bench_dir / "sat_result_theorem.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "fail", "diagnostic": "reported sat with a HOL theorem"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
+            (bench_dir / "unknown_result_theorem.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-tac": {"status": "fail", "diagnostic": "reported unknown with a HOL theorem"}}
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (assert p)
+                    (check-sat)
+                    (exit)
+                    """
+                ),
+                encoding="utf-8",
+            )
             checker = root / "fake-z3-tac.py"
             checker.write_text(
                 textwrap.dedent(
@@ -695,6 +721,16 @@ class ConformanceSuiteTests(unittest.TestCase):
                     if "unknown_theorem" in path.name:
                         print("Z3_TAC_PASS")
                         print("diagnostic=solver reports unknown: audit")
+                        print("theorem=[] |- p")
+                        raise SystemExit(0)
+                    if "sat_result_theorem" in path.name:
+                        print("Z3_TAC_PASS")
+                        print("result=sat")
+                        print("theorem=[] |- p")
+                        raise SystemExit(0)
+                    if "unknown_result_theorem" in path.name:
+                        print("Z3_TAC_PASS")
+                        print("result=unknown")
                         print("theorem=[] |- p")
                         raise SystemExit(0)
                     print("Z3_TAC_PASS")
@@ -745,6 +781,21 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(by_case["unknown_theorem"]["status"], conformance.FAIL)
             self.assertEqual(by_case["unknown_theorem"]["classification"], conformance.CLASSIFICATION_MATCHED)
             self.assertIn("unknown", by_case["unknown_theorem"]["actual_diagnostic"])
+            self.assertEqual(by_case["sat_result_theorem"]["status"], conformance.FAIL)
+            self.assertEqual(by_case["sat_result_theorem"]["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertIn(
+                "reported sat with a HOL theorem",
+                by_case["sat_result_theorem"]["actual_diagnostic"],
+            )
+            self.assertEqual(by_case["unknown_result_theorem"]["status"], conformance.FAIL)
+            self.assertEqual(
+                by_case["unknown_result_theorem"]["classification"],
+                conformance.CLASSIFICATION_MATCHED,
+            )
+            self.assertIn(
+                "reported unknown with a HOL theorem",
+                by_case["unknown_result_theorem"]["actual_diagnostic"],
+            )
 
     def test_z3_tac_oracle_tag_output_is_a_failure(self):
         with tempfile.TemporaryDirectory() as tmp:

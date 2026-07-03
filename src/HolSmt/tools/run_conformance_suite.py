@@ -998,6 +998,14 @@ def command_output_field(stdout: str, stderr: str, field: str) -> str | None:
 
 def z3_tac_unsound_success_diagnostic(stdout: str, stderr: str) -> str | None:
     diagnostic = command_output_field(stdout, stderr, "diagnostic")
+    solver_result = command_output_field(stdout, stderr, "result")
+    theorem = command_output_field(stdout, stderr, "theorem")
+    if theorem is not None and solver_result in {"sat", "unknown"}:
+        return (
+            "checked Z3_TAC reported "
+            f"{solver_result} with a HOL theorem on a non-theorem-producing path"
+        )
+
     if diagnostic is not None:
         diagnostic_lower = diagnostic.lower()
         if "satisfiable" in diagnostic_lower:
