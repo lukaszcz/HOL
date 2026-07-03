@@ -959,6 +959,33 @@ in
     "check-sat query did not preserve define-fun state snapshot")
 end
 
+fun parse_file_define_funs_rec_fragment_scope_success () =
+let
+  val {assertions, local_definitions, queries, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(define-funs-rec ((f ((p Bool)) Bool)) ((not p)))\n" ^
+       "(assert (f false))\n" ^
+       "(check-sat)\n")
+in
+  assert (List.length assertions = 1,
+    "define-funs-rec command changed user assertion count");
+  assert (List.length local_definitions = 1,
+    "define-funs-rec definition was not tracked as a local definition");
+  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_UF" assertions =
+          NONE,
+    "define-funs-rec local definition leaked into QF_UF assertion fragment check");
+  assert (List.exists (fn query =>
+      case query of
+        SmtLib_Parser.QueryCheckSat
+          {assertions = query_assertions, local_definitions = query_defs,
+           assumptions = []} =>
+          List.length query_assertions = 1 andalso
+          List.length query_defs = 1
+      | _ => false) queries,
+    "check-sat query did not preserve define-funs-rec state snapshot")
+end
+
 fun smtlib_soundness_audit_scope_success () =
 let
   val {assertions, local_definitions, ...} =
@@ -2377,6 +2404,8 @@ let
     ("parse_file_query_commands_success", parse_file_query_commands_success),
     ("parse_file_define_fun_fragment_scope_success",
       parse_file_define_fun_fragment_scope_success),
+    ("parse_file_define_funs_rec_fragment_scope_success",
+      parse_file_define_funs_rec_fragment_scope_success),
     ("smtlib_soundness_audit_scope_success",
       smtlib_soundness_audit_scope_success),
     ("smtlib_indexed_parametric_sort_reconstruction_success",
