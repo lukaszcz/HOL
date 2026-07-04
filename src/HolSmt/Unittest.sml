@@ -2460,6 +2460,32 @@ in
   expect_error "unknown" "unknown" (fn _ => SolverSpec.UNKNOWN (SOME "audit"))
 end
 
+fun solver_spec_rejects_bad_proof_theorem () =
+let
+  fun solver_with_thm thm =
+    SolverSpec.make_solver
+      (fn _ => ((), []))
+      "cat "
+      (fn () => fn _ => SolverSpec.UNSAT (SOME thm))
+  fun expect_failure label expected thm goal =
+    (ignore (solver_with_thm thm goal);
+     die ("FAIL: SolverSpec accepted bad proof theorem with " ^ label))
+    handle Feedback.HOL_ERR holerr =>
+      let val msg = Feedback.message_of holerr
+      in
+        assert (Feedback.top_structure_of holerr = "SolverSpec" andalso
+                Feedback.top_function_of holerr = "make_solver",
+          label ^ " diagnostic came from the wrong function: " ^ msg);
+        assert (String.isSubstring expected msg,
+          label ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
+      end
+in
+  expect_failure "extra hypotheses" "additional hyp(s)"
+    (Thm.ASSUME boolSyntax.T) ([], boolSyntax.T);
+  expect_failure "conclusion mismatch" "conclusion does not match goal"
+    boolTheory.TRUTH ([], boolSyntax.F)
+end
+
 (*****************************************************************************)
 (* actually perform tests                                                    *)
 (*****************************************************************************)
@@ -2607,7 +2633,9 @@ let
     ("z3_direct_distinct_contradiction_success",
       z3_direct_distinct_contradiction_success),
     ("holsmt_solver_result_negative_diagnostics",
-      holsmt_solver_result_negative_diagnostics)
+      holsmt_solver_result_negative_diagnostics),
+    ("solver_spec_rejects_bad_proof_theorem",
+      solver_spec_rejects_bad_proof_theorem)
   ]
   val () = List.app run_test tests
   val () = print "\ndone, all unit tests successful.\n"

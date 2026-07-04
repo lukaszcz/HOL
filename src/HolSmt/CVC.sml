@@ -95,7 +95,9 @@ structure CVC = struct
                             "cvc5 returned empty proof (may be unsupported)"
                         else ()
                 val (As, g) = goal
-                val thm = Alethe_ProofReplay.check_proof (As, g, proof)
+                val thm =
+                  Feedback.quiet_messages Alethe_ProofReplay.check_proof
+                    (As, g, proof)
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
               in

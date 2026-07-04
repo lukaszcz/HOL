@@ -149,17 +149,18 @@ fun auto_tac (_, t) =
       handle Conv.UNCHANGED =>
         Thm.REFL t
     val t' = boolSyntax.rhs (Thm.concl t_eq_t')
-    val t'_thm = bossLib.DECIDE t'
+    fun quiet f x = Feedback.quiet_messages f x
+    val t'_thm = quiet bossLib.DECIDE t'
       handle Feedback.HOL_ERR _ =>
-        bossLib.METIS_PROVE [] t'
+        quiet (bossLib.METIS_PROVE []) t'
       handle Feedback.HOL_ERR _ =>
-        intLib.ARITH_PROVE t'
+        quiet intLib.ARITH_PROVE t'
       handle Feedback.HOL_ERR _ =>
-        realLib.REAL_ARITH t'
+        quiet realLib.REAL_ARITH t'
       handle Feedback.HOL_ERR _ =>
-        wordsLib.WORD_DECIDE t'
+        quiet wordsLib.WORD_DECIDE t'
       handle Feedback.HOL_ERR _ =>
-        Tactical.TAC_PROOF (([], t'), blastLib.BBLAST_TAC)
+        quiet Tactical.TAC_PROOF (([], t'), blastLib.BBLAST_TAC)
       handle Feedback.HOL_ERR _ =>
         Drule.EQT_ELIM (bossLib.EVAL t')
     val thm = Thm.EQ_MP (Thm.SYM t_eq_t') t'_thm

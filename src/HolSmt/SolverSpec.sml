@@ -52,24 +52,24 @@ structure SolverSpec = struct
           else ()
       (* if the SMT solver returned a theorem 'thm', then this should be of the
          form "A' |- g" with A' \subseteq A, where (A, g) is the input goal *)
-      val _ = if !Library.trace > 0 then
-                case result of
-                    UNSAT (SOME thm) =>
-                    let
-                      val (As, g) = goal
-                      val As = HOLset.fromList Term.compare As
-                    in
-                      if not (HOLset.isSubset (Thm.hypset thm, As)) then
-                        Feedback.HOL_WARNING "SolverSpec" "make_solver"
-                                    "theorem contains additional hyp(s)"
-                      else ();
-                      if not (Term.aconv (Thm.concl thm) g) then
-                        Feedback.HOL_WARNING "SolverSpec" "make_solver"
-                             "conclusion of theorem does not match goal"
-                      else ()
-                    end
-                  | _ => ()
-              else ()
+      val _ =
+        case result of
+          UNSAT (SOME thm) =>
+          let
+            val (As, g) = goal
+            val allowed_hyps = HOLset.fromList Term.compare As
+            val extra_hyps = HOLset.difference (Thm.hypset thm, allowed_hyps)
+          in
+            if not (HOLset.isEmpty extra_hyps) then
+              raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
+                "solver proof theorem contains additional hyp(s)"
+            else ();
+            if not (Term.aconv (Thm.concl thm) g) then
+              raise Feedback.mk_HOL_ERR "SolverSpec" "make_solver"
+                "solver proof theorem conclusion does not match goal"
+            else ()
+          end
+        | _ => ()
     in
       result
     end
