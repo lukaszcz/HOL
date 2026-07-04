@@ -2616,7 +2616,21 @@ local
 
   and apply_symbol fn_name context loc (tydict, tmdict, sigdict)
       name indices args =
-    if List.null indices then
+    if List.null indices andalso name = "@bbterm" then
+      let
+        val arg_terms = List.map checked_term args
+        val arg_sorts = List.map checked_sort args
+        val t =
+          t_with_args tmdict name [] arg_terms
+          handle Feedback.HOL_ERR holerr =>
+            type_error fn_name context loc NONE NONE
+              ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
+               sort_list_to_string arg_sorts ^ ": " ^
+               Feedback.message_of holerr)
+      in
+        checked_term_of t
+      end
+    else if List.null indices then
       (case peek_signatures (sigdict, name) of
          SOME signatures =>
            apply_user_signature fn_name context loc name args signatures

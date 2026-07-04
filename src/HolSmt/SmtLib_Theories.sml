@@ -333,6 +333,102 @@ in
       (Arbnum.+ (fcpLib.index_to_num (wordsSyntax.dim_of t),
         natural_of_index n_tm))
 
+  fun mk_bbterm bits =
+  let
+    val width = List.length bits
+    val _ =
+      if width = 0 then
+        raise ERR "mk_bbterm" "at least one bit expected"
+      else
+        ()
+    val _ =
+      List.all (fn bit => Term.type_of bit = Type.bool) bits orelse
+      raise ERR "mk_bbterm" "Boolean bit arguments expected"
+    fun dest_bit bit =
+      let
+        val (idx, word) = wordsSyntax.dest_word_bit bit
+      in
+        (Arbnum.toInt (numSyntax.dest_numeral idx), word)
+      end
+    fun dest_holsmt_xor tm =
+      let
+        val (f, r) = Term.dest_comb tm
+        val (c, l) = Term.dest_comb f
+        val {Thy, Name, ...} = Term.dest_thy_const c
+      in
+        if Thy = "HolSmt" andalso Name = "xor" then (l, r)
+        else raise ERR "dest_holsmt_xor" "not xor"
+      end
+    fun dest_bool_xor tm =
+      dest_holsmt_xor tm
+      handle Feedback.HOL_ERR _ =>
+        boolSyntax.dest_eq (boolSyntax.dest_neg tm)
+    fun word_from_bits bs =
+      case from_word_selectors bs of
+        SOME word => SOME word
+      | NONE =>
+          (case from_bitwise_binop boolSyntax.dest_conj wordsSyntax.mk_word_and bs of
+             SOME word => SOME word
+           | NONE =>
+               (case from_bitwise_binop boolSyntax.dest_disj wordsSyntax.mk_word_or bs of
+                  SOME word => SOME word
+                | NONE =>
+                    (case from_bitwise_binop dest_bool_xor wordsSyntax.mk_word_xor bs of
+                       SOME word => SOME word
+                     | NONE =>
+                         (case from_bitwise_binop boolSyntax.dest_eq wordsSyntax.mk_word_xnor bs of
+                            SOME word => SOME word
+                          | NONE => from_bitwise_not bs))))
+    and from_word_selectors bs =
+      case Lib.total (fn () => List.map dest_bit bs) () of
+        NONE => NONE
+      | SOME [] => NONE
+      | SOME ((idx0, word) :: rest) =>
+          let
+            val word_width =
+              Arbnum.toInt (fcpLib.index_to_num (wordsSyntax.dim_of word))
+            fun check _ [] = true
+              | check n ((idx, tm) :: xs) =
+                  idx = n andalso Term.aconv tm word andalso check (n + 1) xs
+          in
+            if idx0 = 0 andalso word_width = width andalso check 1 rest then
+              SOME word
+            else
+              NONE
+          end
+          handle _ => NONE
+    and from_bitwise_binop dest mk bs =
+      case Lib.total (fn () => List.map dest bs) () of
+        SOME pairs =>
+          (case (word_from_bits (List.map Lib.fst pairs),
+                 word_from_bits (List.map Lib.snd pairs)) of
+             (SOME l, SOME r) => SOME (mk (l, r))
+           | _ => NONE)
+      | NONE => NONE
+    and from_bitwise_not bs =
+      case Lib.total (fn () => List.map boolSyntax.dest_neg bs) () of
+        SOME bs' =>
+          (case word_from_bits bs' of
+             SOME word => SOME (wordsSyntax.mk_word_1comp word)
+           | NONE => NONE)
+      | NONE => NONE
+    val i = Term.mk_var ("i", numSyntax.num)
+    fun numeral n = numSyntax.mk_numeral (Arbnum.fromInt n)
+    fun select_bit [] = boolSyntax.F
+      | select_bit ((n, bit) :: rest) =
+          boolSyntax.mk_cond (boolSyntax.mk_eq (i, numeral n),
+            bit, select_bit rest)
+    val indexed_bits =
+      ListPair.zip (List.tabulate (width, Lib.I), bits)
+    val body = select_bit indexed_bits
+  in
+    case word_from_bits bits of
+      SOME word => word
+    | NONE =>
+        fcpSyntax.mk_fcp (Term.mk_abs (i, body),
+          fcpLib.index_type (Arbnum.fromInt width))
+  end
+
   fun mk_bool_ne (t1, t2) =
     boolSyntax.mk_neg (boolSyntax.mk_eq (t1, t2))
 
@@ -961,6 +1057,14 @@ in
         in
           fn t => wordsSyntax.mk_word_extract (m, n, t, index_type)
         end)),
+      extension_entry "cvc5" "@bit_of" (indexed_attributes ["i"])
+        ["cvc5 proof term: ((_ @bit_of i) (_ BitVec m) Bool)"]
+        (K_one_one (fn n => fn t =>
+          wordsSyntax.mk_word_bit (numSyntax.mk_numeral (natural_of_index n),
+            t))),
+      extension_entry "cvc5" "@bbterm" no_attributes
+        ["cvc5 proof term: (@bbterm Bool... (_ BitVec m))"]
+        (K_zero_list mk_bbterm),
       official_entry "bvnot" no_attributes ["(bvnot (_ BitVec m) (_ BitVec m))"]
         (K_zero_one wordsSyntax.mk_word_1comp),
       official_entry "bvneg" no_attributes ["(bvneg (_ BitVec m) (_ BitVec m))"]

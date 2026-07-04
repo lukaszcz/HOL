@@ -130,6 +130,22 @@ local
                       wordsTheory.LSR_LIMIT,
                       wordsTheory.ASR_LIMIT])
 
+  val XOR_ROTATE =
+  let
+    val xor = Term.prim_mk_const {Thy = "HolSmt", Name = "xor"}
+    val a = Term.mk_var ("a", Type.bool)
+    val b = Term.mk_var ("b", Type.bool)
+    val c = Term.mk_var ("c", Type.bool)
+    fun mk_xor (x, y) = Term.mk_comb (Term.mk_comb (xor, x), y)
+    val goal = boolSyntax.mk_eq
+      (mk_xor (a, mk_xor (b, c)), mk_xor (c, mk_xor (a, b)))
+  in
+    Tactical.prove (goal,
+      Tactical.THEN
+        (simpLib.SIMP_TAC bossLib.bool_ss [HolSmtTheory.xor_def],
+         tautLib.TAUT_TAC))
+  end
+
   fun replay_progress_enabled () =
     OS.Process.getEnv "HOL4_ALETHE_REPLAY_PROGRESS" = SOME "1"
 
@@ -349,6 +365,11 @@ local
   in
     tautLib.TAUT_PROVE t
     handle Feedback.HOL_ERR _ =>
+    Tactical.prove (t,
+      Tactical.THEN
+        (simpLib.SIMP_TAC bossLib.bool_ss [HolSmtTheory.xor_def],
+         tautLib.TAUT_TAC))
+    handle Feedback.HOL_ERR _ =>
     auto_prove "prove_tautology" t
   end
 
@@ -526,6 +547,18 @@ local
 
   (* --- resolution / th_resolution --- *)
 
+  fun prove_resolution_taut (prems : Thm.thm list) target =
+  let
+    val prem_terms = List.map Thm.concl prems
+    val imp = List.foldr boolSyntax.mk_imp target prem_terms
+    val imp_thm =
+      tautLib.TAUT_PROVE imp
+      handle Feedback.HOL_ERR _ =>
+      simpLib.SIMP_PROVE bossLib.bool_ss [HolSmtTheory.xor_def] imp
+  in
+    List.foldl (fn (prem, th) => Thm.MP th prem) imp_thm prems
+  end
+
   (* Quick check: is lit the negation of neg_lit? *)
   fun is_neg_of lit neg_lit =
     (Term.aconv lit (boolSyntax.dest_neg neg_lit))
@@ -568,7 +601,10 @@ local
         (* General multi-clause resolution: Alethe's resolution rule is
            hyper-resolution (not just unit resolution). Multiple multi-literal
            clauses resolve simultaneously by canceling complementary literals.
-           METIS_PROVE implements exactly this — propositional resolution. *)
+           First try a pure propositional proof; this is much faster than
+           METIS for the large cvc5 1.3.4 bit-vector XOR derivations. *)
+        prove_resolution_taut prems target
+        handle Feedback.HOL_ERR _ =>
         metisLib.METIS_PROVE prems target
   in
     (cache_step s id thm, thm)
@@ -653,6 +689,20 @@ local
     (cache_step s id thm, thm)
   end
 
+  (* --- and_intro --- *)
+  fun replay_and_intro (s : state) (id : string)
+                       (prems : Thm.thm list) (clause : Term.term list) =
+  let
+    val target = clause_to_disj clause
+    val thm =
+      if List.null prems then
+        prove_tautology clause
+      else
+        metis_prove prems target
+  in
+    (cache_step s id thm, thm)
+  end
+
   (* --- implies --- *)
   (* Alethe implies: from |- (p ==> q) or |- (l1 \/ ... \/ ln),
      derive the clausified form. Use unit_resolution when possible,
@@ -712,6 +762,10 @@ local
     val thm = case prems of
         [p] =>
           metis_prove [p] target
+          handle Feedback.HOL_ERR _ =>
+          (let val imp = tautLib.TAUT_PROVE
+                 (boolSyntax.mk_imp (Thm.concl p, target))
+           in Thm.MP imp p end)
           handle Feedback.HOL_ERR _ =>
           let
             val (l, r) = boolSyntax.dest_eq (Thm.concl p)
@@ -857,6 +911,86 @@ local
     Lib.can (HolKernel.find_term
       (fn t => wordsSyntax.is_word_type (Term.type_of t))) tm
 
+  fun has_word_xor tm =
+    Lib.can (HolKernel.find_term wordsSyntax.is_word_xor) tm
+
+  fun prove_word_xor_ac target =
+  let
+    fun prove_word_ac tm =
+      Tactical.prove (tm,
+        simpLib.SIMP_TAC bossLib.std_ss
+          [simpLib.AC wordsTheory.WORD_XOR_ASSOC
+             wordsTheory.WORD_XOR_COMM])
+    fun prove_bit_conjs tm =
+      Tactical.prove (tm,
+        Tactical.THEN
+          (Tactical.REPEAT Tactic.CONJ_TAC,
+           simpLib.SIMP_TAC bossLib.bool_ss [XOR_ROTATE]))
+    fun prove_bool_side tm =
+      if has_word_xor tm then
+        prove_word_ac tm
+      else
+        prove_bit_conjs tm
+    fun prove_bool_equiv () =
+      let
+        val (l, r) = boolSyntax.dest_eq target
+        val _ =
+          if Term.type_of l = Type.bool andalso Term.type_of r = Type.bool then
+            ()
+          else
+            raise ERR "prove_word_xor_ac" "not a Boolean equivalence"
+        val lth = Drule.EQT_INTRO (prove_bool_side l)
+        val rth = Drule.EQT_INTRO (prove_bool_side r)
+      in
+        Thm.TRANS lth (Thm.SYM rth)
+      end
+  in
+    prove_bool_equiv ()
+    handle Feedback.HOL_ERR _ => prove_word_ac target
+  end
+
+  fun prove_word_xor_bblast target =
+    Tactical.prove (target,
+      Tactical.THEN
+        (blastLib.BBLAST_TAC,
+         Tactical.THEN
+           (simpLib.SIMP_TAC bossLib.bool_ss [HolSmtTheory.xor_def],
+            tautLib.TAUT_TAC)))
+
+  fun prove_word_bblast target =
+    Tactical.prove (target,
+      Tactical.THEN
+        (simpLib.SIMP_TAC bossLib.std_ss
+          [HolSmtTheory.ALL_DISTINCT_NIL, HolSmtTheory.ALL_DISTINCT_CONS,
+           HolSmtTheory.NOT_MEM_NIL, HolSmtTheory.NOT_MEM_CONS,
+           HolSmtTheory.xor_def],
+         Tactical.THEN (blastLib.BBLAST_TAC, wordsLib.WORD_DECIDE_TAC)))
+
+  fun prove_word_rewrite target =
+    (if has_word_xor target then
+       (prove_word_xor_ac target
+        handle Feedback.HOL_ERR _ => prove_word_xor_bblast target)
+     else
+       raise ERR "" "")
+    handle Feedback.HOL_ERR _ =>
+    prove_word_bblast target
+    handle Feedback.HOL_ERR _ =>
+    Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
+      (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
+      wordsLib.WORD_BIT_EQ_ss))
+        [HolSmtTheory.xor_def,
+         simpLib.AC wordsTheory.WORD_XOR_ASSOC wordsTheory.WORD_XOR_COMM],
+      tautLib.TAUT_CONV) target)
+    handle Feedback.HOL_ERR _ =>
+      Tactical.prove (target,
+        Tactical.THEN
+          (simpLib.SIMP_TAC simpLib.empty_ss
+             [boolTheory.COND_RAND, boolTheory.COND_RATOR,
+              HolSmtTheory.xor_def],
+           blastLib.BBLAST_TAC))
+    handle Feedback.HOL_ERR _ =>
+      auto_prove "prove_word_rewrite" target
+
   (* --- rewrite --- *)
   fun replay_rewrite (s : state) (id : string) (clause : Term.term list) =
   let
@@ -871,17 +1005,16 @@ local
       (let val (l, r) = boolSyntax.dest_eq target
        in Thm.ALPHA l r end)
       handle Feedback.HOL_ERR _ =>
+      (* cvc5 bit-blasting emits word equalities involving word_bit and
+         proof-only bitvector reconstruction terms.  Keep those on the word
+         path so large FCP expressions are not sent to arithmetic first. *)
+      (if has_word_type target then prove_word_rewrite target
+       else raise ERR "" "")
+      handle Feedback.HOL_ERR _ =>
       (* Arithmetic simplification rules normalize comparisons, signs, and
          small algebraic contexts.  Discharge those with the arithmetic prover
          before trying broader rewrite libraries. *)
       arith_prove target
-      handle Feedback.HOL_ERR _ =>
-      (* cvc5 all_simplify emits bitvector equalities for word identities and
-         fixed-width shift simplifications.  Use HOL's word decision procedure
-         for those obligations instead of putting associative and commutative
-         word arithmetic rewrites into the general simpset. *)
-      (if has_word_type target then wordsLib.WORD_DECIDE target
-       else raise ERR "" "")
       handle Feedback.HOL_ERR _ =>
       (* Alethe simplification rules normalize literals, Boolean connectives,
          and theory definitions such as SMT real division. *)
@@ -1191,6 +1324,7 @@ local
     | "not_or"             => replay_not_or s id prems clause
     | "or"                 => replay_or s id prems clause
     | "not_and"            => replay_not_and s id prems clause
+    | "and_intro"          => replay_and_intro s id prems clause
     | "implies"            => replay_implies s id prems clause
     | "not_implies1"       => replay_not_implies s id prems clause
     | "not_implies2"       => replay_not_implies s id prems clause
@@ -1226,6 +1360,7 @@ local
     | "rare_rewrite"       => replay_rewrite s id clause
     | "la_mult_pos"        => replay_arith s id clause prems
     | "la_mult_neg"        => replay_arith s id clause prems
+    | "la_mult_sign"       => replay_arith s id clause prems
     | "connective_def"     => replay_rewrite s id clause
     | "and_simplify"       => replay_rewrite s id clause
     | "or_simplify"        => replay_rewrite s id clause
@@ -1238,12 +1373,14 @@ local
     | "ac_simp"            => replay_rewrite s id clause
     | "all_simplify"      => replay_rewrite s id clause (* cvc5 1.1.2 *)
     | "comp_simplify"      => replay_rewrite s id clause
+    | "evaluate"           => replay_rewrite s id clause
     | "qnt_rm_unused"      => replay_rewrite s id clause
     | "minus_simplify"     => replay_rewrite s id clause
     | "sum_simplify"       => replay_rewrite s id clause
     | "prod_simplify"      => replay_rewrite s id clause
     | "div_simplify"       => replay_rewrite s id clause
     | "unary_minus_simplify" => replay_rewrite s id clause
+    | "bv_bitblast_step_var" => replay_rewrite s id clause
     | "nary_elim"          => replay_rewrite s id clause
     | "bfun_elim"          => replay_rewrite s id clause
     | "qnt_cnf"            => replay_tautology_rule s id clause
@@ -1320,8 +1457,11 @@ local
             | _ => prove_tautology clause
         in (cache_step s id thm, thm) end
     | other =>
-        raise ERR "replay_step"
-          ("unknown rule '" ^ other ^ "' at step '" ^ id ^ "'"))
+        if String.isPrefix "bv_bitblast_step" other then
+          replay_rewrite s id clause
+        else
+          raise ERR "replay_step"
+            ("unknown rule '" ^ other ^ "' at step '" ^ id ^ "'"))
     handle e =>
       let
         val _ = WARNING "replay_step"

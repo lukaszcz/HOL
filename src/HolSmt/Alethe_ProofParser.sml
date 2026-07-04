@@ -19,9 +19,16 @@ local
 
   type dicts = SmtLib_Parser.dicts
 
+  fun reserved_cvc5_term name = name = "@bbterm"
+
   fun add_to_tmdict (dicts_ref : dicts ref) name parsefn =
     let val (tydict, tmdict) = !dicts_ref
-        val tmdict' = Library.extend_dict ((name, parsefn), tmdict)
+        val tmdict' =
+          if reserved_cvc5_term name andalso
+             Option.isSome (Redblackmap.peek (tmdict, name)) then
+            tmdict
+          else
+            Library.extend_dict ((name, parsefn), tmdict)
     in dicts_ref := (tydict, tmdict') end
 
   fun add_to_tydict (dicts_ref : dicts ref) name parsefn =
@@ -138,6 +145,102 @@ local
                                     realSyntax.term_of_int den))
       end
       handle _ => NONE
+  end
+
+  fun mk_bbterm bits =
+  let
+    val width = List.length bits
+    val _ =
+      if width = 0 then
+        raise ERR "mk_bbterm" "at least one bit expected"
+      else
+        ()
+    val _ =
+      List.all (fn bit => Term.type_of bit = Type.bool) bits orelse
+      raise ERR "mk_bbterm" "Boolean bit arguments expected"
+    fun dest_bit bit =
+      let
+        val (idx, word) = wordsSyntax.dest_word_bit bit
+      in
+        (Arbnum.toInt (numSyntax.dest_numeral idx), word)
+      end
+    fun dest_holsmt_xor tm =
+      let
+        val (f, r) = Term.dest_comb tm
+        val (c, l) = Term.dest_comb f
+        val {Thy, Name, ...} = Term.dest_thy_const c
+      in
+        if Thy = "HolSmt" andalso Name = "xor" then (l, r)
+        else raise ERR "dest_holsmt_xor" "not xor"
+      end
+    fun dest_bool_xor tm =
+      dest_holsmt_xor tm
+      handle Feedback.HOL_ERR _ =>
+        boolSyntax.dest_eq (boolSyntax.dest_neg tm)
+    fun word_from_bits bs =
+      case from_word_selectors bs of
+        SOME word => SOME word
+      | NONE =>
+          (case from_bitwise_binop boolSyntax.dest_conj wordsSyntax.mk_word_and bs of
+             SOME word => SOME word
+           | NONE =>
+               (case from_bitwise_binop boolSyntax.dest_disj wordsSyntax.mk_word_or bs of
+                  SOME word => SOME word
+                | NONE =>
+                    (case from_bitwise_binop dest_bool_xor wordsSyntax.mk_word_xor bs of
+                       SOME word => SOME word
+                     | NONE =>
+                         (case from_bitwise_binop boolSyntax.dest_eq wordsSyntax.mk_word_xnor bs of
+                            SOME word => SOME word
+                          | NONE => from_bitwise_not bs))))
+    and from_word_selectors bs =
+      case Lib.total (fn () => List.map dest_bit bs) () of
+        NONE => NONE
+      | SOME [] => NONE
+      | SOME ((idx0, word) :: rest) =>
+          let
+            val word_width =
+              Arbnum.toInt (fcpLib.index_to_num (wordsSyntax.dim_of word))
+            fun check _ [] = true
+              | check n ((idx, tm) :: xs) =
+                  idx = n andalso Term.aconv tm word andalso check (n + 1) xs
+          in
+            if idx0 = 0 andalso word_width = width andalso check 1 rest then
+              SOME word
+            else
+              NONE
+          end
+          handle _ => NONE
+    and from_bitwise_binop dest mk bs =
+      case Lib.total (fn () => List.map dest bs) () of
+        SOME pairs =>
+          (case (word_from_bits (List.map Lib.fst pairs),
+                 word_from_bits (List.map Lib.snd pairs)) of
+             (SOME l, SOME r) => SOME (mk (l, r))
+           | _ => NONE)
+      | NONE => NONE
+    and from_bitwise_not bs =
+      case Lib.total (fn () => List.map boolSyntax.dest_neg bs) () of
+        SOME bs' =>
+          (case word_from_bits bs' of
+             SOME word => SOME (wordsSyntax.mk_word_1comp word)
+           | NONE => NONE)
+      | NONE => NONE
+    val i = Term.mk_var ("i", numSyntax.num)
+    fun numeral n = numSyntax.mk_numeral (Arbnum.fromInt n)
+    fun select_bit [] = boolSyntax.F
+      | select_bit ((n, bit) :: rest) =
+          boolSyntax.mk_cond (boolSyntax.mk_eq (i, numeral n),
+            bit, select_bit rest)
+    val indexed_bits =
+      ListPair.zip (List.tabulate (width, Lib.I), bits)
+    val body = select_bit indexed_bits
+  in
+    case word_from_bits bits of
+      SOME word => word
+    | NONE =>
+        fcpSyntax.mk_fcp (Term.mk_abs (i, body),
+          fcpLib.index_type (Arbnum.fromInt width))
   end
 
   (* Parse a term: collect tokens, strip annotations, register bindings *)
@@ -370,9 +473,14 @@ local
 
   fun handle_declare_fun (dicts_ref : dicts ref) get_token =
   let
+    val saved_bbterm = Redblackmap.peek (Lib.snd (!dicts_ref), "@bbterm")
     val (_, tmdict') = SmtLib_Parser.parse_declare_fun get_token (!dicts_ref)
+    val tmdict'' =
+      case saved_bbterm of
+        SOME parsefns => Redblackmap.insert (tmdict', "@bbterm", parsefns)
+      | NONE => tmdict'
   in
-    dicts_ref := (Lib.fst (!dicts_ref), tmdict')
+    dicts_ref := (Lib.fst (!dicts_ref), tmdict'')
   end
 
   fun handle_declare_sort (dicts_ref : dicts ref) get_token =
@@ -506,7 +614,9 @@ in
     val get_token = Library.get_token get_char
     (* Add a catch-all "_" entry for cvc5 rational literals like "0/1" *)
     fun cvc5_literal_parsefn token indices args =
-      if List.null indices andalso List.null args then
+      if token = "@bbterm" andalso List.null indices then
+        mk_bbterm args
+      else if List.null indices andalso List.null args then
         case try_parse_rational token of
           SOME t => t
         | NONE =>

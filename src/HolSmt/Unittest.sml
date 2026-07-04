@@ -1463,6 +1463,10 @@ let
        "(= ((_ sign_extend 2) #b10) #b1110) " ^
        "(= ((_ rotate_left 1) a) b) " ^
        "(= ((_ rotate_right 1) a) b) " ^
+       "((_ @bit_of 3) a) " ^
+       "(= (@bbterm ((_ @bit_of 0) a) ((_ @bit_of 1) a) " ^
+       "((_ @bit_of 2) a) ((_ @bit_of 3) a) ((_ @bit_of 4) a) " ^
+       "((_ @bit_of 5) a) ((_ @bit_of 6) a) ((_ @bit_of 7) a)) a) " ^
        "(bvult a b) (bvule a b) (bvugt a b) (bvuge a b) " ^
        "(bvslt a b) (bvsle a b) (bvsgt a b) (bvsge a b) " ^
        "(= (ubv_to_int a) 0) (= (sbv_to_int a) 0) " ^
