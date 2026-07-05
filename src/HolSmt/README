@@ -100,7 +100,7 @@ SMT-LIB support matrix:
   Core Bool/UF                 yes    yes        native         Z3/cvc5 paths
   Int/Real arithmetic          yes    yes        native         partial
   Fixed bit-vectors            yes    yes        native         partial
-  ArraysEx select/store        yes    yes        no             no
+  ArraysEx select/store        yes    yes        native         no
   Unicode strings              yes    yes        selected native no
   Regular expressions          yes    yes        no             no
   FloatingPoint                yes    yes        no             no
