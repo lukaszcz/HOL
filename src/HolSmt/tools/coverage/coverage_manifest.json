@@ -3571,7 +3571,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
-          "match": "unsupported higher-order/function sort :bool -> bool"
+          "match": "could not resolve symbol 'select' for actual sorts [:int, :int]"
         },
         {
           "kind": "source",
@@ -3721,7 +3721,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
-          "match": "unsupported higher-order/function sort :bool -> bool"
+          "match": "could not resolve symbol 'select' for actual sorts [:int, :int]"
         },
         {
           "kind": "source",
@@ -3786,7 +3786,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
-          "match": "unsupported higher-order/function sort :bool -> bool"
+          "match": "could not resolve symbol 'select' for actual sorts [:int, :int]"
         },
         {
           "kind": "source",
@@ -3936,7 +3936,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
-          "match": "unsupported higher-order/function sort :bool -> bool"
+          "match": "could not resolve symbol 'select' for actual sorts [:int, :int]"
         },
         {
           "kind": "source",
@@ -4071,7 +4071,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/tools/conformance-corpus/v1/manifest.json",
-          "match": "unsupported higher-order/function sort :bool -> bool"
+          "match": "could not resolve symbol 'select' for actual sorts [:int, :int]"
         },
         {
           "kind": "source",
@@ -4087,7 +4087,7 @@
           "match": "qf_ax_read_over_write_unsat_proof"
         }
       ],
-      "notes": "Checked z3-tac array reconstruction fails with an exact higher-order/function-sort diagnostic."
+      "notes": "Checked z3-tac array reconstruction is diagnostic-gated: the HOL function-encoding gap surfaces as an exact select-sort typecheck diagnostic."
     },
     {
       "section": "theories",
@@ -5108,14 +5108,14 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "smtlib_higher_order_translation_rejection_diagnostic"
+          "match": "smtlib_higher_order_translation_abstraction_success"
         }
       ],
       "negative_tests": [
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "function-valued equality"
+          "match": "unsupported higher-order rator expression"
         }
       ],
       "z3_versions": [],
@@ -5123,10 +5123,10 @@
         {
           "kind": "source",
           "path": "src/HolSmt/SmtLib.sml",
-          "match": "unsupported higher-order/function-valued HOL term"
+          "match": "unsupported higher-order rator expression"
         }
       ],
-      "notes": "Higher-order terms are either preprocessed away by selftest simplification or rejected with exact diagnostics when function-valued sorts reach the translator."
+      "notes": "Higher-order terms are either preprocessed away by selftest simplification, abstracted to uninterpreted/array encodings, or rejected with an exact diagnostic when an unsupported higher-order rator expression reaches the translator."
     },
     {
       "section": "selftest_categories",
@@ -5472,7 +5472,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "function-uninterpreted-symbols"
+          "match": "uninterpreted-functions-and-equality"
         }
       ],
       "negative_tests": [],
@@ -5685,7 +5685,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/SolverSpec.sml",
-          "match": "conclusion of theorem does not match goal"
+          "match": "solver proof theorem conclusion does not match goal"
         }
       ],
       "z3_versions": [],
@@ -5820,12 +5820,12 @@
         {
           "kind": "source",
           "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "solver reports unknown"
+          "match": "UNKNOWN result has no HOL theorem to reconstruct"
         },
         {
           "kind": "source",
           "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "solver reports negated term to be satisfiable"
+          "match": "Z3_TAC_SAT"
         }
       ],
       "notes": "SAT is exercised by a corpus z3-tac diagnostic case; UNKNOWN is exercised deterministically through the runner fake-driver path and the SML solver-result unit test."

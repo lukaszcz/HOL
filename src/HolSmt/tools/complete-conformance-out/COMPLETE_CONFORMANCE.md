@@ -1,10 +1,10 @@
 # HolSmt Complete SMT-LIB Conformance
 
 - Status: `red-obligations`
-- Red obligations: 1381
-- Unexpected regressions: 32
+- Red obligations: 1382
+- Unexpected regressions: 0
 - Infrastructure errors: 0
-- Nonzero exit reasons: red-obligations, unexpected-regressions
+- Nonzero exit reasons: red-obligations
 - Steps: 29
 
 ## Artifacts
@@ -34,13 +34,13 @@
 | `conformance-z3-oracle` | `conformance` | `pass` | 0 |
 | `conformance-proof-parse` | `conformance` | `pass` | 0 |
 | `conformance-proof-replay` | `conformance` | `pass` | 0 |
-| `conformance-z3-tac` | `conformance` | `fail` | 1 |
+| `conformance-z3-tac` | `conformance` | `pass` | 0 |
 | `external-parser-only` | `external-conformance` | `pass` | 0 |
-| `external-typecheck-only` | `external-conformance` | `fail` | 1 |
+| `external-typecheck-only` | `external-conformance` | `pass` | 0 |
 | `external-z3-oracle` | `external-conformance` | `pass` | 0 |
 | `external-proof-parse` | `external-conformance` | `pass` | 0 |
 | `external-proof-replay` | `external-conformance` | `pass` | 0 |
-| `external-z3-tac` | `external-conformance` | `fail` | 1 |
+| `external-z3-tac` | `external-conformance` | `pass` | 0 |
 | `proof-z3-2.19.1` | `proof-version` | `skipped` | 0 |
 | `proof-z3-4.11.2` | `proof-version` | `pass` | 0 |
 | `proof-z3-4.12.4` | `proof-version` | `pass` | 0 |
@@ -49,40 +49,3 @@
 | `proof-z3-4.15.3` | `proof-version` | `pass` | 0 |
 | `audit-complete-conformance` | `audit` | `fail` | 1 |
 | `audit-proof-completeness` | `audit` | `fail` | 1 |
-
-## Unexpected Regressions
-
-| Report | Case | Mode | Detail |
-| --- | --- | --- | --- |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Core:distinct:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:abs:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:div:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:divisible:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:ge:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:gt:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:int:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:le:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:lt:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:mod:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:neg:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:plus:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:pow:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:sub:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Ints:times:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:decimal:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:div:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:ge:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:gt:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:le:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:lt:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:neg:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:plus:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:real:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:sub:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals:times:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals_Ints:is-int:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals_Ints:to-int:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json` | `theory:Reals_Ints:to-real:sat` | `z3-tac` | z3-tac command timed out after 30s |
-| `src/HolSmt/tools/complete-conformance-out/external/typecheck-only/external-typecheck-only.json` | `strings-qf_s_concat` | `typecheck-only` | typecheck-only command succeeded |
-| `src/HolSmt/tools/complete-conformance-out/external/z3-tac/external-z3-tac.json` | `arrays-qf_auflia_select_store` | `z3-tac` | checked Z3_TAC theorem proved |
-| `src/HolSmt/tools/complete-conformance-out/external/z3-tac/external-z3-tac.json` | `strings-qf_s_concat` | `z3-tac` | checked Z3_TAC solver result sat |

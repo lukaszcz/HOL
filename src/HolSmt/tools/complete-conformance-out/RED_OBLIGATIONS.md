@@ -2,7 +2,7 @@
 
 - Manifest red rows: 1345
 - Complete-audit red rows: 1345
-- Proof-audit red rows: 36
+- Proof-audit red rows: 37
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
 ## Required First Red Categories
@@ -13,20 +13,22 @@
 | arrays | 15 |
 | FP | 466 |
 | strings/regex | 335 |
-| datatypes | 13 |
+| datatypes | 10 |
 | seq/set/bag | 166 |
 | th-lemma-basic | 1 |
 | advanced theory lemmas | 26 |
-| check-sat-assuming | 0 |
-| unsat core/assumptions | 0 |
+| check-sat-assuming | 1 |
+| unsat core/assumptions | 1 |
 | missing logic packets | 110 |
-| real proof occurrences | 36 |
+| real proof occurrences | 37 |
 | external benchmarks | 2 |
 
 ## Red Rows
 
 | Source | Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| `manifest` | `command:check-sat-assuming:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:check-sat-assuming` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml | command:check-sat-assuming:reconstruction |
+| `manifest` | `command:get-unsat-assumptions-get-unsat-core:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:get-unsat-assumptions-get-unsat-core` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml, src/HolSmt/z3_tac_driver.sml | command:get-unsat-assumptions-get-unsat-core:reconstruction |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `parser-only` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `z3-oracle` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `logic:ALIA:fragment-violation` | `typecheck-only` | `logic` | `ALIA` | `logic-packet:ALIA:fragment-violation` | `typecheck` | src/HolSmt/SmtLib_Logics.sml, src/HolSmt/Z3_ProofReplay.sml | logic:ALIA:fragment-violation |
@@ -157,6 +159,7 @@
 | `manifest` | `proof-rule:th-lemma-string` | `proof-parse` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-string` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-string |
 | `manifest` | `proof-rule:th-lemma-string` | `proof-replay` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-string` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-string |
 | `manifest` | `proof-rule:th-lemma-string` | `z3-tac` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-string` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-string |
+| `manifest` | `soundness-audit:soundness-oracle-tag-boundary` | `z3-tac` | `soundness-audit` | `QF_UF` | `soundness:oracle-tag-boundary` | `theorem-shape` | src/HolSmt/Z3_ProofReplay.sml, src/HolSmt/tools/audit_complete_conformance.py, src/HolSmt/z3_tac_driver.sml | soundness-audit:soundness-oracle-tag-boundary |
 | `manifest` | `theory:ArraysEx:array:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:array:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:array:type-error |
 | `manifest` | `theory:ArraysEx:array:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:array:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:array:type-error |
 | `manifest` | `theory:ArraysEx:extensionality:type-error` | `typecheck-only` | `theory` | `AUFLIA` | `theory-symbol:ArraysEx:extensionality:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:extensionality:type-error |
@@ -196,9 +199,6 @@
 | `manifest` | `theory:Datatypes:constructor-disjointness-replay` | `proof-parse` | `theory` | `ALL` | `datatypes-reconstruction:constructor-disjointness` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:constructor-disjointness-replay |
 | `manifest` | `theory:Datatypes:constructor-disjointness-replay` | `proof-replay` | `theory` | `ALL` | `datatypes-reconstruction:constructor-disjointness` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:constructor-disjointness-replay |
 | `manifest` | `theory:Datatypes:constructor-disjointness-replay` | `z3-tac` | `theory` | `ALL` | `datatypes-reconstruction:constructor-disjointness` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:constructor-disjointness-replay |
-| `manifest` | `theory:Datatypes:mutual-datatypes` | `typecheck-only` | `theory` | `ALL` | `datatypes-reconstruction:mutual-datatypes` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | theory:Datatypes:mutual-datatypes |
-| `manifest` | `theory:Datatypes:parametric-datatype` | `typecheck-only` | `theory` | `ALL` | `datatypes-reconstruction:parametric-datatype` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | theory:Datatypes:parametric-datatype |
-| `manifest` | `theory:Datatypes:recursive-datatype` | `typecheck-only` | `theory` | `ALL` | `datatypes-reconstruction:recursive-datatype` | `typecheck` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/SmtLib_Parser.sml | theory:Datatypes:recursive-datatype |
 | `manifest` | `theory:Datatypes:selector-theorem-replay` | `proof-parse` | `theory` | `ALL` | `datatypes-reconstruction:selector-theorem` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:selector-theorem-replay |
 | `manifest` | `theory:Datatypes:selector-theorem-replay` | `proof-replay` | `theory` | `ALL` | `datatypes-reconstruction:selector-theorem` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:selector-theorem-replay |
 | `manifest` | `theory:Datatypes:selector-theorem-replay` | `z3-tac` | `theory` | `ALL` | `datatypes-reconstruction:selector-theorem` | `proof-replay` | src/HolSmt/SmtLib_Datatypes.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Datatypes:selector-theorem-replay |
@@ -327,4 +327,4 @@
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:boundary` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:boundary` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
-| ... | ... | ... | ... | ... | ... | ... | ... | 1081 more in JSON |
+| ... | ... | ... | ... | ... | ... | ... | ... | 1082 more in JSON |
