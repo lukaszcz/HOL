@@ -281,6 +281,18 @@
       ]
     },
     {
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment QF_LIA",
+          "status": "fail"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        }
+      },
       "file": "cases/arithmetic/qf_lia_nonlinear_audit.smt2",
       "id": "qf_lia_nonlinear_audit",
       "logic": "QF_LIA",
@@ -291,9 +303,10 @@
       ],
       "tags": [
         "ints",
-        "audit-only",
         "linear-logic",
-        "nonlinear-term"
+        "nonlinear-term",
+        "diagnostic",
+        "type-error"
       ]
     },
     {
@@ -1909,8 +1922,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "diagnostic": "recursive datatype declarations are parsed by the script AST but not installed in the HOL dictionary",
-          "status": "fail"
+          "status": "pass"
         }
       },
       "file": "cases/datatypes/all_recursive_datatype_type_error.smt2",
@@ -1922,9 +1934,8 @@
       ],
       "tags": [
         "datatypes",
-        "diagnostic",
-        "recursive",
-        "unsupported"
+        "parser-typecheck",
+        "recursive"
       ]
     },
     {
@@ -1933,8 +1944,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "diagnostic": "unsupported command 'declare-datatypes'",
-          "status": "fail"
+          "status": "pass"
         }
       },
       "file": "cases/datatypes/all_mutual_datatype_type_error.smt2",
@@ -1946,9 +1956,8 @@
       ],
       "tags": [
         "datatypes",
-        "diagnostic",
-        "mutual",
-        "unsupported"
+        "parser-typecheck",
+        "mutual"
       ]
     },
     {
@@ -1957,8 +1966,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "diagnostic": "unsupported parametric datatype declaration",
-          "status": "fail"
+          "status": "pass"
         }
       },
       "file": "cases/datatypes/all_parametric_datatype_type_error.smt2",
@@ -1970,9 +1978,8 @@
       ],
       "tags": [
         "datatypes",
-        "diagnostic",
-        "parametric",
-        "unsupported"
+        "parser-typecheck",
+        "parametric"
       ]
     },
     {
@@ -2248,8 +2255,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "diagnostic": "unsupported command 'define-fun-rec'",
-          "status": "fail"
+          "status": "pass"
         }
       },
       "file": "cases/negative/qf_lia_recursive_define_fun_type_error.smt2",
@@ -2261,9 +2267,7 @@
       ],
       "tags": [
         "negative",
-        "diagnostic",
-        "recursive-construct",
-        "unsupported"
+        "recursive-construct"
       ]
     },
     {
@@ -2275,8 +2279,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "diagnostic": "satisfiable",
-          "status": "fail"
+          "status": "pass"
         }
       },
       "file": "cases/negative/qf_uf_sat_theorem_request_z3_tac_error.smt2",
@@ -2289,7 +2292,6 @@
       ],
       "tags": [
         "negative",
-        "diagnostic",
         "sat-theorem-request",
         "z3-tac"
       ]

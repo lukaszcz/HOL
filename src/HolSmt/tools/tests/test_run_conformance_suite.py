@@ -46,6 +46,104 @@ class ConformanceSuiteTests(unittest.TestCase):
         self.assertIn("ALL", represented)
         self.assertTrue(any("metamorphic" in case.tags for case in cases))
 
+    def test_default_suite_widens_modes_for_supported_logics(self):
+        smoke_cases: dict[tuple[str, str], conformance.Case] = {}
+        for case in conformance.default_cases(None):
+            if "logic-smoke" not in case.tags:
+                continue
+            kind = "proof" if "proof" in case.tags else "oracle"
+            smoke_cases[(case.logic, kind)] = case
+
+        # Currently-supported theories (Core/UF, integer and real arithmetic,
+        # bit-vectors and their array/UF combinations) exercise every mode on
+        # the refutable proof case and parse/typecheck/oracle on the sat smoke.
+        supported = [
+            "QF_UF", "UF", "QF_IDL", "QF_LIA", "LIA", "QF_RDL", "QF_LRA", "LRA",
+            "QF_NIA", "QF_NRA", "QF_LIRA", "QF_UFLIA", "QF_UFLRA",
+            "QF_BV", "BV", "UFBV", "QF_ABV", "QF_AUFBV",
+            "QF_AX", "QF_AUFLIA", "AUFLIA", "QF_ALIA", "ALL",
+        ]
+        for logic in supported:
+            proof = smoke_cases[(logic, "proof")]
+            oracle = smoke_cases[(logic, "oracle")]
+            self.assertEqual(proof.modes, tuple(conformance.ALL_MODES), logic)
+            self.assertEqual(oracle.modes, conformance.SAT_SMOKE_MODES, logic)
+            self.assertNotIn("theory-pending", proof.tags, logic)
+            self.assertNotIn("theory-pending", oracle.tags, logic)
+
+        # FloatingPoint and string logics stay limited to the syntactic modes,
+        # marked (not dropped) so the deferral is a categorized case row.
+        for logic in conformance.THEORY_PENDING_LOGICS:
+            for kind in ("proof", "oracle"):
+                case = smoke_cases[(logic, kind)]
+                self.assertEqual(case.modes, conformance.SYNTACTIC_MODES, logic)
+                self.assertIn("theory-pending", case.tags, logic)
+        # The deferred set is exactly the FloatingPoint and string logics.
+        self.assertEqual(
+            set(conformance.THEORY_PENDING_LOGICS),
+            {
+                "QF_FP", "QF_FPBV", "QF_BVFP", "QF_UFFP", "QF_UFBVFP",
+                "QF_S", "QF_SLIA", "QF_SNIA",
+            },
+        )
+
+    def test_widened_default_suite_runs_solver_and_proof_modes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            fake_z3 = make_fake_z3(root)
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-corpus",
+                    "--z3",
+                    str(fake_z3),
+                    "--logic",
+                    "QF_UF",
+                    "--logic",
+                    "QF_BV",
+                    "--logic",
+                    "LRA",
+                    "--logic",
+                    "QF_FP",
+                    "--mode",
+                    conformance.MODE_Z3_ORACLE,
+                    "--mode",
+                    conformance.MODE_PROOF_PARSE,
+                    "--mode",
+                    conformance.MODE_PROOF_REPLAY,
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            # No auto-added corpus: only the generated default cases ran.
+            self.assertEqual(
+                {case["origin"] for case in report["cases"]},
+                {"generated-default"},
+            )
+            self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 0)
+            summary = report["summary"]["by_logic_mode"]
+            for logic in ("QF_UF", "QF_BV", "LRA"):
+                self.assertGreater(
+                    summary[logic][conformance.MODE_Z3_ORACLE][conformance.PASS], 0, logic
+                )
+                self.assertGreater(
+                    summary[logic][conformance.MODE_PROOF_REPLAY][conformance.PASS], 0, logic
+                )
+            # FloatingPoint stays out of the solver/proof modes entirely.
+            fp = summary["QF_FP"]
+            for mode in (
+                conformance.MODE_Z3_ORACLE,
+                conformance.MODE_PROOF_PARSE,
+                conformance.MODE_PROOF_REPLAY,
+            ):
+                self.assertEqual(fp[mode][conformance.PASS], 0)
+                self.assertEqual(fp[mode][conformance.FAIL], 0)
+                self.assertEqual(fp[mode][conformance.UNSUPPORTED], 0)
+
     def test_versioned_corpus_covers_core_uf_and_arithmetic_families(self):
         cases = conformance.corpus_cases([conformance.DEFAULT_CORPUS_DIR], None)
         by_name = {case.name: case for case in cases}

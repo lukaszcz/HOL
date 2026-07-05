@@ -83,6 +83,16 @@ jobs:
             --mode proof-replay \
             --timeout 20
 
+      - name: Run widened default-suite oracle and proof conformance
+        run: |
+          python3 src/HolSmt/tools/run_conformance_suite.py \
+            --out .holsmt-ci/conformance/default \
+            --no-default-corpus \
+            --mode z3-oracle \
+            --mode proof-parse \
+            --mode proof-replay \
+            --timeout 20
+
       - name: Upload Python/Z3 conformance reports
         if: always()
         uses: actions/upload-artifact@v4
@@ -93,6 +103,8 @@ jobs:
             .holsmt-ci/conformance/parser/CONFORMANCE.md
             .holsmt-ci/conformance/z3/conformance.json
             .holsmt-ci/conformance/z3/CONFORMANCE.md
+            .holsmt-ci/conformance/default/conformance.json
+            .holsmt-ci/conformance/default/CONFORMANCE.md
           if-no-files-found: error
 
   proof-corpus-gate:
@@ -341,6 +353,7 @@ jobs:
             --enforce \
             --conformance-report .holsmt-ci/artifacts/parser/conformance.json \
             --conformance-report .holsmt-ci/artifacts/z3/conformance.json \
+            --conformance-report .holsmt-ci/artifacts/default/conformance.json \
             --conformance-report .holsmt-ci/artifacts/typecheck/conformance.json \
             --conformance-report .holsmt-ci/artifacts/z3-tac/conformance.json
 

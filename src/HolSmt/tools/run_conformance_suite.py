@@ -125,6 +125,29 @@ OFFICIAL_LOGICS = [
 ]
 
 HOLSMT_LOGICS = ["ALL", *OFFICIAL_LOGICS]
+
+# Official logics whose theories HolSmt does not yet translate to HOL or replay
+# in the checked Z3_TAC path: the FloatingPoint (QF_FP) family and the
+# UnicodeStrings/RegLan (QF_S) family.  Per PLAN_full_smtlib.md Phase 0 (0.3)
+# these stay limited to the syntactic modes until their dedicated phases land --
+# HolSmt has parser and typechecker embeddings for them (see the README support
+# matrix) but no solver, proof or checked-tactic coverage.  The generated
+# default cases keep them to MODE_PARSER/MODE_TYPECHECK and tag them
+# `theory-pending`, so the deferral is an explicit, categorized case row rather
+# than a silent omission or an unexpected failure.
+THEORY_PENDING_LOGICS = frozenset({
+    "QF_FP", "QF_FPBV", "QF_BVFP", "QF_UFFP", "QF_UFBVFP",  # FloatingPoint
+    "QF_S", "QF_SLIA", "QF_SNIA",                            # UnicodeStrings/RegLan
+})
+
+# Modes a theory-pending logic can exercise today.
+SYNTACTIC_MODES = (MODE_PARSER, MODE_TYPECHECK)
+
+# Modes applicable to a satisfiable smoke goal: it has no proof to parse or
+# replay and checked Z3_TAC rejects a satisfiable goal, so only parse, typecheck
+# and the Z3 oracle apply (mirrors the *_sat cases in conformance-corpus/v1).
+SAT_SMOKE_MODES = (MODE_PARSER, MODE_TYPECHECK, MODE_Z3_ORACLE)
+
 SOLVER_RESULTS = {"sat", "unsat", "unknown"}
 DEFAULT_TYPECHECK_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-typecheck"
 DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{input}} {{logic}}"
@@ -279,12 +302,25 @@ def logic_smoke_case(logic: str, unsat: bool) -> Case:
     body = "(assert false)" if unsat else "(assert true)"
     proof = "\n(get-proof)" if unsat else ""
     name = f"{logic.lower()}-{'proof' if unsat else 'smoke'}"
+    tags = ["logic-smoke", "generated", "proof" if unsat else "oracle"]
+    if logic in THEORY_PENDING_LOGICS:
+        # Solver/proof/checked-tactic modes are deferred for FloatingPoint and
+        # string logics; run only the syntactic modes they already support.
+        modes = SYNTACTIC_MODES
+        tags.append("theory-pending")
+    elif unsat:
+        # A refutable goal exercises every mode: parse, typecheck, Z3 oracle,
+        # proof parse/replay and the checked Z3_TAC tactic.
+        modes = tuple(ALL_MODES)
+    else:
+        modes = SAT_SMOKE_MODES
     return Case(
         name=name,
         logic=logic,
         text=f"(set-logic {logic})\n{body}\n(check-sat){proof}\n(exit)\n",
         origin="generated-default",
-        tags=("logic-smoke", "generated", "proof" if unsat else "oracle"),
+        tags=tuple(tags),
+        modes=modes,
     )
 
 
@@ -1665,6 +1701,14 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     parser.add_argument("--mode", action="append", choices=ALL_MODES)
     parser.add_argument("--no-default-suite", action="store_true")
     parser.add_argument(
+        "--no-default-corpus",
+        action="store_true",
+        help=(
+            "run the generated default suite without auto-including the bundled "
+            "v1 conformance corpus (explicit --corpus-dir entries still apply)"
+        ),
+    )
+    parser.add_argument(
         "--corpus-dir",
         action="append",
         type=pathlib.Path,
@@ -1721,7 +1765,11 @@ def main(argv: list[str]) -> int:
     if not args.no_default_suite:
         cases.extend(default_cases(selected_logics))
     corpus_dirs = list(args.corpus_dir)
-    if not args.no_default_suite and DEFAULT_CORPUS_DIR.exists():
+    if (
+        not args.no_default_suite
+        and not args.no_default_corpus
+        and DEFAULT_CORPUS_DIR.exists()
+    ):
         corpus_dirs.insert(0, DEFAULT_CORPUS_DIR)
     cases.extend(corpus_cases(corpus_dirs, selected_logics))
     cases.extend(
