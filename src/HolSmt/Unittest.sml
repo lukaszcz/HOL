@@ -2222,6 +2222,49 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
         "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
     end
 
+fun assert_array_prover name prover tm =
+  (let
+     val thm = prover tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
+     Library.check_oracle_tags name thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: " ^ name ^ " did not prove array goal: " ^
+       Feedback.message_of holerr))
+
+fun array_prove_ladder_rungs_success () =
+  (assert_array_prover "array_prove proforma rung"
+     SmtArrayProve.array_prove
+     ``((i =+ e) (a :'i -> 'v)) i = e``;
+   assert_array_prover "array_prove literal update rung"
+     SmtArrayProve.simp_prove_update
+     ``((1i =+ T) (a :int -> bool)) 1i``;
+   assert_array_prover "array_prove symbolic select/store rung"
+     SmtArrayProve.symbolic_index_prove
+     ``i <> j ==> ((i =+ e) (a :'i -> 'v)) j = a j``;
+   assert_array_prover "array_prove extensionality rung"
+     SmtArrayProve.extensionality_prove
+     ``(!i. (a :'i -> 'v) i = b i) ==> (a = b)``;
+   assert_array_prover "array_prove explicit metis rung"
+     SmtArrayProve.metis_array_prove
+     ``(i =+ e) ((i =+ e) (a :'i -> 'v)) = (i =+ e) a``)
+
+fun array_prove_unsupported_diagnostic () =
+  (ignore (SmtArrayProve.array_prove ``F``);
+   die "FAIL: unsupported array th-lemma replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "unsupported th-lemma shape" msg,
+        "array th-lemma diagnostic did not report unsupported shape: " ^ msg);
+      assert (String.isSubstring "theory=array" msg,
+        "array th-lemma diagnostic did not include theory: " ^ msg);
+      assert (String.isSubstring "conclusion=F" msg,
+        "array th-lemma diagnostic did not include conclusion: " ^ msg)
+    end
+
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
   (ignore (replay_z3_proof_string proof_text);
@@ -2690,6 +2733,10 @@ let
       z3_th_lemma_existing_theory_replay_minimal_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
+    ("array_prove_ladder_rungs_success",
+      array_prove_ladder_rungs_success),
+    ("array_prove_unsupported_diagnostic",
+      array_prove_unsupported_diagnostic),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",

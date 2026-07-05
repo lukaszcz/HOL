@@ -9,6 +9,42 @@ struct
     List.foldl (fn (th, net) => Net.insert (Thm.concl th, th) net) Net.empty
       thms
 
+  val array_thm_list = [
+    Tactical.prove
+      (``((i =+ e) a) i = e``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    Tactical.prove
+      (``i <> j ==> ((i =+ e) a) j = a j``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    Tactical.prove
+      (``(i =+ f) ((i =+ e) a) = (i =+ f) a``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [
+          boolTheory.FUN_EQ_THM,
+          combinTheory.APPLY_UPDATE_THM
+        ]),
+    Tactical.prove
+      (``i <> j ==>
+          (j =+ f) ((i =+ e) a) = (i =+ e) ((j =+ f) a)``,
+        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) [
+            boolTheory.FUN_EQ_THM,
+            combinTheory.APPLY_UPDATE_THM
+          ], bossLib.METIS_TAC [])),
+    Tactical.prove
+      (``i <> j ==> ((j =+ f) ((i =+ e) a)) i = e``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    Tactical.prove
+      (``i <> j ==> ((j =+ f) ((i =+ e) a)) j = f``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [combinTheory.APPLY_UPDATE_THM]),
+    Tactical.prove
+      (``(!i. a i = b i) ==> (a = b)``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM]),
+    Tactical.prove
+      (``(a = b) <=> (!i. a i = b i)``,
+        bossLib.RW_TAC (bossLib.srw_ss()) [boolTheory.FUN_EQ_THM])
+  ]
+
+  val array_thms = thm_net_from_list array_thm_list
+
 local
   open HolSmtTheory
 in
@@ -45,9 +81,10 @@ in
      r253, r254, r255, r256, r257, r258, r259, r260, r261]
 
   val th_lemma_thms = thm_net_from_list
-    [t001, t002, t003, t004, t005, t006, t007, t008, t009, t010, t011, t012,
-     t013, t014, t015, t016, t017, t018, t019, t020, t021, t022, t023, t024,
-     t025, t026, t027, t028, t029, t030, t031, t032, t033, t034, t035]
+    ([t001, t002, t003, t004, t005, t006, t007, t008, t009, t010, t011,
+      t012, t013, t014, t015, t016, t017, t018, t019, t020, t021, t022,
+      t023, t024, t025, t026, t027, t028, t029, t030, t031, t032, t033,
+      t034, t035] @ array_thm_list)
 
   val prove_hyp_thms = thm_net_from_list
     [p001, p002, p003, p004, p005, p006, p007, p008, p009]

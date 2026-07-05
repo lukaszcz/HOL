@@ -47,20 +47,7 @@ local
   val AND_IMP_INTRO_SYM = HolSmtTheory.AND_IMP_INTRO_SYM
   val VALID_IFF_TRUE = HolSmtTheory.VALID_IFF_TRUE
 
-  (* a simplification prover that deals with function (i.e., array)
-     updates when the indices are integer or word literals *)
-  val SIMP_PROVE_UPDATE =
-  let
-    val word_type = wordsSyntax.mk_word_type Type.alpha
-    val x = Term.mk_var ("x", word_type)
-    val y = Term.mk_var ("y", word_type)
-    val pat = boolSyntax.mk_eq (x, y)
-  in
-    simpLib.SIMP_PROVE (simpLib.&& (simpLib.++
-    (intSimps.int_ss, simpLib.std_conv_ss {name = "word_EQ_CONV",
-      pats = [pat], conv = wordsLib.word_EQ_CONV}),
-    [combinTheory.UPDATE_def, boolTheory.EQ_SYM_EQ])) []
-  end
+  val SIMP_PROVE_UPDATE = SmtArrayProve.simp_prove_update
 
   (***************************************************************************)
   (* functions that manipulate/access "global" state                         *)
@@ -1381,13 +1368,18 @@ local
     end)
 
   val z3_th_lemma_array = th_lemma_wrapper "array" (fn (state, t) =>
-    let
-      val thm = profile "th_lemma[array](3)(SIMP_PROVE_UPDATE)"
-        SIMP_PROVE_UPDATE t
-    in
-      (* cache 'thm' *)
-      (state_cache_thm state thm, thm)
-    end)
+    (let
+       val thm = profile "th_lemma[array](3)(array_prove)"
+         SmtArrayProve.array_prove t
+     in
+       (* cache 'thm' *)
+       (state_cache_thm state thm, thm)
+     end
+     handle Feedback.HOL_ERR _ =>
+      raise ERR "z3_th_lemma_array"
+        ("unsupported th-lemma shape: theory=array; checked replay is only " ^
+         "implemented for function-update select/store/extensionality " ^
+         "lemmas; conclusion=" ^ Library.term_to_string t)))
 
   val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
     let

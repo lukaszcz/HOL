@@ -1097,6 +1097,17 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(f x = f y) ==> (x = y)``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
+    (* arrays as function updates *)
+
+    (``i <> j ==> ((i =+ e) (a :int -> int)) j = a j``,
+      [thm_Z3p, thm_Z3p_v4]),
+    (``i <> j ==>
+        (j =+ f) ((i =+ e) (a :int -> int)) =
+        (i =+ e) ((j =+ f) a)``,
+      [thm_Z3p, thm_Z3p_v4]),
+    (``(!i. (a :int -> int) i = b i) ==> (a = b)``,
+      [thm_Z3p, thm_Z3p_v4]),
+
     (* predicates *)
 
     (``P x ==> P x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),

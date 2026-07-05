@@ -100,7 +100,7 @@ SMT-LIB support matrix:
   Core Bool/UF                 yes    yes        native         Z3/cvc5 paths
   Int/Real arithmetic          yes    yes        native         partial
   Fixed bit-vectors            yes    yes        native         partial
-  ArraysEx select/store        yes    yes        native         no
+  ArraysEx select/store        yes    yes        native         yes
   Unicode strings              yes    yes        selected native no
   Regular expressions          yes    yes        no             no
   FloatingPoint                yes    yes        no             no
@@ -194,7 +194,7 @@ Z3 th-lemma replay coverage:
   arith       farkas, assign-bounds,         checked by existing arith_prove path
               eq-propagate, gomory-cut,
               triangle-eq
-  array       select-store, extensionality   checked by existing update prover path
+  array       select-store, extensionality   checked by shared array_prove ladder
   bv          bit-blast                      checked by existing word/BBLAST path
   basic       eq-propagate                   unsupported diagnostic:
               "unsupported th-lemma shape: theory=basic; checked replay is not
