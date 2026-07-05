@@ -1217,6 +1217,15 @@ fun smtlib_logic_fragment_diagnostics () =
        "(assert (= (* x y) 1))\n" ^
        "(check-sat)\n")
       "nonlinear arithmetic product";
+    expect_no_fragment "linear coefficient product" "QF_LIA"
+      ("(set-logic QF_LIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(assert (= (* 2 x) 4))\n" ^
+       "(check-sat)\n");
+    expect_no_fragment "ground literal product" "QF_LIA"
+      ("(set-logic QF_LIA)\n" ^
+       "(assert (= (* 2 3) 6))\n" ^
+       "(check-sat)\n");
     expect_fragment "pure bit-vector integer-only term" "UFBV"
       ("(set-logic UFBV)\n" ^
        "(declare-const outside_fragment Int)\n" ^
@@ -1272,6 +1281,15 @@ fun smtlib_checked_replay_gap_diagnostics () =
        "(assert (= (* x y) 1))\n" ^
        "(check-sat)\n")
       "proof-rule:th-lemma-nonlinear-arith";
+    expect_no_gap "ground literal product replay" "QF_NIA"
+      ("(set-logic QF_NIA)\n" ^
+       "(assert (= (* 2 3) 6))\n" ^
+       "(check-sat)\n");
+    expect_no_gap "linear coefficient product replay" "QF_NIA"
+      ("(set-logic QF_NIA)\n" ^
+       "(declare-const x Int)\n" ^
+       "(assert (= (* 2 x) 4))\n" ^
+       "(check-sat)\n");
     expect_no_gap "integer equality replay" "QF_LIA"
       ("(set-logic QF_LIA)\n" ^
        "(declare-const x Int)\n" ^
@@ -2440,6 +2458,64 @@ in
   Library.check_oracle_tags "unit-test" thm
 end
 
+(* The checked SAT short-circuit in Z3.Z3_SMT_Prover proves the asserted
+   body satisfiable entirely within HOL and returns `SAT NONE' without ever
+   invoking an external solver.  Each script below is a trivially true
+   ground (or trivially satisfiable) arithmetic fact whose HOL translation
+   makes Z3 diverge; the short-circuit must decide them locally.  These
+   tests run regardless of whether Z3 is configured. *)
+fun z3_direct_ground_arithmetic_sat_success () =
+let
+  fun conjunction [] = boolSyntax.T
+    | conjunction (tm :: tms) =
+        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
+  fun expect_sat label text =
+    let
+      val state = parse_smtlib_state text
+      val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+    in
+      case Z3.Z3_SMT_Prover ([], goal) of
+        SolverSpec.SAT NONE => ()
+      | SolverSpec.SAT (SOME _) =>
+          die ("FAIL: " ^ label ^ " short-circuit produced a theorem")
+      | SolverSpec.UNSAT _ =>
+          die ("FAIL: " ^ label ^ " was wrongly reported UNSAT")
+      | SolverSpec.UNKNOWN _ =>
+          die ("FAIL: " ^ label ^ " was not decided by the SAT short-circuit")
+    end
+in
+  (* integer ABS -- the `|7| = 7'-shaped example over int *)
+  expect_sat "int abs"
+    ("(set-logic QF_LIA)\n(assert (= (abs (- 7)) 7))\n(check-sat)\n");
+  (* Euclidean division/modulo carry a `nocompute' attribute and require
+     the EDIV_DEF/EMOD_DEF unfolding step of the ladder *)
+  expect_sat "int ediv"
+    ("(set-logic QF_LIA)\n(assert (= (div 7 3) 2))\n(check-sat)\n");
+  expect_sat "int emod"
+    ("(set-logic QF_LIA)\n(assert (= (mod 7 3) 1))\n(check-sat)\n");
+  (* real division goes through Z3's total `smt_rdiv' constant *)
+  expect_sat "real division"
+    ("(set-logic QF_LRA)\n(assert (= (/ 3.0 2.0) 1.5))\n(check-sat)\n");
+  (* linear real arithmetic decided by evaluation *)
+  expect_sat "real plus"
+    ("(set-logic QF_LRA)\n(assert (= (+ 1.0 2.0 3.0) 6.0))\n(check-sat)\n");
+  (* mixed int/real embedding *)
+  expect_sat "intreal to_int"
+    ("(set-logic QF_NIRA)\n(assert (= (to_int 2.0) 2))\n(check-sat)\n");
+  (* a satisfiable equation over an unknown: the ladder proves the
+     existential closure `?x. x = 0' *)
+  expect_sat "int existential"
+    ("(set-logic QF_LIA)\n(declare-const x Int)\n" ^
+     "(assert (= x 0))\n(check-sat)\n");
+  expect_sat "real existential"
+    ("(set-logic QF_LRA)\n(declare-const x Real)\n" ^
+     "(assert (= x 0.0))\n(check-sat)\n");
+  (* propositional tautology -- guards the pre-existing TAUT_CONV branch *)
+  expect_sat "propositional tautology"
+    ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
+     "(assert (or p (not p)))\n(check-sat)\n")
+end
+
 fun holsmt_solver_result_negative_diagnostics () =
 let
   fun expect_error label expected solver =
@@ -2632,6 +2708,8 @@ let
       z3_direct_bitvector_overflow_tautology_sat_success),
     ("z3_direct_distinct_contradiction_success",
       z3_direct_distinct_contradiction_success),
+    ("z3_direct_ground_arithmetic_sat_success",
+      z3_direct_ground_arithmetic_sat_success),
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics),
     ("solver_spec_rejects_bad_proof_theorem",

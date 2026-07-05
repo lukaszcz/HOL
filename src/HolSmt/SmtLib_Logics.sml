@@ -395,7 +395,14 @@ in
        same_const realSyntax.mult_tm rator) andalso
       (case rands of
          [x, y] => not (is_numeric_literal x orelse is_numeric_literal y)
-       | _ => true)
+       (* 'subterms' enumerates every rator application, so a partial
+          application such as (mult_tm $ x) shows up here with a single
+          operand.  It is not itself a product occurrence: the saturated
+          application is present separately in the 'subterms' list and is
+          judged by the [x, y] branch.  Classifying partial applications
+          as nonlinear would flag every multiplication, including the
+          linear (2 * x) and the ground literal product (2 * 3). *)
+       | _ => false)
     end
     handle _ => false
 

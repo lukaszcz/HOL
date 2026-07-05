@@ -1,5 +1,5 @@
 ; family: strings
-; holsmt-expected: {"typecheck-only": {"status": "fail", "diagnostic": "invalid SMT-LIB input"}, "z3-tac": {"status": "fail", "diagnostic": "invalid SMT-LIB input"}}
+; holsmt-expected: {"typecheck-only": {"status": "pass"}, "z3-tac": {"status": "pass"}}
 (set-logic QF_S)
 (declare-const s String)
 (assert (= (str.++ s "") s))

@@ -183,16 +183,59 @@ structure Z3 = struct
     prove_direct_contradiction goal
     handle Feedback.HOL_ERR _ => prove_simplified_goal goal
 
-  fun is_tautological_counterexample ([], g) =
+  (* Conversions used by the checked SAT short-circuit below.  All of them
+     are terminating and produce an actual HOL theorem `|- t = T`, so they
+     never make an unsound `sat' claim. *)
+
+  (* Ground evaluation: unfold Euclidean `ediv'/`emod' (which carry a
+     `nocompute' attribute) into `/', `%', `ABS', ..., then reduce with the
+     standard call-by-value machinery.  Decides closed int/real/intreal
+     arithmetic facts such as `ABS (-7) = 7', `ediv 7 3 = 2',
+     `real_of_int 2 = 2r' and `ALL_DISTINCT [0; 1; 2]'. *)
+  val ground_eval_conv =
+    Conv.THENC
+      (Rewrite.PURE_REWRITE_CONV
+         [integerTheory.EDIV_DEF, integerTheory.EMOD_DEF],
+       bossLib.EVAL)
+
+  (* Real evaluation: rewrite away Z3's total real division `smt_rdiv' and
+     simplify with `real_ss', then reduce.  Decides facts involving real
+     division (`15 / 10 = smt_rdiv 3 2') as well as trivially satisfiable
+     equations over a single unknown (`?x. x = 0'). *)
+  val real_eval_conv =
+    Conv.THENC
+      (simpLib.SIMP_CONV (realSimps.real_ss) [HolSmtTheory.smt_rdiv],
+       bossLib.EVAL)
+
+  (* Try to establish, entirely within HOL, that the asserted body of a
+     `sat' goal is satisfiable.  We existentially close the assertion over
+     its free variables (the declared SMT-LIB constants) and run a cheap-
+     first ladder of terminating deciders.  Success yields `|- ?vars. body'
+     -- a genuine proof that a model exists -- so the caller may soundly
+     report SAT with no external oracle involved.  Every step is wrapped so
+     that failure is silent and falls through to the external solver. *)
+  fun prove_asserted_satisfiable asserted =
+    let
+      val existential =
+        boolSyntax.list_mk_exists (Term.free_vars asserted, asserted)
+      (* propositional tautologies are decided on the open body, since
+         `TAUT_CONV' does not look under quantifiers *)
+      fun via_taut () = Drule.EQT_ELIM (tautLib.TAUT_CONV asserted)
+      fun via_conv cnv () = Drule.EQT_ELIM (cnv existential)
+      fun ladder [] = NONE
+        | ladder (attempt :: rest) =
+            (case Lib.total attempt () of
+               SOME thm => SOME thm
+             | NONE => ladder rest)
+    in
+      ladder [via_taut, via_conv ground_eval_conv, via_conv real_eval_conv]
+    end
+
+  fun is_provably_satisfiable ([], g) =
       (case Lib.total boolSyntax.dest_neg g of
-         SOME asserted =>
-           (case Lib.total tautLib.TAUT_CONV asserted of
-              SOME thm => boolSyntax.is_eq (Thm.concl thm) andalso
-                          Term.aconv (boolSyntax.rhs (Thm.concl thm))
-                            boolSyntax.T
-            | NONE => false)
+         SOME asserted => Option.isSome (prove_asserted_satisfiable asserted)
        | NONE => false)
-    | is_tautological_counterexample _ = false
+    | is_provably_satisfiable _ = false
 
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
   val Z3_SMT_Prover_external =
@@ -242,7 +285,7 @@ structure Z3 = struct
           end)
 
   fun Z3_SMT_Prover goal =
-    if is_tautological_counterexample goal then
+    if is_provably_satisfiable goal then
       SolverSpec.SAT NONE
     else
       SolverSpec.UNSAT (SOME (prove_without_external_solver goal))
