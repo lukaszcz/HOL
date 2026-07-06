@@ -482,6 +482,58 @@ local
     Tactical.TAC_PROOF ((HOLset.listItems asms, t), metisLib.METIS_TAC thms)
   end
 
+  val nnf_rewrites = [
+    boolTheory.DE_MORGAN_THM,
+    boolTheory.NOT_IMP,
+    boolTheory.IMP_DISJ_THM,
+    boolTheory.NOT_FORALL_THM,
+    boolTheory.NOT_EXISTS_THM,
+    boolTheory.NOT_CLAUSES,
+    boolTheory.AND_CLAUSES,
+    boolTheory.OR_CLAUSES,
+    boolTheory.IMP_CLAUSES,
+    boolTheory.EQ_CLAUSES
+  ]
+
+  fun nnf_structural_prove (thms, t) =
+  let
+    fun join_fn (thm, asm_set) = HOLset.union (asm_set, Thm.hypset thm)
+    val asms = List.foldl join_fn Term.empty_tmset thms
+    fun is_refl_eq thm =
+      let val (l, r) = boolSyntax.dest_eq (Thm.concl thm)
+      in l ~~ r end
+      handle Feedback.HOL_ERR _ => false
+    val rewrite_thms = List.filter (not o is_refl_eq) thms
+    fun oriented_premise thm =
+      if Thm.concl thm ~~ t then
+        thm
+      else
+        let
+          val (tl, tr) = boolSyntax.dest_eq t
+          val (cl, cr) = boolSyntax.dest_eq (Thm.concl thm)
+        in
+          if tl ~~ cr andalso tr ~~ cl then Thm.SYM thm
+          else raise ERR "nnf_structural_prove" "premise does not match"
+        end
+    fun reflexive_target () =
+      let val (l, r) = boolSyntax.dest_eq t
+      in Thm.ALPHA l r end
+  in
+    Lib.tryfind oriented_premise thms
+    handle Feedback.HOL_ERR _ =>
+    reflexive_target ()
+    handle Feedback.HOL_ERR _ =>
+    Tactical.TAC_PROOF ((HOLset.listItems asms, t),
+      PURE_REWRITE_TAC (rewrite_thms @ nnf_rewrites) THEN
+      bossLib.SIMP_TAC bossLib.bool_ss (rewrite_thms @ nnf_rewrites) THEN
+      tautLib.TAUT_TAC)
+  end
+
+  fun nnf_prove (thms, t) =
+    profile "nnf[structural]" nnf_structural_prove (thms, t)
+    handle Feedback.HOL_ERR _ =>
+      profile "nnf[metis-fallback]" metis_prove (thms, t)
+
   val INT_LE_RMUL_EXP = Tactical.prove(
     ``!a b n:int. 0 <= n ==> a <= b ==> a * n <= b * n``,
     REPEAT STRIP_TAC THEN
@@ -1044,19 +1096,17 @@ local
 
   (* `z3_nnf_neg` creates a proof for a negative NNF step.
 
-     For the initial implementation, we rely on metisLib.METIS_TAC to find a
-     proof. However, if it becomes a bottleneck, a more specialized proof
-     handler could be implemented to improve performance. *)
+     The structural rung rewrites with Boolean/quantifier NNF theorems and
+     premise equivalences. METIS remains only as a profiled last resort. *)
   fun z3_nnf_neg (state, thms, t) =
-    (state, metis_prove (thms, t))
+    (state, nnf_prove (thms, t))
 
   (* `z3_nnf_pos` creates a proof for a positive NNF step.
 
-     For the initial implementation, we rely on metisLib.METIS_TAC to find a
-     proof. However, if it becomes a bottleneck, a more specialized proof
-     handler could be implemented to improve performance. *)
+     The structural rung rewrites with Boolean/quantifier NNF theorems and
+     premise equivalences. METIS remains only as a profiled last resort. *)
   fun z3_nnf_pos (state, thms, t) =
-    (state, metis_prove (thms, t))
+    (state, nnf_prove (thms, t))
 
   (* ~(... \/ p \/ ...)
      ------------------

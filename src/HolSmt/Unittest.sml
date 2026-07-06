@@ -2241,6 +2241,30 @@ in
     term_with_types actual ^ ", expected " ^ term_with_types expected)
 end
 
+fun profile_call_count name =
+  case List.find (fn (result_name, _) => result_name = name)
+      (Profile.results ()) of
+    SOME (_, info) => #n info
+  | NONE => 0
+
+fun assert_nnf_replays_without_metis (name, proof_text, expected) =
+let
+  val () = Profile.reset_all ()
+  val thm = replay_z3_proof_string proof_text
+  val actual = Thm.concl thm
+  val structural = profile_call_count "nnf[structural]"
+  val fallback = profile_call_count "nnf[metis-fallback]"
+in
+  assert (actual ~~ expected,
+    "NNF proof " ^ name ^ " replayed to " ^ term_with_types actual ^
+    ", expected " ^ term_with_types expected);
+  assert (structural > 0,
+    "NNF proof " ^ name ^ " did not use structural NNF replay");
+  assert (fallback = 0,
+    "NNF proof " ^ name ^ " used METIS fallback " ^
+    Int.toString fallback ^ " time(s)")
+end
+
 fun z3_core_proof_rule_replay_minimal_raw_success () =
 let
   val cases = [
@@ -2341,6 +2365,54 @@ let
   ]
 in
   List.app assert_replays_raw_z3_proof_rule cases
+end
+
+fun z3_nnf_structural_replay_no_metis_success () =
+let
+  val cases = [
+    ("nnf-pos observed identity",
+      "((declare-fun a () Bool) \
+        \(proof (nnf-pos (asserted (= a a)) (= a a))))",
+      ``(a:bool) = a``),
+    ("nnf-pos implication premise congruence",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun na () Bool) \
+        \(proof (nnf-pos (asserted (= (not a) na)) \
+        \(= (implies a b) (or na b)))))",
+      ``((a:bool) ==> b) = (na \/ b)``),
+    ("nnf-neg and",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun na () Bool) (declare-fun nb () Bool) \
+        \(proof (nnf-neg (asserted (= (not a) na)) \
+        \(asserted (= (not b) nb)) \
+        \(= (not (and a b)) (or na nb)))))",
+      ``~((a:bool) /\ b) = (na \/ nb)``),
+    ("nnf-neg or",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun na () Bool) (declare-fun nb () Bool) \
+        \(proof (nnf-neg (asserted (= (not a) na)) \
+        \(asserted (= (not b) nb)) \
+        \(= (not (or a b)) (and na nb)))))",
+      ``~((a:bool) \/ b) = (na /\ nb)``),
+    ("nnf-neg implication",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun nb () Bool) \
+        \(proof (nnf-neg (asserted (= (not b) nb)) \
+        \(= (not (implies a b)) (and a nb)))))",
+      ``~((a:bool) ==> b) = (a /\ nb)``),
+    ("nnf-neg forall",
+      "((proof (nnf-neg \
+        \(= (not (forall ((x Bool)) false)) \
+        \(exists ((x Bool)) true)))))",
+      ``~(!x:bool. F) = (?x:bool. T)``),
+    ("nnf-neg exists",
+      "((proof (nnf-neg \
+        \(= (not (exists ((x Bool)) true)) \
+        \(forall ((x Bool)) false)))))",
+      ``~(?x:bool. T) = (!x:bool. F)``)
+  ]
+in
+  List.app assert_nnf_replays_without_metis cases
 end
 
 fun z3_th_lemma_existing_theory_replay_minimal_success () =
@@ -2946,6 +3018,8 @@ let
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_nnf_structural_replay_no_metis_success",
+      z3_nnf_structural_replay_no_metis_success),
     ("z3_th_lemma_existing_theory_replay_minimal_success",
       z3_th_lemma_existing_theory_replay_minimal_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
