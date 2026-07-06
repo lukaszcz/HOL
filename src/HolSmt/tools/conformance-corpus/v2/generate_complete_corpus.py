@@ -3787,8 +3787,10 @@ def logic_fragment_violation_script(logic: str) -> str:
 
     # Nonlinear arithmetic logics still restrict the available theories:
     # Int-only NIA excludes Real terms, Real-only NRA excludes Int terms,
-    # mixed NIRA without UF excludes uninterpreted functions, and AUFNIRA
-    # has arithmetic+arrays+UF but still excludes bit-vectors.
+    # mixed NIRA without UF excludes uninterpreted functions.  For array
+    # NIRA logics, use bit-vectors instead: HolSmt represents ArraysEx
+    # select as function application, so a function-shaped witness would be
+    # ambiguous after parsing.
     if stem.endswith("NIA"):
         return script(
             "(declare-const outside_fragment Real)",
@@ -3800,7 +3802,7 @@ def logic_fragment_violation_script(logic: str) -> str:
             "(assert (= outside_fragment 0))",
         )
     if stem.endswith("NIRA"):
-        if "UF" not in stem:
+        if "UF" not in stem and not stem.startswith("A"):
             return script(
                 "(declare-fun outside_fragment (Int) Int)",
                 "(assert (= (outside_fragment 0) 0))",

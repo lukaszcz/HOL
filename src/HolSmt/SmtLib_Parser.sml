@@ -3246,10 +3246,13 @@ local
             "assumption literal must have Bool sort"
       end) terms
 
-  fun typecheck_command command state =
+  fun typecheck_command dict_logic command state =
     let
       val context = command_context
       fun finish state = SOME state
+      fun parsedicts_for logic =
+        SmtLib_Logics.parsedicts_of_logic
+          (case dict_logic of SOME broad_logic => broad_logic | NONE => logic)
       fun typecheck_define_fun_command command_name name vars range body state =
         let
           val command_state = dest_typecheck_state command_name state
@@ -3281,7 +3284,7 @@ local
               raise ERR "typecheck_script"
                 "duplicate set-logic: set-logic issued more than once"
             val logic_name = located_string_node logic
-            val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic_name
+            val (tydict, tmdict) = parsedicts_for logic_name
           in
             finish (new_typecheck_state logic_name tydict tmdict)
           end
@@ -3461,7 +3464,7 @@ local
           let
             val command_state = dest_typecheck_state "reset" state
             val logic = visible_logic (#logic command_state)
-            val (tydict, tmdict) = SmtLib_Logics.parsedicts_of_logic logic
+            val (tydict, tmdict) = parsedicts_for logic
           in
             finish (new_typecheck_state (reset_logic logic) tydict tmdict)
           end
@@ -3552,19 +3555,24 @@ local
             ("unknown command '" ^ located_string_node name ^ "'")
     end
 
-  fun typecheck_script script : checked_script =
+  fun typecheck_script_with_dict_logic dict_logic script : checked_script =
     let
       fun loop [] state = finalize_typecheck_state "(end-of-stream)" state
         | loop (command :: rest) state =
             (case node_of command of
                CmdExit => finalize_typecheck_state "exit" state
-             | _ => loop rest (typecheck_command command state))
+             | _ => loop rest (typecheck_command dict_logic command state))
     in
       loop script NONE
     end
 
+  fun typecheck_script script = typecheck_script_with_dict_logic NONE script
+
   fun typecheck_script_string text =
     typecheck_script (parse_script_string text)
+
+  fun typecheck_script_string_with_dict_logic dict_logic text =
+    typecheck_script_with_dict_logic (SOME dict_logic) (parse_script_string text)
 
 in
 
@@ -3575,7 +3583,10 @@ in
   val parse_script_string = parse_script_string
   val parse_script_file = parse_script_file
   val typecheck_script = typecheck_script
+  val typecheck_script_with_dict_logic = typecheck_script_with_dict_logic
   val typecheck_script_string = typecheck_script_string
+  val typecheck_script_string_with_dict_logic =
+    typecheck_script_string_with_dict_logic
 
   val smtlib_mk_let_bindings = smtlib_mk_let_bindings
   val smtlib_mk_let = smtlib_mk_let
@@ -3625,8 +3636,24 @@ in
     result
   end
 
+  fun parse_file_state_with_dict_logic dict_logic (path : string)
+      : command_state_snapshot =
+  let
+    val _ = if !Library.trace > 1 then
+        Feedback.HOL_MESG
+          ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^
+           "' with " ^ dict_logic ^ " dictionaries")
+      else ()
+    val instream = TextIO.openIn path
+    val text = TextIO.inputAll instream
+    val _ = TextIO.closeIn instream
+    val result = typecheck_script_string_with_dict_logic dict_logic text
+  in
+    result
+  end
+
   fun parse_file (path : string)
-    : string * Type.hol_type dict * Term.term dict * Term.term list =
+      : string * Type.hol_type dict * Term.term dict * Term.term list =
     legacy_result_of_state (parse_file_state path)
 
 end  (* local *)

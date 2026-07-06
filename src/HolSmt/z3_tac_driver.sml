@@ -173,8 +173,11 @@ let
           ["logic=" ^ expected_logic,
            "diagnostic=" ^ diagnostic]
     | NONE => ()
-  val state: SmtLib_Parser.command_state_snapshot =
-    SmtLib_Parser.parse_file_state path
+  val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
+    (SmtLib_Parser.parse_file_state path, NONE)
+    handle Feedback.HOL_ERR holerr =>
+      (SmtLib_Parser.parse_file_state_with_dict_logic "ALL" path,
+       SOME holerr)
   val observed_logic = #logic state
   val queries = #queries state
   val assertions = z3_tac_query_assertions queries
@@ -192,6 +195,8 @@ in
       ["logic=" ^ observed_logic,
        "diagnostic=checked mode must reject logic fragment violations before reconstruction: " ^
          valOf fragment_diagnostic]
+  else if Option.isSome scoped_parse_error then
+    raise Feedback.HOL_ERR (valOf scoped_parse_error)
   else
     case z3_tac_query_diagnostic queries of
       SOME diagnostic =>

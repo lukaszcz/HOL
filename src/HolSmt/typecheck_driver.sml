@@ -35,8 +35,11 @@ fun typecheck_query_fragment_terms queries =
 fun typecheck_ok path expected_logic =
 let
   val _ = Library.trace := 0
-  val state: SmtLib_Parser.command_state_snapshot =
-    SmtLib_Parser.parse_file_state path
+  val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
+    (SmtLib_Parser.parse_file_state path, NONE)
+    handle Feedback.HOL_ERR holerr =>
+      (SmtLib_Parser.parse_file_state_with_dict_logic "ALL" path,
+       SOME holerr)
   val observed_logic = #logic state
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
@@ -54,6 +57,8 @@ in
        "logic=" ^ observed_logic ^ "\n" ^
        "diagnostic=logic fragment restrictions are not completely enforced: " ^
        valOf fragment_diagnostic)
+  else if Option.isSome scoped_parse_error then
+    raise Feedback.HOL_ERR (valOf scoped_parse_error)
   else
     (print
        ("TYPECHECK_PASS\n" ^

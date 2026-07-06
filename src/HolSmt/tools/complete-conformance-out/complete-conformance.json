@@ -72,8 +72,8 @@
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
       "result_count": 1163,
       "status_counts": {
-        "fail": 373,
-        "pass": 790,
+        "fail": 374,
+        "pass": 789,
         "unsupported": 0
       }
     },
@@ -108,9 +108,9 @@
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
       "result_count": 924,
       "status_counts": {
-        "fail": 304,
+        "fail": 296,
         "pass": 564,
-        "unsupported": 56
+        "unsupported": 64
       }
     },
     {
