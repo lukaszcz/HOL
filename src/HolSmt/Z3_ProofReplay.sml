@@ -1478,15 +1478,7 @@ local
         (unsupported_advanced_th_lemma_message state metadata t))
 
   fun z3_th_lemma_arith_checked metadata (state, thms, t) =
-    if th_lemma_metadata_has_subkind
-        ["nonlinear", "nonlinear-arith", "nla", "nra", "nia"] metadata
-    then
-      z3_th_lemma_advanced_unsupported
-        (mk_th_lemma_metadata
-          ("nonlinear-arith", #subkind metadata, #indices metadata))
-        (state, thms, t)
-    else
-      z3_th_lemma_arith (state, thms, t)
+    z3_th_lemma_arith (state, thms, t)
 
   fun z3_trans (state, thm1, thm2, t) =
     (state, Thm.TRANS thm1 thm2)

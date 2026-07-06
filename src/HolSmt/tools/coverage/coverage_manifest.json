@@ -4660,7 +4660,7 @@
           "match": "proof-format limitation"
         }
       ],
-      "notes": "Advanced proof replay is explicitly gated."
+      "notes": "Non-arithmetic advanced proof replay is explicitly gated."
     },
     {
       "section": "z3_proof_rules",
@@ -4693,7 +4693,7 @@
           "match": "TH_LEMMA_ADVANCED"
         }
       ],
-      "notes": "Advanced th-lemma labels are parsed and classified."
+      "notes": "Non-arithmetic advanced th-lemma labels are parsed and classified; nonlinear arithmetic routes through the arithmetic replay ladder."
     },
     {
       "section": "z3_proof_rules",
@@ -4739,7 +4739,7 @@
           "match": "proof-format limitation"
         }
       ],
-      "notes": "Advanced th-lemma replay reports exact unsupported diagnostics."
+      "notes": "Non-arithmetic advanced th-lemma replay reports exact unsupported diagnostics."
     },
     {
       "section": "soundness_audit",

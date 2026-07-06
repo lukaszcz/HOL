@@ -1,5 +1,4 @@
 (set-logic ANIRA)
-(declare-const x Real)
-(declare-const y Real)
-(assert (= (* x y) 1.0))
+(declare-fun outside_fragment (Int) Int)
+(assert (= (outside_fragment 0) 0))
 (check-sat)

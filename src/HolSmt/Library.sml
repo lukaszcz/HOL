@@ -513,6 +513,31 @@ struct
       List.exists (Lib.equal realSyntax.real_ty)
         (strip_fun_tys (Term.type_of tm) [])
 
+  val csdp_missing_diagnostic =
+    "nonlinear real arithmetic replay requires the CSDP semidefinite solver " ^
+    "(`coinor-csdp`, or `HOL4_CSDP_EXECUTABLE`); " ^
+    "CSDP executable not found"
+
+  fun raise_csdp_missing () =
+    raise Feedback.mk_HOL_ERR "Library" "nla_prove" csdp_missing_diagnostic
+
+  fun env_csdp_missing () =
+    case OS.Process.getEnv "HOL4_CSDP_EXECUTABLE" of
+        SOME path =>
+          String.isSubstring "/" path andalso
+          (not (OS.FileSys.access (path, [OS.FileSys.A_EXEC]))
+           handle OS.SysErr _ => true)
+      | NONE => false
+
+  fun wrap_csdp_missing f x =
+    if env_csdp_missing () then raise_csdp_missing ()
+    else
+      f x
+      handle Feedback.HOL_ERR holerr =>
+        if String.isSubstring "CSDP not found" (Feedback.message_of holerr)
+        then raise_csdp_missing ()
+        else raise Feedback.HOL_ERR holerr
+
   (* Prove a nonlinear arithmetic goal using NLArith/SOSLib.
      Type-dispatches: real → REAL_NLA then REAL_SOS, int → INT_SOS,
      num → NUM_SOS_RULE.  Avoids trying wrong-type provers. *)
@@ -522,11 +547,11 @@ struct
       handle Feedback.HOL_ERR _ =>
       (* REAL_NLA can't handle strict ineqs with equality preconditions;
          REAL_SOS (which uses CSDP) can. *)
-      SOSLib.REAL_SOS tm
+      wrap_csdp_missing SOSLib.REAL_SOS tm
     else
-      SOSLib.INT_SOS tm
+      wrap_csdp_missing SOSLib.INT_SOS tm
       handle Feedback.HOL_ERR _ =>
-      SOSLib.NUM_SOS_RULE tm
+      wrap_csdp_missing SOSLib.NUM_SOS_RULE tm
 
   fun NLA_TAC (goal as (_, term)) =
     if term_contains_real_ty term then

@@ -543,16 +543,6 @@ TH_LEMMA_PROOF_RULE_OBLIGATIONS: tuple[ProofRuleObligation, ...] = (
         behavior="diagnostic-only",
     ),
     ProofRuleObligation(
-        rule="th-lemma-nonlinear-arith",
-        file_slug="th_lemma_nonlinear_arith",
-        diagnostic="nonlinear arithmetic th-lemma replay is diagnostic-only",
-        notes=(
-            "Diagnostic-only synthetic coverage exists; keep this row red until "
-            "checked replay and real proof-corpus evidence are added."
-        ),
-        behavior="diagnostic-only",
-    ),
-    ProofRuleObligation(
         rule="th-lemma-regexp",
         file_slug="th_lemma_regexp",
         diagnostic="regular-expression th-lemma replay is diagnostic-only",
@@ -705,8 +695,57 @@ def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
     return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
 
 
+def proof_rule_th_lemma_nonlinear_arith_case() -> GeneratedCase:
+    feature = "proof-rule:th-lemma-nonlinear-arith"
+    script = (
+        "(set-option :produce-proofs true)\n"
+        "(set-logic QF_NIA)\n"
+        "(declare-const x Int)\n"
+        "(assert (not (>= (* x x) 0)))\n"
+        "(check-sat)\n"
+        "(get-proof)\n"
+    )
+    entry = manifest_entry(
+        case_id=feature,
+        file="cases/proof_rules/proof_rule_th_lemma_nonlinear_arith.smt2",
+        logic="QF_NIA",
+        standard="Z3-extension",
+        row_class="proof-rule",
+        features=[
+            feature,
+            "proof-rule-family:th-lemma",
+            "proof-rule-behavior:checked-replay",
+        ],
+        modes=("proof-parse", "proof-replay", "z3-tac"),
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected={
+            "proof-parse": expected_result(
+                "pass",
+                proof_rule_histogram={"th-lemma-nonlinear-arith": 1},
+            ),
+            "proof-replay": expected_result(
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
+                proof_rule_histogram={"th-lemma-nonlinear-arith": 1},
+            ),
+            "z3-tac": expected_result(
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
+                proof_rule_histogram={"th-lemma-nonlinear-arith": 1},
+            ),
+        },
+        implementation_obligation=None,
+        source=source("Z3-proof", "Z3 proof rule th-lemma-nonlinear-arith"),
+    )
+    return GeneratedCase(entry=entry, script=script)
+
+
 def proof_rule_cases() -> list[GeneratedCase]:
-    return [proof_rule_asserted_case(), proof_rule_th_lemma_basic_case()] + [
+    return [
+        proof_rule_asserted_case(),
+        proof_rule_th_lemma_basic_case(),
+        proof_rule_th_lemma_nonlinear_arith_case(),
+    ] + [
         th_lemma_proof_rule_case(obligation)
         for obligation in TH_LEMMA_PROOF_RULE_OBLIGATIONS
     ]
@@ -3709,33 +3748,109 @@ def logic_case(
 
 
 def logic_fragment_violation_script(logic: str) -> str:
-    if logic.startswith("QF_"):
-        return (
-            f"(set-logic {logic})\n"
-            "(assert (forall ((p Bool)) p))\n"
-            "(check-sat)\n"
+    def script(*body: str) -> str:
+        return f"(set-logic {logic})\n" + "".join(
+            f"{line}\n" for line in body
+        ) + "(check-sat)\n"
+
+    stem = logic.removeprefix("QF_")
+
+    # Difference logics permit only difference atoms such as x - y <= c.
+    # Use x + y <= c even for QF_IDL/RDL so these rows exercise the
+    # difference-atom restriction, not just quantifier-freeness.
+    if stem.endswith("IDL"):
+        return script(
+            "(declare-const x Int)",
+            "(declare-const y Int)",
+            "(assert (<= (+ x y) 1))",
         )
-    if any(token in logic for token in ("LIA", "IDL", "NIA")):
-        return (
-            f"(set-logic {logic})\n"
+    if stem.endswith("RDL"):
+        return script(
+            "(declare-const x Real)",
+            "(declare-const y Real)",
+            "(assert (<= (+ x y) 1.0))",
+        )
+
+    # Every QF_* logic excludes quantified formulas.
+    if logic.startswith("QF_"):
+        return script("(assert (forall ((p Bool)) p))")
+
+    # Linear arithmetic logics exclude products of two non-constant terms.
+    if stem.endswith(("LIA", "LRA", "LIRA")):
+        sort = "Real" if stem.endswith(("LRA", "LIRA")) else "Int"
+        one = "1.0" if sort == "Real" else "1"
+        return script(
+            f"(declare-const x {sort})",
+            f"(declare-const y {sort})",
+            f"(assert (= (* x y) {one}))",
+        )
+
+    # Nonlinear arithmetic logics still restrict the available theories:
+    # Int-only NIA excludes Real terms, Real-only NRA excludes Int terms,
+    # mixed NIRA without UF excludes uninterpreted functions, and AUFNIRA
+    # has arithmetic+arrays+UF but still excludes bit-vectors.
+    if stem.endswith("NIA"):
+        return script(
+            "(declare-const outside_fragment Real)",
+            "(assert (= outside_fragment 0.0))",
+        )
+    if stem.endswith("NRA"):
+        return script(
+            "(declare-const outside_fragment Int)",
+            "(assert (= outside_fragment 0))",
+        )
+    if stem.endswith("NIRA"):
+        if "UF" not in stem:
+            return script(
+                "(declare-fun outside_fragment (Int) Int)",
+                "(assert (= (outside_fragment 0) 0))",
+            )
+        return script(
+            "(declare-const outside_fragment (_ BitVec 1))",
+            "(assert (= outside_fragment #b0))",
+        )
+
+    # Pure UF/BV/FP/String/etc. logics that reach this fallback do not
+    # include integer arithmetic, so an Int-sorted constant is outside
+    # the logic fragment.
+    return script(
+        "(declare-const outside_fragment Int)",
+        "(assert (= outside_fragment 0))",
+    )
+
+
+def logic_nonlinear_replay_script(logic: str) -> str:
+    if logic == "QF_NIA":
+        body = (
             "(declare-const x Int)\n"
             "(declare-const y Int)\n"
-            "(assert (= (* x y) 1))\n"
-            "(check-sat)\n"
+            "(assert (not (=> (and (>= x 0) (>= y 0)) (>= (* x y) 0))))\n"
         )
-    if any(token in logic for token in ("LRA", "NRA", "LIRA", "NIRA")):
-        return (
-            f"(set-logic {logic})\n"
+    elif logic == "NIA":
+        body = (
+            "(declare-const x Int)\n"
+            "(declare-const y Int)\n"
+            "(assert (not (=> (and (>= x 5) (>= y 5)) (>= (* x y) 25))))\n"
+        )
+    elif logic == "QF_NRA":
+        body = (
             "(declare-const x Real)\n"
             "(declare-const y Real)\n"
-            "(assert (= (* x y) 1.0))\n"
-            "(check-sat)\n"
+            "(assert (not (< 0.0 (+ 1.0 (* 2.0 x x x x) (* 2.0 x x x y) (- (* x x y y)) (* 5.0 y y y y)))))\n"
         )
+    elif logic == "NRA":
+        body = (
+            "(declare-const x Real)\n"
+            "(assert (not (>= (* x x) 0.0)))\n"
+        )
+    else:
+        raise GeneratorError(f"no nonlinear replay script for logic {logic}")
     return (
+        "(set-option :produce-proofs true)\n"
         f"(set-logic {logic})\n"
-        "(declare-const outside_fragment Int)\n"
-        "(assert (= outside_fragment 0))\n"
+        f"{body}"
         "(check-sat)\n"
+        "(get-proof)\n"
     )
 
 
@@ -3801,6 +3916,37 @@ def logic_packet_cases(
                 },
             )
         )
+
+        if logic in {"QF_NIA", "QF_NRA", "NIA", "NRA"}:
+            cases.append(
+                logic_case(
+                    logic=logic,
+                    kind="nonlinear-proof",
+                    script=logic_nonlinear_replay_script(logic),
+                    modes=(
+                        "parser-only",
+                        "typecheck-only",
+                        "z3-oracle",
+                        "proof-parse",
+                        "proof-replay",
+                        "z3-tac",
+                    ),
+                    expected={
+                        "parser-only": expected_result("pass"),
+                        "typecheck-only": expected_result("pass"),
+                        "z3-oracle": expected_result("pass"),
+                        "proof-parse": expected_result("pass"),
+                        "proof-replay": expected_result(
+                            "pass",
+                            theorem_shape="closed theorem without oracle tags",
+                        ),
+                        "z3-tac": expected_result(
+                            "pass",
+                            theorem_shape="closed theorem without oracle tags",
+                        ),
+                    },
+                )
+            )
 
         cases.append(
             logic_case(

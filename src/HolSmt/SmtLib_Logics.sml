@@ -486,10 +486,6 @@ in
           "theory:Z3_Extensions:seq-set-bag:checked-replay"
           ["theory:Z3_Extensions:seq", "theory:Z3_Extensions:set",
            "theory:Z3_Extensions:bag", "proof-rule:th-lemma-seq"])
-      else if some_subterm is_nonlinear_product then
-        SOME (checked_replay_gap_message logic "nonlinear arithmetic"
-          "proof-rule:th-lemma-nonlinear-arith"
-          ["proof-rule:th-lemma-nonlinear-arith"])
       else if some_subterm term_mentions_floatingpoint then
         SOME (checked_replay_gap_message logic "FloatingPoint"
           "theory:FloatingPoint:checked-replay"

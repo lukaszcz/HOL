@@ -7241,6 +7241,60 @@
       }
     },
     {
+      "id": "logic:NIA:nonlinear-proof",
+      "file": "cases/logics/logic_nia_nonlinear_proof.smt2",
+      "logic": "NIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:nonlinear-proof",
+        "logic:NIA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "pass"
+        },
+        "proof-replay": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: NIA"
+      }
+    },
+    {
       "id": "logic:NIA:sat",
       "file": "cases/logics/logic_nia_sat.smt2",
       "logic": "NIA",
@@ -7501,6 +7555,60 @@
           "status": "fail",
           "diagnostic": "missing ')'",
           "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: NRA"
+      }
+    },
+    {
+      "id": "logic:NRA:nonlinear-proof",
+      "file": "cases/logics/logic_nra_nonlinear_proof.smt2",
+      "logic": "NRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:nonlinear-proof",
+        "logic:NRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "pass"
+        },
+        "proof-replay": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
         }
       },
       "implementation_obligation": null,
@@ -12962,6 +13070,60 @@
       }
     },
     {
+      "id": "logic:QF_NIA:nonlinear-proof",
+      "file": "cases/logics/logic_qf_nia_nonlinear_proof.smt2",
+      "logic": "QF_NIA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:nonlinear-proof",
+        "logic:QF_NIA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "pass"
+        },
+        "proof-replay": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_NIA"
+      }
+    },
+    {
       "id": "logic:QF_NIA:sat",
       "file": "cases/logics/logic_qf_nia_sat.smt2",
       "logic": "QF_NIA",
@@ -13491,6 +13653,60 @@
           "status": "fail",
           "diagnostic": "missing ')'",
           "failure_phase": "parser"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_NRA"
+      }
+    },
+    {
+      "id": "logic:QF_NRA:nonlinear-proof",
+      "file": "cases/logics/logic_qf_nra_nonlinear_proof.smt2",
+      "logic": "QF_NRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:nonlinear-proof",
+        "logic:QF_NRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "pass"
+        },
+        "proof-replay": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
         }
       },
       "implementation_obligation": null,
@@ -19568,11 +19784,11 @@
     {
       "id": "proof-rule:th-lemma-nonlinear-arith",
       "file": "cases/proof_rules/proof_rule_th_lemma_nonlinear_arith.smt2",
-      "logic": "QF_UF",
+      "logic": "QF_NIA",
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule-behavior:diagnostic-only",
+        "proof-rule-behavior:checked-replay",
         "proof-rule-family:th-lemma",
         "proof-rule:th-lemma-nonlinear-arith"
       ],
@@ -19591,44 +19807,27 @@
       ],
       "expected": {
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-nonlinear-arith": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
-          "failure_phase": "proof-replay",
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
             "th-lemma-nonlinear-arith": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
             "th-lemma-nonlinear-arith": 1
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/Unittest.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "proof-rule:th-lemma-nonlinear-arith",
-        "test_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 proof rule th-lemma-nonlinear-arith"

@@ -32,6 +32,15 @@ in
   result
 end
 
+fun read_text_file path =
+let
+  val instream = TextIO.openIn path
+  val contents = TextIO.inputAll instream
+  val _ = TextIO.closeIn instream
+in
+  contents
+end
+
 fun parse_smtlib_assertions contents =
   with_temp_file contents
     (fn path =>
@@ -1347,13 +1356,12 @@ fun smtlib_checked_replay_gap_diagnostics () =
        "(assert (set.member x xs))\n" ^
        "(check-sat)\n")
       "theory:Z3_Extensions:seq-set-bag:checked-replay";
-    expect_gap "nonlinear arithmetic replay" "NIA"
+    expect_no_gap "nonlinear arithmetic replay" "NIA"
       ("(set-logic NIA)\n" ^
        "(declare-const x Int)\n" ^
        "(declare-const y Int)\n" ^
        "(assert (= (* x y) 1))\n" ^
-       "(check-sat)\n")
-      "proof-rule:th-lemma-nonlinear-arith";
+       "(check-sat)\n");
     expect_no_gap "ground literal product replay" "QF_NIA"
       ("(set-logic QF_NIA)\n" ^
        "(assert (= (* 2 3) 6))\n" ^
@@ -2257,6 +2265,9 @@ let
       "((declare-fun x () Int) (declare-fun y () Int) \
         \(proof ((_ th-lemma basic eq-propagate 2) \
         \(implies (= x y) (= y x)))))"),
+    ("arith/nla-square",
+      "((declare-fun x () Int) \
+        \(proof ((_ th-lemma arith nla 6) (>= (* x x) 0))))"),
     ("bv/bit-blast",
       "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
   ]
@@ -2294,6 +2305,38 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
       assert (String.isSubstring "unsupported th-lemma shape" msg,
         "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
     end
+
+fun z3_nonlinear_missing_csdp_diagnostic () =
+let
+  val expected = Library.csdp_missing_diagnostic
+  val script =
+    "load \"Library\";\n" ^
+    "val expected = Library.csdp_missing_diagnostic;\n" ^
+    "val _ =\n" ^
+    "  (ignore (Library.nla_prove ``0r < 1r + 2r * (x:real) * x * x * x + 2r * x * x * x * y - x * x * y * y + 5r * y * y * y * y``);\n" ^
+    "   OS.Process.exit OS.Process.failure)\n" ^
+    "  handle Feedback.HOL_ERR holerr =>\n" ^
+    "    let val msg = Feedback.message_of holerr\n" ^
+    "    in if msg = expected then OS.Process.exit OS.Process.success\n" ^
+    "       else (print (msg ^ \"\\n\"); OS.Process.exit OS.Process.failure)\n" ^
+    "    end;\n"
+in
+  with_temp_file script (fn input =>
+    with_temp_file "" (fn output =>
+      let
+        val cmd =
+          "HOL4_CSDP_EXECUTABLE=/definitely-not-hol4-csdp " ^
+          "\"$HOLDIR/bin/hol\" --gcthreads=1 " ^
+          "--holstate=\"$HOLDIR/src/HolSmt/smtheap\" < " ^ input ^
+          " > " ^ output ^ " 2>&1"
+        val status = OS.Process.system cmd
+        val text = read_text_file output
+      in
+        assert (OS.Process.isSuccess status,
+          "missing CSDP diagnostic mismatch; expected '" ^ expected ^
+          "', saw: " ^ text)
+      end))
+end
 
 fun assert_array_prover name prover tm =
   (let
@@ -2388,11 +2431,7 @@ let
     ("datatype",
       "((proof ((_ th-lemma datatype eq-propagate 5) false)))",
       "theory=datatype",
-      "proof-rule:th-lemma-datatype"),
-    ("nonlinear-arith",
-      "((proof ((_ th-lemma arith nla 6) false)))",
-      "theory=nonlinear-arith",
-      "proof-rule:th-lemma-nonlinear-arith")
+      "proof-rule:th-lemma-datatype")
   ]
 in
   List.app expect_advanced_th_lemma_diagnostic cases
@@ -2808,6 +2847,8 @@ let
       z3_th_lemma_existing_theory_replay_minimal_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
+    ("z3_nonlinear_missing_csdp_diagnostic",
+      z3_nonlinear_missing_csdp_diagnostic),
     ("array_prove_ladder_rungs_success",
       array_prove_ladder_rungs_success),
     ("array_prove_unsupported_diagnostic",

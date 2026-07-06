@@ -30,6 +30,12 @@ For a theorem-producing result, the trusted path is:
 generic tactic's `UNSAT NONE` oracle branch is not an acceptable result for
 `Z3_TAC`; `Z3.Z3_SMT_Prover` must return `UNSAT (SOME thm)` after proof replay.
 
+Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
+CSDP is an untrusted semidefinite-solver dependency: it searches for SOS
+certificates, while HOL checks the resulting certificate before any theorem is
+accepted. If CSDP is unavailable, checked replay must fail with the explicit
+dependency diagnostic rather than use an oracle or skip replay.
+
 ## CI and Regression Gate
 
 The HolSmt selftest target is the CI gate for this boundary:

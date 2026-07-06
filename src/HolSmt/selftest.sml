@@ -883,6 +883,11 @@ in
       [thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (* NRA: square nonneg *)
     (``(x:real) * x >= 0``, [thm_Z3, thm_Z3p_v4, thm_CVCp]),
+    (* NRA: strict SOS polynomial, REAL_SOS/CSDP fallback in checked replay *)
+    (``0r < 1r + 2r * (x:real) * x * x * x +
+              2r * x * x * x * y - x * x * y * y +
+              5r * y * y * y * y``,
+      [thm_Z3p_v4]),
 
     (* arithmetic inequalities: <, <=, >, >= *)
 

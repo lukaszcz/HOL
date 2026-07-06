@@ -98,7 +98,7 @@ SMT-LIB support matrix:
 
   Area                         Parse  Typecheck  HOL translate  Replay
   Core Bool/UF                 yes    yes        native         Z3/cvc5 paths
-  Int/Real arithmetic          yes    yes        native         partial
+  Int/Real arithmetic          yes    yes        native         linear and nonlinear
   Fixed bit-vectors            yes    yes        native         partial
   ArraysEx select/store        yes    yes        native         yes
   Unicode strings              yes    yes        selected native no
@@ -113,13 +113,15 @@ Logic coverage summary:
   Logic family                 Contract summary
   UF, QF_UF                   Implemented parser, translation, solving and
                               checked replay coverage.
-  LIA, NIA, UFIDL, UFLIA,     Implemented integer parser/translator/replay
+  LIA, NIA, UFIDL, UFLIA,     Implemented integer parser/translator/replay,
   UFNIA, QF_IDL, QF_LIA,      coverage; parser is permissive and does not
   QF_NIA, QF_UFIDL, QF_UFLIA  enforce every linear or difference-logic
-                              fragment restriction.
-  LRA, NRA, UFLRA, UFNRA,     Implemented real parser/translator/replay
+                              fragment restriction. Nonlinear replay uses the
+                              SOS ladder where needed.
+  LRA, NRA, UFLRA, UFNRA,     Implemented real parser/translator/replay,
   QF_LRA, QF_NRA, QF_RDL,     coverage; parser is permissive about fragment
-  QF_UFLRA, QF_UFNRA          restrictions.
+  QF_UFLRA, QF_UFNRA          restrictions. Some nonlinear real replay cases
+                              require CSDP as a certificate finder.
   QF_LIRA, QF_NIRA,           Implemented mixed Int/Real coverage for current
   QF_UFLIRA, QF_UFNIRA        selftests and dictionaries.
   BV, UFBV, QF_ABV,           Implemented bit-vector parser/translator/replay

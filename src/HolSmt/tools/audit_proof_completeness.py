@@ -58,7 +58,6 @@ TH_LEMMA_OBLIGATION_RULES = {
     "th-lemma-string",
     "th-lemma-regexp",
     "th-lemma-datatype",
-    "th-lemma-nonlinear-arith",
 }
 
 

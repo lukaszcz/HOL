@@ -56,10 +56,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Z3
+      - name: Install Z3 and CSDP
         run: |
           sudo apt-get update
-          sudo apt-get install -y z3
+          sudo apt-get install -y z3 coinor-csdp
           z3 -version
 
       - name: Run parser conformance corpus
@@ -113,10 +113,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
-      - name: Install Z3
+      - name: Install Z3 and CSDP
         run: |
           sudo apt-get update
-          sudo apt-get install -y z3
+          sudo apt-get install -y z3 coinor-csdp
           z3 -version
 
       - name: Validate checked-in supported-version proof matrix

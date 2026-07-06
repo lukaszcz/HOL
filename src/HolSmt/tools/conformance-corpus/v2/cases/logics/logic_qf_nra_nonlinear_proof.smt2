@@ -1,0 +1,7 @@
+(set-option :produce-proofs true)
+(set-logic QF_NRA)
+(declare-const x Real)
+(declare-const y Real)
+(assert (not (< 0.0 (+ 1.0 (* 2.0 x x x x) (* 2.0 x x x y) (- (* x x y y)) (* 5.0 y y y y)))))
+(check-sat)
+(get-proof)

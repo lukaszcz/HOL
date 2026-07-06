@@ -1,3 +1,5 @@
 (set-logic QF_IDL)
-(assert (forall ((p Bool)) p))
+(declare-const x Int)
+(declare-const y Int)
+(assert (<= (+ x y) 1))
 (check-sat)
