@@ -4447,28 +4447,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment ALIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment ALIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ALIA:fragment-violation",
-        "test_ids": [
-          "logic:ALIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ALIA"
@@ -4718,28 +4707,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment ALIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment ALIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ALIRA:fragment-violation",
-        "test_ids": [
-          "logic:ALIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ALIRA"
@@ -4993,28 +4971,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment ANIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment ANIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ANIA:fragment-violation",
-        "test_ids": [
-          "logic:ANIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ANIA"
@@ -5268,28 +5235,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "bit-vector term sort is outside logic fragment ANIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "bit-vector term sort is outside logic fragment ANIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:ANIRA:fragment-violation",
-        "test_ids": [
-          "logic:ANIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: ANIRA"
@@ -5543,28 +5499,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment AUFLIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment AUFLIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFLIA:fragment-violation",
-        "test_ids": [
-          "logic:AUFLIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFLIA"
@@ -5818,28 +5763,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment AUFLIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment AUFLIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFLIRA:fragment-violation",
-        "test_ids": [
-          "logic:AUFLIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFLIRA"
@@ -6093,28 +6027,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "bit-vector term sort is outside logic fragment AUFNIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "bit-vector term sort is outside logic fragment AUFNIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:AUFNIRA:fragment-violation",
-        "test_ids": [
-          "logic:AUFNIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: AUFNIRA"
@@ -6368,28 +6291,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "integer atom is outside bit-vector logic fragment BV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "integer atom is outside bit-vector logic fragment BV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:BV:fragment-violation",
-        "test_ids": [
-          "logic:BV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: BV"
@@ -6641,28 +6553,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment LIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment LIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:LIA:fragment-violation",
-        "test_ids": [
-          "logic:LIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: LIA"
@@ -6910,28 +6811,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment LRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment LRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:LRA:fragment-violation",
-        "test_ids": [
-          "logic:LRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: LRA"
@@ -7179,28 +7069,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment NIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment NIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:NIA:fragment-violation",
-        "test_ids": [
-          "logic:NIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: NIA"
@@ -7502,28 +7381,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment NRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment NRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:NRA:fragment-violation",
-        "test_ids": [
-          "logic:NRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: NRA"
@@ -7827,28 +7695,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ABV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ABV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ABV:fragment-violation",
-        "test_ids": [
-          "logic:QF_ABV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ABV"
@@ -8100,28 +7957,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ALIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ALIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ALIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_ALIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ALIA"
@@ -8371,28 +8217,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ALRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ALRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ALRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_ALRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ALRA"
@@ -8646,28 +8481,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ANIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ANIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ANIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_ANIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ANIA"
@@ -8921,28 +8745,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ANRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_ANRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_ANRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_ANRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_ANRA"
@@ -9196,28 +9009,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFBV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFBV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFBV:fragment-violation",
-        "test_ids": [
-          "logic:QF_AUFBV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFBV"
@@ -9471,28 +9273,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFLIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFLIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFLIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_AUFLIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFLIA"
@@ -9746,28 +9537,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFLIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFLIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFLIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_AUFLIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFLIRA"
@@ -10021,28 +9801,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFNIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFNIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFNIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_AUFNIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFNIA"
@@ -10296,28 +10065,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFNIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AUFNIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AUFNIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_AUFNIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AUFNIRA"
@@ -10569,28 +10327,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AX",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_AX",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_AX:fragment-violation",
-        "test_ids": [
-          "logic:QF_AX:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_AX"
@@ -10838,28 +10585,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_BV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_BV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_BV:fragment-violation",
-        "test_ids": [
-          "logic:QF_BV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_BV"
@@ -11109,28 +10845,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_BVFP",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_BVFP",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_BVFP:fragment-violation",
-        "test_ids": [
-          "logic:QF_BVFP:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_BVFP"
@@ -11384,28 +11109,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_FP",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_FP",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_FP:fragment-violation",
-        "test_ids": [
-          "logic:QF_FP:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_FP"
@@ -11659,28 +11373,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_FPBV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_FPBV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_FPBV:fragment-violation",
-        "test_ids": [
-          "logic:QF_FPBV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_FPBV"
@@ -11932,28 +11635,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_IDL",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_IDL",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_IDL:fragment-violation",
-        "test_ids": [
-          "logic:QF_IDL:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_IDL"
@@ -12201,28 +11893,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_LIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LIA"
@@ -12470,28 +12151,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_LIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LIRA"
@@ -12739,28 +12409,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_LRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_LRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_LRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_LRA"
@@ -13008,28 +12667,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_NIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NIA"
@@ -13331,28 +12979,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_NIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NIRA"
@@ -13600,28 +13237,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_NRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_NRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_NRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_NRA"
@@ -13923,28 +13549,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_RDL",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_RDL",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_RDL:fragment-violation",
-        "test_ids": [
-          "logic:QF_RDL:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_RDL"
@@ -14194,28 +13809,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_S",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_S",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_S:fragment-violation",
-        "test_ids": [
-          "logic:QF_S:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_S"
@@ -14469,28 +14073,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_SLIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_SLIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_SLIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_SLIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_SLIA"
@@ -14744,28 +14337,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_SNIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_SNIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_SNIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_SNIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_SNIA"
@@ -15017,28 +14599,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UF",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UF",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UF:fragment-violation",
-        "test_ids": [
-          "logic:QF_UF:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UF"
@@ -15288,28 +14859,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFBV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFBV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFBV:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFBV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFBV"
@@ -15563,28 +15123,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFBVFP",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFBVFP",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFBVFP:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFBVFP:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFBVFP"
@@ -15838,28 +15387,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFFP",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFFP",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFFP:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFFP:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFFP"
@@ -16111,28 +15649,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_UFIDL",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment QF_UFIDL",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFIDL:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFIDL:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFIDL"
@@ -16380,28 +15907,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLIA:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFLIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLIA"
@@ -16649,28 +16165,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFLIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLIRA"
@@ -16918,28 +16423,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFLRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFLRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFLRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFLRA"
@@ -17187,28 +16681,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFNIRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFNIRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFNIRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFNIRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFNIRA"
@@ -17456,28 +16939,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFNRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "quantified formula is outside logic fragment QF_UFNRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:QF_UFNRA:fragment-violation",
-        "test_ids": [
-          "logic:QF_UFNRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: QF_UFNRA"
@@ -17725,28 +17197,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment UF",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment UF",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UF:fragment-violation",
-        "test_ids": [
-          "logic:UF:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UF"
@@ -17996,28 +17457,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "integer atom is outside bit-vector logic fragment UFBV",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "integer atom is outside bit-vector logic fragment UFBV",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFBV:fragment-violation",
-        "test_ids": [
-          "logic:UFBV:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFBV"
@@ -18269,28 +17719,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment UFIDL",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "difference logic atom shape is outside logic fragment UFIDL",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFIDL:fragment-violation",
-        "test_ids": [
-          "logic:UFIDL:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFIDL"
@@ -18538,28 +17977,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment UFLIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment UFLIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFLIA:fragment-violation",
-        "test_ids": [
-          "logic:UFLIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFLIA"
@@ -18807,28 +18235,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment UFLRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "nonlinear arithmetic product is outside logic fragment UFLRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFLRA:fragment-violation",
-        "test_ids": [
-          "logic:UFLRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFLRA"
@@ -19076,28 +18493,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment UFNIA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "real term sort is outside logic fragment UFNIA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFNIA:fragment-violation",
-        "test_ids": [
-          "logic:UFNIA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFNIA"
@@ -19345,28 +18751,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "logic fragment restrictions are not completely enforced",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment UFNRA",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked mode must reject logic fragment violations before reconstruction",
+          "status": "fail",
+          "diagnostic": "integer term sort is outside logic fragment UFNRA",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Logics.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "logic-packet:UFNRA:fragment-violation",
-        "test_ids": [
-          "logic:UFNRA:fragment-violation"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-logic",
         "reference": "SMT-LIB 2.7 logic packet: UFNRA"

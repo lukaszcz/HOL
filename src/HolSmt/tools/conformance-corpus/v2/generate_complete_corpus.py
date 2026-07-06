@@ -3821,6 +3821,30 @@ def logic_fragment_violation_script(logic: str) -> str:
     )
 
 
+def logic_fragment_violation_diagnostic(logic: str) -> str:
+    stem = logic.removeprefix("QF_")
+    if stem.endswith(("IDL", "RDL")):
+        prefix = "difference logic atom shape"
+    elif logic.startswith("QF_"):
+        prefix = "quantified formula"
+    elif stem.endswith(("LIA", "LRA", "LIRA")):
+        prefix = "nonlinear arithmetic product"
+    elif stem.endswith("NIA"):
+        prefix = "real term sort"
+    elif stem.endswith("NRA"):
+        prefix = "integer term sort"
+    elif stem.endswith("NIRA"):
+        if "UF" not in stem and not stem.startswith("A"):
+            prefix = "uninterpreted function application"
+        else:
+            prefix = "bit-vector term sort"
+    elif "BV" in stem or "FP" in stem:
+        return f"integer atom is outside bit-vector logic fragment {logic}"
+    else:
+        prefix = "integer term sort"
+    return f"{prefix} is outside logic fragment {logic}"
+
+
 def logic_nonlinear_replay_script(logic: str) -> str:
     if logic == "QF_NIA":
         body = (
@@ -3993,7 +4017,7 @@ def logic_packet_cases(
             )
         )
 
-        fragment_case_id = f"logic:{logic}:fragment-violation"
+        fragment_diagnostic = logic_fragment_violation_diagnostic(logic)
         cases.append(
             logic_case(
                 logic=logic,
@@ -4003,22 +4027,16 @@ def logic_packet_cases(
                 expected={
                     "parser-only": expected_result("pass"),
                     "typecheck-only": expected_result(
-                        "red",
-                        diagnostic="logic fragment restrictions are not completely enforced",
+                        "fail",
+                        diagnostic=fragment_diagnostic,
                         failure_phase="typecheck",
                     ),
                     "z3-tac": expected_result(
-                        "red",
-                        diagnostic="checked mode must reject logic fragment violations before reconstruction",
+                        "fail",
+                        diagnostic=fragment_diagnostic,
                         failure_phase="typecheck",
                     ),
                 },
-                implementation=logic_obligation(
-                    logic,
-                    "fragment-violation",
-                    fragment_case_id,
-                    "typecheck",
-                ),
             )
         )
 

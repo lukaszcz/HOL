@@ -2,7 +2,6 @@
 
 (declare-const x Real)
 (declare-const y Real)
-(assert (<= (+ x 1.0) (+ y 2.0)))
-(assert (= (- (+ x y) y) x))
+(assert (<= (- x y) 1.0))
 (check-sat)
 (exit)

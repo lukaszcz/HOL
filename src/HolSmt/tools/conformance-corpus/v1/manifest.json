@@ -2260,7 +2260,7 @@
       },
       "file": "cases/negative/qf_lia_recursive_define_fun_type_error.smt2",
       "id": "qf_lia_recursive_define_fun_type_error",
-      "logic": "QF_LIA",
+      "logic": "QF_UFLIA",
       "modes": [
         "parser-only",
         "typecheck-only"

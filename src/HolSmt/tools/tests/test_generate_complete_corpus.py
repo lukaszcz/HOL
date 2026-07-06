@@ -56,7 +56,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
 
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
-        self.assertEqual(len(cases), 2 + len(generator.TH_LEMMA_PROOF_RULE_OBLIGATIONS))
+        self.assertEqual(len(cases), 3 + len(generator.TH_LEMMA_PROOF_RULE_OBLIGATIONS))
         self.assertEqual({case["class"] for case in cases}, {"proof-rule"})
         case_ids = {case["id"] for case in cases}
         self.assertIn("proof-rule:asserted", case_ids)
@@ -82,6 +82,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             if (
                 case["id"].startswith("proof-rule:th-lemma-")
                 and case["id"] != "proof-rule:th-lemma-basic"
+                and case["implementation_obligation"] is not None
             ):
                 self.assertIn("z3-tac", case["expected"])
                 self.assertEqual(case["expected"]["z3-tac"]["failure_phase"], "proof-replay")
@@ -193,7 +194,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 for filename in obligation["files"]:
                     self.assertTrue((REPO_ROOT / filename).exists(), filename)
 
-    def test_logics_subcommand_emits_six_case_packet_per_packet_logic(self):
+    def test_logics_subcommand_emits_case_packet_per_packet_logic(self):
         stdout = io.StringIO()
         with contextlib.redirect_stdout(stdout):
             self.assertEqual(generator.main(["logics"]), 0)
@@ -201,7 +202,11 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
         packet_logics = generator.logic_packet_logics()
-        self.assertEqual(len(cases), 6 * len(packet_logics))
+        nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
+        self.assertEqual(
+            len(cases),
+            6 * len(packet_logics) + len(nonlinear_logics & set(packet_logics)),
+        )
         self.assertEqual({case["class"] for case in cases}, {"logic"})
         self.assertNotIn("ALL", {case["logic"] for case in cases})
 
@@ -216,18 +221,17 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 for feature in case["features"]
                 if feature.startswith("logic-case:")
             }
-            self.assertEqual(
-                kinds,
-                {
-                    "logic-case:sat",
-                    "logic-case:unsat-proof",
-                    "logic-case:type-error",
-                    "logic-case:malformed",
-                    "logic-case:fragment-violation",
-                    "logic-case:boundary",
-                },
-                logic,
-            )
+            expected_kinds = {
+                "logic-case:sat",
+                "logic-case:unsat-proof",
+                "logic-case:type-error",
+                "logic-case:malformed",
+                "logic-case:fragment-violation",
+                "logic-case:boundary",
+            }
+            if logic in nonlinear_logics:
+                expected_kinds.add("logic-case:nonlinear-proof")
+            self.assertEqual(kinds, expected_kinds, logic)
             unsat = [
                 case for case in logic_cases
                 if "logic-case:unsat-proof" in case["features"]
@@ -254,6 +258,35 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             required | excluded,
             set(generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE)),
         )
+
+    def test_fragment_violation_rows_are_expected_failures(self):
+        manifest = generator.manifest_for_cases(generator.logic_packet_cases())
+        cases = audit.validate_v2_manifest(manifest)
+        fragment_cases = [
+            case for case in cases
+            if "logic-case:fragment-violation" in case["features"]
+        ]
+
+        self.assertEqual(
+            len(fragment_cases),
+            len(generator.logic_packet_logics()),
+        )
+        for case in fragment_cases:
+            logic = case["logic"]
+            diagnostic = generator.logic_fragment_violation_diagnostic(logic)
+            self.assertIsNone(case["implementation_obligation"], case)
+            self.assertEqual(case["expected"]["parser-only"]["status"], "pass")
+            for mode in ("typecheck-only", "z3-tac"):
+                with self.subTest(logic=logic, mode=mode):
+                    self.assertEqual(case["expected"][mode]["status"], "fail")
+                    self.assertEqual(
+                        case["expected"][mode]["failure_phase"],
+                        "typecheck",
+                    )
+                    self.assertEqual(
+                        case["expected"][mode]["diagnostic"],
+                        diagnostic,
+                    )
 
     def test_theories_subcommand_separates_strings_and_z3_extensions(self):
         stdout = io.StringIO()
@@ -462,7 +495,11 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 inventory,
                 generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE),
             )
-            self.assertEqual(len(cases), 6 * len(packet_logics))
+            nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
+            self.assertEqual(
+                len(cases),
+                6 * len(packet_logics) + len(nonlinear_logics & set(packet_logics)),
+            )
 
     def test_audit_subcommand_validates_existing_manifest(self):
         with tempfile.TemporaryDirectory() as tmp:
