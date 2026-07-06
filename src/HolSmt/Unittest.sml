@@ -1277,42 +1277,121 @@ fun smtlib_logic_fragment_diagnostics () =
         SOME msg =>
           die (label ^ " reported a spurious fragment violation: " ^ msg)
       | NONE => ()
+    fun script logic body =
+      "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
+    fun script_for_checker parse_logic body =
+      script parse_logic body
   in
     expect_fragment "QF quantifier" "QF_UF"
-      ("(set-logic QF_UF)\n" ^
-       "(assert (forall ((p Bool)) p))\n" ^
-       "(check-sat)\n")
+      (script "QF_UF"
+       "(assert (forall ((p Bool)) p))\n")
       "quantified formula";
+    expect_no_fragment "non-QF quantifier" "UF"
+      (script "UF"
+       "(assert (forall ((p Bool)) p))\n");
     expect_no_fragment "QF define-fun local definition" "QF_UF"
-      ("(set-logic QF_UF)\n" ^
+      (script "QF_UF"
        "(define-fun id ((p Bool)) Bool p)\n" ^
        "(assert (id true))\n" ^
-       "(check-sat)\n");
+       "");
     expect_no_fragment "QF recursive local definition" "QF_UF"
-      ("(set-logic QF_UF)\n" ^
-       "(define-fun-rec f ((p Bool)) Bool p)\n" ^
-       "(check-sat)\n");
+      (script "QF_UF"
+       "(define-fun-rec f ((p Bool)) Bool p)\n");
     expect_fragment "linear arithmetic product" "ALIA"
-      ("(set-logic ALIA)\n" ^
+      (script "ALIA"
        "(declare-const x Int)\n" ^
        "(declare-const y Int)\n" ^
-       "(assert (= (* x y) 1))\n" ^
-       "(check-sat)\n")
+       "(assert (= (* x y) 1))\n")
       "nonlinear arithmetic product";
     expect_no_fragment "linear coefficient product" "QF_LIA"
-      ("(set-logic QF_LIA)\n" ^
+      (script "QF_LIA"
        "(declare-const x Int)\n" ^
-       "(assert (= (* 2 x) 4))\n" ^
-       "(check-sat)\n");
+       "(assert (= (* 2 x) 4))\n");
     expect_no_fragment "ground literal product" "QF_LIA"
-      ("(set-logic QF_LIA)\n" ^
-       "(assert (= (* 2 3) 6))\n" ^
-       "(check-sat)\n");
+      (script "QF_LIA"
+       "(assert (= (* 2 3) 6))\n");
+    expect_no_fragment "integer nonlinear arithmetic product" "NIA"
+      (script "NIA"
+       "(declare-const x Int)\n" ^
+       "(declare-const y Int)\n" ^
+       "(assert (= (* x y) 1))\n");
+    expect_no_fragment "real nonlinear arithmetic product" "NRA"
+      (script "NRA"
+       "(declare-const x Real)\n" ^
+       "(declare-const y Real)\n" ^
+       "(assert (= (* x y) 1.0))\n");
+    expect_fragment "difference logic sum atom" "QF_IDL"
+      (script "QF_IDL"
+       "(declare-const x Int)\n" ^
+       "(declare-const y Int)\n" ^
+       "(assert (<= (+ x y) 1))\n")
+      "difference logic atom shape";
+    expect_no_fragment "difference logic difference atom" "QF_IDL"
+      (script "QF_IDL"
+       "(declare-const x Int)\n" ^
+       "(declare-const y Int)\n" ^
+       "(assert (<= (- x y) 1))\n");
+    expect_fragment "non-UF function application" "QF_NIRA"
+      (script "QF_NIRA"
+       "(declare-fun outside_fragment (Int) Int)\n" ^
+       "(assert (= (outside_fragment 0) 0))\n")
+      "uninterpreted function application";
+    expect_no_fragment "UF function application" "QF_UFNIRA"
+      (script "QF_UFNIRA"
+       "(declare-fun outside_fragment (Int) Int)\n" ^
+       "(assert (= (outside_fragment 0) 0))\n");
+    expect_fragment "NIA real sort" "NIA"
+      (script_for_checker "ALL"
+       "(declare-const outside_fragment Real)\n" ^
+       "(assert (= outside_fragment 0.0))\n")
+      "real term sort";
+    expect_no_fragment "NRA real sort" "NRA"
+      (script "NRA"
+       "(declare-const x Real)\n" ^
+       "(assert (= x 0.0))\n");
+    expect_fragment "NRA integer sort" "NRA"
+      (script_for_checker "ALL"
+       "(declare-const outside_fragment Int)\n" ^
+       "(assert (= outside_fragment 0))\n")
+      "integer term sort";
+    expect_no_fragment "NIA integer sort" "NIA"
+      (script "NIA"
+       "(declare-const x Int)\n" ^
+       "(assert (= x 0))\n");
+    expect_fragment "AUFNIRA bit-vector sort" "AUFNIRA"
+      (script_for_checker "ALL"
+       "(declare-const outside_fragment (_ BitVec 1))\n" ^
+       "(assert (= outside_fragment #b0))\n")
+      "bit-vector term sort";
+    expect_no_fragment "UFBV bit-vector sort" "UFBV"
+      (script "UFBV"
+       "(declare-const x (_ BitVec 1))\n" ^
+       "(assert (= x #b0))\n");
+    expect_fragment "string sort unavailable" "QF_UF"
+      (script_for_checker "ALL"
+       "(declare-const s String)\n" ^
+       "(assert (= s s))\n")
+      "string term sort";
+    expect_no_fragment "string sort available" "QF_S"
+      (script "QF_S"
+       "(declare-const s String)\n" ^
+       "(assert (= s s))\n");
+    expect_fragment "free sort unavailable" "LIA"
+      (script_for_checker "ALL"
+       "(declare-sort U 0)\n" ^
+       "(declare-const u U)\n" ^
+       "(assert (= u u))\n")
+      "free sort";
+    expect_no_fragment "free sort available" "QF_UF"
+      (script "QF_UF"
+       "(declare-sort U 0)\n" ^
+       "(declare-const u U)\n" ^
+       "(assert (= u u))\n");
     expect_fragment "pure bit-vector integer-only term" "UFBV"
-      ("(set-logic UFBV)\n" ^
+      (script "UFBV"
        "(declare-const outside_fragment Int)\n" ^
        "(assert (= outside_fragment 0))\n" ^
-       "(check-sat)\n")
+       "")
       "integer-only term"
   end
 
@@ -1667,13 +1746,28 @@ let
     "QF_S", "QF_SLIA", "QF_SNIA", "QF_FP", "QF_FPBV",
     "QF_BVFP", "QF_UFFP", "QF_UFBVFP"
   ]
+  val legacy_linear_logics = [
+    "ALIA", "ALIRA", "AUFLIA", "AUFLIRA", "LIA", "LRA",
+    "QF_ALIA", "QF_ALRA", "QF_AUFLIA", "QF_AUFLIRA",
+    "QF_IDL", "QF_LIA", "QF_LIRA", "QF_LRA", "QF_RDL",
+    "QF_UFIDL", "QF_UFLIA", "QF_UFLIRA", "QF_UFLRA",
+    "UFIDL", "UFLIA", "UFLRA"
+  ]
   fun require_logic logic =
     let
       val _ = SmtLib_Logics.parsedicts_of_logic logic
       val metadata = SmtLib_Logics.metadata_of_logic logic
+      val _ = SmtLib_Logics.logic_fragment_of_logic logic
+      val was_legacy_linear =
+        List.exists (fn linear_logic => logic = linear_logic)
+          legacy_linear_logics
     in
       assert (not (List.null metadata),
-        "logic metadata was empty for " ^ logic)
+        "logic metadata was empty for " ^ logic);
+      assert (not was_legacy_linear orelse
+              SmtLib_Logics.is_linear_arith_logic logic,
+        "legacy linear-arithmetic logic no longer classified linear: " ^
+        logic)
     end
 in
   List.app require_logic logics

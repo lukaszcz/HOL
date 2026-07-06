@@ -6,111 +6,111 @@
   },
   "conformance_reports": [
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
         "expected-implementation-gap": 1,
-        "matched": 1188
+        "matched": 1192
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 1189
+        "pass": 1193
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json",
-      "result_count": 1189,
+      "result_count": 1193,
       "status_counts": {
         "fail": 63,
-        "pass": 1126,
+        "pass": 1130,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
-        "expected-implementation-gap": 33,
-        "matched": 235
+        "expected-implementation-gap": 32,
+        "matched": 240
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 268
+        "pass": 272
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/proof-parse/conformance-proof-parse.json",
-      "result_count": 268,
+      "result_count": 272,
       "status_counts": {
         "fail": 0,
-        "pass": 243,
+        "pass": 247,
         "unsupported": 25
       }
     },
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
-        "expected-implementation-gap": 33,
-        "matched": 235
+        "expected-implementation-gap": 32,
+        "matched": 240
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 268
+        "pass": 272
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/proof-replay/conformance-proof-replay.json",
-      "result_count": 268,
+      "result_count": 272,
       "status_counts": {
         "fail": 0,
-        "pass": 243,
+        "pass": 247,
         "unsupported": 25
       }
     },
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
         "expected-implementation-gap": 598,
-        "matched": 561
+        "matched": 565
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 1159
+        "pass": 1163
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
-      "result_count": 1159,
+      "result_count": 1163,
       "status_counts": {
-        "fail": 369,
+        "fail": 373,
         "pass": 790,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
         "expected-implementation-gap": 187,
-        "matched": 621
+        "matched": 625
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 808
+        "pass": 812
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-oracle/conformance-z3-oracle.json",
-      "result_count": 808,
+      "result_count": 812,
       "status_counts": {
         "fail": 3,
-        "pass": 805,
+        "pass": 809,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1256,
+      "case_count": 1260,
       "classification_counts": {
-        "expected-implementation-gap": 479,
-        "matched": 441
+        "expected-implementation-gap": 478,
+        "matched": 446
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 920
+        "pass": 924
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
-      "result_count": 920,
+      "result_count": 924,
       "status_counts": {
-        "fail": 308,
-        "pass": 560,
-        "unsupported": 52
+        "fail": 304,
+        "pass": 564,
+        "unsupported": 56
       }
     },
     {
@@ -271,7 +271,7 @@
     }
   ],
   "red_obligations": {
-    "complete_audit_red_count": 1331,
+    "complete_audit_red_count": 1328,
     "complete_audit_red_obligations": [
       {
         "category": "implementation_obligation",
@@ -2319,60 +2319,6 @@
         "message": "red expected row requires implementation work for proof-rule:th-lemma-fp",
         "severity": "error",
         "subject": "case/proof-rule:th-lemma-fp:z3-tac"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
-          ]
-        },
-        "message": "red expected row requires implementation work for proof-rule:th-lemma-nonlinear-arith",
-        "severity": "error",
-        "subject": "case/proof-rule:th-lemma-nonlinear-arith:proof-parse"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
-          ]
-        },
-        "message": "red expected row requires implementation work for proof-rule:th-lemma-nonlinear-arith",
-        "severity": "error",
-        "subject": "case/proof-rule:th-lemma-nonlinear-arith:proof-replay"
-      },
-      {
-        "category": "implementation_obligation",
-        "code": "red_implementation_obligation",
-        "details": {
-          "failure_phase": "proof-replay",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
-          ]
-        },
-        "message": "red expected row requires implementation work for proof-rule:th-lemma-nonlinear-arith",
-        "severity": "error",
-        "subject": "case/proof-rule:th-lemma-nonlinear-arith:z3-tac"
       },
       {
         "category": "implementation_obligation",
@@ -24926,7 +24872,7 @@
         "subject": "case/theory:Z3_Extensions:set:unsat-proof:typecheck-only"
       }
     ],
-    "manifest_red_count": 1331,
+    "manifest_red_count": 1328,
     "manifest_red_obligations": [
       {
         "case": "command:check-sat-assuming:reconstruction",
@@ -27749,81 +27695,6 @@
           "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added.",
           "test_ids": [
             "proof-rule:th-lemma-fp"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "z3-tac"
-      },
-      {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
-        "features": [
-          "proof-rule-behavior:diagnostic-only",
-          "proof-rule-family:th-lemma",
-          "proof-rule:th-lemma-nonlinear-arith"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "proof-rule:th-lemma-nonlinear-arith",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added.",
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "proof-parse"
-      },
-      {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "diagnostic": "nonlinear arithmetic th-lemma replay is diagnostic-only",
-        "features": [
-          "proof-rule-behavior:diagnostic-only",
-          "proof-rule-family:th-lemma",
-          "proof-rule:th-lemma-nonlinear-arith"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "proof-rule:th-lemma-nonlinear-arith",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added.",
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
-          ]
-        },
-        "logic": "QF_UF",
-        "mode": "proof-replay"
-      },
-      {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
-        "features": [
-          "proof-rule-behavior:diagnostic-only",
-          "proof-rule-family:th-lemma",
-          "proof-rule:th-lemma-nonlinear-arith"
-        ],
-        "implementation_obligation": {
-          "failure_phase": "proof-replay",
-          "feature": "proof-rule:th-lemma-nonlinear-arith",
-          "files": [
-            "src/HolSmt/Unittest.sml",
-            "src/HolSmt/Z3_ProofParser.sml",
-            "src/HolSmt/Z3_ProofReplay.sml"
-          ],
-          "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added.",
-          "test_ids": [
-            "proof-rule:th-lemma-nonlinear-arith"
           ]
         },
         "logic": "QF_UF",
@@ -71217,57 +71088,6 @@
         ]
       },
       {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Unittest.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "proof-rule:th-lemma-nonlinear-arith",
-        "mode": "proof-parse",
-        "source": "manifest",
-        "test_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ]
-      },
-      {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Unittest.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "proof-rule:th-lemma-nonlinear-arith",
-        "mode": "proof-replay",
-        "source": "manifest",
-        "test_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ]
-      },
-      {
-        "case": "proof-rule:th-lemma-nonlinear-arith",
-        "class": "proof-rule",
-        "failure_phase": "proof-replay",
-        "implementation_files": [
-          "src/HolSmt/Unittest.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "logic": "QF_UF",
-        "missing_feature": "proof-rule:th-lemma-nonlinear-arith",
-        "mode": "z3-tac",
-        "source": "manifest",
-        "test_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ]
-      },
-      {
         "case": "proof-rule:th-lemma-regexp",
         "class": "proof-rule",
         "failure_phase": "proof-replay",
@@ -93108,7 +92928,7 @@
         "class": "real-proof-corpus",
         "failure_phase": "proof-parse",
         "implementation_files": [
-          "src/HolSmt/Unittest.sml",
+          "src/HolSmt/Z3_Proof.sml",
           "src/HolSmt/Z3_ProofParser.sml",
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
@@ -94318,12 +94138,12 @@
           "failure_phase": "proof-parse",
           "feature": "real-proof-occurrence:th-lemma-nonlinear-arith",
           "files": [
-            "src/HolSmt/Unittest.sml",
+            "src/HolSmt/Z3_Proof.sml",
             "src/HolSmt/Z3_ProofParser.sml",
             "src/HolSmt/Z3_ProofReplay.sml"
           ],
           "implementation_files": [
-            "src/HolSmt/Unittest.sml",
+            "src/HolSmt/Z3_Proof.sml",
             "src/HolSmt/Z3_ProofParser.sml",
             "src/HolSmt/Z3_ProofReplay.sml"
           ],
@@ -94468,7 +94288,7 @@
     ],
     "required_first_red_category_counts": {
       "FP": 466,
-      "advanced theory lemmas": 26,
+      "advanced theory lemmas": 23,
       "arrays": 1,
       "check-sat-assuming": 1,
       "datatypes": 10,
@@ -94721,14 +94541,14 @@
   "summary": {
     "classification_counts": {
       "accepted": 27,
-      "expected-implementation-gap": 1331,
-      "matched": 3296
+      "expected-implementation-gap": 1328,
+      "matched": 3323
     },
     "infrastructure_error_count": 0,
     "nonzero_exit_reasons": [
       "red-obligations"
     ],
-    "red_obligation_count": 1368,
+    "red_obligation_count": 1365,
     "report_dir": "src/HolSmt/tools/complete-conformance-out",
     "schema": "holsmt-complete-conformance-run-v1",
     "status": "red-obligations",

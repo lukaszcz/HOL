@@ -406,19 +406,84 @@ in
     end
     handle _ => false
 
+  datatype arith_fragment = NO_ARITH | LINEAR | NONLINEAR | DIFFERENCE
+
+  type logic_fragment = {
+    quantifiers : bool,
+    uninterpreted : bool,
+    arrays : bool,
+    arith : arith_fragment,
+    ints : bool,
+    reals : bool,
+    bitvectors : bool,
+    strings : bool,
+    floatingpoint : bool
+  }
+
+  fun logic_stem logic =
+    if String.isPrefix "QF_" logic then
+      String.extract (logic, 3, NONE)
+    else
+      logic
+
+  fun arith_fragment_of_stem stem =
+    if String.isSuffix "IDL" stem orelse String.isSuffix "RDL" stem then
+      DIFFERENCE
+    else if String.isSuffix "LIA" stem orelse
+            String.isSuffix "LRA" stem orelse
+            String.isSuffix "LIRA" stem then
+      LINEAR
+    else if String.isSuffix "NIA" stem orelse
+            String.isSuffix "NRA" stem orelse
+            String.isSuffix "NIRA" stem then
+      NONLINEAR
+    else
+      NO_ARITH
+
+  fun logic_fragment_of_logic "ALL" = {
+      quantifiers = true, uninterpreted = true, arrays = true,
+      arith = NONLINEAR, ints = true, reals = true, bitvectors = true,
+      strings = true, floatingpoint = true
+    }
+    | logic_fragment_of_logic logic =
+    let
+      val stem = logic_stem logic
+      val arith = arith_fragment_of_stem stem
+      val strings = String.isSubstring "S" stem
+      val floatingpoint = String.isSubstring "FP" stem
+      val bitvectors = String.isSubstring "BV" stem orelse floatingpoint
+      val ints =
+        strings orelse floatingpoint orelse
+        bitvectors orelse
+        String.isSuffix "IDL" stem orelse
+        String.isSuffix "LIA" stem orelse
+        String.isSuffix "NIA" stem orelse
+        String.isSuffix "LIRA" stem orelse
+        String.isSuffix "NIRA" stem
+      val reals =
+        floatingpoint orelse
+        String.isSuffix "RDL" stem orelse
+        String.isSuffix "LRA" stem orelse
+        String.isSuffix "NRA" stem orelse
+        String.isSuffix "LIRA" stem orelse
+        String.isSuffix "NIRA" stem
+    in {
+      quantifiers = not (String.isPrefix "QF_" logic),
+      uninterpreted = String.isSubstring "UF" stem,
+      arrays = String.isPrefix "A" stem,
+      arith = arith,
+      ints = ints,
+      reals = reals,
+      bitvectors = bitvectors,
+      strings = strings,
+      floatingpoint = floatingpoint
+    } end
+
   fun is_linear_arith_logic logic =
-    List.exists (fn linear_logic => logic = linear_logic)
-      ["ALIA", "ALIRA", "AUFLIA", "AUFLIRA", "LIA", "LRA",
-       "QF_ALIA", "QF_ALRA", "QF_AUFLIA", "QF_AUFLIRA",
-       "QF_IDL", "QF_LIA", "QF_LIRA", "QF_LRA", "QF_RDL",
-       "QF_UFIDL", "QF_UFLIA", "QF_UFLIRA", "QF_UFLRA",
-       "UFIDL", "UFLIA", "UFLRA"]
-
-  fun is_pure_uf_logic logic =
-    List.exists (fn uf_logic => logic = uf_logic) ["UF", "QF_UF"]
-
-  fun is_pure_bv_logic logic =
-    List.exists (fn bv_logic => logic = bv_logic) ["BV", "UFBV"]
+    case #arith (logic_fragment_of_logic logic) of
+      LINEAR => true
+    | DIFFERENCE => true
+    | _ => false
 
   fun term_type_contains pred tm = type_contains pred (Term.type_of tm)
 
@@ -462,6 +527,85 @@ in
     orelse symbol_name_is_prefix "fp." tm
     orelse symbol_name_is_prefix "to_fp" tm
 
+  fun term_mentions_string_theory tm =
+    term_type_contains type_contains_string tm
+    orelse term_mentions_reglan tm
+    orelse symbol_name_is_prefix "smtlib_str_" tm
+    orelse symbol_name_is_prefix "str." tm
+    orelse symbol_name_is_prefix "smtlib_re_" tm
+    orelse symbol_name_is_prefix "re." tm
+
+  fun term_mentions_bitvector_theory tm =
+    term_type_contains type_contains_word tm
+    orelse symbol_name_is_prefix "smtlib_bv" tm
+    orelse symbol_name_is_prefix "bv" tm
+
+  fun type_contains_free_sort ty =
+    type_contains
+      (fn ty =>
+        Type.is_vartype ty andalso
+        let val name = Type.dest_vartype ty
+        in
+          not (String.isPrefix "'smtlib_FloatingPoint" name) andalso
+          not (String.isPrefix "'smtlib_RoundingMode" name) andalso
+          not (String.isPrefix "'smtlib_RegLan" name)
+        end)
+      ty
+
+  fun is_uninterpreted_operator_application tm =
+    let val (rator, rands) = boolSyntax.strip_comb tm
+    in Term.is_var rator andalso not (List.null rands) end
+    handle _ => false
+
+  fun is_arith_relation tm =
+    let
+      val (rator, rands) = boolSyntax.strip_comb tm
+      fun rel r =
+        same_const intSyntax.leq_tm r orelse
+        same_const intSyntax.less_tm r orelse
+        same_const intSyntax.geq_tm r orelse
+        same_const intSyntax.greater_tm r orelse
+        same_const realSyntax.leq_tm r orelse
+        same_const realSyntax.less_tm r orelse
+        same_const realSyntax.geq_tm r orelse
+        same_const realSyntax.greater_tm r
+    in
+      if rel rator andalso List.length rands = 2 then
+        SOME rands
+      else
+        let val (lhs, rhs) = boolSyntax.dest_eq tm
+        in
+          if term_type_contains type_contains_int lhs orelse
+             term_type_contains type_contains_real lhs orelse
+             term_type_contains type_contains_int rhs orelse
+             term_type_contains type_contains_real rhs then
+            SOME [lhs, rhs]
+          else
+            NONE
+        end
+        handle _ => NONE
+    end
+    handle _ => NONE
+
+  fun is_clear_non_difference_sum tm =
+    let val (rator, rands) = boolSyntax.strip_comb tm
+    in
+      (same_const intSyntax.plus_tm rator orelse
+       same_const realSyntax.plus_tm rator) andalso
+      (case rands of
+         [x, y] => not (is_numeric_literal x orelse is_numeric_literal y)
+       | _ => false)
+    end
+    handle _ => false
+
+  fun is_clear_difference_logic_atom_violation tm =
+    case is_arith_relation tm of
+      SOME sides =>
+        List.exists
+          (fn side => List.exists is_clear_non_difference_sum (subterms side))
+          sides
+    | NONE => false
+
   fun checked_replay_gap_message logic family missing_feature case_ids =
     "checked Z3_TAC replay for " ^ family ^
     " is not implemented for logic " ^ logic ^
@@ -495,33 +639,79 @@ in
 
   fun fragment_violation_diagnostic logic assertions =
     let
+      val fragment = logic_fragment_of_logic logic
       val all_subterms = List.concat (List.map subterms assertions)
       fun some_subterm p = List.exists p all_subterms
+      val has_int = some_subterm (term_type_contains type_contains_int)
+      val has_real = some_subterm (term_type_contains type_contains_real)
+      val has_word = some_subterm (term_type_contains type_contains_word)
+      val has_string = some_subterm (term_type_contains type_contains_string)
       fun qf_violation () =
-        String.isPrefix "QF_" logic andalso List.exists has_quantifier assertions
-      fun uf_theory_violation () =
-        is_pure_uf_logic logic andalso
-        some_subterm (fn tm =>
-          term_type_contains type_contains_int tm orelse
-          term_type_contains type_contains_real tm orelse
-          term_type_contains type_contains_word tm orelse
-          term_type_contains type_contains_string tm)
-      fun bv_theory_violation () =
-        is_pure_bv_logic logic andalso
-        some_subterm (term_type_contains type_contains_int) andalso
-        not (some_subterm (term_type_contains type_contains_word))
+        not (#quantifiers fragment) andalso List.exists has_quantifier assertions
+      fun nonlinear_violation () =
+        is_linear_arith_logic logic andalso some_subterm is_nonlinear_product
+      fun difference_violation () =
+        #arith fragment = DIFFERENCE andalso
+        some_subterm is_clear_difference_logic_atom_violation
+      fun uf_operator_violation () =
+        not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
+        some_subterm
+          (fn tm =>
+            is_uninterpreted_operator_application tm andalso
+            not ((#floatingpoint fragment orelse #strings fragment orelse
+                  #bitvectors fragment) andalso
+                 symbol_name_is_prefix "smtlib_" tm) andalso
+            not (#floatingpoint fragment andalso
+                 term_mentions_floatingpoint tm) andalso
+            not (#strings fragment andalso term_mentions_string_theory tm)
+            andalso
+            not (#bitvectors fragment andalso
+                 term_mentions_bitvector_theory tm))
+      fun bv_integer_only_violation () =
+        logic <> "ALL" andalso #bitvectors fragment andalso has_int andalso
+        not has_word
+      fun int_sort_violation () =
+        not (#ints fragment) andalso has_int
+      fun real_sort_violation () =
+        not (#reals fragment) andalso has_real
+      fun bitvector_sort_violation () =
+        not (#bitvectors fragment) andalso has_word
+      fun string_sort_violation () =
+        not (#strings fragment) andalso
+        (has_string orelse some_subterm term_mentions_reglan)
+      fun floatingpoint_sort_violation () =
+        not (#floatingpoint fragment) andalso
+        some_subterm term_mentions_floatingpoint
+      fun free_sort_violation () =
+        not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
+        some_subterm (term_type_contains type_contains_free_sort)
     in
       if qf_violation () then
         SOME ("quantified formula is outside logic fragment " ^ logic)
-      else if is_linear_arith_logic logic andalso
-              some_subterm is_nonlinear_product then
+      else if nonlinear_violation () then
         SOME ("nonlinear arithmetic product is outside logic fragment " ^
               logic)
-      else if uf_theory_violation () then
-        SOME ("non-UF term sort is outside logic fragment " ^ logic)
-      else if bv_theory_violation () then
+      else if difference_violation () then
+        SOME ("difference logic atom shape is outside logic fragment " ^
+              logic)
+      else if uf_operator_violation () then
+        SOME ("uninterpreted function application is outside logic fragment " ^
+              logic)
+      else if bv_integer_only_violation () then
         SOME ("integer-only term is outside bit-vector logic fragment " ^
               logic)
+      else if int_sort_violation () then
+        SOME ("integer term sort is outside logic fragment " ^ logic)
+      else if real_sort_violation () then
+        SOME ("real term sort is outside logic fragment " ^ logic)
+      else if bitvector_sort_violation () then
+        SOME ("bit-vector term sort is outside logic fragment " ^ logic)
+      else if string_sort_violation () then
+        SOME ("string term sort is outside logic fragment " ^ logic)
+      else if floatingpoint_sort_violation () then
+        SOME ("floating-point term sort is outside logic fragment " ^ logic)
+      else if free_sort_violation () then
+        SOME ("free sort is outside logic fragment " ^ logic)
       else
         NONE
     end

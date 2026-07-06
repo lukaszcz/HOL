@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1331
-- Complete-audit red rows: 1331
+- Manifest red rows: 1328
+- Complete-audit red rows: 1328
 - Proof-audit red rows: 37
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -16,7 +16,7 @@
 | datatypes | 10 |
 | seq/set/bag | 166 |
 | th-lemma-basic | 1 |
-| advanced theory lemmas | 26 |
+| advanced theory lemmas | 23 |
 | check-sat-assuming | 1 |
 | unsat core/assumptions | 1 |
 | missing logic packets | 110 |
@@ -147,9 +147,6 @@
 | `manifest` | `proof-rule:th-lemma-fp` | `proof-parse` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-fp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-fp |
 | `manifest` | `proof-rule:th-lemma-fp` | `proof-replay` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-fp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-fp |
 | `manifest` | `proof-rule:th-lemma-fp` | `z3-tac` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-fp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-fp |
-| `manifest` | `proof-rule:th-lemma-nonlinear-arith` | `proof-parse` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-nonlinear-arith` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-nonlinear-arith |
-| `manifest` | `proof-rule:th-lemma-nonlinear-arith` | `proof-replay` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-nonlinear-arith` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-nonlinear-arith |
-| `manifest` | `proof-rule:th-lemma-nonlinear-arith` | `z3-tac` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-nonlinear-arith` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-nonlinear-arith |
 | `manifest` | `proof-rule:th-lemma-regexp` | `proof-parse` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-regexp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-regexp |
 | `manifest` | `proof-rule:th-lemma-regexp` | `proof-replay` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-regexp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-regexp |
 | `manifest` | `proof-rule:th-lemma-regexp` | `z3-tac` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-regexp` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-regexp |
@@ -327,4 +324,7 @@
 | `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:boundary` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:sat |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:sat` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:sat |
-| ... | ... | ... | ... | ... | ... | ... | ... | 1068 more in JSON |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:sat` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:sat |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:type-error` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:type-error` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:type-error |
+| ... | ... | ... | ... | ... | ... | ... | ... | 1065 more in JSON |
