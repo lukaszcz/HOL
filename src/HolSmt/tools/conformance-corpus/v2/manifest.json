@@ -20006,29 +20006,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx Array sort arity mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx Array sort arity mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:array:type-error",
-        "test_ids": [
-          "theory:ArraysEx:array:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: Array"
@@ -20226,29 +20214,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:extensionality:type-error",
-        "test_ids": [
-          "theory:ArraysEx:extensionality:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: extensionality"
@@ -20452,29 +20428,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:mixed-index-value-sorts:type-error",
-        "test_ids": [
-          "theory:ArraysEx:mixed-index-value-sorts:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: mixed-index-value-sorts"
@@ -20677,29 +20641,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:read-over-write:type-error",
-        "test_ids": [
-          "theory:ArraysEx:read-over-write:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: read-over-write"
@@ -20898,29 +20850,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx select index sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:select:type-error",
-        "test_ids": [
-          "theory:ArraysEx:select:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: select"
@@ -21118,29 +21058,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:store:type-error",
-        "test_ids": [
-          "theory:ArraysEx:store:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: store"
@@ -21338,29 +21266,17 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "negative theory sort/type diagnostics are incomplete",
+          "status": "fail",
+          "diagnostic": "ArraysEx store value sort mismatch",
           "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/HolSmtScript.sml",
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:ArraysEx:write-over-write:type-error",
-        "test_ids": [
-          "theory:ArraysEx:write-over-write:type-error"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 ArraysEx theory: write-over-write"

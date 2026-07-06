@@ -2491,12 +2491,18 @@ local
   and typecheck_sort context tydict sort_ast =
     let
       fun arg_sorts args = List.map (typecheck_sort context tydict) args
+      fun array_sort_arity loc actual =
+        type_error "typecheck_sort" context loc NONE NONE
+          ("ArraysEx Array sort arity mismatch: expected exactly two " ^
+           "sort arguments (Index and Element), actual sort argument " ^
+           "count " ^ Int.toString actual)
       fun function_sort loc args =
         let
           val sorts = arg_sorts args
           fun split_last [] =
                 type_error "typecheck_sort" context loc NONE NONE
-                  "function sort '->' expects at least one domain sort and one range sort"
+                  ("function sort '->' expects at least one domain sort " ^
+                   "and one range sort")
             | split_last [range] = ([], range)
             | split_last (domain :: rest) =
                 let val (domains, range) = split_last rest
@@ -2506,7 +2512,8 @@ local
           case domains of
             [] =>
               type_error "typecheck_sort" context loc NONE NONE
-                "function sort '->' expects at least one domain sort and one range sort"
+                ("function sort '->' expects at least one domain sort " ^
+                 "and one range sort")
           | _ => boolSyntax.list_mk_fun (domains, range)
         end
       fun parse_index name_loc indices args =
@@ -2529,15 +2536,21 @@ local
     in
       case node_of sort_ast of
         SortIdentifier name =>
-          (t_with_args tydict name [] []
-           handle Feedback.HOL_ERR holerr =>
-             type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
-               (Feedback.message_of holerr))
+          if name = "Array" then
+            array_sort_arity (loc_of sort_ast) 0
+          else
+            (t_with_args tydict name [] []
+             handle Feedback.HOL_ERR holerr =>
+               type_error "typecheck_sort" context (loc_of sort_ast) NONE NONE
+                 (Feedback.message_of holerr))
       | SortIndexed (name, indices) =>
           parse_index name indices []
       | SortApply (head, args) =>
           if located_string_node head = "->" then
             function_sort (loc_of sort_ast) args
+          else if located_string_node head = "Array" andalso
+                  List.length args <> 2 then
+            array_sort_arity (loc_of sort_ast) (List.length args)
           else
             (t_with_args tydict (located_string_node head) []
                (arg_sorts args)
@@ -2616,52 +2629,100 @@ local
 
   and apply_symbol fn_name context loc (tydict, tmdict, sigdict)
       name indices args =
-    if List.null indices andalso name = "@bbterm" then
-      let
-        val arg_terms = List.map checked_term args
-        val arg_sorts = List.map checked_sort args
-        val t =
-          t_with_args tmdict name [] arg_terms
-          handle Feedback.HOL_ERR holerr =>
-            type_error fn_name context loc NONE NONE
-              ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
-               sort_list_to_string arg_sorts ^ ": " ^
-               Feedback.message_of holerr)
-      in
-        checked_term_of t
-      end
-    else if List.null indices then
-      (case peek_signatures (sigdict, name) of
-         SOME signatures =>
-           apply_user_signature fn_name context loc name args signatures
-       | NONE =>
-         let
-           val arg_terms = List.map checked_term args
-           val arg_sorts = List.map checked_sort args
-           val t =
-             t_with_args tmdict name [] arg_terms
-             handle Feedback.HOL_ERR holerr =>
-               type_error fn_name context loc NONE NONE
-                 ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
-                  sort_list_to_string arg_sorts ^ ": " ^
-                  Feedback.message_of holerr)
-         in
-           checked_term_of t
-         end)
-    else
-      let
-        val arg_terms = List.map checked_term args
-        val arg_sorts = List.map checked_sort args
-        val t =
-          t_with_args tmdict name indices arg_terms
-          handle Feedback.HOL_ERR holerr =>
-            type_error fn_name context loc NONE NONE
-              ("could not resolve indexed symbol '" ^ name ^
-               "' for actual sorts " ^ sort_list_to_string arg_sorts ^
-               ": " ^ Feedback.message_of holerr)
-      in
-        checked_term_of t
-      end
+    let
+      fun arity_mismatch symbol expected actual =
+        type_error fn_name context loc NONE NONE
+          ("ArraysEx " ^ symbol ^ " arity mismatch: expected " ^
+           Int.toString expected ^ " arguments, actual argument count " ^
+           Int.toString actual)
+      fun array_dom_rng symbol array_sort =
+        SOME (Type.dom_rng array_sort)
+        handle Feedback.HOL_ERR _ =>
+          type_error fn_name context loc NONE (SOME array_sort)
+            ("ArraysEx " ^ symbol ^ " array sort mismatch: expected " ^
+             "Array Index Element")
+      fun check_array_builtin arg_sorts =
+        if not (List.null indices) then ()
+        else
+          case (name, arg_sorts) of
+            ("select", [array_sort, index_sort]) =>
+              let val (expected_index, _) =
+                    valOf (array_dom_rng "select" array_sort)
+              in
+                if index_sort = expected_index then ()
+                else
+                  type_error fn_name context loc (SOME expected_index)
+                    (SOME index_sort)
+                    "ArraysEx select index sort mismatch"
+              end
+          | ("select", _) =>
+              arity_mismatch "select" 2 (List.length arg_sorts)
+          | ("store", [array_sort, index_sort, value_sort]) =>
+              let val (expected_index, expected_value) =
+                    valOf (array_dom_rng "store" array_sort)
+              in
+                if index_sort <> expected_index then
+                  type_error fn_name context loc (SOME expected_index)
+                    (SOME index_sort)
+                    "ArraysEx store index sort mismatch"
+                else if value_sort <> expected_value then
+                  type_error fn_name context loc (SOME expected_value)
+                    (SOME value_sort)
+                    "ArraysEx store value sort mismatch"
+                else ()
+              end
+          | ("store", _) =>
+              arity_mismatch "store" 3 (List.length arg_sorts)
+          | _ => ()
+    in
+      if List.null indices andalso name = "@bbterm" then
+        let
+          val arg_terms = List.map checked_term args
+          val arg_sorts = List.map checked_sort args
+          val t =
+            t_with_args tmdict name [] arg_terms
+            handle Feedback.HOL_ERR holerr =>
+              type_error fn_name context loc NONE NONE
+                ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
+                 sort_list_to_string arg_sorts ^ ": " ^
+                 Feedback.message_of holerr)
+        in
+          checked_term_of t
+        end
+      else if List.null indices then
+        (case peek_signatures (sigdict, name) of
+           SOME signatures =>
+             apply_user_signature fn_name context loc name args signatures
+         | NONE =>
+             let
+               val arg_terms = List.map checked_term args
+               val arg_sorts = List.map checked_sort args
+               val _ = check_array_builtin arg_sorts
+               val t =
+                 t_with_args tmdict name [] arg_terms
+                 handle Feedback.HOL_ERR holerr =>
+                   type_error fn_name context loc NONE NONE
+                     ("could not resolve symbol '" ^ name ^
+                      "' for actual sorts " ^ sort_list_to_string arg_sorts ^
+                      ": " ^ Feedback.message_of holerr)
+             in
+               checked_term_of t
+             end)
+      else
+        let
+          val arg_terms = List.map checked_term args
+          val arg_sorts = List.map checked_sort args
+          val t =
+            t_with_args tmdict name indices arg_terms
+            handle Feedback.HOL_ERR holerr =>
+              type_error fn_name context loc NONE NONE
+                ("could not resolve indexed symbol '" ^ name ^
+                 "' for actual sorts " ^ sort_list_to_string arg_sorts ^
+                 ": " ^ Feedback.message_of holerr)
+        in
+          checked_term_of t
+        end
+    end
 
   and typecheck_term context env term_ast =
     let

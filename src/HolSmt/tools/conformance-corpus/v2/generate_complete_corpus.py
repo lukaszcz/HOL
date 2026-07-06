@@ -3385,6 +3385,17 @@ def theory_source(symbol: TheorySymbol) -> dict[str, object]:
     return source("SMT-LIB-theory", f"SMT-LIB 2.7 {symbol.theory} theory: {symbol.name}")
 
 
+ARRAY_TYPE_ERROR_DIAGNOSTICS = {
+    "array": "ArraysEx Array sort arity mismatch",
+    "select": "ArraysEx select index sort mismatch",
+    "store": "ArraysEx store value sort mismatch",
+    "read-over-write": "ArraysEx store value sort mismatch",
+    "write-over-write": "ArraysEx store value sort mismatch",
+    "extensionality": "ArraysEx select index sort mismatch",
+    "mixed-index-value-sorts": "ArraysEx select index sort mismatch",
+}
+
+
 def scripted_theory_case_file(theory: str, case_id: str) -> str:
     directory = {
         "Datatypes": "datatypes",
@@ -3526,7 +3537,23 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             implementation = theory_obligation(symbol, kind, case_id, phase)
     elif kind == "type-error":
         modes = ("parser-only", "typecheck-only", "z3-tac")
-        if symbol.theory == "UnicodeStrings" and symbol.slug == "string-literal":
+        if symbol.theory == "ArraysEx":
+            diagnostic = ARRAY_TYPE_ERROR_DIAGNOSTICS[symbol.slug]
+            expected = {
+                "parser-only": expected_result("pass"),
+                "typecheck-only": expected_result(
+                    "fail",
+                    diagnostic=diagnostic,
+                    failure_phase="typecheck",
+                ),
+                "z3-tac": expected_result(
+                    "fail",
+                    diagnostic=diagnostic,
+                    failure_phase="typecheck",
+                ),
+            }
+            implementation = None
+        elif symbol.theory == "UnicodeStrings" and symbol.slug == "string-literal":
             expected = {
                 "parser-only": expected_result("pass"),
                 "typecheck-only": expected_result(

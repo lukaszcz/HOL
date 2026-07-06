@@ -1099,6 +1099,79 @@ fun smtlib_typecheck_declared_function_mismatch_diagnostic () =
         "function mismatch diagnostic lacked expected/actual sorts: " ^ msg)
     end
 
+fun smtlib_array_type_mismatch_diagnostics () =
+let
+  fun script logic body =
+    "(set-logic " ^ logic ^ ")\n" ^ body ^ "(exit)\n"
+  fun expect (label, text, diagnostic) =
+    expect_hol_error_contains label diagnostic
+      (fn () => ignore (parse_smtlib_state text))
+  val cases = [
+    ("array sort arity",
+     script "QF_AX"
+       ("(declare-sort I 0)\n" ^
+        "(declare-const bad (Array I))\n"),
+     "ArraysEx Array sort arity mismatch"),
+    ("select index sort",
+     script "QF_AX"
+       ("(declare-sort I 0)\n" ^
+        "(declare-sort E 0)\n" ^
+        "(declare-const a (Array I E))\n" ^
+        "(declare-const e E)\n" ^
+        "(assert (= (select a e) e))\n"),
+     "ArraysEx select index sort mismatch"),
+    ("store value sort",
+     script "QF_AX"
+       ("(declare-sort I 0)\n" ^
+        "(declare-sort E 0)\n" ^
+        "(declare-const a (Array I E))\n" ^
+        "(declare-const i I)\n" ^
+        "(assert (= (store a i i) a))\n"),
+     "ArraysEx store value sort mismatch"),
+    ("read over write value sort",
+     script "QF_AX"
+       ("(declare-sort I 0)\n" ^
+        "(declare-sort E 0)\n" ^
+        "(declare-const a (Array I E))\n" ^
+        "(declare-const i I)\n" ^
+        "(assert (= (select (store a i i) i) i))\n"),
+     "ArraysEx store value sort mismatch"),
+    ("write over write value sort",
+     script "QF_AX"
+       ("(declare-sort I 0)\n" ^
+        "(declare-sort E 0)\n" ^
+        "(declare-const a (Array I E))\n" ^
+        "(declare-const i I)\n" ^
+        "(assert (= (store (store a i i) i i) a))\n"),
+     "ArraysEx store value sort mismatch"),
+    ("extensionality index sort",
+     script "AUFLIA"
+       ("(declare-const a (Array Int Bool))\n" ^
+        "(assert (forall ((i Bool)) (= (select a i) true)))\n"),
+     "ArraysEx select index sort mismatch"),
+    ("mixed index value sorts",
+     script "QF_AUFBV"
+       ("(declare-const a (Array (_ BitVec 8) Bool))\n" ^
+        "(assert (= (select a true) true))\n"),
+     "ArraysEx select index sort mismatch")
+  ]
+  val {assertions, ...} =
+    parse_smtlib_state
+      (script "QF_AX"
+        ("(declare-sort I 0)\n" ^
+         "(declare-sort E 0)\n" ^
+         "(declare-const a (Array I E))\n" ^
+         "(declare-const i I)\n" ^
+         "(declare-const e E)\n" ^
+         "(assert (= (select (store a i e) i) e))\n"))
+in
+  List.app expect cases;
+  assert (List.length assertions = 1,
+    "well-typed array script should produce exactly one assertion");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "well-typed array assertion did not typecheck as Bool")
+end
+
 fun smtlib_command_malformed_diagnostics () =
   let
     fun typecheck text () = ignore (SmtLib_Parser.typecheck_script_string text)
@@ -2669,6 +2742,8 @@ let
       smtlib_typecheck_invalid_assertion_diagnostic),
     ("smtlib_typecheck_declared_function_mismatch_diagnostic",
       smtlib_typecheck_declared_function_mismatch_diagnostic),
+    ("smtlib_array_type_mismatch_diagnostics",
+      smtlib_array_type_mismatch_diagnostics),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",

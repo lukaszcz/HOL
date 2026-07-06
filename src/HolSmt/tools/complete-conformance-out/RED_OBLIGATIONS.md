@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1345
-- Complete-audit red rows: 1345
+- Manifest red rows: 1331
+- Complete-audit red rows: 1331
 - Proof-audit red rows: 37
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -10,7 +10,7 @@
 | Category | Red rows |
 | --- | ---: |
 | function sorts | 0 |
-| arrays | 15 |
+| arrays | 1 |
 | FP | 466 |
 | strings/regex | 335 |
 | datatypes | 10 |
@@ -160,20 +160,6 @@
 | `manifest` | `proof-rule:th-lemma-string` | `proof-replay` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-string` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-string |
 | `manifest` | `proof-rule:th-lemma-string` | `z3-tac` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-string` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-string |
 | `manifest` | `soundness-audit:soundness-oracle-tag-boundary` | `z3-tac` | `soundness-audit` | `QF_UF` | `soundness:oracle-tag-boundary` | `theorem-shape` | src/HolSmt/Z3_ProofReplay.sml, src/HolSmt/tools/audit_complete_conformance.py, src/HolSmt/z3_tac_driver.sml | soundness-audit:soundness-oracle-tag-boundary |
-| `manifest` | `theory:ArraysEx:array:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:array:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:array:type-error |
-| `manifest` | `theory:ArraysEx:array:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:array:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:array:type-error |
-| `manifest` | `theory:ArraysEx:extensionality:type-error` | `typecheck-only` | `theory` | `AUFLIA` | `theory-symbol:ArraysEx:extensionality:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:extensionality:type-error |
-| `manifest` | `theory:ArraysEx:extensionality:type-error` | `z3-tac` | `theory` | `AUFLIA` | `theory-symbol:ArraysEx:extensionality:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:extensionality:type-error |
-| `manifest` | `theory:ArraysEx:mixed-index-value-sorts:type-error` | `typecheck-only` | `theory` | `QF_AUFBV` | `theory-symbol:ArraysEx:mixed-index-value-sorts:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:mixed-index-value-sorts:type-error |
-| `manifest` | `theory:ArraysEx:mixed-index-value-sorts:type-error` | `z3-tac` | `theory` | `QF_AUFBV` | `theory-symbol:ArraysEx:mixed-index-value-sorts:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:mixed-index-value-sorts:type-error |
-| `manifest` | `theory:ArraysEx:read-over-write:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:read-over-write:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:read-over-write:type-error |
-| `manifest` | `theory:ArraysEx:read-over-write:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:read-over-write:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:read-over-write:type-error |
-| `manifest` | `theory:ArraysEx:select:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:select:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:select:type-error |
-| `manifest` | `theory:ArraysEx:select:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:select:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:select:type-error |
-| `manifest` | `theory:ArraysEx:store:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:store:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:store:type-error |
-| `manifest` | `theory:ArraysEx:store:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:store:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:store:type-error |
-| `manifest` | `theory:ArraysEx:write-over-write:type-error` | `typecheck-only` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:write-over-write:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:write-over-write:type-error |
-| `manifest` | `theory:ArraysEx:write-over-write:type-error` | `z3-tac` | `theory` | `QF_AX` | `theory-symbol:ArraysEx:write-over-write:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:ArraysEx:write-over-write:type-error |
 | `manifest` | `theory:Core:and:type-error` | `typecheck-only` | `theory` | `QF_UF` | `theory-symbol:Core:and:type-error` | `typecheck` | src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Core:and:type-error |
 | `manifest` | `theory:Core:and:type-error` | `z3-tac` | `theory` | `QF_UF` | `theory-symbol:Core:and:type-error` | `typecheck` | src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Core:and:type-error |
 | `manifest` | `theory:Core:bool:type-error` | `typecheck-only` | `theory` | `QF_UF` | `theory-symbol:Core:bool:type-error` | `typecheck` | src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Core:bool:type-error |
@@ -327,4 +313,18 @@
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:boundary` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:boundary` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:boundary |
 | `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
-| ... | ... | ... | ... | ... | ... | ... | ... | 1082 more in JSON |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:sat` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:sat |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:type-error` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `proof-parse` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:unsat-proof |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `proof-replay` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:unsat-proof |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:unsat-proof |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvumulo:unsat-proof` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvumulo:unsat-proof |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvurem:type-error` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvurem:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvurem:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvurem:type-error` | `z3-tac` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvurem:type-error` | `typecheck` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvurem:type-error |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:boundary` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:boundary |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:boundary` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:boundary` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:boundary |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:sat` | `typecheck-only` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:sat |
+| `manifest` | `theory:Fixed_Size_BitVectors:bvusubo:sat` | `z3-oracle` | `theory` | `QF_BV` | `theory-symbol:Fixed_Size_BitVectors:bvusubo:sat` | `solver` | src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:Fixed_Size_BitVectors:bvusubo:sat |
+| ... | ... | ... | ... | ... | ... | ... | ... | 1068 more in JSON |
