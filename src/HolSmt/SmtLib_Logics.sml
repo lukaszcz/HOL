@@ -606,6 +606,14 @@ in
           sides
     | NONE => false
 
+  fun term_has_word_subterm tm =
+    List.exists (term_type_contains type_contains_word) (subterms tm)
+
+  fun is_bv_logic_pure_int_atom tm =
+    case is_arith_relation tm of
+      SOME _ => not (term_has_word_subterm tm)
+    | NONE => false
+
   fun checked_replay_gap_message logic family missing_feature case_ids =
     "checked Z3_TAC replay for " ^ family ^
     " is not implemented for logic " ^ logic ^
@@ -667,9 +675,10 @@ in
             andalso
             not (#bitvectors fragment andalso
                  term_mentions_bitvector_theory tm))
-      fun bv_integer_only_violation () =
-        logic <> "ALL" andalso #bitvectors fragment andalso has_int andalso
-        not has_word
+      fun bv_int_atom_violation () =
+        logic <> "ALL" andalso #bitvectors fragment andalso
+        #arith fragment = NO_ARITH andalso has_int andalso
+        some_subterm is_bv_logic_pure_int_atom
       fun int_sort_violation () =
         not (#ints fragment) andalso has_int
       fun real_sort_violation () =
@@ -697,8 +706,8 @@ in
       else if uf_operator_violation () then
         SOME ("uninterpreted function application is outside logic fragment " ^
               logic)
-      else if bv_integer_only_violation () then
-        SOME ("integer-only term is outside bit-vector logic fragment " ^
+      else if bv_int_atom_violation () then
+        SOME ("integer atom is outside bit-vector logic fragment " ^
               logic)
       else if int_sort_violation () then
         SOME ("integer term sort is outside logic fragment " ^ logic)

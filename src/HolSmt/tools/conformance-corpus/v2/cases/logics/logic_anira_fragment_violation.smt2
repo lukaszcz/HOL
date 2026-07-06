@@ -1,4 +1,4 @@
 (set-logic ANIRA)
-(declare-fun outside_fragment (Int) Int)
-(assert (= (outside_fragment 0) 0))
+(declare-const outside_fragment (_ BitVec 1))
+(assert (= outside_fragment #b0))
 (check-sat)

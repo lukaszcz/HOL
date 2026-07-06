@@ -1392,7 +1392,16 @@ fun smtlib_logic_fragment_diagnostics () =
        "(declare-const outside_fragment Int)\n" ^
        "(assert (= outside_fragment 0))\n" ^
        "")
-      "integer-only term"
+      "integer atom";
+    expect_fragment "mixed bit-vector integer atom" "QF_BV"
+      (script "QF_BV"
+       "(declare-const outside_fragment Int)\n" ^
+       "(declare-const b (_ BitVec 1))\n" ^
+       "(assert (and (= outside_fragment 0) (= b #b0)))\n")
+      "integer atom";
+    expect_no_fragment "bit-vector integer conversion" "QF_BV"
+      (script "QF_BV"
+       "(assert (= ((_ int_to_bv 1) 0) #b0))\n")
   end
 
 fun smtlib_checked_replay_gap_diagnostics () =
