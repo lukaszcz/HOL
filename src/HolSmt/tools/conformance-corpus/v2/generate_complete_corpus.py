@@ -955,19 +955,19 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         slug="define-fun-rec-define-funs-rec",
         commands=("define-fun-rec", "define-funs-rec"),
-        positive_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool p)\n(check-sat)\n",
+        positive_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool p)\n(assert (f true))\n(check-sat)\n",
         negative_script="(set-logic QF_UF)\n(define-funs-rec ((f ((p Bool)) Bool)) ())\n",
         state_script="(set-logic QF_UF)\n(define-funs-rec ((f ((p Bool)) Bool)) ((not p)))\n(assert (f false))\n(check-sat)\n",
-        reconstruction_script="(set-logic QF_UF)\n(define-fun-rec f ((p Bool)) Bool (f p))\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_UF)\n(define-funs-rec ((even ((p Bool)) Bool) (odd ((p Bool)) Bool)) ((odd p) (not (even p))))\n(assert (even true))\n(check-sat)\n",
         negative_diagnostic="malformed recursive definition block",
         negative_phase="parser",
-        reconstruction_applies=False,
-        reconstruction_diagnostic="recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point",
-        reconstruction_phase="theorem-shape",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="define-fun-rec replay coverage is incomplete",
+        reconstruction_phase="proof-replay",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/SmtLib.sml"),
         obligation_notes=(
-            "Recursive definition commands are parsed and bounded-state checked, but "
-            "recursive semantics are not translated for checked Z3_TAC replay."
+            "Recursive definition commands are predeclared and equated as asserted "
+            "hypotheses; checked Z3_TAC replay must preserve that theorem shape."
         ),
     ),
     CommandGroup(
@@ -1147,6 +1147,7 @@ RECONSTRUCTED_COMMAND_GROUPS = {
     "declare-sort",
     "define-const",
     "define-fun",
+    "define-fun-rec-define-funs-rec",
     "define-sort",
     "echo",
     "get-proof",
@@ -1630,6 +1631,47 @@ def command_cases() -> list[GeneratedCase]:
                 implementation=reconstruction_obligation,
             )
         )
+    recursive_group = next(
+        group for group in COMMAND_GROUPS
+        if group.slug == "define-fun-rec-define-funs-rec"
+    )
+    full_replay_modes = (
+        "parser-only",
+        "typecheck-only",
+        "z3-tac",
+    )
+    full_replay_expected = {
+        mode: expected_result(
+            "pass",
+            notes="recursive equations are asserted hypotheses, not HOL definitions",
+        )
+        for mode in full_replay_modes
+    }
+    cases.append(
+        command_case(
+            recursive_group,
+            "define-fun-rec-replay",
+            "(set-logic QF_UF)\n"
+            "(define-fun-rec f ((p Bool)) Bool p)\n"
+            "(assert (not (f true)))\n"
+            "(check-sat)\n",
+            full_replay_modes,
+            full_replay_expected,
+        )
+    )
+    cases.append(
+        command_case(
+            recursive_group,
+            "define-funs-rec-replay",
+            "(set-logic QF_UF)\n"
+            "(define-funs-rec ((even ((p Bool)) Bool) (odd ((p Bool)) Bool)) "
+            "((odd p) (not (even p))))\n"
+            "(assert (even true))\n"
+            "(check-sat)\n",
+            full_replay_modes,
+            full_replay_expected,
+        )
+    )
     cases.extend(datatype_command_corpus_case(case) for case in DATATYPE_COMMAND_CORPUS_CASES)
     return cases
 

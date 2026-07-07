@@ -1417,6 +1417,96 @@
       }
     },
     {
+      "id": "command:define-fun-rec-define-funs-rec:define-fun-rec-replay",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec_define_fun_rec_replay.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:define-fun-rec-replay",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        },
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
+      "id": "command:define-fun-rec-define-funs-rec:define-funs-rec-replay",
+      "file": "cases/commands/command_define_fun_rec_define_funs_rec_define_funs_rec_replay.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:define-funs-rec-replay",
+        "command-group:define-fun-rec-define-funs-rec",
+        "command:define-fun-rec",
+        "command:define-funs-rec"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        },
+        "typecheck-only": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        },
+        "z3-tac": {
+          "status": "pass",
+          "notes": "recursive equations are asserted hypotheses, not HOL definitions"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 command group: define-fun-rec, define-funs-rec"
+      }
+    },
+    {
       "id": "command:define-fun-rec-define-funs-rec:negative",
       "file": "cases/commands/command_define_fun_rec_define_funs_rec_negative.smt2",
       "logic": "QF_UF",
@@ -1477,10 +1567,8 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "unsupported",
-          "diagnostic": "recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point",
-          "failure_phase": "theorem-shape",
-          "notes": "theorem reconstruction applies: false"
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": null,
@@ -1516,11 +1604,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": null,

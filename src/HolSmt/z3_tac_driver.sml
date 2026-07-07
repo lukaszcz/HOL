@@ -79,11 +79,7 @@ fun z3_tac_goal assertions =
 
 fun z3_tac_unsupported_command_diagnostic command =
   case SmtLib_Parser.node_of command of
-    SmtLib_Parser.CmdDefineFunRec _ =>
-      SOME "recursive definition command define-fun-rec is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.CmdDefineFunsRec _ =>
-      SOME "recursive definition command define-funs-rec is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.CmdDeclareDatatype _ =>
+    SmtLib_Parser.CmdDeclareDatatype _ =>
       SOME "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point"
   | SmtLib_Parser.CmdDeclareDatatypes _ =>
       SOME "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"

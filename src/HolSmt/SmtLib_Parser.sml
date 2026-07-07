@@ -1724,7 +1724,7 @@ local
     (tydict, tmdict)
   end
 
-  fun define_fun_term name vars range_type definiens tmdict =
+  fun define_fun_signature name vars range_type tmdict =
   let
     val domain_types = List.map (Term.type_of o Lib.snd) vars
     val tm = Term.mk_var (name,
@@ -1736,9 +1736,22 @@ local
       else
         raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
     val tmdict = Library.extend_dict ((name, parsefn), tmdict)
+  in
+    (tm, tmdict)
+  end
+
+  fun define_fun_equation tm vars definiens =
+  let
     val vars = List.map Lib.snd vars
-    val definition = boolSyntax.list_mk_forall (vars,
+  in
+    boolSyntax.list_mk_forall (vars,
       boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
+  end
+
+  fun define_fun_term name vars range_type definiens tmdict =
+  let
+    val (tm, tmdict) = define_fun_signature name vars range_type tmdict
+    val definition = define_fun_equation tm vars definiens
   in
     (tmdict, definition)
   end
@@ -1773,6 +1786,98 @@ local
     val _ = Library.expect_token ")" (get_token ())
   in
     define_fun_term name vars range_type definiens tmdict
+  end
+
+  fun add_sorted_vars_to_legacy_tmdict vars tmdict =
+  let
+    fun var_parsefn var token indices args =
+      if List.null indices andalso List.null args then
+        var
+      else
+        raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
+          "wrong number of arguments"
+  in
+    List.foldl Library.extend_dict tmdict
+      (List.map (Lib.apsnd var_parsefn) vars)
+  end
+
+  fun parse_legacy_fun_signature get_token tydict =
+  let
+    val _ = Library.expect_token "(" (get_token ())
+    val name = get_token ()
+    val vars = parse_sorted_vars get_token tydict
+    val range_type = parse_type get_token tydict
+    val _ = Library.expect_token ")" (get_token ())
+    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+  in
+    (name, vars, range_type)
+  end
+
+  fun parse_define_fun_rec get_token (tydict, tmdict) =
+  let
+    val name = get_token ()
+    val vars = parse_sorted_vars get_token tydict
+    val range_type = parse_type get_token tydict
+    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+    val (tm, tmdict) = define_fun_signature name vars range_type tmdict
+    val definiens_tmdict = add_sorted_vars_to_legacy_tmdict vars tmdict
+    val definiens = parse_term get_token (tydict, definiens_tmdict)
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    (tmdict, define_fun_equation tm vars definiens)
+  end
+
+  fun parse_define_funs_rec get_token (tydict, tmdict) =
+  let
+    fun parse_signatures tmdict specs =
+      let val token = get_token ()
+      in
+        if token = ")" then
+          (tmdict, List.rev specs)
+        else
+          let
+            val get_token' = Library.undo_look_ahead [token] get_token
+            val (name, vars, range_type) =
+              parse_legacy_fun_signature get_token' tydict
+            val (tm, tmdict) =
+              define_fun_signature name vars range_type tmdict
+          in
+            parse_signatures tmdict ((tm, vars) :: specs)
+          end
+      end
+
+    fun malformed_count () =
+      raise ERR "define-funs-rec"
+        "malformed recursive definition block: function signature count does not match body count"
+
+    fun parse_bodies tmdict [] definitions =
+      let val token = get_token ()
+      in
+        if token = ")" then List.rev definitions else malformed_count ()
+      end
+      | parse_bodies tmdict ((tm, vars) :: specs) definitions =
+        let val token = get_token ()
+        in
+          if token = ")" then
+            malformed_count ()
+          else
+            let
+              val get_token' = Library.undo_look_ahead [token] get_token
+              val body_tmdict = add_sorted_vars_to_legacy_tmdict vars tmdict
+              val definiens = parse_term get_token' (tydict, body_tmdict)
+              val definition = define_fun_equation tm vars definiens
+            in
+              parse_bodies tmdict specs (definition :: definitions)
+            end
+        end
+
+    val _ = Library.expect_token "(" (get_token ())
+    val (tmdict, specs) = parse_signatures tmdict []
+    val _ = Library.expect_token "(" (get_token ())
+    val definitions = parse_bodies tmdict specs []
+    val _ = Library.expect_token ")" (get_token ())
+  in
+    (tmdict, definitions)
   end
 
   type assertion_frame = {
@@ -1851,6 +1956,11 @@ local
         named_assertions = frame_named_assertions frame,
         local_definitions = assertion :: frame_local_definitions frame
       }) state
+
+  fun add_assertions assertions state =
+    List.foldl
+      (fn (assertion, state) => add_assertion assertion NONE state)
+      state assertions
 
   fun add_query query ({logic, frames, queries}: command_state) =
     {logic = logic, frames = frames, queries = query :: queries}
@@ -2071,11 +2181,23 @@ local
         parse_commands get_token (SOME (add_definition def command_state))
       end
     | "define-fun-rec" =>
-      raise ERR "parse_commands"
-        "unsupported command 'define-fun-rec': recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+      let
+        val command_state = dest_state "define-fun-rec" state
+        val (tydict, tmdict) = current_dicts command_state
+        val (tmdict, def) = parse_define_fun_rec get_token (tydict, tmdict)
+        val command_state = update_current_dicts (tydict, tmdict) command_state
+      in
+        parse_commands get_token (SOME (add_assertion def NONE command_state))
+      end
     | "define-funs-rec" =>
-      raise ERR "parse_commands"
-        "unsupported command 'define-funs-rec': mutually recursive definitions are parsed by the script AST but not expanded into HOL definitions"
+      let
+        val command_state = dest_state "define-funs-rec" state
+        val (tydict, tmdict) = current_dicts command_state
+        val (tmdict, defs) = parse_define_funs_rec get_token (tydict, tmdict)
+        val command_state = update_current_dicts (tydict, tmdict) command_state
+      in
+        parse_commands get_token (SOME (add_assertions defs command_state))
+      end
     | "declare-datatype" =>
       let
         val command_state = dest_state "declare-datatype" state
@@ -3713,6 +3835,7 @@ in
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list
+  val parse_benchmark_state = parse_benchmark_state
   val parse_benchmark = parse_benchmark
 
   (* 'parse_file' parses an SMT-LIB 2 benchmark, returning the
@@ -3729,11 +3852,11 @@ in
      get-model, get-value, get-assignment, get-assertions, echo, and exit.
      Solver query commands update parser state, but model/value/core output
      is not produced by this parser or by proof reconstruction mode.
-     Recursive definition commands predeclare their recursive signatures for
-     bounded state/typechecking; checked Z3_TAC rejects them before theorem
-     construction.  Datatype commands install uninterpreted datatype sorts
-     plus constructor, selector, and tester symbols for bounded command-state
-     checking.  Any other command is rejected with "unknown command". *)
+     Recursive definition commands predeclare their recursive signatures and
+     add their equations to the assertion context.  Datatype commands install
+     uninterpreted datatype sorts plus constructor, selector, and tester symbols
+     for bounded command-state checking.  Any other command is rejected with
+     "unknown command". *)
 
   fun parse_file_state (path : string) : command_state_snapshot =
   let

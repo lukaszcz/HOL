@@ -110,6 +110,10 @@ fun parse_legacy_smtlib_assertions contents =
     assertions
   end
 
+fun parse_legacy_smtlib_state contents =
+  SmtLib_Parser.parse_benchmark_state
+    (Library.get_token (string_get_char contents))
+
 fun assert_body s =
   if String.isPrefix "(assert " s then
     let
@@ -1033,6 +1037,34 @@ in
           List.length query_defs = 1
       | _ => false) queries,
     "check-sat query did not preserve define-funs-rec state snapshot")
+end
+
+fun parse_legacy_define_fun_rec_hypothesis_only_success () =
+let
+  val {assertions, local_definitions, queries, ...} =
+    parse_legacy_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(define-fun-rec f ((p Bool)) Bool (f p))\n" ^
+       "(define-funs-rec ((g ((p Bool)) Bool) (h ((p Bool)) Bool)) " ^
+       "((h p) (g p)))\n" ^
+       "(assert (not (f true)))\n" ^
+       "(check-sat)\n")
+  val recursive_equations = List.filter boolSyntax.is_forall assertions
+in
+  assert (List.length assertions = 4,
+    "legacy recursive definitions were not added as hypothesis assertions");
+  assert (List.length recursive_equations = 3,
+    "legacy recursive definition equations were not universally quantified");
+  assert (List.null local_definitions,
+    "legacy recursive definitions were installed as local definitions");
+  assert (List.exists (fn query =>
+      case query of
+        SmtLib_Parser.QueryCheckSat
+          {assertions = query_assertions, local_definitions = query_defs,
+           assumptions = []} =>
+          List.length query_assertions = 4 andalso List.null query_defs
+      | _ => false) queries,
+    "legacy check-sat query did not preserve recursive hypotheses")
 end
 
 fun smtlib_soundness_audit_scope_success () =
@@ -3347,6 +3379,8 @@ let
       parse_file_define_fun_fragment_scope_success),
     ("parse_file_define_funs_rec_fragment_scope_success",
       parse_file_define_funs_rec_fragment_scope_success),
+    ("parse_legacy_define_fun_rec_hypothesis_only_success",
+      parse_legacy_define_fun_rec_hypothesis_only_success),
     ("smtlib_soundness_audit_scope_success",
       smtlib_soundness_audit_scope_success),
     ("smtlib_indexed_parametric_sort_reconstruction_success",
