@@ -2,7 +2,7 @@
 
 - Manifest red rows: 1218
 - Complete-audit red rows: 1218
-- Proof-audit red rows: 36
+- Proof-audit red rows: 34
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
 ## Required First Red Categories
@@ -20,7 +20,7 @@
 | check-sat-assuming | 1 |
 | unsat core/assumptions | 1 |
 | missing logic packets | 0 |
-| real proof occurrences | 36 |
+| real proof occurrences | 34 |
 | external benchmarks | 2 |
 
 ## Red Rows
@@ -327,4 +327,4 @@
 | `manifest` | `theory:FloatingPoint:fp.abs:sat` | `z3-tac` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:sat` | `solver` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:sat |
 | `manifest` | `theory:FloatingPoint:fp.abs:type-error` | `typecheck-only` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:type-error |
 | `manifest` | `theory:FloatingPoint:fp.abs:type-error` | `z3-tac` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:type-error |
-| ... | ... | ... | ... | ... | ... | ... | ... | 954 more in JSON |
+| ... | ... | ... | ... | ... | ... | ... | ... | 952 more in JSON |

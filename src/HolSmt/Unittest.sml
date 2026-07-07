@@ -2227,6 +2227,28 @@ fun z3_proof_parser_unknown_rule_diagnostic () =
         "unknown-rule diagnostic did not include Z3 version: " ^ msg)
     end
 
+fun z3_proof_parser_version_gate_diagnostic () =
+let
+  val gated_rule = "apply-def"
+  val gated_version = "2.19.1"
+in
+  assert (not (Option.isSome
+      (Z3_Proof.lookup_rule gated_version gated_rule)),
+    "version-gated proof rule unexpectedly resolved");
+  (ignore (parse_z3_proof_string gated_version
+    "((proof (apply-def (asserted false) false)))");
+   die "FAIL: version-gated Z3 proof rule parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring
+          ("rule " ^ gated_rule ^ " not supported by Z3 version " ^
+           gated_version) msg,
+        "version-gate diagnostic did not report the precise rule/version: " ^
+        msg)
+    end
+end
+
 fun replay_z3_proof_string contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string "4.12.4" contents)
@@ -3130,6 +3152,8 @@ let
       z3_proof_parser_advanced_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
+    ("z3_proof_parser_version_gate_diagnostic",
+      z3_proof_parser_version_gate_diagnostic),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",

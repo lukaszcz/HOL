@@ -114,18 +114,34 @@ struct
 
   val unknown_z3_version = "<unknown>"
 
-  fun mk_rule (name, aliases, premise_shape, replay_handler) : proof_rule = {
+  fun mk_rule_with_version version_support
+      (name, aliases, premise_shape, replay_handler) : proof_rule = {
     name = name,
     aliases = aliases,
-    version_support = AllZ3Versions,
+    version_support = version_support,
     premise_shape = premise_shape,
     conclusion_shape = BooleanConclusion,
     replay_handler = replay_handler
   }
 
+  fun mk_rule args = mk_rule_with_version AllZ3Versions args
+
+  fun mk_z3_4_rule args =
+    mk_rule_with_version (Z3VersionPrefixes ["4."]) args
+
   val proof_rule_registry : proof_rule list = [
     mk_rule ("and-elim", [], OnePremise, "and_elim"),
-    mk_rule ("apply-def", [], OnePremise, "apply_def"),
+    (* Version gates are traceable to
+       .agent-files/reports/C1/histograms/rules_by_version.tsv.
+       C1 measured 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3;
+       2.19.1 could not execute on the aarch64 host.  Therefore we only
+       gate rules with measured 4.x evidence to the 4.x dialect when
+       that remains consistent with verify_z3_versions.sh.  The verifier
+       shows some C1 4.11.2 non-observations are corpus gaps, not version
+       gaps.  Never-observed legacy/residual rules stay at the default
+       AllZ3Versions until a legacy-capable measurement or TASK_24 owner
+       decision says otherwise. *)
+    mk_z3_4_rule ("apply-def", [], OnePremise, "apply_def"),
     mk_rule ("asserted", [], ZeroPremises, "asserted"),
     mk_rule ("commutativity", [], ZeroPremises, "commutativity"),
     mk_rule ("def-axiom", [], ZeroPremises, "def_axiom"),
@@ -133,7 +149,7 @@ struct
     mk_rule ("hypothesis", [], ZeroPremises, "hypothesis"),
     mk_rule ("iff-false", [], OnePremise, "iff_false"),
     mk_rule ("iff-true", [], OnePremise, "iff_true"),
-    mk_rule ("intro-def", [], ZeroPremises, "intro_def"),
+    mk_z3_4_rule ("intro-def", [], ZeroPremises, "intro_def"),
     mk_rule ("lemma", [], OnePremise, "lemma"),
     mk_rule ("monotonicity", [], ListPremises, "monotonicity"),
     mk_rule ("mp", [], TwoPremises, "mp"),
@@ -201,8 +217,12 @@ struct
       proof_rule_registry
 
   fun registry_lookup_failure (version : string) (name : string) =
-    "Z3 proof rule registry lookup failed: rule '" ^ name ^
-    "' is unsupported for Z3 version " ^ version
+    if Option.isSome (List.find (rule_matches name) proof_rule_registry) then
+      "Z3 proof rule registry lookup failed: rule " ^ name ^
+      " not supported by Z3 version " ^ version
+    else
+      "Z3 proof rule registry lookup failed: unknown rule " ^ name ^
+      " for Z3 version " ^ version
 
   (* The Z3 proof is a directed acyclic graph of inference steps.  A
      unique integer ID is assigned to each inference step.  Note that

@@ -85964,23 +85964,6 @@
       ]
     },
     {
-      "case": "apply-def",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:apply-def",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:apply-def:real-proof-occurrence"
-      ]
-    },
-    {
       "case": "asserted",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86097,23 +86080,6 @@
       "source": "proof-audit",
       "test_ids": [
         "proof-rule:iff-true:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "intro-def",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:intro-def",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:intro-def:real-proof-occurrence"
       ]
     },
     {
@@ -86559,7 +86525,7 @@
       ]
     }
   ],
-  "proof_audit_red_count": 36,
+  "proof_audit_red_count": 34,
   "proof_audit_red_obligations": [
     {
       "blocking": false,
@@ -86597,36 +86563,6 @@
       "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
       "severity": "red",
       "subject": "and-elim"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:apply-def:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:apply-def",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:apply-def:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "apply-def"
     },
     {
       "blocking": false,
@@ -86852,36 +86788,6 @@
       "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
       "severity": "red",
       "subject": "iff-true"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:intro-def:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:intro-def",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:intro-def:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "intro-def"
     },
     {
       "blocking": false,
@@ -87762,7 +87668,7 @@
     "external benchmarks": 2,
     "function sorts": 0,
     "missing logic packets": 0,
-    "real proof occurrences": 36,
+    "real proof occurrences": 34,
     "seq/set/bag": 166,
     "strings/regex": 335,
     "th-lemma-basic": 0,
