@@ -999,17 +999,71 @@ local
 
   fun t_with_args dict (token : string) (indices : Term.term list)
       (args : 'a list) : 'a =
-    Lib.tryfind (fn f => f token indices args) (Redblackmap.find (dict, token)
-      handle Redblackmap.NotFound => [])
-    handle Feedback.HOL_ERR _ =>
-    (* catch-all *)
-    Lib.tryfind (fn f => f token indices args) (Redblackmap.find (dict, "_")
-      handle Redblackmap.NotFound => [])
-    handle Feedback.HOL_ERR _ =>
-      raise ERR "t_with_args" ("failed to parse '" ^ token ^
-        "' (with indices [" ^ String.concatWith ", "
-        (List.map Hol_pp.term_to_string indices) ^ "] and " ^
-        Int.toString (List.length args) ^ " argument(s))")
+  let
+    fun try_fns [] last_err = (NONE, last_err)
+      | try_fns (f :: fs) last_err =
+          (SOME (f token indices args), last_err)
+          handle Interrupt => raise Interrupt
+               | Feedback.HOL_ERR holerr => try_fns fs (SOME holerr)
+               | _ => try_fns fs last_err
+    val primary_fns = Redblackmap.find (dict, token)
+      handle Redblackmap.NotFound => []
+    val catch_all_fns = Redblackmap.find (dict, "_")
+      handle Redblackmap.NotFound => []
+    fun generic_msg detail =
+      "failed to parse '" ^ token ^ "' (with indices [" ^
+      String.concatWith ", " (List.map Hol_pp.term_to_string indices) ^
+      "] and " ^ Int.toString (List.length args) ^ " argument(s))" ^
+      detail
+  in
+    case try_fns primary_fns NONE of
+      (SOME result, _) => result
+    | (NONE, primary_err) =>
+        (case try_fns catch_all_fns NONE of
+           (SOME result, _) => result
+         | (NONE, catch_all_err) =>
+             (case (catch_all_err, primary_err) of
+                (SOME holerr, _) =>
+                  raise ERR "t_with_args"
+                    (generic_msg (": " ^ Feedback.message_of holerr))
+              | (NONE, SOME holerr) =>
+                  raise ERR "t_with_args"
+                    (generic_msg (": " ^ Feedback.message_of holerr))
+              | (NONE, NONE) => raise ERR "t_with_args" (generic_msg "")))
+  end
+
+  fun declared_sort_parsefn sort_name arity =
+  let
+    val nullary_ty = Type.mk_vartype ("'" ^ sort_name)
+    val cache = ref ([] : (Type.hol_type list * Type.hol_type) list)
+    fun same_args (args1, args2) =
+      Lib.list_compare Type.compare (args1, args2) = EQUAL
+    fun cached_ty args =
+      case List.find (fn (cached_args, _) => same_args (cached_args, args)) (!cache) of
+        SOME (_, ty) => ty
+      | NONE =>
+          let
+            val ty = Type.gen_tyvar ()
+          in
+            cache := (args, ty) :: !cache;
+            ty
+          end
+    fun arity_mismatch actual =
+      raise ERR ("<" ^ sort_name ^ ">")
+        ("declare-sort arity mismatch for '" ^ sort_name ^ "': expected " ^
+         Int.toString arity ^ ", actual " ^ Int.toString actual)
+  in
+    fn token => fn indices => fn args =>
+      if not (List.null indices) then
+        raise ERR ("<" ^ sort_name ^ ">")
+          ("declare-sort arity mismatch for '" ^ sort_name ^
+           "': expected no indices, actual " ^
+           Int.toString (List.length indices))
+      else if List.length args = arity then
+        if arity = 0 then nullary_ty else cached_ty args
+      else
+        arity_mismatch (List.length args)
+  end
 
   fun same_sort ty1 ty2 = Type.compare (ty1, ty2) = EQUAL
 
@@ -1408,18 +1462,21 @@ local
   end
 
   (* returns an extended 'tydict' *)
-  (* FIXME: We only allow sort declarations of arity 0 at present. *)
   fun parse_declare_sort get_token tydict =
   let
     val name = get_token ()
-    val _ = Library.expect_token "0" (get_token ())
+    val arity_text = get_token ()
+    val arity =
+      case Int.fromString arity_text of
+        SOME n =>
+          if n < 0 then raise ERR "parse_declare_sort"
+            ("declare-sort arity for '" ^ name ^ "' must be non-negative")
+          else n
+      | NONE => raise ERR "parse_declare_sort"
+          ("declare-sort arity for '" ^ name ^
+           "' must be a numeral, got '" ^ arity_text ^ "'")
     val _ = Library.expect_token ")" (get_token ())
-    val ty = Type.mk_vartype ("'" ^ name)
-    fun parsefn token indices args =
-      if List.null indices andalso List.null args then
-        ty
-      else
-        raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
+    val parsefn = declared_sort_parsefn name arity
   in
     Library.extend_dict ((name, parsefn), tydict)
   end
@@ -2918,16 +2975,18 @@ local
     let
       val sort_name = located_string_node name
       val arity_text = located_string_node arity
-      val _ =
-        if arity_text = "0" then ()
-        else type_error "typecheck_declare_sort" context (loc_of arity)
-          NONE NONE
-          ("declare-sort arity: unsupported sort arity for '" ^ sort_name ^
-           "': expected 0, actual " ^ arity_text)
-      val ty = Type.mk_vartype ("'" ^ sort_name)
-      fun parsefn token indices args =
-        if List.null indices andalso List.null args then ty
-        else raise ERR ("<" ^ sort_name ^ ">") "wrong number of arguments"
+      val arity =
+        case Int.fromString arity_text of
+          SOME n =>
+            if n < 0 then type_error "typecheck_declare_sort" context
+              (loc_of arity) NONE NONE
+              ("declare-sort arity for '" ^ sort_name ^ "' must be non-negative")
+            else n
+        | NONE => type_error "typecheck_declare_sort" context (loc_of arity)
+            NONE NONE
+            ("declare-sort arity for '" ^ sort_name ^
+             "' must be a numeral, got '" ^ arity_text ^ "'")
+      val parsefn = declared_sort_parsefn sort_name arity
     in
       Library.extend_dict ((sort_name, parsefn), tydict)
     end

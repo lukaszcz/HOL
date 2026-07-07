@@ -203,9 +203,12 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         cases = audit.validate_v2_manifest(manifest)
         packet_logics = generator.logic_packet_logics()
         nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
+        int_real_logics = generator.INT_REAL_COERCION_LOGICS & set(packet_logics)
         self.assertEqual(
             len(cases),
-            6 * len(packet_logics) + len(nonlinear_logics & set(packet_logics)),
+            6 * len(packet_logics)
+            + len(nonlinear_logics & set(packet_logics))
+            + len(int_real_logics),
         )
         self.assertEqual({case["class"] for case in cases}, {"logic"})
         self.assertNotIn("ALL", {case["logic"] for case in cases})
@@ -231,6 +234,8 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             }
             if logic in nonlinear_logics:
                 expected_kinds.add("logic-case:nonlinear-proof")
+            if logic in int_real_logics:
+                expected_kinds.add("logic-case:int-real-user-function-coercion")
             self.assertEqual(kinds, expected_kinds, logic)
             unsat = [
                 case for case in logic_cases
@@ -496,9 +501,12 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 generator.parse_accepted_logics(generator.DEFAULT_LOGIC_SOURCE),
             )
             nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
+            int_real_logics = generator.INT_REAL_COERCION_LOGICS & set(packet_logics)
             self.assertEqual(
                 len(cases),
-                6 * len(packet_logics) + len(nonlinear_logics & set(packet_logics)),
+                6 * len(packet_logics)
+                + len(nonlinear_logics & set(packet_logics))
+                + len(int_real_logics),
             )
 
     def test_audit_subcommand_validates_existing_manifest(self):

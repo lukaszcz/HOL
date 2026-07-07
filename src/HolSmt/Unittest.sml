@@ -1266,6 +1266,83 @@ in
     "well-typed array script should produce exactly one assertion");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "well-typed array assertion did not typecheck as Bool")
+  end
+
+fun smtlib_declare_sort_parametric_success () =
+let
+  val script =
+    "(set-logic QF_UF)\n" ^
+    "(declare-sort A 0)\n" ^
+    "(declare-sort B 0)\n" ^
+    "(declare-sort Box 1)\n" ^
+    "(declare-sort Pair 2)\n" ^
+    "(declare-const x1 (Box A))\n" ^
+    "(declare-const x2 (Box A))\n" ^
+    "(declare-const y (Box B))\n" ^
+    "(declare-const p (Pair A B))\n" ^
+    "(declare-const q (Pair B A))\n" ^
+    "(assert (= x1 x2))\n" ^
+    "(assert (= y y))\n" ^
+    "(assert (= p p))\n" ^
+    "(assert (= q q))\n" ^
+    "(exit)\n"
+  fun check_assertions label assertions =
+    let
+      val vars = List.concat (List.map Term.free_vars assertions)
+      fun var_ty name =
+        case List.find (fn tm => Lib.fst (Term.dest_var tm) = name) vars of
+          SOME tm => Lib.snd (Term.dest_var tm)
+        | NONE => die (label ^ " missing free variable " ^ name)
+      val x1_ty = var_ty "x1"
+      val x2_ty = var_ty "x2"
+      val y_ty = var_ty "y"
+      val p_ty = var_ty "p"
+      val q_ty = var_ty "q"
+      fun same ty1 ty2 = Type.compare (ty1, ty2) = EQUAL
+    in
+      assert (List.length assertions = 4,
+        label ^ " parametric declare-sort assertion count mismatch");
+      assert (same x1_ty x2_ty,
+        label ^ " did not share equal Box A instantiations");
+      assert (not (same x1_ty y_ty),
+        label ^ " equated distinct Box instantiations");
+      assert (not (same p_ty q_ty),
+        label ^ " equated distinct Pair instantiations");
+      assert (not (same x1_ty p_ty),
+        label ^ " equated distinct declared sort constructors")
+    end
+  val legacy_assertions = parse_legacy_smtlib_assertions script
+  val {assertions = checked_assertions, ...} = parse_smtlib_state script
+in
+  check_assertions "legacy parser" legacy_assertions;
+  check_assertions "typechecker" checked_assertions
+end
+
+fun smtlib_declare_sort_parametric_arity_diagnostics () =
+let
+  fun script body =
+    "(set-logic QF_UF)\n" ^
+    "(declare-sort A 0)\n" ^
+    "(declare-sort Box 1)\n" ^
+    body ^
+    "(exit)\n"
+  val too_few = script "(declare-const bad Box)\n"
+  val too_many = script "(declare-const bad (Box A A))\n"
+  fun legacy text () = ignore (parse_legacy_smtlib_assertions text)
+  fun typecheck text () = ignore (SmtLib_Parser.typecheck_script_string text)
+in
+  expect_hol_error_contains "legacy declare-sort arity too few"
+    "declare-sort arity mismatch for 'Box': expected 1, actual 0"
+    (legacy too_few);
+  expect_hol_error_contains "legacy declare-sort arity too many"
+    "declare-sort arity mismatch for 'Box': expected 1, actual 2"
+    (legacy too_many);
+  expect_hol_error_contains "typecheck declare-sort arity too few"
+    "declare-sort arity mismatch for 'Box': expected 1, actual 0"
+    (typecheck too_few);
+  expect_hol_error_contains "typecheck declare-sort arity too many"
+    "declare-sort arity mismatch for 'Box': expected 1, actual 2"
+    (typecheck too_many)
 end
 
 fun smtlib_command_malformed_diagnostics () =
@@ -1278,9 +1355,6 @@ fun smtlib_command_malformed_diagnostics () =
     expect_hol_error_contains "duplicate set-logic"
       "set-logic issued more than once"
       (typecheck "(set-logic QF_UF)\n(set-logic QF_UF)\n");
-    expect_hol_error_contains "declare-sort arity"
-      "unsupported sort arity"
-      (typecheck "(set-logic QF_UF)\n(declare-sort U 1)\n");
     expect_hol_error_contains "declare-fun arity"
       "wrong number of arguments for 'f'"
       (typecheck
@@ -3289,6 +3363,10 @@ let
       smtlib_int_only_no_spurious_coercion_success),
     ("smtlib_array_type_mismatch_diagnostics",
       smtlib_array_type_mismatch_diagnostics),
+    ("smtlib_declare_sort_parametric_success",
+      smtlib_declare_sort_parametric_success),
+    ("smtlib_declare_sort_parametric_arity_diagnostics",
+      smtlib_declare_sort_parametric_arity_diagnostics),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",

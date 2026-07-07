@@ -1113,7 +1113,7 @@
       "expected": {
         "typecheck-only": {
           "status": "fail",
-          "diagnostic": "declare-sort arity",
+          "diagnostic": "declare-sort arity mismatch",
           "failure_phase": "typecheck"
         }
       },

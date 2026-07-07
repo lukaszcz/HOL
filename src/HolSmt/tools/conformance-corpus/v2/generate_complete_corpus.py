@@ -834,11 +834,44 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         slug="declare-sort",
         commands=("declare-sort",),
-        positive_script="(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(check-sat)\n",
-        negative_script="(set-logic QF_UF)\n(declare-sort U 1)\n",
-        state_script="(set-logic QF_UF)\n(declare-sort U 0)\n(push 1)\n(declare-const a U)\n(pop 1)\n(check-sat)\n",
-        reconstruction_script="(set-logic QF_UF)\n(declare-sort U 0)\n(declare-const a U)\n(assert (not (= a a)))\n(check-sat)\n",
-        negative_diagnostic="declare-sort arity",
+        positive_script=(
+            "(set-logic QF_UF)\n"
+            "(declare-sort A 0)\n"
+            "(declare-sort B 0)\n"
+            "(declare-sort Box 1)\n"
+            "(declare-sort Pair 2)\n"
+            "(declare-const x1 (Box A))\n"
+            "(declare-const x2 (Box A))\n"
+            "(declare-const y (Box B))\n"
+            "(declare-const p (Pair A B))\n"
+            "(assert (= x1 x2))\n"
+            "(assert (= y y))\n"
+            "(assert (= p p))\n"
+            "(check-sat)\n"
+        ),
+        negative_script=(
+            "(set-logic QF_UF)\n"
+            "(declare-sort A 0)\n"
+            "(declare-sort Box 1)\n"
+            "(declare-const bad (Box A A))\n"
+        ),
+        state_script=(
+            "(set-logic QF_UF)\n"
+            "(declare-sort A 0)\n"
+            "(declare-sort Box 1)\n"
+            "(push 1)\n"
+            "(declare-const a (Box A))\n"
+            "(pop 1)\n"
+            "(check-sat)\n"
+        ),
+        reconstruction_script=(
+            "(set-logic QF_UF)\n"
+            "(declare-sort U 0)\n"
+            "(declare-const a U)\n"
+            "(assert (not (= a a)))\n"
+            "(check-sat)\n"
+        ),
+        negative_diagnostic="declare-sort arity mismatch",
         negative_phase="typecheck",
         reconstruction_applies=True,
         reconstruction_diagnostic="abstract sort reconstruction coverage is incomplete",
