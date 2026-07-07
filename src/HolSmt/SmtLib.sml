@@ -550,31 +550,62 @@ local
       strings, nonlinear}) =
     let
       val qf = if quantifiers then "" else "QF_"
+      fun quantified_array_arith_logic () =
+        (* Non-QF AUFNIA/AUFNRA are not in the supported logic table here;
+           use the recognized A*NIRA/A*LIRA supersets when needed. *)
+        if integers andalso reals then
+          if uninterpreted then
+            "AUF" ^ (if nonlinear then "NIRA" else "LIRA")
+          else
+            "A" ^ (if nonlinear then "NIRA" else "LIRA")
+        else if integers then
+          if uninterpreted then
+            if nonlinear then "AUFNIRA" else "AUFLIA"
+          else
+            "A" ^ (if nonlinear then "NIA" else "LIA")
+        else if reals then
+          if uninterpreted then
+            "AUF" ^ (if nonlinear then "NIRA" else "LIRA")
+          else
+            "A" ^ (if nonlinear then "NIRA" else "LIRA")
+        else if uninterpreted then
+          "AUFLIA"
+        else
+          "ALIA"
       fun arith_logic () =
         if integers andalso reals then
-          if quantifiers orelse arrays orelse uninterpreted then
+          if quantifiers andalso arrays then
+            quantified_array_arith_logic ()
+          else if quantifiers orelse arrays orelse uninterpreted then
             "AUFNIRA"
           else if nonlinear then qf ^ "NIRA" else qf ^ "LIRA"
         else if integers then
           if arrays then
-            qf ^ "AUF" ^ (if nonlinear then "NIA" else "LIA")
+            if quantifiers then
+              quantified_array_arith_logic ()
+            else
+              qf ^ "AUF" ^ (if nonlinear then "NIA" else "LIA")
           else if uninterpreted then
             qf ^ "UF" ^ (if nonlinear then "NIA" else "LIA")
           else
             qf ^ (if nonlinear then "NIA" else "LIA")
         else if reals then
           if arrays then
-            qf ^ "AUF" ^ (if nonlinear then "NRA" else "LRA")
+            if quantifiers then
+              quantified_array_arith_logic ()
+            else
+              qf ^ "AUF" ^ (if nonlinear then "NRA" else "LRA")
           else if uninterpreted then
             qf ^ "UF" ^ (if nonlinear then "NRA" else "LRA")
           else
             qf ^ (if nonlinear then "NRA" else "LRA")
         else if arrays then
-          if quantifiers then "ALL" else "QF_AX"
+          if quantifiers then quantified_array_arith_logic () else "QF_AX"
         else
           qf ^ "UF"
       val logic =
         if strings then
+          (* Phase 4 will refine UnicodeStrings/RegLan combinations. *)
           if bitvectors orelse reals orelse quantifiers orelse arrays orelse
              uninterpreted then
             "ALL"
@@ -583,6 +614,7 @@ local
           else
             "QF_S"
         else if bitvectors then
+          (* Phase 5 will refine FloatingPoint/BV-family combinations. *)
           if integers orelse reals orelse quantifiers then
             "ALL"
           else if arrays then
@@ -1254,6 +1286,7 @@ in
   fun translation_records ({records, ...} : translation) = records
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux
+  val infer_logic_from_features = infer_logic_from_features
 
   fun goal_to_SmtLib_translation logic =
     Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o (goal_to_SmtLib_aux logic)

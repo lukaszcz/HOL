@@ -6,25 +6,25 @@
   },
   "conformance_reports": [
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 1,
-        "matched": 1192
+        "matched": 1202
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 1193
+        "pass": 1203
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/parser-only/conformance-parser-only.json",
-      "result_count": 1193,
+      "result_count": 1203,
       "status_counts": {
         "fail": 63,
-        "pass": 1130,
+        "pass": 1140,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 32,
         "matched": 240
@@ -42,7 +42,7 @@
       }
     },
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 32,
         "matched": 240
@@ -60,25 +60,25 @@
       }
     },
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 543,
-        "matched": 620
+        "matched": 630
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 1163
+        "pass": 1173
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/typecheck-only/conformance-typecheck-only.json",
-      "result_count": 1163,
+      "result_count": 1173,
       "status_counts": {
         "fail": 374,
-        "pass": 789,
+        "pass": 799,
         "unsupported": 0
       }
     },
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 187,
         "matched": 625
@@ -96,20 +96,20 @@
       }
     },
     {
-      "case_count": 1260,
+      "case_count": 1270,
       "classification_counts": {
         "expected-implementation-gap": 423,
-        "matched": 501
+        "matched": 511
       },
       "conformance_status_counts": {
         "fail": 0,
-        "pass": 924
+        "pass": 934
       },
       "path": "src/HolSmt/tools/complete-conformance-out/conformance/z3-tac/conformance-z3-tac.json",
-      "result_count": 924,
+      "result_count": 934,
       "status_counts": {
         "fail": 351,
-        "pass": 564,
+        "pass": 574,
         "unsupported": 9
       }
     },
@@ -88187,7 +88187,7 @@
     "classification_counts": {
       "accepted": 27,
       "expected-implementation-gap": 1218,
-      "matched": 3433
+      "matched": 3463
     },
     "infrastructure_error_count": 0,
     "nonzero_exit_reasons": [

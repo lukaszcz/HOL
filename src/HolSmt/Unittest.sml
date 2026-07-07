@@ -1871,6 +1871,21 @@ end
 
 fun smtlib_translation_logic_inference_success () =
 let
+  fun mk_features (quantifiers, uninterpreted, arrays, bitvectors,
+                   integers, reals, strings, nonlinear) =
+    SmtLib.LogicFeatures {
+      quantifiers = quantifiers, uninterpreted = uninterpreted,
+      arrays = arrays, bitvectors = bitvectors, integers = integers,
+      reals = reals, strings = strings, nonlinear = nonlinear}
+  fun expect_features expected (name, feature_tuple) =
+    let
+      val (logic, reason) =
+        SmtLib.infer_logic_from_features (mk_features feature_tuple)
+    in
+      assert (logic = expected,
+        "feature-vector inference '" ^ name ^ "' expected " ^ expected ^
+        ", got " ^ logic ^ " (" ^ reason ^ ")")
+    end
   fun expect_logic expected tm =
     let
       val (logic, set_logic, _, _) = inferred_logic tm
@@ -1881,12 +1896,99 @@ let
         "set-logic command did not match inferred logic " ^ expected)
     end
 in
+  List.app (expect_features "QF_UF") [
+    ("core", (false, false, false, false, false, false, false, false))
+  ];
+  List.app (expect_features "QF_LIA") [
+    ("linear integer", (false, false, false, false, true, false,
+      false, false))
+  ];
+  List.app (expect_features "QF_NIA") [
+    ("nonlinear integer", (false, false, false, false, true, false,
+      false, true))
+  ];
+  List.app (expect_features "QF_LRA") [
+    ("linear real", (false, false, false, false, false, true,
+      false, false))
+  ];
+  List.app (expect_features "QF_BV") [
+    ("bitvectors", (false, false, false, true, false, false,
+      false, false))
+  ];
+  List.app (expect_features "QF_UFBV") [
+    ("bitvectors with UF", (false, true, false, true, false, false,
+      false, false))
+  ];
+  List.app (expect_features "QF_AX") [
+    ("quantifier-free arrays", (false, false, true, false, false, false,
+      false, false))
+  ];
+  List.app (expect_features "QF_AUFLIA") [
+    ("quantifier-free arrays LIA", (false, false, true, false, true,
+      false, false, false))
+  ];
+  List.app (expect_features "QF_S") [
+    ("strings", (false, false, false, false, false, false, true, false))
+  ];
+  List.app (expect_features "QF_SLIA") [
+    ("strings LIA", (false, false, false, false, true, false, true,
+      false))
+  ];
+  List.app (expect_features "QF_SNIA") [
+    ("strings NIA", (false, false, false, false, true, false, true, true))
+  ];
+  List.app (expect_features "ALL") [
+    ("mixed strings", (false, true, false, false, false, false, true,
+      false)),
+    ("quantified bitvectors", (true, false, false, true, false, false,
+      false, false))
+  ];
+  List.app (expect_features "ALIA") [
+    ("quantified arrays", (true, false, true, false, false, false,
+      false, false)),
+    ("quantified arrays LIA", (true, false, true, false, true, false,
+      false, false))
+  ];
+  List.app (expect_features "AUFLIA") [
+    ("quantified arrays UF", (true, true, true, false, false, false,
+      false, false)),
+    ("quantified arrays UF LIA", (true, true, true, false, true, false,
+      false, false))
+  ];
+  List.app (expect_features "ANIA") [
+    ("quantified arrays NIA", (true, false, true, false, true, false,
+      false, true))
+  ];
+  List.app (expect_features "AUFNIRA") [
+    ("quantified arrays UF NIA", (true, true, true, false, true, false,
+      false, true)),
+    ("quantified arrays UF NRA", (true, true, true, false, false, true,
+      false, true))
+  ];
+  List.app (expect_features "ALIRA") [
+    ("quantified arrays LRA", (true, false, true, false, false, true,
+      false, false)),
+    ("quantified arrays LIRA", (true, false, true, false, true, true,
+      false, false))
+  ];
+  List.app (expect_features "AUFLIRA") [
+    ("quantified arrays UF LRA", (true, true, true, false, false, true,
+      false, false)),
+    ("quantified arrays UF LIRA", (true, true, true, false, true, true,
+      false, false))
+  ];
+  List.app (expect_features "ANIRA") [
+    ("quantified arrays NRA", (true, false, true, false, false, true,
+      false, true)),
+    ("quantified arrays NIRA", (true, false, true, false, true, true,
+      false, true))
+  ];
   expect_logic "QF_LIA" ``(x:int) <= x + 1``;
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
-  expect_logic "ALL" ``!(x:'a). (P:'a -> bool) x``
+  expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
 
 fun smtlib_translation_records_success () =
