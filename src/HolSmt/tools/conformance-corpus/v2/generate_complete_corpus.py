@@ -126,6 +126,19 @@ SPARSE_LOGICS = {
     "QF_SLIA",
 }
 
+INT_REAL_COERCION_LOGICS = {
+    "ALIRA",
+    "ANIRA",
+    "AUFLIRA",
+    "AUFNIRA",
+    "QF_AUFLIRA",
+    "QF_AUFNIRA",
+    "QF_LIRA",
+    "QF_NIRA",
+    "QF_UFLIRA",
+    "QF_UFNIRA",
+}
+
 
 class GeneratorError(ValueError):
     pass
@@ -3721,6 +3734,15 @@ def logic_source(logic: str) -> dict[str, object]:
     return source("SMT-LIB-logic", f"SMT-LIB 2.7 logic packet: {logic}")
 
 
+def logic_has_uninterpreted_functions(logic: str) -> bool:
+    return "UF" in logic.removeprefix("QF_")
+
+
+def logic_allows_int_real_coercion_case_in_checked_modes(logic: str) -> bool:
+    stem = logic.removeprefix("QF_")
+    return logic_has_uninterpreted_functions(logic) or stem.startswith("A")
+
+
 def logic_obligation(logic: str, kind: str, case_id: str, failure_phase: str) -> dict[str, object]:
     return implementation_obligation(
         files=("src/HolSmt/SmtLib_Logics.sml", "src/HolSmt/Z3_ProofReplay.sml"),
@@ -3890,6 +3912,16 @@ def logic_nonlinear_replay_script(logic: str) -> str:
     )
 
 
+def logic_int_real_user_function_coercion_script(logic: str) -> str:
+    return (
+        f"(set-logic {logic})\n"
+        "(declare-const x Int)\n"
+        "(declare-fun p (Real) Bool)\n"
+        "(assert (p x))\n"
+        "(check-sat)\n"
+    )
+
+
 def logic_packet_cases(
     logic_source_path: Path = DEFAULT_LOGIC_SOURCE,
 ) -> list[GeneratedCase]:
@@ -3915,6 +3947,38 @@ def logic_packet_cases(
                 },
             )
         )
+
+        if logic in INT_REAL_COERCION_LOGICS:
+            expected = {"parser-only": expected_result("pass")}
+            if logic_allows_int_real_coercion_case_in_checked_modes(logic):
+                expected["typecheck-only"] = expected_result("pass")
+                expected["z3-tac"] = expected_result("pass")
+            else:
+                expected["typecheck-only"] = expected_result(
+                    "fail",
+                    diagnostic=(
+                        "uninterpreted function application is outside "
+                        f"logic fragment {logic}"
+                    ),
+                    failure_phase="typecheck",
+                )
+                expected["z3-tac"] = expected_result(
+                    "fail",
+                    diagnostic=(
+                        "uninterpreted function application is outside "
+                        f"logic fragment {logic}"
+                    ),
+                    failure_phase="typecheck",
+                )
+            cases.append(
+                logic_case(
+                    logic=logic,
+                    kind="int-real-user-function-coercion",
+                    script=logic_int_real_user_function_coercion_script(logic),
+                    modes=("parser-only", "typecheck-only", "z3-tac"),
+                    expected=expected,
+                )
+            )
 
         unsat_case_id = f"logic:{logic}:unsat-proof"
         cases.append(

@@ -4724,6 +4724,47 @@
       }
     },
     {
+      "id": "logic:ALIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_alira_int_real_user_function_coercion.smt2",
+      "logic": "ALIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:underrepresented-v1",
+        "logic:ALIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: ALIRA"
+      }
+    },
+    {
       "id": "logic:ALIRA:malformed",
       "file": "cases/logics/logic_alira_malformed.smt2",
       "logic": "ALIRA",
@@ -5243,6 +5284,47 @@
           "status": "fail",
           "diagnostic": "bit-vector term sort is outside logic fragment ANIRA",
           "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: ANIRA"
+      }
+    },
+    {
+      "id": "logic:ANIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_anira_int_real_user_function_coercion.smt2",
+      "logic": "ANIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:underrepresented-v1",
+        "logic:ANIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -5780,6 +5862,47 @@
       }
     },
     {
+      "id": "logic:AUFLIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_auflira_int_real_user_function_coercion.smt2",
+      "logic": "AUFLIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:underrepresented-v1",
+        "logic:AUFLIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: AUFLIRA"
+      }
+    },
+    {
       "id": "logic:AUFLIRA:malformed",
       "file": "cases/logics/logic_auflira_malformed.smt2",
       "logic": "AUFLIRA",
@@ -6035,6 +6158,47 @@
           "status": "fail",
           "diagnostic": "bit-vector term sort is outside logic fragment AUFNIRA",
           "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: AUFNIRA"
+      }
+    },
+    {
+      "id": "logic:AUFNIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_aufnira_int_real_user_function_coercion.smt2",
+      "logic": "AUFNIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:underrepresented-v1",
+        "logic:AUFNIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -9554,6 +9718,47 @@
       }
     },
     {
+      "id": "logic:QF_AUFLIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_auflira_int_real_user_function_coercion.smt2",
+      "logic": "QF_AUFLIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:sparse-v1",
+        "logic:QF_AUFLIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_AUFLIRA"
+      }
+    },
+    {
       "id": "logic:QF_AUFLIRA:malformed",
       "file": "cases/logics/logic_qf_auflira_malformed.smt2",
       "logic": "QF_AUFLIRA",
@@ -10073,6 +10278,47 @@
           "status": "fail",
           "diagnostic": "quantified formula is outside logic fragment QF_AUFNIRA",
           "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_AUFNIRA"
+      }
+    },
+    {
+      "id": "logic:QF_AUFNIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_aufnira_int_real_user_function_coercion.smt2",
+      "logic": "QF_AUFNIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic-inventory:underrepresented-v1",
+        "logic:QF_AUFNIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -12168,6 +12414,50 @@
       }
     },
     {
+      "id": "logic:QF_LIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_lira_int_real_user_function_coercion.smt2",
+      "logic": "QF_LIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic:QF_LIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "uninterpreted function application is outside logic fragment QF_LIRA",
+          "failure_phase": "typecheck"
+        },
+        "z3-tac": {
+          "status": "fail",
+          "diagnostic": "uninterpreted function application is outside logic fragment QF_LIRA",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_LIRA"
+      }
+    },
+    {
       "id": "logic:QF_LIRA:malformed",
       "file": "cases/logics/logic_qf_lira_malformed.smt2",
       "logic": "QF_LIRA",
@@ -12986,6 +13276,50 @@
         "z3-tac": {
           "status": "fail",
           "diagnostic": "quantified formula is outside logic fragment QF_NIRA",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_NIRA"
+      }
+    },
+    {
+      "id": "logic:QF_NIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_nira_int_real_user_function_coercion.smt2",
+      "logic": "QF_NIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic:QF_NIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "uninterpreted function application is outside logic fragment QF_NIRA",
+          "failure_phase": "typecheck"
+        },
+        "z3-tac": {
+          "status": "fail",
+          "diagnostic": "uninterpreted function application is outside logic fragment QF_NIRA",
           "failure_phase": "typecheck"
         }
       },
@@ -16182,6 +16516,46 @@
       }
     },
     {
+      "id": "logic:QF_UFLIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_uflira_int_real_user_function_coercion.smt2",
+      "logic": "QF_UFLIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic:QF_UFLIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_UFLIRA"
+      }
+    },
+    {
       "id": "logic:QF_UFLIRA:malformed",
       "file": "cases/logics/logic_qf_uflira_malformed.smt2",
       "logic": "QF_UFLIRA",
@@ -16689,6 +17063,46 @@
           "status": "fail",
           "diagnostic": "quantified formula is outside logic fragment QF_UFNIRA",
           "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-logic",
+        "reference": "SMT-LIB 2.7 logic packet: QF_UFNIRA"
+      }
+    },
+    {
+      "id": "logic:QF_UFNIRA:int-real-user-function-coercion",
+      "file": "cases/logics/logic_qf_ufnira_int_real_user_function_coercion.smt2",
+      "logic": "QF_UFNIRA",
+      "standard": "SMT-LIB-2.7",
+      "class": "logic",
+      "features": [
+        "logic-case:int-real-user-function-coercion",
+        "logic:QF_UFNIRA"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
         }
       },
       "implementation_obligation": null,

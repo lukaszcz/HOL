@@ -53,6 +53,21 @@ fun parse_smtlib_assertions contents =
 fun parse_smtlib_state contents =
   with_temp_file contents SmtLib_Parser.parse_file_state
 
+fun term_has_subterm pred tm =
+  pred tm orelse
+  (let
+     val (rator, rand) = Term.dest_comb tm
+   in
+     term_has_subterm pred rator orelse term_has_subterm pred rand
+   end
+   handle _ =>
+     (let val (_, body) = Term.dest_abs tm
+      in term_has_subterm pred body end
+      handle _ => false))
+
+fun term_has_real_of_int tm =
+  term_has_subterm intrealSyntax.is_real_of_int tm
+
 fun inferred_logic tm =
 let
   val (translation, strings) = SmtLib.goal_to_SmtLib_translation NONE ([], tm)
@@ -85,6 +100,15 @@ in
       raise Feedback.mk_HOL_ERR "Unittest" "string_get_char"
         "end of string"
 end
+
+fun parse_legacy_smtlib_assertions contents =
+  let
+    val (_, _, _, assertions) =
+      SmtLib_Parser.parse_benchmark
+        (Library.get_token (string_get_char contents))
+  in
+    assertions
+  end
 
 fun assert_body s =
   if String.isPrefix "(assert " s then
@@ -1107,6 +1131,69 @@ fun smtlib_typecheck_declared_function_mismatch_diagnostic () =
               contains "actual sort :int" msg,
         "function mismatch diagnostic lacked expected/actual sorts: " ^ msg)
     end
+
+fun smtlib_int_real_operator_coercion_success () =
+let
+  val script =
+    "(set-logic QF_LIRA)\n" ^
+    "(declare-const x Int)\n" ^
+    "(declare-const y Real)\n" ^
+    "(assert (= (+ x y) 3.0))\n" ^
+    "(exit)\n"
+  val legacy_assertions = parse_legacy_smtlib_assertions script
+  val {assertions = checked_assertions, ...} = parse_smtlib_state script
+in
+  assert (List.length legacy_assertions = 1,
+    "legacy operator coercion script produced wrong assertion count");
+  assert (List.length checked_assertions = 1,
+    "typechecked operator coercion script produced wrong assertion count");
+  assert (term_has_real_of_int (List.hd legacy_assertions),
+    "legacy operator coercion did not insert real_of_int");
+  assert (term_has_real_of_int (List.hd checked_assertions),
+    "typechecked operator coercion did not insert real_of_int")
+end
+
+fun smtlib_int_real_user_function_coercion_success () =
+let
+  val script =
+    "(set-logic QF_UFLIRA)\n" ^
+    "(declare-const x Int)\n" ^
+    "(declare-fun p (Real) Bool)\n" ^
+    "(assert (p x))\n" ^
+    "(exit)\n"
+  val legacy_assertions = parse_legacy_smtlib_assertions script
+  val {assertions = checked_assertions, ...} = parse_smtlib_state script
+in
+  assert (List.length legacy_assertions = 1,
+    "legacy user-function coercion script produced wrong assertion count");
+  assert (List.length checked_assertions = 1,
+    "typechecked user-function coercion script produced wrong assertion count");
+  assert (term_has_real_of_int (List.hd legacy_assertions),
+    "legacy user-function coercion did not insert real_of_int");
+  assert (term_has_real_of_int (List.hd checked_assertions),
+    "typechecked user-function coercion did not insert real_of_int")
+end
+
+fun smtlib_int_only_no_spurious_coercion_success () =
+let
+  val script =
+    "(set-logic QF_LIA)\n" ^
+    "(declare-const x Int)\n" ^
+    "(declare-fun p (Int) Bool)\n" ^
+    "(assert (p x))\n" ^
+    "(exit)\n"
+  val legacy_assertions = parse_legacy_smtlib_assertions script
+  val {assertions = checked_assertions, ...} = parse_smtlib_state script
+in
+  assert (List.length legacy_assertions = 1,
+    "legacy Int-only script produced wrong assertion count");
+  assert (List.length checked_assertions = 1,
+    "typechecked Int-only script produced wrong assertion count");
+  assert (not (term_has_real_of_int (List.hd legacy_assertions)),
+    "legacy Int-only script inserted a spurious real_of_int");
+  assert (not (term_has_real_of_int (List.hd checked_assertions)),
+    "typechecked Int-only script inserted a spurious real_of_int")
+end
 
 fun smtlib_array_type_mismatch_diagnostics () =
 let
@@ -3092,6 +3179,12 @@ let
       smtlib_typecheck_invalid_assertion_diagnostic),
     ("smtlib_typecheck_declared_function_mismatch_diagnostic",
       smtlib_typecheck_declared_function_mismatch_diagnostic),
+    ("smtlib_int_real_operator_coercion_success",
+      smtlib_int_real_operator_coercion_success),
+    ("smtlib_int_real_user_function_coercion_success",
+      smtlib_int_real_user_function_coercion_success),
+    ("smtlib_int_only_no_spurious_coercion_success",
+      smtlib_int_only_no_spurious_coercion_success),
     ("smtlib_array_type_mismatch_diagnostics",
       smtlib_array_type_mismatch_diagnostics),
     ("smtlib_command_malformed_diagnostics",

@@ -1,0 +1,5 @@
+(set-logic QF_AUFLIRA)
+(declare-const x Int)
+(declare-fun p (Real) Bool)
+(assert (p x))
+(check-sat)

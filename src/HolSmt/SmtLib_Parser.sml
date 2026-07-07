@@ -1011,6 +1011,50 @@ local
         (List.map Hol_pp.term_to_string indices) ^ "] and " ^
         Int.toString (List.length args) ^ " argument(s))")
 
+  fun same_sort ty1 ty2 = Type.compare (ty1, ty2) = EQUAL
+
+  fun int_to_real_expected expected actual =
+    same_sort expected realSyntax.real_ty andalso same_sort actual intSyntax.int_ty
+
+  fun coerce_int_arg_to_real arg =
+    if same_sort (Term.type_of arg) intSyntax.int_ty then
+      (intrealSyntax.mk_real_of_int arg, true)
+    else
+      (arg, false)
+
+  fun coerce_int_args_to_real args =
+    let
+      val coerced = List.map coerce_int_arg_to_real args
+    in
+      (List.map Lib.fst coerced, List.exists Lib.snd coerced)
+    end
+
+  fun coerce_arg_to_expected expected arg =
+    if int_to_real_expected expected (Term.type_of arg) then
+      intrealSyntax.mk_real_of_int arg
+    else
+      arg
+
+  fun coerce_args_to_expected domain args =
+    ListPair.map (fn (expected, arg) => coerce_arg_to_expected expected arg)
+      (domain, args)
+
+  fun list_mk_comb_coerce_int_to_real tm domain args =
+    Term.list_mk_comb (tm, coerce_args_to_expected domain args)
+
+  fun t_with_term_args dict token indices args =
+    t_with_args dict token indices args
+    handle original as Feedback.HOL_ERR _ =>
+      let
+        val (coerced_args, changed) = coerce_int_args_to_real args
+      in
+        if changed then
+          t_with_args dict token indices coerced_args
+          handle Feedback.HOL_ERR _ => raise original
+        else
+          raise original
+      end
+
   (***************************************************************************)
   (* type-specific parsing functions                                         *)
   (***************************************************************************)
@@ -1119,7 +1163,7 @@ local
         get_indices (parse_index () :: acc)
     end
   in
-    t_with_args tmdict head (get_indices [])
+    t_with_term_args tmdict head (get_indices [])
   end
 
   and parse_var_bindings cfg get_token (tydict, tmdict)
@@ -1291,7 +1335,7 @@ local
     if token = "(" then
       parse_indexed_or_compound_term cfg get_token (tydict, tmdict)
     else
-      t_with_args tmdict token []
+      t_with_term_args tmdict token []
 
   and parse_term_with_cfg cfg get_token (tydict, tmdict) : Term.term =
     parse_term_aux cfg get_token (tydict, tmdict) (get_token ()) []
@@ -1421,7 +1465,7 @@ local
     val args_count = List.length domain_types
     fun parsefn token indices args =
       if List.null indices andalso List.length args = args_count then
-        Term.list_mk_comb (tm, args)
+        list_mk_comb_coerce_int_to_real tm domain_types args
       else
         raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
   in
@@ -1467,7 +1511,7 @@ local
         val args_count = List.length arg_tys
         fun ctor_parse token indices args =
           if List.null indices andalso List.length args = args_count then
-            Term.list_mk_comb (ctor_tm, args)
+            list_mk_comb_coerce_int_to_real ctor_tm arg_tys args
           else
             raise ERR ("<" ^ ctor_name ^ ">") "wrong number of arguments"
         fun selector_entry ((selector_name, selector_ty), tmdict) =
@@ -1476,7 +1520,7 @@ local
               Type.--> (datatype_ty, selector_ty))
             fun selector_parse token indices args =
               if List.null indices andalso List.length args = 1 then
-                Term.list_mk_comb (selector_tm, args)
+                list_mk_comb_coerce_int_to_real selector_tm [datatype_ty] args
               else
                 raise ERR ("<" ^ selector_name ^ ">")
                   "wrong number of arguments"
@@ -1631,7 +1675,7 @@ local
     val args_count = List.length domain_types
     fun parsefn token indices args =
       if List.null indices andalso List.length args = args_count then
-        Term.list_mk_comb (tm, args)
+        list_mk_comb_coerce_int_to_real tm domain_types args
       else
         raise ERR ("<" ^ name ^ ">") "wrong number of arguments"
     val tmdict = Library.extend_dict ((name, parsefn), tmdict)
@@ -2570,13 +2614,18 @@ local
       fun match_one ((expected, actual), subst) =
         let
           val expected = Type.type_subst subst expected
+          val actual =
+            if int_to_real_expected expected actual then realSyntax.real_ty
+            else actual
           val more = Type.match_type expected actual
         in
           more @ subst
         end
       val subst = List.foldl match_one [] (ListPair.zip (domain, arg_sorts))
     in
-      SOME {tm = Term.inst subst tm, range = Type.type_subst subst range}
+      SOME {tm = Term.inst subst tm,
+        domain = List.map (Type.type_subst subst) domain,
+        range = Type.type_subst subst range}
     end
     handle Feedback.HOL_ERR _ => NONE
 
@@ -2610,8 +2659,11 @@ local
           signatures
     in
       case Lib.get_first (instantiate_signature arg_sorts) arity_matches of
-        SOME {tm, range} =>
-          CheckedTerm {term = Term.list_mk_comb (tm, arg_terms), sort = range}
+        SOME {tm, domain, range} =>
+          CheckedTerm {
+            term = list_mk_comb_coerce_int_to_real tm domain arg_terms,
+            sort = range
+          }
       | NONE =>
           let
             val actual =
@@ -2649,7 +2701,8 @@ local
               let val (expected_index, _) =
                     valOf (array_dom_rng "select" array_sort)
               in
-                if index_sort = expected_index then ()
+                if index_sort = expected_index orelse
+                   int_to_real_expected expected_index index_sort then ()
                 else
                   type_error fn_name context loc (SOME expected_index)
                     (SOME index_sort)
@@ -2661,11 +2714,13 @@ local
               let val (expected_index, expected_value) =
                     valOf (array_dom_rng "store" array_sort)
               in
-                if index_sort <> expected_index then
+                if index_sort <> expected_index andalso
+                   not (int_to_real_expected expected_index index_sort) then
                   type_error fn_name context loc (SOME expected_index)
                     (SOME index_sort)
                     "ArraysEx store index sort mismatch"
-                else if value_sort <> expected_value then
+                else if value_sort <> expected_value andalso
+                        not (int_to_real_expected expected_value value_sort) then
                   type_error fn_name context loc (SOME expected_value)
                     (SOME value_sort)
                     "ArraysEx store value sort mismatch"
@@ -2680,7 +2735,7 @@ local
           val arg_terms = List.map checked_term args
           val arg_sorts = List.map checked_sort args
           val t =
-            t_with_args tmdict name [] arg_terms
+            t_with_term_args tmdict name [] arg_terms
             handle Feedback.HOL_ERR holerr =>
               type_error fn_name context loc NONE NONE
                 ("could not resolve symbol '" ^ name ^ "' for actual sorts " ^
@@ -2699,7 +2754,7 @@ local
                val arg_sorts = List.map checked_sort args
                val _ = check_array_builtin arg_sorts
                val t =
-                 t_with_args tmdict name [] arg_terms
+                 t_with_term_args tmdict name [] arg_terms
                  handle Feedback.HOL_ERR holerr =>
                    type_error fn_name context loc NONE NONE
                      ("could not resolve symbol '" ^ name ^
@@ -2713,7 +2768,7 @@ local
           val arg_terms = List.map checked_term args
           val arg_sorts = List.map checked_sort args
           val t =
-            t_with_args tmdict name indices arg_terms
+            t_with_term_args tmdict name indices arg_terms
             handle Feedback.HOL_ERR holerr =>
               type_error fn_name context loc NONE NONE
                 ("could not resolve indexed symbol '" ^ name ^
