@@ -1543,17 +1543,65 @@ local
      Although more generally, the proof rule is supposed to handle any number of
      theorems passed as arguments and any path between the elements.
 
-     R must be a symmetric and transitive relation. So far only equality has
-     been observed to be used as `R` (same as in the `symm` and `trans` rules),
-     although it's not inconceivable that it may be used for other relations as
-     well.
+     R must be a symmetric and transitive relation. Equality is the only
+     relation observed in Z3 proof traces, so replay equality chains directly
+     and keep METIS only as a measurable fallback. *)
 
-     For the initial implementation, we rely on metisLib.METIS_TAC to find a
-     proof. However, if it becomes a bottleneck, a more specialized proof
-     handler could be implemented to improve performance. *)
+  fun trans_star_exact_prove (thms, t) =
+  let
+    fun term_eq (t1, t2) = Term.compare (t1, t2) = EQUAL
+    fun term_member tm = List.exists (fn tm' => term_eq (tm, tm'))
+    val (lhs, rhs) = boolSyntax.dest_eq t
+      handle Feedback.HOL_ERR _ =>
+        raise ERR "trans_star_exact_prove"
+          ("conclusion is not an equation: " ^ Library.term_to_string t)
+    fun edge_thms thm =
+      let
+        val (l, r) = boolSyntax.dest_eq (Thm.concl thm)
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "trans_star_exact_prove"
+              ("premise is not an equation: " ^
+               Library.term_to_string (Thm.concl thm))
+      in
+        [(l, r, thm), (r, l, Thm.SYM thm)]
+      end
+    val edges = List.concat (List.map edge_thms thms)
+    fun outgoing tm =
+      List.filter (fn (from, _, _) => term_eq (from, tm)) edges
+    fun search [] _ = NONE
+      | search ((node, path) :: rest) visited =
+          if term_eq (node, rhs) then
+            SOME (List.rev path)
+          else
+            let
+              fun add_edge ((_, next, thm), (queue, visited')) =
+                if term_member next visited' then
+                  (queue, visited')
+                else
+                  ((next, thm :: path) :: queue, next :: visited')
+              val (new_queue, visited') =
+                List.foldl add_edge ([], visited) (outgoing node)
+            in
+              search (rest @ List.rev new_queue) visited'
+            end
+    fun chain [] = Thm.ALPHA lhs rhs
+      | chain (thm :: thms') =
+          List.foldl (fn (next, acc) => Thm.TRANS acc next) thm thms'
+  in
+    case search [(lhs, [])] [lhs] of
+      SOME path => chain path
+    | NONE =>
+        raise ERR "trans_star_exact_prove"
+          ("no equality path from " ^ Library.term_to_string lhs ^
+           " to " ^ Library.term_to_string rhs ^ " through " ^
+           Int.toString (List.length thms) ^ " premise(s)")
+  end
 
   fun z3_trans_star (state, thms, t) =
-    (state, metis_prove (thms, t))
+    (state, profile "trans_star[exact]" trans_star_exact_prove (thms, t))
+    handle exact_err =>
+      (state, profile "trans_star[metis-fallback]" metis_prove (thms, t))
+      handle Feedback.HOL_ERR _ => raise exact_err
 
   fun z3_true_axiom (state, t) =
     (state, boolTheory.TRUTH)

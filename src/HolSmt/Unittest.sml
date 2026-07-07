@@ -2265,6 +2265,24 @@ in
     Int.toString fallback ^ " time(s)")
 end
 
+fun assert_trans_star_replays_without_metis (name, proof_text, expected) =
+let
+  val () = Profile.reset_all ()
+  val thm = replay_z3_proof_string proof_text
+  val actual = Thm.concl thm
+  val exact = profile_call_count "trans_star[exact]"
+  val fallback = profile_call_count "trans_star[metis-fallback]"
+in
+  assert (actual ~~ expected,
+    "trans* proof " ^ name ^ " replayed to " ^ term_with_types actual ^
+    ", expected " ^ term_with_types expected);
+  assert (exact > 0,
+    "trans* proof " ^ name ^ " did not use exact chain replay");
+  assert (fallback = 0,
+    "trans* proof " ^ name ^ " used METIS fallback " ^
+    Int.toString fallback ^ " time(s)")
+end
+
 fun z3_core_proof_rule_replay_minimal_raw_success () =
 let
   val cases = [
@@ -2366,6 +2384,48 @@ let
 in
   List.app assert_replays_raw_z3_proof_rule cases
 end
+
+fun z3_trans_star_chain_search_replay_no_metis_success () =
+let
+  val cases = [
+    ("straight chain",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun c () Bool) (declare-fun d () Bool) \
+        \(proof (trans* (asserted (= a b)) (asserted (= b c)) \
+        \(asserted (= c d)) (= a d))))",
+      ``(a:bool) = d``),
+    ("chain with symmetry",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun c () Bool) (declare-fun d () Bool) \
+        \(proof (trans* (asserted (= a b)) (asserted (= c b)) \
+        \(asserted (= c d)) (= a d))))",
+      ``(a:bool) = d``),
+    ("chain with irrelevant premise",
+      "((declare-fun a () Bool) (declare-fun b () Bool) \
+        \(declare-fun c () Bool) (declare-fun x () Bool) \
+        \(declare-fun y () Bool) \
+        \(proof (trans* (asserted (= a b)) (asserted (= x y)) \
+        \(asserted (= b c)) (= a c))))",
+      ``(a:bool) = c``)
+  ]
+in
+  List.app assert_trans_star_replays_without_metis cases
+end
+
+fun z3_trans_star_chain_search_no_path_diagnostic () =
+  (ignore (replay_z3_proof_string
+    "((declare-fun a () Bool) (declare-fun b () Bool) \
+      \(declare-fun c () Bool) (declare-fun d () Bool) \
+      \(proof (trans* (asserted (= a b)) (asserted (= c d)) (= a d))))");
+   die "FAIL: trans* proof without an equality path replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "no equality path" msg,
+        "trans* no-path diagnostic did not explain missing path: " ^ msg);
+      assert (String.isSubstring "a" msg andalso String.isSubstring "d" msg,
+        "trans* no-path diagnostic did not include endpoints: " ^ msg)
+    end
 
 fun z3_nnf_structural_replay_no_metis_success () =
 let
@@ -3018,6 +3078,10 @@ let
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
+    ("z3_trans_star_chain_search_replay_no_metis_success",
+      z3_trans_star_chain_search_replay_no_metis_success),
+    ("z3_trans_star_chain_search_no_path_diagnostic",
+      z3_trans_star_chain_search_no_path_diagnostic),
     ("z3_nnf_structural_replay_no_metis_success",
       z3_nnf_structural_replay_no_metis_success),
     ("z3_th_lemma_existing_theory_replay_minimal_success",
