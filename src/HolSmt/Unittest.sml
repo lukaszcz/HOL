@@ -2522,6 +2522,58 @@ in
           Feedback.message_of holerr))) cases
 end
 
+fun assert_basic_th_lemma_dispatch
+    (name, proof_text, required_profile, forbidden_profiles) =
+let
+  val () = Profile.reset_all ()
+  val thm = replay_z3_proof_string proof_text
+in
+  assert (List.null (Thm.hyp thm),
+    "basic th-lemma " ^ name ^ " replayed with unexpected hypotheses: " ^
+    Library.thm_to_string thm);
+  Library.check_oracle_tags ("basic th-lemma " ^ name) thm;
+  assert (profile_call_count required_profile > 0,
+    "basic th-lemma " ^ name ^ " did not use " ^ required_profile);
+  List.app (fn profile =>
+    assert (profile_call_count profile = 0,
+      "basic th-lemma " ^ name ^ " unexpectedly used " ^ profile))
+    forbidden_profiles
+end
+
+fun z3_th_lemma_basic_dispatch_replay_success () =
+let
+  val arith_profile = "th_lemma[basic](4)(arith)"
+  val bv_profile = "th_lemma[basic](5)(bv)"
+  val array_profile = "th_lemma[basic](6)(array)"
+  val metis_profile = "th_lemma[basic](7)(METIS)"
+  val cases = [
+    ("pure-boolean",
+      "((proof ((_ th-lemma basic eq-propagate 0) true)))",
+      "th_lemma[basic](3)(TAUT_PROVE)",
+      [arith_profile, bv_profile, array_profile, metis_profile]),
+    ("arith",
+      "((declare-fun x () Int) (declare-fun y () Int) \
+        \(proof ((_ th-lemma basic eq-propagate 1) \
+        \(implies (= x y) (= y x)))))",
+      arith_profile,
+      [bv_profile, array_profile, metis_profile]),
+    ("bv",
+      "((declare-fun x () (_ BitVec 8)) \
+        \(proof ((_ th-lemma basic eq-propagate 2) \
+        \(= (bvadd x #x00) x))))",
+      bv_profile,
+      [arith_profile, array_profile, metis_profile]),
+    ("array",
+      "((declare-fun a () (Array Bool Bool)) (declare-fun i () Bool) \
+        \(proof ((_ th-lemma basic eq-propagate 3) \
+        \(= (store a i (select a i)) a))))",
+      array_profile,
+      [arith_profile, bv_profile, metis_profile])
+  ]
+in
+  List.app assert_basic_th_lemma_dispatch cases
+end
+
 fun z3_th_lemma_basic_unsupported_diagnostic () =
   (ignore (replay_z3_proof_string
     "((proof ((_ th-lemma basic eq-propagate 7) false)))");
@@ -2538,7 +2590,9 @@ fun z3_th_lemma_basic_unsupported_diagnostic () =
       assert (String.isSubstring "parsed HOL conclusion: F" msg,
         "basic th-lemma diagnostic did not include conclusion: " ^ msg);
       assert (String.isSubstring "unsupported th-lemma shape" msg,
-        "basic th-lemma diagnostic did not report unsupported shape: " ^ msg)
+        "basic th-lemma diagnostic did not report unsupported shape: " ^ msg);
+      assert (String.isSubstring "attempted theories=[boolean, metis]" msg,
+        "basic th-lemma diagnostic did not include attempted theories: " ^ msg)
     end
 
 fun z3_nonlinear_missing_csdp_diagnostic () =
@@ -3086,6 +3140,8 @@ let
       z3_nnf_structural_replay_no_metis_success),
     ("z3_th_lemma_existing_theory_replay_minimal_success",
       z3_th_lemma_existing_theory_replay_minimal_success),
+    ("z3_th_lemma_basic_dispatch_replay_success",
+      z3_th_lemma_basic_dispatch_replay_success),
     ("z3_th_lemma_basic_unsupported_diagnostic",
       z3_th_lemma_basic_unsupported_diagnostic),
     ("z3_nonlinear_missing_csdp_diagnostic",

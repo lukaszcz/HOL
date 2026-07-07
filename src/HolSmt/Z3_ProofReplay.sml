@@ -191,6 +191,39 @@ local
       List.exists (Lib.equal realSyntax.real_ty)
         (strip_fun_tys (Term.type_of tm) [])
 
+  fun type_contains pred ty =
+    pred ty orelse
+    (let val (dom, rng) = Type.dom_rng ty
+     in type_contains pred dom orelse type_contains pred rng end
+     handle Feedback.HOL_ERR _ => false)
+
+  fun term_contains_type pred tm =
+    Lib.can (HolKernel.find_term
+      (fn subtm => type_contains pred (Term.type_of subtm))) tm
+
+  fun has_arith_atom tm =
+    term_contains_type
+      (fn ty =>
+        Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+        Type.compare (ty, realSyntax.real_ty) = EQUAL) tm
+
+  fun has_word_atom tm =
+    term_contains_type wordsSyntax.is_word_type tm
+
+  fun is_function_type ty =
+    Lib.can Type.dom_rng ty
+
+  fun has_array_atom tm =
+    Lib.can (HolKernel.find_term (fn subtm =>
+      combinSyntax.is_update_comb subtm orelse
+      (Term.is_comb subtm andalso
+       let val rator = Lib.fst (Term.dest_comb subtm)
+       in
+         (Term.is_var rator andalso is_function_type (Term.type_of rator))
+         orelse combinSyntax.is_update_comb rator
+       end) orelse
+      (Term.is_var subtm andalso is_function_type (Term.type_of subtm)))) tm
+
   (* returns "|- l = r", provided 'l' and 'r' are conjunctions that can be
      obtained from each other using associativity, commutativity and
      idempotence of conjunction, and identity of "T" wrt. conjunction.
@@ -1431,23 +1464,7 @@ local
          "implemented for function-update select/store/extensionality " ^
          "lemmas; conclusion=" ^ Library.term_to_string t)))
 
-  val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
-    let
-      val thm = profile "th_lemma[basic](3)(TAUT_PROVE)"
-        tautLib.TAUT_PROVE t
-        handle Feedback.HOL_ERR _ =>
-          profile "th_lemma[basic](4)(METIS)" metis_prove ([], t)
-    in
-      (* cache 'thm' *)
-      (state_cache_thm state thm, thm)
-    end
-    handle Feedback.HOL_ERR _ =>
-      raise ERR "z3_th_lemma_basic"
-        ("unsupported th-lemma shape: theory=basic; checked replay is only " ^
-         "implemented for Boolean tautology/equality simplification lemmas; " ^
-         "conclusion=" ^ Library.term_to_string t))
-
-  val z3_th_lemma_bv =
+  val bv_th_lemma_prove =
   let
     (* TODO: I would like to find out whether PURE_REWRITE_TAC is
              faster than SIMP_TAC here. However, using the former
@@ -1457,23 +1474,67 @@ local
     val COND_REWRITE_TAC = (*Rewrite.PURE_REWRITE_TAC*) simpLib.SIMP_TAC
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
   in
+    fn t =>
+      profile "th_lemma[bv](3)(WORD_BIT_EQ)" (fn () =>
+        Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
+          (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
+          wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t)) ()
+      handle Feedback.HOL_ERR _ =>
+        profile "th_lemma[bv](4)(COND_BBLAST)" Tactical.prove (t,
+          Tactical.THEN (profile "th_lemma[bv](4.1)(COND_REWRITE_TAC)"
+            COND_REWRITE_TAC, profile "th_lemma[bv](4.2)(BBLAST_TAC)"
+            blastLib.BBLAST_TAC))
+  end
+
+  val z3_th_lemma_basic = th_lemma_wrapper "basic" (fn (state, t) =>
+    let
+      fun unsupported attempts =
+        raise ERR "z3_th_lemma_basic"
+          ("unsupported th-lemma shape: theory=basic; " ^
+           "attempted theories=[" ^
+           String.concatWith ", " (List.rev attempts) ^
+           "]; checked replay is implemented for Boolean, arithmetic, " ^
+           "bit-vector and array equality simplification lemmas; " ^
+           "conclusion=" ^ Library.term_to_string t)
+
+      fun metis attempts =
+        profile "th_lemma[basic](7)(METIS)" metis_prove ([], t)
+        handle Feedback.HOL_ERR _ => unsupported ("metis" :: attempts)
+
+      fun array attempts =
+        if has_array_atom t then
+          (profile "th_lemma[basic](6)(array)" SmtArrayProve.array_prove t
+           handle Feedback.HOL_ERR _ => metis ("array" :: attempts))
+        else metis attempts
+
+      fun bv attempts =
+        if has_word_atom t then
+          (profile "th_lemma[basic](5)(bv)" bv_th_lemma_prove t
+           handle Feedback.HOL_ERR _ => array ("bv" :: attempts))
+        else array attempts
+
+      fun arith attempts =
+        if has_arith_atom t then
+          (profile "th_lemma[basic](4)(arith)" arith_prove t
+           handle Feedback.HOL_ERR _ => bv ("arith" :: attempts))
+        else bv attempts
+
+      val thm = profile "th_lemma[basic](3)(TAUT_PROVE)"
+        tautLib.TAUT_PROVE t
+        handle Feedback.HOL_ERR _ => arith ["boolean"]
+    in
+      (* cache 'thm' *)
+      (state_cache_thm state thm, thm)
+    end)
+
+  val z3_th_lemma_bv =
     th_lemma_wrapper "bv" (fn (state, t) =>
       let
-        val thm = profile "th_lemma[bv](3)(WORD_BIT_EQ)" (fn () =>
-          Drule.EQT_ELIM (Conv.THENC (simpLib.SIMP_CONV (simpLib.++
-            (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
-            wordsLib.WORD_BIT_EQ_ss)) [], tautLib.TAUT_CONV) t)) ()
-        handle Feedback.HOL_ERR _ =>
-
-          profile "th_lemma[bv](4)(COND_BBLAST)" Tactical.prove (t,
-            Tactical.THEN (profile "th_lemma[bv](4.1)(COND_REWRITE_TAC)"
-              COND_REWRITE_TAC, profile "th_lemma[bv](4.2)(BBLAST_TAC)"
-              blastLib.BBLAST_TAC))
+        val thm = bv_th_lemma_prove t
       in
         (* cache 'thm' *)
         (state_cache_thm state thm, thm)
       end)
-  end
 
   fun th_lemma_metadata_has_subkind subkinds
       ({subkind, ...} : th_lemma_metadata) =

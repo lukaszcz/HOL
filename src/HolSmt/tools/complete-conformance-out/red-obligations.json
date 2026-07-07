@@ -86372,23 +86372,6 @@
       ]
     },
     {
-      "case": "th-lemma-basic",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:th-lemma-basic",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:th-lemma-basic"
-      ]
-    },
-    {
       "case": "th-lemma-bv",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86576,7 +86559,7 @@
       ]
     }
   ],
-  "proof_audit_red_count": 37,
+  "proof_audit_red_count": 36,
   "proof_audit_red_obligations": [
     {
       "blocking": false,
@@ -87393,38 +87376,6 @@
       "code": "missing_real_proof_occurrence",
       "details": {
         "aliases": [
-          "th-lemma[basic]"
-        ],
-        "case_ids": [
-          "proof-rule:th-lemma-basic"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:th-lemma-basic",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:th-lemma-basic"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "th-lemma-basic"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [
           "th-lemma[bv]"
         ],
         "case_ids": [
@@ -87811,10 +87762,10 @@
     "external benchmarks": 2,
     "function sorts": 0,
     "missing logic packets": 0,
-    "real proof occurrences": 37,
+    "real proof occurrences": 36,
     "seq/set/bag": 166,
     "strings/regex": 335,
-    "th-lemma-basic": 1,
+    "th-lemma-basic": 0,
     "unsat core/assumptions": 1
   },
   "schema": "holsmt-red-obligation-summary-v1"

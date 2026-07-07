@@ -608,10 +608,20 @@ def proof_rule_asserted_case() -> GeneratedCase:
 
 def proof_rule_th_lemma_basic_case() -> GeneratedCase:
     feature = "proof-rule:th-lemma-basic"
+    script = (
+        "(set-option :produce-proofs true)\n"
+        "(set-logic QF_LIA)\n"
+        "(declare-const x Int)\n"
+        "(declare-const y Int)\n"
+        "(assert (= x y))\n"
+        "(assert (not (= y x)))\n"
+        "(check-sat)\n"
+        "(get-proof)\n"
+    )
     entry = manifest_entry(
         case_id=feature,
         file="cases/proof_rules/proof_rule_th_lemma_basic.smt2",
-        logic="QF_UF",
+        logic="QF_LIA",
         standard="Z3-extension",
         row_class="proof-rule",
         features=[
@@ -639,7 +649,7 @@ def proof_rule_th_lemma_basic_case() -> GeneratedCase:
         implementation_obligation=None,
         source=source("Z3-proof", "Z3 proof rule th-lemma-basic"),
     )
-    return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
+    return GeneratedCase(entry=entry, script=script)
 
 
 def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:

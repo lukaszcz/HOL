@@ -18990,7 +18990,7 @@
     {
       "id": "proof-rule:th-lemma-basic",
       "file": "cases/proof_rules/proof_rule_th_lemma_basic.smt2",
-      "logic": "QF_UF",
+      "logic": "QF_LIA",
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [

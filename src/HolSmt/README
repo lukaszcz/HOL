@@ -198,9 +198,9 @@ Z3 th-lemma replay coverage:
               triangle-eq
   array       select-store, extensionality   checked by shared array_prove ladder
   bv          bit-blast                      checked by existing word/BBLAST path
-  basic       eq-propagate                   unsupported diagnostic:
-              "unsupported th-lemma shape: theory=basic; checked replay is not
-              implemented for basic Boolean/equality simplification lemmas"
+  basic       eq-propagate                   checked by Boolean TAUT_PROVE, then
+                                             arithmetic, bit-vector and array
+                                             dispatch before METIS fallback
 
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.

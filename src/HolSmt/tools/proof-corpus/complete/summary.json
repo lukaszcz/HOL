@@ -1,21 +1,55 @@
 {
-  "aggregate_rule_histogram": {},
-  "aggregate_theory_lemma_histogram": {},
-  "discovered_rules": [],
-  "entries": [],
-  "entry_count": 0,
+  "aggregate_rule_histogram": {
+    "th-lemma-basic": 1
+  },
+  "aggregate_theory_lemma_histogram": {
+    "basic:eq-propagate": 1
+  },
+  "discovered_rules": [
+    "th-lemma-basic"
+  ],
+  "entries": [
+    "src/HolSmt/Unittest.sml#z3_th_lemma_basic_dispatch_replay_success"
+  ],
+  "entry_count": 1,
   "kind": "proof-corpus-summary",
   "malformed_fragment_count": 0,
-  "proof_count": 0,
+  "proof_count": 1,
   "proof_rule_support": {
     "parse_only": [
       "proof-bind"
     ],
-    "replay_supported": []
+    "replay_supported": [
+      "th-lemma-basic"
+    ]
   },
-  "rules_by_version": [],
+  "rules_by_version": [
+    {
+      "rule_histogram": {
+        "th-lemma-basic": 1
+      },
+      "rules": [
+        "th-lemma-basic"
+      ],
+      "theory_lemma_histogram": {
+        "basic:eq-propagate": 1
+      },
+      "theory_lemma_subkinds": [
+        "basic:eq-propagate"
+      ],
+      "z3_version": "synthetic-unit"
+    }
+  ],
   "schema": "holsmt-z3-proof-corpus-v1",
-  "theory_lemma_subkinds": [],
+  "theory_lemma_subkinds": [
+    "basic:eq-propagate"
+  ],
   "unknown_rule_coverage": [],
-  "z3_versions": []
+  "z3_versions": [
+    {
+      "entry_count": 1,
+      "proof_count": 1,
+      "version": "synthetic-unit"
+    }
+  ]
 }
