@@ -38,6 +38,28 @@ if is_unsat and "(get-proof" in text:
     return path
 
 
+def make_fake_model_z3(directory):
+    path = pathlib.Path(directory) / "fake-model-z3"
+    script = """#!/usr/bin/env python3
+import pathlib
+import sys
+
+if "-version" in sys.argv:
+    print("Z3 version 4.13.0")
+    raise SystemExit(0)
+
+text = pathlib.Path(sys.argv[-1]).read_text(encoding="utf-8")
+print("sat")
+if "(get-model)" in text:
+    print("(model-output preserved)")
+if "(get-value" in text:
+    print("((p true))")
+"""
+    path.write_text(script, encoding="utf-8")
+    path.chmod(path.stat().st_mode | stat.S_IXUSR)
+    return path
+
+
 class ConformanceSuiteTests(unittest.TestCase):
     def test_default_suite_represents_every_official_logic(self):
         cases = conformance.default_cases(None)
@@ -633,6 +655,48 @@ class ConformanceSuiteTests(unittest.TestCase):
                 fail_case["expected"][conformance.MODE_PARSER]["diagnostic_substring"],
                 "missing set-logic",
             )
+
+    def test_z3_oracle_stdout_expectation_checks_solver_output_verbatim(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = pathlib.Path(tmp)
+            bench_dir = root / "bench"
+            bench_dir.mkdir()
+            (bench_dir / "model.smt2").write_text(
+                textwrap.dedent(
+                    """\
+                    ; holsmt-expected: {"z3-oracle": {"status": "pass", "stdout": "sat\\n(model-output preserved)\\n((p true))\\n"}}
+                    (set-option :produce-models true)
+                    (set-logic QF_UF)
+                    (declare-const p Bool)
+                    (check-sat)
+                    (get-model)
+                    (get-value (p))
+                    """
+                ),
+                encoding="utf-8",
+            )
+            out_dir = root / "out"
+
+            code = conformance.main(
+                [
+                    "--out",
+                    str(out_dir),
+                    "--no-default-suite",
+                    "--benchmark-dir",
+                    str(bench_dir),
+                    "--mode",
+                    conformance.MODE_Z3_ORACLE,
+                    "--z3",
+                    str(make_fake_model_z3(root)),
+                ]
+            )
+
+            self.assertEqual(code, 0)
+            report = json.loads((out_dir / "conformance.json").read_text(encoding="utf-8"))
+            item = report["results"][0]
+            self.assertEqual(item["classification"], conformance.CLASSIFICATION_MATCHED)
+            self.assertEqual(item["actual_stdout"], "sat\n(model-output preserved)\n((p true))\n")
+            self.assertTrue(item["stdout_match"])
 
     def test_expected_diagnostic_mismatch_is_distinct_and_preserves_repro(self):
         with tempfile.TemporaryDirectory() as tmp:

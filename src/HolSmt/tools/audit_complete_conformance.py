@@ -338,6 +338,10 @@ def validate_expected_result(value: object, label: str) -> str:
         "notes",
         "unsat_core",
         "unsat_assumptions",
+        "stdout",
+        "stderr",
+        "stdout_contains",
+        "stderr_contains",
     }
     extra = sorted(set(value) - allowed)
     require(not extra, f"{label} has unknown field(s): {', '.join(extra)}")
@@ -350,6 +354,10 @@ def validate_expected_result(value: object, label: str) -> str:
         "notes",
         "unsat_core",
         "unsat_assumptions",
+        "stdout",
+        "stderr",
+        "stdout_contains",
+        "stderr_contains",
     ):
         if string_field in value:
             require_string(value[string_field], f"{label}.{string_field}", allow_empty=string_field == "notes")

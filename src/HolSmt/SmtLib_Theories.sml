@@ -1232,13 +1232,11 @@ in
         (K_zero_one boolSyntax.mk_neg),
       official_entry "=>" right_assoc_attributes
         ["(=> Bool Bool Bool :right-assoc)"] (rightassoc boolSyntax.mk_imp),
-      (* FIXME: SMT-LIB declares "and" and "or" as left-assoc. This
-         interacts badly with HOL4, where they are right-assoc.  In
-         particular, it breaks our proof reconstruction implementation
-         (Z3_ProofReplay.sml) in a few places that are not prepared to
-         handle the additional parentheses. For now, we parse "and"
-         and "or" as rightassoc. Since conjunction and disjunction are
-         associative, this does not change the meaning of formulas. *)
+      (* TASK_19/F5 decision, PLAN_phase_1.md §7 F5 / P1.1: keep the
+         SMT-LIB-visible :left-assoc metadata for "and" and "or", but
+         build right-associated HOL terms.  HOL4's Boolean syntax and
+         proof replay depend on the right-associated shape; conjunction
+         and disjunction are associative, so the meaning is unchanged. *)
       official_entry "and" left_assoc_attributes
         ["(and Bool Bool Bool :left-assoc)"]
         (rightassoc boolSyntax.mk_conj),

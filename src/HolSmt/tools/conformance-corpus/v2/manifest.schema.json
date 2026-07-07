@@ -319,6 +319,18 @@
         "unsat_assumptions": {
           "type": "string"
         },
+        "stdout": {
+          "type": "string"
+        },
+        "stderr": {
+          "type": "string"
+        },
+        "stdout_contains": {
+          "type": "string"
+        },
+        "stderr_contains": {
+          "type": "string"
+        },
         "proof_rule_histogram": {
           "type": "object",
           "additionalProperties": {

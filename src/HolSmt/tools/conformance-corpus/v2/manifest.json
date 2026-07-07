@@ -2452,7 +2452,8 @@
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "stdout_contains": "((p true))",
+          "notes": "oracle mode exposes solver model/value output verbatim"
         }
       },
       "implementation_obligation": null,

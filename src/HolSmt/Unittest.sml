@@ -1674,16 +1674,56 @@ in
     "overloaded/indexed typecheck assertion did not parse as Bool")
 end
 
+fun smtlib_and_or_right_assoc_parse_shape_success () =
+let
+  val assertions =
+    parse_smtlib_assertions
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const a Bool)\n" ^
+       "(declare-const b Bool)\n" ^
+       "(declare-const c Bool)\n" ^
+       "(assert (and a b c))\n" ^
+       "(assert (or a b c))\n" ^
+       "(exit)\n")
+  val a = Term.mk_var ("a", Type.bool)
+  val b = Term.mk_var ("b", Type.bool)
+  val c = Term.mk_var ("c", Type.bool)
+  fun assert_and_shape tm =
+    let
+      val (left, right) = boolSyntax.dest_conj tm
+      val (mid, last) = boolSyntax.dest_conj right
+    in
+      assert (Term.aconv left a andalso Term.aconv mid b andalso
+        Term.aconv last c,
+        "(and a b c) did not parse as a /\\ (b /\\ c)")
+    end
+  fun assert_or_shape tm =
+    let
+      val (left, right) = boolSyntax.dest_disj tm
+      val (mid, last) = boolSyntax.dest_disj right
+    in
+      assert (Term.aconv left a andalso Term.aconv mid b andalso
+        Term.aconv last c,
+        "(or a b c) did not parse as a \\/ (b \\/ c)")
+    end
+in
+  case assertions of
+    [and_tm, or_tm] => (assert_and_shape and_tm; assert_or_shape or_tm)
+  | _ => die "and/or associativity script produced wrong assertion count"
+end
+
 fun smtlib_core_symbol_metadata_success () =
 let
   val metadata = SmtLib_Logics.metadata_of_logic "QF_UF"
   val eq_symbol = find_symbol_metadata "Core" "term" "=" metadata
   val distinct_symbol = find_symbol_metadata "Core" "term" "distinct" metadata
   val and_symbol = find_symbol_metadata "Core" "term" "and" metadata
+  val or_symbol = find_symbol_metadata "Core" "term" "or" metadata
   val bool_symbol = find_symbol_metadata "Core" "sort" "Bool" metadata
   val eq_attrs = #attributes eq_symbol
   val distinct_attrs = #attributes distinct_symbol
   val and_attrs = #attributes and_symbol
+  val or_attrs = #attributes or_symbol
 in
   assert (metadata_is_official bool_symbol,
     "Bool sort metadata is not marked official");
@@ -1694,7 +1734,9 @@ in
   assert (#overloaded distinct_attrs andalso #pairwise distinct_attrs,
     "distinct metadata did not preserve overloaded/pairwise attributes");
   assert (#left_associative and_attrs,
-    "and metadata did not record its official left-associative attribute")
+    "and metadata did not record its official left-associative attribute");
+  assert (#left_associative or_attrs,
+    "or metadata did not record its official left-associative attribute")
 end
 
 fun smtlib_logic_metadata_extension_split_success () =
@@ -3420,6 +3462,8 @@ let
       smtlib_checked_replay_gap_diagnostics),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
+    ("smtlib_and_or_right_assoc_parse_shape_success",
+      smtlib_and_or_right_assoc_parse_shape_success),
     ("smtlib_core_symbol_metadata_success",
       smtlib_core_symbol_metadata_success),
     ("smtlib_logic_metadata_extension_split_success",

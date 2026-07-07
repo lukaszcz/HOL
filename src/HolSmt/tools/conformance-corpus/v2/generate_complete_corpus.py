@@ -265,6 +265,10 @@ def expected_result(
     notes: str | None = None,
     unsat_core: str | None = None,
     unsat_assumptions: str | None = None,
+    stdout: str | None = None,
+    stderr: str | None = None,
+    stdout_contains: str | None = None,
+    stderr_contains: str | None = None,
 ) -> dict[str, object]:
     require_choice(status, "expected status", EXPECTED_STATUSES)
     result: dict[str, object] = {"status": status}
@@ -286,6 +290,14 @@ def expected_result(
         result["unsat_core"] = require_string(unsat_core, "unsat_core")
     if unsat_assumptions is not None:
         result["unsat_assumptions"] = require_string(unsat_assumptions, "unsat_assumptions")
+    if stdout is not None:
+        result["stdout"] = require_string(stdout, "stdout", allow_empty=True)
+    if stderr is not None:
+        result["stderr"] = require_string(stderr, "stderr", allow_empty=True)
+    if stdout_contains is not None:
+        result["stdout_contains"] = require_string(stdout_contains, "stdout_contains")
+    if stderr_contains is not None:
+        result["stderr_contains"] = require_string(stderr_contains, "stderr_contains")
     if notes is not None:
         result["notes"] = notes
     return result
@@ -1583,6 +1595,12 @@ def command_cases() -> list[GeneratedCase]:
                 notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
             ),
         }
+        if group.slug == "get-model-get-value-get-assignment-get-assertions":
+            state_expected["z3-oracle"] = expected_result(
+                "pass",
+                stdout_contains="((p true))",
+                notes="oracle mode exposes solver model/value output verbatim",
+            )
         if group.slug == "exit":
             state_expected["z3-oracle"] = expected_result(
                 "fail",

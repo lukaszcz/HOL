@@ -171,6 +171,10 @@ class ExpectedOutcome:
     diagnostic_substring: str | None = None
     unsat_core: str | None = None
     unsat_assumptions: str | None = None
+    stdout: str | None = None
+    stderr: str | None = None
+    stdout_contains: str | None = None
+    stderr_contains: str | None = None
 
 
 @dataclass(frozen=True)
@@ -223,6 +227,10 @@ def normalize_expected_outcome(value: object, *, context: str) -> ExpectedOutcom
         diagnostic = None
         unsat_core = None
         unsat_assumptions = None
+        stdout = None
+        stderr = None
+        stdout_contains = None
+        stderr_contains = None
     elif isinstance(value, dict):
         status = value.get("status")
         diagnostic = (
@@ -232,6 +240,10 @@ def normalize_expected_outcome(value: object, *, context: str) -> ExpectedOutcom
         )
         unsat_core = value.get("unsat_core")
         unsat_assumptions = value.get("unsat_assumptions")
+        stdout = value.get("stdout")
+        stderr = value.get("stderr")
+        stdout_contains = value.get("stdout_contains")
+        stderr_contains = value.get("stderr_contains")
     else:
         raise ValueError(f"{context}: expected outcome must be a status string or object")
 
@@ -243,6 +255,14 @@ def normalize_expected_outcome(value: object, *, context: str) -> ExpectedOutcom
         raise ValueError(f"{context}: expected unsat_core must be a string")
     if unsat_assumptions is not None and not isinstance(unsat_assumptions, str):
         raise ValueError(f"{context}: expected unsat_assumptions must be a string")
+    for field_name, field_value in (
+        ("stdout", stdout),
+        ("stderr", stderr),
+        ("stdout_contains", stdout_contains),
+        ("stderr_contains", stderr_contains),
+    ):
+        if field_value is not None and not isinstance(field_value, str):
+            raise ValueError(f"{context}: expected {field_name} must be a string")
     if status == UNSUPPORTED and not diagnostic:
         raise ValueError(f"{context}: expected unsupported outcomes require a diagnostic substring")
     return ExpectedOutcome(
@@ -250,6 +270,10 @@ def normalize_expected_outcome(value: object, *, context: str) -> ExpectedOutcom
         diagnostic_substring=diagnostic,
         unsat_core=unsat_core,
         unsat_assumptions=unsat_assumptions,
+        stdout=stdout,
+        stderr=stderr,
+        stdout_contains=stdout_contains,
+        stderr_contains=stderr_contains,
     )
 
 
@@ -314,6 +338,14 @@ def expected_outcome_json(expected: Mapping[str, ExpectedOutcome]) -> dict[str, 
             item["unsat_core"] = outcome.unsat_core
         if outcome.unsat_assumptions is not None:
             item["unsat_assumptions"] = outcome.unsat_assumptions
+        if outcome.stdout is not None:
+            item["stdout"] = outcome.stdout
+        if outcome.stderr is not None:
+            item["stderr"] = outcome.stderr
+        if outcome.stdout_contains is not None:
+            item["stdout_contains"] = outcome.stdout_contains
+        if outcome.stderr_contains is not None:
+            item["stderr_contains"] = outcome.stderr_contains
         result[mode] = item
     return result
 
@@ -658,6 +690,10 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
     item["expected_diagnostic"] = expected.diagnostic_substring
     item["expected_unsat_core"] = expected.unsat_core
     item["expected_unsat_assumptions"] = expected.unsat_assumptions
+    item["expected_stdout"] = expected.stdout
+    item["expected_stderr"] = expected.stderr
+    item["expected_stdout_contains"] = expected.stdout_contains
+    item["expected_stderr_contains"] = expected.stderr_contains
     diagnostic_match = (
         expected.diagnostic_substring in actual_diagnostic
         if expected.diagnostic_substring is not None
@@ -670,6 +706,8 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
     if isinstance(artifact, dict):
         stdout = str(artifact.get("stdout") or "")
         stderr = str(artifact.get("stderr") or "")
+    item["actual_stdout"] = stdout
+    item["actual_stderr"] = stderr
     actual_unsat_core = command_output_field(stdout, stderr, "unsat_core")
     actual_unsat_assumptions = command_output_field(
         stdout, stderr, "unsat_assumptions"
@@ -688,6 +726,22 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
     )
     item["unsat_core_match"] = unsat_core_match
     item["unsat_assumptions_match"] = unsat_assumptions_match
+    stdout_match = expected.stdout == stdout if expected.stdout is not None else None
+    stderr_match = expected.stderr == stderr if expected.stderr is not None else None
+    stdout_contains_match = (
+        expected.stdout_contains in stdout
+        if expected.stdout_contains is not None
+        else None
+    )
+    stderr_contains_match = (
+        expected.stderr_contains in stderr
+        if expected.stderr_contains is not None
+        else None
+    )
+    item["stdout_match"] = stdout_match
+    item["stderr_match"] = stderr_match
+    item["stdout_contains_match"] = stdout_contains_match
+    item["stderr_contains_match"] = stderr_contains_match
 
     if expected.status == RED:
         item["red_obligation"] = True
@@ -702,6 +756,14 @@ def apply_expectation(case: Case, item: dict[str, object]) -> dict[str, object]:
         item["conformance_status"] = FAIL
         item["classification"] = CLASSIFICATION_DIAGNOSTIC_MISMATCH
     elif unsat_core_match is False or unsat_assumptions_match is False:
+        item["conformance_status"] = FAIL
+        item["classification"] = CLASSIFICATION_DIAGNOSTIC_MISMATCH
+    elif (
+        stdout_match is False
+        or stderr_match is False
+        or stdout_contains_match is False
+        or stderr_contains_match is False
+    ):
         item["conformance_status"] = FAIL
         item["classification"] = CLASSIFICATION_DIAGNOSTIC_MISMATCH
     else:
