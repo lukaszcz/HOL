@@ -716,10 +716,10 @@ class ConformanceSuiteTests(unittest.TestCase):
             (bench_dir / "assuming.smt2").write_text(
                 textwrap.dedent(
                     """\
-                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "check-sat-assuming is outside checked Z3_TAC"}}
+                    ; holsmt-expected: {"z3-tac": {"status": "pass"}}
                     (set-logic QF_UF)
                     (declare-const p Bool)
-                    (check-sat-assuming (p))
+                    (check-sat-assuming ((not p)))
                     (exit)
                     """
                 ),
@@ -728,7 +728,7 @@ class ConformanceSuiteTests(unittest.TestCase):
             (bench_dir / "unsat_core.smt2").write_text(
                 textwrap.dedent(
                     """\
-                    ; holsmt-expected: {"z3-tac": {"status": "unsupported", "diagnostic": "get-unsat-core is outside checked Z3_TAC"}}
+                    ; holsmt-expected: {"z3-tac": {"status": "pass", "unsat_core": "(bad)"}}
                     (set-logic QF_UF)
                     (assert (! false :named bad))
                     (check-sat)
@@ -803,14 +803,13 @@ class ConformanceSuiteTests(unittest.TestCase):
                         print("Z3_TAC_UNSUPPORTED")
                         print("diagnostic=raw SMT-LIB query get-model is outside checked Z3_TAC command-line entry point")
                         raise SystemExit(1)
-                    if "(check-sat-assuming" in text:
-                        print("Z3_TAC_UNSUPPORTED")
-                        print("diagnostic=check-sat-assuming is outside checked Z3_TAC command-line entry point")
-                        raise SystemExit(1)
                     if "(get-unsat-core)" in text:
-                        print("Z3_TAC_UNSUPPORTED")
-                        print("diagnostic=raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point")
-                        raise SystemExit(1)
+                        print("Z3_TAC_PASS")
+                        print("z3_version=4.13.0")
+                        print("result=unsat")
+                        print("theorem=[F] |- F")
+                        print("unsat_core=(bad)")
+                        raise SystemExit(0)
                     if "sat_theorem" in path.name:
                         print("Z3_TAC_PASS")
                         print("diagnostic=solver reports negated term to be satisfiable")
@@ -861,18 +860,11 @@ class ConformanceSuiteTests(unittest.TestCase):
             self.assertEqual(by_case["diagnostic"]["status"], conformance.UNSUPPORTED)
             self.assertEqual(by_case["diagnostic"]["classification"], conformance.CLASSIFICATION_MATCHED)
             self.assertIn("get-model is outside checked Z3_TAC", by_case["diagnostic"]["actual_diagnostic"])
-            self.assertEqual(by_case["assuming"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["assuming"]["status"], conformance.PASS)
             self.assertEqual(by_case["assuming"]["classification"], conformance.CLASSIFICATION_MATCHED)
-            self.assertIn(
-                "check-sat-assuming is outside checked Z3_TAC",
-                by_case["assuming"]["actual_diagnostic"],
-            )
-            self.assertEqual(by_case["unsat_core"]["status"], conformance.UNSUPPORTED)
+            self.assertEqual(by_case["unsat_core"]["status"], conformance.PASS)
             self.assertEqual(by_case["unsat_core"]["classification"], conformance.CLASSIFICATION_MATCHED)
-            self.assertIn(
-                "get-unsat-core is outside checked Z3_TAC",
-                by_case["unsat_core"]["actual_diagnostic"],
-            )
+            self.assertTrue(by_case["unsat_core"]["unsat_core_match"])
             self.assertEqual(by_case["sat_theorem"]["status"], conformance.FAIL)
             self.assertEqual(by_case["sat_theorem"]["classification"], conformance.CLASSIFICATION_MATCHED)
             self.assertIn("satisfiable", by_case["sat_theorem"]["actual_diagnostic"])

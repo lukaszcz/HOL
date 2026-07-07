@@ -313,6 +313,12 @@
           "type": "string",
           "minLength": 1
         },
+        "unsat_core": {
+          "type": "string"
+        },
+        "unsat_assumptions": {
+          "type": "string"
+        },
         "proof_rule_histogram": {
           "type": "object",
           "additionalProperties": {

@@ -174,6 +174,8 @@ class CommandGroup:
     obligation_files: tuple[str, ...]
     obligation_notes: str = GENERATED_OBLIGATION_NOTES
     red_when_reconstruction_not_applicable: bool = False
+    reconstruction_unsat_core: str | None = None
+    reconstruction_unsat_assumptions: str | None = None
 
 
 @dataclass(frozen=True)
@@ -261,6 +263,8 @@ def expected_result(
     theorem_shape: str | None = None,
     proof_rule_histogram: Mapping[str, int] | None = None,
     notes: str | None = None,
+    unsat_core: str | None = None,
+    unsat_assumptions: str | None = None,
 ) -> dict[str, object]:
     require_choice(status, "expected status", EXPECTED_STATUSES)
     result: dict[str, object] = {"status": status}
@@ -278,6 +282,10 @@ def expected_result(
                 raise GeneratorError("proof_rule_histogram counts must be non-negative integers")
             histogram[rule] = count
         result["proof_rule_histogram"] = histogram
+    if unsat_core is not None:
+        result["unsat_core"] = require_string(unsat_core, "unsat_core")
+    if unsat_assumptions is not None:
+        result["unsat_assumptions"] = require_string(unsat_assumptions, "unsat_assumptions")
     if notes is not None:
         result["notes"] = notes
     return result
@@ -1025,11 +1033,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named p_name))\n(check-sat-assuming ((not p)))\n",
         negative_diagnostic="assumption literal must have Bool sort",
         negative_phase="typecheck",
-        reconstruction_applies=False,
-        reconstruction_diagnostic="check-sat-assuming is outside checked Z3_TAC command-line entry point",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="check-sat-assuming replay evidence is incomplete",
         reconstruction_phase="theorem-shape",
-        obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-        red_when_reconstruction_not_applicable=True,
+        obligation_files=("src/HolSmt/z3_tac_driver.sml", "src/HolSmt/Z3_ProofReplay.sml"),
     ),
     CommandGroup(
         slug="get-proof",
@@ -1051,18 +1058,15 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         positive_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n(get-unsat-assumptions)\n",
         negative_script="(set-logic QF_UF)\n(get-unsat-core)\n",
         state_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n",
-        reconstruction_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(assert (! false :named bad))\n(check-sat)\n(get-unsat-core)\n",
+        reconstruction_script="(set-option :produce-unsat-cores true)\n(set-logic QF_UF)\n(declare-const p Bool)\n(assert (! p :named p_name))\n(check-sat-assuming ((not p)))\n(get-unsat-core)\n(get-unsat-assumptions)\n",
         negative_diagnostic="unsat core requested before unsat result",
         negative_phase="solver",
-        reconstruction_applies=False,
-        reconstruction_diagnostic="raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
+        reconstruction_applies=True,
+        reconstruction_diagnostic="unsat-core and unsat-assumption extraction evidence is incomplete",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/z3_tac_driver.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-        obligation_notes=(
-            "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked "
-            "Z3_TAC entry point does not implement extraction/replay response objects."
-        ),
-        red_when_reconstruction_not_applicable=True,
+        reconstruction_unsat_core="(p_name)",
+        reconstruction_unsat_assumptions="(~p)",
     ),
     CommandGroup(
         slug="get-model-get-value-get-assignment-get-assertions",
@@ -1142,6 +1146,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
 RECONSTRUCTED_COMMAND_GROUPS = {
     "assert",
     "check-sat",
+    "check-sat-assuming",
     "declare-const",
     "declare-fun",
     "declare-sort",
@@ -1151,6 +1156,7 @@ RECONSTRUCTED_COMMAND_GROUPS = {
     "define-sort",
     "echo",
     "get-proof",
+    "get-unsat-assumptions-get-unsat-core",
     "push-pop",
     "reset-reset-assertions",
     "set-info",
@@ -1599,6 +1605,8 @@ def command_cases() -> list[GeneratedCase]:
             reconstruction_expected = expected_result(
                 "pass",
                 notes=f"theorem reconstruction applies: {str(group.reconstruction_applies).lower()}",
+                unsat_core=group.reconstruction_unsat_core,
+                unsat_assumptions=group.reconstruction_unsat_assumptions,
             )
         elif not group.reconstruction_applies and not group.red_when_reconstruction_not_applicable:
             reconstruction_expected = expected_result(

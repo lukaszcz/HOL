@@ -278,6 +278,9 @@
       "class": "SMT-LIB 2.7",
       "phases": [
         "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
         "tested"
       ],
       "expected_status": "implemented",
@@ -558,6 +561,11 @@
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
           "match": "parse_file_query_commands_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
         }
       ],
       "negative_tests": [
@@ -692,6 +700,9 @@
       "class": "SMT-LIB 2.7",
       "phases": [
         "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
         "tested"
       ],
       "expected_status": "implemented",
@@ -1209,6 +1220,9 @@
       "class": "SMT-LIB 2.7",
       "phases": [
         "parsed",
+        "translated",
+        "solved",
+        "reconstructed",
         "tested"
       ],
       "expected_status": "implemented",
@@ -1217,6 +1231,11 @@
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
           "match": "parse_file_query_commands_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
         }
       ],
       "negative_tests": [
@@ -1231,56 +1250,10 @@
         {
           "kind": "source",
           "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "check-sat-assuming is outside checked Z3_TAC"
+          "match": "z3_tac_goal assertions = (assertions, boolSyntax.F)"
         }
       ],
-      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
-    },
-    {
-      "section": "commands",
-      "item": "check-sat-assuming",
-      "class": "SMT-LIB 2.7",
-      "phases": [
-        "translated"
-      ],
-      "expected_status": "not_applicable",
-      "positive_tests": [],
-      "negative_tests": [],
-      "z3_versions": [],
-      "artifacts": [
-        {
-          "kind": "manual",
-          "description": "check-sat-assuming: translated phase(s) are not part of this command's checked HolSmt behavior; Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
-        }
-      ],
-      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
-    },
-    {
-      "section": "commands",
-      "item": "check-sat-assuming",
-      "class": "SMT-LIB 2.7",
-      "phases": [
-        "solved",
-        "reconstructed"
-      ],
-      "expected_status": "unsupported_diagnostic",
-      "positive_tests": [],
-      "negative_tests": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
-          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
-        }
-      ],
-      "z3_versions": [],
-      "artifacts": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "check-sat-assuming is outside checked Z3_TAC"
-        }
-      ],
-      "notes": "Covers assumption preservation and checked Z3_TAC unsupported diagnostics."
+      "notes": "Covers assumption preservation and checked Z3_TAC replay with assumptions as HOL hypotheses."
     },
     {
       "section": "commands",
@@ -1288,6 +1261,8 @@
       "class": "SMT-LIB 2.7",
       "phases": [
         "parsed",
+        "solved",
+        "reconstructed",
         "tested"
       ],
       "expected_status": "implemented",
@@ -1296,6 +1271,11 @@
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
           "match": "parse_file_query_commands_success"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
+          "match": "unsat_core_match"
         }
       ],
       "negative_tests": [
@@ -1309,11 +1289,11 @@
       "artifacts": [
         {
           "kind": "source",
-          "path": "src/HolSmt/SmtLib_Parser.sml",
-          "match": "unsat-core extraction is not implemented"
+          "path": "src/HolSmt/z3_tac_driver.sml",
+          "match": "z3_tac_unsat_response_fields"
         }
       ],
-      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
+      "notes": "Covers query preservation and construction-checked unsat-core/unsat-assumption extraction."
     },
     {
       "section": "commands",
@@ -1329,37 +1309,10 @@
       "artifacts": [
         {
           "kind": "manual",
-          "description": "get-unsat-assumptions, get-unsat-core: translated phase(s) are not part of this command's checked HolSmt behavior; Covers query preservation and explicit unsupported extraction diagnostics."
+          "description": "get-unsat-assumptions, get-unsat-core: translated phase(s) are not part of this command's checked HolSmt behavior; Covers query preservation and construction-checked extraction."
         }
       ],
-      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
-    },
-    {
-      "section": "commands",
-      "item": "get-unsat-assumptions, get-unsat-core",
-      "class": "SMT-LIB 2.7",
-      "phases": [
-        "solved",
-        "reconstructed"
-      ],
-      "expected_status": "unsupported_diagnostic",
-      "positive_tests": [],
-      "negative_tests": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/tools/tests/test_run_conformance_suite.py",
-          "match": "test_z3_tac_command_reports_success_and_expected_diagnostic"
-        }
-      ],
-      "z3_versions": [],
-      "artifacts": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/SmtLib_Parser.sml",
-          "match": "unsat-core extraction is not implemented"
-        }
-      ],
-      "notes": "Covers query preservation and explicit unsupported extraction diagnostics."
+      "notes": "Covers query preservation and construction-checked extraction."
     },
     {
       "section": "commands",

@@ -36,18 +36,16 @@ fun z3_tac_query_name query =
 
 fun z3_tac_query_diagnostic queries =
   case queries of
-    [SmtLib_Parser.QueryCheckSat {assumptions = [], ...}] => NONE
-  | [SmtLib_Parser.QueryCheckSat {assumptions = [], ...},
-     SmtLib_Parser.QueryGetProof] => NONE
-  | SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...} :: _ =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
-  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatAssumptions] =>
-      SOME "raw SMT-LIB query get-unsat-assumptions is outside checked Z3_TAC command-line entry point"
-  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore] =>
-      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
+    [SmtLib_Parser.QueryCheckSat _] => NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetProof] => NONE
+  | [SmtLib_Parser.QueryCheckSat _,
+     SmtLib_Parser.QueryGetUnsatAssumptions] => NONE
+  | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore] => NONE
   | [SmtLib_Parser.QueryCheckSat _, SmtLib_Parser.QueryGetUnsatCore,
-     SmtLib_Parser.QueryGetUnsatAssumptions] =>
-      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
+     SmtLib_Parser.QueryGetUnsatAssumptions] => NONE
+  | [SmtLib_Parser.QueryCheckSat _,
+     SmtLib_Parser.QueryGetUnsatAssumptions,
+     SmtLib_Parser.QueryGetUnsatCore] => NONE
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | SmtLib_Parser.QueryCheckSat _ :: query :: _ =>
@@ -64,6 +62,11 @@ fun z3_tac_query_assertions queries =
         local_definitions @ assertions @ assumptions
   | _ => []
 
+fun z3_tac_query_assumptions queries =
+  case queries of
+    SmtLib_Parser.QueryCheckSat {assumptions, ...} :: _ => assumptions
+  | _ => []
+
 fun z3_tac_query_fragment_terms queries =
   case queries of
     SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} :: _ =>
@@ -74,8 +77,57 @@ fun z3_tac_conjunction [] = boolSyntax.T
   | z3_tac_conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
 
-fun z3_tac_goal assertions =
-  boolSyntax.mk_neg (z3_tac_conjunction assertions)
+fun z3_tac_hypothesis_goal_required queries =
+  case queries of
+    SmtLib_Parser.QueryCheckSat {assumptions = _ :: _, ...} :: _ => true
+  | SmtLib_Parser.QueryGetUnsatAssumptions :: _ => true
+  | SmtLib_Parser.QueryGetUnsatCore :: _ => true
+  | _ :: rest => z3_tac_hypothesis_goal_required rest
+  | [] => false
+
+fun z3_tac_goal queries assertions =
+  if z3_tac_hypothesis_goal_required queries then
+    (assertions, boolSyntax.F)
+  else
+    ([], boolSyntax.mk_neg (z3_tac_conjunction assertions))
+
+fun z3_tac_parenthesized_list items =
+  "(" ^ String.concatWith " " items ^ ")"
+
+fun z3_tac_term_member tm terms =
+  List.exists (fn candidate => Term.aconv candidate tm) terms
+
+fun z3_tac_unsat_assumption_terms thm assumptions =
+  let val hyps = Thm.hyp thm
+  in List.filter (fn assumption => z3_tac_term_member assumption hyps) assumptions end
+
+fun z3_tac_unsat_core_names thm named_assertions =
+  let val hyps = Thm.hyp thm
+  in
+    List.map Lib.fst
+      (List.filter
+        (fn (_, assertion) => z3_tac_term_member assertion hyps)
+        named_assertions)
+  end
+
+fun z3_tac_unsat_response_fields thm queries assumptions named_assertions =
+let
+  val assumption_list =
+    z3_tac_parenthesized_list
+      (List.map Library.term_to_string
+        (z3_tac_unsat_assumption_terms thm assumptions))
+  val core_list =
+    z3_tac_parenthesized_list
+      (z3_tac_unsat_core_names thm named_assertions)
+  fun add_fields [] fields = List.rev fields
+    | add_fields (SmtLib_Parser.QueryGetUnsatAssumptions :: rest) fields =
+        add_fields rest ("unsat_assumptions=" ^ assumption_list :: fields)
+    | add_fields (SmtLib_Parser.QueryGetUnsatCore :: rest) fields =
+        add_fields rest ("unsat_core=" ^ core_list :: fields)
+    | add_fields (_ :: rest) fields = add_fields rest fields
+in
+  add_fields queries []
+end
 
 fun z3_tac_unsupported_command_diagnostic command =
   case SmtLib_Parser.node_of command of
@@ -104,14 +156,16 @@ fun z3_tac_script_query_diagnostic query_names =
   case query_names of
     ["check-sat"] => NONE
   | ["check-sat", "get-proof"] => NONE
-  | "check-sat-assuming" :: _ =>
-      SOME "check-sat-assuming is outside checked Z3_TAC command-line entry point"
-  | ["check-sat", "get-unsat-assumptions"] =>
-      SOME "raw SMT-LIB query get-unsat-assumptions is outside checked Z3_TAC command-line entry point"
-  | ["check-sat", "get-unsat-core"] =>
-      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
-  | ["check-sat", "get-unsat-core", "get-unsat-assumptions"] =>
-      SOME "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point"
+  | ["check-sat-assuming"] => NONE
+  | ["check-sat-assuming", "get-proof"] => NONE
+  | ["check-sat", "get-unsat-assumptions"] => NONE
+  | ["check-sat-assuming", "get-unsat-assumptions"] => NONE
+  | ["check-sat", "get-unsat-core"] => NONE
+  | ["check-sat-assuming", "get-unsat-core"] => NONE
+  | ["check-sat", "get-unsat-core", "get-unsat-assumptions"] => NONE
+  | ["check-sat-assuming", "get-unsat-core", "get-unsat-assumptions"] => NONE
+  | ["check-sat", "get-unsat-assumptions", "get-unsat-core"] => NONE
+  | ["check-sat-assuming", "get-unsat-assumptions", "get-unsat-core"] => NONE
   | [] =>
       SOME "no check-sat query in raw SMT-LIB script for checked Z3_TAC"
   | "check-sat" :: query :: _ =>
@@ -147,7 +201,7 @@ datatype z3_tac_checked_result =
   | Z3_TAC_UNKNOWN of string option
 
 fun z3_tac_checked_result goal =
-  case Z3.Z3_SMT_Prover ([], goal) of
+  case Z3.Z3_SMT_Prover goal of
     SolverSpec.UNSAT (SOME thm) =>
       let val () = Library.check_oracle_tags "Z3_TAC conformance driver" thm
       in Z3_TAC_UNSAT thm end
@@ -177,6 +231,7 @@ let
   val observed_logic = #logic state
   val queries = #queries state
   val assertions = z3_tac_query_assertions queries
+  val assumptions = z3_tac_query_assumptions queries
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
       (z3_tac_query_fragment_terms queries)
@@ -202,7 +257,7 @@ in
            "queries=" ^ Int.toString (List.length queries)]
     | NONE =>
       let
-        val goal = z3_tac_goal assertions
+        val goal = z3_tac_goal queries assertions
         (* Reconstruction failures are the only place a theory-family gate
            may fire: checked Z3_TAC re-proves whatever it can (e.g. abstract
            FloatingPoint equalities, bvsmulo via th-lemma-bv), and we die
@@ -235,7 +290,9 @@ in
             z3_tac_emit "Z3_TAC_PASS"
               (common_fields @
                ["result=unsat",
-                "theorem=" ^ Library.thm_to_string thm])
+                "theorem=" ^ Library.thm_to_string thm] @
+               z3_tac_unsat_response_fields thm queries assumptions
+                 (#named_assertions state))
         | Z3_TAC_SAT =>
             z3_tac_emit "Z3_TAC_PASS" (common_fields @ ["result=sat"])
         | Z3_TAC_UNKNOWN NONE =>

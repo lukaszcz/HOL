@@ -2293,8 +2293,6 @@ local
       let
         val command_state = dest_state "get-unsat-assumptions" state
         val _ = Library.expect_token ")" (get_token ())
-        val _ = query_warning "get-unsat-assumptions"
-          "unsat-assumption extraction is not implemented"
       in
         parse_commands get_token
           (SOME (add_query QueryGetUnsatAssumptions command_state))
@@ -2303,8 +2301,6 @@ local
       let
         val command_state = dest_state "get-unsat-core" state
         val _ = Library.expect_token ")" (get_token ())
-        val _ = query_warning "get-unsat-core"
-          "unsat-core extraction is not implemented"
       in
         parse_commands get_token
           (SOME (add_query QueryGetUnsatCore command_state))
@@ -3737,16 +3733,12 @@ local
           let
             val command_state =
               dest_typecheck_state "get-unsat-assumptions" state
-            val _ = query_warning "get-unsat-assumptions"
-              "unsat-assumption extraction is not implemented"
           in
             finish (add_typechecked_query QueryGetUnsatAssumptions command_state)
           end
       | CmdGetUnsatCore =>
           let
             val command_state = dest_typecheck_state "get-unsat-core" state
-            val _ = query_warning "get-unsat-core"
-              "unsat-core extraction is not implemented"
           in
             finish (add_typechecked_query QueryGetUnsatCore command_state)
           end

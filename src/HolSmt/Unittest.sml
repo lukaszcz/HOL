@@ -3141,6 +3141,17 @@ in
     (fn () =>
       Z3.check_reconstructed_theorem "unit-test"
         (([], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  ignore (Z3.check_reconstructed_theorem "unit-test"
+    (([boolSyntax.T], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  expect_failure "extra hypothesis with allowed assumptions"
+    "unexpected hypotheses: [T]"
+    (fn () =>
+      Z3.check_reconstructed_theorem "unit-test"
+        (([boolSyntax.F], boolSyntax.T), Thm.ASSUME boolSyntax.T));
+  expect_failure "allowed assumption details" "allowed hypotheses: [F]"
+    (fn () =>
+      Z3.check_reconstructed_theorem "unit-test"
+        (([boolSyntax.F], boolSyntax.T), Thm.ASSUME boolSyntax.T));
   expect_failure "conclusion mismatch" "parsed assertion-negation goal" (fn () =>
     Z3.check_reconstructed_theorem "unit-test"
       (([], boolSyntax.F), boolTheory.TRUTH))

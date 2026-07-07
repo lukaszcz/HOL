@@ -329,13 +329,28 @@ def validate_implementation_obligation(value: object, label: str) -> None:
 
 def validate_expected_result(value: object, label: str) -> str:
     require(isinstance(value, dict), f"{label} must be an object")
-    allowed = {"status", "diagnostic", "failure_phase", "theorem_shape", "proof_rule_histogram", "notes"}
+    allowed = {
+        "status",
+        "diagnostic",
+        "failure_phase",
+        "theorem_shape",
+        "proof_rule_histogram",
+        "notes",
+        "unsat_core",
+        "unsat_assumptions",
+    }
     extra = sorted(set(value) - allowed)
     require(not extra, f"{label} has unknown field(s): {', '.join(extra)}")
     require("status" in value, f"{label} is missing status")
     status = value["status"]
     require(status in V2_STATUSES, f"{label}.status must be one of {sorted(V2_STATUSES)}")
-    for string_field in ("diagnostic", "theorem_shape", "notes"):
+    for string_field in (
+        "diagnostic",
+        "theorem_shape",
+        "notes",
+        "unsat_core",
+        "unsat_assumptions",
+    ):
         if string_field in value:
             require_string(value[string_field], f"{label}.{string_field}", allow_empty=string_field == "notes")
     if "failure_phase" in value:

@@ -1,41 +1,6 @@
 {
-  "complete_audit_red_count": 1218,
+  "complete_audit_red_count": 1216,
   "complete_audit_red_obligations": [
-    {
-      "category": "implementation_obligation",
-      "code": "red_implementation_obligation",
-      "details": {
-        "failure_phase": "theorem-shape",
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "command:check-sat-assuming:reconstruction"
-        ]
-      },
-      "message": "red expected row requires implementation work for command-reconstruction:check-sat-assuming",
-      "severity": "error",
-      "subject": "case/command:check-sat-assuming:reconstruction:z3-tac"
-    },
-    {
-      "category": "implementation_obligation",
-      "code": "red_implementation_obligation",
-      "details": {
-        "failure_phase": "theorem-shape",
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "test_ids": [
-          "command:get-unsat-assumptions-get-unsat-core:reconstruction"
-        ]
-      },
-      "message": "red expected row requires implementation work for command-reconstruction:get-unsat-assumptions-get-unsat-core",
-      "severity": "error",
-      "subject": "case/command:get-unsat-assumptions-get-unsat-core:reconstruction:z3-tac"
-    },
     {
       "category": "implementation_obligation",
       "code": "red_implementation_obligation",
@@ -22730,58 +22695,8 @@
       "subject": "case/theory:Z3_Extensions:set:unsat-proof:typecheck-only"
     }
   ],
-  "manifest_red_count": 1218,
+  "manifest_red_count": 1216,
   "manifest_red_obligations": [
-    {
-      "case": "command:check-sat-assuming:reconstruction",
-      "class": "command",
-      "diagnostic": "check-sat-assuming is outside checked Z3_TAC command-line entry point",
-      "features": [
-        "command-case:reconstruction",
-        "command-group:check-sat-assuming",
-        "command:check-sat-assuming"
-      ],
-      "implementation_obligation": {
-        "failure_phase": "theorem-shape",
-        "feature": "command-reconstruction:check-sat-assuming",
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "notes": "Generated red seed row; keep red until executable evidence is added.",
-        "test_ids": [
-          "command:check-sat-assuming:reconstruction"
-        ]
-      },
-      "logic": "QF_UF",
-      "mode": "z3-tac"
-    },
-    {
-      "case": "command:get-unsat-assumptions-get-unsat-core:reconstruction",
-      "class": "command",
-      "diagnostic": "raw SMT-LIB query get-unsat-core is outside checked Z3_TAC command-line entry point",
-      "features": [
-        "command-case:reconstruction",
-        "command-group:get-unsat-assumptions-get-unsat-core",
-        "command:get-unsat-assumptions",
-        "command:get-unsat-core"
-      ],
-      "implementation_obligation": {
-        "failure_phase": "theorem-shape",
-        "feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
-        "files": [
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "notes": "Unsat-core and unsat-assumption commands are parsed and tracked, but the checked Z3_TAC entry point does not implement extraction/replay response objects.",
-        "test_ids": [
-          "command:get-unsat-assumptions-get-unsat-core:reconstruction"
-        ]
-      },
-      "logic": "QF_UF",
-      "mode": "z3-tac"
-    },
     {
       "case": "external-benchmark:external-missing-pinned-benchmark-evidence",
       "class": "external-benchmark",
@@ -64437,39 +64352,6 @@
   ],
   "obligations": [
     {
-      "case": "command:check-sat-assuming:reconstruction",
-      "class": "command",
-      "failure_phase": "theorem-shape",
-      "implementation_files": [
-        "src/HolSmt/SmtLib_Parser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "QF_UF",
-      "missing_feature": "command-reconstruction:check-sat-assuming",
-      "mode": "z3-tac",
-      "source": "manifest",
-      "test_ids": [
-        "command:check-sat-assuming:reconstruction"
-      ]
-    },
-    {
-      "case": "command:get-unsat-assumptions-get-unsat-core:reconstruction",
-      "class": "command",
-      "failure_phase": "theorem-shape",
-      "implementation_files": [
-        "src/HolSmt/SmtLib_Parser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml",
-        "src/HolSmt/z3_tac_driver.sml"
-      ],
-      "logic": "QF_UF",
-      "missing_feature": "command-reconstruction:get-unsat-assumptions-get-unsat-core",
-      "mode": "z3-tac",
-      "source": "manifest",
-      "test_ids": [
-        "command:get-unsat-assumptions-get-unsat-core:reconstruction"
-      ]
-    },
-    {
       "case": "external-benchmark:external-missing-pinned-benchmark-evidence",
       "class": "external-benchmark",
       "failure_phase": "solver",
@@ -87663,7 +87545,7 @@
     "FP": 466,
     "advanced theory lemmas": 23,
     "arrays": 1,
-    "check-sat-assuming": 1,
+    "check-sat-assuming": 0,
     "datatypes": 10,
     "external benchmarks": 2,
     "function sorts": 0,
@@ -87672,7 +87554,7 @@
     "seq/set/bag": 166,
     "strings/regex": 335,
     "th-lemma-basic": 0,
-    "unsat core/assumptions": 1
+    "unsat core/assumptions": 0
   },
   "schema": "holsmt-red-obligation-summary-v1"
 }

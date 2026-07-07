@@ -1,7 +1,7 @@
 # HolSmt Complete SMT-LIB Conformance
 
 - Status: `red-obligations`
-- Red obligations: 1252
+- Red obligations: 1250
 - Unexpected regressions: 0
 - Infrastructure errors: 0
 - Nonzero exit reasons: red-obligations
@@ -34,7 +34,7 @@
 | `conformance-z3-oracle` | `conformance` | `pass` | 0 |
 | `conformance-proof-parse` | `conformance` | `pass` | 0 |
 | `conformance-proof-replay` | `conformance` | `pass` | 0 |
-| `conformance-z3-tac` | `conformance` | `pass` | 0 |
+| `conformance-z3-tac` | `conformance` | `fail` | 1 |
 | `external-parser-only` | `external-conformance` | `pass` | 0 |
 | `external-typecheck-only` | `external-conformance` | `pass` | 0 |
 | `external-z3-oracle` | `external-conformance` | `pass` | 0 |

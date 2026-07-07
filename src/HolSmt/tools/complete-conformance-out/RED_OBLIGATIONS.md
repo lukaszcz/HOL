@@ -1,7 +1,7 @@
 # HolSmt Red Obligation Summary
 
-- Manifest red rows: 1218
-- Complete-audit red rows: 1218
+- Manifest red rows: 1216
+- Complete-audit red rows: 1216
 - Proof-audit red rows: 34
 - Full machine-readable obligation rows are in `red-obligations.json`.
 
@@ -17,8 +17,8 @@
 | seq/set/bag | 166 |
 | th-lemma-basic | 0 |
 | advanced theory lemmas | 23 |
-| check-sat-assuming | 1 |
-| unsat core/assumptions | 1 |
+| check-sat-assuming | 0 |
+| unsat core/assumptions | 0 |
 | missing logic packets | 0 |
 | real proof occurrences | 34 |
 | external benchmarks | 2 |
@@ -27,8 +27,6 @@
 
 | Source | Case | Mode | Class | Logic | Missing feature | Failure phase | Files | Test IDs |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| `manifest` | `command:check-sat-assuming:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:check-sat-assuming` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml | command:check-sat-assuming:reconstruction |
-| `manifest` | `command:get-unsat-assumptions-get-unsat-core:reconstruction` | `z3-tac` | `command` | `QF_UF` | `command-reconstruction:get-unsat-assumptions-get-unsat-core` | `theorem-shape` | src/HolSmt/SmtLib_Parser.sml, src/HolSmt/Z3_ProofReplay.sml, src/HolSmt/z3_tac_driver.sml | command:get-unsat-assumptions-get-unsat-core:reconstruction |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `parser-only` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `external-benchmark:external-missing-pinned-benchmark-evidence` | `z3-oracle` | `external-benchmark` | `QF_UF` | `external:missing-pinned-benchmark-evidence` | `solver` | src/HolSmt/tools/external-benchmarks/pinned/manifest.json, src/HolSmt/tools/import_external_benchmarks.py | external-benchmark:external-missing-pinned-benchmark-evidence |
 | `manifest` | `proof-rule:th-lemma-datatype` | `proof-parse` | `proof-rule` | `QF_UF` | `proof-rule:th-lemma-datatype` | `proof-replay` | src/HolSmt/Unittest.sml, src/HolSmt/Z3_ProofParser.sml, src/HolSmt/Z3_ProofReplay.sml | proof-rule:th-lemma-datatype |
@@ -327,4 +325,6 @@
 | `manifest` | `theory:FloatingPoint:fp.abs:sat` | `z3-tac` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:sat` | `solver` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:sat |
 | `manifest` | `theory:FloatingPoint:fp.abs:type-error` | `typecheck-only` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:type-error |
 | `manifest` | `theory:FloatingPoint:fp.abs:type-error` | `z3-tac` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:type-error` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:type-error |
-| ... | ... | ... | ... | ... | ... | ... | ... | 952 more in JSON |
+| `manifest` | `theory:FloatingPoint:fp.abs:unsat-proof` | `typecheck-only` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:unsat-proof` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:unsat-proof |
+| `manifest` | `theory:FloatingPoint:fp.abs:unsat-proof` | `z3-oracle` | `theory` | `QF_FP` | `theory-symbol:FloatingPoint:fp.abs:unsat-proof` | `typecheck` | src/HolSmt/HolSmtScript.sml, src/HolSmt/SmtLib.sml, src/HolSmt/SmtLib_Theories.sml, src/HolSmt/Z3_ProofReplay.sml | theory:FloatingPoint:fp.abs:unsat-proof |
+| ... | ... | ... | ... | ... | ... | ... | ... | 950 more in JSON |
