@@ -1250,7 +1250,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "z3_tac_goal assertions = (assertions, boolSyntax.F)"
+          "match": "fun z3_tac_goal queries assertions ="
         }
       ],
       "notes": "Covers assumption preservation and checked Z3_TAC replay with assumptions as HOL hypotheses."

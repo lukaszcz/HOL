@@ -125,6 +125,14 @@ New features
     files* sub-section of *Maintaining HOL Formalizations with
     Holmake* in the Description manual.
 
+-   `HolSmt` has substantially expanded checked SMT-LIB coverage:
+    ArraysEx select/store and nonlinear arithmetic now have native
+    checked Z3 proof replay paths, and the SMT-LIB command frontend
+    covers the current command-completeness matrix, including scoped
+    assertion commands, `check-sat-assuming`, unsat cores,
+    unsat assumptions, recursive function commands on the legacy
+    path, and model-query passthrough in oracle mode.
+
 Bugs fixed
 ----------
 
@@ -195,13 +203,13 @@ Incompatibilities
     In particular, users are recommended to *not* directly open `realaxTheory` (an intermediate
     theory for constructing real numbers), in which all useful theorems should be also covered by
    `realTheory` (under same or different theorem names).
-  
+
 |  Old name       | New name           | Statements                                    |
 | --------------- | ------------------ | --------------------------------------------- |
 | `REAL_LE_SUP'`  | `REAL_LE_SUP2`     | `!s a b y. y IN s /\ a <= y /\ (!x. x IN s ==> x <= b) ==> a <= sup s` |
 | `REAL_LE_MUL'`  | `REAL_LE_MUL_NEG`  | `!x y. x <= 0 /\ y <= 0 ==> 0 <= x * y`       |
 | `REAL_LT_MUL'`  | `REAL_LT_MUL_NEG`  | `!x y. x < 0 /\ y < 0 ==> 0 < x * y`          |
-| `REAL_LT_LMUL'` | `REAL_LT_LMUL_NEG` | `!x y z. x < 0 ==> (x * y < x * z <=> z < y)` | 
+| `REAL_LT_LMUL'` | `REAL_LT_LMUL_NEG` | `!x y z. x < 0 ==> (x * y < x * z <=> z < y)` |
 | `REAL_LT_RMUL'` | `REAL_LT_RMUL_NEG` | `!x y z. z < 0 ==> (x * z < y * z <=> y < x)` |
 
 -   For better compatibility with HOL Light (making code-porting easier), arithmetic theory’s `GREATER_EQ` theorem (stating *m ≥ n ⇔ n ≤ m*) is now also available in that theory under the name `GE`.
