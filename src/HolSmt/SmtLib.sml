@@ -1147,6 +1147,30 @@ local
       (Conv.THENC (Conv.SUB_CONV NUM_TO_INT_CONV, conv_term)) tm
   end
 
+  fun num_binder_to_int_once_conv tm =
+  let
+    fun is_num_var v = Type.compare (Term.type_of v, numSyntax.num) = EQUAL
+    val is_num_forall =
+      boolSyntax.is_forall tm andalso
+      is_num_var (Lib.fst (boolSyntax.dest_forall tm))
+    val is_num_exists =
+      boolSyntax.is_exists tm andalso
+      is_num_var (Lib.fst (boolSyntax.dest_exists tm))
+  in
+    if is_num_forall then
+      Conv.HO_REWR_CONV HolSmtTheory.NUM_FORALL_TO_INT tm
+    else if is_num_exists then
+      Conv.HO_REWR_CONV HolSmtTheory.NUM_EXISTS_TO_INT tm
+    else
+      Conv.NO_CONV tm
+  end
+
+  fun NUM_BINDERS_TO_INT_CONV tm =
+    Conv.THENC
+      (Conv.TOP_DEPTH_CONV num_binder_to_int_once_conv,
+       Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
   local
     structure A = arithmeticTheory
     structure I = integerTheory
@@ -1311,6 +1335,7 @@ in
     end
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
+  val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
 
   (* Applies NUM_TO_INT_CONV to both the assumptions and the conclusion *)
   val NUM_TO_INT_TAC =
@@ -1319,6 +1344,15 @@ in
   in
     RULE_ASSUM_TAC (Conv.CONV_RULE NUM_TO_INT_CONV) THEN
     CONV_TAC NUM_TO_INT_CONV
+  end
+
+  (* Relativizes num-typed binders to guarded int-typed binders. *)
+  val NUM_BINDERS_TO_INT_TAC =
+  let
+    open Tactic Tactical
+  in
+    RULE_ASSUM_TAC (Conv.CONV_RULE NUM_BINDERS_TO_INT_CONV) THEN
+    CONV_TAC NUM_BINDERS_TO_INT_CONV
   end
 
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT

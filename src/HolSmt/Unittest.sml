@@ -210,9 +210,77 @@ in
   ()
 end
 
+fun assert_no_hyps (label, thm) =
+  assert (List.null (Thm.hyp thm),
+    label ^ " produced a theorem with hypotheses")
+
+fun assert_concl_alpha (label, thm, expected) =
+  let val actual = Thm.concl thm
+  in
+    assert (actual ~~ expected,
+      label ^ " conclusion mismatch\nexpected: " ^
+      term_with_types expected ^ "\nactual: " ^ term_with_types actual)
+  end
+
+fun assert_num_binder_conv (label, input, expected) =
+  let
+    val thm = SmtLib.NUM_BINDERS_TO_INT_CONV input
+    val expected_concl = boolSyntax.mk_eq (input, expected)
+  in
+    assert_no_hyps (label, thm);
+    assert_concl_alpha (label, thm, expected_concl)
+  end
+
 (*****************************************************************************)
 (* test definitions                                                          *)
 (*****************************************************************************)
+
+fun num_binder_transfer_lemmas_success () =
+  let
+    val forall_expected =
+      ``!P :num -> bool.
+          (!n :num. P n) <=> (!i :int. 0 <= i ==> P (Num i))``
+    val exists_expected =
+      ``!P :num -> bool.
+          (?n :num. P n) <=> (?i :int. 0 <= i /\ P (Num i))``
+  in
+    assert_no_hyps ("NUM_FORALL_TO_INT", HolSmtTheory.NUM_FORALL_TO_INT);
+    assert_no_hyps ("NUM_EXISTS_TO_INT", HolSmtTheory.NUM_EXISTS_TO_INT);
+    assert_concl_alpha
+      ("NUM_FORALL_TO_INT", HolSmtTheory.NUM_FORALL_TO_INT,
+       forall_expected);
+    assert_concl_alpha
+      ("NUM_EXISTS_TO_INT", HolSmtTheory.NUM_EXISTS_TO_INT,
+       exists_expected)
+  end
+
+fun num_binder_relativization_forall_success () =
+  assert_num_binder_conv
+    ("num forall binder relativization",
+     ``!n :num. n = n``,
+     ``!i :int. 0 <= i ==> Num i = Num i``)
+
+fun num_binder_relativization_exists_success () =
+  assert_num_binder_conv
+    ("num exists binder relativization",
+     ``?n :num. n = 0``,
+     ``?i :int. 0 <= i /\ Num i = 0``)
+
+fun num_binder_relativization_nested_mixed_success () =
+  assert_num_binder_conv
+    ("nested mixed num binder relativization",
+     ``!n :num. !j :int. ?m :num. j <= &m /\ n <= m``,
+     ``!i :int.
+         0 <= i ==>
+         !j :int.
+           ?k :int.
+             0 <= k /\ j <= &(Num k) /\ Num i <= Num k``)
+
+fun num_binder_relativization_non_num_noop_success () =
+  assert_num_binder_conv
+    ("non-num binder relativization no-op",
+     ``!i :int. i <= i``,
+     ``!i :int. i <= i``)
 
 (* Test: `Z3_ProofReplay.remove_definitions` works without any definitions *)
 fun remove_defs_no_defs () = ([], [])
@@ -3431,6 +3499,16 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("num_binder_transfer_lemmas_success",
+      num_binder_transfer_lemmas_success),
+    ("num_binder_relativization_forall_success",
+      num_binder_relativization_forall_success),
+    ("num_binder_relativization_exists_success",
+      num_binder_relativization_exists_success),
+    ("num_binder_relativization_nested_mixed_success",
+      num_binder_relativization_nested_mixed_success),
+    ("num_binder_relativization_non_num_noop_success",
+      num_binder_relativization_non_num_noop_success),
     ("remove_definitions_no_defs", fn () => remove_defs_test remove_defs_no_defs),
     ("remove_definitions_dup", fn () => remove_defs_test remove_defs_dup),
     ("remove_definitions_tricky1", fn () => remove_defs_test remove_defs_tricky1),

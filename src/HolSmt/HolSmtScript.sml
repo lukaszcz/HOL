@@ -96,6 +96,15 @@ Ancestors[qualified]
   val _ = s ("SKOLEM_FORALL", P ``?a. ~(!x. P x) <=> ~(P a)``)
   val _ = s ("SKOLEM_EXISTS", P ``?a. (?x. P x) <=> P a``)
 
+  val _ = s ("NUM_FORALL_TO_INT",
+    M [integerTheory.INT_POS, integerTheory.NUM_OF_INT,
+       integerTheory.INT_OF_NUM]
+      ``!P. (!n :num. P n) <=> (!i :int. 0 <= i ==> P (Num i))``)
+  val _ = s ("NUM_EXISTS_TO_INT",
+    M [integerTheory.INT_POS, integerTheory.NUM_OF_INT,
+       integerTheory.INT_OF_NUM]
+      ``!P. (?n :num. P n) <=> (?i :int. 0 <= i /\ P (Num i))``)
+
   (* used for Z3's proof rule def-axiom *)
 
   val _ = s ("d001", T ``~(p <=> q) \/ ~p \/ q``)
