@@ -40,6 +40,9 @@
     "require_no_oracles": false,
     "require_replay_success": false,
     "required_rule_occurrences": [
+      "def-axiom",
+      "hypothesis",
+      "lemma",
       "th-lemma-arith",
       "th-lemma-array",
       "th-lemma-nonlinear-arith"

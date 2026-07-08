@@ -55,9 +55,23 @@
       "inferred_rules": [
         "th-lemma-nonlinear-arith"
       ]
+    },
+    {
+      "id": "theory:Fixed_Size_BitVectors:bvsaddo:unsat-proof",
+      "family": "v2-theory-bv",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_fixed_size_bitvectors_bvsaddo_unsat_proof.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "def-axiom",
+        "hypothesis",
+        "lemma"
+      ]
     }
   ],
   "required_rule_occurrences": [
+    "def-axiom",
+    "hypothesis",
+    "lemma",
     "th-lemma-array",
     "th-lemma-arith",
     "th-lemma-nonlinear-arith"

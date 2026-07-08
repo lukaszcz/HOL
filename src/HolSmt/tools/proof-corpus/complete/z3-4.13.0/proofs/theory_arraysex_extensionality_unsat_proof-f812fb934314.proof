@@ -26,3 +26,4 @@
  ))
  (let ((@x47 (mp~ (mp (asserted $x29) (rewrite (= $x29 $x29)) $x29) (nnf-pos (proof-bind ?x43) (~ $x29 $x29)) $x29)))
  (unit-resolution ((_ quant-inst ((_ array-ext 0) a b)) (or (not $x467) $x482)) (mp @x47 (quant-intro (proof-bind ?x470) (= $x29 $x467)) $x467) @x499 false))))))))))))))
+

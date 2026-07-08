@@ -30,3 +30,4 @@
  (let ((@x37 (asserted $x36)))
  (let ((@x115 (mp @x37 (trans @x110 (rewrite (= (not (not $x102)) $x102)) (= $x36 $x102)) $x102)))
  (unit-resolution ((_ th-lemma arith) (not $x71)) (mp @x115 @x125 $x71) false))))))))))))))))))))))))))))))))
+

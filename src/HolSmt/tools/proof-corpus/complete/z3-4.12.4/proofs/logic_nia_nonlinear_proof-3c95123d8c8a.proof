@@ -14,3 +14,4 @@
  (let (($x45 (not $x32)))
  (let ((@x46 (not-or-elim @x38 $x45)))
  (unit-resolution ((_ th-lemma arith) (or $x67 (not $x28) $x32)) (mp (and-elim @x39 $x28) (rewrite (= $x28 $x28)) $x28) (mp @x46 (rewrite (= $x45 $x45)) $x45) @x75 false))))))))))))))))
+

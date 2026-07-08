@@ -3,21 +3,24 @@
     "th-lemma-nonlinear-arith": 3
   },
   "aggregate_rule_histogram": {
-    "and-elim": 2,
-    "asserted": 6,
-    "monotonicity": 3,
-    "mp": 9,
+    "and-elim": 4,
+    "asserted": 7,
+    "def-axiom": 8,
+    "hypothesis": 1,
+    "lemma": 1,
+    "monotonicity": 15,
+    "mp": 26,
     "mp~": 1,
     "nnf-pos": 1,
-    "not-or-elim": 2,
+    "not-or-elim": 4,
     "proof-bind": 2,
     "quant-inst": 1,
     "quant-intro": 1,
-    "rewrite": 12,
+    "rewrite": 40,
     "th-lemma-arith": 3,
     "th-lemma-array": 1,
-    "trans": 4,
-    "unit-resolution": 6
+    "trans": 13,
+    "unit-resolution": 17
   },
   "aggregate_theory_lemma_histogram": {
     "arith:<none>": 2,
@@ -27,6 +30,9 @@
   "discovered_rules": [
     "and-elim",
     "asserted",
+    "def-axiom",
+    "hypothesis",
+    "lemma",
     "monotonicity",
     "mp",
     "mp~",
@@ -45,15 +51,16 @@
     "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
     "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_arraysex_extensionality_unsat_proof.smt2",
     "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_nia_nonlinear_proof.smt2",
-    "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_qf_nra_nonlinear_proof.smt2"
+    "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_qf_nra_nonlinear_proof.smt2",
+    "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_fixed_size_bitvectors_bvsaddo_unsat_proof.smt2"
   ],
-  "entry_count": 4,
+  "entry_count": 5,
   "inferred_rules": [
     "th-lemma-nonlinear-arith"
   ],
   "kind": "proof-corpus-summary",
   "malformed_fragment_count": 0,
-  "proof_count": 4,
+  "proof_count": 5,
   "proof_rule_support": {
     "parse_only": [
       "proof-bind"
@@ -124,25 +131,31 @@
         "th-lemma-nonlinear-arith"
       ],
       "rule_histogram": {
-        "and-elim": 2,
-        "asserted": 6,
-        "monotonicity": 3,
-        "mp": 9,
+        "and-elim": 4,
+        "asserted": 7,
+        "def-axiom": 8,
+        "hypothesis": 1,
+        "lemma": 1,
+        "monotonicity": 15,
+        "mp": 26,
         "mp~": 1,
         "nnf-pos": 1,
-        "not-or-elim": 2,
+        "not-or-elim": 4,
         "proof-bind": 2,
         "quant-inst": 1,
         "quant-intro": 1,
-        "rewrite": 12,
+        "rewrite": 40,
         "th-lemma-arith": 3,
         "th-lemma-array": 1,
-        "trans": 4,
-        "unit-resolution": 6
+        "trans": 13,
+        "unit-resolution": 17
       },
       "rules": [
         "and-elim",
         "asserted",
+        "def-axiom",
+        "hypothesis",
+        "lemma",
         "monotonicity",
         "mp",
         "mp~",
@@ -179,8 +192,8 @@
   "unknown_rule_coverage": [],
   "z3_versions": [
     {
-      "entry_count": 4,
-      "proof_count": 4,
+      "entry_count": 5,
+      "proof_count": 5,
       "version": "4.13.0"
     }
   ]

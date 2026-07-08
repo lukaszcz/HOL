@@ -262,17 +262,39 @@ for version in "${selected_versions[@]}"; do
   proof_out="$report_dir/proofs/z3-$version"
   mkdir -p "$proof_out"
   if z3_path=$(z3_for_version "$version"); then
+    proof_cases=()
+    proof_requirements=(
+      --require-rule-occurrence th-lemma-array
+      --require-rule-occurrence th-lemma-arith
+      --require-rule-occurrence th-lemma-nonlinear-arith
+    )
+    case "$version" in
+      4.11.2)
+        proof_cases+=(
+          --case-id minimal_bool_unsat
+          --case-id theory:ArraysEx:extensionality:unsat-proof
+          --case-id logic:NIA:nonlinear-proof
+          --case-id logic:QF_NRA:nonlinear-proof
+        )
+        ;;
+      4.12.4|4.13.0|4.14.1|4.15.3)
+        proof_requirements+=(
+          --require-rule-occurrence def-axiom
+          --require-rule-occurrence hypothesis
+          --require-rule-occurrence lemma
+        )
+        ;;
+    esac
     run_step "proof-z3-$version" proof-version python3 "$script_dir/record_z3_proof_corpus.py" \
       --z3 "$z3_path" \
       --z3-version "$version" \
       --out "$proof_out" \
       --timeout "$timeout_seconds" \
       --complete-corpus-manifest "$proof_manifest" \
+      "${proof_cases[@]}" \
       --gate-report rule-gate.json \
       --fail-on-unknown-rules \
-      --require-rule-occurrence th-lemma-array \
-      --require-rule-occurrence th-lemma-arith \
-      --require-rule-occurrence th-lemma-nonlinear-arith \
+      "${proof_requirements[@]}" \
       --require-theory-subkind 'array:<none>' \
       --minimized-repro-dir "$report_dir/minimized-repros/proofs/z3-$version"
   else
