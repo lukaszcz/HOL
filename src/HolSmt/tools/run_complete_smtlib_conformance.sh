@@ -270,18 +270,30 @@ for version in "${selected_versions[@]}"; do
     )
     case "$version" in
       4.11.2)
+        proof_requirements+=(
+          --require-rule-occurrence commutativity
+          --require-rule-occurrence elim-unused
+          --require-rule-occurrence sk
+        )
         proof_cases+=(
           --case-id minimal_bool_unsat
           --case-id theory:ArraysEx:extensionality:unsat-proof
           --case-id logic:NIA:nonlinear-proof
           --case-id logic:QF_NRA:nonlinear-proof
+          --case-id proof-rule:commutativity-symm-trans-star:real-proof-occurrence
+          --case-id proof-rule:elim-unused:real-proof-occurrence
+          --case-id proof-rule:sk:real-proof-occurrence
         )
         ;;
       4.12.4|4.13.0|4.14.1|4.15.3)
         proof_requirements+=(
           --require-rule-occurrence def-axiom
+          --require-rule-occurrence elim-unused
           --require-rule-occurrence hypothesis
           --require-rule-occurrence lemma
+          --require-rule-occurrence sk
+          --require-rule-occurrence symm
+          --require-rule-occurrence "trans*"
         )
         ;;
     esac

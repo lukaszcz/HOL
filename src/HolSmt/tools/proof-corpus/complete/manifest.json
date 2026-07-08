@@ -66,15 +66,49 @@
         "hypothesis",
         "lemma"
       ]
+    },
+    {
+      "id": "proof-rule:commutativity-symm-trans-star:real-proof-occurrence",
+      "family": "v2-proof-rule-residual",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_commutativity_symm_trans_star.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "commutativity",
+        "symm",
+        "trans*"
+      ]
+    },
+    {
+      "id": "proof-rule:elim-unused:real-proof-occurrence",
+      "family": "v2-proof-rule-residual",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_elim_unused.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "elim-unused"
+      ]
+    },
+    {
+      "id": "proof-rule:sk:real-proof-occurrence",
+      "family": "v2-proof-rule-residual",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_skolem.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "sk"
+      ]
     }
   ],
   "required_rule_occurrences": [
+    "commutativity",
     "def-axiom",
+    "elim-unused",
     "hypothesis",
     "lemma",
+    "sk",
+    "symm",
     "th-lemma-array",
     "th-lemma-arith",
-    "th-lemma-nonlinear-arith"
+    "th-lemma-nonlinear-arith",
+    "trans*"
   ],
   "required_theory_subkinds": [
     "array:<none>"

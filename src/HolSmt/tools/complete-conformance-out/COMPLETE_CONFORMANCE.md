@@ -1,7 +1,7 @@
 # HolSmt Complete SMT-LIB Conformance
 
 - Status: `red-obligations`
-- Red obligations: 1236
+- Red obligations: 1228
 - Unexpected regressions: 0
 - Infrastructure errors: 0
 - Nonzero exit reasons: red-obligations

@@ -1,0 +1,5 @@
+((set-logic UF)
+(proof
+(let (($x24 (forall ((x Bool) )(! false :qid k!3))
+))
+(mp (asserted $x24) (elim-unused (= $x24 false)) false))))

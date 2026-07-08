@@ -1,0 +1,8 @@
+(set-option :produce-proofs true)
+(set-logic UF)
+(declare-sort U 0)
+(declare-fun P (U) Bool)
+(assert (exists ((x U)) (P x)))
+(assert (forall ((y U)) (not (P y))))
+(check-sat)
+(get-proof)

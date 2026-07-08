@@ -27,6 +27,32 @@
       "input": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_arraysex_extensionality_unsat_proof.smt2",
       "rule": "proof-bind",
       "z3_version": "4.11.2"
+    },
+    {
+      "artifacts": {
+        "effective_input_sha256": "016e9f608eae948f4c9b55b813b329a0f997324800902eddd23e195738445ae0",
+        "input_sha256": "016e9f608eae948f4c9b55b813b329a0f997324800902eddd23e195738445ae0",
+        "proof_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/proofs/proof_rule_residual_skolem-016e9f608eae.proof",
+        "proof_sha256": "eb35c3bd88ed7a2df263fe39185e69da82ec062ae13a3861aad71691fbd7f15e",
+        "stderr_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stderr",
+        "stdout_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stdout"
+      },
+      "contexts": [
+        {
+          "column": 78,
+          "context": "...(not (P y)))))\\n ))\\n (let ((@x48 (mp~ (mp (asserted $x29) (rewrite (= $x29 $x29)) $x29) (nnf-pos (proof-bind ?x44) (~ $x29 $x29)) $x29)))\\n (let (($x38 (P x!0)))\\n (let (($x26 (exists ((x U) )(! (P x) :qid k!5))\\n...",
+          "line": 14
+        },
+        {
+          "column": 95,
+          "context": "...)\\n (unit-resolution ((_ quant-inst x!0) (or (not $x468) (not $x38))) @x41 (mp @x48 (quant-intro (proof-bind ?x471) (= $x29 $x468)) $x468) false)))))))))))\\n\\n",
+          "line": 19
+        }
+      ],
+      "count": 2,
+      "input": "src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_skolem.smt2",
+      "rule": "proof-bind",
+      "z3_version": "4.11.2"
     }
   ],
   "passed": true,
@@ -40,6 +66,9 @@
     "require_no_oracles": false,
     "require_replay_success": false,
     "required_rule_occurrences": [
+      "commutativity",
+      "elim-unused",
+      "sk",
       "th-lemma-arith",
       "th-lemma-array",
       "th-lemma-nonlinear-arith"
