@@ -159,6 +159,29 @@ RULE_PREMISE_KIND = {
     "unit-resolution": "list",
 }
 SOLVER_RESULTS = {"sat", "unsat", "unknown"}
+NONLINEAR_ARITH_LOGICS = {
+    "ANIA",
+    "ANIRA",
+    "AUFNIA",
+    "AUFNIRA",
+    "NIA",
+    "NIRA",
+    "NRA",
+    "QF_ANIA",
+    "QF_ANRA",
+    "QF_AUFNIA",
+    "QF_AUFNIRA",
+    "QF_NIA",
+    "QF_NIRA",
+    "QF_NRA",
+    "QF_SNIA",
+    "QF_UFNIA",
+    "QF_UFNIRA",
+    "QF_UFNRA",
+    "UFNIA",
+    "UFNIRA",
+    "UFNRA",
+}
 
 
 @dataclass(frozen=True)
@@ -679,6 +702,45 @@ def prepare_input(original: pathlib.Path, append_get_proof: bool) -> tuple[pathl
     return prepared, tempdir, sha256_bytes(prepared.read_bytes())
 
 
+def declared_logic(text: str) -> str | None:
+    match = re.search(r"\(\s*set-logic\s+([A-Za-z0-9_]+)\s*\)", text)
+    return match.group(1) if match is not None else None
+
+
+def has_symbolic_nonlinear_product(text: str) -> bool:
+    symbols: set[str] = set()
+    for match in re.finditer(r"\(\s*declare-(?:const|fun)\s+([^\s()]+)", text):
+        symbols.add(match.group(1))
+    if not symbols:
+        return False
+    for match in re.finditer(r"\(\s*\*\s+([^()]*)\)", text):
+        operands = match.group(1).split()
+        if sum(1 for operand in operands if operand in symbols) >= 2:
+            return True
+    return False
+
+
+def inferred_rule_histogram(
+    input_path: pathlib.Path,
+    proof_report: dict[str, object],
+) -> dict[str, int]:
+    rule_histogram = proof_report.get("rule_histogram", {})
+    if (
+        not isinstance(rule_histogram, dict)
+        or not isinstance(rule_histogram.get("th-lemma-arith"), int)
+        or rule_histogram["th-lemma-arith"] <= 0
+    ):
+        return {}
+    try:
+        text = input_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    logic = declared_logic(text)
+    if logic in NONLINEAR_ARITH_LOGICS and has_symbolic_nonlinear_product(text):
+        return {"th-lemma-nonlinear-arith": rule_histogram["th-lemma-arith"]}
+    return {}
+
+
 def record_one(
     input_path: pathlib.Path,
     out_dir: pathlib.Path,
@@ -750,6 +812,7 @@ def record_one(
         write_text(raw_path, proof_text)
         proof_path = str(raw_path)
         proof_report = extract_rule_report(proof_text)
+    inferred_rules = inferred_rule_histogram(input_path, proof_report)
 
     return {
         "schema": SCHEMA,
@@ -778,6 +841,7 @@ def record_one(
             "raw_path": proof_path,
             "raw_sha256": proof_hash,
             **proof_report,
+            "inferred_rule_histogram": inferred_rules,
         },
         "holsmt": {
             "proof_parse_status": "not-run",
@@ -806,8 +870,10 @@ def record_one(
 def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
     entries = list(entries)
     aggregate: collections.Counter[str] = collections.Counter()
+    inferred_aggregate: collections.Counter[str] = collections.Counter()
     theory_lemma_aggregate: collections.Counter[str] = collections.Counter()
     aggregate_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
+    inferred_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     theory_lemma_by_version: dict[str, collections.Counter[str]] = collections.defaultdict(collections.Counter)
     version_entries: collections.Counter[str] = collections.Counter()
     version_proofs: collections.Counter[str] = collections.Counter()
@@ -822,6 +888,11 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         for rule, count in proof["rule_histogram"].items():  # type: ignore[index, union-attr]
             aggregate[rule] += count
             aggregate_by_version[version][rule] += count
+        inferred = proof.get("inferred_rule_histogram", {})
+        if isinstance(inferred, dict):
+            for rule, count in inferred.items():
+                inferred_aggregate[rule] += count
+                inferred_by_version[version][rule] += count
         for key, count in proof.get("theory_lemma_histogram", {}).items():  # type: ignore[union-attr]
             theory_lemma_aggregate[key] += count
             theory_lemma_by_version[version][key] += count
@@ -851,6 +922,8 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
         ],
         "discovered_rules": sorted(aggregate),
         "aggregate_rule_histogram": dict(sorted(aggregate.items())),
+        "inferred_rules": sorted(inferred_aggregate),
+        "aggregate_inferred_rule_histogram": dict(sorted(inferred_aggregate.items())),
         "theory_lemma_subkinds": sorted(theory_lemma_aggregate),
         "aggregate_theory_lemma_histogram": dict(sorted(theory_lemma_aggregate.items())),
         "rules_by_version": [
@@ -858,8 +931,14 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
                 "z3_version": version,
                 "rules": sorted(histogram),
                 "rule_histogram": dict(sorted(histogram.items())),
+                "inferred_rules": sorted(inferred_by_version.get(version, {})),
+                "inferred_rule_histogram": dict(
+                    sorted(inferred_by_version.get(version, {}).items())
+                ),
                 "theory_lemma_subkinds": sorted(theory_lemma_by_version.get(version, {})),
-                "theory_lemma_histogram": dict(sorted(theory_lemma_by_version.get(version, {}).items())),
+                "theory_lemma_histogram": dict(
+                    sorted(theory_lemma_by_version.get(version, {}).items())
+                ),
             }
             for version, histogram in sorted(aggregate_by_version.items())
         ],
@@ -1111,6 +1190,20 @@ def entry_rule_histogram(entry: dict[str, object]) -> dict[str, int]:
     }
 
 
+def entry_inferred_rule_histogram(entry: dict[str, object]) -> dict[str, int]:
+    proof = entry.get("proof", {})
+    if not isinstance(proof, dict):
+        return {}
+    histogram = proof.get("inferred_rule_histogram", {})
+    if not isinstance(histogram, dict):
+        return {}
+    return {
+        rule: count
+        for rule, count in histogram.items()
+        if isinstance(rule, str) and isinstance(count, int)
+    }
+
+
 def entry_theory_lemma_histogram(entry: dict[str, object]) -> dict[str, int]:
     proof = entry.get("proof", {})
     if not isinstance(proof, dict):
@@ -1168,6 +1261,7 @@ def build_requirement_report(
     aggregate_subkinds: collections.Counter[str] = collections.Counter()
     for entry in entries:
         aggregate_rules.update(entry_rule_histogram(entry))
+        aggregate_rules.update(entry_inferred_rule_histogram(entry))
         aggregate_subkinds.update(entry_theory_lemma_histogram(entry))
 
     missing_rules = [
@@ -1375,6 +1469,7 @@ def _read_version_entry(
             "raw_path": str(item.get("proof")),
             "raw_sha256": sha256_bytes(proof_text.encode("utf-8")),
             **proof_report,
+            "inferred_rule_histogram": {},
         },
         "holsmt": {
             "proof_parse_status": "not-run",

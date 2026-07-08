@@ -19,7 +19,51 @@
         "asserted",
         "unit-resolution"
       ]
+    },
+    {
+      "id": "theory:ArraysEx:extensionality:unsat-proof",
+      "family": "v2-theory-array",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_arraysex_extensionality_unsat_proof.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-array"
+      ],
+      "required_theory_subkinds": [
+        "array:<none>"
+      ]
+    },
+    {
+      "id": "logic:NIA:nonlinear-proof",
+      "family": "v2-logic-nonlinear-arith",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_nia_nonlinear_proof.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-arith"
+      ],
+      "inferred_rules": [
+        "th-lemma-nonlinear-arith"
+      ]
+    },
+    {
+      "id": "logic:QF_NRA:nonlinear-proof",
+      "family": "v2-logic-nonlinear-arith",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_qf_nra_nonlinear_proof.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-arith"
+      ],
+      "inferred_rules": [
+        "th-lemma-nonlinear-arith"
+      ]
     }
+  ],
+  "required_rule_occurrences": [
+    "th-lemma-array",
+    "th-lemma-arith",
+    "th-lemma-nonlinear-arith"
+  ],
+  "required_theory_subkinds": [
+    "array:<none>"
   ],
   "required_artifacts": [
     "input_file",

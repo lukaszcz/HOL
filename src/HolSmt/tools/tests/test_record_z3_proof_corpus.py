@@ -164,6 +164,8 @@ class ProofRuleExtractionTests(unittest.TestCase):
             ]
         )
         self.assertEqual(summary["discovered_rules"], ["asserted", "unit-resolution"])
+        self.assertEqual(summary["inferred_rules"], [])
+        self.assertEqual(summary["aggregate_inferred_rule_histogram"], {})
         self.assertEqual(summary["proof_rule_support"]["parse_only"], ["proof-bind"])
         self.assertEqual(
             summary["rules_by_version"],
@@ -172,6 +174,8 @@ class ProofRuleExtractionTests(unittest.TestCase):
                     "z3_version": "2.19.1",
                     "rules": ["asserted"],
                     "rule_histogram": {"asserted": 1},
+                    "inferred_rules": [],
+                    "inferred_rule_histogram": {},
                     "theory_lemma_subkinds": [],
                     "theory_lemma_histogram": {},
                 },
@@ -179,6 +183,8 @@ class ProofRuleExtractionTests(unittest.TestCase):
                     "z3_version": "4.13.0",
                     "rules": ["asserted", "unit-resolution"],
                     "rule_histogram": {"asserted": 1, "unit-resolution": 1},
+                    "inferred_rules": [],
+                    "inferred_rule_histogram": {},
                     "theory_lemma_subkinds": [],
                     "theory_lemma_histogram": {},
                 },
@@ -282,6 +288,24 @@ class ProofRuleExtractionTests(unittest.TestCase):
         self.assertEqual(report["missing_theory_subkinds"], [{"theory_subkind": "arith:gomory"}])
         self.assertEqual(report["replay_failures"][0]["proof_replay_status"], "not-run")
         self.assertEqual(report["oracle_failures"], [])
+
+    def test_requirement_report_accepts_inferred_rule_occurrence(self):
+        proof = extract_rule_report("(proof ((_ th-lemma arith) (asserted a) false))")
+        item = entry("nonlinear.smt2", "4.13.0", proof)
+        item["proof"]["inferred_rule_histogram"] = {  # type: ignore[index]
+            "th-lemma-nonlinear-arith": 1
+        }
+
+        report = build_requirement_report(
+            [item],
+            required_rules=["th-lemma-nonlinear-arith"],
+            required_theory_subkinds=[],
+            require_replay_success=False,
+            require_no_oracles=False,
+        )
+
+        self.assertTrue(report["passed"])
+        self.assertEqual(report["missing_rule_occurrences"], [])
 
     def test_requirement_report_flags_oracle_tags(self):
         proof = extract_rule_report("(proof (asserted false))")

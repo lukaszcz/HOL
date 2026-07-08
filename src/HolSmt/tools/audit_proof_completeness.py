@@ -311,11 +311,21 @@ def real_proof_occurrences(path: Path | None) -> set[str]:
     require(isinstance(summary, dict), f"{path} root must be an object")
     discovered = summary.get("discovered_rules")
     histogram = summary.get("aggregate_rule_histogram")
+    inferred = summary.get("inferred_rules")
+    inferred_histogram = summary.get("aggregate_inferred_rule_histogram")
     rules: set[str] = set()
     if isinstance(discovered, list):
         rules.update(item for item in discovered if isinstance(item, str))
     if isinstance(histogram, dict):
         rules.update(rule for rule, count in histogram.items() if isinstance(rule, str) and isinstance(count, int) and count > 0)
+    if isinstance(inferred, list):
+        rules.update(item for item in inferred if isinstance(item, str))
+    if isinstance(inferred_histogram, dict):
+        rules.update(
+            rule
+            for rule, count in inferred_histogram.items()
+            if isinstance(rule, str) and isinstance(count, int) and count > 0
+        )
     return rules
 
 

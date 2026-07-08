@@ -268,8 +268,12 @@ for version in "${selected_versions[@]}"; do
       --out "$proof_out" \
       --timeout "$timeout_seconds" \
       --complete-corpus-manifest "$proof_manifest" \
-      --expected-rules "$script_dir/proof-corpus/minimal_expected_rules.json" \
       --gate-report rule-gate.json \
+      --fail-on-unknown-rules \
+      --require-rule-occurrence th-lemma-array \
+      --require-rule-occurrence th-lemma-arith \
+      --require-rule-occurrence th-lemma-nonlinear-arith \
+      --require-theory-subkind 'array:<none>' \
       --minimized-repro-dir "$report_dir/minimized-repros/proofs/z3-$version"
   else
     cat >"$proof_out/proof-version-report.json" <<EOF

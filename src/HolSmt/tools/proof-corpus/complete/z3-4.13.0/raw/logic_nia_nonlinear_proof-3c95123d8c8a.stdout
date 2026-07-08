@@ -1,0 +1,17 @@
+unsat
+((set-logic NIA)
+(proof
+(let (($x67 (<= x 4)))
+ (let (($x71 (not $x67)))
+ (let (($x26 (>= x 5)))
+ (let (($x28 (>= y 5)))
+ (let (($x29 (and $x26 $x28)))
+ (let (($x40 (not (or (not $x29) (>= (* x y) 25)))))
+ (let ((@x38 (mp (asserted (not (=> $x29 (>= (* x y) 25)))) (rewrite (= (not (=> $x29 (>= (* x y) 25))) $x40)) $x40)))
+ (let ((@x39 (not-or-elim @x38 $x29)))
+ (let ((@x42 (and-elim @x39 $x26)))
+ (let ((@x75 (unit-resolution ((_ th-lemma arith farkas 1 1) (or $x71 (not $x26))) (mp @x42 (rewrite (= $x26 $x26)) $x26) $x71)))
+ (let (($x32 (>= (* x y) 25)))
+ (let (($x45 (not $x32)))
+ (let ((@x46 (not-or-elim @x38 $x45)))
+ (unit-resolution ((_ th-lemma arith) (or $x67 (not $x28) $x32)) (mp (and-elim @x39 $x28) (rewrite (= $x28 $x28)) $x28) (mp @x46 (rewrite (= $x45 $x45)) $x45) @x75 false))))))))))))))))

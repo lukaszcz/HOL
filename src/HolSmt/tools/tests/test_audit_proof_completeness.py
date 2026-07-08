@@ -191,6 +191,25 @@ class ProofCompletenessAuditTests(unittest.TestCase):
         self.assertTrue(any(issue["subject"] == "mp" and not issue["blocking"] for issue in real_issues), real_issues)
         self.assertTrue(report["summary"]["passed"], report["issues"])
 
+    def test_real_occurrences_include_inferred_summary_rules(self):
+        tmp, _, _, _, summary_path = self.build_fixture(
+            summary={
+                "schema": "holsmt-z3-proof-corpus-v1",
+                "discovered_rules": ["th-lemma-arith"],
+                "aggregate_rule_histogram": {"th-lemma-arith": 1},
+                "inferred_rules": ["th-lemma-nonlinear-arith"],
+                "aggregate_inferred_rule_histogram": {
+                    "th-lemma-nonlinear-arith": 1
+                },
+            }
+        )
+        self.addCleanup(tmp.cleanup)
+
+        self.assertIn(
+            "th-lemma-nonlinear-arith",
+            audit.real_proof_occurrences(summary_path),
+        )
+
     def test_missing_real_occurrence_includes_case_ids_and_implementation_files(self):
         tmp, proof_source, unittest_source, manifest_path, summary_path = self.build_fixture()
         self.addCleanup(tmp.cleanup)

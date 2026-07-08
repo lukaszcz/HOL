@@ -1,4 +1,5 @@
 {
+  "aggregate_inferred_rule_histogram": {},
   "aggregate_rule_histogram": {
     "asserted": 6,
     "unit-resolution": 3
@@ -14,6 +15,7 @@
     "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2"
   ],
   "entry_count": 3,
+  "inferred_rules": [],
   "kind": "proof-corpus-summary",
   "malformed_fragment_count": 0,
   "proof_count": 3,
@@ -80,6 +82,8 @@
   },
   "rules_by_version": [
     {
+      "inferred_rule_histogram": {},
+      "inferred_rules": [],
       "rule_histogram": {
         "asserted": 2,
         "unit-resolution": 1
@@ -93,6 +97,8 @@
       "z3_version": "2.19.1"
     },
     {
+      "inferred_rule_histogram": {},
+      "inferred_rules": [],
       "rule_histogram": {
         "asserted": 2,
         "unit-resolution": 1
@@ -106,6 +112,8 @@
       "z3_version": "4.12.4"
     },
     {
+      "inferred_rule_histogram": {},
+      "inferred_rules": [],
       "rule_histogram": {
         "asserted": 2,
         "unit-resolution": 1
