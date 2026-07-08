@@ -85829,40 +85829,6 @@
       ]
     },
     {
-      "case": "and-elim",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:and-elim",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:and-elim:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "asserted",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:asserted",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:asserted"
-      ]
-    },
-    {
       "case": "commutativity",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -85982,57 +85948,6 @@
       ]
     },
     {
-      "case": "monotonicity",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:monotonicity",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:monotonicity:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "mp",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:mp",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:mp:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "mp~",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:mp~",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:mp~:real-proof-occurrence"
-      ]
-    },
-    {
       "case": "nnf-neg",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86050,74 +85965,6 @@
       ]
     },
     {
-      "case": "nnf-pos",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:nnf-pos",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:nnf-pos:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "not-or-elim",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:not-or-elim",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:not-or-elim:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "quant-inst",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:quant-inst",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:quant-inst:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "quant-intro",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:quant-intro",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:quant-intro:real-proof-occurrence"
-      ]
-    },
-    {
       "case": "refl",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86132,23 +85979,6 @@
       "source": "proof-audit",
       "test_ids": [
         "proof-rule:refl:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "rewrite",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:rewrite",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:rewrite:real-proof-occurrence"
       ]
     },
     {
@@ -86186,7 +86016,7 @@
       ]
     },
     {
-      "case": "th-lemma-arith",
+      "case": "th-lemma-basic",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
       "implementation_files": [
@@ -86195,28 +86025,11 @@
         "src/HolSmt/Z3_ProofReplay.sml"
       ],
       "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:th-lemma-arith",
+      "missing_feature": "real-proof-occurrence:th-lemma-basic",
       "mode": "proof-corpus",
       "source": "proof-audit",
       "test_ids": [
-        "proof-rule:th-lemma-arith:real-proof-occurrence"
-      ]
-    },
-    {
-      "case": "th-lemma-array",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:th-lemma-array",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:th-lemma-array:real-proof-occurrence"
+        "proof-rule:th-lemma-basic"
       ]
     },
     {
@@ -86271,23 +86084,6 @@
       ]
     },
     {
-      "case": "th-lemma-nonlinear-arith",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:th-lemma-nonlinear-arith",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:th-lemma-nonlinear-arith"
-      ]
-    },
-    {
       "case": "th-lemma-regexp",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86339,23 +86135,6 @@
       ]
     },
     {
-      "case": "trans",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:trans",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:trans:real-proof-occurrence"
-      ]
-    },
-    {
       "case": "trans*",
       "class": "real-proof-corpus",
       "failure_phase": "proof-parse",
@@ -86388,102 +86167,10 @@
       "test_ids": [
         "proof-rule:true-axiom:real-proof-occurrence"
       ]
-    },
-    {
-      "case": "unit-resolution",
-      "class": "real-proof-corpus",
-      "failure_phase": "proof-parse",
-      "implementation_files": [
-        "src/HolSmt/Z3_Proof.sml",
-        "src/HolSmt/Z3_ProofParser.sml",
-        "src/HolSmt/Z3_ProofReplay.sml"
-      ],
-      "logic": "ALL",
-      "missing_feature": "real-proof-occurrence:unit-resolution",
-      "mode": "proof-corpus",
-      "source": "proof-audit",
-      "test_ids": [
-        "proof-rule:unit-resolution:real-proof-occurrence"
-      ]
     }
   ],
-  "proof_audit_red_count": 34,
+  "proof_audit_red_count": 20,
   "proof_audit_red_obligations": [
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:and-elim:real-proof-occurrence"
-        ],
-        "coverage_row": {
-          "item": "and-elim",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "source:src/HolSmt/Unittest.sml#(\"and-elim\""
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:and-elim",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:and-elim:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "and-elim"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:asserted"
-        ],
-        "coverage_row": {
-          "item": "asserted",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "proof_rule:asserted",
-            "source:src/HolSmt/Unittest.sml#z3_core_proof_rule_replay_minimal_raw_success"
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:asserted",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:asserted"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "asserted"
-    },
     {
       "blocking": false,
       "category": "real-proof-corpus",
@@ -86715,106 +86402,6 @@
       "details": {
         "aliases": [],
         "case_ids": [
-          "proof-rule:monotonicity:real-proof-occurrence"
-        ],
-        "coverage_row": {
-          "item": "monotonicity",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "source:src/HolSmt/Unittest.sml#(\"monotonicity\""
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:monotonicity",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:monotonicity:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "monotonicity"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:mp:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:mp",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:mp:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "mp"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [
-          "mp-eq",
-          "mp_eq"
-        ],
-        "case_ids": [
-          "proof-rule:mp~:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:mp~",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:mp~:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "mp~"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
           "proof-rule:nnf-neg:real-proof-occurrence"
         ],
         "coverage_row": {},
@@ -86845,133 +86432,6 @@
       "details": {
         "aliases": [],
         "case_ids": [
-          "proof-rule:nnf-pos:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:nnf-pos",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:nnf-pos:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "nnf-pos"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:not-or-elim:real-proof-occurrence"
-        ],
-        "coverage_row": {
-          "item": "not-or-elim",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "source:src/HolSmt/Unittest.sml#(\"not-or-elim\""
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:not-or-elim",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:not-or-elim:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "not-or-elim"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:quant-inst:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:quant-inst",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:quant-inst:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "quant-inst"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:quant-intro:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:quant-intro",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:quant-intro:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "quant-intro"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
           "proof-rule:refl:real-proof-occurrence"
         ],
         "coverage_row": {},
@@ -86994,43 +86454,6 @@
       "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
       "severity": "red",
       "subject": "refl"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:rewrite:real-proof-occurrence"
-        ],
-        "coverage_row": {
-          "item": "rewrite",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "source:src/HolSmt/Unittest.sml#(\"rewrite\""
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:rewrite",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:rewrite:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "rewrite"
     },
     {
       "blocking": false,
@@ -87100,14 +86523,14 @@
       "code": "missing_real_proof_occurrence",
       "details": {
         "aliases": [
-          "th-lemma[arith]"
+          "th-lemma[basic]"
         ],
         "case_ids": [
-          "proof-rule:th-lemma-arith:real-proof-occurrence"
+          "proof-rule:th-lemma-basic"
         ],
         "coverage_row": {},
         "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:th-lemma-arith",
+        "feature": "real-proof-occurrence:th-lemma-basic",
         "files": [
           "src/HolSmt/Z3_Proof.sml",
           "src/HolSmt/Z3_ProofParser.sml",
@@ -87119,44 +86542,12 @@
           "src/HolSmt/Z3_ProofReplay.sml"
         ],
         "test_ids": [
-          "proof-rule:th-lemma-arith:real-proof-occurrence"
+          "proof-rule:th-lemma-basic"
         ]
       },
       "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
       "severity": "red",
-      "subject": "th-lemma-arith"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [
-          "th-lemma[array]"
-        ],
-        "case_ids": [
-          "proof-rule:th-lemma-array:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:th-lemma-array",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:th-lemma-array:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "th-lemma-array"
+      "subject": "th-lemma-basic"
     },
     {
       "blocking": false,
@@ -87376,76 +86767,6 @@
       "code": "missing_real_proof_occurrence",
       "details": {
         "aliases": [
-          "th-lemma[nonlinear-arith]",
-          "th-lemma-nonlinear",
-          "th-lemma[nonlinear]",
-          "th-lemma-nla",
-          "th-lemma[nla]",
-          "th-lemma-nra",
-          "th-lemma[nra]",
-          "th-lemma-nia",
-          "th-lemma[nia]"
-        ],
-        "case_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:th-lemma-nonlinear-arith",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:th-lemma-nonlinear-arith"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "th-lemma-nonlinear-arith"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:trans:real-proof-occurrence"
-        ],
-        "coverage_row": {},
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:trans",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:trans:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "trans"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [
           "trans-star"
         ],
         "case_ids": [
@@ -87501,59 +86822,21 @@
       "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
       "severity": "red",
       "subject": "true-axiom"
-    },
-    {
-      "blocking": false,
-      "category": "real-proof-corpus",
-      "code": "missing_real_proof_occurrence",
-      "details": {
-        "aliases": [],
-        "case_ids": [
-          "proof-rule:unit-resolution:real-proof-occurrence"
-        ],
-        "coverage_row": {
-          "item": "unit-resolution",
-          "reconstructed": "implemented",
-          "test_ids": [
-            "proof_rule:unit-resolution",
-            "source:src/HolSmt/Unittest.sml#z3_core_proof_rule_replay_minimal_raw_success"
-          ],
-          "tested": "implemented"
-        },
-        "failure_phase": "proof-parse",
-        "feature": "real-proof-occurrence:unit-resolution",
-        "files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "implementation_files": [
-          "src/HolSmt/Z3_Proof.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "test_ids": [
-          "proof-rule:unit-resolution:real-proof-occurrence"
-        ]
-      },
-      "message": "registered Z3 proof rule has no checked-in real proof-corpus occurrence yet",
-      "severity": "red",
-      "subject": "unit-resolution"
     }
   ],
   "required_first_red_category_counts": {
     "FP": 466,
-    "advanced theory lemmas": 23,
-    "arrays": 1,
+    "advanced theory lemmas": 21,
+    "arrays": 0,
     "check-sat-assuming": 0,
     "datatypes": 10,
     "external benchmarks": 2,
     "function sorts": 0,
     "missing logic packets": 0,
-    "real proof occurrences": 34,
+    "real proof occurrences": 20,
     "seq/set/bag": 166,
     "strings/regex": 335,
-    "th-lemma-basic": 0,
+    "th-lemma-basic": 1,
     "unsat core/assumptions": 0
   },
   "schema": "holsmt-red-obligation-summary-v1"

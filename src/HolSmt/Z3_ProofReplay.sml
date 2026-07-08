@@ -1466,12 +1466,12 @@ local
 
   val bv_th_lemma_prove =
   let
-    (* TODO: I would like to find out whether PURE_REWRITE_TAC is
-             faster than SIMP_TAC here. However, using the former
-             instead of the latter causes HOL4 to segfault on various
-             SMT-LIB benchmark proofs. So far I do not know the reason
-             for these segfaults. *)
-    val COND_REWRITE_TAC = (*Rewrite.PURE_REWRITE_TAC*) simpLib.SIMP_TAC
+    (* Keep SIMP_TAC for conditional rewrites.  A 2026-07-08 Poly/ML 5.9.2
+       retry with PURE_REWRITE_TAC did not reproduce the old segfault in the
+       unit phase, but the full selftest run did not finish promptly after
+       entering functional tests.  See:
+       .agent-files/reports/TASK_22_c6/C6_TRIAGE.md *)
+    val COND_REWRITE_TAC = simpLib.SIMP_TAC
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
   in
     fn t =>
@@ -2218,23 +2218,31 @@ local
     HOLset.foldl remove_hyp thm bad_hyps
   end
 
-  (* FIXME: The following is a workaround for a yet-to-be-filed Z3 issue where
-     a hypothesis is introduced in a `hypothesis` rule but is not discharged by
-     a `lemma` rule at any point in the proof. So far, all such hypotheses have
-     assumed the form `p = p`, which can easily be discharged here. *)
+  (* Workaround for a Z3 proof issue where a `hypothesis` rule introduces the
+     literal tautology `p = p` and no later `lemma` rule discharges it.  Keep
+     this intentionally narrow: other reflexive equalities are not known Z3
+     artifacts and should not be silently removed.  Ready-to-file upstream
+     draft:
+     .agent-files/reports/TASK_22_c6/upstream_issues/z3_undischarged_p_eq_p_hypothesis.md *)
+  fun is_spurious_p_eq_p hyp =
+    if boolSyntax.is_eq hyp then
+      let
+        val (lhs, rhs) = boolSyntax.dest_eq hyp
+      in
+        Term.term_eq lhs rhs andalso
+        (case Lib.total Term.dest_var lhs of
+           SOME ("p", ty) => ty = Type.bool
+         | _ => false)
+      end
+    else
+      false
+
   fun remove_extra_hyps (asserted, thm) =
   let
     val extra_hyps = HOLset.difference (Thm.hypset thm, asserted)
     fun remove_hyp (hyp, thm) =
-      if boolSyntax.is_eq hyp then
-        let
-          val (lhs, rhs) = boolSyntax.dest_eq hyp
-        in
-          if Term.term_eq lhs rhs then
-            Drule.PROVE_HYP (Thm.REFL lhs) thm
-          else
-            thm
-        end
+      if is_spurious_p_eq_p hyp then
+        Drule.PROVE_HYP (Thm.REFL (Lib.fst (boolSyntax.dest_eq hyp))) thm
       else
         thm
   in
@@ -2243,6 +2251,7 @@ local
 in
   (* For unit tests *)
   val remove_definitions = remove_definitions
+  val remove_extra_hyps = remove_extra_hyps
 
   fun replay_root_for_test proof : Thm.thm =
   let

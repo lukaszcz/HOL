@@ -2586,6 +2586,22 @@ in
     end
 end
 
+fun z3_proof_parser_rule_name_term_boundary () =
+  (ignore (parse_z3_proof_string "4.12.4"
+    "((proof (asserted (rewrite (= false false)))))");
+   die "FAIL: rule-name identifier in conclusion parsed without ambiguity")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "asserted" msg,
+        "rule-name term boundary diagnostic did not include the enclosing \
+        \proof rule: " ^ msg);
+      assert (String.isSubstring "not a numeral" msg orelse
+              String.isSubstring "argument" msg,
+        "rule-name term boundary diagnostic did not identify proof parsing: " ^
+        msg)
+    end
+
 fun replay_z3_proof_string contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string "4.12.4" contents)
@@ -2598,6 +2614,22 @@ in
   assert (actual ~~ expected,
     "raw Z3 proof rule " ^ name ^ " replayed to " ^
     term_with_types actual ^ ", expected " ^ term_with_types expected)
+end
+
+fun z3_remove_extra_hyps_only_p_eq_p_success () =
+let
+  val asserted = Term.empty_tmset
+  val p_eq_p = ``(p:bool) = p``
+  val q_eq_q = ``(q:bool) = q``
+  val p_clean = Z3_ProofReplay.remove_extra_hyps
+    (asserted, Thm.ASSUME p_eq_p)
+  val q_kept = Z3_ProofReplay.remove_extra_hyps
+    (asserted, Thm.ASSUME q_eq_q)
+in
+  assert (HOLset.isEmpty (Thm.hypset p_clean),
+    "remove_extra_hyps did not discharge literal p = p");
+  assert (HOLset.member (Thm.hypset q_kept, q_eq_q),
+    "remove_extra_hyps discharged a non-p reflexive equality")
 end
 
 fun profile_call_count name =
@@ -3516,6 +3548,10 @@ let
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_proof_parser_version_gate_diagnostic",
       z3_proof_parser_version_gate_diagnostic),
+    ("z3_proof_parser_rule_name_term_boundary",
+      z3_proof_parser_rule_name_term_boundary),
+    ("z3_remove_extra_hyps_only_p_eq_p_success",
+      z3_remove_extra_hyps_only_p_eq_p_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",
       z3_core_proof_rule_replay_minimal_raw_success),
     ("z3_trans_star_chain_search_replay_no_metis_success",

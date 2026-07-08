@@ -47,22 +47,17 @@ local
   (* Z3 proofterms are essentially encoded in SMT-LIB term syntax, so
      we re-use the SMT-LIB parser. *)
 
-  (* FIXME: However, there is a problem: the last argument to each
-     inference rule is the inferred conclusion (thus, a term), whereas
-     previous arguments are premises (thus, proofterms).
-     Unfortunately, the parser does not know whether it is parsing the
-     last argument until after it has parsed it.  We therefore parse
-     proofterms and terms uniformly as HOL terms, encoding the former
-     as terms of type :'pt.  Note that the current implementation
-     might parse certain terms (namely those containing functions
-     whose names coincide with Z3 inference rule names) erroneously as
-     proofterms.
+  (* Limitation: the Z3 proof format does not syntactically separate a rule's
+     premise proofterms from its final conclusion term.  The parser therefore
+     parses proofterms and conclusion terms through one SMT-LIB term grammar,
+     encoding proofterms as HOL terms of type :'pt.  If a conclusion term uses
+     an identifier that is also a Z3 rule name, the term may be parsed as a
+     proofterm-shaped term before replay can tell that it was the conclusion.
 
-     I am hoping that the Z3 proof format will eventually be changed
-     so that this is no longer an issue in the parser.  It would
-     suffice to enclose each inference rule's list of premises in
-     parentheses; then the parser would find a ")" token once it has
-     parsed the last premise, and can continue by parsing a term. *)
+     A format-level fix would make premises an explicit list, e.g. by
+     parenthesizing the premises before the conclusion.  See the ready-to-file
+     upstream draft:
+     .agent-files/reports/TASK_22_c6/upstream_issues/z3_proofterm_term_ambiguity.md *)
 
   val pt_ty = Type.mk_vartype "'pt"
   val th_lemma_metadata_ty = listSyntax.mk_list_type stringSyntax.string_ty
@@ -240,10 +235,21 @@ local
     ("select-store",    builtin_name "select-store"),
     ("triangle-eq",     builtin_name "triangle-eq"),
 
-    (* FIXME: I am hoping that the Z3 proof format will eventually be
-       changed to adhere to the SMT-LIB format more strictly, i.e.,
-       also for the following operations/constants, so that these
-       additional parsing functions are no longer necessary. *)
+    (* Z3 proof dialect shims keyed to C1:
+
+       token/function        C1 4.x corpus status              decision
+       iff                  not observed as a proof token      keep
+       implies              not observed as a proof token      keep
+       ~, binary            not observed as a proof token      keep
+       ~, unary Int/Real    not observed as a proof token      keep
+       _, negative/fraction not observed as a proof token      keep
+
+       These are not proof rules; they let legacy and proof-local Z3 terms
+       parse even when Z3 prints non-SMT-LIB spellings inside proofs.  The C1
+       inventory did not show a corpus-dead extra shim to drop in the available
+       4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3 proofs, and Z3 2.19.1 could
+       not be executed on this host.  See:
+       .agent-files/reports/C1/C1_rule_inventory.md *)
     ("iff", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
     ("implies", SmtLib_Theories.K_zero_two boolSyntax.mk_imp),
     (* equivalence modulo naming *)
