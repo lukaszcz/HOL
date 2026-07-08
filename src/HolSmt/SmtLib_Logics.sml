@@ -339,50 +339,15 @@ in
   structure QF_UFLIRA = QF_LIRA
   structure QF_UFNIRA = QF_LIRA
 
-  fun type_contains pred ty =
-    pred ty orelse
-    (let val (dom, rng) = Type.dom_rng ty
-     in type_contains pred dom orelse type_contains pred rng end
-     handle _ => false)
-
-  fun type_contains_int ty =
-    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
-
-  fun type_contains_real ty =
-    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
-
-  fun type_contains_word ty =
-    type_contains (Lib.can wordsSyntax.dest_word_type) ty
-
-  fun type_contains_string ty =
-    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
-      ty
-
-  fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
-
-  fun subterms tm =
-    tm ::
-    (let
-       val (rator, rand) = Term.dest_comb tm
-     in
-       subterms rator @ subterms rand
-     end
-     handle _ =>
-       (let val (_, body) = Term.dest_abs tm
-        in subterms body end
-        handle _ => []))
-
-  fun has_quantifier tm =
-    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
-    (let
-       val (rator, rand) = Term.dest_comb tm
-     in
-       has_quantifier rator orelse has_quantifier rand
-     end
-     handle _ =>
-       (let val (_, body) = Term.dest_abs tm
-        in has_quantifier body end
-        handle _ => false))
+  (* structural term/type helpers shared via Library (see Library.sml) *)
+  val type_contains = Library.type_contains
+  val type_contains_int = Library.type_contains_int
+  val type_contains_real = Library.type_contains_real
+  val type_contains_word = Library.type_contains_word
+  val type_contains_string = Library.type_contains_string
+  val same_const = Library.same_const
+  val subterms = Library.subterms
+  val has_quantifier = Library.has_quantifier
 
   fun is_numeric_literal tm =
     Lib.can intSyntax.int_of_term tm orelse
@@ -404,7 +369,7 @@ in
           linear (2 * x) and the ground literal product (2 * 3). *)
        | _ => false)
     end
-    handle _ => false
+    handle Feedback.HOL_ERR _ => false
 
   datatype arith_fragment = NO_ARITH | LINEAR | NONLINEAR | DIFFERENCE
 
@@ -495,7 +460,7 @@ in
         SOME (#Name (Term.dest_thy_const rator))
       else NONE
     end
-    handle _ => NONE
+    handle Feedback.HOL_ERR _ => NONE
 
   fun symbol_name_is_prefix prefix tm =
     case symbol_name tm of
@@ -555,7 +520,7 @@ in
   fun is_uninterpreted_operator_application tm =
     let val (rator, rands) = boolSyntax.strip_comb tm
     in Term.is_var rator andalso not (List.null rands) end
-    handle _ => false
+    handle Feedback.HOL_ERR _ => false
 
   fun is_arith_relation tm =
     let
@@ -583,9 +548,9 @@ in
           else
             NONE
         end
-        handle _ => NONE
+        handle Feedback.HOL_ERR _ => NONE
     end
-    handle _ => NONE
+    handle Feedback.HOL_ERR _ => NONE
 
   fun is_clear_non_difference_sum tm =
     let val (rator, rands) = boolSyntax.strip_comb tm
@@ -596,7 +561,7 @@ in
          [x, y] => not (is_numeric_literal x orelse is_numeric_literal y)
        | _ => false)
     end
-    handle _ => false
+    handle Feedback.HOL_ERR _ => false
 
   fun is_clear_difference_logic_atom_violation tm =
     case is_arith_relation tm of

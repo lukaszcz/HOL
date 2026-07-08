@@ -42,7 +42,9 @@ type translation = {
   logic : string,
   tydict : (Type.hol_type, string) Redblackmap.dict,
   tmdict : (Term.term * int, string) Redblackmap.dict,
-  records : translation_record list
+  (* built lazily: only the Unittest diagnostics force this, never the
+     production solve path (see 'translation_records') *)
+  records : unit -> translation_record list
 }
 
 local
@@ -386,29 +388,17 @@ local
         SOME name => name
       | NONE => Redblackmap.find (tydict, ty)
 
-  fun type_contains pred ty =
-    pred ty orelse
-    (let val (dom, rng) = Type.dom_rng ty
-     in type_contains pred dom orelse type_contains pred rng end
-     handle _ => false)
-
-  fun type_contains_word ty =
-    type_contains (Lib.can wordsSyntax.dest_word_type) ty
-
-  fun type_contains_int ty =
-    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
-
-  fun type_contains_real ty =
-    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
-
-  fun type_contains_string ty =
-    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
-      ty
+  (* structural term/type helpers shared via Library (see Library.sml) *)
+  val type_contains = Library.type_contains
+  val type_contains_word = Library.type_contains_word
+  val type_contains_int = Library.type_contains_int
+  val type_contains_real = Library.type_contains_real
+  val type_contains_string = Library.type_contains_string
 
   fun type_contains_function ty =
     type_contains is_function_type ty
 
-  fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
+  val same_const = Library.same_const
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
@@ -462,29 +452,9 @@ local
       stringSyntax.string_lt_tm, stringSyntax.string_le_tm
     ]
 
-  fun subterms tm =
-    tm ::
-    (let
-       val (rator, rand) = Term.dest_comb tm
-     in
-       subterms rator @ subterms rand
-     end
-     handle _ =>
-       (let val (_, body) = Term.dest_abs tm
-        in subterms body end
-        handle _ => []))
+  val subterms = Library.subterms
 
-  fun has_quantifier tm =
-    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
-    (let
-       val (rator, rand) = Term.dest_comb tm
-     in
-       has_quantifier rator orelse has_quantifier rand
-     end
-     handle _ =>
-       (let val (_, body) = Term.dest_abs tm
-        in has_quantifier body end
-        handle _ => false))
+  val has_quantifier = Library.has_quantifier
 
   fun builtin_encoding tm =
     let
@@ -586,7 +556,11 @@ local
             else
               qf ^ "AUF" ^ (if nonlinear then "NIA" else "LIA")
           else if uninterpreted then
-            qf ^ "UF" ^ (if nonlinear then "NIA" else "LIA")
+            (* QF_UFNIA is not an official SMT-LIB logic; widen the
+               quantifier-free nonlinear case to the recognized QF_UFNIRA
+               superset (the quantified UFNIA case is already official). *)
+            if nonlinear andalso not quantifiers then "QF_UFNIRA"
+            else qf ^ "UF" ^ (if nonlinear then "NIA" else "LIA")
           else
             qf ^ (if nonlinear then "NIA" else "LIA")
         else if reals then
@@ -594,7 +568,9 @@ local
             if quantifiers then
               quantified_array_arith_logic ()
             else
-              qf ^ "AUF" ^ (if nonlinear then "NRA" else "LRA")
+              (* QF_AUFNRA / QF_AUFLRA are not official SMT-LIB logics;
+                 widen to the recognized QF_AUFNIRA / QF_AUFLIRA supersets. *)
+              qf ^ "AUF" ^ (if nonlinear then "NIRA" else "LIRA")
           else if uninterpreted then
             qf ^ "UF" ^ (if nonlinear then "NRA" else "LRA")
           else
@@ -1095,7 +1071,7 @@ local
       case logic of
         NONE => (inferred_logic, reason)
       | SOME l => (l, "caller override")
-    val records =
+    val records = fn () =>
       build_translation_records terms selected_logic reason features tydict tmdict
     val translation = {logic = selected_logic, tydict = tydict,
       tmdict = tmdict, records = records}
@@ -1105,6 +1081,21 @@ local
     val smtlibs = List.foldl
       (fn ((xs, s), acc) => acc @ xs @ ["(assert " ^ s ^ ")\n"]) [] smtlibs
   in
+    (* A `(set-logic ...)` is always emitted, including on the implicit
+       (`logic = NONE`) Z3/CVC path.  Older revisions emitted none for
+       `NONE`, letting the solver default to accept-anything; relying on
+       that default is fragile.  Emitting unconditionally is safe because
+       `infer_logic_from_features` is a sound over-approximation of the
+       goal's theory needs: every theory Phase 1 can translate contributes
+       a feature, any multiplication is treated as nonlinear, and any
+       un-modelled feature combination falls back to `ALL`.  So the
+       declared fragment never excludes a term the goal actually contains
+       (a too-narrow fragment would make the solver reject a goal it could
+       otherwise prove), and the emitted name is always a recognised logic
+       (see `infer_logic_from_features` and `parsedicts_of_logic`).  Any
+       future widening of what Phase >1 can translate must preserve this
+       invariant — add the feature and its logic mapping together, or keep
+       the `ALL` fallback. *)
     (translation, ["(set-logic " ^ selected_logic ^ ")\n"] @ [
       "(set-info :source |Automatically generated from HOL4 by SmtLib.goal_to_SmtLib.\n",
       "Copyright (c) 2011 Tjark Weber. All rights reserved.|)\n",
@@ -1112,39 +1103,6 @@ local
     ] @ smtlibs @ [
       "(check-sat)\n"
     ])
-  end
-
-  (* convert `num` literals into integer literals *)
-  fun NUM_TO_INT_CONV tm =
-  let
-    fun conv_term tm =
-      if numSyntax.is_numeral tm then
-        Thm.SYM (Thm.SPEC tm integerTheory.NUM_OF_INT)
-      else
-        raise Conv.UNCHANGED
-    fun is_builtin_num_sym tm =
-    let
-      val sym = Lib.fst (boolSyntax.strip_comb tm)
-    in
-    (* The following are symbols that take numerals as arguments but which we
-       already have special handlers to convert into SMT-LIB syntax (therefore
-       we don't need to convert their arguments into integer literals) *)
-      List.exists (Term.same_const sym) [
-        wordsSyntax.word_extract_tm, wordsSyntax.word_replicate_tm,
-        wordsSyntax.word_rol_tm, wordsSyntax.word_ror_tm
-      ]
-    end
-  in
-    (* Don't descend when encountering integer, rational, real or word literals,
-       otherwise we'll be inadvertently converting those as well. Also, don't
-       descend when encountering symbols that take numerals as arguments and
-       which we already handle specially. *)
-    if intSyntax.is_int_literal tm orelse ratSyntax.is_literal tm orelse
-       realSyntax.is_real_literal tm orelse wordsSyntax.is_word_literal tm orelse
-       is_builtin_num_sym tm then
-      raise Conv.UNCHANGED
-    else
-      (Conv.THENC (Conv.SUB_CONV NUM_TO_INT_CONV, conv_term)) tm
   end
 
   fun num_binder_to_int_once_conv tm =
@@ -1170,6 +1128,53 @@ local
       (Conv.TOP_DEPTH_CONV num_binder_to_int_once_conv,
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
     handle Conv.UNCHANGED => Thm.REFL tm
+
+  val num_transfer_rewrites = [
+    HolSmtTheory.NUM_TO_INT_GUARDED,
+    integerTheory.INT_POS,
+    Conv.GSYM integerTheory.INT_INJ,
+    Conv.GSYM integerTheory.INT_LE,
+    Conv.GSYM integerTheory.INT_LT,
+    Conv.GSYM integerTheory.INT_ADD,
+    Conv.GSYM integerTheory.INT_MUL,
+    Conv.GSYM integerTheory.INT_EXP,
+    integerTheory.INT,
+    int_arithTheory.INT_NUM_SUB,
+    HolSmtTheory.INT_NUM_EDIV,
+    HolSmtTheory.INT_NUM_EMOD,
+    Conv.GSYM int_arithTheory.INT_NUM_DIVIDES,
+    int_arithTheory.INT_NUM_COND,
+    arithmeticTheory.GREATER_DEF,
+    arithmeticTheory.GREATER_EQ,
+    arithmeticTheory.MAX_DEF,
+    arithmeticTheory.MIN_DEF,
+    Drule.GEN_ALL (Thm.SYM intrealTheory.real_of_int_num)
+  ]
+
+  fun NUM_TO_INT_CONV tm =
+    Conv.THENC
+      (NUM_BINDERS_TO_INT_CONV,
+       simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
+  fun num_free_concl_vars (asms, concl) =
+  let
+    fun is_num_var v =
+      Term.is_var v andalso
+      Type.compare (Term.type_of v, numSyntax.num) = EQUAL
+    val asm_fvs = List.concat (List.map Term.free_vars asms)
+    fun free_in_asms v = List.exists (fn w => Term.aconv v w) asm_fvs
+  in
+    List.filter (fn v => is_num_var v andalso not (free_in_asms v))
+      (Term.free_vars concl)
+  end
+
+  fun SPEC_NUM_FREE_VARS_TAC g =
+  let
+    val vars = num_free_concl_vars g
+  in
+    Tactical.MAP_EVERY (fn v => Tactic.SPEC_TAC (v, v)) vars g
+  end
 
   local
     structure A = arithmeticTheory
@@ -1201,35 +1206,35 @@ local
          seem to cause issues, but EXP_2 prevents Z3 from solving
          ``x DIV 42 <= x``. *)
       case (Thy, Name) of
-        ("arithmetic", "*") => [ I.NUM_INT_MUL ]
-      | ("arithmetic", "+") => [ I.INT_ADD ]
-      | ("arithmetic", "-") => [ int_arithTheory.INT_NUM_SUB ]
-      | ("arithmetic", "<=") => [ I.INT_LE ]
-      | ("arithmetic", ">") => [ A.GREATER_DEF ]
-      | ("arithmetic", ">=") => [ A.GREATER_EQ ]
-      | ("arithmetic", "DIV") => [ I.NUM_INT_EDIV ]
-      | ("arithmetic", "EXP") => [ A.EXP, A.EXP_1, A.EXP_POS ]
-      | ("arithmetic", "MAX") => [ A.MAX_DEF ]
-      | ("arithmetic", "MIN") => [ A.MIN_DEF ]
-      | ("arithmetic", "MOD") => [ I.NUM_INT_EMOD ]
-      | ("integer", "Num") => [ I.INT_OF_NUM, I.NUM_OF_INT ]
+        ("arithmetic", "*") => []
+      | ("arithmetic", "+") => []
+      | ("arithmetic", "-") => []
+      | ("arithmetic", "<=") => []
+      | ("arithmetic", ">") => []
+      | ("arithmetic", ">=") => []
+      | ("arithmetic", "DIV") => []
+      | ("arithmetic", "EXP") => []
+      | ("arithmetic", "MAX") => []
+      | ("arithmetic", "MIN") => []
+      | ("arithmetic", "MOD") => []
+      | ("integer", "Num") => []
       | ("integer", "int_div") => [ I.INT_DIV_EDIV ]
       | ("integer", "int_exp") => [ I.int_exp ]
       | ("integer", "int_max") => [ I.INT_MAX ]
       | ("integer", "int_min") => [ I.INT_MIN ]
       | ("integer", "int_mod") => [ I.INT_MOD_EMOD ]
-      | ("integer", "int_of_num") => [ I.INT_OF_NUM, I.INT_POS, I.NUM_OF_INT ]
+      | ("integer", "int_of_num") => []
       | ("integer", "int_quot") => [ I.INT_QUOT_EDIV ]
       | ("integer", "int_rem") => [ I.INT_REM_EMOD ]
       | ("intreal", "INT_CEILING") => [ HolSmtTheory.int_ceiling_floor ]
       | ("marker", "Abbrev") => [ markerTheory.Abbrev_def ]
       | ("min", "=") =>
           if Type.compare (Ty, num --> num --> bool) = EQUAL then
-            [ I.INT_INJ ]
+            []
           else
             []
-      | ("num", "SUC") => [ I.INT ]
-      | ("prim_rec", "<") => [ I.INT_LT ]
+      | ("num", "SUC") => []
+      | ("prim_rec", "<") => []
       | ("realax", "/") => [ HolSmtTheory.real_div_smt_rdiv ]
       | ("realax", "NUM_CEILING") => [ IR.INT_NUM_CEILING, R.NUM_CEILING_BASE ]
       | ("realax", "NUM_FLOOR") => [ IR.INT_NUM_FLOOR, R.NUM_FLOOR_BASE ]
@@ -1307,7 +1312,7 @@ in
   val include_theorems = ref true
 
   fun translation_logic ({logic, ...} : translation) = logic
-  fun translation_records ({records, ...} : translation) = records
+  fun translation_records ({records, ...} : translation) = records ()
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux
   val infer_logic_from_features = infer_logic_from_features
@@ -1337,13 +1342,18 @@ in
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
 
-  (* Applies NUM_TO_INT_CONV to both the assumptions and the conclusion *)
+  (* Runs the proved num-to-int transfer on the conclusion.  Free num
+     variables in the conclusion are first made explicit so the binder
+     transfer can add the non-negativity guard. *)
   val NUM_TO_INT_TAC =
   let
     open Tactic Tactical
   in
-    RULE_ASSUM_TAC (Conv.CONV_RULE NUM_TO_INT_CONV) THEN
-    CONV_TAC NUM_TO_INT_CONV
+    SPEC_NUM_FREE_VARS_TAC THEN
+    CONV_TAC NUM_TO_INT_CONV THEN
+    REPEAT GEN_TAC THEN
+    REPEAT DISCH_TAC THEN
+    simpLib.ASM_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites
   end
 
   (* Relativizes num-typed binders to guarded int-typed binders. *)
@@ -1380,7 +1390,7 @@ in
   let
     open Tactical simpLib
   in
-    REPEAT Tactic.GEN_TAC THEN
+    NUM_TO_INT_TAC THEN
     (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
     SIMP_TAC pureSimps.pure_ss [
       (* FIXME: polymorphic functions seem to be highly problematic at the

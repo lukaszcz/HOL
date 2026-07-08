@@ -191,11 +191,7 @@ local
       List.exists (Lib.equal realSyntax.real_ty)
         (strip_fun_tys (Term.type_of tm) [])
 
-  fun type_contains pred ty =
-    pred ty orelse
-    (let val (dom, rng) = Type.dom_rng ty
-     in type_contains pred dom orelse type_contains pred rng end
-     handle Feedback.HOL_ERR _ => false)
+  val type_contains = Library.type_contains  (* shared, see Library.sml *)
 
   fun term_contains_type pred tm =
     Lib.can (HolKernel.find_term
@@ -1588,9 +1584,6 @@ local
       raise ERR "z3_th_lemma_advanced_unsupported"
         (unsupported_advanced_th_lemma_message state metadata t))
 
-  fun z3_th_lemma_arith_checked metadata (state, thms, t) =
-    z3_th_lemma_arith (state, thms, t)
-
   fun z3_trans (state, thm1, thm2, t) =
     (state, Thm.TRANS thm1 thm2)
 
@@ -1660,7 +1653,7 @@ local
 
   fun z3_trans_star (state, thms, t) =
     (state, profile "trans_star[exact]" trans_star_exact_prove (thms, t))
-    handle exact_err =>
+    handle (exact_err as Feedback.HOL_ERR _) =>
       (state, profile "trans_star[metis-fallback]" metis_prove (thms, t))
       handle Feedback.HOL_ERR _ => raise exact_err
 
@@ -2004,7 +1997,7 @@ local
     | thm_of_proofterm (state_proof, TH_LEMMA_ARITH (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata)
-          (z3_th_lemma_arith_checked metadata) (pts, concl) continuation []
+          z3_th_lemma_arith (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_ARRAY (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_array

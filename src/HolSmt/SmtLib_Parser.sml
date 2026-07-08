@@ -246,11 +246,9 @@ local
              SOME #"\"" =>
                (ignore (advance ()); string_lit start (#"\"" :: chars))
            | _ => token StringToken start chars)
-      | SOME #"\\" =>
-          (case advance () of
-             NONE => syntax_error "get_token" (mk_point_span (pos ()))
-               "unterminated string escape"
-           | SOME c => string_lit start (c :: chars))
+      (* SMT-LIB 2.6 string literals have no backslash escapes; the only
+         in-string escape is a doubled quote ("") handled above, so every
+         other character (backslash included) is taken literally. *)
       | SOME c => string_lit start (c :: chars)
   in
     fn () =>

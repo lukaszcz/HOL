@@ -200,12 +200,20 @@ struct
 
   fun rule_matches name rule = List.exists (Lib.equal name) (rule_names rule)
 
+  (* A version string we can gate against begins with a digit; anything else
+     (notably Z3's "<undiscoverable>" sentinel, used when the -version banner
+     could not be parsed) cannot be gated meaningfully, so we stay permissive
+     rather than reject rules the configured solver actually emitted. *)
+  fun is_known_version version =
+    version <> "" andalso Char.isDigit (String.sub (version, 0))
+
   fun version_supported version (rule : proof_rule) =
-    case #version_support rule of
-      AllZ3Versions => true
-    | Z3Versions versions => List.exists (Lib.equal version) versions
-    | Z3VersionPrefixes prefixes =>
-        List.exists (fn prefix => String.isPrefix prefix version) prefixes
+    not (is_known_version version) orelse
+    (case #version_support rule of
+       AllZ3Versions => true
+     | Z3Versions versions => List.exists (Lib.equal version) versions
+     | Z3VersionPrefixes prefixes =>
+         List.exists (fn prefix => String.isPrefix prefix version) prefixes)
 
   fun lookup_rule (version : string) (name : string) =
     case List.find (rule_matches name) proof_rule_registry of

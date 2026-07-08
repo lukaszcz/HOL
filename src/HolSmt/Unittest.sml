@@ -483,6 +483,83 @@ in
   n = 0 orelse loop 0
 end
 
+fun transferred_smtlib_text tm =
+let
+  val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], tm)
+  val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+in
+  String.concat strings
+end
+
+fun assert_not_contains label needle haystack =
+  assert (not (contains needle haystack),
+    label ^ " unexpectedly contained '" ^ needle ^ "':\n" ^ haystack)
+
+fun assert_pure_int_transfer label text =
+  (assert_not_contains label "(declare-sort" text;
+   assert_not_contains label "forall" text;
+   assert_not_contains label "Num" text;
+   assert_not_contains label "int_of_num" text)
+
+fun num_transfer_literal_normalization_success () =
+let
+  val text = transferred_smtlib_text ``42n = n``
+in
+  assert_pure_int_transfer "num literal transfer" text;
+  assert (contains "(assert (<= 0 v0))" text,
+    "num literal transfer did not emit free-var non-negativity guard:\n" ^
+    text);
+  assert (contains "(assert (not (= 42 v0)))" text,
+    "num literal transfer did not normalize literal to Int 42:\n" ^ text)
+end
+
+fun num_transfer_operator_drive_success () =
+let
+  val text = transferred_smtlib_text
+    ``!n m :num.
+        Num (&n) + (n - m) + (n DIV SUC m) + (n MOD SUC m) <=
+        MAX (SUC n) (MIN n m)``
+in
+  assert_pure_int_transfer "num operator transfer" text;
+  assert (contains "div" text,
+    "num operator transfer did not drive DIV to integer div:\n" ^ text);
+  assert (contains "mod" text,
+    "num operator transfer did not drive MOD to integer mod:\n" ^ text);
+  assert (contains "ite" text,
+    "num operator transfer did not preserve guarded subtraction/DIV/MOD:\n" ^
+    text)
+end
+
+fun num_transfer_unguarded_num_corner_success () =
+let
+  val text = transferred_smtlib_text ``Num (i:int) = 0``
+in
+  assert (contains "(declare-sort" text,
+    "unguarded Num unexpectedly transferred to pure int:\n" ^ text);
+  assert_not_contains "unguarded Num corner" "forall" text
+end
+
+fun num_transfer_guarded_num_success () =
+let
+  val text = transferred_smtlib_text ``0i <= i ==> Num i = 0``
+in
+  assert_pure_int_transfer "guarded Num transfer" text;
+  assert (contains "(assert (<= 0 v0))" text,
+    "guarded Num transfer did not retain guard as integer assumption:\n" ^
+    text);
+  assert (contains "(assert (not (= v0 0)))" text,
+    "guarded Num transfer did not rewrite Num i to i:\n" ^ text)
+end
+
+fun num_bridge_axioms_retired_success () =
+let
+  val text = transferred_smtlib_text ``(1:int) + 2 = 3``
+in
+  assert_not_contains "num bridge axiom retirement" "forall" text;
+  assert_not_contains "num bridge axiom retirement" "Num" text;
+  assert_not_contains "num bridge axiom retirement" "int_of_num" text
+end
+
 fun expect_hol_error_contains label expected f =
   let
     val _ = f ()
@@ -3509,6 +3586,16 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("num_transfer_literal_normalization_success",
+      num_transfer_literal_normalization_success),
+    ("num_transfer_operator_drive_success",
+      num_transfer_operator_drive_success),
+    ("num_transfer_unguarded_num_corner_success",
+      num_transfer_unguarded_num_corner_success),
+    ("num_transfer_guarded_num_success",
+      num_transfer_guarded_num_success),
+    ("num_bridge_axioms_retired_success",
+      num_bridge_axioms_retired_success),
     ("remove_definitions_no_defs", fn () => remove_defs_test remove_defs_no_defs),
     ("remove_definitions_dup", fn () => remove_defs_test remove_defs_dup),
     ("remove_definitions_tricky1", fn () => remove_defs_test remove_defs_tricky1),

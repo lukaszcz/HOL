@@ -666,6 +666,8 @@ def z3_version(z3_executable: str) -> str:
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=10,
         )
     except OSError as exc:
@@ -673,6 +675,13 @@ def z3_version(z3_executable: str) -> str:
     output = (completed.stdout or completed.stderr).strip()
     match = re.search(r"Z3 version\s+(\S+)", output)
     return match.group(1) if match else output
+
+
+def version_sort_key(version: str) -> tuple[int, ...]:
+    """Order Z3 version strings numerically, so e.g. "4.8.x" precedes
+    "4.13.x" instead of sorting lexicographically. Versions with no numeric
+    components (e.g. "<undiscoverable>") sort first."""
+    return tuple(int(n) for n in re.findall(r"\d+", version))
 
 
 def proof_options_for(version: str) -> list[str]:
@@ -764,6 +773,8 @@ def record_one(
             check=False,
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             timeout=timeout,
         )
         stdout = completed.stdout
@@ -918,7 +929,7 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
                 "entry_count": version_entries[version],
                 "proof_count": version_proofs[version],
             }
-            for version in sorted(version_entries)
+            for version in sorted(version_entries, key=version_sort_key)
         ],
         "discovered_rules": sorted(aggregate),
         "aggregate_rule_histogram": dict(sorted(aggregate.items())),
@@ -940,7 +951,10 @@ def build_summary(entries: Iterable[dict[str, object]]) -> dict[str, object]:
                     sorted(theory_lemma_by_version.get(version, {}).items())
                 ),
             }
-            for version, histogram in sorted(aggregate_by_version.items())
+            for version, histogram in sorted(
+                aggregate_by_version.items(),
+                key=lambda item: version_sort_key(item[0]),
+            )
         ],
         "unknown_rule_coverage": [
             {

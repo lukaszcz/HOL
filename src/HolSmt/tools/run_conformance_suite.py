@@ -1089,9 +1089,9 @@ def run_command_mode(
     if not command_template:
         return result(case, mode, UNSUPPORTED, f"no {mode} command configured")
     command = command_template.format(
-        input=str(input_path),
-        logic=case.logic,
-        name=case.name,
+        input=shlex.quote(str(input_path)),
+        logic=shlex.quote(case.logic),
+        name=shlex.quote(case.name),
     )
     try:
         completed = run_shell_command(command, timeout)
@@ -1193,9 +1193,9 @@ def run_z3_tac_mode(
         )
 
     command = command_template.format(
-        input=str(input_path),
-        logic=case.logic,
-        name=case.name,
+        input=shlex.quote(str(input_path)),
+        logic=shlex.quote(case.logic),
+        name=shlex.quote(case.name),
     )
     try:
         completed = run_shell_command(command, timeout)

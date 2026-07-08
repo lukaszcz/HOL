@@ -7,6 +7,12 @@ struct
 
   val ERR = Feedback.mk_HOL_ERR "SmtArrayProve"
 
+  (* METIS on the array-replay path runs with a time/inference bound so that
+     a hard or ultimately-unprovable goal cannot hang proof reconstruction
+     (mirrors the bounded METIS in Alethe_ProofReplay). *)
+  val metis_limit : mlibMeter.limit = {time = SOME 1.0, infs = SOME 5000}
+  fun with_metis_limit f = Lib.with_flag (metisTools.limit, metis_limit) f
+
   fun unsupported t =
     raise ERR "array_prove"
       ("unsupported th-lemma shape: theory=array; checked replay is only " ^
@@ -38,12 +44,13 @@ struct
   ]
 
   fun symbolic_index_prove t =
-    Tactical.prove (t,
-      Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) [
-          combinTheory.UPDATE_def,
-          combinTheory.APPLY_UPDATE_THM,
-          boolTheory.EQ_SYM_EQ
-        ], bossLib.METIS_TAC []))
+    with_metis_limit (fn () =>
+      Tactical.prove (t,
+        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) [
+            combinTheory.UPDATE_def,
+            combinTheory.APPLY_UPDATE_THM,
+            boolTheory.EQ_SYM_EQ
+          ], bossLib.METIS_TAC []))) ()
 
   fun extensionality_prove t =
     Tactical.prove (t,
@@ -56,13 +63,14 @@ struct
       ])
 
   fun choice_extensionality_prove t =
-    Tactical.prove (t,
-      Tactical.THEN
-        (bossLib.RW_TAC (bossLib.srw_ss()) array_rewrites,
-         bossLib.METIS_TAC [boolTheory.SELECT_AX]))
+    with_metis_limit (fn () =>
+      Tactical.prove (t,
+        Tactical.THEN
+          (bossLib.RW_TAC (bossLib.srw_ss()) array_rewrites,
+           bossLib.METIS_TAC [boolTheory.SELECT_AX]))) ()
 
   fun metis_array_prove t =
-    metisLib.METIS_PROVE array_rewrites t
+    with_metis_limit (fn () => metisLib.METIS_PROVE array_rewrites t) ()
 
   fun has_update_comb t =
     Lib.can (HolKernel.find_term combinSyntax.is_update_comb) t

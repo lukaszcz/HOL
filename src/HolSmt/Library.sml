@@ -467,6 +467,61 @@ struct
 *)
 
   (***************************************************************************)
+  (* term / type structure helpers                                           *)
+  (* (shared by the SMT-LIB translator, the logic-fragment checker, and Z3   *)
+  (*  proof replay)                                                          *)
+  (***************************************************************************)
+
+  (* does 'ty', or any of its domain/range components, satisfy 'pred'? *)
+  fun type_contains pred ty =
+    pred ty orelse
+    (let val (dom, rng) = Type.dom_rng ty
+     in type_contains pred dom orelse type_contains pred rng end
+     handle Feedback.HOL_ERR _ => false)
+
+  fun type_contains_int ty =
+    type_contains (fn ty => Type.compare (ty, intSyntax.int_ty) = EQUAL) ty
+
+  fun type_contains_real ty =
+    type_contains (fn ty => Type.compare (ty, realSyntax.real_ty) = EQUAL) ty
+
+  fun type_contains_word ty =
+    type_contains (Lib.can wordsSyntax.dest_word_type) ty
+
+  fun type_contains_string ty =
+    type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
+      ty
+
+  (* 'tm' is exactly the constant 'c' (same name and theory) *)
+  fun same_const c tm = Term.is_const tm andalso Term.same_const tm c
+
+  (* every subterm of 'tm' (including 'tm' itself), in pre-order; threading an
+     accumulator keeps the walk linear rather than quadratic in the size of
+     the application spine *)
+  fun subterms tm =
+    let
+      fun walk (tm, acc) =
+        tm ::
+        (let val (rator, rand) = Term.dest_comb tm
+         in walk (rator, walk (rand, acc)) end
+         handle Feedback.HOL_ERR _ =>
+           (let val (_, body) = Term.dest_abs tm
+            in walk (body, acc) end
+            handle Feedback.HOL_ERR _ => acc))
+    in
+      walk (tm, [])
+    end
+
+  fun has_quantifier tm =
+    boolSyntax.is_forall tm orelse boolSyntax.is_exists tm orelse
+    (let val (rator, rand) = Term.dest_comb tm
+     in has_quantifier rator orelse has_quantifier rand end
+     handle Feedback.HOL_ERR _ =>
+       (let val (_, body) = Term.dest_abs tm
+        in has_quantifier body end
+        handle Feedback.HOL_ERR _ => false))
+
+  (***************************************************************************)
   (* nonlinear arithmetic detection and proving                              *)
   (***************************************************************************)
 

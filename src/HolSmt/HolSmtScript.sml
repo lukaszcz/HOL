@@ -105,6 +105,34 @@ Ancestors[qualified]
        integerTheory.INT_OF_NUM]
       ``!P. (?n :num. P n) <=> (?i :int. 0 <= i /\ P (Num i))``)
 
+  val _ = s ("NUM_TO_INT_GUARDED",
+    M [integerTheory.INT_OF_NUM]
+      ``!i :int. 0 <= i ==> (integer$int_of_num (Num i) = i)``)
+
+  val _ = s ("INT_NUM_EDIV",
+    prove(
+      ``!n m. integer$int_of_num (n DIV m) =
+          if integer$int_of_num m = 0i then 0i
+          else integer$ediv (integer$int_of_num n) (integer$int_of_num m)``,
+      rpt strip_tac >> Cases_on `m` >- fs[] >>
+      `integer$int_of_num (SUC n') <> 0i`
+        by fs[integerTheory.INT_INJ] >>
+      `0i < integer$int_of_num (SUC n')`
+        by fs[integerTheory.INT_LT] >>
+      metis_tac[integerTheory.INT_DIV, integerTheory.INT_DIV_EDIV]))
+
+  val _ = s ("INT_NUM_EMOD",
+    prove(
+      ``!n m. integer$int_of_num (n MOD m) =
+          if integer$int_of_num m = 0i then integer$int_of_num n
+          else integer$emod (integer$int_of_num n) (integer$int_of_num m)``,
+      rpt strip_tac >> Cases_on `m` >- fs[] >>
+      `integer$int_of_num (SUC n') <> 0i`
+        by fs[integerTheory.INT_INJ] >>
+      `0i < integer$int_of_num (SUC n')`
+        by fs[integerTheory.INT_LT] >>
+      metis_tac[integerTheory.INT_MOD, integerTheory.INT_MOD_EMOD]))
+
   (* used for Z3's proof rule def-axiom *)
 
   val _ = s ("d001", T ``~(p <=> q) \/ ~p \/ q``)
