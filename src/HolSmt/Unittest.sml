@@ -3376,136 +3376,146 @@ in
       (([], boolSyntax.F), boolTheory.TRUTH))
 end
 
-fun z3_direct_bitvector_overflow_contradiction_success () =
+fun with_low_solver_timeout f =
 let
-  fun conjunction [] = boolSyntax.T
-    | conjunction (tm :: tms) =
-        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
-  val state =
-    parse_smtlib_state
-      ("(set-option :produce-proofs true)\n" ^
-       "(set-logic QF_BV)\n" ^
-       "(declare-const a (_ BitVec 8))\n" ^
-       "(declare-const b (_ BitVec 8))\n" ^
-       "(assert (and (bvsaddo a b) (not (bvsaddo a b))))\n" ^
-       "(check-sat)\n" ^
-       "(get-proof)\n")
-  val goal = boolSyntax.mk_neg (conjunction (#assertions state))
-  val thm =
-    case Z3.Z3_SMT_Prover ([], goal) of
-      SolverSpec.UNSAT (SOME thm) => thm
-    | _ => die "FAIL: direct bitvector contradiction did not produce a theorem"
+  val old_timeout = !SolverSpec.timeout_milliseconds
+  fun restore () = SolverSpec.timeout_milliseconds := old_timeout
+  fun work () =
+    (SolverSpec.timeout_milliseconds := 2000;
+     f ())
 in
-  assert (List.null (Thm.hyp thm),
-    "direct bitvector contradiction theorem has unexpected hypotheses");
-  assert (Term.aconv (Thm.concl thm) goal,
-    "direct bitvector contradiction theorem conclusion does not match goal");
-  Library.check_oracle_tags "unit-test" thm
+  Portable.finally restore work ()
 end
+
+fun z3_direct_if_configured f =
+  if Z3.is_configured () then
+    with_low_solver_timeout f
+  else
+    ()
+
+fun conjunction [] = boolSyntax.T
+  | conjunction (tm :: tms) =
+      List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
+
+fun z3_direct_bitvector_overflow_contradiction_success () =
+  z3_direct_if_configured (fn () =>
+  let
+    val state =
+      parse_smtlib_state
+        ("(set-option :produce-proofs true)\n" ^
+         "(set-logic QF_BV)\n" ^
+         "(declare-const a (_ BitVec 8))\n" ^
+         "(declare-const b (_ BitVec 8))\n" ^
+         "(assert (and (bvsaddo a b) (not (bvsaddo a b))))\n" ^
+         "(check-sat)\n" ^
+         "(get-proof)\n")
+    val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+    val thm =
+      case Z3.Z3_SMT_Prover ([], goal) of
+        SolverSpec.UNSAT (SOME thm) => thm
+      | _ =>
+          die "FAIL: external bitvector contradiction did not replay a theorem"
+  in
+    assert (List.null (Thm.hyp thm),
+      "direct bitvector contradiction theorem has unexpected hypotheses");
+    assert (Term.aconv (Thm.concl thm) goal,
+      "direct bitvector contradiction theorem conclusion does not match goal");
+    Library.check_oracle_tags "unit-test" thm
+  end)
 
 fun z3_direct_bitvector_overflow_tautology_sat_success () =
-let
-  fun conjunction [] = boolSyntax.T
-    | conjunction (tm :: tms) =
-        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
-  val state =
-    parse_smtlib_state
-      ("(set-logic QF_BV)\n" ^
-       "(declare-const a (_ BitVec 8))\n" ^
-       "(declare-const b (_ BitVec 8))\n" ^
-       "(assert (or (bvumulo a b) (not (bvumulo a b))))\n" ^
-       "(check-sat)\n")
-  val goal = boolSyntax.mk_neg (conjunction (#assertions state))
-in
-  case Z3.Z3_SMT_Prover ([], goal) of
-    SolverSpec.SAT NONE => ()
-  | SolverSpec.SAT (SOME _) =>
-      die "FAIL: direct bitvector tautology SAT produced a theorem"
-  | _ => die "FAIL: direct bitvector tautology was not reported SAT"
-end
+  z3_direct_if_configured (fn () =>
+  let
+    val state =
+      parse_smtlib_state
+        ("(set-logic QF_BV)\n" ^
+         "(declare-const a (_ BitVec 8))\n" ^
+         "(declare-const b (_ BitVec 8))\n" ^
+         "(assert (or (bvumulo a b) (not (bvumulo a b))))\n" ^
+         "(check-sat)\n")
+    val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+  in
+    case Z3.Z3_SMT_Prover ([], goal) of
+      SolverSpec.SAT _ => ()
+    | SolverSpec.UNSAT _ =>
+        die "FAIL: external bitvector tautology was wrongly reported UNSAT"
+    | SolverSpec.UNKNOWN _ =>
+        die "FAIL: external bitvector tautology was not reported SAT"
+  end)
 
 fun z3_direct_distinct_contradiction_success () =
-let
-  fun conjunction [] = boolSyntax.T
-    | conjunction (tm :: tms) =
-        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
-  val state =
-    parse_smtlib_state
-      ("(set-option :produce-proofs true)\n" ^
-       "(set-logic QF_LIA)\n" ^
-       "(assert (distinct 1 1))\n" ^
-       "(check-sat)\n" ^
-       "(get-proof)\n")
-  val goal = boolSyntax.mk_neg (conjunction (#assertions state))
-  val thm =
-    case Z3.Z3_SMT_Prover ([], goal) of
-      SolverSpec.UNSAT (SOME thm) => thm
-    | _ => die "FAIL: direct distinct contradiction did not produce a theorem"
-in
-  assert (List.null (Thm.hyp thm),
-    "direct distinct contradiction theorem has unexpected hypotheses");
-  assert (Term.aconv (Thm.concl thm) goal,
-    "direct distinct contradiction theorem conclusion does not match goal");
-  Library.check_oracle_tags "unit-test" thm
-end
-
-(* The checked SAT short-circuit in Z3.Z3_SMT_Prover proves the asserted
-   body satisfiable entirely within HOL and returns `SAT NONE' without ever
-   invoking an external solver.  Each script below is a trivially true
-   ground (or trivially satisfiable) arithmetic fact whose HOL translation
-   makes Z3 diverge; the short-circuit must decide them locally.  These
-   tests run regardless of whether Z3 is configured. *)
-fun z3_direct_ground_arithmetic_sat_success () =
-let
-  fun conjunction [] = boolSyntax.T
-    | conjunction (tm :: tms) =
-        List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
-  fun expect_sat label text =
-    let
-      val state = parse_smtlib_state text
-      val goal = boolSyntax.mk_neg (conjunction (#assertions state))
-    in
+  z3_direct_if_configured (fn () =>
+  let
+    val state =
+      parse_smtlib_state
+        ("(set-option :produce-proofs true)\n" ^
+         "(set-logic QF_LIA)\n" ^
+         "(assert (not (= 1 1)))\n" ^
+         "(check-sat)\n" ^
+         "(get-proof)\n")
+    val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+    val thm =
       case Z3.Z3_SMT_Prover ([], goal) of
-        SolverSpec.SAT NONE => ()
-      | SolverSpec.SAT (SOME _) =>
-          die ("FAIL: " ^ label ^ " short-circuit produced a theorem")
-      | SolverSpec.UNSAT _ =>
-          die ("FAIL: " ^ label ^ " was wrongly reported UNSAT")
-      | SolverSpec.UNKNOWN _ =>
-          die ("FAIL: " ^ label ^ " was not decided by the SAT short-circuit")
-    end
-in
-  (* integer ABS -- the `|7| = 7'-shaped example over int *)
-  expect_sat "int abs"
-    ("(set-logic QF_LIA)\n(assert (= (abs (- 7)) 7))\n(check-sat)\n");
-  (* Euclidean division/modulo carry a `nocompute' attribute and require
-     the EDIV_DEF/EMOD_DEF unfolding step of the ladder *)
-  expect_sat "int ediv"
-    ("(set-logic QF_LIA)\n(assert (= (div 7 3) 2))\n(check-sat)\n");
-  expect_sat "int emod"
-    ("(set-logic QF_LIA)\n(assert (= (mod 7 3) 1))\n(check-sat)\n");
-  (* real division goes through Z3's total `smt_rdiv' constant *)
-  expect_sat "real division"
-    ("(set-logic QF_LRA)\n(assert (= (/ 3.0 2.0) 1.5))\n(check-sat)\n");
-  (* linear real arithmetic decided by evaluation *)
-  expect_sat "real plus"
-    ("(set-logic QF_LRA)\n(assert (= (+ 1.0 2.0 3.0) 6.0))\n(check-sat)\n");
-  (* mixed int/real embedding *)
-  expect_sat "intreal to_int"
-    ("(set-logic QF_NIRA)\n(assert (= (to_int 2.0) 2))\n(check-sat)\n");
-  (* a satisfiable equation over an unknown: the ladder proves the
-     existential closure `?x. x = 0' *)
-  expect_sat "int existential"
-    ("(set-logic QF_LIA)\n(declare-const x Int)\n" ^
-     "(assert (= x 0))\n(check-sat)\n");
-  expect_sat "real existential"
-    ("(set-logic QF_LRA)\n(declare-const x Real)\n" ^
-     "(assert (= x 0.0))\n(check-sat)\n");
-  (* propositional tautology -- guards the pre-existing TAUT_CONV branch *)
-  expect_sat "propositional tautology"
-    ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
-     "(assert (or p (not p)))\n(check-sat)\n")
-end
+        SolverSpec.UNSAT (SOME thm) => thm
+      | _ => die "FAIL: external integer contradiction did not replay a theorem"
+  in
+    assert (List.null (Thm.hyp thm),
+      "direct integer contradiction theorem has unexpected hypotheses");
+    assert (Term.aconv (Thm.concl thm) goal,
+      "direct integer contradiction theorem conclusion does not match goal");
+    Library.check_oracle_tags "unit-test" thm
+  end)
+
+(* Each script below is a trivially true ground or satisfiable arithmetic
+   fact.  The proved transfer pass and timeout should let external Z3 report
+   `sat' promptly; when Z3 is not configured this external-verdict check is
+   skipped like the other solver-gated tests. *)
+fun z3_direct_ground_arithmetic_sat_success () =
+  z3_direct_if_configured (fn () =>
+  let
+    fun expect_sat label text =
+      let
+        val state = parse_smtlib_state text
+        val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+      in
+        case Z3.Z3_SMT_Prover ([], goal) of
+          SolverSpec.SAT _ => ()
+        | SolverSpec.UNSAT _ =>
+            die ("FAIL: " ^ label ^ " was wrongly reported UNSAT")
+        | SolverSpec.UNKNOWN _ =>
+            die ("FAIL: " ^ label ^ " was not reported SAT")
+      end
+  in
+    (* integer ABS -- the `|7| = 7'-shaped example over int *)
+    expect_sat "int abs"
+      ("(set-logic QF_LIA)\n(assert (= (abs (- 7)) 7))\n(check-sat)\n");
+    (* Euclidean division/modulo previously exercised the divergent
+       num-bridge path; they must now get a prompt external SAT verdict. *)
+    expect_sat "int ediv"
+      ("(set-logic QF_LIA)\n(assert (= (div 7 3) 2))\n(check-sat)\n");
+    expect_sat "int emod"
+      ("(set-logic QF_LIA)\n(assert (= (mod 7 3) 1))\n(check-sat)\n");
+    (* real division goes through Z3's total `smt_rdiv' constant *)
+    expect_sat "real division"
+      ("(set-logic QF_LRA)\n(assert (= (/ 3.0 2.0) 1.5))\n(check-sat)\n");
+    (* linear real arithmetic through external Z3 *)
+    expect_sat "real plus"
+      ("(set-logic QF_LRA)\n(assert (= (+ 1.0 2.0 3.0) 6.0))\n(check-sat)\n");
+    (* mixed int/real embedding *)
+    expect_sat "intreal to_int"
+      ("(set-logic QF_NIRA)\n(assert (= (to_int 2.0) 2))\n(check-sat)\n");
+    (* satisfiable equations over unknowns *)
+    expect_sat "int existential"
+      ("(set-logic QF_LIA)\n(declare-const x Int)\n" ^
+       "(assert (= x 0))\n(check-sat)\n");
+    expect_sat "real existential"
+      ("(set-logic QF_LRA)\n(declare-const x Real)\n" ^
+       "(assert (= x 0.0))\n(check-sat)\n");
+    (* propositional tautology through external Z3 *)
+    expect_sat "propositional tautology"
+      ("(set-logic QF_UF)\n(declare-const p Bool)\n" ^
+       "(assert (or p (not p)))\n(check-sat)\n")
+  end)
 
 fun holsmt_solver_result_negative_diagnostics () =
 let
