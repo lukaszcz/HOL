@@ -2,3 +2,5 @@
 /holsmt-typecheck
 /holsmt-z3-tac
 /tools/conformance-out
+/tools/complete-conformance-out
+/tools/complete-conformance-out-*
