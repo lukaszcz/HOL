@@ -34,7 +34,7 @@
 | `conformance-z3-oracle` | `conformance` | `pass` | 0 |
 | `conformance-proof-parse` | `conformance` | `pass` | 0 |
 | `conformance-proof-replay` | `conformance` | `pass` | 0 |
-| `conformance-z3-tac` | `conformance` | `fail` | 1 |
+| `conformance-z3-tac` | `conformance` | `pass` | 0 |
 | `external-parser-only` | `external-conformance` | `pass` | 0 |
 | `external-typecheck-only` | `external-conformance` | `pass` | 0 |
 | `external-z3-oracle` | `external-conformance` | `pass` | 0 |

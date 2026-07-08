@@ -10,6 +10,7 @@ local
   val alethe_cfg : SmtLib_Parser.parser_cfg = {
     mk_let_bindings = SmtLib_Parser.smtlib_mk_let_bindings,
     mk_let = SmtLib_Parser.smtlib_mk_let,
+    parse_choice = true,
     parse_lambda = false
   }
 

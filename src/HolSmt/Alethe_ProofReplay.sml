@@ -684,6 +684,13 @@ local
     val target = clause_to_disj clause
     val thm = case prems of
         [p] => metis_prove [p] target
+          handle Feedback.HOL_ERR _ =>
+          let
+            val imp = tautLib.TAUT_PROVE
+              (boolSyntax.mk_imp (Thm.concl p, target))
+          in
+            Thm.MP imp p
+          end
       | _ => raise ERR "replay_not_and" "expected 1 premise"
   in
     (cache_step s id thm, thm)
@@ -694,10 +701,22 @@ local
                        (prems : Thm.thm list) (clause : Term.term list) =
   let
     val target = clause_to_disj clause
+    fun prove_from_prems tm =
+      Lib.tryfind (fn th =>
+        if Term.aconv (Thm.concl th) tm then th
+        else raise ERR "" "") prems
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (l, r) = boolSyntax.dest_conj tm
+      in
+        Thm.CONJ (prove_from_prems l) (prove_from_prems r)
+      end
     val thm =
       if List.null prems then
         prove_tautology clause
       else
+        prove_from_prems target
+        handle Feedback.HOL_ERR _ =>
         metis_prove prems target
   in
     (cache_step s id thm, thm)
@@ -1011,6 +1030,10 @@ local
       (if has_word_type target then prove_word_rewrite target
        else raise ERR "" "")
       handle Feedback.HOL_ERR _ =>
+      (* Array simplification rules normalize select/store terms.  Keep this
+         on the shared solver-neutral ladder used by Z3 replay. *)
+      SmtArrayProve.array_prove target
+      handle Feedback.HOL_ERR _ =>
       (* Arithmetic simplification rules normalize comparisons, signs, and
          small algebraic contexts.  Discharge those with the arithmetic prover
          before trying broader rewrite libraries. *)
@@ -1170,9 +1193,40 @@ local
     val thm =
       prove_eq target
       handle Feedback.HOL_ERR _ =>
+      SmtArrayProve.array_prove target
+      handle Feedback.HOL_ERR _ =>
       auto_prove "replay_sko" target
   in
     (cache_step s id thm, thm)
+  end
+
+  (* --- arrays_ext ---
+     cvc5 emits this rule for array extensionality lemmas.  The checked proof
+     goes through the same array_prove ladder as Z3's th-lemma[array] replay. *)
+  fun replay_arrays_ext (s : state) (id : string)
+                        (prems : Thm.thm list) (clause : Term.term list) =
+  let
+    val target = clause_to_disj clause
+    val thm =
+      SmtArrayProve.array_prove target
+      handle Feedback.HOL_ERR _ =>
+      (if List.null prems then raise ERR "" ""
+       else
+         let
+           val hyps = List.map Thm.concl prems
+           val imp = SmtArrayProve.array_prove
+             (boolSyntax.list_mk_imp (hyps, target))
+         in
+           List.foldl (fn (prem, th) => Thm.MP th prem) imp prems
+         end)
+      handle Feedback.HOL_ERR _ =>
+      metis_prove prems target
+      handle Feedback.HOL_ERR _ =>
+      raise ERR "replay_arrays_ext" ("failed: " ^
+        Library.term_to_string target)
+    val s' = state_cache_thm s thm
+  in
+    (cache_step s' id thm, thm)
   end
 
   (* --- hole (cvc5 proof gap, typically TRUST_THEORY_REWRITE) ---
@@ -1228,16 +1282,19 @@ local
         (* 4. Quantified propositional: strip quantifiers, TAUT body *)
         prove_quant_body_eq target
         handle Feedback.HOL_ERR _ =>
-        (* 5. METIS with no premises (handles first-order quantifiers) *)
+        (* 5. Array select/store/extensionality simplification *)
+        SmtArrayProve.array_prove target
+        handle Feedback.HOL_ERR _ =>
+        (* 6. METIS with no premises (handles first-order quantifiers) *)
         metis_prove [] target
         handle Feedback.HOL_ERR _ =>
-        (* 6. Simplifier (handles e.g. -(1*x) + x = 0) *)
+        (* 7. Simplifier (handles e.g. -(1*x) + x = 0) *)
         simpLib.SIMP_PROVE alethe_ss [] target
         handle Feedback.HOL_ERR _ =>
-        (* 7. Evaluation *)
+        (* 8. Evaluation *)
         Drule.EQT_ELIM (bossLib.EVAL target)
         handle Feedback.HOL_ERR _ =>
-        (* 8. Nonlinear arithmetic (handles ARITH_MULT_SIGN etc.) *)
+        (* 9. Nonlinear arithmetic (handles ARITH_MULT_SIGN etc.) *)
         (if Library.is_nonlinear target then Library.nla_prove target
          else raise ERR "" "")
         handle Feedback.HOL_ERR _ =>
@@ -1361,6 +1418,7 @@ local
     | "la_mult_pos"        => replay_arith s id clause prems
     | "la_mult_neg"        => replay_arith s id clause prems
     | "la_mult_sign"       => replay_arith s id clause prems
+    | "arrays_ext"         => replay_arrays_ext s id prems clause
     | "connective_def"     => replay_rewrite s id clause
     | "and_simplify"       => replay_rewrite s id clause
     | "or_simplify"        => replay_rewrite s id clause

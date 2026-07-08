@@ -87945,10 +87945,10 @@
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-proof-replay.stdout"
     },
     {
-      "exit_code": 1,
+      "exit_code": 0,
       "kind": "conformance",
       "name": "conformance-z3-tac",
-      "status": "fail",
+      "status": "pass",
       "stderr": "src/HolSmt/tools/complete-conformance-out/logs/conformance-z3-tac.stderr",
       "stdout": "src/HolSmt/tools/complete-conformance-out/logs/conformance-z3-tac.stdout"
     },

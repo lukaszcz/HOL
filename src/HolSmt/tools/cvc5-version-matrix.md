@@ -49,10 +49,15 @@ num_min_imp           replay METIS fallback fails on MIN/MAX ite expansion
 num_max_imp           replay METIS fallback fails on MIN/MAX ite expansion
 int_min_imp           replay METIS fallback fails on MIN/MAX ite expansion
 real_max_imp          replay METIS fallback fails on MIN/MAX ite expansion
+array_store_commute   Alethe choice/named-term binder shape in symbolic
+                      store-commutation mirror
 ```
 
 Those rows are TASK_20 Alethe replay obligations, not upstream cvc5 issues.
-No external cvc5 issue is filed or drafted for them.
+No external cvc5 issue is filed for them.  TASK_20 added a local draft
+upstream question for `array_store_commute` under `.agent-files/reports/`
+because that proof shape appears to involve named subterms under a `choice`
+binder.
 
 ## Restored 1.3.4 Rows
 

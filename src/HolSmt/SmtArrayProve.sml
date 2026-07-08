@@ -55,6 +55,12 @@ struct
         boolTheory.EQ_SYM_EQ
       ])
 
+  fun choice_extensionality_prove t =
+    Tactical.prove (t,
+      Tactical.THEN
+        (bossLib.RW_TAC (bossLib.srw_ss()) array_rewrites,
+         bossLib.METIS_TAC [boolTheory.SELECT_AX]))
+
   fun metis_array_prove t =
     metisLib.METIS_PROVE array_rewrites t
 
@@ -69,6 +75,8 @@ struct
     symbolic_index_prove t
     handle Feedback.HOL_ERR _ =>
     extensionality_prove t
+    handle Feedback.HOL_ERR _ =>
+    choice_extensionality_prove t
     handle Feedback.HOL_ERR _ =>
     (if has_update_comb t then metis_array_prove t else unsupported t)
     handle Feedback.HOL_ERR _ =>

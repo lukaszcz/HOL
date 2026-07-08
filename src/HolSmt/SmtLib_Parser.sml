@@ -105,6 +105,7 @@ struct
   type parser_cfg = {
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
+    parse_choice: bool,
     parse_lambda: bool
   }
 
@@ -1360,6 +1361,11 @@ local
           else if token = "exists" then
             parse_binder_term cfg get_token (tydict, tmdict)
               boolSyntax.list_mk_exists
+          else if token = "choice" andalso #parse_choice cfg then
+            parse_binder_term cfg get_token (tydict, tmdict)
+              (fn (vars, body) =>
+                List.foldr (fn (v, acc) => boolSyntax.mk_select (v, acc))
+                  body vars)
           (* SMT-LIB 2.6 doesn't have special `lambda` terms, but Z3 proof
              certificates do. So we only parse them when allowed by the
              parser configuration, otherwise we will parse identifiers that are
@@ -1417,6 +1423,7 @@ local
   val smtlib_cfg = {
     mk_let_bindings = smtlib_mk_let_bindings,
     mk_let = smtlib_mk_let,
+    parse_choice = false,
     parse_lambda = false
   }
 

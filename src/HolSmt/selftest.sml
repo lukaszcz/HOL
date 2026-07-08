@@ -1105,13 +1105,15 @@ in
     (* arrays as function updates *)
 
     (``i <> j ==> ((i =+ e) (a :int -> int)) j = a j``,
-      [thm_Z3p, thm_Z3p_v4]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``i <> j ==>
         (j =+ f) ((i =+ e) (a :int -> int)) =
         (i =+ e) ((j =+ f) a)``,
-      [thm_Z3p, thm_Z3p_v4]),
+      [thm_Z3p, thm_Z3p_v4
+       (*, thm_CVCp: cvc5 1.3.4 emits an Alethe choice/named-term
+          binder shape that HolSmt records in cvc5-version-matrix.md. *)]),
     (``(!i. (a :int -> int) i = b i) ==> (a = b)``,
-      [thm_Z3p, thm_Z3p_v4]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
 
     (* predicates *)
 
