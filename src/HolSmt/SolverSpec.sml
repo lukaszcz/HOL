@@ -8,6 +8,26 @@ structure SolverSpec = struct
                   | UNSAT of Thm.thm option  (* assumptions |- conclusion *)
                   | UNKNOWN of string option  (* reason for failure *)
 
+  val timeout_milliseconds = ref 30000
+
+  fun configured_timeout_milliseconds () =
+    let
+      val ms = !timeout_milliseconds
+    in
+      if ms <= 0 then
+        raise Feedback.mk_HOL_ERR "SolverSpec"
+          "configured_timeout_milliseconds"
+          "solver timeout must be a positive number of milliseconds"
+      else
+        ms
+    end
+
+  fun wall_timeout_seconds () =
+    (configured_timeout_milliseconds () + 999) div 1000 + 1
+
+  fun with_wall_timeout cmd =
+    "timeout " ^ Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
+
   (* calls 'pre' (which is supposed to translate a HOL goal into a list of
      strings that the SMT solver will understand); writes these strings into a
      file; appends the names of input and output files to 'cmd_stem' before
@@ -25,7 +45,7 @@ structure SolverSpec = struct
     val outfile = FileSys.tmpName ()
     fun work() = let
       val _ = Library.write_strings_to_file infile inputs
-      val cmd = cmd_stem ^ infile ^ " > " ^ outfile
+      val cmd = with_wall_timeout (cmd_stem ^ infile ^ " > " ^ outfile)
       (* the actual system call to the SMT solver *)
       val _ = if !Library.trace > 1 then
                 Feedback.HOL_MESG ("HolSmtLib: calling external command '" ^

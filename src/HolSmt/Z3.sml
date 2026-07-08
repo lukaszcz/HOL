@@ -37,10 +37,17 @@ structure Z3 = struct
       SOME file => file
     | NONE => "<unconfigured>"
 
+  fun timeout_option () =
+    " -t:" ^ Int.toString (SolverSpec.configured_timeout_milliseconds ())
+
+  fun with_timeout_option cmd_stem =
+    timeout_option () ^ cmd_stem
+
   fun mk_Z3_fun name pre cmd_stem post goal =
     case configured_executable () of
       SOME file =>
-        SolverSpec.make_solver pre (file ^ cmd_stem) post goal
+        SolverSpec.make_solver pre (file ^ with_timeout_option cmd_stem)
+          post goal
     | NONE =>
         raise Feedback.mk_HOL_ERR "Z3" name error_msg
 
@@ -110,6 +117,8 @@ structure Z3 = struct
 
   val proof_cmd_stem = proof_option ^ " -smt2 -file:"
 
+  fun current_proof_cmd_stem () = with_timeout_option proof_cmd_stem
+
   fun command_string cmd_stem =
     executable_string () ^ cmd_stem ^ "<input-file> > <output-file>"
 
@@ -159,86 +168,8 @@ structure Z3 = struct
       thm
     end
 
-  fun direct_contradiction_thm goal =
-    let
-      val asserted = boolSyntax.dest_neg goal
-      val contradiction = Library.gen_contradiction (Thm.ASSUME asserted)
-    in
-      Thm.NOT_INTRO (Thm.DISCH asserted contradiction)
-    end
-
-  fun prove_direct_contradiction goal =
-    check_reconstructed_theorem "Z3_SMT_Prover"
-      (goal, direct_contradiction_thm (Lib.snd goal))
-
-  fun prove_simplified_goal goal =
-    let
-      val thm = Tactical.TAC_PROOF (goal,
-        Tactical.THEN (SmtLib.SIMP_TAC true, intLib.ARITH_TAC))
-    in
-      check_reconstructed_theorem "Z3_SMT_Prover" (goal, thm)
-    end
-
-  fun prove_without_external_solver goal =
-    prove_direct_contradiction goal
-    handle Feedback.HOL_ERR _ => prove_simplified_goal goal
-
-  (* Conversions used by the checked SAT short-circuit below.  All of them
-     are terminating and produce an actual HOL theorem `|- t = T`, so they
-     never make an unsound `sat' claim. *)
-
-  (* Ground evaluation: unfold Euclidean `ediv'/`emod' (which carry a
-     `nocompute' attribute) into `/', `%', `ABS', ..., then reduce with the
-     standard call-by-value machinery.  Decides closed int/real/intreal
-     arithmetic facts such as `ABS (-7) = 7', `ediv 7 3 = 2',
-     `real_of_int 2 = 2r' and `ALL_DISTINCT [0; 1; 2]'. *)
-  val ground_eval_conv =
-    Conv.THENC
-      (Rewrite.PURE_REWRITE_CONV
-         [integerTheory.EDIV_DEF, integerTheory.EMOD_DEF],
-       bossLib.EVAL)
-
-  (* Real evaluation: rewrite away Z3's total real division `smt_rdiv' and
-     simplify with `real_ss', then reduce.  Decides facts involving real
-     division (`15 / 10 = smt_rdiv 3 2') as well as trivially satisfiable
-     equations over a single unknown (`?x. x = 0'). *)
-  val real_eval_conv =
-    Conv.THENC
-      (simpLib.SIMP_CONV (realSimps.real_ss) [HolSmtTheory.smt_rdiv],
-       bossLib.EVAL)
-
-  (* Try to establish, entirely within HOL, that the asserted body of a
-     `sat' goal is satisfiable.  We existentially close the assertion over
-     its free variables (the declared SMT-LIB constants) and run a cheap-
-     first ladder of terminating deciders.  Success yields `|- ?vars. body'
-     -- a genuine proof that a model exists -- so the caller may soundly
-     report SAT with no external oracle involved.  Every step is wrapped so
-     that failure is silent and falls through to the external solver. *)
-  fun prove_asserted_satisfiable asserted =
-    let
-      val existential =
-        boolSyntax.list_mk_exists (Term.free_vars asserted, asserted)
-      (* propositional tautologies are decided on the open body, since
-         `TAUT_CONV' does not look under quantifiers *)
-      fun via_taut () = Drule.EQT_ELIM (tautLib.TAUT_CONV asserted)
-      fun via_conv cnv () = Drule.EQT_ELIM (cnv existential)
-      fun ladder [] = NONE
-        | ladder (attempt :: rest) =
-            (case Lib.total attempt () of
-               SOME thm => SOME thm
-             | NONE => ladder rest)
-    in
-      ladder [via_taut, via_conv ground_eval_conv, via_conv real_eval_conv]
-    end
-
-  fun is_provably_satisfiable ([], g) =
-      (case Lib.total boolSyntax.dest_neg g of
-         SOME asserted => Option.isSome (prove_asserted_satisfiable asserted)
-       | NONE => false)
-    | is_provably_satisfiable _ = false
-
   (* Z3 (Linux/Unix), SMT-LIB file format, with proofs *)
-  val Z3_SMT_Prover_external =
+  val Z3_SMT_Prover =
     mk_Z3_fun "Z3_SMT_Prover"
       (fn goal =>
         let
@@ -267,13 +198,13 @@ structure Z3 = struct
                   handle Feedback.HOL_ERR holerr =>
                     (TextIO.closeIn instream;
                      raise_with_context "Z3_SMT_Prover" "proof parse"
-                       proof_cmd_stem holerr)
+                       (current_proof_cmd_stem ()) holerr)
                 val _ = TextIO.closeIn instream
                 val (As, g) = goal
                 val thm = Z3_ProofReplay.check_proof (As, g, proof)
                   handle Feedback.HOL_ERR holerr =>
                     raise_with_context "Z3_SMT_Prover" "proof replay"
-                      proof_cmd_stem holerr
+                      (current_proof_cmd_stem ()) holerr
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
                 val thm = check_reconstructed_theorem "Z3_SMT_Prover"
@@ -283,12 +214,5 @@ structure Z3 = struct
               end
             | _ => (result before TextIO.closeIn instream)
           end)
-
-  fun Z3_SMT_Prover goal =
-    if is_provably_satisfiable goal then
-      SolverSpec.SAT NONE
-    else
-      SolverSpec.UNSAT (SOME (prove_without_external_solver goal))
-      handle Feedback.HOL_ERR _ => Z3_SMT_Prover_external goal
 
 end
