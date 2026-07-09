@@ -55440,24 +55440,11 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Reals:decimal:unsat-proof",
-        "test_ids": [
-          "theory:Reals:decimal:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Reals theory: _"
@@ -55677,24 +55664,11 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Reals:div:unsat-proof",
-        "test_ids": [
-          "theory:Reals:div:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Reals theory: /"
@@ -58070,24 +58044,11 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Reals_Ints:is-int:unsat-proof",
-        "test_ids": [
-          "theory:Reals_Ints:is-int:unsat-proof"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Reals_Ints theory: is_int"

@@ -2131,6 +2131,28 @@ local
       thm
     else
       let
+        fun prove_ground_def def =
+          let
+            val thm = bossLib.EVAL def
+          in
+            if boolSyntax.is_eq (Thm.concl thm) andalso
+               Lib.snd (boolSyntax.dest_eq (Thm.concl thm)) ~~ boolSyntax.T
+            then Drule.EQT_ELIM thm
+            else raise ERR "remove_definitions" "definition is not evaluable"
+          end
+        fun is_var_def def =
+          boolSyntax.is_eq def andalso
+          Term.is_var (Lib.fst (boolSyntax.dest_eq def))
+        val (ground_defs, defs) =
+          List.partition (not o is_var_def) (HOLset.listItems defs)
+        val defs = HOLset.addList (Term.empty_tmset, defs)
+        val thm = HOLset.foldl
+          (fn (def, thm) => Drule.PROVE_HYP (prove_ground_def def) thm)
+          thm (HOLset.addList (Term.empty_tmset, ground_defs))
+      in
+        if HOLset.isEmpty defs then thm
+        else
+      let
         (* For convenience, `dest_defs` will contain a list of `(lhs, rhs)`
            pairs, where `lhs` is the var being defined and `rhs` its
            definition. *)
@@ -2186,6 +2208,7 @@ local
         (* Recurse to remove the remaining variables' definitions *)
         remove_definitions (new_defs, var_set, thm)
       end
+      end
 
   (* this function identifies hypotheses in the final theorem that are not in
      the original list of assumptions and then tries to remove them; it's a
@@ -2201,9 +2224,20 @@ local
     val asl = (boolSyntax.mk_neg g) :: asl
     val asms = HOLset.addList (Term.empty_tmset, asl)
     val bad_hyps = HOLset.difference (hyps, asms)
+    val smt_normalize_ss = bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
+      intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss
+    fun smt_normalize_tac thms =
+      bossLib.RW_TAC smt_normalize_ss
+        (HolSmtTheory.real_div_smt_rdiv ::
+         intrealTheory.is_int_alt ::
+         intrealTheory.is_int_thm ::
+         thms)
     fun remove_hyp (hyp, thm) : Thm.thm =
     let
-      val hyp_thm = Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
+      val hyp_thm =
+        Tactical.TAC_PROOF ((asl, hyp), smt_normalize_tac [])
+        handle Feedback.HOL_ERR _ =>
+          Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
     in
       Drule.PROVE_HYP hyp_thm thm
     end
