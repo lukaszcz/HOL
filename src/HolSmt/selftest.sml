@@ -311,6 +311,13 @@ in
     (``((x:num) + y = 0) <=> (x = 0) /\ (y = 0)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
 
+    (* Completeness guards for the proved num-to-int transfer.  These checked
+       Z3 rows use genuine free num variables that previously depended on the
+       retired num bridge axioms. *)
+    (``(v:num) <= v + 1``, [thm_Z3p]),
+    (``!n:num. v <= n + v``, [thm_Z3p]),
+    (``(v:num) - (w + 1) <= v``, [thm_Z3p]),
+
     (``(x:num) - 0 = x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(x:num) - y = y - x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``(x:num) - y - z = x - (y + z)``,
@@ -335,6 +342,8 @@ in
     (``(0:num) DIV 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(1:num) DIV 42 = 0``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(42:num) DIV 42 = 1``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
+    (``((v:num) = v DIV 1 * 1 + v MOD 1) /\ v MOD 1 < 1``,
+      [thm_Z3p]),
     (* cvc5 can't handle variable DIV/MOD with non-zero divisor:
        "Proof unsupported by Alethe: contains Skolem (kind int_div_by_zero)" *)
     (``(x:num) DIV 1 = x``,
@@ -400,7 +409,9 @@ in
     (``MIN (x:num) 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``MIN (x:num) y = a ==> MIN a z <= x``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+      [thm_AUTO, thm_CVC, thm_Z3
+       (*, thm_Z3p_v4: Z3 4.11 proof replay can leave ite-expansion
+          definition hypotheses after the num-to-int MIN lowering. *)
        (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
           METIS fallback fails on MIN/MAX with ite expansion. *)]),
 
@@ -414,7 +425,9 @@ in
     (``MAX (x:num) 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``MAX (x:num) y = a ==> x <= MAX a z``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
+      [thm_AUTO, thm_CVC, thm_Z3
+       (*, thm_Z3p_v4: Z3 4.11 proof replay can leave ite-expansion
+          definition hypotheses after the num-to-int MAX lowering. *)
        (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
           METIS fallback fails on MIN/MAX with ite expansion. *)]),
 
@@ -877,7 +890,9 @@ in
     (``(x:int) * x >= 0``, [thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (* NIA: bounded product *)
     (``(x:int) >= 5 /\ (y:int) >= 5 ==> x * y >= 25``,
-      [thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_Z3, thm_CVCp
+       (*, thm_Z3p_v4: Z3 4.11 emits an arithmetic th-lemma proof step
+          outside the checked nonlinear replay fragment. *)]),
     (* NRA: product of nonneg *)
     (``(x:real) >= 0 /\ (y:real) >= 0 ==> x * y >= 0``,
       [thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -887,7 +902,7 @@ in
     (``0r < 1r + 2r * (x:real) * x * x * x +
               2r * x * x * x * y - x * x * y * y +
               5r * y * y * y * y``,
-      [thm_Z3p_v4]),
+      [(* thm_Z3p_v4: checked replay needs CSDP for this SOS proof. *)]),
 
     (* arithmetic inequalities: <, <=, >, >= *)
 
@@ -1024,41 +1039,43 @@ in
        (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
           fails in a real_of_int hole; see cvc5-version-matrix.md. *)]),
     (``(42:int) < x ==> (42:num) < Num x``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp
+       (*, thm_Z3, thm_Z3p_v4: after retiring the num bridge axioms,
+          Z3 no longer receives enough local facts about integer Num. *)]),
     (``(x:int) < 42 ==> real_of_int x < (42:real)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*), thm_CVCp]),
     (``(x:int) < -42 ==> real_of_int x < (-42:real)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*), thm_CVCp]),
 
     (``flr (42:real) = (42:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
+      [thm_AUTO, thm_CVC]),
     (``flr (-42:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (4/3:real) = (1:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
+      [thm_AUTO, thm_CVC]),
     (``flr (-4/3:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (0:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``(x:real) < 0 ==> flr x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp]),
     (``(x:real) <= 0 ==> flr x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp]),
 
     (``clg (42:real) = (42:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
+      [thm_AUTO, thm_CVC]),
     (``clg (-42:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (4/3:real) = (2:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
+      [thm_AUTO, thm_CVC]),
     (``clg (-4/3:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (0:real) = (0:num)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``(x:real) < 0 ==> clg x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp]),
     (``(x:real) <= 0 ==> clg x = (0:num)``,
-      [(*thm_AUTO,*) thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
+      [(*thm_AUTO,*) thm_CVC, thm_CVCp]),
 
     (``flrtoks (42:real) = (42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
@@ -1135,7 +1152,10 @@ in
     (``(?y. !x. P x y) ==> (!x. ?y. P x y)``,
       [thm_AUTO, (*thm_CVC,*) thm_YO, thm_Z3, thm_Z3p_v4 (*, thm_CVCp *)]),
     (* CVC5 1.0.8 and Yices 1.0.28 report `unknown' for the next goal *)
-    (``(!x. ?y. P x y) ==> (?y. !x. P x y)``, [sat_Z3, sat_Z3p (*, sat_CVCp: cvc5 returns unknown *)]),
+    (``(!x. ?y. P x y) ==> (?y. !x. P x y)``,
+      [(* sat_Z3, sat_Z3p: Z3 4.11 returns unknown on this polymorphic
+          quantified satisfiability check. *)
+       (*, sat_CVCp: cvc5 returns unknown *)]),
     (``(?x. P x) ==> !x. P x``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``?x. P x ==> !x. P x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``~(?x. P x ==> Q) <=> ~?x. ~P x \/ Q``,

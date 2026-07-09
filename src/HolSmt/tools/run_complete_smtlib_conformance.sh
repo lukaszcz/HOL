@@ -202,7 +202,7 @@ fi
 
 rm -rf "$v2_root"
 
-run_step build-holsmt-drivers build "$holmake" -C src/HolSmt selftest.exe holsmt-typecheck holsmt-z3-tac
+run_step build-holsmt-drivers build "$holmake" --no-project -C src/HolSmt selftest.exe holsmt-typecheck holsmt-z3-tac
 run_step generate-v2-commands generation python3 "$v2_generator" --manifest "$v2_manifest" --logics-json "$v2_logics_json" commands --write
 run_step generate-v2-theories generation python3 "$v2_generator" --manifest "$v2_manifest" --logics-json "$v2_logics_json" theories --write
 run_step generate-v2-logics generation python3 "$v2_generator" --manifest "$v2_manifest" --logics-json "$v2_logics_json" logics --write

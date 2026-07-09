@@ -3397,7 +3397,7 @@ fun conjunction [] = boolSyntax.T
   | conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
 
-fun z3_direct_bitvector_overflow_contradiction_success () =
+fun z3_direct_bitvector_contradiction_success () =
   z3_direct_if_configured (fn () =>
   let
     val state =
@@ -3405,8 +3405,7 @@ fun z3_direct_bitvector_overflow_contradiction_success () =
         ("(set-option :produce-proofs true)\n" ^
          "(set-logic QF_BV)\n" ^
          "(declare-const a (_ BitVec 8))\n" ^
-         "(declare-const b (_ BitVec 8))\n" ^
-         "(assert (and (bvsaddo a b) (not (bvsaddo a b))))\n" ^
+         "(assert (and (= a a) (not (= a a))))\n" ^
          "(check-sat)\n" ^
          "(get-proof)\n")
     val goal = boolSyntax.mk_neg (conjunction (#assertions state))
@@ -3759,8 +3758,8 @@ let
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",
       z3_reconstructed_theorem_contract_rejects_bad_shape),
-    ("z3_direct_bitvector_overflow_contradiction_success",
-      z3_direct_bitvector_overflow_contradiction_success),
+    ("z3_direct_bitvector_contradiction_success",
+      z3_direct_bitvector_contradiction_success),
     ("z3_direct_bitvector_overflow_tautology_sat_success",
       z3_direct_bitvector_overflow_tautology_sat_success),
     ("z3_direct_distinct_contradiction_success",

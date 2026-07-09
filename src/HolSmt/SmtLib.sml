@@ -1129,6 +1129,76 @@ local
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
+  val exp_one_rewrites =
+  let
+    val th = Drule.SPEC_ALL arithmeticTheory.EXP_1
+  in
+    List.map Drule.GEN_ALL [Thm.CONJUNCT1 th, Thm.CONJUNCT2 th]
+  end
+
+  val INT_EXP_1 =
+  let
+    val i = Term.mk_var ("i", intSyntax.int_ty)
+    val th =
+      Thm.SPEC numSyntax.zero_tm
+        (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
+  in
+    Drule.GEN_ALL
+      (simpLib.SIMP_RULE pureSimps.pure_ss
+        [Thm.CONJUNCT1 integerTheory.int_exp, integerTheory.INT_MUL_RID,
+         Conv.GSYM arithmeticTheory.ONE]
+        th)
+  end
+
+  val INT_EXP_BASE_1 =
+  let
+    val n = Term.mk_var ("n", numSyntax.num)
+    val one = numSyntax.mk_numeral Arbnum.one
+    val th = Thm.SPEC n (Thm.SPEC one integerTheory.INT_EXP)
+  in
+    Drule.GEN_ALL
+      (simpLib.SIMP_RULE pureSimps.pure_ss
+        [List.hd exp_one_rewrites, integerTheory.INT] th)
+  end
+
+  val INT_EXP_2 =
+  let
+    val i = Term.mk_var ("i", intSyntax.int_ty)
+    val one = numSyntax.mk_numeral Arbnum.one
+    val th =
+      Thm.SPEC one (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp))
+  in
+    Drule.GEN_ALL
+      (simpLib.SIMP_RULE pureSimps.pure_ss
+         [INT_EXP_1, Conv.GSYM arithmeticTheory.TWO] th)
+  end
+
+  val INT_EXP_3 =
+  let
+    val i = Term.mk_var ("i", intSyntax.int_ty)
+    val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
+    val th =
+      numLib.REDUCE_RULE
+        (Thm.SPEC two (Thm.SPEC i (Thm.CONJUNCT2 integerTheory.int_exp)))
+  in
+    Drule.GEN_ALL
+      (simpLib.SIMP_RULE pureSimps.pure_ss
+        [INT_EXP_2, integerTheory.INT_MUL_ASSOC] th)
+  end
+
+  val REAL_POW_3 =
+  let
+    val x = Term.mk_var ("x", realSyntax.real_ty)
+    val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
+    val th =
+      numLib.REDUCE_RULE
+        (Thm.SPEC two (Thm.SPEC x (Thm.CONJUNCT2 realTheory.pow)))
+  in
+    Drule.GEN_ALL
+      (simpLib.SIMP_RULE pureSimps.pure_ss
+        [realTheory.POW_2, realTheory.REAL_MUL_ASSOC] th)
+  end
+
   val num_transfer_rewrites = [
     HolSmtTheory.NUM_TO_INT_GUARDED,
     integerTheory.INT_POS,
@@ -1136,8 +1206,14 @@ local
     Conv.GSYM integerTheory.INT_LE,
     Conv.GSYM integerTheory.INT_LT,
     Conv.GSYM integerTheory.INT_ADD,
-    Conv.GSYM integerTheory.INT_MUL,
+    Conv.GSYM integerTheory.INT_MUL
+  ] @ exp_one_rewrites @ [
+    arithmeticTheory.ZERO_LT_EXP,
     Conv.GSYM integerTheory.INT_EXP,
+    INT_EXP_1,
+    INT_EXP_BASE_1,
+    INT_EXP_2,
+    INT_EXP_3,
     integerTheory.INT,
     int_arithTheory.INT_NUM_SUB,
     HolSmtTheory.INT_NUM_EDIV,
@@ -1342,18 +1418,64 @@ in
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
 
+  fun type_mentions_num ty =
+    Type.compare (ty, numSyntax.num) = EQUAL orelse
+    (case Lib.total Type.dom_rng ty of
+       SOME (dom, rng) => type_mentions_num dom orelse type_mentions_num rng
+     | NONE => false)
+
+  fun is_num_transfer_const tm =
+    if not (Term.is_const tm) orelse not (type_mentions_num (Term.type_of tm))
+    then false
+    else
+      case Lib.total Term.dest_thy_const tm of
+        SOME {Thy = "arithmetic", Name, ...} =>
+          List.exists (fn n => n = Name)
+            ["*", "+", "-", "<=", ">", ">=", "DIV", "EXP", "MAX", "MIN",
+             "MOD"]
+      | SOME {Thy = "num", Name = "SUC", ...} => true
+      | SOME {Thy = "integer", Name = "int_exp", ...} => true
+      | SOME {Thy = "prim_rec", Name = "<", ...} => true
+      | SOME {Thy = "integer", Name = "Num", ...} => true
+      | SOME {Thy = "integer", Name = "int_of_num", ...} => true
+      | _ => false
+
+  fun atom_needs_num_transfer atom =
+    (Term.is_var atom andalso
+     Type.compare (Term.type_of atom, numSyntax.num) = EQUAL) orelse
+    is_num_transfer_const atom
+
+  fun goal_has_word (asms, concl) =
+  let
+    val atoms = Term.all_atomsl (concl :: asms) Term.empty_tmset
+  in
+    HOLset.foldl
+      (fn (atom, seen) => seen orelse type_contains_word (Term.type_of atom))
+      false atoms
+  end
+
+  fun goal_mentions_num (asms, concl) =
+  let
+    val atoms = Term.all_atomsl (concl :: asms) Term.empty_tmset
+  in
+    HOLset.foldl (fn (atom, seen) => seen orelse atom_needs_num_transfer atom)
+      false atoms
+  end
+
   (* Runs the proved num-to-int transfer on the conclusion.  Free num
      variables in the conclusion are first made explicit so the binder
      transfer can add the non-negativity guard. *)
-  val NUM_TO_INT_TAC =
+  fun NUM_TO_INT_TAC g =
   let
     open Tactic Tactical
   in
-    SPEC_NUM_FREE_VARS_TAC THEN
-    CONV_TAC NUM_TO_INT_CONV THEN
-    REPEAT GEN_TAC THEN
-    REPEAT DISCH_TAC THEN
-    simpLib.ASM_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites
+    if goal_mentions_num g andalso not (goal_has_word g) then
+      (SPEC_NUM_FREE_VARS_TAC THEN
+       CONV_TAC NUM_TO_INT_CONV THEN
+       REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
+       bossLib.REV_FULL_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites) g
+    else
+      ALL_TAC g
   end
 
   (* Relativizes num-typed binders to guarded int-typed binders. *)
@@ -1405,7 +1527,7 @@ in
       combinTheory.UPDATE_APPLY1, combinTheory.APPLY_UPDATE_THM,
       combinTheory.UPDATE_EQ, boolTheory.REFL_CLAUSE,
       HolSmtTheory.ALL_DISTINCT_NIL, HolSmtTheory.ALL_DISTINCT_CONS,
-      listTheory.MEM
+      listTheory.MEM, realTheory.POW_1, realTheory.POW_2, REAL_POW_3
     ] THEN
     SIMP_TAC pureSimps.pure_ss [
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
