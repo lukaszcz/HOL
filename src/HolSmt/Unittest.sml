@@ -3538,6 +3538,38 @@ fun z3_direct_ground_arithmetic_sat_success () =
        "(assert (or p (not p)))\n(check-sat)\n")
   end)
 
+fun z3_direct_ground_arithmetic_unsat_success () =
+  z3_direct_if_configured (fn () =>
+  let
+    fun expect_unsat label text =
+      let
+        val state = parse_smtlib_state text
+        val goal = boolSyntax.mk_neg (conjunction (#assertions state))
+        val thm =
+          case Z3.Z3_SMT_Prover ([], goal) of
+            SolverSpec.UNSAT (SOME thm) => thm
+          | SolverSpec.UNSAT NONE =>
+              die ("FAIL: " ^ label ^ " returned UNSAT without a theorem")
+          | SolverSpec.SAT _ =>
+              die ("FAIL: " ^ label ^ " was wrongly reported SAT")
+          | SolverSpec.UNKNOWN _ =>
+              die ("FAIL: " ^ label ^ " was not reported UNSAT")
+      in
+        assert (List.null (Thm.hyp thm),
+          label ^ " theorem has unexpected hypotheses");
+        assert (Term.aconv (Thm.concl thm) goal,
+          label ^ " theorem conclusion does not match goal");
+        Library.check_oracle_tags "unit-test" thm
+      end
+  in
+    expect_unsat "int divisible"
+      ("(set-option :produce-proofs true)\n(set-logic QF_LIA)\n" ^
+       "(assert ((_ divisible 3) 7))\n(check-sat)\n(get-proof)\n");
+    expect_unsat "int pow"
+      ("(set-option :produce-proofs true)\n(set-logic QF_NIA)\n" ^
+       "(assert (= (** 2 3) 9))\n(check-sat)\n(get-proof)\n")
+  end)
+
 fun holsmt_solver_result_negative_diagnostics () =
 let
   fun expect_error label expected solver =
@@ -3790,6 +3822,8 @@ let
       z3_direct_distinct_contradiction_success),
     ("z3_direct_ground_arithmetic_sat_success",
       z3_direct_ground_arithmetic_sat_success),
+    ("z3_direct_ground_arithmetic_unsat_success",
+      z3_direct_ground_arithmetic_unsat_success),
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics),
     ("solver_spec_rejects_bad_proof_theorem",

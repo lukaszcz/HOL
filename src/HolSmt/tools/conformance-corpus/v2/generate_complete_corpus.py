@@ -1204,6 +1204,11 @@ UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES = {
     "theory:Z3_Extensions:set.union:unsat-proof",
 }
 
+NATIVE_Z3_PROOF_UNSUPPORTED_THEORY_CASES = {
+    "theory:Ints:divisible:unsat-proof",
+    "theory:Ints:pow:unsat-proof",
+}
+
 RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:ArraysEx:array:unsat-proof",
     "theory:ArraysEx:extensionality:unsat-proof",
@@ -1321,6 +1326,7 @@ RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS = {
     "theory:FloatingPoint:to-fp:unsat-proof",
     "theory:Ints:abs:unsat-proof",
     "theory:Ints:div:unsat-proof",
+    "theory:Ints:divisible:unsat-proof",
     "theory:Ints:ge:unsat-proof",
     "theory:Ints:gt:unsat-proof",
     "theory:Ints:int:unsat-proof",
@@ -3637,6 +3643,25 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
             not parser_gap
             and case_id not in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES
         )
+        native_z3_proof_unsupported = (
+            case_id in NATIVE_Z3_PROOF_UNSUPPORTED_THEORY_CASES
+        )
+        proof_gap_status = (
+            "pass" if proof_modes_reconstructed else
+            "unsupported" if native_z3_proof_unsupported else "red"
+        )
+        proof_gap_phase = (
+            None if proof_modes_reconstructed or native_z3_proof_unsupported
+            else "proof-parse"
+        )
+        proof_replay_gap_phase = (
+            None if proof_modes_reconstructed or native_z3_proof_unsupported
+            else "proof-replay"
+        )
+        arithmetic_unsat_reconstructed = (
+            symbol.theory in {"Ints", "Reals", "Reals_Ints"}
+            and case_id in RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS
+        )
         z3_tac_reconstructed = case_id in RECONSTRUCTED_THEORY_Z3_TAC_UNSAT_PROOFS
         front_end_gap = parser_gap or z3_unsupported or translation_gap
         expected = {
@@ -3659,25 +3684,27 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 failure_phase="solver" if z3_unsupported else "parser" if parser_gap else None,
             ),
             "proof-parse": expected_result(
-                "pass" if proof_modes_reconstructed else "red",
-                diagnostic="Z3 proof is unavailable until solver support for this theory symbol exists"
+                proof_gap_status,
+                diagnostic="proof modes require unsat input"
+                if native_z3_proof_unsupported else
+                "Z3 proof is unavailable until solver support for this theory symbol exists"
                 if case_id in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES else blocked_by_parser
                 if parser_gap else None
                 if proof_modes_reconstructed else "theory proof parsing evidence is incomplete",
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else None
-                if proof_modes_reconstructed else "proof-parse",
+                if parser_gap else proof_gap_phase,
                 proof_rule_histogram=None if proof_modes_reconstructed else {"asserted": 1},
             ),
             "proof-replay": expected_result(
-                "pass" if proof_modes_reconstructed else "red",
-                diagnostic="Z3 proof replay is unavailable until solver support for this theory symbol exists"
+                proof_gap_status,
+                diagnostic="proof modes require unsat input"
+                if native_z3_proof_unsupported else
+                "Z3 proof replay is unavailable until solver support for this theory symbol exists"
                 if case_id in UNSAT_PROOF_MODE_BLOCKED_THEORY_CASES else blocked_by_parser
                 if parser_gap else None
                 if proof_modes_reconstructed else "theory proof replay evidence is incomplete",
                 failure_phase="solver" if z3_unsupported else "parser"
-                if parser_gap else None
-                if proof_modes_reconstructed else "proof-replay",
+                if parser_gap else proof_replay_gap_phase,
                 proof_rule_histogram=None if proof_modes_reconstructed else {"asserted": 1},
             ),
             "z3-tac": expected_result(
@@ -3691,6 +3718,8 @@ def theory_case(symbol: TheorySymbol, kind: str, script: str) -> GeneratedCase:
                 if z3_tac_reconstructed else "solver" if z3_unsupported else "parser"
                 if parser_gap else "translation" if translation_gap else "proof-replay",
                 theorem_shape=None if z3_tac_reconstructed else "closed theorem without oracle tags",
+                stdout_contains="result=unsat"
+                if arithmetic_unsat_reconstructed else None,
             ),
         }
         if not any(result["status"] == "red" for result in expected.values()):

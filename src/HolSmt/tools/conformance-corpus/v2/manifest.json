@@ -19935,11 +19935,24 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "pass",
+          "status": "red",
+          "diagnostic": "checked theorem-shape evidence for the oracle-tag boundary is still an implementation obligation",
           "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": null,
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/tools/audit_complete_conformance.py",
+          "src/HolSmt/z3_tac_driver.sml"
+        ],
+        "feature": "soundness:oracle-tag-boundary",
+        "test_ids": [
+          "soundness-audit:soundness-oracle-tag-boundary"
+        ],
+        "failure_phase": "theorem-shape",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
       "source": {
         "kind": "HolSmt-internal",
         "reference": "checked Z3_TAC oracle-tag boundary"
@@ -52167,7 +52180,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -52386,7 +52400,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -52595,40 +52610,25 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "Z3 proof is unavailable until solver support for this theory symbol exists",
-          "failure_phase": "proof-parse",
+          "status": "unsupported",
+          "diagnostic": "proof modes require unsat input",
           "proof_rule_histogram": {
             "asserted": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "Z3 proof replay is unavailable until solver support for this theory symbol exists",
-          "failure_phase": "proof-replay",
+          "status": "unsupported",
+          "diagnostic": "proof modes require unsat input",
           "proof_rule_histogram": {
             "asserted": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for theory symbol is incomplete",
-          "failure_phase": "proof-replay",
-          "theorem_shape": "closed theorem without oracle tags"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Ints:divisible:unsat-proof",
-        "test_ids": [
-          "theory:Ints:divisible:unsat-proof"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Ints theory: divisible"
@@ -52840,7 +52840,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -53055,7 +53056,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -53270,7 +53272,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -53485,7 +53488,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -53700,7 +53704,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -53919,7 +53924,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -54134,7 +54140,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -54345,7 +54352,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -54564,7 +54572,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -54769,37 +54778,25 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "Z3 proof is unavailable until solver support for this theory symbol exists",
-          "failure_phase": "proof-parse",
+          "status": "unsupported",
+          "diagnostic": "proof modes require unsat input",
           "proof_rule_histogram": {
             "asserted": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "Z3 proof replay is unavailable until solver support for this theory symbol exists",
-          "failure_phase": "proof-replay",
+          "status": "unsupported",
+          "diagnostic": "proof modes require unsat input",
           "proof_rule_histogram": {
             "asserted": 1
           }
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Theories.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "theory-symbol:Ints:pow:unsat-proof",
-        "test_ids": [
-          "theory:Ints:pow:unsat-proof"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Ints theory: **"
@@ -55011,7 +55008,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -55230,7 +55228,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -55907,7 +55906,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -56122,7 +56122,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -56337,7 +56338,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -56552,7 +56554,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -56767,7 +56770,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -56978,7 +56982,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -57197,7 +57202,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -57412,7 +57418,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -57627,7 +57634,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -57846,7 +57854,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -58290,7 +58299,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,
@@ -58509,7 +58519,8 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "pass"
+          "status": "pass",
+          "stdout_contains": "result=unsat"
         }
       },
       "implementation_obligation": null,

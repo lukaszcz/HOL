@@ -102,9 +102,12 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
 
         manifest = json.loads(stdout.getvalue())
         cases = audit.validate_v2_manifest(manifest)
+        recursive_replay_cases = 2
         self.assertEqual(
             len(cases),
-            4 * len(generator.COMMAND_GROUPS) + len(generator.DATATYPE_COMMAND_CORPUS_CASES),
+            4 * len(generator.COMMAND_GROUPS)
+            + recursive_replay_cases
+            + len(generator.DATATYPE_COMMAND_CORPUS_CASES),
         )
         self.assertEqual({case["class"] for case in cases}, {"command"})
 
@@ -121,21 +124,27 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             by_group.setdefault(group_features[0], []).append(case)
 
         self.assertEqual(len(by_group), len(generator.COMMAND_GROUPS))
-        for group_cases in by_group.values():
+        for group, group_cases in by_group.items():
             kinds = {
                 feature
                 for case in group_cases
                 for feature in case["features"]
                 if feature.startswith("command-case:")
             }
+            expected_kinds = {
+                "command-case:positive",
+                "command-case:negative",
+                "command-case:state",
+                "command-case:reconstruction",
+            }
+            if group == "command-group:define-fun-rec-define-funs-rec":
+                expected_kinds.update({
+                    "command-case:define-fun-rec-replay",
+                    "command-case:define-funs-rec-replay",
+                })
             self.assertEqual(
                 kinds,
-                {
-                    "command-case:positive",
-                    "command-case:negative",
-                    "command-case:state",
-                    "command-case:reconstruction",
-                },
+                expected_kinds,
             )
             negative_cases = [
                 case

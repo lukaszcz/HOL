@@ -70,6 +70,16 @@ local
    ]
 
   val apfst_K = Lib.apfst o Lib.K
+  val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
+  fun mk_int_emod (dividend, divisor) =
+    Term.list_mk_comb (int_emod_tm, [dividend, divisor])
+
+  fun literal_int_divides_mod_eq (divisor, dividend) =
+    if intSyntax.is_int_literal divisor andalso
+       Arbint.> (intSyntax.int_of_term divisor, Arbint.zero) then
+      [mk_int_emod (dividend, divisor), intSyntax.term_of_int Arbint.zero]
+    else
+      raise ERR "<builtin_symbols.int_divides>" "not a positive literal divisor"
 
   (* returns true iff 'ty' is a word type that is not fixed-width *)
   fun is_non_numeric_word_type ty =
@@ -133,6 +143,9 @@ local
     (Term.prim_mk_const {Thy="integer", Name="ediv"}, apfst_K "div"),
     (Term.prim_mk_const {Thy="integer", Name="emod"}, apfst_K "mod"),
     (intSyntax.absval_tm, apfst_K "abs"),
+    (intSyntax.divides_tm, fn (_, ts) =>
+      SmtLib_Theories.two_args (fn (divisor, dividend) =>
+        ("=", literal_int_divides_mod_eq (divisor, dividend))) ts),
     (intSyntax.leq_tm, apfst_K "<="),
     (intSyntax.less_tm, apfst_K "<"),
     (intSyntax.geq_tm, apfst_K ">="),
@@ -1199,8 +1212,45 @@ local
         [realTheory.POW_2, realTheory.REAL_MUL_ASSOC] th)
   end
 
+  fun thm_rhs_is_true th =
+  let
+    val (_, rhs) = boolSyntax.dest_eq (Thm.concl th)
+  in
+    Term.aconv rhs boolSyntax.T
+  end
+
+  fun INT_DIVIDES_LITERAL_MOD_CONV tm =
+  let
+    val (divisor, _) = intSyntax.dest_divides tm
+    val zero = intSyntax.term_of_int Arbint.zero
+    val _ =
+      if intSyntax.is_int_literal divisor then ()
+      else raise ERR "INT_DIVIDES_LITERAL_MOD_CONV" "non-literal divisor"
+    val pos_th =
+      simpLib.SIMP_CONV intLib.int_ss []
+        (intSyntax.mk_less (zero, divisor))
+    val _ =
+      if thm_rhs_is_true pos_th then ()
+      else raise ERR "INT_DIVIDES_LITERAL_MOD_CONV" "non-positive divisor"
+    val nz_th =
+      simpLib.SIMP_CONV intLib.int_ss []
+        (boolSyntax.mk_neg (boolSyntax.mk_eq (divisor, zero)))
+    val z_th =
+      simpLib.SIMP_CONV intLib.int_ss []
+        (boolSyntax.mk_eq (divisor, zero))
+  in
+    Conv.THENC
+      (Conv.REWR_CONV integerTheory.INT_DIVIDES_MOD0,
+       simpLib.SIMP_CONV pureSimps.pure_ss [
+         pos_th, nz_th, z_th, integerTheory.INT_MOD_EMOD,
+         boolTheory.COND_CLAUSES, boolTheory.AND_CLAUSES,
+         boolTheory.OR_CLAUSES
+       ]) tm
+  end
+
   val num_transfer_rewrites = [
     HolSmtTheory.NUM_TO_INT_GUARDED,
+    integerTheory.NUM_OF_INT,
     integerTheory.INT_POS,
     Conv.GSYM integerTheory.INT_INJ,
     Conv.GSYM integerTheory.INT_LE,
@@ -1536,6 +1586,9 @@ in
     ] THEN
     Library.WORD_SIMP_TAC THEN
     Library.SET_SIMP_TAC THEN
+    Tactic.RULE_ASSUM_TAC
+      (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
+    Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
     NUM_TO_INT_TAC THEN
     ADD_THEOREMS_TAC
