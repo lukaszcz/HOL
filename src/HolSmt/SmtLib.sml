@@ -1462,15 +1462,17 @@ in
       false atoms
   end
 
-  (* Runs the proved num-to-int transfer on the conclusion.  Free num
-     variables in the conclusion are first made explicit so the binder
-     transfer can add the non-negativity guard. *)
+  (* Runs the proved num-to-int transfer on the whole goal.  Assumptions are
+     first moved into the conclusion so free num variables anywhere in the
+     sequent are made explicit and get a non-negativity guard. *)
   fun NUM_TO_INT_TAC g =
   let
     open Tactic Tactical
+    val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
   in
     if goal_mentions_num g andalso not (goal_has_word g) then
-      (SPEC_NUM_FREE_VARS_TAC THEN
+      (undisch_assums THEN
+       SPEC_NUM_FREE_VARS_TAC THEN
        CONV_TAC NUM_TO_INT_CONV THEN
        REPEAT (GEN_TAC ORELSE DISCH_TAC) THEN
        bossLib.REV_FULL_SIMP_TAC pureSimps.pure_ss num_transfer_rewrites) g

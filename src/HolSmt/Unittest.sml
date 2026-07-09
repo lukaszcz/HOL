@@ -491,6 +491,14 @@ in
   String.concat strings
 end
 
+fun transferred_smtlib_goal_text goal0 =
+let
+  val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal0
+  val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+in
+  String.concat strings
+end
+
 fun assert_not_contains label needle haystack =
   assert (not (contains needle haystack),
     label ^ " unexpectedly contained '" ^ needle ^ "':\n" ^ haystack)
@@ -549,6 +557,20 @@ in
     text);
   assert (contains "(assert (not (= v0 0)))" text,
     "guarded Num transfer did not rewrite Num i to i:\n" ^ text)
+end
+
+fun num_transfer_assumption_free_var_success () =
+let
+  val text =
+    transferred_smtlib_goal_text ([``(x:num) <= 1``], ``(x:num) <= 2``)
+in
+  assert_pure_int_transfer "num assumption transfer" text;
+  assert (contains "(assert (<= 0 v0))" text,
+    "num assumption transfer did not emit non-negativity guard:\n" ^ text);
+  assert (contains "(assert (<= v0 1))" text,
+    "num assumption transfer did not rewrite assumption to Int:\n" ^ text);
+  assert (contains "(assert (not (<= v0 2)))" text,
+    "num assumption transfer did not rewrite conclusion to Int:\n" ^ text)
 end
 
 fun num_bridge_axioms_retired_success () =
@@ -3603,6 +3625,8 @@ let
       num_transfer_unguarded_num_corner_success),
     ("num_transfer_guarded_num_success",
       num_transfer_guarded_num_success),
+    ("num_transfer_assumption_free_var_success",
+      num_transfer_assumption_free_var_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
     ("remove_definitions_no_defs", fn () => remove_defs_test remove_defs_no_defs),
