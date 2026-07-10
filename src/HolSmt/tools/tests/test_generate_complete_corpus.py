@@ -163,8 +163,30 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         ]
         self.assertEqual(len(datatype_cases), len(generator.DATATYPE_COMMAND_CORPUS_CASES))
         self.assertTrue(
-            all(case["file"].startswith("cases/commands/datatypes/") for case in datatype_cases)
+            all(
+                case["file"].startswith("cases/commands/datatypes/")
+                for case in datatype_cases
+            )
         )
+        self.assertTrue(
+            all(
+                "theory:Datatypes" in case["features"]
+                for case in datatype_cases
+            )
+        )
+        datatype_by_id = {case["id"]: case for case in datatype_cases}
+        new_datatype_ids = {
+            "command:datatypes:declare-datatypes-arity-mismatch",
+            "command:datatypes:declare-datatypes-par-mismatch",
+            "command:datatypes:equality-chain",
+            "command:datatypes:match-default-variable",
+            "command:datatypes:match-nested-branch",
+            "command:datatypes:match-simple",
+            "command:datatypes:non-well-founded-self",
+            "command:datatypes:parametric-two-instances",
+            "command:datatypes:selector-misapplication-sat",
+        }
+        self.assertLessEqual(new_datatype_ids, set(datatype_by_id))
         self.assertTrue(
             any(
                 "datatype-command:parametric" in case["features"]
@@ -172,6 +194,50 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 for case in datatype_cases
             )
         )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:non-well-founded-self"
+            ]["expected"]["typecheck-only"]["status"],
+            "red",
+        )
+        for case_id in {
+            "command:datatypes:match-simple",
+            "command:datatypes:match-nested-branch",
+            "command:datatypes:match-default-variable",
+        }:
+            case = datatype_by_id[case_id]
+            self.assertIn("datatype-command:match", case["features"])
+            self.assertEqual(case["expected"]["parser-only"]["status"], "red")
+            self.assertIsNotNone(case["implementation_obligation"])
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:parametric-two-instances"
+            ]["expected"]["z3-tac"]["status"],
+            "red",
+        )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:selector-misapplication-sat"
+            ]["expected"]["z3-oracle"]["status"],
+            "pass",
+        )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:equality-chain"
+            ]["expected"]["z3-tac"]["status"],
+            "red",
+        )
+        for case_id in {
+            "command:datatypes:declare-datatypes-arity-mismatch",
+            "command:datatypes:declare-datatypes-par-mismatch",
+        }:
+            case = datatype_by_id[case_id]
+            self.assertIn(
+                "command-group:declare-datatype-declare-datatypes",
+                case["features"],
+            )
+            self.assertEqual(case["expected"]["typecheck-only"]["status"], "fail")
+            self.assertIsNone(case["implementation_obligation"])
 
         reconstruction_cases = [
             case for case in cases

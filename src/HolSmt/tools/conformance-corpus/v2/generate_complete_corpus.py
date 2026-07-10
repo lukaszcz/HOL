@@ -1407,6 +1407,195 @@ def command_case(
 
 DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
     ScriptedCase(
+        slug="non-well-founded-self",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype D ((mk (self D))))\n"
+            "(check-sat)\n"
+        ),
+        modes=("typecheck-only", "z3-oracle"),
+        expected={
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="datatype D is not well-founded",
+                failure_phase="typecheck",
+                notes="flips in TASK_10",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic="datatype D is not well-founded",
+                failure_phase="typecheck",
+                notes="flips in TASK_10",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command:declare-datatype",
+            "datatype-command:non-well-founded",
+            "theory:Datatypes",
+            "theory-behavior:recursive-datatype",
+        ),
+        implementation_feature="datatypes-elaboration:well-foundedness",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+            "src/HolSmt/z3_tac_driver.sml",
+        ),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 datatype well-foundedness check",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-simple",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green)))\n"
+            "(declare-const c Color)\n"
+            "(assert (= (match c ((red 0) (green 1))) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result(
+                "red",
+                diagnostic="match term parsing is not implemented",
+                failure_phase="parser",
+                notes="flips in TASK_16",
+            ),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="match term typechecking is not implemented",
+                failure_phase="typecheck",
+                notes="flips in TASK_16",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic="match term oracle path is not implemented",
+                failure_phase="translation",
+                notes="flips in TASK_16",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-simple",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        implementation_feature="datatypes-surface:match-simple",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+        ),
+        implementation_phase="parser",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes match term",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-nested-branch",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Tree ((leaf (value Int)) "
+            "(node (left Tree) (right Tree))))\n"
+            "(declare-const t Tree)\n"
+            "(assert (= (match t\n"
+            "  (((leaf x) x)\n"
+            "   ((node l r) (match l (((leaf y) y) ((node u v) 0)))))) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result(
+                "red",
+                diagnostic="match term parsing is not implemented",
+                failure_phase="parser",
+                notes="flips in TASK_16",
+            ),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="nested match typechecking is not implemented",
+                failure_phase="typecheck",
+                notes="flips in TASK_16",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic="nested match oracle path is not implemented",
+                failure_phase="translation",
+                notes="flips in TASK_16",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-nested",
+            "theory:Datatypes",
+            "theory-behavior:match",
+            "theory-behavior:recursive-datatype",
+        ),
+        implementation_feature="datatypes-surface:match-nested",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+        ),
+        implementation_phase="parser",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes nested match term",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-default-variable",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green) (blue)))\n"
+            "(declare-const c Color)\n"
+            "(assert (= (match c ((red 0) (other 1))) 1))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        expected={
+            "parser-only": expected_result(
+                "red",
+                diagnostic="match term parsing is not implemented",
+                failure_phase="parser",
+                notes="flips in TASK_16/TASK_17",
+            ),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="match default variable pattern is not implemented",
+                failure_phase="typecheck",
+                notes="flips in TASK_16/TASK_17",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic="match default variable oracle path is not implemented",
+                failure_phase="translation",
+                notes="flips in TASK_16/TASK_17",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-default-variable",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        implementation_feature="datatypes-surface:match-default-variable",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+        ),
+        implementation_phase="parser",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes match default variable pattern",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
         slug="simple-enum",
         script=(
             "(set-logic ALL)\n"
@@ -1502,6 +1691,205 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         ),
         logic="ALL",
         source_reference="SMT-LIB 2.7 declare-datatype parametric datatype command",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="parametric-two-instances",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Box (par (T) ((box (value T)))))\n"
+            "(declare-const bi (Box Int))\n"
+            "(declare-const bb (Box Bool))\n"
+            "(assert (= (value bi) 7))\n"
+            "(assert (= (value bb) true))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic=(
+                    "datatype parametric instantiation at multiple instances "
+                    "is incomplete"
+                ),
+                failure_phase="typecheck",
+                notes="flips in TASK_10/TASK_17",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic=(
+                    "datatype parametric instantiation at multiple instances "
+                    "is incomplete"
+                ),
+                failure_phase="translation",
+                notes="flips in TASK_10/TASK_17",
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic=(
+                    "checked Z3_TAC reconstruction for datatype "
+                    "parametric instantiation is incomplete"
+                ),
+                failure_phase="translation",
+                notes="flips in TASK_13/TASK_17",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:parametric",
+            "datatype-command:parametric-two-instances",
+            "theory:Datatypes",
+            "theory-behavior:parametric-datatype",
+        ),
+        implementation_feature="datatypes-surface:parametric-two-instances",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+            "src/HolSmt/Z3_ProofReplay.sml",
+            "src/HolSmt/z3_tac_driver.sml",
+        ),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes parametric instantiation",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="selector-misapplication-sat",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Maybe ((none) (some (value Int))))\n"
+            "(assert (= (value none) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("z3-oracle",),
+        expected={
+            "z3-oracle": expected_result(
+                "pass",
+                notes="oracle-only selector misapplication sat surface case",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:selector-misapplication",
+            "theory:Datatypes",
+            "theory-behavior:selector",
+            "theory-behavior:wrong-constructor-selector",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes selector on wrong constructor",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="equality-chain",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green) (blue)))\n"
+            "(declare-const a Color)\n"
+            "(declare-const b Color)\n"
+            "(declare-const c Color)\n"
+            "(assert (= a b c))\n"
+            "(assert (not (= a c)))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "red",
+                diagnostic="datatype equality chains are not typechecked natively",
+                failure_phase="typecheck",
+                notes="flips in TASK_10/TASK_17",
+            ),
+            "z3-oracle": expected_result(
+                "red",
+                diagnostic="datatype equality chains are not translated natively",
+                failure_phase="translation",
+                notes="flips in TASK_10/TASK_17",
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic=(
+                    "checked Z3_TAC reconstruction for datatype equality "
+                    "chains is incomplete"
+                ),
+                failure_phase="translation",
+                notes="flips in TASK_13/TASK_17",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:equality-chain",
+            "theory:Datatypes",
+            "theory-behavior:equality",
+        ),
+        implementation_feature="datatypes-surface:equality-chain",
+        implementation_files=(
+            "src/HolSmt/SmtLib.sml",
+            "src/HolSmt/SmtLib_Parser.sml",
+            "src/HolSmt/Z3_ProofReplay.sml",
+            "src/HolSmt/z3_tac_driver.sml",
+        ),
+        implementation_phase="typecheck",
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes equality over constructors",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="declare-datatypes-arity-mismatch",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatypes ((Tree 1)) "
+            "(((node (left Tree) (right Tree)))))\n"
+        ),
+        modes=("typecheck-only",),
+        expected={
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="declare-datatypes arity for 'Tree'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command-group:declare-datatype-declare-datatypes",
+            "command:declare-datatypes",
+            "datatype-command:arity-mismatch",
+            "theory:Datatypes",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatypes arity mismatch",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="declare-datatypes-par-mismatch",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatypes ((Box 0)) "
+            "((par (T) ((box (value T))))))\n"
+        ),
+        modes=("typecheck-only",),
+        expected={
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="declare-datatypes par arity for 'Box'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command-group:declare-datatype-declare-datatypes",
+            "command:declare-datatypes",
+            "datatype-command:par-mismatch",
+            "theory:Datatypes",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 declare-datatypes par mismatch",
         source_kind="SMT-LIB-standard",
     ),
 )

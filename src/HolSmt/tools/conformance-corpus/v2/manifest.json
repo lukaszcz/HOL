@@ -437,6 +437,344 @@
       }
     },
     {
+      "id": "command:datatypes:declare-datatypes-arity-mismatch",
+      "file": "cases/commands/datatypes/command_datatypes_declare_datatypes_arity_mismatch.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatypes",
+        "datatype-command:arity-mismatch",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "declare-datatypes arity for 'Tree'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatypes arity mismatch"
+      }
+    },
+    {
+      "id": "command:datatypes:declare-datatypes-par-mismatch",
+      "file": "cases/commands/datatypes/command_datatypes_declare_datatypes_par_mismatch.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command-group:declare-datatype-declare-datatypes",
+        "command:declare-datatypes",
+        "datatype-command:par-mismatch",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "declare-datatypes par arity for 'Box'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 declare-datatypes par mismatch"
+      }
+    },
+    {
+      "id": "command:datatypes:equality-chain",
+      "file": "cases/commands/datatypes/command_datatypes_equality_chain.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:equality-chain",
+        "theory-behavior:equality",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "datatype equality chains are not typechecked natively",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_10/TASK_17"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "datatype equality chains are not translated natively",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_10/TASK_17"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked Z3_TAC reconstruction for datatype equality chains is incomplete",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_13/TASK_17"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/z3_tac_driver.sml"
+        ],
+        "feature": "datatypes-surface:equality-chain",
+        "test_ids": [
+          "command:datatypes:equality-chain"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes equality over constructors"
+      }
+    },
+    {
+      "id": "command:datatypes:match-default-variable",
+      "file": "cases/commands/datatypes/command_datatypes_match_default_variable.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-default-variable",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "match term parsing is not implemented",
+          "failure_phase": "parser",
+          "notes": "flips in TASK_16/TASK_17"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "match default variable pattern is not implemented",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_16/TASK_17"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "match default variable oracle path is not implemented",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_16/TASK_17"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-surface:match-default-variable",
+        "test_ids": [
+          "command:datatypes:match-default-variable"
+        ],
+        "failure_phase": "parser",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes match default variable pattern"
+      }
+    },
+    {
+      "id": "command:datatypes:match-nested-branch",
+      "file": "cases/commands/datatypes/command_datatypes_match_nested_branch.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-nested",
+        "theory-behavior:match",
+        "theory-behavior:recursive-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "match term parsing is not implemented",
+          "failure_phase": "parser",
+          "notes": "flips in TASK_16"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "nested match typechecking is not implemented",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_16"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "nested match oracle path is not implemented",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_16"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-surface:match-nested",
+        "test_ids": [
+          "command:datatypes:match-nested-branch"
+        ],
+        "failure_phase": "parser",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes nested match term"
+      }
+    },
+    {
+      "id": "command:datatypes:match-simple",
+      "file": "cases/commands/datatypes/command_datatypes_match_simple.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-simple",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "match term parsing is not implemented",
+          "failure_phase": "parser",
+          "notes": "flips in TASK_16"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "match term typechecking is not implemented",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_16"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "match term oracle path is not implemented",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_16"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml"
+        ],
+        "feature": "datatypes-surface:match-simple",
+        "test_ids": [
+          "command:datatypes:match-simple"
+        ],
+        "failure_phase": "parser",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes match term"
+      }
+    },
+    {
       "id": "command:datatypes:mutual-tree-forest",
       "file": "cases/commands/datatypes/command_datatypes_mutual_tree_forest.smt2",
       "logic": "ALL",
@@ -473,6 +811,64 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatypes mutual datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:non-well-founded-self",
+      "file": "cases/commands/datatypes/command_datatypes_non_well_founded_self.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command:declare-datatype",
+        "datatype-command:non-well-founded",
+        "theory-behavior:recursive-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "datatype D is not well-founded",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_10"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "datatype D is not well-founded",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_10"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/z3_tac_driver.sml"
+        ],
+        "feature": "datatypes-elaboration:well-foundedness",
+        "test_ids": [
+          "command:datatypes:non-well-founded-self"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 datatype well-foundedness check"
       }
     },
     {
@@ -515,6 +911,76 @@
       }
     },
     {
+      "id": "command:datatypes:parametric-two-instances",
+      "file": "cases/commands/datatypes/command_datatypes_parametric_two_instances.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:parametric",
+        "datatype-command:parametric-two-instances",
+        "theory-behavior:parametric-datatype",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "red",
+          "diagnostic": "datatype parametric instantiation at multiple instances is incomplete",
+          "failure_phase": "typecheck",
+          "notes": "flips in TASK_10/TASK_17"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "datatype parametric instantiation at multiple instances is incomplete",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_10/TASK_17"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "checked Z3_TAC reconstruction for datatype parametric instantiation is incomplete",
+          "failure_phase": "translation",
+          "notes": "flips in TASK_13/TASK_17"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/SmtLib.sml",
+          "src/HolSmt/SmtLib_Parser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/z3_tac_driver.sml"
+        ],
+        "feature": "datatypes-surface:parametric-two-instances",
+        "test_ids": [
+          "command:datatypes:parametric-two-instances"
+        ],
+        "failure_phase": "typecheck",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes parametric instantiation"
+      }
+    },
+    {
       "id": "command:datatypes:recursive-list",
       "file": "cases/commands/datatypes/command_datatypes_recursive_list.smt2",
       "logic": "ALL",
@@ -551,6 +1017,43 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatype recursive datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:selector-misapplication-sat",
+      "file": "cases/commands/datatypes/command_datatypes_selector_misapplication_sat.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:selector-misapplication",
+        "theory-behavior:selector",
+        "theory-behavior:wrong-constructor-selector",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "z3-oracle": {
+          "status": "pass",
+          "notes": "oracle-only selector misapplication sat surface case"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes selector on wrong constructor"
       }
     },
     {
