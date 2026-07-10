@@ -239,6 +239,9 @@ val _ = Hol_datatype
   `smt_rec = <| smt_count : int; smt_flag : bool |>`
 
 val _ = Hol_datatype
+  `smt_tri = SmtTriA | SmtTriB of int | SmtTriC of bool`
+
+val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
@@ -2532,7 +2535,7 @@ let
     ("list-constructor-current-uf", ([],
        ``CONS (x:int) xs = CONS y ys``),
       ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((List_Int 0))",
-       "(declare-fun v0 (Int List_Int) List_Int)"]),
+       "(ctor_List_Int_CONS v1 v2)"]),
     ("function-application-arrays", ([],
        ``(f:'a -> 'b) x = g y``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
@@ -2595,10 +2598,91 @@ let
     ("datatype-constructor-current-uf", ([],
        ``SOME (x:int) = SOME y``),
       ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((Option_Int 0))",
-       "(declare-fun v0 (Int) Option_Int)"])
+       "(ctor_Option_Int_SOME v1)"])
   ]
 in
   List.app expect cases
+end
+
+fun smtlib_datatype_term_translation_success () =
+let
+  fun smtlib_text goal =
+    let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+    in String.concat strings end
+  fun assert_has name text snippet =
+    assert (contains snippet text,
+      "datatype translation case '" ^ name ^
+      "' missed SMT-LIB snippet '" ^ snippet ^ "'\nSMT-LIB:\n" ^ text)
+  fun assert_lacks name text snippet =
+    assert (not (contains snippet text),
+      "datatype translation case '" ^ name ^
+      "' unexpectedly emitted snippet '" ^ snippet ^ "'\nSMT-LIB:\n" ^ text)
+  val ctor_text = smtlib_text ([], ``SmtTriB (x:int) = SmtTriB y``)
+  val partial_text = smtlib_text ([],
+    ``(SmtTriB = (f:int -> smt_tri))``)
+  val case_text = smtlib_text ([],
+    ``(case (z:smt_tri) of
+         SmtTriA => 0i
+       | SmtTriB x => x
+       | SmtTriC p => if p then 1i else 2i) = 0i``)
+  val selector_tm = TypeBase.mk_case
+    (``z:smt_tri``,
+     [(``SmtTriA``, boolSyntax.mk_arb intSyntax.int_ty),
+      (``SmtTriB (x:int)``, ``x:int``),
+      (``SmtTriC (p:bool)``, boolSyntax.mk_arb intSyntax.int_ty)])
+  val selector_text = smtlib_text ([], boolSyntax.mk_eq (selector_tm, ``0i``))
+  val record_access_text = smtlib_text ([],
+    ``(r:smt_rec).smt_count = 0i``)
+  val record_update_text = smtlib_text ([],
+    ``(r with smt_count := 3i).smt_count = 3i``)
+in
+  assert_has "constructor application" ctor_text
+    "(ctor_Smt_tri_SmtTriB v1)";
+  assert_lacks "constructor application" ctor_text
+    "(declare-fun v0 (Int) Smt_tri)";
+  assert_has "partial constructor fallthrough" partial_text
+    "(declare-fun v0 () (Array Int Smt_tri))";
+  assert_has "case expression" case_text
+    "(ite ((_ is ctor_Smt_tri_SmtTriA) v0) 0";
+  assert_has "case expression" case_text
+    "(sel_Smt_tri_ctor_Smt_tri_SmtTriB_0 v0)";
+  assert_has "case expression" case_text
+    "(ite (sel_Smt_tri_ctor_Smt_tri_SmtTriC_0 v0) 1 2)";
+  assert_has "selector-shaped case" selector_text
+    "(sel_Smt_tri_ctor_Smt_tri_SmtTriB_0 v0)";
+  assert_lacks "selector-shaped case" selector_text
+    "(_ is ctor_Smt_tri_SmtTriB)";
+  assert_has "record access" record_access_text
+    "(recordtype_smt_rec_seldef_smt_count v1)";
+  assert_has "record update" record_update_text
+    "(ctor_Smt_rec_recordtype_smt_rec 3";
+  assert_has "record update" record_update_text
+    "(recordtype_smt_rec_seldef_smt_flag v1)"
+end
+
+fun smtlib_datatype_parser_dict_success () =
+let
+  val (translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([], ``SmtTriB (x:int) = SmtTriB y``)
+  val dicts = SmtLib.parser_dicts_for_translation translation
+  val ctor = parse_roundtrip_term "datatype constructor parser"
+    "(ctor_Smt_tri_SmtTriB 7)" dicts
+  val tester = parse_roundtrip_term "datatype tester parser"
+    "((_ is ctor_Smt_tri_SmtTriB) (ctor_Smt_tri_SmtTriB 7))" dicts
+  val expected_ctor = ``SmtTriB 7i``
+  val expected_tester = TypeBase.mk_case
+    (expected_ctor,
+     [(``SmtTriA``, boolSyntax.F),
+      (``SmtTriB (x:int)``, boolSyntax.T),
+      (``SmtTriC (p:bool)``, boolSyntax.F)])
+in
+  assert (Term.aconv ctor expected_ctor,
+    "datatype constructor parser resolved to " ^ term_with_types ctor ^
+    ", expected " ^ term_with_types expected_ctor);
+  assert (tester ~~ expected_tester,
+    "datatype tester parser resolved to " ^ term_with_types tester ^
+    ", expected " ^ term_with_types expected_tester)
 end
 
 fun smtlib_preprocessing_and_gap_diagnostics () =
@@ -2646,9 +2730,6 @@ let
 in
   ignore (inferred_logic ``(H:('a -> 'b) -> bool) f``);
   ignore (inferred_logic ``(f:int -> bool) = g``);
-  expect_translation_error "datatype case selector current gap"
-    ``(case (opt:int option) of NONE => 0i | SOME x => x) = 0i``
-    "unsupported higher-order rator expression";
   assert (contains "if y = 0 then 0 else smt_rdiv x y" rdiv_thm,
     "real division preprocessing theorem did not expose smt_rdiv shape: " ^
     rdiv_thm);
@@ -3850,6 +3931,10 @@ let
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",
       smtlib_term_translation_branch_matrix_success),
+    ("smtlib_datatype_term_translation_success",
+      smtlib_datatype_term_translation_success),
+    ("smtlib_datatype_parser_dict_success",
+      smtlib_datatype_parser_dict_success),
     ("smtlib_preprocessing_and_gap_diagnostics",
       smtlib_preprocessing_and_gap_diagnostics),
     ("smtlib_roundtrip_current_theories_success",

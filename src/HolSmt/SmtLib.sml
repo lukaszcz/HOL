@@ -815,6 +815,38 @@ local
       List.rev names
     end
 
+  fun datatype_constructor_infos ty type_name =
+    let
+      val tyinfo =
+        case TypeBase.fetch ty of
+          SOME info => info
+        | NONE => raise ERR "datatype_constructor_infos"
+            "missing TypeBase entry"
+      val fields = TypeBasePure.fields_of tyinfo
+      fun one (constructor, (used, acc)) =
+        let
+          val constructor = TypeBasePure.cinst ty constructor
+          val cname = constructor_name type_name constructor used
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+          val selector_names =
+            if not (List.null fields) andalso List.length doms =
+               List.length fields then
+              record_selector_names tyinfo cname fields (cname :: used)
+            else
+              generated_selector_names type_name cname (List.length doms)
+                (cname :: used)
+          val selectors = ListPair.zipEq (selector_names, doms)
+          val used = cname :: selector_names @ used
+        in
+          (used, (constructor, cname, selectors) :: acc)
+        end
+      val (_, infos) =
+        List.foldl one (smt_reserved_term_names, [])
+          (TypeBasePure.constructors_of tyinfo)
+    in
+      List.rev infos
+    end
+
   fun type_decl_record (ty, name) =
     TypeDeclaration {hol_type = ty, smt_name = name,
       declaration = "(declare-sort " ^ name ^ " 0)\n"}
@@ -833,35 +865,21 @@ local
               SOME info => info
             | NONE => raise ERR "datatype_declaration_text"
                 "missing TypeBase entry"
-          val fields = TypeBasePure.fields_of tyinfo
-          fun one (constructor, (used, acc)) =
+          val infos = datatype_constructor_infos ty type_name
+          fun one (_, cname, selectors) =
             let
-              val constructor = TypeBasePure.cinst ty constructor
-              val cname = constructor_name type_name constructor used
-              val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
-              val selector_names =
-                if not (List.null fields) andalso List.length doms =
-                   List.length fields then
-                  record_selector_names tyinfo cname fields (cname :: used)
-                else
-                  generated_selector_names type_name cname
-                    (List.length doms) (cname :: used)
-              val selectors = ListPair.mapEq
+              val selectors = List.map
                 (fn (sel, dom) => "(" ^ sel ^ " " ^ sort_of dom ^ ")")
-                (selector_names, doms)
-              val cdec = "(" ^ cname ^
-                (case selectors of
-                  [] => ""
-                | _ => " " ^ String.concatWith " " selectors) ^ ")"
-              val used = cname :: selector_names @ used
+                selectors
             in
-              (used, cdec :: acc)
+              "(" ^ cname ^
+              (case selectors of
+                [] => ""
+              | _ => " " ^ String.concatWith " " selectors) ^ ")"
             end
-          val (_, cdecs) =
-            List.foldl one (smt_reserved_term_names,
-              []) (TypeBasePure.constructors_of tyinfo)
+          val cdecs = List.map one infos
         in
-          "(" ^ String.concatWith " " (List.rev cdecs) ^ ")"
+          "(" ^ String.concatWith " " cdecs ^ ")"
         end
       val sort_decls = List.map (fn name => "(" ^ name ^ " 0)") names
       val datatype_decls = ListPair.mapEq constructor_decs (family, names)
@@ -1043,6 +1061,99 @@ local
       List.rev builtin_records @ advanced_records
     end
 
+  fun datatype_tester_term ty constructor arg =
+    let
+      val type_name = type_name_stem ty
+      val infos = datatype_constructor_infos ty type_name
+      fun clause (constructor', _, _) =
+        let
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
+          val vars = List.map Term.genvar doms
+          val pat = Term.list_mk_comb (constructor', vars)
+          val result =
+            if Term.same_const constructor constructor' then boolSyntax.T
+            else boolSyntax.F
+        in
+          (pat, result)
+        end
+    in
+      TypeBase.mk_case (arg, List.map clause infos)
+    end
+
+  fun datatype_selector_term ty constructor selector_index arg =
+    let
+      val type_name = type_name_stem ty
+      val infos = datatype_constructor_infos ty type_name
+      val selector_ty =
+        case List.find (fn (constructor', _, _) =>
+            Term.same_const constructor constructor') infos of
+          SOME (_, _, selectors) => Lib.snd (List.nth (selectors, selector_index))
+        | NONE => raise ERR "datatype_selector_term" "missing constructor"
+      fun clause (constructor', _, _) =
+        let
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor')
+          val vars = List.map Term.genvar doms
+          val pat = Term.list_mk_comb (constructor', vars)
+          val result =
+            if Term.same_const constructor constructor' then
+              List.nth (vars, selector_index)
+            else
+              boolSyntax.mk_arb selector_ty
+        in
+          (pat, result)
+        end
+    in
+      TypeBase.mk_case (arg, List.map clause infos)
+    end
+
+  fun add_datatype_parser_entries (ty, type_name, dict) =
+    let
+      val infos = datatype_constructor_infos ty type_name
+      fun add_constructor ((constructor, cname, selectors), dict) =
+        let
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+          val arity = List.length doms
+          fun constructor_parse token indices args =
+            if List.null indices andalso List.length args = arity then
+              Term.list_mk_comb (constructor, args)
+            else
+              raise ERR ("<" ^ token ^ ">") "wrong number of arguments"
+          fun selector_entry ((selector_index, (selector_name, _)), dict) =
+            let
+              fun selector_parse token indices args =
+                case (indices, args) of
+                  ([], [arg]) =>
+                    datatype_selector_term ty constructor selector_index arg
+                | _ => raise ERR ("<" ^ token ^ ">")
+                    "one argument expected"
+            in
+              Library.extend_dict ((selector_name, selector_parse), dict)
+            end
+          fun tester_parse token indices args =
+            case (indices, args) of
+              ([index], [arg]) =>
+                let
+                  val index_name = Lib.fst (Term.dest_var index)
+                in
+                  if index_name = cname then
+                    datatype_tester_term ty constructor arg
+                  else
+                    raise ERR ("<" ^ token ^ " " ^ cname ^ ">")
+                      "tester constructor mismatch"
+                end
+            | _ => raise ERR ("<" ^ token ^ " " ^ cname ^ ">")
+                "one constructor index and one argument expected"
+          val dict = Library.extend_dict ((cname, constructor_parse), dict)
+          val dict = Library.extend_dict (("is", tester_parse), dict)
+          val numbered = ListPair.zipEq
+            (List.tabulate (List.length selectors, fn n => n), selectors)
+        in
+          List.foldl selector_entry dict numbered
+        end
+    in
+      List.foldl add_constructor dict infos
+    end
+
   fun parser_dicts_for_translation_aux ({logic, tydict, tmdict, ...} : translation) =
     let
       val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
@@ -1056,6 +1167,10 @@ local
             else
               raise ERR ("<" ^ s ^ ">") "wrong number of arguments"))]))
         (Redblackmap.mkDict String.compare) tmdict
+      val tm_dict = Redblackmap.foldl (fn (ty, name, dict) =>
+        case datatype_family ty of
+          SOME _ => add_datatype_parser_entries (ty, name, dict)
+        | NONE => dict) tm_dict tydict
       val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic logic
     in
       (Library.union_dict logic_tydict ty_dict,
@@ -1186,6 +1301,9 @@ local
   let
     fun sexpr x [] = x
       | sexpr x xs = "(" ^ x ^ " " ^ String.concatWith " " xs ^ ")"
+    fun beta_reduce t =
+      boolSyntax.rhs (Thm.concl (Drule.LIST_BETA_CONV t))
+      handle Feedback.HOL_ERR _ => t
     fun builtin_symbol (rator, rands) =
       let
         val (name, rands) = Lib.tryfind (fn parsefn => parsefn (rator, rands))
@@ -1206,6 +1324,202 @@ local
         in
           (Redblackmap.insert (bounds, v, name), name)
         end
+    fun ensure_type ((tydict, tmdict), ty) =
+      let val (tydict, (decls, name)) = translate_type (tydict, ty)
+      in (((tydict, tmdict), decls), name) end
+    fun constructor_info_for tydict ty constructor =
+      let
+        val type_name =
+          case Redblackmap.peek (tydict, ty) of
+            SOME name => name
+          | NONE => raise ERR "translate_term" "datatype type not registered"
+        val infos = datatype_constructor_infos ty type_name
+      in
+        case List.find (fn (constructor', _, _) =>
+            Term.same_const constructor constructor') infos of
+          SOME info => info
+        | NONE => raise ERR "translate_term" "constructor name not found"
+      end
+    fun translate_constructor_application acc rator rands =
+      let
+        val _ = TypeBase.is_constructor rator
+        val (doms, data_ty) = boolSyntax.strip_fun (Term.type_of rator)
+        val arity = List.length doms
+        val _ =
+          if List.length rands = arity then ()
+          else raise ERR "translate_term" "partial constructor application"
+        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
+        val (_, cname, _) = constructor_info_for tydict data_ty rator
+        val tmdict = Redblackmap.insert (tmdict, (rator, arity), cname)
+        val acc = (tydict, tmdict)
+        val (acc, declnames) = Lib.foldl_map
+          (fn (a, t) => translate_term (a, (bounds, t))) (acc, rands)
+        val (declss, names) = Lib.split declnames
+      in
+        (acc, (typedecls @ List.concat declss, sexpr cname names))
+      end
+    fun selector_case_match match_tydict elem clauses =
+      let
+        val data_ty = Term.type_of elem
+        val type_name = Redblackmap.find (match_tydict, data_ty)
+        val infos = datatype_constructor_infos data_ty type_name
+        fun clause_for constructor =
+          List.find (fn (pat, _) =>
+            let val (pat_rator, _) = boolSyntax.strip_comb pat
+            in Term.same_const constructor pat_rator end) clauses
+        fun rhs_is_arb rhs = boolSyntax.is_arb rhs
+        fun selector_for (constructor, _, selectors) =
+          let
+            val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+            val indices = List.tabulate (List.length doms, fn n => n)
+            fun try_index n =
+              case clause_for constructor of
+                SOME (pat, rhs) =>
+                  let val (_, vars) = boolSyntax.strip_comb pat
+                  in
+                    if List.length vars = List.length doms andalso
+                       Term.aconv rhs (List.nth (vars, n)) andalso
+                       List.all (fn (constructor', _, _) =>
+                         Term.same_const constructor constructor' orelse
+                         (case clause_for constructor' of
+                            SOME (_, rhs') => rhs_is_arb rhs'
+                          | NONE => false)) infos
+                    then SOME (Lib.fst (List.nth (selectors, n)))
+                    else NONE
+                  end
+              | NONE => NONE
+          in
+            Lib.get_first try_index indices
+          end
+      in
+        Lib.get_first selector_for infos
+      end
+    fun translate_selector_case acc =
+      let
+        val (_, elem, clauses) = TypeBase.dest_case tm
+        val (((tydict, tmdict), typedecls), _) =
+          ensure_type (acc, Term.type_of elem)
+        val selector_name =
+          case selector_case_match tydict elem clauses of
+            SOME name => name
+          | NONE => raise ERR "translate_term" "not a selector case"
+        val acc = (tydict, tmdict)
+        val (acc, (elemdecls, elemname)) = translate_term (acc, (bounds, elem))
+      in
+        (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
+      end
+    fun translate_case_constant acc rator rands =
+      let
+        val (elem, cases) =
+          case rands of
+            elem :: cases => (elem, cases)
+          | [] => raise ERR "translate_term" "case constant without scrutinee"
+        val data_ty = Term.type_of elem
+        val tyinfo =
+          case TypeBase.fetch data_ty of
+            SOME info => info
+          | NONE => raise ERR "translate_term" "case scrutinee not datatype"
+        val _ =
+          if Term.same_const rator (TypeBasePure.case_const_of tyinfo) then ()
+          else raise ERR "translate_term" "not datatype case constant"
+        val _ =
+          if List.length cases = List.length (TypeBasePure.constructors_of tyinfo)
+          then ()
+          else raise ERR "translate_term" "wrong number of case branches"
+        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, data_ty)
+        val type_name = Redblackmap.find (tydict, data_ty)
+        val infos = datatype_constructor_infos data_ty type_name
+        fun selector_terms (constructor, _, selectors) =
+          List.map (fn n => datatype_selector_term data_ty constructor n elem)
+            (List.tabulate (List.length selectors, fn n => n))
+        fun branch_term (casefn, info) =
+          beta_reduce (Term.list_mk_comb (casefn, selector_terms info))
+        val branch_terms = ListPair.mapEq branch_term (cases, infos)
+        val acc = (tydict, tmdict)
+        val (acc, (elemdecls, elemname)) = translate_term (acc, (bounds, elem))
+        val (acc, declbranches) = Lib.foldl_map
+          (fn (a, t) => translate_term (a, (bounds, t))) (acc, branch_terms)
+        val (branchdeclss, branchnames) = Lib.split declbranches
+        fun tester (_, cname, _) = sexpr ("(_ is " ^ cname ^ ")") [elemname]
+        fun cascaded [] [] = raise ERR "translate_term" "empty datatype case"
+          | cascaded [_] [branch] = branch
+          | cascaded (info :: infos) (branch :: branches) =
+              sexpr "ite" [tester info, branch, cascaded infos branches]
+          | cascaded _ _ = raise ERR "translate_term" "case branch mismatch"
+      in
+        (acc, (typedecls @ elemdecls @ List.concat branchdeclss,
+          cascaded infos branchnames))
+      end
+    fun translate_record_selector acc =
+      let
+        val (select, x) = Term.dest_comb tm
+        val (_, select_ty) = Term.dest_const select
+        val (record_ty, rng_ty) = Type.dom_rng select_ty
+        val fields = TypeBase.fields_of record_ty
+        val _ = if List.null fields then
+            raise ERR "translate_term" "not a record selector"
+          else ()
+        val j = Lib.index (fn (_, {ty = field_ty, accessor, ...}) =>
+            Term.same_const select accessor andalso
+            Lib.can (Type.match_type field_ty) rng_ty) fields
+        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, record_ty)
+        val type_name = Redblackmap.find (tydict, record_ty)
+        val infos = datatype_constructor_infos record_ty type_name
+        val (_, _, selectors) =
+          case infos of
+            [info] => info
+          | _ => raise ERR "translate_term" "record has multiple constructors"
+        val selector_name = Lib.fst (List.nth (selectors, j))
+        val tmdict = Redblackmap.insert (tmdict, (select, 1), selector_name)
+        val acc = (tydict, tmdict)
+        val (acc, (xdecls, xname)) = translate_term (acc, (bounds, x))
+      in
+        (acc, (typedecls @ xdecls, sexpr selector_name [xname]))
+      end
+    fun translate_record_update acc =
+      let
+        val (update_f, x) = Term.dest_comb tm
+        val (update, f) = Term.dest_comb update_f
+        val new_val =
+          combinSyntax.dest_K_1 f
+          handle Feedback.HOL_ERR _ =>
+            let
+              val (var1, body) = Term.dest_abs f
+              val (k_tm, var2) = Term.dest_comb body
+              val _ =
+                if Term.aconv var1 var2 then ()
+                else raise ERR "translate_term"
+                  "record update function not in eta-long form"
+            in
+              combinSyntax.dest_K_1 k_tm
+            end
+        val record_ty = Term.type_of x
+        val fields = TypeBase.fields_of record_ty
+        val _ = if List.null fields then
+            raise ERR "translate_term" "not a record update"
+          else ()
+        val val_ty = Term.type_of new_val
+        val j = Lib.index (fn (_, {ty = field_ty, fupd, ...}) =>
+            Term.same_const update fupd andalso
+            Lib.can (Type.match_type field_ty) val_ty) fields
+        val (((tydict, tmdict), typedecls), _) = ensure_type (acc, record_ty)
+        val type_name = Redblackmap.find (tydict, record_ty)
+        val infos = datatype_constructor_infos record_ty type_name
+        val (_, cname, selectors) =
+          case infos of
+            [info] => info
+          | _ => raise ERR "translate_term" "record has multiple constructors"
+        val acc = (tydict, tmdict)
+        val (acc, (xdecls, xname)) = translate_term (acc, (bounds, x))
+        val (acc, (newdecls, newname)) =
+          translate_term (acc, (bounds, new_val))
+        fun field_name (n, (selector_name, _)) =
+          if n = j then newname else sexpr selector_name [xname]
+        val field_names = ListPair.mapEq field_name
+          (List.tabulate (List.length selectors, fn n => n), selectors)
+      in
+        (acc, (typedecls @ xdecls @ newdecls, sexpr cname field_names))
+      end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
   in
     (* binders *)
@@ -1275,6 +1589,21 @@ local
         builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
+    handle Feedback.HOL_ERR _ =>
+
+      translate_constructor_application acc rator rands
+    handle Feedback.HOL_ERR _ =>
+
+      translate_selector_case acc
+    handle Feedback.HOL_ERR _ =>
+
+      translate_case_constant acc rator rands
+    handle Feedback.HOL_ERR _ =>
+
+      translate_record_selector acc
+    handle Feedback.HOL_ERR _ =>
+
+      translate_record_update acc
     handle Feedback.HOL_ERR _ =>
 
       (* arrays are represented by HOL functions: function application is
