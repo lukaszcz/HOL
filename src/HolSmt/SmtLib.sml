@@ -25,6 +25,8 @@ datatype translation_record =
                        features : logic_features}
   | TypeDeclaration of {hol_type : Type.hol_type, smt_name : string,
                         declaration : string}
+  | DatatypeDeclaration of {hol_types : Type.hol_type list,
+                            smt_names : string list, declaration : string}
   | TermDeclaration of {hol_term : Term.term, arity : int,
                         smt_name : string, domain_sorts : string list,
                         range_sort : string, declaration : string}
@@ -638,9 +640,251 @@ local
         declaration = declaration}
     end
 
+  val smt_reserved_type_names = [
+    "Bool", "Int", "Real", "String", "Array", "BitVec"
+  ]
+
+  val smt_reserved_term_names = [
+    "true", "false", "not", "and", "or", "xor", "=>", "=", "distinct",
+    "ite", "select", "store", "div", "mod", "abs", "to_real", "to_int",
+    "is_int"
+  ]
+
+  fun is_smt_reserved names name = List.exists (fn s => s = name) names
+
+  fun starts_with_alpha s =
+    String.size s > 0 andalso Char.isAlpha (String.sub (s, 0))
+
+  fun smt_simple_symbol prefix raw =
+    let
+      val sanitized = SmtLib_Theories.sanitize_name raw
+      val base =
+        if starts_with_alpha sanitized then sanitized else prefix ^ sanitized
+    in
+      if base = prefix then prefix ^ "x" else base
+    end
+
+  fun capitalize s =
+    if s = "" then "T"
+    else
+      String.str (Char.toUpper (String.sub (s, 0))) ^
+      String.extract (s, 1, NONE)
+
+  fun type_name_stem ty =
+    case first_success (fn (_, f) => f ty)
+        (TypeNet.match (builtin_types, ty)) of
+      SOME name => smt_simple_symbol "T_" name
+    | NONE =>
+      if Type.is_vartype ty then
+        smt_simple_symbol "T_" (Type.dest_vartype ty)
+      else if is_function_type ty then
+        let
+          val (dom, rng) = Type.dom_rng ty
+        in
+          "Fun_" ^ type_name_stem dom ^ "_" ^ type_name_stem rng
+        end
+      else
+        let
+          val {Tyop, Args, ...} = Type.dest_thy_type ty
+          val base = smt_simple_symbol "T_" (capitalize Tyop)
+        in
+          case Args of
+            [] => base
+          | _ => base ^ "_" ^ String.concatWith "_"
+              (List.map type_name_stem Args)
+        end
+
+  fun dict_type_names tydict =
+    Redblackmap.foldl (fn (_, name, acc) => name :: acc) [] tydict
+
+  fun fresh_smt_name reserved used stem =
+    let
+      val stem = smt_simple_symbol "S_" stem
+      fun unavailable s =
+        is_smt_reserved reserved s orelse List.exists (fn t => t = s) used
+      fun loop n =
+        let
+          val candidate =
+            if n = 0 then stem else stem ^ "_" ^ Int.toString n
+        in
+          if unavailable candidate then loop (n + 1) else candidate
+        end
+    in
+      loop 0
+    end
+
+  fun same_type (ty1, ty2) = Type.compare (ty1, ty2) = EQUAL
+
+  fun member_type ty tys = List.exists (fn ty' => same_type (ty, ty')) tys
+
+  fun add_type ty tys = if member_type ty tys then tys else ty :: tys
+
+  fun free_datatype_tyinfo tyinfo =
+    not (List.null (TypeBasePure.constructors_of tyinfo)) andalso
+    Lib.can TypeBasePure.nchotomy_of tyinfo andalso
+    Lib.can TypeBasePure.case_def_of tyinfo andalso
+    Lib.can TypeBasePure.induction_of tyinfo
+
+  fun datatype_translation_excluded ty = same_type (ty, numSyntax.num)
+
+  fun predicate_domain_type pred =
+    let
+      val (dom, rng) = Type.dom_rng (Term.type_of pred)
+    in
+      if same_type (rng, Type.bool) then SOME dom else NONE
+    end
+    handle Feedback.HOL_ERR _ => NONE
+
+  fun datatype_family_types tyinfo ty =
+    let
+      val (preds, _) =
+        boolSyntax.strip_forall (Thm.concl (TypeBasePure.induction_of tyinfo))
+      val patterns = List.mapPartial predicate_domain_type preds
+      fun instantiate pattern =
+        let val theta = Type.match_type pattern ty
+        in List.map (Type.type_subst theta) patterns end
+    in
+      case Lib.get_first (Lib.total instantiate) patterns of
+        SOME family =>
+          List.rev (List.foldl (fn (fam_ty, acc) => add_type fam_ty acc)
+            [] family)
+      | NONE => raise ERR "datatype_family_types" "no matching family member"
+    end
+
+  fun datatype_family ty =
+    if datatype_translation_excluded ty then
+      NONE
+    else case TypeBase.fetch ty of
+      NONE => NONE
+    | SOME tyinfo =>
+      if free_datatype_tyinfo tyinfo then
+        let
+          val family = datatype_family_types tyinfo ty
+          val tyinfos = List.map TypeBase.fetch family
+        in
+          if List.all Option.isSome tyinfos andalso
+             List.all (free_datatype_tyinfo o valOf) tyinfos then
+            SOME family
+          else
+            NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
+      else
+        NONE
+
+  fun constructor_name type_name constructor used =
+    let
+      val raw = #Name (Term.dest_thy_const constructor)
+        handle Feedback.HOL_ERR _ => Hol_pp.term_to_string constructor
+    in
+      fresh_smt_name smt_reserved_term_names used
+        ("ctor_" ^ type_name ^ "_" ^ raw)
+    end
+
+  fun record_selector_names tyinfo constructor_name fields used =
+    let
+      fun field_name (_, {accessor, ...} : TypeBasePure.rcd_fieldinfo) =
+        #Name (Term.dest_thy_const accessor)
+        handle Feedback.HOL_ERR _ => Hol_pp.term_to_string accessor
+      fun one ((field, info), (used, acc)) =
+        let
+          val raw =
+            case field_name (field, info) of "" => field | name => name
+          val name = fresh_smt_name smt_reserved_term_names used raw
+        in
+          (name :: used, name :: acc)
+        end
+      val (_, names) = List.foldl one (used, []) fields
+    in
+      List.rev names
+    end
+
+  fun generated_selector_names type_name constructor_name arity used =
+    let
+      fun one (n, (used, acc)) =
+        let
+          val name = fresh_smt_name smt_reserved_term_names used
+            ("sel_" ^ type_name ^ "_" ^ constructor_name ^ "_" ^
+             Int.toString n)
+        in
+          (name :: used, name :: acc)
+        end
+      val (_, names) =
+        List.foldl one (used, []) (List.tabulate (arity, fn n => n))
+    in
+      List.rev names
+    end
+
   fun type_decl_record (ty, name) =
     TypeDeclaration {hol_type = ty, smt_name = name,
       declaration = "(declare-sort " ^ name ^ " 0)\n"}
+
+  fun datatype_declaration_text sort_of family names =
+    let
+      val name_of = ListPair.zipEq (family, names)
+      fun lookup_name ty =
+        case List.find (fn (ty', _) => same_type (ty, ty')) name_of of
+          SOME (_, name) => name
+        | NONE => raise ERR "datatype_declaration_text" "missing family name"
+      fun constructor_decs (ty, type_name) =
+        let
+          val tyinfo =
+            case TypeBase.fetch ty of
+              SOME info => info
+            | NONE => raise ERR "datatype_declaration_text"
+                "missing TypeBase entry"
+          val fields = TypeBasePure.fields_of tyinfo
+          fun one (constructor, (used, acc)) =
+            let
+              val constructor = TypeBasePure.cinst ty constructor
+              val cname = constructor_name type_name constructor used
+              val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+              val selector_names =
+                if not (List.null fields) andalso List.length doms =
+                   List.length fields then
+                  record_selector_names tyinfo cname fields (cname :: used)
+                else
+                  generated_selector_names type_name cname
+                    (List.length doms) (cname :: used)
+              val selectors = ListPair.mapEq
+                (fn (sel, dom) => "(" ^ sel ^ " " ^ sort_of dom ^ ")")
+                (selector_names, doms)
+              val cdec = "(" ^ cname ^
+                (case selectors of
+                  [] => ""
+                | _ => " " ^ String.concatWith " " selectors) ^ ")"
+              val used = cname :: selector_names @ used
+            in
+              (used, cdec :: acc)
+            end
+          val (_, cdecs) =
+            List.foldl one (smt_reserved_term_names,
+              []) (TypeBasePure.constructors_of tyinfo)
+        in
+          "(" ^ String.concatWith " " (List.rev cdecs) ^ ")"
+        end
+      val sort_decls = List.map (fn name => "(" ^ name ^ " 0)") names
+      val datatype_decls = ListPair.mapEq constructor_decs (family, names)
+    in
+      "(declare-datatypes (" ^ String.concatWith " " sort_decls ^ ") (" ^
+      String.concatWith " " datatype_decls ^ "))\n"
+    end
+
+  fun datatype_decl_record tydict ty =
+    case datatype_family ty of
+      NONE => NONE
+    | SOME family =>
+      let
+        val names = List.map (fn fam_ty => Redblackmap.find (tydict, fam_ty))
+          family
+        val declaration = datatype_declaration_text
+          (smt_sort_of_type tydict) family names
+      in
+        SOME (DatatypeDeclaration {hol_types = family, smt_names = names,
+          declaration = declaration}, family)
+      end
+      handle Redblackmap.NotFound => NONE
+           | Feedback.HOL_ERR _ => NONE
 
   fun infer_features terms tydict tmdict =
     let
@@ -779,8 +1023,17 @@ local
     let
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
-      val type_records = Redblackmap.foldl (fn (ty, name, acc) =>
-        type_decl_record (ty, name) :: acc) [] tydict
+      fun add_type_record (ty, name, (seen, acc)) =
+        if member_type ty seen then
+          (seen, acc)
+        else
+          case datatype_decl_record tydict ty of
+            SOME (record, family) =>
+              (List.foldl (fn (fam_ty, seen) => add_type fam_ty seen)
+                seen family, record :: acc)
+          | NONE =>
+              (add_type ty seen, type_decl_record (ty, name) :: acc)
+      val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict tydict (key, name) :: acc) [] tmdict
       val builtin_records = encoded_symbol_records terms
@@ -812,30 +1065,7 @@ local
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB type declarations, and the SMT-LIB representation of the
      given type *)
-  fun translate_type (tydict, ty) =
-  let
-    val (tydict, (decls, name)) =
-      if is_function_type ty then
-        let
-          val (dom, rng) = Type.dom_rng ty
-          val (tydict, (domdecls, domname)) = translate_type (tydict, dom)
-          val (tydict, (rngdecls, rngname)) = translate_type (tydict, rng)
-        in
-          (tydict, (domdecls @ rngdecls, "(Array " ^ domname ^ " " ^
-            rngname ^ ")"))
-        end
-      else
-        (tydict,
-          ([],
-            case first_success (fn (_, f) => f ty)
-                (TypeNet.match (builtin_types, ty)) of
-              SOME name => name
-            | NONE => Redblackmap.find (tydict, ty)))
-  in
-    (tydict, (decls, name))
-  end
-  handle Redblackmap.NotFound =>
-    (* uninterpreted types *)
+  fun uninterpreted_type (tydict, ty) =
     let
       val name = ty_prefix ^ Int.toString (Redblackmap.numItems tydict)
       val decl = "(declare-sort " ^ name ^ " 0)\n"
@@ -852,6 +1082,92 @@ local
         ();
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
+  fun translate_type (tydict, ty) =
+    if is_function_type ty then
+      let
+        val (dom, rng) = Type.dom_rng ty
+        val (tydict, (domdecls, domname)) = translate_type (tydict, dom)
+        val (tydict, (rngdecls, rngname)) = translate_type (tydict, rng)
+      in
+        (tydict, (domdecls @ rngdecls, "(Array " ^ domname ^ " " ^
+          rngname ^ ")"))
+      end
+    else
+      case first_success (fn (_, f) => f ty)
+          (TypeNet.match (builtin_types, ty)) of
+        SOME name => (tydict, ([], name))
+      | NONE =>
+        (case Redblackmap.peek (tydict, ty) of
+          SOME name => (tydict, ([], name))
+        | NONE =>
+          (case translate_datatype_type (tydict, ty) of
+            SOME result => result
+          | NONE =>
+            let
+              val _ =
+                case TypeBase.fetch ty of
+                  SOME _ =>
+                    if !Library.trace > 0 then
+                      WARNING "translate_type"
+                        ("datatype fallback for " ^ Hol_pp.type_to_string ty)
+                    else
+                      ()
+                | NONE => ()
+            in
+              uninterpreted_type (tydict, ty)
+            end))
+  and translate_datatype_type (tydict, ty) =
+    case datatype_family ty of
+      NONE => NONE
+    | SOME family =>
+      let
+        val used0 = dict_type_names tydict @ smt_reserved_type_names
+        fun add_name (fam_ty, (used, acc)) =
+          let
+            val name = fresh_smt_name smt_reserved_type_names used
+              (type_name_stem fam_ty)
+          in
+            (name :: used, name :: acc)
+          end
+        val (_, names_rev) = List.foldl add_name (used0, []) family
+        val names = List.rev names_rev
+        val tydict_with_family = ListPair.foldlEq
+          (fn (fam_ty, name, dict) => Redblackmap.insert (dict, fam_ty, name))
+          tydict (family, names)
+        fun translate_constructor_doms (fam_ty, (dict, decls)) =
+          let
+            val tyinfo =
+              case TypeBase.fetch fam_ty of
+                SOME info => info
+              | NONE => raise ERR "translate_datatype_type"
+                  "missing TypeBase entry"
+            fun translate_one (constructor, (dict, decls)) =
+              let
+                val constructor = TypeBasePure.cinst fam_ty constructor
+                val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
+                fun translate_dom (dom, (dict, decls)) =
+                  let val (dict, (new_decls, _)) = translate_type (dict, dom)
+                  in (dict, decls @ new_decls) end
+              in
+                List.foldl translate_dom (dict, decls) doms
+              end
+          in
+            List.foldl translate_one (dict, decls)
+              (TypeBasePure.constructors_of tyinfo)
+          end
+        val (tydict, dependency_decls) =
+          List.foldl translate_constructor_doms (tydict_with_family, []) family
+        val declaration = datatype_declaration_text
+          (smt_sort_of_type tydict) family names
+        val name =
+          case Redblackmap.peek (tydict, ty) of
+            SOME n => n
+          | NONE => raise ERR "translate_datatype_type" "unregistered type"
+      in
+        SOME (tydict, (dependency_decls @ [declaration], name))
+      end
+      handle Feedback.HOL_ERR _ => NONE
+           | Redblackmap.NotFound => NONE
 
   (* SMT-LIB is first-order.  Thus, higher-order arguments must be abstracted
      so that they are

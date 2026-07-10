@@ -232,6 +232,36 @@ fun assert_num_binder_conv (label, input, expected) =
   end
 
 (*****************************************************************************)
+(* local datatypes for translation tests                                      *)
+(*****************************************************************************)
+
+val _ = Hol_datatype
+  `smt_rec = <| smt_count : int; smt_flag : bool |>`
+
+val _ = Hol_datatype
+  `smt_left = SmtLeftDone | SmtLeft of smt_right;
+   smt_right = SmtRightDone | SmtRight of smt_left`
+
+val _ = new_type ("smt_nonfree", 1)
+val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
+val _ = new_constant
+  ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
+val smt_nonfree_ind = new_axiom
+  ("smt_nonfree_ind",
+   ``!P. P smt_nonfree_nil /\
+         (!t. P t ==> !a. P (smt_nonfree_cons a t)) ==> !x. P x``)
+val smt_nonfree_cases = new_axiom
+  ("smt_nonfree_cases",
+   ``!x. (x = smt_nonfree_nil) \/
+         ?a t. x = smt_nonfree_cons a t``)
+val _ = TypeBase.write [
+  TypeBasePure.mk_nondatatype_info
+    (``:'a smt_nonfree``,
+     {encode = NONE, induction = SOME smt_nonfree_ind,
+      nchotomy = SOME smt_nonfree_cases, size = NONE})
+]
+
+(*****************************************************************************)
 (* test definitions                                                          *)
 (*****************************************************************************)
 
@@ -2334,6 +2364,66 @@ in
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
+fun smtlib_datatype_type_translation_success () =
+let
+  fun smtlib_text goal =
+    let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE goal
+    in String.concat strings end
+  fun assert_has label needle text =
+    assert (contains needle text,
+      label ^ " did not contain '" ^ needle ^ "':\n" ^ text)
+  fun assert_lacks label needle text =
+    assert (not (contains needle text),
+      label ^ " unexpectedly contained '" ^ needle ^ "':\n" ^ text)
+  val enum_text = smtlib_text ([], ``(x:ordering) = y``)
+  val list_text = smtlib_text ([], ``(xs:int list) = ys``)
+  val two_list_text = smtlib_text ([],
+    ``((xs:int list) = ys) /\ ((bs:bool list) = cs)``)
+  val record_text = smtlib_text ([], ``(r:smt_rec) = s``)
+  val mutual_text = smtlib_text ([], ``(l:smt_left) = m``)
+  val nonfree_text = smtlib_text ([],
+    ``(n:int smt_nonfree) = m``)
+  val builtin_text = smtlib_text ([], ``(s:string) = t``)
+  val (records_translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE ([], ``(xs:int list) = ys``)
+  val records = SmtLib.translation_records records_translation
+  val has_datatype_record =
+    List.exists
+      (fn SmtLib.DatatypeDeclaration {hol_types, smt_names, declaration} =>
+            List.exists (fn ty => Type.compare (ty, ``:int list``) = EQUAL)
+              hol_types andalso
+            List.exists (fn name => name = "List_Int") smt_names andalso
+            contains "(declare-datatypes" declaration
+        | _ => false) records
+in
+  assert_has "enum datatype" "(declare-datatypes ((Ordering 0))"
+    enum_text;
+  assert_has "recursive list datatype" "(declare-datatypes ((List_Int 0))"
+    list_text;
+  assert_has "recursive list self field" "List_Int" list_text;
+  assert_has "first monomorphic list instance" "(List_Int 0)"
+    two_list_text;
+  assert_has "second monomorphic list instance" "(List_Bool 0)"
+    two_list_text;
+  assert_has "record datatype" "(declare-datatypes ((Smt_rec 0))"
+    record_text;
+  assert_has "record int selector"
+    "(recordtype_smt_rec_seldef_smt_count Int)" record_text;
+  assert_has "record bool selector"
+    "(recordtype_smt_rec_seldef_smt_flag Bool)" record_text;
+  assert_has "mutual datatype left sort" "(Smt_left 0)" mutual_text;
+  assert_has "mutual datatype right sort" "(Smt_right 0)" mutual_text;
+  assert_has "mutual datatype block" "(declare-datatypes" mutual_text;
+  assert_has "non-free fallback sort" "(declare-sort t0 0)" nonfree_text;
+  assert_lacks "non-free fallback" "(declare-datatypes" nonfree_text;
+  assert_has "builtin string precedence" "(declare-fun v0 () String)"
+    builtin_text;
+  assert_lacks "builtin string precedence" "(declare-datatypes"
+    builtin_text;
+  assert (has_datatype_record,
+    "translation records did not include datatype declaration record")
+end
+
 fun smtlib_extended_hol_encoding_records_success () =
 let
   val s = Term.mk_var ("s", stringSyntax.string_ty)
@@ -2441,8 +2531,8 @@ let
        "(= (str.++ v0 v1) (str.++ v1 v0))"]),
     ("list-constructor-current-uf", ([],
        ``CONS (x:int) xs = CONS y ys``),
-      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)\n",
-       "(declare-fun v0 (Int t0) t0)"]),
+      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((List_Int 0))",
+       "(declare-fun v0 (Int List_Int) List_Int)"]),
     ("function-application-arrays", ([],
        ``(f:'a -> 'b) x = g y``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
@@ -2450,8 +2540,8 @@ let
        "(= (select v0 v1) (select v2 v3))"]),
     ("tuple-selector-current-uf", ([],
        ``FST (p:int # bool) <= FST p + 1``),
-      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)",
-       "(declare-fun v0 (t0) Int)"]),
+      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((Prod_Int_Bool 0))",
+       "(declare-fun v0 (Prod_Int_Bool) Int)"]),
     ("sets-as-predicates-current-uf", ([],
        ``(s:'a -> bool) x``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 Bool))",
@@ -2504,8 +2594,8 @@ let
       ["str.prefixof", "str.++", "str.<", "str.<="]),
     ("datatype-constructor-current-uf", ([],
        ``SOME (x:int) = SOME y``),
-      ["(set-logic QF_UFLIA)\n", "(declare-sort t0 0)",
-       "(declare-fun v0 (Int) t0)"])
+      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((Option_Int 0))",
+       "(declare-fun v0 (Int) Option_Int)"])
   ]
 in
   List.app expect cases
@@ -3750,6 +3840,8 @@ let
       smtlib_translation_logic_inference_success),
     ("smtlib_translation_records_success",
       smtlib_translation_records_success),
+    ("smtlib_datatype_type_translation_success",
+      smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_higher_order_translation_abstraction_success",
