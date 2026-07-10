@@ -266,6 +266,7 @@ for version in "${selected_versions[@]}"; do
     proof_requirements=(
       --require-rule-occurrence th-lemma-array
       --require-rule-occurrence th-lemma-arith
+      --require-rule-occurrence th-lemma-datatype
       --require-rule-occurrence th-lemma-nonlinear-arith
     )
     case "$version" in
@@ -278,6 +279,12 @@ for version in "${selected_versions[@]}"; do
         proof_cases+=(
           --case-id minimal_bool_unsat
           --case-id theory:ArraysEx:extensionality:unsat-proof
+          --case-id theory:Datatypes:symbolic-acyclicity
+          --case-id theory:Datatypes:symbolic-constructor-injectivity
+          --case-id theory:Datatypes:symbolic-mutual-family
+          --case-id theory:Datatypes:symbolic-parametric-instance
+          --case-id theory:Datatypes:symbolic-selector-constructor
+          --case-id theory:Datatypes:symbolic-tester-exhaustiveness
           --case-id logic:NIA:nonlinear-proof
           --case-id logic:QF_NRA:nonlinear-proof
           --case-id proof-rule:commutativity-symm-trans-star:real-proof-occurrence
@@ -308,6 +315,7 @@ for version in "${selected_versions[@]}"; do
       --fail-on-unknown-rules \
       "${proof_requirements[@]}" \
       --require-theory-subkind 'array:<none>' \
+      --require-theory-subkind 'datatype:<none>' \
       --minimized-repro-dir "$report_dir/minimized-repros/proofs/z3-$version"
   else
     cat >"$proof_out/proof-version-report.json" <<EOF

@@ -405,6 +405,36 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         self.assertTrue(
             any("theory-behavior:disjointness" in case["features"] for case in datatype_cases)
         )
+        symbolic_cases = [
+            case for case in datatype_cases
+            if "theory-behavior:symbolic-datatype-proof" in case["features"]
+        ]
+        self.assertEqual(len(symbolic_cases), 6)
+        symbolic_features = {
+            feature
+            for case in symbolic_cases
+            for feature in case["features"]
+            if feature.startswith("theory-entry:Datatypes:symbolic-")
+        }
+        self.assertEqual(
+            symbolic_features,
+            {
+                "theory-entry:Datatypes:symbolic-acyclicity",
+                "theory-entry:Datatypes:symbolic-constructor-injectivity",
+                "theory-entry:Datatypes:symbolic-mutual-family",
+                "theory-entry:Datatypes:symbolic-parametric-instance",
+                "theory-entry:Datatypes:symbolic-selector-constructor",
+                "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
+            },
+        )
+        for case in symbolic_cases:
+            self.assertIn("proof-rule:th-lemma-datatype", case["features"])
+            for mode in ("proof-parse", "proof-replay", "z3-tac"):
+                self.assertEqual(case["expected"][mode]["status"], "red")
+                self.assertEqual(
+                    case["expected"][mode].get("proof_rule_histogram"),
+                    {"th-lemma-datatype": 1},
+                )
         function_sort_cases = [
             case for case in hocore_cases
             if "higher-order/function-sort" in case["features"]

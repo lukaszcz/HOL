@@ -1,0 +1,7 @@
+unsat
+((set-logic ALL)
+(proof
+(let ((?x26 (cons h l)))
+ (let (($x27 (= l ?x26)))
+ (let ((@x28 (asserted $x27)))
+ ((_ th-lemma datatype) (symm (mp @x28 (rewrite (= $x27 $x27)) $x27) (= ?x26 l)) false))))))

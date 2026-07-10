@@ -1,0 +1,7 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-datatype Box (par (T) ((box (value T)))))
+(declare-const bx (Box Int))
+(assert (not (= bx (box (value bx)))))
+(check-sat)
+(get-proof)

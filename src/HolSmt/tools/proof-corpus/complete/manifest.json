@@ -33,6 +33,78 @@
       ]
     },
     {
+      "id": "theory:Datatypes:symbolic-acyclicity",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_acyclicity.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
+      "id": "theory:Datatypes:symbolic-constructor-injectivity",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_constructor_injectivity.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
+      "id": "theory:Datatypes:symbolic-mutual-family",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_mutual_family.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
+      "id": "theory:Datatypes:symbolic-parametric-instance",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_parametric_instance.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
+      "id": "theory:Datatypes:symbolic-selector-constructor",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_selector_constructor.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
+      "id": "theory:Datatypes:symbolic-tester-exhaustiveness",
+      "family": "v2-theory-datatype",
+      "path": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/datatypes/theory_datatypes_symbolic_tester_exhaustiveness.smt2",
+      "expected_result": "unsat",
+      "required_rules": [
+        "th-lemma-datatype"
+      ],
+      "required_theory_subkinds": [
+        "datatype:<none>"
+      ]
+    },
+    {
       "id": "logic:NIA:nonlinear-proof",
       "family": "v2-logic-nonlinear-arith",
       "path": "src/HolSmt/tools/conformance-corpus/v2/cases/logics/logic_nia_nonlinear_proof.smt2",
@@ -107,11 +179,13 @@
     "symm",
     "th-lemma-array",
     "th-lemma-arith",
+    "th-lemma-datatype",
     "th-lemma-nonlinear-arith",
     "trans*"
   ],
   "required_theory_subkinds": [
-    "array:<none>"
+    "array:<none>",
+    "datatype:<none>"
   ],
   "required_artifacts": [
     "input_file",

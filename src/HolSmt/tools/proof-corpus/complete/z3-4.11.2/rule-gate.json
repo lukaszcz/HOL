@@ -6,10 +6,10 @@
       "artifacts": {
         "effective_input_sha256": "f812fb93431491f415d49abecf0b93ee37597d106c4366c9debb2a0b4440304e",
         "input_sha256": "f812fb93431491f415d49abecf0b93ee37597d106c4366c9debb2a0b4440304e",
-        "proof_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/proofs/theory_arraysex_extensionality_unsat_proof-f812fb934314.proof",
+        "proof_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/proofs/theory_arraysex_extensionality_unsat_proof-f812fb934314.proof",
         "proof_sha256": "3c936e9a0472a953bc2d1c76536c3f4a7785f9b26df0a23df35179e690b6faa7",
-        "stderr_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/theory_arraysex_extensionality_unsat_proof-f812fb934314.stderr",
-        "stdout_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/theory_arraysex_extensionality_unsat_proof-f812fb934314.stdout"
+        "stderr_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/theory_arraysex_extensionality_unsat_proof-f812fb934314.stderr",
+        "stdout_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/theory_arraysex_extensionality_unsat_proof-f812fb934314.stdout"
       },
       "contexts": [
         {
@@ -24,7 +24,7 @@
         }
       ],
       "count": 2,
-      "input": "src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_arraysex_extensionality_unsat_proof.smt2",
+      "input": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/conformance-corpus/v2/cases/theories/theory_arraysex_extensionality_unsat_proof.smt2",
       "rule": "proof-bind",
       "z3_version": "4.11.2"
     },
@@ -32,10 +32,10 @@
       "artifacts": {
         "effective_input_sha256": "016e9f608eae948f4c9b55b813b329a0f997324800902eddd23e195738445ae0",
         "input_sha256": "016e9f608eae948f4c9b55b813b329a0f997324800902eddd23e195738445ae0",
-        "proof_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/proofs/proof_rule_residual_skolem-016e9f608eae.proof",
+        "proof_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/proofs/proof_rule_residual_skolem-016e9f608eae.proof",
         "proof_sha256": "eb35c3bd88ed7a2df263fe39185e69da82ec062ae13a3861aad71691fbd7f15e",
-        "stderr_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stderr",
-        "stdout_path": "src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stdout"
+        "stderr_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stderr",
+        "stdout_path": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/proof-corpus/complete/z3-4.11.2/raw/proof_rule_residual_skolem-016e9f608eae.stdout"
       },
       "contexts": [
         {
@@ -50,7 +50,7 @@
         }
       ],
       "count": 2,
-      "input": "src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_skolem.smt2",
+      "input": "/home/lukasz/dev/HOL/worktrees/smt/src/HolSmt/tools/conformance-corpus/v2/cases/proof_rules/proof_rule_residual_skolem.smt2",
       "rule": "proof-bind",
       "z3_version": "4.11.2"
     }
@@ -66,15 +66,14 @@
     "require_no_oracles": false,
     "require_replay_success": false,
     "required_rule_occurrences": [
-      "commutativity",
-      "elim-unused",
-      "sk",
       "th-lemma-arith",
       "th-lemma-array",
+      "th-lemma-datatype",
       "th-lemma-nonlinear-arith"
     ],
     "required_theory_subkinds": [
-      "array:<none>"
+      "array:<none>",
+      "datatype:<none>"
     ]
   },
   "schema": "holsmt-z3-proof-corpus-v1",

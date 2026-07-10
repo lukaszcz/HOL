@@ -1,0 +1,8 @@
+(set-option :produce-proofs true)
+(set-logic ALL)
+(declare-datatype Color ((red) (blue)))
+(declare-const c Color)
+(assert (not ((_ is red) c)))
+(assert (not ((_ is blue) c)))
+(check-sat)
+(get-proof)

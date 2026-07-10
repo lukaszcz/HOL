@@ -3148,6 +3148,55 @@ Z3_EXTENSION_THEORY_SYMBOLS: tuple[TheorySymbol, ...] = (
 )
 
 
+def datatype_symbolic_proof_expected(
+    *,
+    proof_diagnostic: str,
+    replay_diagnostic: str,
+    tac_diagnostic: str,
+) -> dict[str, dict[str, object]]:
+    return {
+        "parser-only": expected_result("pass"),
+        "typecheck-only": expected_result("pass"),
+        "z3-oracle": expected_result("pass"),
+        "proof-parse": expected_result(
+            "red",
+            diagnostic=proof_diagnostic,
+            failure_phase="proof-parse",
+            proof_rule_histogram={"th-lemma-datatype": 1},
+        ),
+        "proof-replay": expected_result(
+            "red",
+            diagnostic=replay_diagnostic,
+            failure_phase="proof-replay",
+            proof_rule_histogram={"th-lemma-datatype": 1},
+        ),
+        "z3-tac": expected_result(
+            "red",
+            diagnostic=tac_diagnostic,
+            failure_phase="proof-replay",
+            theorem_shape="closed theorem without oracle tags",
+            proof_rule_histogram={"th-lemma-datatype": 1},
+        ),
+    }
+
+
+DATATYPE_SYMBOLIC_PROOF_MODES = (
+    "parser-only",
+    "typecheck-only",
+    "z3-oracle",
+    "proof-parse",
+    "proof-replay",
+    "z3-tac",
+)
+
+
+DATATYPE_SYMBOLIC_PROOF_FILES = (
+    "src/HolSmt/SmtLib_Datatypes.sml",
+    "src/HolSmt/Z3_ProofParser.sml",
+    "src/HolSmt/Z3_ProofReplay.sml",
+)
+
+
 DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
     ScriptedCase(
         slug="simple-constructors-selectors-testers",
@@ -3330,6 +3379,247 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
         ),
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes theory parametric datatype",
+    ),
+    ScriptedCase(
+        slug="symbolic-acyclicity",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n"
+            "(declare-const l List)\n"
+            "(declare-const h Int)\n"
+            "(assert (= l (cons h l)))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic="datatype acyclicity proof parsing is incomplete",
+            replay_diagnostic="datatype acyclicity replay is incomplete",
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype acyclicity is "
+                "incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-acyclicity",
+            "theory-case:unsat-proof",
+            "theory-behavior:recursive-datatype",
+            "theory-behavior:acyclicity",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:acyclicity",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference="Z3 datatype th-lemma proof shape: acyclicity",
+        source_kind="Z3-proof",
+    ),
+    ScriptedCase(
+        slug="symbolic-tester-exhaustiveness",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype Color ((red) (blue)))\n"
+            "(declare-const c Color)\n"
+            "(assert (not ((_ is red) c)))\n"
+            "(assert (not ((_ is blue) c)))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic=(
+                "datatype tester exhaustiveness proof parsing is incomplete"
+            ),
+            replay_diagnostic=(
+                "datatype tester exhaustiveness replay is incomplete"
+            ),
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype tester "
+                "exhaustiveness is incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
+            "theory-case:unsat-proof",
+            "theory-behavior:tester",
+            "theory-behavior:exhaustiveness",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:tester-exhaustiveness",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference=(
+            "Z3 datatype th-lemma proof shape: tester exhaustiveness"
+        ),
+        source_kind="Z3-proof",
+    ),
+    ScriptedCase(
+        slug="symbolic-constructor-injectivity",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n"
+            "(declare-const x List)\n"
+            "(declare-const a Int)\n"
+            "(declare-const b Int)\n"
+            "(declare-const l List)\n"
+            "(assert (= (cons a l) (cons b l)))\n"
+            "(assert ((_ is cons) x))\n"
+            "(assert (not (= x (cons (head x) (tail x)))))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic=(
+                "datatype constructor injectivity proof parsing is incomplete"
+            ),
+            replay_diagnostic=(
+                "datatype constructor injectivity replay is incomplete"
+            ),
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype constructor "
+                "injectivity is incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-constructor-injectivity",
+            "theory-case:unsat-proof",
+            "theory-behavior:constructor",
+            "theory-behavior:injectivity",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:constructor-injectivity",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference=(
+            "Z3 datatype th-lemma proof shape: constructor injectivity"
+        ),
+        source_kind="Z3-proof",
+    ),
+    ScriptedCase(
+        slug="symbolic-selector-constructor",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype List ((nil) (cons (head Int) (tail List))))\n"
+            "(declare-const x List)\n"
+            "(assert ((_ is cons) x))\n"
+            "(assert (not (= x (cons (head x) (tail x)))))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic=(
+                "datatype selector/constructor proof parsing is incomplete"
+            ),
+            replay_diagnostic=(
+                "datatype selector/constructor replay is incomplete"
+            ),
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype "
+                "selector/constructor interaction is incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-selector-constructor",
+            "theory-case:unsat-proof",
+            "theory-behavior:selector",
+            "theory-behavior:constructor",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:selector-constructor",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference=(
+            "Z3 datatype th-lemma proof shape: selector/constructor"
+        ),
+        source_kind="Z3-proof",
+    ),
+    ScriptedCase(
+        slug="symbolic-mutual-family",
+        script=proof_script(
+            "ALL",
+            "(declare-datatypes ((Tree 0) (Forest 0))\n"
+            "  (((leaf) (node (children Forest)))\n"
+            "   ((nilF) (consF (head Tree) (tail Forest)))))\n"
+            "(declare-const t Tree)\n"
+            "(declare-const f Forest)\n"
+            "(assert (= f (consF t f)))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic=(
+                "datatype mutual-family proof parsing is incomplete"
+            ),
+            replay_diagnostic="datatype mutual-family replay is incomplete",
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype mutual-family "
+                "reasoning is incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-mutual-family",
+            "theory-case:unsat-proof",
+            "theory-behavior:mutual-datatype",
+            "theory-behavior:acyclicity",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:mutual-family",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference="Z3 datatype th-lemma proof shape: mutual family",
+        source_kind="Z3-proof",
+    ),
+    ScriptedCase(
+        slug="symbolic-parametric-instance",
+        script=proof_script(
+            "ALL",
+            "(declare-datatype Box (par (T) ((box (value T)))))\n"
+            "(declare-const bx (Box Int))\n"
+            "(assert (not (= bx (box (value bx)))))\n",
+        ),
+        modes=DATATYPE_SYMBOLIC_PROOF_MODES,
+        expected=datatype_symbolic_proof_expected(
+            proof_diagnostic=(
+                "datatype parametric-instance proof parsing is incomplete"
+            ),
+            replay_diagnostic=(
+                "datatype parametric-instance replay is incomplete"
+            ),
+            tac_diagnostic=(
+                "checked Z3_TAC reconstruction for datatype "
+                "parametric-instance reasoning is incomplete"
+            ),
+        ),
+        features=(
+            "theory:Datatypes",
+            "theory-entry:Datatypes:symbolic-parametric-instance",
+            "theory-case:unsat-proof",
+            "theory-behavior:parametric-datatype",
+            "theory-behavior:selector",
+            "theory-behavior:symbolic-datatype-proof",
+            "theory-behavior:proof-gap",
+            "proof-rule:th-lemma-datatype",
+        ),
+        implementation_feature="datatypes-reconstruction:parametric-instance",
+        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
+        implementation_phase="proof-parse",
+        logic="ALL",
+        source_reference=(
+            "Z3 datatype th-lemma proof shape: parametric instance"
+        ),
+        source_kind="Z3-proof",
     ),
 )
 

@@ -323,7 +323,7 @@ EOF
 }
 
 printf 'Building HolSmt verification targets...\n'
-bin/Holmake -C src/HolSmt selftest.exe holsmt-z3-tac >/dev/null
+bin/Holmake --no-project -C src/HolSmt selftest.exe holsmt-z3-tac >/dev/null
 
 for version in "${versions[@]}"; do
   printf '\n==> Verifying Z3 %s\n' "$version"
