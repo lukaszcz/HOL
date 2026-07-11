@@ -1944,7 +1944,9 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "pass"
+          "diagnostic_substring": "needs 0 arguments, but was given 1",
+          "failure_phase": "typecheck",
+          "status": "fail"
         }
       },
       "file": "cases/datatypes/all_mutual_datatype_type_error.smt2",
