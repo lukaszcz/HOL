@@ -12,6 +12,7 @@ datatype logic_features = LogicFeatures of {
   integers : bool,
   reals : bool,
   strings : bool,
+  datatypes : bool,
   nonlinear : bool
 }
 
@@ -518,7 +519,7 @@ local
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      strings, nonlinear}) =
+      strings, datatypes, nonlinear}) =
     String.concatWith "," (List.map Lib.fst (List.filter Lib.snd [
       ("quantifiers", quantifiers),
       ("uninterpreted", uninterpreted),
@@ -527,14 +528,38 @@ local
       ("integers", integers),
       ("reals", reals),
       ("strings", strings),
+      ("datatypes", datatypes),
       ("nonlinear", nonlinear)
     ]))
 
   fun infer_logic_from_features (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      strings, nonlinear}) =
+      strings, datatypes, nonlinear}) =
     let
       val qf = if quantifiers then "" else "QF_"
+      fun datatype_arith_logic () =
+        if arrays then
+          if integers andalso reals then
+            "AUFDT" ^ (if nonlinear then "NIRA" else "LIRA")
+          else if integers then
+            if nonlinear then "AUFDTNIRA" else "AUFDTLIA"
+          else if reals then
+            "AUFDT" ^ (if nonlinear then "NIRA" else "LIRA")
+          else
+            "AUFDTLIA"
+        else if integers andalso reals then
+          if nonlinear then "UFDTNIRA"
+          else qf ^ "UFDTLIRA"
+        else if integers then
+          if nonlinear then qf ^ "UFDTNIA"
+          else qf ^ "UFDTLIA"
+        else if reals then
+          if nonlinear then "UFDTNIRA"
+          else qf ^ "UFDTLIRA"
+        else if quantifiers orelse uninterpreted then
+          qf ^ "UFDT"
+        else
+          "QF_DT"
       fun quantified_array_arith_logic () =
         (* Non-QF AUFNIA/AUFNRA are not in the supported logic table here;
            use the recognized A*NIRA/A*LIRA supersets when needed. *)
@@ -594,11 +619,18 @@ local
           if quantifiers then quantified_array_arith_logic () else "QF_AX"
         else
           qf ^ "UF"
+      fun bitvector_datatype_logic () =
+        if integers orelse reals then
+          "ALL"
+        else if arrays then
+          "AUFBVDT"
+        else
+          "UFBVDT"
       val logic =
         if strings then
           (* Phase 4 will refine UnicodeStrings/RegLan combinations. *)
           if bitvectors orelse reals orelse quantifiers orelse arrays orelse
-             uninterpreted then
+             uninterpreted orelse datatypes then
             "ALL"
           else if integers then
             if nonlinear then "QF_SNIA" else "QF_SLIA"
@@ -606,7 +638,9 @@ local
             "QF_S"
         else if bitvectors then
           (* Phase 5 will refine FloatingPoint/BV-family combinations. *)
-          if integers orelse reals orelse quantifiers then
+          if datatypes then
+            bitvector_datatype_logic ()
+          else if integers orelse reals orelse quantifiers then
             "ALL"
           else if arrays then
             if uninterpreted then qf ^ "AUFBV" else qf ^ "ABV"
@@ -614,6 +648,8 @@ local
             qf ^ "UFBV"
           else
             qf ^ "BV"
+        else if datatypes then
+          datatype_arith_logic ()
         else
           arith_logic ()
       val reason =
@@ -926,17 +962,52 @@ local
         subterm_types type_contains_string orelse
         List.exists (fn tm => is_string_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      fun type_is_datatype ty =
+        not (has_type_builtin ty) andalso Option.isSome (datatype_family ty)
+      fun type_contains_datatype ty =
+        type_contains type_is_datatype ty
+      fun term_is_datatype_constructor tm =
+        Lib.can TypeBase.is_constructor tm
+      fun term_is_datatype_record_selector tm =
+        let
+          val (dom, _) = Type.dom_rng (Term.type_of tm)
+          val tyinfo =
+            case TypeBase.fetch dom of
+              SOME info => info
+            | NONE => raise ERR "infer_features" "not a datatype selector"
+          val fields = TypeBasePure.fields_of tyinfo
+        in
+          List.exists
+            (fn (_, {accessor, ...} : TypeBasePure.rcd_fieldinfo) =>
+               Term.same_const tm accessor)
+            fields
+        end
+      fun term_is_datatype_native ((tm, arity), _) =
+        (arity = 0 andalso type_contains_datatype (Term.type_of tm)) orelse
+        term_is_datatype_constructor tm orelse
+        Lib.can term_is_datatype_record_selector tm
+      val datatypes =
+        subterm_types type_contains_datatype orelse
+        Redblackmap.foldl (fn (ty, _, b) =>
+          b orelse type_contains_datatype ty) false tydict orelse
+        Redblackmap.foldl (fn ((tm, _), _, b) =>
+          b orelse type_contains_datatype (Term.type_of tm)) false tmdict
       val nonlinear =
         List.exists (fn tm => is_nonlinear_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
-      val has_uninterpreted_type = Redblackmap.numItems tydict > 0
+      val has_uninterpreted_type =
+        Redblackmap.foldl (fn (ty, _, b) =>
+          b orelse not (type_contains_datatype ty)) false tydict
       fun range_after 0 ty = ty
         | range_after n ty = range_after (n - 1) (Lib.snd (Type.dom_rng ty))
       fun term_needs_uf ((tm, arity), _) =
-        arity > 0 orelse
-        (arity = 0 andalso
-         not (has_type_builtin (range_after arity (Term.type_of tm))) andalso
-         not (is_function_type (range_after arity (Term.type_of tm))))
+        if term_is_datatype_native ((tm, arity), "") then
+          false
+        else
+          arity > 0 orelse
+          (arity = 0 andalso
+           not (has_type_builtin (range_after arity (Term.type_of tm))) andalso
+           not (is_function_type (range_after arity (Term.type_of tm))))
       val uninterpreted =
         has_uninterpreted_type orelse
         Redblackmap.foldl (fn (key, value, b) =>
@@ -951,7 +1022,8 @@ local
     in
       LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
-        reals = reals, strings = strings, nonlinear = nonlinear}
+        reals = reals, strings = strings, datatypes = datatypes,
+        nonlinear = nonlinear}
     end
 
   fun advanced_encoding_records terms =
@@ -983,10 +1055,11 @@ local
           mode = ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = false,
+          translate = true,
           replay = false,
           notes =
-            "SMT-LIB datatype commands are parsed/typechecked; HOL datatype constructors/selectors are not emitted as native SMT datatypes by this translator.",
+            "SMT-LIB datatype commands are parsed/typechecked; HOL TypeBase " ^
+            "datatypes are emitted as native SMT-LIB Datatypes.",
           proof_obligation =
             "A checked soundness argument must connect constructor disjointness, injectivity, selectors, testers, and recursion axioms before native replay support."
         }
@@ -1156,6 +1229,13 @@ local
 
   fun parser_dicts_for_translation_aux ({logic, tydict, tmdict, ...} : translation) =
     let
+      fun parsedicts_for_logic logic =
+        SmtLib_Logics.parsedicts_of_logic logic
+        handle e as Feedback.HOL_ERR _ =>
+          if String.isSubstring "DT" logic then
+            SmtLib_Logics.parsedicts_of_logic "ALL"
+          else
+            raise e
       val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
         Redblackmap.insert (dict, s, [SmtLib_Theories.K_zero_zero ty]))
         (Redblackmap.mkDict String.compare) tydict
@@ -1171,7 +1251,7 @@ local
         case datatype_family ty of
           SOME _ => add_datatype_parser_entries (ty, name, dict)
         | NONE => dict) tm_dict tydict
-      val (logic_tydict, logic_tmdict) = SmtLib_Logics.parsedicts_of_logic logic
+      val (logic_tydict, logic_tmdict) = parsedicts_for_logic logic
     in
       (Library.union_dict logic_tydict ty_dict,
        Library.union_dict logic_tmdict tm_dict)

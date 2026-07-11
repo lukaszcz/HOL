@@ -104,8 +104,9 @@ SMT-LIB support matrix:
   Unicode strings              yes    yes        selected native no
   Regular expressions          yes    yes        no             no
   FloatingPoint                yes    yes        no             no
-  Datatypes                    yes    single declarations only no no
-  Recursive datatypes          AST only explicit rejection no    no
+  Datatypes                    yes    yes        native         no
+  Recursive/mutual/parametric
+    datatypes                  yes    yes        native         no
   Z3 Seq/Set/Bag extensions    yes    yes        no             no
 
 Logic coverage summary:

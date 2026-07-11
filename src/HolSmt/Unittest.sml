@@ -2224,7 +2224,15 @@ let
     SmtLib.LogicFeatures {
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
-      reals = reals, strings = strings, nonlinear = nonlinear}
+      reals = reals, strings = strings, datatypes = false,
+      nonlinear = nonlinear}
+  fun mk_datatype_features (quantifiers, uninterpreted, arrays, bitvectors,
+                            integers, reals, strings, nonlinear) =
+    SmtLib.LogicFeatures {
+      quantifiers = quantifiers, uninterpreted = uninterpreted,
+      arrays = arrays, bitvectors = bitvectors, integers = integers,
+      reals = reals, strings = strings, datatypes = true,
+      nonlinear = nonlinear}
   fun expect_features expected (name, feature_tuple) =
     let
       val (logic, reason) =
@@ -2233,6 +2241,15 @@ let
       assert (logic = expected,
         "feature-vector inference '" ^ name ^ "' expected " ^ expected ^
         ", got " ^ logic ^ " (" ^ reason ^ ")")
+    end
+  fun expect_datatype_features expected (name, feature_tuple) =
+    let
+      val (logic, reason) =
+        SmtLib.infer_logic_from_features (mk_datatype_features feature_tuple)
+    in
+      assert (logic = expected,
+        "datatype feature-vector inference '" ^ name ^ "' expected " ^
+        expected ^ ", got " ^ logic ^ " (" ^ reason ^ ")")
     end
   fun expect_logic expected tm =
     let
@@ -2285,6 +2302,77 @@ in
   List.app (expect_features "QF_SNIA") [
     ("strings NIA", (false, false, false, false, true, false, true, true))
   ];
+  List.app (expect_datatype_features "QF_DT") [
+    ("datatypes", (false, false, false, false, false, false, false, false))
+  ];
+  List.app (expect_datatype_features "QF_UFDT") [
+    ("datatypes with UF", (false, true, false, false, false, false,
+      false, false))
+  ];
+  List.app (expect_datatype_features "QF_UFDTLIA") [
+    ("datatypes with LIA", (false, false, false, false, true, false,
+      false, false))
+  ];
+  List.app (expect_datatype_features "QF_UFDTLIRA") [
+    ("datatypes with LIRA", (false, false, false, false, true, true,
+      false, false))
+  ];
+  List.app (expect_datatype_features "QF_UFDTNIA") [
+    ("datatypes with NIA", (false, false, false, false, true, false,
+      false, true))
+  ];
+  List.app (expect_datatype_features "UFDT") [
+    ("quantified datatypes", (true, false, false, false, false, false,
+      false, false))
+  ];
+  List.app (expect_datatype_features "UFDTLIA") [
+    ("quantified datatypes with LIA", (true, false, false, false, true,
+      false, false, false))
+  ];
+  List.app (expect_datatype_features "UFDTLIRA") [
+    ("quantified datatypes with LRA", (true, false, false, false, false,
+      true, false, false)),
+    ("quantified datatypes with LIRA", (true, false, false, false, true,
+      true, false, false))
+  ];
+  List.app (expect_datatype_features "UFDTNIA") [
+    ("quantified datatypes with NIA", (true, false, false, false, true,
+      false, false, true))
+  ];
+  List.app (expect_datatype_features "UFDTNIRA") [
+    ("quantified datatypes with NRA", (true, false, false, false, false,
+      true, false, true)),
+    ("quantified datatypes with NIRA", (true, false, false, false, true,
+      true, false, true))
+  ];
+  List.app (expect_datatype_features "AUFDTLIA") [
+    ("datatypes with arrays", (false, false, true, false, false, false,
+      false, false)),
+    ("datatypes with arrays LIA", (false, false, true, false, true, false,
+      false, false))
+  ];
+  List.app (expect_datatype_features "AUFDTLIRA") [
+    ("datatypes with arrays LRA", (false, false, true, false, false, true,
+      false, false)),
+    ("datatypes with arrays LIRA", (false, false, true, false, true, true,
+      false, false))
+  ];
+  List.app (expect_datatype_features "AUFDTNIRA") [
+    ("datatypes with arrays NIA", (false, false, true, false, true, false,
+      false, true)),
+    ("datatypes with arrays NRA", (false, false, true, false, false, true,
+      false, true))
+  ];
+  List.app (expect_datatype_features "UFBVDT") [
+    ("datatypes with bitvectors", (false, false, false, true, false, false,
+      false, false)),
+    ("datatypes with bitvectors UF", (false, true, false, true, false,
+      false, false, false))
+  ];
+  List.app (expect_datatype_features "AUFBVDT") [
+    ("datatypes with arrays bitvectors", (false, false, true, true, false,
+      false, false, false))
+  ];
   List.app (expect_features "ALL") [
     ("mixed strings", (false, true, false, false, false, false, true,
       false)),
@@ -2336,6 +2424,8 @@ in
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
+  expect_logic "QF_DT" ``(x:ordering) = y``;
+  expect_logic "QF_UFDTLIA" ``CONS (x:int) xs = CONS y ys``;
   expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
 
@@ -2399,6 +2489,7 @@ let
             contains "(declare-datatypes" declaration
         | _ => false) records
 in
+  assert_has "enum datatype logic" "(set-logic QF_DT)\n" enum_text;
   assert_has "enum datatype" "(declare-datatypes ((Ordering 0))"
     enum_text;
   assert_has "recursive list datatype" "(declare-datatypes ((List_Int 0))"
@@ -2453,6 +2544,13 @@ let
             replay = false, proof_obligation, ...} =>
             contains "NaN" proof_obligation
         | _ => false) records
+  val has_datatype_matrix_row =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "Datatypes", parse = true, typecheck = true,
+            translate = true, replay = false, notes, ...} =>
+            contains "native SMT-LIB Datatypes" notes
+        | _ => false) records
   val has_bag_matrix_row =
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
@@ -2470,6 +2568,8 @@ in
     "translation records lacked str.++ encoded symbol");
   assert (has_fp_matrix_row,
     "translation records lacked FloatingPoint proof-obligation row");
+  assert (has_datatype_matrix_row,
+    "translation records lacked native Datatypes encoding row");
   assert (has_bag_matrix_row,
     "translation records lacked sequence/set/bag matrix row")
 end
@@ -2532,18 +2632,19 @@ let
        ``STRCAT (s:string) t = STRCAT t s``),
       ["(set-logic QF_S)\n", "(declare-fun v0 () String)\n",
        "(= (str.++ v0 v1) (str.++ v1 v0))"]),
-    ("list-constructor-current-uf", ([],
+    ("list-constructor-native-dt", ([],
        ``CONS (x:int) xs = CONS y ys``),
-      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((List_Int 0))",
+      ["(set-logic QF_UFDTLIA)\n", "(declare-datatypes ((List_Int 0))",
        "(ctor_List_Int_CONS v1 v2)"]),
     ("function-application-arrays", ([],
        ``(f:'a -> 'b) x = g y``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
        "(declare-fun v2 () (Array t2 t1))",
        "(= (select v0 v1) (select v2 v3))"]),
-    ("tuple-selector-current-uf", ([],
+    ("tuple-selector-native-dt", ([],
        ``FST (p:int # bool) <= FST p + 1``),
-      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((Prod_Int_Bool 0))",
+      ["(set-logic QF_UFDTLIA)\n",
+       "(declare-datatypes ((Prod_Int_Bool 0))",
        "(declare-fun v0 (Prod_Int_Bool) Int)"]),
     ("sets-as-predicates-current-uf", ([],
        ``(s:'a -> bool) x``),
@@ -2595,9 +2696,9 @@ let
     ("string-operations", ([],
        ``isPREFIX (s:string) (STRCAT s t) /\ (s < t) /\ (s <= t)``),
       ["str.prefixof", "str.++", "str.<", "str.<="]),
-    ("datatype-constructor-current-uf", ([],
+    ("datatype-constructor-native-dt", ([],
        ``SOME (x:int) = SOME y``),
-      ["(set-logic QF_UFLIA)\n", "(declare-datatypes ((Option_Int 0))",
+      ["(set-logic QF_UFDTLIA)\n", "(declare-datatypes ((Option_Int 0))",
        "(ctor_Option_Int_SOME v1)"])
   ]
 in
