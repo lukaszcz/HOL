@@ -3749,6 +3749,86 @@ fun array_prove_unsupported_diagnostic () =
         "array th-lemma diagnostic did not include conclusion: " ^ msg)
     end
 
+fun assert_datatype_prover name prover tm =
+  (let
+     val thm = prover tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
+     Library.check_oracle_tags name thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: " ^ name ^ " did not prove datatype goal: " ^
+       Feedback.message_of holerr))
+
+fun smt_tri_tester ctor scrutinee =
+  let
+    fun result name = if name = ctor then boolSyntax.T else boolSyntax.F
+  in
+    TypeBase.mk_case
+      (scrutinee,
+       [(``SmtTriA``, result "SmtTriA"),
+        (``SmtTriB (x:int)``, result "SmtTriB"),
+        (``SmtTriC (p:bool)``, result "SmtTriC")])
+  end
+
+fun smt_tri_left_selector scrutinee =
+  TypeBase.mk_case
+    (scrutinee,
+     [(``SmtTriA``, boolSyntax.mk_arb intSyntax.int_ty),
+      (``SmtTriB (x:int)``, ``x:int``),
+      (``SmtTriC (p:bool)``, boolSyntax.mk_arb intSyntax.int_ty)])
+
+fun datatype_prove_ladder_rungs_success () =
+  let
+    val c = ``c:smt_tri``
+    fun mk_imp_chain ants concl =
+      List.foldr (fn (ant, acc) => boolSyntax.mk_imp (ant, acc)) concl ants
+    val exhaustiveness_goal =
+      mk_imp_chain
+        (List.map boolSyntax.mk_neg
+          [smt_tri_tester "SmtTriA" c,
+           smt_tri_tester "SmtTriB" c,
+           smt_tri_tester "SmtTriC" c])
+        boolSyntax.F
+  in
+    assert (List.null Z3_ProformaThms.datatype_thm_list,
+      "datatype proforma list should stay empty until shared schemata exist");
+    assert_datatype_prover "datatype_prove harvest disjointness rung"
+      SmtDatatypeProve.datatype_prove
+      ``SmtTriA <> SmtTriB 1i``;
+    assert_datatype_prover "datatype_prove harvest injectivity rung"
+      SmtDatatypeProve.datatype_simp_prove
+      ``SmtTriB (x:int) = SmtTriB y ==> x = y``;
+    assert_datatype_prover "datatype_prove harvest selector rung"
+      SmtDatatypeProve.datatype_simp_prove
+      (boolSyntax.mk_eq (smt_tri_left_selector ``SmtTriB 7i``, ``7i``));
+    assert_datatype_prover "datatype_prove exhaustiveness rung"
+      SmtDatatypeProve.exhaustiveness_prove
+      exhaustiveness_goal;
+    assert_datatype_prover "datatype_prove acyclicity rung"
+      SmtDatatypeProve.acyclicity_prove
+      ``SmtLeft (SmtRight (l:smt_left)) <> l``;
+    assert_datatype_prover "datatype_prove explicit metis rung"
+      SmtDatatypeProve.metis_datatype_prove
+      ``SmtTriB (x:int) = SmtTriB y /\ SmtTriA <> SmtTriB y ==> x = y``
+  end
+
+fun datatype_prove_unsupported_diagnostic () =
+  (ignore (SmtDatatypeProve.datatype_prove ``F``);
+   die "FAIL: unsupported datatype th-lemma replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "unsupported th-lemma shape" msg,
+        "datatype th-lemma diagnostic did not report unsupported shape: " ^
+        msg);
+      assert (String.isSubstring "theory=datatype" msg,
+        "datatype th-lemma diagnostic did not include theory: " ^ msg);
+      assert (String.isSubstring "conclusion=F" msg,
+        "datatype th-lemma diagnostic did not include conclusion: " ^ msg)
+    end
+
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
   (ignore (replay_z3_proof_string proof_text);
@@ -4339,6 +4419,10 @@ let
       array_prove_ladder_rungs_success),
     ("array_prove_unsupported_diagnostic",
       array_prove_unsupported_diagnostic),
+    ("datatype_prove_ladder_rungs_success",
+      datatype_prove_ladder_rungs_success),
+    ("datatype_prove_unsupported_diagnostic",
+      datatype_prove_unsupported_diagnostic),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
