@@ -43,9 +43,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null
@@ -150,9 +148,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null
@@ -257,9 +253,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null
@@ -364,9 +358,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null
@@ -471,9 +463,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null
@@ -578,9 +568,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null

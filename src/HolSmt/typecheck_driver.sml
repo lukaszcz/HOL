@@ -17,6 +17,14 @@ fun typecheck_args () =
     args as [_, _] => args
   | _ => typecheck_extra_args ()
 
+val _ = SmtLib_Datatypes.empty_name_map
+
+val typecheck_datatype_options =
+  {dict_logic = NONE, elaborate_datatypes = true}
+
+fun typecheck_datatype_options_with_logic logic =
+  {dict_logic = SOME logic, elaborate_datatypes = true}
+
 fun typecheck_count_assertions
     (state: SmtLib_Parser.command_state_snapshot) =
   List.length (#assertions state)
@@ -36,9 +44,11 @@ fun typecheck_ok path expected_logic =
 let
   val _ = Library.trace := 0
   val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
-    (SmtLib_Parser.parse_file_state path, NONE)
+    (SmtLib_Parser.parse_file_state_with_options
+       typecheck_datatype_options path, NONE)
     handle Feedback.HOL_ERR holerr =>
-      (SmtLib_Parser.parse_file_state_with_dict_logic "ALL" path,
+      (SmtLib_Parser.parse_file_state_with_options
+         (typecheck_datatype_options_with_logic "ALL") path,
        SOME holerr)
   val observed_logic = #logic state
   val fragment_diagnostic =

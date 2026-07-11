@@ -3347,11 +3347,14 @@ local
 
   fun add_real_datatype_tester mk_tester_case tmdict =
     let
+      fun constructor_index_name index =
+        Lib.fst (Term.dest_var index)
+        handle Feedback.HOL_ERR _ => Lib.fst (Term.dest_const index)
       fun parsefn token indices args =
         case (indices, args) of
           ([index], [arg]) =>
             mk_tester_case {
-              constructor = Lib.fst (Term.dest_var index),
+              constructor = constructor_index_name index,
               scrutinee = arg
             }
         | _ => raise ERR "<is>"

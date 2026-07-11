@@ -999,7 +999,7 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
         reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (= red blue))\n(check-sat)\n",
         negative_diagnostic="declare-datatypes arity for 'Tree'",
         negative_phase="typecheck",
-        reconstruction_applies=False,
+        reconstruction_applies=True,
         reconstruction_diagnostic="datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
         reconstruction_phase="theorem-shape",
         obligation_files=("src/HolSmt/SmtLib_Parser.sml", "src/HolSmt/Z3_ProofReplay.sml"),
@@ -1160,6 +1160,7 @@ RECONSTRUCTED_COMMAND_GROUPS = {
     "check-sat",
     "check-sat-assuming",
     "declare-const",
+    "declare-datatype-declare-datatypes",
     "declare-fun",
     "declare-sort",
     "define-const",
@@ -1413,19 +1414,17 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "(declare-datatype D ((mk (self D))))\n"
             "(check-sat)\n"
         ),
-        modes=("typecheck-only", "z3-oracle"),
+        modes=("typecheck-only", "z3-tac"),
         expected={
             "typecheck-only": expected_result(
-                "red",
+                "fail",
                 diagnostic="datatype D is not well-founded",
                 failure_phase="typecheck",
-                notes="flips in TASK_10",
             ),
-            "z3-oracle": expected_result(
-                "red",
+            "z3-tac": expected_result(
+                "fail",
                 diagnostic="datatype D is not well-founded",
                 failure_phase="typecheck",
-                notes="flips in TASK_10",
             ),
         },
         features=(
@@ -1707,15 +1706,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic=(
-                    "datatype parametric instantiation at multiple instances "
-                    "is incomplete"
-                ),
-                failure_phase="typecheck",
-                notes="flips in TASK_10/TASK_17",
-            ),
+            "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result(
                 "red",
                 diagnostic=(
@@ -1750,7 +1741,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "src/HolSmt/Z3_ProofReplay.sml",
             "src/HolSmt/z3_tac_driver.sml",
         ),
-        implementation_phase="typecheck",
+        implementation_phase="translation",
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes parametric instantiation",
         source_kind="SMT-LIB-standard",
@@ -1797,12 +1788,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "red",
-                diagnostic="datatype equality chains are not typechecked natively",
-                failure_phase="typecheck",
-                notes="flips in TASK_10/TASK_17",
-            ),
+            "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result(
                 "red",
                 diagnostic="datatype equality chains are not translated natively",
@@ -1833,7 +1819,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "src/HolSmt/Z3_ProofReplay.sml",
             "src/HolSmt/z3_tac_driver.sml",
         ),
-        implementation_phase="typecheck",
+        implementation_phase="translation",
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes equality over constructors",
         source_kind="SMT-LIB-standard",
@@ -1897,6 +1883,8 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
 
 def scripted_obligation(case: ScriptedCase, case_id: str) -> dict[str, object] | None:
     if case.implementation_feature is None:
+        return None
+    if not any(result.get("status") == "red" for result in case.expected.values()):
         return None
     if case.implementation_phase is None:
         raise GeneratorError(f"{case_id} has an implementation feature without a failure phase")

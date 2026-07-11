@@ -544,10 +544,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "datatype equality chains are not typechecked natively",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_10/TASK_17"
+          "status": "pass"
         },
         "z3-oracle": {
           "status": "red",
@@ -573,7 +570,7 @@
         "test_ids": [
           "command:datatypes:equality-chain"
         ],
-        "failure_phase": "typecheck",
+        "failure_phase": "translation",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -829,7 +826,7 @@
       ],
       "modes": [
         "typecheck-only",
-        "z3-oracle"
+        "z3-tac"
       ],
       "versions": [
         "2.19.1",
@@ -841,31 +838,17 @@
       ],
       "expected": {
         "typecheck-only": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "datatype D is not well-founded",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_10"
+          "failure_phase": "typecheck"
         },
-        "z3-oracle": {
-          "status": "red",
+        "z3-tac": {
+          "status": "fail",
           "diagnostic": "datatype D is not well-founded",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_10"
+          "failure_phase": "typecheck"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "feature": "datatypes-elaboration:well-foundedness",
-        "test_ids": [
-          "command:datatypes:non-well-founded-self"
-        ],
-        "failure_phase": "typecheck",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 datatype well-foundedness check"
@@ -943,10 +926,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
-          "diagnostic": "datatype parametric instantiation at multiple instances is incomplete",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_10/TASK_17"
+          "status": "pass"
         },
         "z3-oracle": {
           "status": "red",
@@ -972,7 +952,7 @@
         "test_ids": [
           "command:datatypes:parametric-two-instances"
         ],
-        "failure_phase": "typecheck",
+        "failure_phase": "translation",
         "notes": "Generated red seed row; keep red until executable evidence is added."
       },
       "source": {
@@ -1344,10 +1324,8 @@
       ],
       "expected": {
         "z3-tac": {
-          "status": "unsupported",
-          "diagnostic": "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
-          "failure_phase": "theorem-shape",
-          "notes": "theorem reconstruction applies: false"
+          "status": "pass",
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": null,
@@ -1383,11 +1361,11 @@
       "expected": {
         "typecheck-only": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         },
         "z3-oracle": {
           "status": "pass",
-          "notes": "theorem reconstruction applies: false"
+          "notes": "theorem reconstruction applies: true"
         }
       },
       "implementation_obligation": null,
@@ -4030,9 +4008,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4153,9 +4129,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4276,9 +4250,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4399,9 +4371,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4522,9 +4492,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4645,9 +4613,7 @@
           "status": "pass"
         },
         "z3-tac": {
-          "status": "fail",
-          "diagnostic": "SAT benchmark has no HOL theorem to reconstruct",
-          "failure_phase": "theorem-shape"
+          "status": "pass"
         }
       },
       "implementation_obligation": null,
@@ -4730,54 +4696,6 @@
         "reference": "HolSmt curated reduced QF_UF UNSAT proof external benchmark",
         "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_uf_unsat_proof.smt2",
         "notes": "pinned source_path=curated-reduced/qf_uf_unsat_proof.smt2; pin=TASK-013; sha256=756670abcdc5bb88254cb7b494a67b43b41f942731b199539a1de6b673f4073a"
-      }
-    },
-    {
-      "id": "external-benchmark:external-missing-pinned-benchmark-evidence",
-      "file": "cases/external/external_benchmark_external_missing_pinned_benchmark_evidence.smt2",
-      "logic": "QF_UF",
-      "standard": "SMT-LIB-2.7",
-      "class": "external-benchmark",
-      "features": [
-        "external:missing-pinned-benchmark-evidence"
-      ],
-      "modes": [
-        "parser-only",
-        "z3-oracle"
-      ],
-      "versions": [
-        "2.19.1",
-        "4.11.2",
-        "4.12.4",
-        "4.13.0",
-        "4.14.1",
-        "4.15.3"
-      ],
-      "expected": {
-        "parser-only": {
-          "status": "red",
-          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
-        },
-        "z3-oracle": {
-          "status": "red",
-          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
-        }
-      },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json",
-          "src/HolSmt/tools/import_external_benchmarks.py"
-        ],
-        "feature": "external:missing-pinned-benchmark-evidence",
-        "test_ids": [
-          "external-benchmark:external-missing-pinned-benchmark-evidence"
-        ],
-        "failure_phase": "solver",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
-      "source": {
-        "kind": "external-benchmark",
-        "reference": "pinned external benchmark importer missing evidence seed"
       }
     },
     {

@@ -20,6 +20,14 @@ fun z3_tac_args () =
     args as [_, _] => args
   | _ => z3_tac_extra_args ()
 
+val _ = SmtLib_Datatypes.empty_name_map
+
+val z3_tac_datatype_options =
+  {dict_logic = NONE, elaborate_datatypes = true}
+
+fun z3_tac_datatype_options_with_logic logic =
+  {dict_logic = SOME logic, elaborate_datatypes = true}
+
 fun z3_tac_query_name query =
   case query of
     SmtLib_Parser.QueryCheckSat {assumptions = [], ...} => "check-sat"
@@ -131,11 +139,7 @@ end
 
 fun z3_tac_unsupported_command_diagnostic command =
   case SmtLib_Parser.node_of command of
-    SmtLib_Parser.CmdDeclareDatatype _ =>
-      SOME "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point"
-  | SmtLib_Parser.CmdDeclareDatatypes _ =>
-      SOME "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
-  | _ => NONE
+    _ => NONE
 
 fun z3_tac_command_query_name command =
   case SmtLib_Parser.node_of command of
@@ -224,9 +228,11 @@ let
            "diagnostic=" ^ diagnostic]
     | NONE => ()
   val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
-    (SmtLib_Parser.parse_file_state path, NONE)
+    (SmtLib_Parser.parse_file_state_with_options
+       z3_tac_datatype_options path, NONE)
     handle Feedback.HOL_ERR holerr =>
-      (SmtLib_Parser.parse_file_state_with_dict_logic "ALL" path,
+      (SmtLib_Parser.parse_file_state_with_options
+         (z3_tac_datatype_options_with_logic "ALL") path,
        SOME holerr)
   val observed_logic = #logic state
   val queries = #queries state
