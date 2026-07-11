@@ -1102,6 +1102,22 @@ in
     "flag-off datatype typecheck defined a TypeBase datatype")
 end
 
+fun holsmtlib_z3_tac_datatype_flag_leakage_guard () =
+let
+  fun existing path = OS.FileSys.access (path, [OS.FileSys.A_READ])
+  val path =
+    if existing "HolSmtLib.sml" then "HolSmtLib.sml"
+    else "src/HolSmt/HolSmtLib.sml"
+  val source = read_text_file path
+in
+  assert (not (String.isSubstring "elaborate_datatypes" source),
+    "HolSmtLib mentions the datatype elaboration flag");
+  assert (not (String.isSubstring "typecheck_script_with_options" source),
+    "HolSmtLib uses the parser options entry point");
+  assert (not (String.isSubstring "parse_file_state_with_options" source),
+    "HolSmtLib uses the parser options entry point")
+end
+
 fun parse_legacy_datatype_mutual_dictionary_success () =
 let
   val (_, _, _, assertions) =
@@ -4189,6 +4205,8 @@ let
       parse_file_datatype_elaboration_options_success),
     ("parse_file_datatype_elaboration_flag_off_success",
       parse_file_datatype_elaboration_flag_off_success),
+    ("holsmtlib_z3_tac_datatype_flag_leakage_guard",
+      holsmtlib_z3_tac_datatype_flag_leakage_guard),
     ("parse_legacy_datatype_mutual_dictionary_success",
       parse_legacy_datatype_mutual_dictionary_success),
     ("smtlib_datatype_elaboration_core_success",
