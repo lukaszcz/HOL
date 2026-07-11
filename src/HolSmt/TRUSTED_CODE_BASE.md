@@ -16,6 +16,8 @@ For a theorem-producing result, the trusted path is:
 
 - `src/HolSmt/SmtLib.sml`: translates the HOL goal to SMT-LIB and records the
   selected logic, emitted symbols and HOL theory encodings.
+- `src/HolSmt/SmtLib_Datatypes.sml`: elaborates SMT-LIB datatype
+  declarations to HOL datatypes and builds selector/tester case expressions.
 - `src/HolSmt/Z3.sml`: invokes the configured Z3 executable, requests proof
   output, parses only `unsat` proof-producing results and calls
   `Library.check_oracle_tags` on the reconstructed theorem.
@@ -61,6 +63,11 @@ Semantic Mismatches`. Current manifest-backed audit items include:
 - FloatingPoint NaN, infinity and rounding-mode semantics;
 - HOL char-list strings versus SMT-LIB UnicodeStrings and regex languages;
 - ArraysEx select/store versus current HOL function encoding;
+- SMT-LIB datatype selectors are total but underspecified on constructors that
+  do not own the selector.  The HOL encoding chooses the `ARB` value for those
+  branches, which is one concrete interpretation of the SMT-LIB semantics.
+  An SMT `unsat` result holds for all such interpretations, so this HOL
+  instance preserves checked replay soundness.
 - `sat` and `unknown` solver results as non-theorem-producing outcomes.
 
 For each item, accepted reconstruction needs a checked proof path, a

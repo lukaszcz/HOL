@@ -1044,6 +1044,162 @@ in
     "legacy datatype parser assertion did not parse as Bool")
 end
 
+fun datatype_command script =
+  case SmtLib_Parser.parse_script_string script of
+    [command] =>
+      (case SmtLib_Parser.node_of command of
+         SmtLib_Parser.CmdDeclareDatatype (name, decl) => (name, decl)
+       | _ => die "expected declare-datatype command")
+  | _ => die "expected one datatype command"
+
+fun datatypes_command script =
+  case SmtLib_Parser.parse_script_string script of
+    [command] =>
+      (case SmtLib_Parser.node_of command of
+         SmtLib_Parser.CmdDeclareDatatypes (bindings, decls) =>
+           (bindings, decls)
+       | _ => die "expected declare-datatypes command")
+  | _ => die "expected one datatypes command"
+
+fun smtlib_datatype_elaboration_core_success () =
+let
+  fun has_option opt = case opt of SOME _ => true | NONE => false
+  fun assert_tyinfo label tyi =
+    let
+      val ty = TypeBasePure.ty_of tyi
+      val constructors = TypeBasePure.constructors_of tyi
+      val one_one = TypeBasePure.one_one_of tyi
+      val distinct = TypeBasePure.distinct_of tyi
+    in
+      assert (not (List.null constructors),
+        label ^ " had no TypeBase constructors");
+      assert (has_option one_one, label ^ " had no one_one theorem");
+      assert (has_option distinct, label ^ " had no distinct theorem");
+      assert (has_option (TypeBase.fetch ty),
+        label ^ " type was not registered in TypeBase")
+    end
+  fun define_one script =
+    SmtLib_Datatypes.define_datatype (datatype_command script)
+  fun define_group script =
+    SmtLib_Datatypes.define_datatypes (datatypes_command script)
+  fun const_name tm =
+    #Name (Term.dest_thy_const tm)
+    handle Feedback.HOL_ERR _ => Lib.fst (Term.dest_const tm)
+  fun constructor_args ty =
+    case Lib.total Type.dom_rng ty of
+      NONE => []
+    | SOME (domain, range) => domain :: constructor_args range
+  fun constructor_pattern ctor =
+    let
+      val arg_tys = constructor_args (Term.type_of ctor)
+      val vars = List.tabulate (List.length arg_tys,
+        fn i => Term.mk_var ("x" ^ Int.toString i, List.nth (arg_tys, i)))
+    in
+      (Term.list_mk_comb (ctor, vars), vars)
+    end
+  fun lookup kind names smt =
+    case SmtLib_Datatypes.lookup_smt kind names smt of
+      SOME hol => hol
+    | NONE => die ("missing datatype name-map entry for " ^ smt)
+
+  val simple = define_one
+    "(declare-datatype SimpleA1 ((simpleA) (simpleB (ival Int))))"
+  val recursive = define_one
+    ("(declare-datatype RecListA1 " ^
+     "((nilA) (consA (head Int) (tail RecListA1))))")
+  val mutual = define_group
+    ("(declare-datatypes ((MutTreeA1 0) (MutForestA1 0)) " ^
+     "(((leafA) (nodeA (forest MutForestA1))) " ^
+     "((emptyA) (consForestA (tree MutTreeA1) (rest MutForestA1)))))")
+  val parametric = define_one
+    "(declare-datatype BoxA1 (par (T) ((emptyBox) (box (value T)))))"
+  val _ = List.app (fn (label, tyi) => assert_tyinfo label tyi)
+    [("simple", hd (#tyinfos simple)),
+     ("recursive", hd (#tyinfos recursive)),
+     ("mutual-tree", hd (#tyinfos mutual)),
+     ("mutual-forest", hd (tl (#tyinfos mutual))),
+     ("parametric", hd (#tyinfos parametric))]
+
+  val cache1 = define_one
+    "(declare-datatype CacheA1 ((cacheNil) (cacheCons (v Int))))"
+  val cache2 = define_one
+    "(declare-datatype CacheA1 ((cacheNil) (cacheCons (v Int))))"
+  val _ = assert (#hol_types cache1 = #hol_types cache2,
+    "identical datatype declaration did not hit the cache")
+
+  val collision = define_one
+    "(declare-datatype List ((nil) (cons (head Int) (tail List))))"
+  val collision_ty =
+    lookup SmtLib_Datatypes.TypeName (#names collision) "List"
+  val collision_cons =
+    lookup SmtLib_Datatypes.ConstructorName (#names collision) "cons"
+  val _ = assert (collision_ty <> "List" andalso
+                  String.isPrefix "smtlib_dt_" collision_ty,
+    "datatype type name collision was not freshened")
+  val _ = assert (collision_cons <> "cons" andalso
+                  String.isPrefix "smtlib_dt_ctor_" collision_cons,
+    "constructor name collision was not freshened")
+
+  val same1 = define_one
+    "(declare-datatype SameA1 ((sameMk (x Int))))"
+  val same2 = define_one
+    "(declare-datatype SameA1 ((sameMk (x Bool))))"
+  val _ = assert (#hol_types same1 <> #hol_types same2,
+    "different datatype structures with the same SMT name reused a HOL type")
+
+  val pair_decl = define_one
+    ("(declare-datatype MaybePairA1 " ^
+     "((none) (mk (left Int) (right Bool))))")
+  val pair_ty = hd (#hol_types pair_decl)
+  val pair_names = #names pair_decl
+  val mk_hol = lookup SmtLib_Datatypes.ConstructorName pair_names "mk"
+  val p = Term.mk_var ("p", pair_ty)
+  val ctors = TypeBase.constructors_of pair_ty
+  fun selector_branch ctor =
+    let
+      val (pat, vars) = constructor_pattern ctor
+      val rhs =
+        if const_name ctor = mk_hol then hd vars
+        else boolSyntax.mk_arb intSyntax.int_ty
+    in
+      (pat, rhs)
+    end
+  fun tester_branch ctor =
+    let val (pat, _) = constructor_pattern ctor
+    in
+      (pat, if const_name ctor = mk_hol then boolSyntax.T else boolSyntax.F)
+    end
+  val selector_actual =
+    SmtLib_Datatypes.mk_selector_case
+      {selector = "left", constructor = "mk", scrutinee = p}
+  val selector_expected = TypeBase.mk_case (p, List.map selector_branch ctors)
+  val tester_actual =
+    SmtLib_Datatypes.mk_tester_case {constructor = "mk", scrutinee = p}
+  val tester_expected = TypeBase.mk_case (p, List.map tester_branch ctors)
+in
+  assert (selector_actual ~~ selector_expected,
+    "selector builder produced " ^ term_with_types selector_actual ^
+    ", expected " ^ term_with_types selector_expected);
+  assert (tester_actual ~~ tester_expected,
+    "tester builder produced " ^ term_with_types tester_actual ^
+    ", expected " ^ term_with_types tester_expected)
+end
+
+fun smtlib_datatype_elaboration_wellfounded_diagnostic () =
+  let
+    val _ = SmtLib_Datatypes.define_datatype
+      (datatype_command
+        "(declare-datatype D ((mk (self D))))")
+  in
+    die "ill-founded datatype declaration was accepted"
+  end
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (contains "datatype declaration 'D' is not well-founded" msg,
+        "well-foundedness diagnostic mismatch: " ^ msg)
+    end
+
 fun parse_file_echo_success () =
 let
   val assertions =
@@ -3954,6 +4110,10 @@ let
       parse_file_parametric_datatype_dictionary_success),
     ("parse_legacy_datatype_mutual_dictionary_success",
       parse_legacy_datatype_mutual_dictionary_success),
+    ("smtlib_datatype_elaboration_core_success",
+      smtlib_datatype_elaboration_core_success),
+    ("smtlib_datatype_elaboration_wellfounded_diagnostic",
+      smtlib_datatype_elaboration_wellfounded_diagnostic),
     ("parse_file_echo_success", parse_file_echo_success),
     ("parse_file_push_pop_assertion_scoping",
       parse_file_push_pop_assertion_scoping),
