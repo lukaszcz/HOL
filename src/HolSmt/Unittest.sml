@@ -3159,6 +3159,13 @@ in
   Z3_ProofParser.parse_stream_with_version dicts version instream
 end
 
+fun parse_z3_proof_string_with_dicts dicts version contents =
+let
+  val instream = TextIO.openString contents
+in
+  Z3_ProofParser.parse_stream_with_version dicts version instream
+end
+
 fun z3_proof_registry_metadata_success () =
   case Z3_Proof.lookup_rule "4.12.4" "mp-eq" of
     SOME ({name, premise_shape, conclusion_shape, replay_handler, ...}
@@ -3236,6 +3243,27 @@ in
   | NONE => die "FAIL: advanced th-lemma proof did not define root proof step"
 end
 
+fun z3_proof_parser_datatype_th_lemma_metadata_success () =
+let
+  val proof = parse_z3_proof_string "4.13.0"
+    "((proof ((_ th-lemma datatype eq-propagate 5) false)))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.TH_LEMMA_DATATYPE
+      ({theory, subkind, indices}, [], concl)) =>
+        (assert (theory = "datatype",
+          "datatype th-lemma metadata did not preserve theory");
+         assert (subkind = SOME "eq-propagate",
+          "datatype th-lemma metadata did not preserve subkind");
+         assert (indices = ["5"],
+          "datatype th-lemma metadata did not preserve proof indices: [" ^
+          String.concatWith ", " indices ^ "]");
+         assert (concl ~~ ``F``,
+          "datatype th-lemma metadata test parsed unexpected conclusion"))
+  | SOME _ => die "FAIL: datatype th-lemma parsed to unexpected constructor"
+  | NONE => die "FAIL: datatype th-lemma proof did not define root proof step"
+end
+
 fun z3_proof_parser_unknown_rule_diagnostic () =
   (ignore (parse_z3_proof_string "4.12.4"
     "((proof (new-z3-rule false)))");
@@ -3293,6 +3321,10 @@ fun z3_proof_parser_rule_name_term_boundary () =
 fun replay_z3_proof_string contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string "4.12.4" contents)
+
+fun replay_z3_proof_string_with_dicts dicts contents =
+  Z3_ProofReplay.replay_root_for_test
+    (parse_z3_proof_string_with_dicts dicts "4.12.4" contents)
 
 fun assert_replays_raw_z3_proof_rule (name, proof_text, expected) =
 let
@@ -3571,6 +3603,17 @@ let
       "((proof ((_ th-lemma array select-store 0) (= false false))))"),
     ("array/extensionality",
       "((proof ((_ th-lemma array extensionality 0) (= true true))))"),
+    ("datatype/acyclicity",
+      "((declare-fun l () Smt_left) \
+        \(proof ((_ th-lemma datatype 0) \
+        \(not (= (ctor_Smt_left_SmtLeft \
+        \(ctor_Smt_right_SmtRight l)) l)))))"),
+    ("datatype/exhaustiveness",
+      "((declare-fun c () Smt_tri) \
+        \(proof ((_ th-lemma datatype 1) \
+        \(implies (not ((_ is ctor_Smt_tri_SmtTriA) c)) \
+        \(implies (not ((_ is ctor_Smt_tri_SmtTriB) c)) \
+        \(implies (not ((_ is ctor_Smt_tri_SmtTriC) c)) false))))))"),
     ("basic/true",
       "((proof ((_ th-lemma basic eq-propagate 0) true)))"),
     ("basic/equality",
@@ -3586,9 +3629,20 @@ let
       "((proof ((_ th-lemma bv bit-blast 1) (= false false))))")
   ]
 in
-  List.app (fn (name, proof_text) =>
+  let
+    val (datatype_translation, _) =
+      SmtLib.goal_to_SmtLib_translation NONE
+        ([], ``((c:smt_tri) = c) /\ ((l:smt_left) = l)``)
+    val datatype_dicts =
+      SmtLib.parser_dicts_for_translation datatype_translation
+    fun replay name =
+      if String.isPrefix "datatype/" name then
+        replay_z3_proof_string_with_dicts datatype_dicts
+      else replay_z3_proof_string
+  in
+    List.app (fn (name, proof_text) =>
     (let
-       val thm = replay_z3_proof_string proof_text
+       val thm = replay name proof_text
        val _ = assert (List.null (Thm.hyp thm),
          "th-lemma " ^ name ^ " replayed with unexpected hypotheses: " ^
          Library.thm_to_string thm)
@@ -3599,6 +3653,7 @@ in
       handle Feedback.HOL_ERR holerr =>
         die ("FAIL: th-lemma " ^ name ^ " did not replay: " ^
           Feedback.message_of holerr))) cases
+  end
 end
 
 fun assert_basic_th_lemma_dispatch
@@ -3829,6 +3884,29 @@ fun datatype_prove_unsupported_diagnostic () =
         "datatype th-lemma diagnostic did not include conclusion: " ^ msg)
     end
 
+fun z3_rewrite_datatype_rung_replay_success () =
+let
+  val acyclic_eq =
+    boolSyntax.mk_eq (``l:smt_left``, ``SmtLeft (SmtRight (l:smt_left))``)
+  val (translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([], acyclic_eq)
+  val dicts = SmtLib.parser_dicts_for_translation translation
+  val proof_text =
+    "((declare-fun l () Smt_left) \
+    \(proof (rewrite (= (= l (ctor_Smt_left_SmtLeft \
+    \(ctor_Smt_right_SmtRight l))) false))))"
+  val () = Profile.reset_all ()
+  val thm = replay_z3_proof_string_with_dicts dicts proof_text
+in
+  assert (Thm.concl thm ~~ boolSyntax.mk_eq (acyclic_eq, boolSyntax.F),
+    "datatype rewrite replayed to unexpected conclusion: " ^
+    Library.thm_to_string thm);
+  assert (profile_call_count "rewrite(11.1)(datatype)" > 0,
+    "datatype rewrite did not use the rewrite datatype rung");
+  Library.check_oracle_tags "datatype rewrite replay" thm
+end
+
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
   (ignore (replay_z3_proof_string proof_text);
@@ -3875,11 +3953,7 @@ let
     ("regexp",
       "((proof ((_ th-lemma regexp eq-propagate 4) false)))",
       "theory=regexp",
-      "proof-rule:th-lemma-regexp"),
-    ("datatype",
-      "((proof ((_ th-lemma datatype eq-propagate 5) false)))",
-      "theory=datatype",
-      "proof-rule:th-lemma-datatype")
+      "proof-rule:th-lemma-regexp")
   ]
 in
   List.app expect_advanced_th_lemma_diagnostic cases
@@ -4391,6 +4465,8 @@ let
       z3_proof_parser_th_lemma_metadata_success),
     ("z3_proof_parser_advanced_th_lemma_metadata_success",
       z3_proof_parser_advanced_th_lemma_metadata_success),
+    ("z3_proof_parser_datatype_th_lemma_metadata_success",
+      z3_proof_parser_datatype_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
     ("z3_proof_parser_version_gate_diagnostic",
@@ -4423,6 +4499,8 @@ let
       datatype_prove_ladder_rungs_success),
     ("datatype_prove_unsupported_diagnostic",
       datatype_prove_unsupported_diagnostic),
+    ("z3_rewrite_datatype_rung_replay_success",
+      z3_rewrite_datatype_rung_replay_success),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",

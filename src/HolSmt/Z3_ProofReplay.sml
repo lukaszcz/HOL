@@ -1321,6 +1321,9 @@ local
         profile "rewrite(11)(arith)" arith_prove t
 
         | HolSatLib.SAT_cex _ => profile "rewrite(11)(arith)" arith_prove t)
+        handle Feedback.HOL_ERR _ =>
+
+        profile "rewrite(11.1)(datatype)" SmtDatatypeProve.datatype_prove t
 
     in
       (state_cache_thm state thm, thm)
@@ -1532,6 +1535,16 @@ local
         (state_cache_thm state thm, thm)
       end)
 
+  val z3_th_lemma_datatype =
+    th_lemma_wrapper "datatype" (fn (state, t) =>
+      let
+        val thm = profile "th_lemma[datatype](3)"
+          SmtDatatypeProve.datatype_prove t
+      in
+        (* cache 'thm' *)
+        (state_cache_thm state thm, thm)
+      end)
+
   fun th_lemma_metadata_has_subkind subkinds
       ({subkind, ...} : th_lemma_metadata) =
     case subkind of
@@ -1549,8 +1562,6 @@ local
     | "str" => "string"
     | "regex" => "regexp"
     | "re" => "regexp"
-    | "datatypes" => "datatype"
-    | "dt" => "datatype"
     | other => other
 
   fun advanced_th_lemma_obligation metadata =
@@ -1730,6 +1741,7 @@ local
     | proofterm_replay_handler (TH_LEMMA_ARRAY _) = "th_lemma[array]"
     | proofterm_replay_handler (TH_LEMMA_BASIC _) = "th_lemma[basic]"
     | proofterm_replay_handler (TH_LEMMA_BV _) = "th_lemma[bv]"
+    | proofterm_replay_handler (TH_LEMMA_DATATYPE _) = "th_lemma[datatype]"
     | proofterm_replay_handler (TH_LEMMA_ADVANCED _) = "th_lemma[advanced]"
     | proofterm_replay_handler (TRANS _) = "trans"
     | proofterm_replay_handler (TRANS_STAR _) = "trans_star"
@@ -1747,6 +1759,8 @@ local
     | proofterm_rule (TH_LEMMA_BASIC (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule (TH_LEMMA_BV (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_DATATYPE (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule (TH_LEMMA_ADVANCED (metadata, _, _)) =
         th_lemma_rule_name metadata
@@ -1781,6 +1795,7 @@ local
     | proofterm_concl (TH_LEMMA_ARRAY (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_BASIC (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_BV (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_DATATYPE (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_ADVANCED (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS_STAR (_, concl)) = SOME concl
@@ -2010,6 +2025,10 @@ local
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata) z3_th_lemma_bv
           (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_DATATYPE
+        (metadata, pts, concl)) continuation =
+        list_prems state_proof (th_lemma_rule_name metadata)
+          z3_th_lemma_datatype (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_ADVANCED (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata)

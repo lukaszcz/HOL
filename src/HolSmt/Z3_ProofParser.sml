@@ -508,6 +508,8 @@ local
         th_lemma_prems_pt version TH_LEMMA_BASIC
     | proofterm_maker version "th_lemma[bv]" =
         th_lemma_prems_pt version TH_LEMMA_BV
+    | proofterm_maker version "th_lemma[datatype]" =
+        th_lemma_prems_pt version TH_LEMMA_DATATYPE
     | proofterm_maker version "th_lemma[advanced]" =
         th_lemma_prems_pt version TH_LEMMA_ADVANCED
     | proofterm_maker version "trans" = two_prems_pt version TRANS

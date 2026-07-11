@@ -1206,9 +1206,15 @@ local
             case (indices, args) of
               ([index], [arg]) =>
                 let
-                  val index_name = Lib.fst (Term.dest_var index)
+                  val index_matches_constructor =
+                    Term.same_const index constructor
+                    handle Feedback.HOL_ERR _ => false
+                  val index_name =
+                    Lib.fst (Term.dest_var index)
+                    handle Feedback.HOL_ERR _ =>
+                      #Name (Term.dest_thy_const index)
                 in
-                  if index_name = cname then
+                  if index_name = cname orelse index_matches_constructor then
                     datatype_tester_term ty constructor arg
                   else
                     raise ERR ("<" ^ token ^ " " ^ cname ^ ">")
