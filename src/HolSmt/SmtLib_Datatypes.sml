@@ -30,11 +30,21 @@ struct
     testers : name_pair list
   }
 
+  type selector_info = {
+    selector_smt : string,
+    selector_hol : string,
+    constructor_smt : string,
+    constructor_hol : string,
+    field_index : int
+  }
+
   type elaboration = {
     asts : Datatype.AST list,
     names : name_map,
     hol_types : Type.hol_type list,
-    tyinfos : TypeBase.tyinfo list
+    tyinfos : TypeBase.tyinfo list,
+    selectors : selector_info list,
+    constructors : name_pair list
   }
 
   type selector_case = {
@@ -53,14 +63,6 @@ struct
     constructors = [],
     selectors = [],
     testers = []
-  }
-
-  type selector_info = {
-    selector_smt : string,
-    selector_hol : string,
-    constructor_smt : string,
-    constructor_hol : string,
-    field_index : int
   }
 
   type cache_entry = {
@@ -234,8 +236,11 @@ struct
     #Name (Term.dest_thy_const tm)
     handle Feedback.HOL_ERR _ => Lib.fst (Term.dest_const tm)
 
+  fun constructors_of_type ty =
+    List.map (TypeBasePure.cinst ty) (TypeBase.constructors_of ty)
+
   fun find_constructor ty name =
-    List.find (fn ctor => const_name ctor = name) (TypeBase.constructors_of ty)
+    List.find (fn ctor => const_name ctor = name) (constructors_of_type ty)
 
   fun mk_constructor_pattern ctor =
     let
@@ -451,7 +456,7 @@ struct
       val hol_types = List.map (hol_type_of_decl names) group
       val tyinfos = List.map fetch_tyinfo hol_types
       val result = {asts = asts, names = names, hol_types = hol_types,
-        tyinfos = tyinfos}
+        tyinfos = tyinfos, selectors = selectors, constructors = constructors}
       val entry = {key = key, result = result, selectors = selectors,
         constructors = constructors}
       val _ = cache := entry :: !cache
@@ -519,13 +524,13 @@ struct
         end
     in
       TypeBase.mk_case (scrutinee,
-        List.map branch (TypeBase.constructors_of ty))
+        List.map branch (constructors_of_type ty))
     end
 
   fun mk_tester_case ({constructor, scrutinee} : tester_case) =
     let
       val ty = Term.type_of scrutinee
-      val constructors = TypeBase.constructors_of ty
+      val constructors = constructors_of_type ty
       val target =
         case List.find
           (fn ctor => const_name ctor = constructor orelse
@@ -546,5 +551,68 @@ struct
     in
       TypeBase.mk_case (scrutinee, List.map branch constructors)
     end
+
+  fun parser_result_of_group group
+      ({hol_types, selectors, constructors, ...} : elaboration) =
+    let
+      fun type_entry ((name, _), hol_type) =
+        {smt_name = node name, hol_type = hol_type}
+
+      fun constructor_entry hol_type ctor =
+        let
+          val tm = TypeBasePure.cinst hol_type ctor
+          val hol_name = const_name tm
+          val smt_name =
+            option_get ("missing SMT constructor name for " ^ hol_name)
+              (assoc_hol hol_name constructors)
+        in
+          {smt_name = smt_name, hol_name = hol_name, term = tm}
+        end
+
+      fun constructor_entries hol_type =
+        List.map (constructor_entry hol_type)
+          (TypeBase.constructors_of hol_type)
+
+      fun selector_entry
+          ({selector_smt, constructor_smt, constructor_hol, field_index, ...}
+             : selector_info) =
+        let
+          fun find_in_type hol_type =
+            Option.map (fn ctor => (hol_type, ctor))
+              (find_constructor hol_type constructor_hol)
+          val (domain, ctor) =
+            option_get
+              ("missing constructor type for selector " ^ selector_smt)
+              (Lib.get_first find_in_type hol_types)
+          val range =
+            List.nth (constructor_args (Term.type_of ctor), field_index)
+        in
+          {smt_name = selector_smt, constructor = constructor_smt,
+           domain = domain, range = range}
+        end
+    in
+      {types = ListPair.map type_entry (group, hol_types),
+       constructors = List.concat (List.map constructor_entries hol_types),
+       selectors = List.map selector_entry selectors,
+       mk_selector_case = mk_selector_case,
+       mk_tester_case = mk_tester_case}
+    end
+
+  fun define_datatype_for_parser (name, decl) =
+    parser_result_of_group [(name, decl)] (define_datatype (name, decl))
+
+  fun define_datatypes_for_parser (bindings, decls) =
+    let
+      fun binding_name binding =
+        case node binding of P.DatatypeBinding (name, _) => name
+      val group = ListPair.zip (List.map binding_name bindings, decls)
+    in
+      parser_result_of_group group (define_datatypes (bindings, decls))
+    end
+
+  val _ = P.install_datatype_elaborator {
+    define_datatype = define_datatype_for_parser,
+    define_datatypes = define_datatypes_for_parser
+  }
 
 end

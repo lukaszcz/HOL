@@ -53,6 +53,9 @@ fun parse_smtlib_assertions contents =
 fun parse_smtlib_state contents =
   with_temp_file contents SmtLib_Parser.parse_file_state
 
+fun parse_smtlib_state_with_options options contents =
+  with_temp_file contents (SmtLib_Parser.parse_file_state_with_options options)
+
 fun term_has_subterm pred tm =
   pred tm orelse
   (let
@@ -1023,6 +1026,80 @@ in
     "parametric datatype dictionary script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "parametric datatype assertion did not parse as Bool")
+end
+
+fun parse_file_datatype_elaboration_options_success () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  fun typecheck script =
+    SmtLib_Parser.typecheck_script_string_with_options options script
+  fun has_typebase_constructor tm =
+    term_has_subterm (Lib.can TypeBase.is_constructor) tm
+  fun assert_assertions label state =
+    let val assertions = #assertions state
+    in
+      assert (not (List.null assertions),
+        label ^ " produced no assertions");
+      assert (List.all (fn tm => Term.type_of tm = Type.bool) assertions,
+        label ^ " produced a non-Bool assertion");
+      assert (List.exists has_typebase_constructor assertions,
+        label ^ " assertion did not contain a TypeBase constructor")
+    end
+  val enum_state = typecheck
+    ("(set-logic ALL)\n" ^
+     "(declare-datatype ColorA2_09 ((redA2_09) (greenA2_09)))\n" ^
+     "(assert (= redA2_09 greenA2_09))\n" ^
+     "(exit)\n")
+  val recursive_state = typecheck
+    ("(set-logic ALL)\n" ^
+     "(declare-datatype ListA2_09 " ^
+     "((nilA2_09) (consA2_09 (headA2_09 Int) " ^
+     "(tailA2_09 ListA2_09))))\n" ^
+     "(assert (= (tailA2_09 (consA2_09 1 nilA2_09)) nilA2_09))\n" ^
+     "(exit)\n")
+  val mutual_state = typecheck
+    ("(set-logic ALL)\n" ^
+     "(declare-datatypes ((TreeA2_09 0) (ForestA2_09 0))\n" ^
+     "  (((leafA2_09) (nodeA2_09 (childrenA2_09 ForestA2_09)))\n" ^
+     "   ((nilFA2_09) (consFA2_09 (headFA2_09 TreeA2_09) " ^
+     "(tailFA2_09 ForestA2_09)))))\n" ^
+     "(assert ((_ is nodeA2_09) (nodeA2_09 nilFA2_09)))\n" ^
+     "(exit)\n")
+  val parametric_state = typecheck
+    ("(set-logic ALL)\n" ^
+     "(declare-datatype BoxA2_09 " ^
+     "(par (T) ((boxA2_09 (valueA2_09 T)))))\n" ^
+     "(declare-const biA2_09 (BoxA2_09 Int))\n" ^
+     "(declare-const bbA2_09 (BoxA2_09 Bool))\n" ^
+     "(assert (and (= (valueA2_09 (boxA2_09 1)) 1) " ^
+     "((_ is boxA2_09) biA2_09)))\n" ^
+     "(assert (and (= (valueA2_09 (boxA2_09 true)) true) " ^
+     "((_ is boxA2_09) bbA2_09)))\n" ^
+     "(exit)\n")
+in
+  assert_assertions "enum datatype elaboration" enum_state;
+  assert_assertions "recursive datatype elaboration" recursive_state;
+  assert_assertions "mutual datatype elaboration" mutual_state;
+  assert_assertions "parametric datatype elaboration" parametric_state
+end
+
+fun parse_file_datatype_elaboration_flag_off_success () =
+let
+  val hol_tyop = "smtlib_dt_A2FlagOff09"
+  val decls_before = Type.decls hol_tyop
+  val state =
+    parse_smtlib_state
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype A2FlagOff09 " ^
+       "((mkA2FlagOff09 (vA2FlagOff09 Int))))\n" ^
+       "(assert (= (vA2FlagOff09 (mkA2FlagOff09 1)) 1))\n" ^
+       "(exit)\n")
+  val after = Type.decls hol_tyop
+in
+  assert (List.length (#assertions state) = 1,
+    "flag-off datatype script produced the wrong assertion count");
+  assert (decls_before = after,
+    "flag-off datatype typecheck defined a TypeBase datatype")
 end
 
 fun parse_legacy_datatype_mutual_dictionary_success () =
@@ -4108,6 +4185,10 @@ let
       parse_file_datatype_dictionary_success),
     ("parse_file_parametric_datatype_dictionary_success",
       parse_file_parametric_datatype_dictionary_success),
+    ("parse_file_datatype_elaboration_options_success",
+      parse_file_datatype_elaboration_options_success),
+    ("parse_file_datatype_elaboration_flag_off_success",
+      parse_file_datatype_elaboration_flag_off_success),
     ("parse_legacy_datatype_mutual_dictionary_success",
       parse_legacy_datatype_mutual_dictionary_success),
     ("smtlib_datatype_elaboration_core_success",

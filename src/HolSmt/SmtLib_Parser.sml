@@ -102,6 +102,51 @@ struct
 
   type script_ast = command_ast located list
 
+  type typecheck_options = {
+    dict_logic : string option,
+    elaborate_datatypes : bool
+  }
+
+  type datatype_type_entry = {
+    smt_name : string,
+    hol_type : Type.hol_type
+  }
+
+  type datatype_constructor_entry = {
+    smt_name : string,
+    hol_name : string,
+    term : Term.term
+  }
+
+  type datatype_selector_entry = {
+    smt_name : string,
+    constructor : string,
+    domain : Type.hol_type,
+    range : Type.hol_type
+  }
+
+  type datatype_elaboration_result = {
+    types : datatype_type_entry list,
+    constructors : datatype_constructor_entry list,
+    selectors : datatype_selector_entry list,
+    mk_selector_case : {
+      selector : string,
+      constructor : string,
+      scrutinee : Term.term
+    } -> Term.term,
+    mk_tester_case : {
+      constructor : string,
+      scrutinee : Term.term
+    } -> Term.term
+  }
+
+  type datatype_elaborator = {
+    define_datatype : string located * datatype_decl_ast located ->
+      datatype_elaboration_result,
+    define_datatypes : datatype_binding_ast located list *
+      datatype_decl_ast located list -> datatype_elaboration_result
+  }
+
   type parser_cfg = {
     mk_let_bindings: dicts * bindings -> Term.term dict,
     mk_let: bindings * Term.term -> Term.term,
@@ -141,6 +186,11 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Parser"
   val WARNING = Feedback.HOL_WARNING "SmtLib_Parser"
+
+  val datatype_elaborator : datatype_elaborator option ref = ref NONE
+
+  fun install_datatype_elaborator hooks =
+    datatype_elaborator := SOME hooks
 
   (***************************************************************************)
   (* source-located SMT-LIB script AST                                       *)
@@ -3240,17 +3290,124 @@ local
           end
     end
 
-  fun typecheck_declare_datatype context name decl (tydict, tmdict, sigdict) =
+  fun real_datatype_sort_parsefn smt_name base_ty token indices args =
+    let
+      val {Thy, Tyop, Args} = Type.dest_thy_type base_ty
+      val arity = List.length Args
+      fun arity_error actual =
+        raise ERR ("<" ^ smt_name ^ ">")
+          ("datatype arity mismatch for '" ^ smt_name ^ "': expected " ^
+           Int.toString arity ^ ", actual " ^ Int.toString actual)
+    in
+      if not (List.null indices) then
+        raise ERR ("<" ^ smt_name ^ ">")
+          ("datatype sort '" ^ smt_name ^ "' does not take indices")
+      else if List.length args = arity then
+        if arity = 0 then base_ty
+        else Type.mk_thy_type {Thy = Thy, Tyop = Tyop, Args = args}
+      else
+        arity_error (List.length args)
+    end
+
+  fun add_real_datatype_type ({smt_name, hol_type}: datatype_type_entry,
+      tydict) =
+    Library.extend_dict
+      ((smt_name, real_datatype_sort_parsefn smt_name hol_type), tydict)
+
+  fun add_real_datatype_constructor
+      ({smt_name, term, ...}: datatype_constructor_entry,
+       (tmdict, sigdict)) =
+    let
+      val (domain, range) = boolSyntax.strip_fun (Term.type_of term)
+    in
+      add_value_term_signature smt_name term domain range (tmdict, sigdict)
+    end
+
+  fun add_real_datatype_selector mk_selector_case
+      ({smt_name, constructor, domain, range}: datatype_selector_entry,
+       tmdict) =
+    let
+      fun parsefn token indices args =
+        case (indices, args) of
+          ([], [arg]) =>
+            let
+              val _ = Type.match_type domain (Term.type_of arg)
+            in
+              mk_selector_case {
+                selector = smt_name,
+                constructor = constructor,
+                scrutinee = arg
+              }
+            end
+        | _ => raise ERR ("<" ^ smt_name ^ ">")
+            "one datatype selector argument expected"
+    in
+      Library.extend_dict ((smt_name, parsefn), tmdict)
+    end
+
+  fun add_real_datatype_tester mk_tester_case tmdict =
+    let
+      fun parsefn token indices args =
+        case (indices, args) of
+          ([index], [arg]) =>
+            mk_tester_case {
+              constructor = Lib.fst (Term.dest_var index),
+              scrutinee = arg
+            }
+        | _ => raise ERR "<is>"
+            "one constructor index and one datatype tester argument expected"
+    in
+      Library.extend_dict (("is", parsefn), tmdict)
+    end
+
+  fun install_real_datatype_elaboration
+      ({types, constructors, selectors, mk_selector_case, mk_tester_case}:
+         datatype_elaboration_result)
+      (tydict, tmdict, sigdict) =
+    let
+      val tydict = List.foldl add_real_datatype_type tydict types
+      val (tmdict, sigdict) =
+        List.foldl add_real_datatype_constructor
+          (tmdict, sigdict) constructors
+      val tmdict =
+        List.foldl (add_real_datatype_selector mk_selector_case)
+          tmdict selectors
+      val tmdict = add_real_datatype_tester mk_tester_case tmdict
+    in
+      (tydict, tmdict, sigdict)
+    end
+
+  fun require_datatype_elaborator context loc =
+    case !datatype_elaborator of
+      SOME hooks => hooks
+    | NONE =>
+        type_error "typecheck_declare_datatype" context loc NONE NONE
+          "datatype elaboration requested before SmtLib_Datatypes was loaded"
+
+  fun typecheck_declare_datatype elaborate_datatypes context name decl
+      (tydict, tmdict, sigdict) =
     let
       val arity =
         case node_of decl of
           DatatypeDecl (params, _) => List.length params
-      val tydict = extend_datatype_sort context name arity tydict
+      val result =
+        if elaborate_datatypes then
+          SOME (#define_datatype
+            (require_datatype_elaborator context (loc_of name)) (name, decl))
+        else NONE
+      val tydict =
+        if elaborate_datatypes then tydict
+        else extend_datatype_sort context name arity tydict
     in
-      typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
+      case result of
+        SOME elaboration =>
+          install_real_datatype_elaboration elaboration
+            (tydict, tmdict, sigdict)
+      | NONE =>
+          typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
     end
 
-  fun typecheck_declare_datatypes context bindings decls
+  fun typecheck_declare_datatypes elaborate_datatypes context bindings decls
       (tydict, tmdict, sigdict) =
     let
       val _ =
@@ -3284,14 +3441,29 @@ local
       val _ = List.app check_decl_arity (ListPair.zip (infos, decls))
 
       val tydict =
-        List.foldl
-          (fn ((name, arity), tydict) =>
-            extend_datatype_sort context name arity tydict)
-          tydict infos
+        if elaborate_datatypes then tydict
+        else
+          List.foldl
+            (fn ((name, arity), tydict) =>
+              extend_datatype_sort context name arity tydict)
+            tydict infos
       fun add_one ((name, _), decl, (tydict, tmdict, sigdict)) =
         typecheck_datatype_body context name decl (tydict, tmdict, sigdict)
     in
-      ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
+      if elaborate_datatypes then
+        let
+          val hooks =
+            require_datatype_elaborator context
+              (case bindings of b :: _ => loc_of b
+               | [] => (case decls of d :: _ => loc_of d
+                        | [] => raise ERR "typecheck_declare_datatypes"
+                            "empty declare-datatypes command"))
+          val result = #define_datatypes hooks (bindings, decls)
+        in
+          install_real_datatype_elaboration result (tydict, tmdict, sigdict)
+        end
+      else
+        ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
     end
 
   fun define_typechecked_fun context loc name vars range_type definiens
@@ -3483,7 +3655,8 @@ local
             "assumption literal must have Bool sort"
       end) terms
 
-  fun typecheck_command dict_logic command state =
+  fun typecheck_command ({dict_logic, elaborate_datatypes}: typecheck_options)
+      command state =
     let
       val context = command_context
       fun finish state = SOME state
@@ -3646,8 +3819,9 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val (tydict, tmdict, sigdict) =
-              typecheck_declare_datatype (context "declare-datatype")
-                name decl (tydict, tmdict, sigdict)
+              typecheck_declare_datatype elaborate_datatypes
+                (context "declare-datatype") name decl
+                (tydict, tmdict, sigdict)
           in
             finish (update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state)
@@ -3659,7 +3833,7 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val (tydict, tmdict, sigdict) =
-              typecheck_declare_datatypes
+              typecheck_declare_datatypes elaborate_datatypes
                 (context "declare-datatypes")
                 bindings decls (tydict, tmdict, sigdict)
           in
@@ -3788,24 +3962,37 @@ local
             ("unknown command '" ^ located_string_node name ^ "'")
     end
 
-  fun typecheck_script_with_dict_logic dict_logic script : checked_script =
+  val default_typecheck_options = {
+    dict_logic = NONE,
+    elaborate_datatypes = false
+  }
+
+  fun typecheck_script_with_options options script : checked_script =
     let
       fun loop [] state = finalize_typecheck_state "(end-of-stream)" state
         | loop (command :: rest) state =
             (case node_of command of
                CmdExit => finalize_typecheck_state "exit" state
-             | _ => loop rest (typecheck_command dict_logic command state))
+             | _ => loop rest (typecheck_command options command state))
     in
       loop script NONE
     end
 
-  fun typecheck_script script = typecheck_script_with_dict_logic NONE script
+  fun typecheck_script_with_dict_logic dict_logic script =
+    typecheck_script_with_options
+      {dict_logic = dict_logic, elaborate_datatypes = false} script
+
+  fun typecheck_script script =
+    typecheck_script_with_options default_typecheck_options script
 
   fun typecheck_script_string text =
     typecheck_script (parse_script_string text)
 
   fun typecheck_script_string_with_dict_logic dict_logic text =
     typecheck_script_with_dict_logic (SOME dict_logic) (parse_script_string text)
+
+  fun typecheck_script_string_with_options options text =
+    typecheck_script_with_options options (parse_script_string text)
 
 in
 
@@ -3815,9 +4002,14 @@ in
   val source_span_to_string = source_span_to_string
   val parse_script_string = parse_script_string
   val parse_script_file = parse_script_file
+  val install_datatype_elaborator = install_datatype_elaborator
+  val default_typecheck_options = default_typecheck_options
   val typecheck_script = typecheck_script
+  val typecheck_script_with_options = typecheck_script_with_options
   val typecheck_script_with_dict_logic = typecheck_script_with_dict_logic
   val typecheck_script_string = typecheck_script_string
+  val typecheck_script_string_with_options =
+    typecheck_script_string_with_options
   val typecheck_script_string_with_dict_logic =
     typecheck_script_string_with_dict_logic
 
@@ -3855,36 +4047,33 @@ in
      for bounded command-state checking.  Any other command is rejected with
      "unknown command". *)
 
-  fun parse_file_state (path : string) : command_state_snapshot =
+  fun parse_file_state_with_options
+      (options as {dict_logic, ...}: typecheck_options) (path : string)
+      : command_state_snapshot =
   let
     (* parse the file contents *)
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG
-          ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^ "'")
+          ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^ "'" ^
+           (case dict_logic of
+              NONE => ""
+            | SOME logic => " with " ^ logic ^ " dictionaries"))
       else ()
     val instream = TextIO.openIn path
     val text = TextIO.inputAll instream
     val _ = TextIO.closeIn instream
-    val result = typecheck_script_string text
+    val result = typecheck_script_string_with_options options text
   in
     result
   end
 
+  fun parse_file_state (path : string) : command_state_snapshot =
+    parse_file_state_with_options default_typecheck_options path
+
   fun parse_file_state_with_dict_logic dict_logic (path : string)
       : command_state_snapshot =
-  let
-    val _ = if !Library.trace > 1 then
-        Feedback.HOL_MESG
-          ("HolSmtLib: parsing SMT-LIB 2 benchmark file '" ^ path ^
-           "' with " ^ dict_logic ^ " dictionaries")
-      else ()
-    val instream = TextIO.openIn path
-    val text = TextIO.inputAll instream
-    val _ = TextIO.closeIn instream
-    val result = typecheck_script_string_with_dict_logic dict_logic text
-  in
-    result
-  end
+    parse_file_state_with_options
+      {dict_logic = SOME dict_logic, elaborate_datatypes = false} path
 
   fun parse_file (path : string)
       : string * Type.hol_type dict * Term.term dict * Term.term list =
