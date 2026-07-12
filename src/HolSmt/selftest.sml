@@ -1560,31 +1560,31 @@ in
 
     (* data types: case constants *)
 
-    (``dt1_CASE foo f b z = f``, [thm_AUTO, thm_YO]),
-    (``dt1_CASE bar f b z = b``, [thm_AUTO, thm_YO]),
-    (``dt1_CASE baz f b z = z``, [thm_AUTO, thm_YO]),
-    (``dt1_CASE x c c c = c``, [(*thm_AUTO,*) thm_YO]),
-    (``list_CASE [] n c = n``, [thm_AUTO, thm_YO]),
+    (``dt1_CASE foo f b z = f``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``dt1_CASE bar f b z = b``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``dt1_CASE baz f b z = z``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``dt1_CASE x c c c = c``, [(*thm_AUTO,*) thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``list_CASE [] n c = n``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``list_CASE (x::xs) n c = c x xs``,
-      [thm_AUTO, thm_YO]),
-    (``option_CASE (SOME x) n s = s x``, [thm_AUTO]),
-    (``option_CASE NONE n s = n``, [thm_AUTO]),
+      [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``option_CASE (SOME x) n s = s x``, [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
+    (``option_CASE NONE n s = n``, [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
 
     (* records: field selectors *)
 
     (``(x = y) <=> (x.employed = y.employed) /\ (x.age = y.age)``,
-      [(*thm_AUTO,*) thm_YO]),
+      [(*thm_AUTO,*) thm_YO, thm_Z3p, thm_Z3p_v4]),
 
     (* records: field updates *)
 
     (``(x with employed := e).employed = e``,
-      [thm_AUTO, thm_YO]),
+      [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``(x with age := a).employed = x.employed``,
-      [thm_AUTO]),
+      [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
 
     (``x with <| employed := e; age := a |> =
      y with <| employed := e; age := a |>``,
-      [thm_AUTO, thm_YO]),
+      [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
 
     (* records: literals *)
 

@@ -14,7 +14,8 @@ struct
     raise ERR "datatype_prove"
       ("unsupported th-lemma shape: theory=datatype; checked replay is only " ^
        "implemented for TypeBase datatype disjointness, injectivity, " ^
-       "selector/tester, exhaustiveness, and acyclicity lemmas; conclusion=" ^
+       "selector/tester, case-split reconstruction, exhaustiveness, " ^
+       "and acyclicity lemmas; conclusion=" ^
        Library.term_to_string t)
 
   fun add_ty ty tys = if List.exists (fn ty' => ty' = ty) tys then tys
@@ -106,8 +107,20 @@ struct
       List.foldl add_tm [] (List.filter datatype_term (subterms t))
     end
 
+  fun datatype_free_terms t =
+    let
+      fun datatype_term tm =
+        let val ty = Term.type_of tm
+        in ty <> Type.bool andalso has_constructors ty end
+      fun add_tm (tm, acc) =
+        if List.exists (fn tm' => Term.aconv tm' tm) acc then acc
+        else tm :: acc
+    in
+      List.foldl add_tm [] (List.filter datatype_term (Term.free_vars t))
+    end
+
   fun nchotomy_for_term tm =
-    Thm.SPEC tm (TypeBase.nchotomy_of (Term.type_of tm))
+    Drule.ISPEC tm (TypeBase.nchotomy_of (Term.type_of tm))
 
   fun exhaustiveness_prove t =
     let
@@ -118,6 +131,18 @@ struct
       else Tactical.prove (t,
         Tactical.THEN
           (Tactical.EVERY (List.map Tactic.STRUCT_CASES_TAC cases),
+           bossLib.RW_TAC (bossLib.srw_ss()) thms))
+    end
+
+  fun datatype_cases_prove t =
+    let
+      val thms = datatype_rewrite_thms t
+      val cases = List.map nchotomy_for_term (datatype_free_terms t)
+    in
+      if List.null cases then unsupported t
+      else Tactical.prove (t,
+        Tactical.THEN
+          (Tactical.EVERY (List.map Tactic.FULL_STRUCT_CASES_TAC cases),
            bossLib.RW_TAC (bossLib.srw_ss()) thms))
     end
 
@@ -162,6 +187,8 @@ struct
     Z3_ProformaThms.prove Z3_ProformaThms.datatype_thms t
     handle Feedback.HOL_ERR _ =>
     datatype_simp_prove t
+    handle Feedback.HOL_ERR _ =>
+    datatype_cases_prove t
     handle Feedback.HOL_ERR _ =>
     exhaustiveness_prove t
     handle Feedback.HOL_ERR _ =>

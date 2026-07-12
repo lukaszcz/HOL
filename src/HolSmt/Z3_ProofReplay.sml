@@ -2251,10 +2251,36 @@ local
          intrealTheory.is_int_alt ::
          intrealTheory.is_int_thm ::
          thms)
+    fun smt_full_normalize_tac thms =
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+        (HolSmtTheory.real_div_smt_rdiv ::
+         intrealTheory.is_int_alt ::
+         intrealTheory.is_int_thm ::
+         thms)
+    fun datatype_normalize_tac thms (asl, hyp) =
+      let
+        val combined = boolSyntax.list_mk_conj (hyp :: asl)
+        val cases = List.map SmtDatatypeProve.nchotomy_for_term
+          (SmtDatatypeProve.datatype_free_terms combined)
+      in
+        Tactical.THEN
+          (Tactical.EVERY (List.map Tactic.FULL_STRUCT_CASES_TAC cases),
+           smt_full_normalize_tac thms) (asl, hyp)
+      end
     fun remove_hyp (hyp, thm) : Thm.thm =
     let
+      val datatype_thms =
+        SmtDatatypeProve.datatype_rewrite_thms
+          (boolSyntax.list_mk_conj (hyp :: asl))
+        handle Feedback.HOL_ERR _ => []
       val hyp_thm =
         Tactical.TAC_PROOF ((asl, hyp), smt_normalize_tac [])
+        handle Feedback.HOL_ERR _ =>
+          Tactical.TAC_PROOF ((asl, hyp),
+            smt_full_normalize_tac datatype_thms)
+        handle Feedback.HOL_ERR _ =>
+          Tactical.TAC_PROOF ((asl, hyp),
+            datatype_normalize_tac datatype_thms)
         handle Feedback.HOL_ERR _ =>
           Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
     in
