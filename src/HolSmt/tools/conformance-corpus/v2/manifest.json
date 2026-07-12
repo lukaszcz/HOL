@@ -577,7 +577,8 @@
       "modes": [
         "parser-only",
         "typecheck-only",
-        "z3-oracle"
+        "z3-oracle",
+        "z3-tac"
       ],
       "versions": [
         "2.19.1",
@@ -595,6 +596,9 @@
           "status": "pass"
         },
         "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
           "status": "pass"
         }
       },
@@ -661,7 +665,8 @@
       "modes": [
         "parser-only",
         "typecheck-only",
-        "z3-oracle"
+        "z3-oracle",
+        "z3-tac"
       ],
       "versions": [
         "2.19.1",
@@ -679,6 +684,9 @@
           "status": "pass"
         },
         "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
           "status": "pass"
         }
       },
@@ -783,7 +791,8 @@
       "modes": [
         "parser-only",
         "typecheck-only",
-        "z3-oracle"
+        "z3-oracle",
+        "z3-tac"
       ],
       "versions": [
         "2.19.1",
@@ -801,6 +810,9 @@
           "status": "pass"
         },
         "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
           "status": "pass"
         }
       },
@@ -847,6 +859,55 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes unknown match constructor diagnostic"
+      }
+    },
+    {
+      "id": "command:datatypes:mutual-selector",
+      "file": "cases/commands/datatypes/command_datatypes_mutual_selector.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatypes",
+        "datatype-command:mutual",
+        "datatype-command:mutual-selector",
+        "theory-behavior:mutual-datatype",
+        "theory-behavior:selector",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes selector on mutual family"
       }
     },
     {
@@ -969,6 +1030,55 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 declare-datatype parametric datatype command"
+      }
+    },
+    {
+      "id": "command:datatypes:parametric-tester",
+      "file": "cases/commands/datatypes/command_datatypes_parametric_tester.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command:declare-datatype",
+        "datatype-command:parametric",
+        "datatype-command:parametric-tester",
+        "theory-behavior:parametric-datatype",
+        "theory-behavior:tester",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes tester on parametric instance"
       }
     },
     {

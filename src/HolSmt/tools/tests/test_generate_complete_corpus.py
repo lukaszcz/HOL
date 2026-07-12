@@ -181,7 +181,9 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             "command:datatypes:match-default-variable",
             "command:datatypes:match-nested-branch",
             "command:datatypes:match-simple",
+            "command:datatypes:mutual-selector",
             "command:datatypes:non-well-founded-self",
+            "command:datatypes:parametric-tester",
             "command:datatypes:parametric-two-instances",
             "command:datatypes:selector-misapplication-sat",
         }
@@ -209,6 +211,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             self.assertEqual(case["expected"]["parser-only"]["status"], "pass")
             self.assertEqual(case["expected"]["typecheck-only"]["status"], "pass")
             self.assertEqual(case["expected"]["z3-oracle"]["status"], "pass")
+            self.assertEqual(case["expected"]["z3-tac"]["status"], "pass")
             self.assertIsNone(case["implementation_obligation"])
         self.assertEqual(
             datatype_by_id[
@@ -228,6 +231,19 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             ]["expected"]["z3-oracle"]["status"],
             "pass",
         )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:selector-misapplication-sat"
+            ]["modes"],
+            ["z3-oracle"],
+        )
+        for case_id in {
+            "command:datatypes:parametric-tester",
+            "command:datatypes:mutual-selector",
+        }:
+            case = datatype_by_id[case_id]
+            self.assertEqual(case["expected"]["z3-tac"]["status"], "pass")
+            self.assertEqual(case["expected"]["z3-oracle"]["status"], "pass")
         self.assertEqual(
             datatype_by_id[
                 "command:datatypes:equality-chain"

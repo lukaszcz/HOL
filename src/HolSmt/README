@@ -107,6 +107,7 @@ SMT-LIB support matrix:
   Datatypes                    yes    yes        native         yes
   Recursive/mutual/parametric
     datatypes                  yes    yes        native         yes
+  Datatype match               yes    yes        native         yes
   Z3 Seq/Set/Bag extensions    yes    yes        no             no
 
 Logic coverage summary:
@@ -136,6 +137,17 @@ Logic coverage summary:
   AUFNIRA, QF_ALRA,           coverage is implemented, while solver/replay
   QF_ANRA, QF_AUFLIRA,        status is matrix-specific.
   QF_AUFNIRA
+  UFDT, QF_UFDT,              Core + Datatypes dictionaries, including
+  UFDTLIA, UFDTNIA,           recursive, mutual and parametric datatypes;
+  QF_UFDTLIA, QF_UFDTNIA      parser/typechecker, native translation and
+                              checked replay are covered in driver modes.
+  UFDTLIRA, UFDTNIRA,         Core + Datatypes + Int/Real dictionaries;
+  QF_UFDTLIRA                 mixed numeric fragment restrictions are
+                              enforced by the manifest-backed logic rows.
+  AUFDTLIA, AUFDTLIRA,        ArraysEx + Datatypes + arithmetic dictionaries;
+  AUFDTNIRA, UFBVDT,          supported non-FP DT logic family rows are in the
+  AUFBVDT, AUFBVDTLIA,        default complete-conformance suite with
+  AUFBVDTNIA, AUFBVDTNIRA     fragment-violation diagnostics.
   QF_AX                       Array parser/typechecker coverage exists; proof
                               reconstruction coverage remains limited.
   QF_S, QF_SLIA, QF_SNIA      String logic parse/typecheck embeddings; string
@@ -152,6 +164,14 @@ For the complete per-logic and per-theory rows, including evidence, test IDs,
 diagnostic IDs and test status, read
 `src/HolSmt/tools/coverage/SMTLIB_COVERAGE.md`.  Public documentation should not
 claim more than that generated report.
+
+The `SmtLib_Parser` library default remains placeholder datatype mode unless a
+caller sets `elaborate_datatypes = true`.  Placeholder mode installs datatype
+sorts and symbols without elaborating genuine HOL datatypes, and rejects
+binding `match` patterns with a precise diagnostic.  The command-line
+typecheck and checked Z3 tactic drivers use native datatype elaboration by
+default; `holsmt-typecheck --placeholder-datatypes` keeps the library default
+available as an explicit gate.
 
 HOL translation records include HOLTheoryEncoding rows for the advanced
 theories.  These rows distinguish native SMT-LIB encodings from conservative

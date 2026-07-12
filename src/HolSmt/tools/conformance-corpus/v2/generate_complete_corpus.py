@@ -1477,11 +1477,12 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "(assert (= (match c ((red 0) (green 1))) 0))\n"
             "(check-sat)\n"
         ),
-        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
         expected={
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1513,11 +1514,12 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "   ((node l r) (match l (((leaf y) y) ((node u v) 0)))))) 0))\n"
             "(check-sat)\n"
         ),
-        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
         expected={
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1547,11 +1549,12 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
             "(assert (= (match c ((red 0) (other 1))) 1))\n"
             "(check-sat)\n"
         ),
-        modes=("parser-only", "typecheck-only", "z3-oracle"),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
         expected={
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1858,6 +1861,65 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         ),
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes selector on wrong constructor",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="parametric-tester",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Box (par (T) ((box (value T)))))\n"
+            "(declare-const bi (Box Int))\n"
+            "(assert ((_ is box) bi))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result("pass"),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatype",
+            "datatype-command:parametric",
+            "datatype-command:parametric-tester",
+            "theory:Datatypes",
+            "theory-behavior:parametric-datatype",
+            "theory-behavior:tester",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes tester on parametric instance",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="mutual-selector",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatypes ((Tree 0) (Forest 0))\n"
+            "  (((leaf) (node (children Forest)))\n"
+            "   ((nilF) (consF (head Tree) (tail Forest)))))\n"
+            "(assert (= (head (consF leaf nilF)) leaf))\n"
+            "(check-sat)\n"
+        ),
+        modes=("parser-only", "typecheck-only", "z3-oracle", "z3-tac"),
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result("pass"),
+            "z3-oracle": expected_result("pass"),
+            "z3-tac": expected_result("pass"),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command:declare-datatypes",
+            "datatype-command:mutual",
+            "datatype-command:mutual-selector",
+            "theory:Datatypes",
+            "theory-behavior:mutual-datatype",
+            "theory-behavior:selector",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes selector on mutual family",
         source_kind="SMT-LIB-standard",
     ),
     ScriptedCase(
