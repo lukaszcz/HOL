@@ -15,6 +15,7 @@ declare -a selected_versions=()
 all_modes=(
   parser-only
   typecheck-only
+  typecheck-placeholder
   z3-oracle
   proof-parse
   proof-replay
@@ -231,6 +232,11 @@ for mode in "${selected_modes[@]}"; do
 done
 
 for mode in "${selected_modes[@]}"; do
+  if [ "$mode" = "typecheck-placeholder" ]; then
+    write_skipped_step "external-$mode" external-conformance \
+      "typecheck-placeholder is only defined for explicit corpus rows"
+    continue
+  fi
   external_out="$report_dir/external/$mode"
   mkdir -p "$external_out"
   run_step "external-$mode" external-conformance python3 "$script_dir/run_conformance_suite.py" \

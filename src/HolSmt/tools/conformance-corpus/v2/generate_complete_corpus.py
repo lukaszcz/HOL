@@ -40,6 +40,7 @@ CASE_CLASSES = (
 MODES = (
     "parser-only",
     "typecheck-only",
+    "typecheck-placeholder",
     "z3-oracle",
     "proof-parse",
     "proof-replay",
@@ -1479,12 +1480,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "fail",
-                diagnostic="match term typechecking is not implemented",
-                failure_phase="typecheck",
-                notes="flips in TASK_16",
-            ),
+            "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
         },
         features=(
@@ -1520,12 +1516,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "fail",
-                diagnostic="nested match typechecking is not implemented",
-                failure_phase="typecheck",
-                notes="flips in TASK_16",
-            ),
+            "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
         },
         features=(
@@ -1559,12 +1550,7 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
             "parser-only": expected_result("pass"),
-            "typecheck-only": expected_result(
-                "fail",
-                diagnostic="match default variable pattern is not implemented",
-                failure_phase="typecheck",
-                notes="flips in TASK_16/TASK_17",
-            ),
+            "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
         },
         features=(
@@ -1584,6 +1570,129 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes match default variable pattern",
         source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-non-exhaustive",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green)))\n"
+            "(declare-const c Color)\n"
+            "(assert (= (match c ((red 0))) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("typecheck-only",),
+        expected={
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="non-exhaustive match",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-non-exhaustive",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes non-exhaustive match diagnostic",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-unknown-constructor",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green)))\n"
+            "(declare-const c Color)\n"
+            "(assert (= (match c (((blue x) 0) (default 1))) 1))\n"
+            "(check-sat)\n"
+        ),
+        modes=("typecheck-only",),
+        expected={
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="unknown match constructor 'blue'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-unknown-constructor",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes unknown match constructor diagnostic",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-duplicate-pattern",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Color ((red) (green)))\n"
+            "(declare-const c Color)\n"
+            "(assert (= (match c ((red 0) (red 1) (green 2))) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("typecheck-only",),
+        expected={
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic="duplicate match constructor pattern 'red'",
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-duplicate-pattern",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        logic="ALL",
+        source_reference="SMT-LIB 2.7 Datatypes duplicate match constructor diagnostic",
+        source_kind="SMT-LIB-standard",
+    ),
+    ScriptedCase(
+        slug="match-placeholder-rejection",
+        script=(
+            "(set-logic ALL)\n"
+            "(declare-datatype Box ((box (value Int))))\n"
+            "(declare-const b Box)\n"
+            "(assert (= (match b (((box x) x))) 0))\n"
+            "(check-sat)\n"
+        ),
+        modes=("typecheck-placeholder",),
+        expected={
+            "typecheck-placeholder": expected_result(
+                "fail",
+                diagnostic=(
+                    "placeholder datatype mode cannot support binding "
+                    "patterns soundly"
+                ),
+                failure_phase="typecheck",
+            ),
+        },
+        features=(
+            "command-case:datatype-corpus",
+            "command-case:negative",
+            "command:declare-datatype",
+            "datatype-command:match",
+            "datatype-command:match-placeholder-rejection",
+            "theory:Datatypes",
+            "theory-behavior:match",
+        ),
+        logic="ALL",
+        source_reference="HolSmt placeholder datatype mode match rejection",
+        source_kind="HolSmt-internal",
     ),
     ScriptedCase(
         slug="simple-enum",

@@ -37,12 +37,23 @@ CORPUS_SCHEMA = "holsmt-conformance-corpus-v1"
 
 MODE_PARSER = "parser-only"
 MODE_TYPECHECK = "typecheck-only"
+MODE_TYPECHECK_PLACEHOLDER = "typecheck-placeholder"
 MODE_Z3_ORACLE = "z3-oracle"
 MODE_PROOF_PARSE = "proof-parse"
 MODE_PROOF_REPLAY = "proof-replay"
 MODE_Z3_TAC = "z3-tac"
 
 ALL_MODES = [
+    MODE_PARSER,
+    MODE_TYPECHECK,
+    MODE_TYPECHECK_PLACEHOLDER,
+    MODE_Z3_ORACLE,
+    MODE_PROOF_PARSE,
+    MODE_PROOF_REPLAY,
+    MODE_Z3_TAC,
+]
+
+DEFAULT_MODES = [
     MODE_PARSER,
     MODE_TYPECHECK,
     MODE_Z3_ORACLE,
@@ -169,6 +180,10 @@ SAT_SMOKE_MODES = (MODE_PARSER, MODE_TYPECHECK, MODE_Z3_ORACLE)
 SOLVER_RESULTS = {"sat", "unsat", "unknown"}
 DEFAULT_TYPECHECK_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-typecheck"
 DEFAULT_TYPECHECK_COMMAND = f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} {{input}} {{logic}}"
+DEFAULT_TYPECHECK_PLACEHOLDER_COMMAND = (
+    f"{shlex.quote(str(DEFAULT_TYPECHECK_DRIVER))} "
+    "{input} {logic} --placeholder-datatypes"
+)
 DEFAULT_Z3_TAC_DRIVER = pathlib.Path(__file__).resolve().parents[1] / "holsmt-z3-tac"
 DEFAULT_Z3_TAC_COMMAND = f"{shlex.quote(str(DEFAULT_Z3_TAC_DRIVER))} {{input}} {{logic}}"
 DEFAULT_CORPUS_DIR = pathlib.Path(__file__).resolve().parent / "conformance-corpus" / "v1"
@@ -202,7 +217,7 @@ class Case:
     text: str
     origin: str
     tags: tuple[str, ...]
-    modes: tuple[str, ...] = tuple(ALL_MODES)
+    modes: tuple[str, ...] = tuple(DEFAULT_MODES)
     source_path: pathlib.Path | None = None
     expected: Mapping[str, ExpectedOutcome] = field(default_factory=dict)
 
@@ -381,7 +396,7 @@ def logic_smoke_case(logic: str, unsat: bool) -> Case:
     elif unsat:
         # A refutable goal exercises every mode: parse, typecheck, Z3 oracle,
         # proof parse/replay and the checked Z3_TAC tactic.
-        modes = tuple(ALL_MODES)
+        modes = tuple(DEFAULT_MODES)
     else:
         modes = SAT_SMOKE_MODES
     return Case(
@@ -593,7 +608,7 @@ def corpus_cases(paths: Iterable[pathlib.Path], selected_logics: set[str] | None
             row_class = entry.get("class")
             if isinstance(row_class, str) and row_class:
                 tags_value = [f"class:{row_class}", *tags_value]
-            modes_value = entry.get("modes", ALL_MODES)
+            modes_value = entry.get("modes", DEFAULT_MODES)
             if not isinstance(modes_value, list) or not modes_value:
                 raise ValueError(f"{context}: modes must be a non-empty list")
             modes: list[str] = []
@@ -1136,6 +1151,10 @@ def default_typecheck_command() -> str:
     return DEFAULT_TYPECHECK_COMMAND
 
 
+def default_typecheck_placeholder_command() -> str:
+    return DEFAULT_TYPECHECK_PLACEHOLDER_COMMAND
+
+
 def run_typecheck_mode(
     case: Case,
     input_path: pathlib.Path,
@@ -1151,6 +1170,25 @@ def run_typecheck_mode(
             artifact={"command": command_template},
         )
     return run_command_mode(case, MODE_TYPECHECK, input_path, command_template, timeout)
+
+
+def run_typecheck_placeholder_mode(
+    case: Case,
+    input_path: pathlib.Path,
+    command_template: str | None,
+    timeout: int,
+) -> dict[str, object]:
+    if command_template == DEFAULT_TYPECHECK_PLACEHOLDER_COMMAND and not DEFAULT_TYPECHECK_DRIVER.exists():
+        return result(
+            case,
+            MODE_TYPECHECK_PLACEHOLDER,
+            UNSUPPORTED,
+            f"default typecheck-placeholder driver not built: {DEFAULT_TYPECHECK_DRIVER}",
+            artifact={"command": command_template},
+        )
+    return run_command_mode(
+        case, MODE_TYPECHECK_PLACEHOLDER, input_path, command_template, timeout
+    )
 
 
 def command_output_field(stdout: str, stderr: str, field: str) -> str | None:
@@ -1871,6 +1909,15 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument(
+        "--typecheck-placeholder-command",
+        default=default_typecheck_placeholder_command(),
+        help=(
+            "shell command template for typecheck-placeholder mode; "
+            "placeholders: {input}, {logic}, {name}; defaults to "
+            "src/HolSmt/holsmt-typecheck --placeholder-datatypes"
+        ),
+    )
+    parser.add_argument(
         "--z3-tac-command",
         default=default_z3_tac_command(),
         help=(
@@ -1888,7 +1935,7 @@ def main(argv: list[str]) -> int:
     out_dir = args.out.resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
     selected_logics = set(args.logic) if args.logic else None
-    selected_modes = tuple(args.mode) if args.mode else tuple(ALL_MODES)
+    selected_modes = tuple(args.mode) if args.mode else tuple(DEFAULT_MODES)
 
     cases: list[Case] = []
     if not args.no_default_suite:
@@ -1949,6 +1996,13 @@ def main(argv: list[str]) -> int:
                 item = proof_result_cache[0] if mode == MODE_PROOF_PARSE else proof_result_cache[1]
             elif mode == MODE_TYPECHECK:
                 item = run_typecheck_mode(case, input_path, args.typecheck_command, args.timeout)
+            elif mode == MODE_TYPECHECK_PLACEHOLDER:
+                item = run_typecheck_placeholder_mode(
+                    case,
+                    input_path,
+                    args.typecheck_placeholder_command,
+                    args.timeout,
+                )
             elif mode == MODE_Z3_TAC:
                 item = run_z3_tac_mode(case, input_path, args.z3_tac_command, args.timeout)
             else:

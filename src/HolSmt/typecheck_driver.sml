@@ -1,7 +1,8 @@
 (* Command-line typecheck driver for SMT-LIB conformance tests. *)
 
 fun typecheck_usage () =
-  "Usage: " ^ CommandLine.name () ^ " <input.smt2> <logic>\n"
+  "Usage: " ^ CommandLine.name () ^
+  " <input.smt2> <logic> [--placeholder-datatypes]\n"
 
 fun typecheck_die msg =
   (TextIO.output (TextIO.stdErr, msg ^ "\n");
@@ -15,15 +16,16 @@ fun typecheck_extra_args () =
 fun typecheck_args () =
   case CommandLine.arguments () of
     args as [_, _] => args
+  | args as [_, _, "--placeholder-datatypes"] => args
   | _ => typecheck_extra_args ()
 
 val _ = SmtLib_Datatypes.empty_name_map
 
-val typecheck_datatype_options =
-  {dict_logic = NONE, elaborate_datatypes = true}
+fun typecheck_datatype_options elaborate =
+  {dict_logic = NONE, elaborate_datatypes = elaborate}
 
-fun typecheck_datatype_options_with_logic logic =
-  {dict_logic = SOME logic, elaborate_datatypes = true}
+fun typecheck_datatype_options_with_logic elaborate logic =
+  {dict_logic = SOME logic, elaborate_datatypes = elaborate}
 
 fun typecheck_count_assertions
     (state: SmtLib_Parser.command_state_snapshot) =
@@ -40,15 +42,15 @@ fun typecheck_query_fragment_terms queries =
         assertions @ assumptions
     | _ => []) queries)
 
-fun typecheck_ok path expected_logic =
+fun typecheck_ok path expected_logic elaborate_datatypes =
 let
   val _ = Library.trace := 0
   val (state: SmtLib_Parser.command_state_snapshot, scoped_parse_error) =
     (SmtLib_Parser.parse_file_state_with_options
-       typecheck_datatype_options path, NONE)
+       (typecheck_datatype_options elaborate_datatypes) path, NONE)
     handle Feedback.HOL_ERR holerr =>
       (SmtLib_Parser.parse_file_state_with_options
-         (typecheck_datatype_options_with_logic "ALL") path,
+         (typecheck_datatype_options_with_logic elaborate_datatypes "ALL") path,
        SOME holerr)
   val observed_logic = #logic state
   val fragment_diagnostic =
@@ -96,5 +98,6 @@ handle Feedback.HOL_ERR holerr =>
 
 val () =
   case typecheck_args () of
-    [path, logic] => typecheck_ok path logic
+    [path, logic] => typecheck_ok path logic true
+  | [path, logic, "--placeholder-datatypes"] => typecheck_ok path logic false
   | _ => typecheck_die (typecheck_usage ())

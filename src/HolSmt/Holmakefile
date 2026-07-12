@@ -10,8 +10,12 @@ holsmt-typecheck: typecheck_driver.uo
 	printf '%s\n' \
 	  '#!/bin/sh' \
 	  'set -e' \
-	  'if [ "$$#" -ne 2 ]; then' \
-	  '  echo "Usage: $$0 <input.smt2> <logic>" >&2' \
+	  'if [ "$$#" -ne 2 ] && [ "$$#" -ne 3 ]; then' \
+	  '  echo "Usage: $$0 <input.smt2> <logic> [--placeholder-datatypes]" >&2' \
+	  '  exit 1' \
+	  'fi' \
+	  'if [ "$$#" -eq 3 ] && [ "$$3" != "--placeholder-datatypes" ]; then' \
+	  '  echo "Usage: $$0 <input.smt2> <logic> [--placeholder-datatypes]" >&2' \
 	  '  exit 1' \
 	  'fi' \
 	  'case "$$1" in' \
@@ -19,7 +23,11 @@ holsmt-typecheck: typecheck_driver.uo
 	  '  *) input=$$(pwd)/$$1 ;;' \
 	  'esac' \
 	  'cd "$$(dirname "$$0")"' \
-	  'extra=$$(printf "%s\n%s" "$$input" "$$2")' \
+	  'if [ "$$#" -eq 3 ]; then' \
+	  '  extra=$$(printf "%s\n%s\n%s" "$$input" "$$2" "$$3")' \
+	  'else' \
+	  '  extra=$$(printf "%s\n%s" "$$input" "$$2")' \
+	  'fi' \
 	  '$(HOLDIR)/bin/hol --gcthreads=1 run --holstate=$(HOLDIR)/src/HolSmt/smtheap --extra "$$extra" typecheck_driver' \
 	  > $@
 	chmod +x $@

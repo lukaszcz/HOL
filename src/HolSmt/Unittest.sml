@@ -1102,6 +1102,97 @@ in
     "flag-off datatype typecheck defined a TypeBase datatype")
 end
 
+fun expect_smtlib_typecheck_failure label options script diagnostic =
+  (ignore (SmtLib_Parser.typecheck_script_string_with_options options script);
+   die ("FAIL: " ^ label ^ " typechecked successfully"))
+  handle HOL_ERR holerr =>
+    let val msg = message_of holerr
+    in
+      assert (contains diagnostic msg,
+        label ^ " diagnostic mismatch\nexpected substring: " ^
+        diagnostic ^ "\nactual: " ^ msg)
+    end
+
+fun parse_file_datatype_match_elaboration_success () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val state =
+    SmtLib_Parser.typecheck_script_string_with_options options
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype MatchTreeA2_16 " ^
+       "((leafA2_16 (valueA2_16 Int)) " ^
+       "(nodeA2_16 (leftA2_16 MatchTreeA2_16) " ^
+       "(rightA2_16 MatchTreeA2_16)) (emptyA2_16)))\n" ^
+       "(declare-const tA2_16 MatchTreeA2_16)\n" ^
+       "(declare-const xA2_16 Bool)\n" ^
+       "(assert (= (match tA2_16\n" ^
+       "  (((leafA2_16 xA2_16) xA2_16)\n" ^
+       "   ((nodeA2_16 lA2_16 rA2_16)\n" ^
+       "    (match lA2_16 (((leafA2_16 yA2_16) yA2_16) " ^
+       "(fallbackA2_16 0))))\n" ^
+       "   (emptyA2_16 2))) 0))\n" ^
+       "(assert (= (match tA2_16 " ^
+       "((emptyA2_16 0) (defaultA2_16 1))) 1))\n" ^
+       "(exit)\n")
+  val assertions = #assertions state
+in
+  assert (List.length assertions = 2,
+    "match elaboration script produced the wrong assertion count");
+  assert (List.all (fn tm => Term.type_of tm = Type.bool) assertions,
+    "match elaboration produced a non-Bool assertion");
+  assert (List.all (term_has_subterm (Lib.can TypeBase.dest_case))
+      assertions,
+    "match elaboration did not build TypeBase case terms")
+end
+
+fun parse_file_datatype_match_negatives () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val base =
+    "(set-logic ALL)\n" ^
+    "(declare-datatype MatchColorA2_16 ((redA2_16) (greenA2_16)))\n" ^
+    "(declare-const cA2_16 MatchColorA2_16)\n"
+  val _ = expect_smtlib_typecheck_failure
+    "non-exhaustive match" options
+    (base ^
+     "(assert (= (match cA2_16 ((redA2_16 0))) 0))\n" ^
+     "(exit)\n")
+    "non-exhaustive match"
+  val _ = expect_smtlib_typecheck_failure
+    "unknown constructor match" options
+    (base ^
+     "(assert (= (match cA2_16 (((blueA2_16 xA2_16) 0) " ^
+     "(fallbackA2_16 1))) 1))\n" ^
+     "(exit)\n")
+    "unknown match constructor 'blueA2_16'"
+  val _ = expect_smtlib_typecheck_failure
+    "duplicate constructor match" options
+    (base ^
+     "(assert (= (match cA2_16 ((redA2_16 0) " ^
+     "(redA2_16 1) (greenA2_16 2))) 0))\n" ^
+     "(exit)\n")
+    "duplicate match constructor pattern 'redA2_16'"
+in
+  ()
+end
+
+fun parse_file_datatype_match_placeholder_rejection () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = false}
+in
+  expect_smtlib_typecheck_failure
+    "placeholder match rejection" options
+    ("(set-logic ALL)\n" ^
+     "(declare-datatype MatchPlaceholderA2_16 " ^
+     "((mkMatchPlaceholderA2_16 (vMatchPlaceholderA2_16 Int))))\n" ^
+     "(declare-const pMatchPlaceholderA2_16 MatchPlaceholderA2_16)\n" ^
+     "(assert (= (match pMatchPlaceholderA2_16 " ^
+     "(((mkMatchPlaceholderA2_16 xMatchPlaceholderA2_16) " ^
+     "xMatchPlaceholderA2_16))) 0))\n" ^
+     "(exit)\n")
+    "placeholder datatype mode cannot support binding patterns soundly"
+end
+
 fun holsmtlib_z3_tac_datatype_flag_leakage_guard () =
 let
   fun existing path = OS.FileSys.access (path, [OS.FileSys.A_READ])
@@ -4396,6 +4487,12 @@ let
       parse_file_datatype_elaboration_options_success),
     ("parse_file_datatype_elaboration_flag_off_success",
       parse_file_datatype_elaboration_flag_off_success),
+    ("parse_file_datatype_match_elaboration_success",
+      parse_file_datatype_match_elaboration_success),
+    ("parse_file_datatype_match_negatives",
+      parse_file_datatype_match_negatives),
+    ("parse_file_datatype_match_placeholder_rejection",
+      parse_file_datatype_match_placeholder_rejection),
     ("holsmtlib_z3_tac_datatype_flag_leakage_guard",
       holsmtlib_z3_tac_datatype_flag_leakage_guard),
     ("parse_legacy_datatype_mutual_dictionary_success",

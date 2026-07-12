@@ -36,9 +36,15 @@ struct
     | TermIndexed of string located * term_ast located list
     | TermApply of term_ast located * term_ast located list
     | TermLet of (string located * term_ast located) list * term_ast located
+    | TermMatch of term_ast located * match_case_ast located list
     | TermForall of sorted_var_ast located list * term_ast located
     | TermExists of sorted_var_ast located list * term_ast located
     | TermAnnotated of term_ast located * sexp_ast located list
+  and match_pattern_ast =
+      MatchPatternAtom of string located
+    | MatchPatternConstructor of string located * string located list
+  and match_case_ast =
+      MatchCase of match_pattern_ast located * term_ast located
   and sorted_var_ast =
       SortedVar of string located * sort_ast located
 
@@ -491,6 +497,60 @@ local
             val loc = combine_span (token_loc open_tok) (token_loc close_tok)
           in
             located loc (TermLet (bindings, body))
+          end
+        else if head_text = "match" then
+          let
+            fun parse_pattern_from_first tok =
+              if token_text tok = "(" then
+                let
+                  val ctor = parse_atom_name "parse_match_pattern"
+                    (need_token "parse_match_pattern" "constructor name")
+                  fun parse_binder tok =
+                    if token_text tok = "(" orelse token_text tok = ")" then
+                      syntax_error "parse_match_pattern" (token_loc tok)
+                        ("expected flat pattern binder, found '" ^
+                         token_text tok ^ "'")
+                    else
+                      parse_atom_name "parse_match_pattern" tok
+                  val (binders, close_tok) =
+                    parse_until_rparen "parse_match_pattern" parse_binder []
+                  val loc = combine_span (token_loc tok) (token_loc close_tok)
+                in
+                  located loc (MatchPatternConstructor (ctor, binders))
+                end
+              else if token_text tok = ")" then
+                syntax_error "parse_match_pattern" (token_loc tok)
+                  "unexpected ')'"
+              else
+                located (token_loc tok)
+                  (MatchPatternAtom
+                    (located (token_loc tok) (token_text tok)))
+
+            fun parse_branch tok =
+              let
+                val _ = expect_token "parse_match_branch" "(" tok
+                val pattern = parse_pattern_from_first
+                  (need_token "parse_match_branch" "match pattern")
+                val body = parse_term_from_first
+                  (need_token "parse_match_branch" "match branch body")
+                val close_tok = need_token "parse_match_branch" "')'"
+                val _ = expect_token "parse_match_branch" ")" close_tok
+                val loc = combine_span (token_loc tok) (token_loc close_tok)
+              in
+                located loc (MatchCase (pattern, body))
+              end
+
+            val scrutinee = parse_term_from_first
+              (need_token "parse_term" "match scrutinee")
+            val branches_open = need_token "parse_term" "match branch list"
+            val _ = expect_token "parse_term" "(" branches_open
+            val (branches, _) =
+              parse_until_rparen "parse_term" parse_branch []
+            val close_tok = need_token "parse_term" "')'"
+            val _ = expect_token "parse_term" ")" close_tok
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermMatch (scrutinee, branches))
           end
         else if head_text = "forall" orelse head_text = "exists" then
           let
@@ -2470,6 +2530,21 @@ local
   datatype checked_term =
     CheckedTerm of {term: Term.term, sort: Type.hol_type}
 
+  datatype checked_match_branch =
+      CheckedMatchConstructor of {
+        smt_name: string,
+        hol_name: string,
+        constructor: Term.term,
+        pattern: Term.term,
+        body: checked_term,
+        loc: source_span
+      }
+    | CheckedMatchDefault of {
+        var: Term.term,
+        body: checked_term,
+        loc: source_span
+      }
+
   fun checked_term_of t = CheckedTerm {term = t, sort = Term.type_of t}
   fun checked_term (CheckedTerm {term, ...}) = term
   fun checked_sort (CheckedTerm {sort, ...}) = sort
@@ -2743,7 +2818,8 @@ local
       (tmdict, sigdict)
     end
 
-  fun index_term_from_ast context (tydict, tmdict, sigdict) term_ast =
+  fun index_term_from_ast_with_options elaborate_datatypes context
+      (tydict, tmdict, sigdict) term_ast =
     let
       fun parse_numeral token =
         intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
@@ -2752,15 +2828,23 @@ local
         TermIdentifier token =>
           (parse_numeral token
            handle Feedback.HOL_ERR _ =>
-             ((checked_term o typecheck_term context (tydict, tmdict, sigdict))
-                term_ast
+             ((checked_term o
+                 typecheck_term_with_options elaborate_datatypes context
+                   (tydict, tmdict, sigdict)) term_ast
               handle Feedback.HOL_ERR _ =>
                 Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
       | TermString _ =>
-          checked_term (typecheck_term context (tydict, tmdict, sigdict)
-            term_ast)
-      | _ => checked_term (typecheck_term context (tydict, tmdict, sigdict) term_ast)
+          checked_term
+            (typecheck_term_with_options elaborate_datatypes context
+              (tydict, tmdict, sigdict) term_ast)
+      | _ =>
+          checked_term
+            (typecheck_term_with_options elaborate_datatypes context
+              (tydict, tmdict, sigdict) term_ast)
     end
+
+  and index_term_from_ast context env term_ast =
+    index_term_from_ast_with_options false context env term_ast
 
   and typecheck_sort context tydict sort_ast =
     let
@@ -3009,11 +3093,306 @@ local
         end
     end
 
+  and constructor_arg_types ty =
+    case Lib.total Type.dom_rng ty of
+      NONE => []
+    | SOME (domain, range) => domain :: constructor_arg_types range
+
+  and const_name tm =
+    #Name (Term.dest_thy_const tm)
+    handle Feedback.HOL_ERR _ => Lib.fst (Term.dest_const tm)
+
+  and constructors_for_match context loc scrutinee_sort =
+    let
+      val constructors =
+        List.map (TypeBasePure.cinst scrutinee_sort)
+          (TypeBase.constructors_of scrutinee_sort)
+        handle Feedback.HOL_ERR _ =>
+          type_error "typecheck_match" context loc NONE
+            (SOME scrutinee_sort)
+            "match scrutinee sort is not an elaborated datatype"
+    in
+      if List.null constructors then
+        type_error "typecheck_match" context loc NONE (SOME scrutinee_sort)
+          "match scrutinee sort has no datatype constructors"
+      else constructors
+    end
+
+  and constructor_pattern_with_names ctor names =
+    let
+      val arg_tys = constructor_arg_types (Term.type_of ctor)
+      val _ =
+        if List.length names = List.length arg_tys then ()
+        else raise ERR "constructor_pattern_with_names"
+          "binder count does not match constructor arity"
+      val vars = ListPair.map Term.mk_var (names, arg_tys)
+    in
+      (Term.list_mk_comb (ctor, vars), vars)
+    end
+
+  and generated_constructor_pattern ctor =
+    let
+      val arg_tys = constructor_arg_types (Term.type_of ctor)
+      val names = List.tabulate (List.length arg_tys,
+        fn i => "match" ^ Int.toString i)
+    in
+      constructor_pattern_with_names ctor names
+    end
+
+  and constructor_for_pattern context loc sigdict scrutinee_sort constructors
+      smt_name =
+    let
+      fun same_constructor tm ctor =
+        const_name tm = const_name ctor
+        handle Feedback.HOL_ERR _ => false
+
+      fun instantiate ({tm, domain, range}: function_signature) =
+        let
+          val subst = Type.match_type range scrutinee_sort
+          val tm = Term.inst subst tm
+          val domain = List.map (Type.type_subst subst) domain
+        in
+          case List.find (same_constructor tm) constructors of
+            SOME ctor =>
+              SOME {smt_name = smt_name, hol_name = const_name ctor,
+                constructor = ctor, domain = domain}
+          | NONE => NONE
+        end
+        handle Feedback.HOL_ERR _ => NONE
+    in
+      case peek_signatures (sigdict, smt_name) of
+        SOME signatures =>
+          (case Lib.get_first instantiate signatures of
+             SOME result => result
+           | NONE =>
+               type_error "typecheck_match" context loc NONE
+                 (SOME scrutinee_sort)
+                 ("unknown match constructor '" ^ smt_name ^
+                  "' for scrutinee sort " ^ type_to_string scrutinee_sort))
+      | NONE =>
+          type_error "typecheck_match" context loc NONE (SOME scrutinee_sort)
+            ("unknown match constructor '" ^ smt_name ^
+             "' for scrutinee sort " ^ type_to_string scrutinee_sort)
+    end
+
+  and add_pattern_bindings bindings (tmdict, sigdict) =
+    List.foldl
+      (fn (var, (tmdict, sigdict)) =>
+        let val name = Lib.fst (Term.dest_var var)
+        in
+          add_value_term_signature name var [] (Term.type_of var)
+            (tmdict, sigdict)
+        end)
+      (tmdict, sigdict) bindings
+
+  and reject_duplicate_pattern_binders context loc names =
+    let
+      fun seen _ [] = false
+        | seen name (x :: xs) = name = x orelse seen name xs
+      fun loop [] = ()
+        | loop (name :: rest) =
+            if seen name rest then
+              type_error "typecheck_match" context loc NONE NONE
+                ("duplicate match pattern binder '" ^ name ^ "'")
+            else loop rest
+    in
+      loop names
+    end
+
+  and typecheck_match elaborate_datatypes context
+      (env as (tydict, tmdict, sigdict)) loc scrutinee branches =
+    let
+      val _ =
+        if elaborate_datatypes then ()
+        else
+          type_error "typecheck_match" context loc NONE NONE
+            ("SMT-LIB match requires datatype elaboration; placeholder " ^
+             "datatype mode cannot support binding patterns soundly")
+      val _ =
+        if List.null branches then
+          type_error "typecheck_match" context loc NONE NONE
+            "match expression must have at least one branch"
+        else ()
+      val scrutinee_checked =
+        typecheck_term_with_options elaborate_datatypes context env scrutinee
+      val scrutinee_term = checked_term scrutinee_checked
+      val scrutinee_sort = checked_sort scrutinee_checked
+      val constructors =
+        constructors_for_match context (loc_of scrutinee) scrutinee_sort
+
+      fun check_body local_tmdict local_sigdict body =
+        typecheck_term_with_options elaborate_datatypes context
+          (tydict, local_tmdict, local_sigdict) body
+
+      fun check_constructor_branch branch_loc pattern_loc ctor_name binder_names
+          body =
+        let
+          val ctor_s = located_string_node ctor_name
+          val binders = List.map located_string_node binder_names
+          val _ = reject_duplicate_pattern_binders context pattern_loc binders
+          val {hol_name, constructor, domain, ...} =
+            constructor_for_pattern context (loc_of ctor_name) sigdict
+              scrutinee_sort constructors ctor_s
+          val _ =
+            if List.length binders = List.length domain then ()
+            else
+              type_error "typecheck_match" context pattern_loc NONE NONE
+                ("constructor pattern '" ^ ctor_s ^ "' arity mismatch: " ^
+                 "expected " ^ Int.toString (List.length domain) ^
+                 " binders, actual " ^ Int.toString (List.length binders))
+          val vars = ListPair.map Term.mk_var (binders, domain)
+          val (local_tmdict, local_sigdict) =
+            add_pattern_bindings vars (tmdict, sigdict)
+          val body_checked = check_body local_tmdict local_sigdict body
+          val pattern = Term.list_mk_comb (constructor, vars)
+        in
+          CheckedMatchConstructor {
+            smt_name = ctor_s,
+            hol_name = hol_name,
+            constructor = constructor,
+            pattern = pattern,
+            body = body_checked,
+            loc = branch_loc
+          }
+        end
+
+      fun check_default_branch branch_loc name body =
+        let
+          val var = Term.mk_var (located_string_node name, scrutinee_sort)
+          val (local_tmdict, local_sigdict) =
+            add_pattern_bindings [var] (tmdict, sigdict)
+          val body_checked = check_body local_tmdict local_sigdict body
+        in
+          CheckedMatchDefault {var = var, body = body_checked, loc = branch_loc}
+        end
+
+      fun check_branch branch =
+        case node_of branch of
+          MatchCase (pattern, body) =>
+            (case node_of pattern of
+               MatchPatternConstructor (ctor_name, binders) =>
+                 check_constructor_branch (loc_of branch) (loc_of pattern)
+                   ctor_name binders body
+             | MatchPatternAtom name =>
+                 (case Lib.total
+                    (constructor_for_pattern context (loc_of name) sigdict
+                      scrutinee_sort constructors) (located_string_node name) of
+                    SOME {constructor, domain = [], hol_name, ...} =>
+                      let
+                        val body_checked = check_body tmdict sigdict body
+                      in
+                        CheckedMatchConstructor {
+                          smt_name = located_string_node name,
+                          hol_name = hol_name,
+                          constructor = constructor,
+                          pattern = constructor,
+                          body = body_checked,
+                          loc = loc_of branch
+                        }
+                      end
+                  | SOME {domain, ...} =>
+                      type_error "typecheck_match" context (loc_of pattern)
+                        NONE NONE
+                        ("constructor pattern '" ^ located_string_node name ^
+                         "' arity mismatch: expected " ^
+                         Int.toString (List.length domain) ^
+                         " binders, actual 0")
+                  | NONE => check_default_branch (loc_of branch) name body))
+
+      val checked_branches = List.map check_branch branches
+
+      fun body_sort branch =
+        case branch of
+          CheckedMatchConstructor {body, ...} => checked_sort body
+        | CheckedMatchDefault {body, ...} => checked_sort body
+      fun body_loc branch =
+        case branch of
+          CheckedMatchConstructor {loc, ...} => loc
+        | CheckedMatchDefault {loc, ...} => loc
+      val result_sort = body_sort (hd checked_branches)
+      val _ =
+        List.app
+          (fn branch =>
+            if body_sort branch = result_sort then ()
+            else type_error "typecheck_match" context (body_loc branch)
+              (SOME result_sort) (SOME (body_sort branch))
+              "match branch result sort mismatch")
+          checked_branches
+
+      fun duplicate name [] = false
+        | duplicate name (x :: xs) = name = x orelse duplicate name xs
+      fun scan [] seen default = (List.rev seen, default)
+        | scan (branch :: rest) seen default =
+            (case branch of
+               CheckedMatchConstructor {smt_name, hol_name, loc, ...} =>
+                 if duplicate hol_name seen then
+                   type_error "typecheck_match" context loc NONE NONE
+                     ("duplicate match constructor pattern '" ^ smt_name ^ "'")
+                 else scan rest (hol_name :: seen) default
+             | CheckedMatchDefault {loc, ...} =>
+                 (case default of
+                    NONE => scan rest seen (SOME branch)
+                  | SOME _ =>
+                      type_error "typecheck_match" context loc NONE NONE
+                        "duplicate match default pattern"))
+      val (covered, default) = scan checked_branches [] NONE
+      val missing =
+        List.filter (fn ctor => not (duplicate (const_name ctor) covered))
+          constructors
+      val _ =
+        if List.null missing orelse Option.isSome default then ()
+        else
+          type_error "typecheck_match" context loc NONE NONE
+            ("non-exhaustive match: missing constructor pattern '" ^
+             const_name (hd missing) ^ "'")
+
+      fun branch_for_constructor ctor =
+        let val cname = const_name ctor
+        in
+          case List.find
+              (fn branch =>
+                case branch of
+                  CheckedMatchConstructor {hol_name, ...} => hol_name = cname
+                | CheckedMatchDefault _ => false)
+              checked_branches of
+            SOME (CheckedMatchConstructor {pattern, body, ...}) =>
+              (pattern, checked_term body)
+          | SOME (CheckedMatchDefault _) =>
+              raise ERR "typecheck_match" "internal default branch lookup"
+          | NONE =>
+              (case default of
+                 SOME (CheckedMatchDefault {var, body, ...}) =>
+                   let
+                     val (pattern, _) = generated_constructor_pattern ctor
+                     val rhs = Term.subst
+                       [{redex = var, residue = pattern}]
+                       (checked_term body)
+                   in
+                     (pattern, rhs)
+                   end
+               | _ => raise ERR "typecheck_match"
+                   "missing constructor without default branch")
+        end
+      val case_term =
+        TypeBase.mk_case (scrutinee_term,
+          List.map branch_for_constructor constructors)
+        handle Feedback.HOL_ERR holerr =>
+          type_error "typecheck_match" context loc NONE NONE
+            ("could not construct datatype match case: " ^
+             Feedback.message_of holerr)
+    in
+      CheckedTerm {term = case_term, sort = result_sort}
+    end
+
   and typecheck_term context env term_ast =
+    typecheck_term_with_options false context env term_ast
+
+  and typecheck_term_with_options elaborate_datatypes context env term_ast =
     let
       val (tydict, tmdict, sigdict) = env
-      fun check t = typecheck_term context env t
-      fun check_index t = index_term_from_ast context env t
+      fun check t = typecheck_term_with_options elaborate_datatypes context env t
+      fun check_index t =
+        index_term_from_ast_with_options elaborate_datatypes context env t
       fun apply_head loc head args =
         case node_of head of
           TermIdentifier name =>
@@ -3065,22 +3444,33 @@ local
                     (tmdict, sigdict))
                 (tmdict, sigdict) checked_bindings
             val body_checked =
-              typecheck_term context (tydict, tmdict, sigdict) body
+              typecheck_term_with_options elaborate_datatypes context
+                (tydict, tmdict, sigdict) body
             val t = (#mk_let smtlib_cfg) (checked_bindings,
               checked_term body_checked)
           in
             checked_term_of t
           end
+      | TermMatch (scrutinee, branches) =>
+          typecheck_match elaborate_datatypes context env (loc_of term_ast)
+            scrutinee branches
       | TermForall (vars, body) =>
-          typecheck_binder context env term_ast vars body boolSyntax.list_mk_forall
+          typecheck_binder_with_options elaborate_datatypes context env
+            term_ast vars body boolSyntax.list_mk_forall
       | TermExists (vars, body) =>
-          typecheck_binder context env term_ast vars body boolSyntax.list_mk_exists
+          typecheck_binder_with_options elaborate_datatypes context env
+            term_ast vars body boolSyntax.list_mk_exists
       | TermAnnotated (term, _) =>
           check term
     end
 
   and typecheck_binder context (tydict, tmdict, sigdict) term_ast vars body
       mk_binder =
+    typecheck_binder_with_options false context (tydict, tmdict, sigdict)
+      term_ast vars body mk_binder
+
+  and typecheck_binder_with_options elaborate_datatypes context
+      (tydict, tmdict, sigdict) term_ast vars body mk_binder =
     let
       val vars = List.map (typecheck_sorted_var context tydict) vars
       val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
@@ -3091,7 +3481,8 @@ local
               (tmdict, sigdict))
           (tmdict, sigdict) vars
       val body_checked =
-        typecheck_term context (tydict, tmdict, sigdict) body
+        typecheck_term_with_options elaborate_datatypes context
+          (tydict, tmdict, sigdict) body
       val body = expect_checked_sort "typecheck_binder" context (loc_of body)
         Type.bool body_checked
     in
@@ -3490,13 +3881,14 @@ local
           (tmdict, sigdict))
       (tmdict, sigdict) vars
 
-  fun typecheck_definition_body context loc body
+  fun typecheck_definition_body elaborate_datatypes context loc body
       (tydict, tmdict, sigdict) vars range_type =
     let
       val (body_tmdict, body_sigdict) =
         add_sorted_vars_to_env vars (tmdict, sigdict)
       val body_checked =
-        typecheck_term context (tydict, body_tmdict, body_sigdict) body
+        typecheck_term_with_options elaborate_datatypes context
+          (tydict, body_tmdict, body_sigdict) body
     in
       expect_checked_sort "typecheck_definition_body" context loc range_type
         body_checked
@@ -3509,13 +3901,16 @@ local
         boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
     end
 
-  fun typecheck_define_const context name sort body (tydict, tmdict, sigdict) =
+  fun typecheck_define_const elaborate_datatypes context name sort body
+      (tydict, tmdict, sigdict) =
     let
       val name_loc = loc_of name
       val name = located_string_node name
       val _ = reject_duplicate_definition context name_loc name sigdict
       val range_type = typecheck_sort context tydict sort
-      val body_checked = typecheck_term context (tydict, tmdict, sigdict) body
+      val body_checked =
+        typecheck_term_with_options elaborate_datatypes context
+          (tydict, tmdict, sigdict) body
       val body_term = expect_checked_sort "typecheck_define_const" context
         (loc_of body) range_type body_checked
       val (tmdict, sigdict, definition) =
@@ -3525,7 +3920,7 @@ local
       (tmdict, sigdict, definition)
     end
 
-  fun typecheck_define_fun context name sorted_vars range body
+  fun typecheck_define_fun elaborate_datatypes context name sorted_vars range body
       (tydict, tmdict, sigdict) =
     let
       val name_loc = loc_of name
@@ -3543,6 +3938,15 @@ local
         | TermLet (bindings, body) =>
             List.exists (term_mentions_name o Lib.snd) bindings orelse
             term_mentions_name body
+        | TermMatch (scrutinee, branches) =>
+            let
+              fun branch_mentions branch =
+                case node_of branch of
+                  MatchCase (_, body) => term_mentions_name body
+            in
+              term_mentions_name scrutinee orelse
+              List.exists branch_mentions branches
+            end
         | TermForall (_, body) => term_mentions_name body
         | TermExists (_, body) => term_mentions_name body
         | TermAnnotated (term, _) => term_mentions_name term
@@ -3554,8 +3958,9 @@ local
       val range_type = typecheck_sort context tydict range
       val vars = List.map (typecheck_sorted_var context tydict) sorted_vars
       val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
-      val body_term = typecheck_definition_body context (loc_of body) body
-        (tydict, tmdict, sigdict) vars range_type
+      val body_term =
+        typecheck_definition_body elaborate_datatypes context (loc_of body)
+          body (tydict, tmdict, sigdict) vars range_type
       val (tmdict, sigdict, definition) =
         define_typechecked_fun context name_loc name vars range_type
           body_term (tmdict, sigdict)
@@ -3563,7 +3968,8 @@ local
       (tmdict, sigdict, definition)
     end
 
-  fun typecheck_define_fun_rec context name sorted_vars range body
+  fun typecheck_define_fun_rec elaborate_datatypes context name sorted_vars
+      range body
       (tydict, tmdict, sigdict) =
     let
       val name_loc = loc_of name
@@ -3575,14 +3981,16 @@ local
       val domain_types = List.map (Term.type_of o Lib.snd) vars
       val (tm, tmdict, sigdict) =
         add_value_signature name domain_types range_type (tmdict, sigdict)
-      val body_term = typecheck_definition_body context (loc_of body) body
-        (tydict, tmdict, sigdict) vars range_type
+      val body_term =
+        typecheck_definition_body elaborate_datatypes context (loc_of body)
+          body (tydict, tmdict, sigdict) vars range_type
       val definition = mk_definition tm vars body_term
     in
       (tmdict, sigdict, definition)
     end
 
-  fun typecheck_define_funs_rec context sigs bodies (tydict, tmdict, sigdict) =
+  fun typecheck_define_funs_rec elaborate_datatypes context sigs bodies
+      (tydict, tmdict, sigdict) =
     let
       val _ =
         if List.length sigs = List.length bodies then ()
@@ -3615,8 +4023,9 @@ local
 
       fun make_def ({tm, vars, range, ...}, body) =
         let
-          val body_term = typecheck_definition_body context (loc_of body) body
-            (tydict, tmdict, sigdict) vars range
+          val body_term =
+            typecheck_definition_body elaborate_datatypes context (loc_of body)
+              body (tydict, tmdict, sigdict) vars range
         in
           mk_definition tm vars body_term
         end
@@ -3646,10 +4055,11 @@ local
       TermAnnotated (body, attrs) => (body, named_attribute attrs)
     | _ => (term, NONE)
 
-  fun typecheck_bool_terms context env fn_name terms =
+  fun typecheck_bool_terms elaborate_datatypes context env fn_name terms =
     List.map (fn term =>
       let
-        val checked = typecheck_term context env term
+        val checked =
+          typecheck_term_with_options elaborate_datatypes context env term
       in
         if checked_sort checked = Type.bool then checked_term checked
         else
@@ -3672,8 +4082,8 @@ local
           val (tydict, tmdict, sigdict) =
             current_typecheck_dicts command_state
           val (tmdict, sigdict, def) =
-            typecheck_define_fun (context command_name) name vars range body
-              (tydict, tmdict, sigdict)
+            typecheck_define_fun elaborate_datatypes (context command_name)
+              name vars range body (tydict, tmdict, sigdict)
           val command_state = update_current_typecheck_dicts
             (tydict, tmdict, sigdict) command_state
         in
@@ -3780,7 +4190,8 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val (tmdict, sigdict, def) =
-              typecheck_define_const (context "define-const") name sort body
+              typecheck_define_const elaborate_datatypes
+                (context "define-const") name sort body
                 (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
@@ -3795,7 +4206,8 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val (tmdict, sigdict, def) =
-              typecheck_define_fun_rec (context "define-fun-rec")
+              typecheck_define_fun_rec elaborate_datatypes
+                (context "define-fun-rec")
                 name vars range body (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
@@ -3808,7 +4220,8 @@ local
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
             val (tmdict, sigdict, definitions) =
-              typecheck_define_funs_rec (context "define-funs-rec")
+              typecheck_define_funs_rec elaborate_datatypes
+                (context "define-funs-rec")
                 sigs bodies (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
@@ -3848,7 +4261,9 @@ local
             val command_state = dest_typecheck_state "assert" state
             val env = current_typecheck_dicts command_state
             val (term, name) = split_assertion_term term
-            val checked = typecheck_term (context "assert") env term
+            val checked =
+              typecheck_term_with_options elaborate_datatypes
+                (context "assert") env term
             val assertion =
               if checked_sort checked = Type.bool then checked_term checked
               else
@@ -3899,7 +4314,7 @@ local
           let
             val command_state =
               dest_typecheck_state "check-sat-assuming" state
-            val assumptions = typecheck_bool_terms
+            val assumptions = typecheck_bool_terms elaborate_datatypes
               (context "check-sat-assuming")
               (current_typecheck_dicts command_state)
               "typecheck_check_sat_assuming" assumptions
@@ -3935,7 +4350,8 @@ local
           let
             val command_state = dest_typecheck_state "get-value" state
             val terms = List.map (checked_term o
-              typecheck_term (context "get-value")
+              typecheck_term_with_options elaborate_datatypes
+                (context "get-value")
                 (current_typecheck_dicts command_state)) terms
             val _ = query_warning "get-value"
               "term values are not produced by Z3_TAC"

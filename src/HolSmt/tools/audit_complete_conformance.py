@@ -27,6 +27,7 @@ STATUS_COLUMNS = ("parsed", "translated", "solved", "reconstructed", "tested")
 V2_MODES = {
     "parser-only",
     "typecheck-only",
+    "typecheck-placeholder",
     "z3-oracle",
     "proof-parse",
     "proof-replay",

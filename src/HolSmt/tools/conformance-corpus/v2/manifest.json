@@ -592,10 +592,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "fail",
-          "diagnostic": "match default variable pattern is not implemented",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_16/TASK_17"
+          "status": "pass"
         },
         "z3-oracle": {
           "status": "pass"
@@ -605,6 +602,45 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes match default variable pattern"
+      }
+    },
+    {
+      "id": "command:datatypes:match-duplicate-pattern",
+      "file": "cases/commands/datatypes/command_datatypes_match_duplicate_pattern.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-duplicate-pattern",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "duplicate match constructor pattern 'red'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes duplicate match constructor diagnostic"
       }
     },
     {
@@ -640,10 +676,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "fail",
-          "diagnostic": "nested match typechecking is not implemented",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         },
         "z3-oracle": {
           "status": "pass"
@@ -653,6 +686,84 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes nested match term"
+      }
+    },
+    {
+      "id": "command:datatypes:match-non-exhaustive",
+      "file": "cases/commands/datatypes/command_datatypes_match_non_exhaustive.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-non-exhaustive",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "non-exhaustive match",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes non-exhaustive match diagnostic"
+      }
+    },
+    {
+      "id": "command:datatypes:match-placeholder-rejection",
+      "file": "cases/commands/datatypes/command_datatypes_match_placeholder_rejection.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-placeholder-rejection",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-placeholder"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-placeholder": {
+          "status": "fail",
+          "diagnostic": "placeholder datatype mode cannot support binding patterns soundly",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "HolSmt-internal",
+        "reference": "HolSmt placeholder datatype mode match rejection"
       }
     },
     {
@@ -687,10 +798,7 @@
           "status": "pass"
         },
         "typecheck-only": {
-          "status": "fail",
-          "diagnostic": "match term typechecking is not implemented",
-          "failure_phase": "typecheck",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         },
         "z3-oracle": {
           "status": "pass"
@@ -700,6 +808,45 @@
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes match term"
+      }
+    },
+    {
+      "id": "command:datatypes:match-unknown-constructor",
+      "file": "cases/commands/datatypes/command_datatypes_match_unknown_constructor.smt2",
+      "logic": "ALL",
+      "standard": "SMT-LIB-2.7",
+      "class": "command",
+      "features": [
+        "command-case:datatype-corpus",
+        "command-case:negative",
+        "command:declare-datatype",
+        "datatype-command:match",
+        "datatype-command:match-unknown-constructor",
+        "theory-behavior:match",
+        "theory:Datatypes"
+      ],
+      "modes": [
+        "typecheck-only"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "typecheck-only": {
+          "status": "fail",
+          "diagnostic": "unknown match constructor 'blue'",
+          "failure_phase": "typecheck"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "SMT-LIB-standard",
+        "reference": "SMT-LIB 2.7 Datatypes unknown match constructor diagnostic"
       }
     },
     {
@@ -4853,6 +5000,54 @@
         "reference": "HolSmt curated reduced QF_UFDT UNSAT proof external benchmark",
         "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_ufdt_unsat_proof.smt2",
         "notes": "pinned source_path=curated-reduced/qf_ufdt_unsat_proof.smt2; pin=TASK-015; sha256=112b4a349c5b6b4af2dc7123f96c025931e649dede820f0d63db47e80158c089"
+      }
+    },
+    {
+      "id": "external-benchmark:external-missing-pinned-benchmark-evidence",
+      "file": "cases/external/external_benchmark_external_missing_pinned_benchmark_evidence.smt2",
+      "logic": "QF_UF",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external:missing-pinned-benchmark-evidence"
+      ],
+      "modes": [
+        "parser-only",
+        "z3-oracle"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "red",
+          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
+        },
+        "z3-oracle": {
+          "status": "red",
+          "diagnostic": "pinned external benchmark evidence is still an implementation obligation"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json",
+          "src/HolSmt/tools/import_external_benchmarks.py"
+        ],
+        "feature": "external:missing-pinned-benchmark-evidence",
+        "test_ids": [
+          "external-benchmark:external-missing-pinned-benchmark-evidence"
+        ],
+        "failure_phase": "solver",
+        "notes": "Generated red seed row; keep red until executable evidence is added."
+      },
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "pinned external benchmark importer missing evidence seed"
       }
     },
     {
