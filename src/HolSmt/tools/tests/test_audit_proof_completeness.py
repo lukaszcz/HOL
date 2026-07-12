@@ -253,6 +253,35 @@ class ProofCompletenessAuditTests(unittest.TestCase):
         self.assertEqual(missing, {"th-lemma-fp"})
         self.assertFalse(report["summary"]["passed"])
 
+    def test_real_occurrence_retires_diagnostic_th_lemma_red_obligation(self):
+        tmp, proof_source, unittest_source, manifest_path, summary_path = self.build_fixture(
+            manifest={"schema_version": "2", "cases": []},
+            summary={
+                "schema": "holsmt-z3-proof-corpus-v1",
+                "discovered_rules": ["asserted", "th-lemma-fp"],
+                "aggregate_rule_histogram": {
+                    "asserted": 1,
+                    "th-lemma-fp": 1,
+                },
+            },
+        )
+        self.addCleanup(tmp.cleanup)
+
+        report = audit.build_report(
+            proof_source=proof_source,
+            unittest_source=unittest_source,
+            manifest_path=manifest_path,
+            proof_summary_path=summary_path,
+        )
+
+        missing = [
+            issue
+            for issue in report["issues"]
+            if issue["code"] == "missing_th_lemma_red_obligation"
+        ]
+        self.assertEqual(missing, [])
+        self.assertTrue(report["summary"]["passed"], report["issues"])
+
     def test_checked_in_sources_have_synthetic_mapping_for_every_registry_rule(self):
         report = audit.build_report(
             proof_source=audit.DEFAULT_PROOF_SOURCE,

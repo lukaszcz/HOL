@@ -401,7 +401,11 @@ def audit(
             )
 
     for rule in sorted(TH_LEMMA_OBLIGATION_RULES):
-        if rule in th_lemma_classes and rule not in manifest_red_features:
+        if (
+            rule in th_lemma_classes
+            and rule not in manifest_red_features
+            and rule not in real_rules
+        ):
             issues.append(
                 Issue(
                     code="missing_th_lemma_red_obligation",
