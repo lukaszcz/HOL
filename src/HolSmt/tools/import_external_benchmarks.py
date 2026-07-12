@@ -143,6 +143,44 @@ CURATED_REDUCED_CASES = {
 (check-sat)
 (get-proof)
 """,
+    "curated-reduced/qf_dt_sat.smt2": """(set-info :smt-lib-version 2.7)
+(set-logic QF_DT)
+(set-info :status sat)
+(declare-datatype Color ((red) (blue)))
+(declare-const c Color)
+(assert (or (= c red) (= c blue)))
+(check-sat)
+""",
+    "curated-reduced/qf_dt_unsat_proof.smt2": """(set-info :smt-lib-version 2.7)
+(set-logic QF_DT)
+(set-info :status unsat)
+(declare-datatype Color ((red) (blue)))
+(assert (= red blue))
+(check-sat)
+(get-proof)
+""",
+    "curated-reduced/qf_ufdt_sat.smt2": """(set-info :smt-lib-version 2.7)
+(set-logic QF_UFDT)
+(set-info :status sat)
+(declare-sort U 0)
+(declare-datatype Color ((red) (blue)))
+(declare-fun paint (U) Color)
+(declare-const u U)
+(assert (= (paint u) red))
+(check-sat)
+""",
+    "curated-reduced/qf_ufdt_unsat_proof.smt2": """(set-info :smt-lib-version 2.7)
+(set-logic QF_UFDT)
+(set-info :status unsat)
+(declare-sort U 0)
+(declare-datatype Color ((red) (blue)))
+(declare-fun paint (U) Color)
+(declare-const u U)
+(assert (= (paint u) red))
+(assert (= (paint u) blue))
+(check-sat)
+(get-proof)
+""",
 }
 
 

@@ -25,6 +25,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v5
 
+      - name: Validate pinned external benchmark importer
+        run: python3 src/HolSmt/tools/import_external_benchmarks.py --check >/tmp/holsmt-pinned-external-manifest.json
+
       - name: Run curated external benchmark slice
         run: |
           python3 src/HolSmt/tools/run_conformance_suite.py \

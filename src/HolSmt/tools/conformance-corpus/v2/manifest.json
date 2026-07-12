@@ -4128,6 +4128,128 @@
       }
     },
     {
+      "id": "external-benchmark:curated-reduced-qf-dt-sat",
+      "file": "cases/external/curated_reduced_qf_dt_sat.smt2",
+      "logic": "QF_DT",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external-logic-family:QF_DT",
+        "external-source:curated-reduced",
+        "external-status:sat"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "HolSmt curated reduced QF_DT SAT external benchmark",
+        "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_dt_sat.smt2",
+        "notes": "pinned source_path=curated-reduced/qf_dt_sat.smt2; pin=TASK-015; sha256=958c4ede597725127e579a13222c370297d70ac0d07592721160f271770aa998"
+      }
+    },
+    {
+      "id": "external-benchmark:curated-reduced-qf-dt-unsat-proof",
+      "file": "cases/external/curated_reduced_qf_dt_unsat_proof.smt2",
+      "logic": "QF_DT",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external-logic-family:QF_DT",
+        "external-source:curated-reduced",
+        "external-status:unsat-proof"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
+          "failure_phase": "proof-parse"
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
+          "failure_phase": "proof-replay"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem proving unsatisfiability"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
+        ],
+        "feature": "external-proof:QF_DT",
+        "test_ids": [
+          "external-benchmark:curated-reduced-qf-dt-unsat-proof"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Pinned external datatype UNSAT proof benchmark; keep red until external proof parsing and replay are executable evidence."
+      },
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "HolSmt curated reduced QF_DT UNSAT proof external benchmark",
+        "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_dt_unsat_proof.smt2",
+        "notes": "pinned source_path=curated-reduced/qf_dt_unsat_proof.smt2; pin=TASK-015; sha256=72bfe8a2fa4954d65058db5d27bfe4be141134818e841e802f0016448bed592c"
+      }
+    },
+    {
       "id": "external-benchmark:curated-reduced-qf-lia-sat",
       "file": "cases/external/curated_reduced_qf_lia_sat.smt2",
       "logic": "QF_LIA",
@@ -4609,6 +4731,128 @@
         "reference": "HolSmt curated reduced QF_UF UNSAT proof external benchmark",
         "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_uf_unsat_proof.smt2",
         "notes": "pinned source_path=curated-reduced/qf_uf_unsat_proof.smt2; pin=TASK-013; sha256=756670abcdc5bb88254cb7b494a67b43b41f942731b199539a1de6b673f4073a"
+      }
+    },
+    {
+      "id": "external-benchmark:curated-reduced-qf-ufdt-sat",
+      "file": "cases/external/curated_reduced_qf_ufdt_sat.smt2",
+      "logic": "QF_UFDT",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external-logic-family:QF_UFDT",
+        "external-source:curated-reduced",
+        "external-status:sat"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "z3-tac": {
+          "status": "pass"
+        }
+      },
+      "implementation_obligation": null,
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "HolSmt curated reduced QF_UFDT SAT external benchmark",
+        "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_ufdt_sat.smt2",
+        "notes": "pinned source_path=curated-reduced/qf_ufdt_sat.smt2; pin=TASK-015; sha256=f5c3f8cb7802f6f433893449207073abe0768bd7334354497337359213e4fdbe"
+      }
+    },
+    {
+      "id": "external-benchmark:curated-reduced-qf-ufdt-unsat-proof",
+      "file": "cases/external/curated_reduced_qf_ufdt_unsat_proof.smt2",
+      "logic": "QF_UFDT",
+      "standard": "SMT-LIB-2.7",
+      "class": "external-benchmark",
+      "features": [
+        "external-logic-family:QF_UFDT",
+        "external-source:curated-reduced",
+        "external-status:unsat-proof"
+      ],
+      "modes": [
+        "parser-only",
+        "typecheck-only",
+        "z3-oracle",
+        "proof-parse",
+        "proof-replay",
+        "z3-tac"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "parser-only": {
+          "status": "pass"
+        },
+        "typecheck-only": {
+          "status": "pass"
+        },
+        "z3-oracle": {
+          "status": "pass"
+        },
+        "proof-parse": {
+          "status": "red",
+          "diagnostic": "external benchmark proof parsing evidence is not wired into mandatory CI",
+          "failure_phase": "proof-parse"
+        },
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "external benchmark proof replay is not implemented for this reduced case",
+          "failure_phase": "proof-replay"
+        },
+        "z3-tac": {
+          "status": "red",
+          "diagnostic": "external benchmark theorem reconstruction is not implemented for this reduced case",
+          "failure_phase": "proof-replay",
+          "theorem_shape": "closed theorem proving unsatisfiability"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Z3_ProofParser.sml",
+          "src/HolSmt/Z3_ProofReplay.sml",
+          "src/HolSmt/SmtLib_Datatypes.sml",
+          "src/HolSmt/tools/external-benchmarks/pinned/manifest.json"
+        ],
+        "feature": "external-proof:QF_UFDT",
+        "test_ids": [
+          "external-benchmark:curated-reduced-qf-ufdt-unsat-proof"
+        ],
+        "failure_phase": "proof-replay",
+        "notes": "Pinned external datatype UNSAT proof benchmark; keep red until external proof parsing and replay are executable evidence."
+      },
+      "source": {
+        "kind": "external-benchmark",
+        "reference": "HolSmt curated reduced QF_UFDT UNSAT proof external benchmark",
+        "url": "https://hol-theorem-prover.org/holsmt/external-benchmarks/curated-reduced/qf_ufdt_unsat_proof.smt2",
+        "notes": "pinned source_path=curated-reduced/qf_ufdt_unsat_proof.smt2; pin=TASK-015; sha256=112b4a349c5b6b4af2dc7123f96c025931e649dede820f0d63db47e80158c089"
       }
     },
     {

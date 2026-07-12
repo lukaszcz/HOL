@@ -292,18 +292,25 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         packet_logics = generator.logic_packet_logics()
         nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
         int_real_logics = generator.INT_REAL_COERCION_LOGICS & set(packet_logics)
+        datatype_logics = {logic for logic in packet_logics if "DT" in logic.removeprefix("QF_")}
         self.assertEqual(
             len(cases),
             6 * len(packet_logics)
             + len(nonlinear_logics & set(packet_logics))
-            + len(int_real_logics),
+            + len(int_real_logics)
+            + len(datatype_logics),
         )
         self.assertEqual({case["class"] for case in cases}, {"logic"})
         self.assertNotIn("ALL", {case["logic"] for case in cases})
 
         by_logic = {}
         for case in cases:
-            by_logic.setdefault(case["logic"], []).append(case)
+            packet_logic = next(
+                feature.split(":", 1)[1]
+                for feature in case["features"]
+                if feature.startswith("logic:") and not feature.startswith("logic-case:")
+            )
+            by_logic.setdefault(packet_logic, []).append(case)
         self.assertEqual(set(by_logic), set(packet_logics))
         for logic, logic_cases in by_logic.items():
             kinds = {
@@ -324,6 +331,8 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 expected_kinds.add("logic-case:nonlinear-proof")
             if logic in int_real_logics:
                 expected_kinds.add("logic-case:int-real-user-function-coercion")
+            if logic in datatype_logics:
+                expected_kinds.add("logic-case:datatype-fragment-violation")
             self.assertEqual(kinds, expected_kinds, logic)
             unsat = [
                 case for case in logic_cases
@@ -506,12 +515,6 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
             },
         )
-        z3_tac_expected_failures = {
-            "theory-entry:Datatypes:symbolic-constructor-injectivity",
-            "theory-entry:Datatypes:symbolic-parametric-instance",
-            "theory-entry:Datatypes:symbolic-selector-constructor",
-            "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
-        }
         for case in symbolic_cases:
             self.assertIn("proof-rule:th-lemma-datatype", case["features"])
             for mode in ("proof-parse", "proof-replay"):
@@ -525,14 +528,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 for feature in case["features"]
                 if feature.startswith("theory-entry:Datatypes:symbolic-")
             )
-            if entry_feature in z3_tac_expected_failures:
-                self.assertEqual(case["expected"]["z3-tac"]["status"], "fail")
-                self.assertEqual(
-                    case["expected"]["z3-tac"]["failure_phase"],
-                    "proof-replay",
-                )
-            else:
-                self.assertEqual(case["expected"]["z3-tac"]["status"], "pass")
+            self.assertEqual(case["expected"]["z3-tac"]["status"], "pass", entry_feature)
             self.assertEqual(
                 case["expected"]["z3-tac"].get("proof_rule_histogram"),
                 {"th-lemma-datatype": 1},
@@ -644,11 +640,13 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             )
             nonlinear_logics = {"QF_NIA", "QF_NRA", "NIA", "NRA"}
             int_real_logics = generator.INT_REAL_COERCION_LOGICS & set(packet_logics)
+            datatype_logics = {logic for logic in packet_logics if "DT" in logic.removeprefix("QF_")}
             self.assertEqual(
                 len(cases),
                 6 * len(packet_logics)
                 + len(nonlinear_logics & set(packet_logics))
-                + len(int_real_logics),
+                + len(int_real_logics)
+                + len(datatype_logics),
             )
 
     def test_audit_subcommand_validates_existing_manifest(self):

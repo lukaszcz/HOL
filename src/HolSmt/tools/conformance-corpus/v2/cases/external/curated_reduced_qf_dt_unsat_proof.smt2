@@ -1,0 +1,7 @@
+(set-info :smt-lib-version 2.7)
+(set-logic QF_DT)
+(set-info :status unsat)
+(declare-datatype Color ((red) (blue)))
+(assert (= red blue))
+(check-sat)
+(get-proof)

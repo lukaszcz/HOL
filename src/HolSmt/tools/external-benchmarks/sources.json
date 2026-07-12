@@ -9,6 +9,10 @@
       "reason": "covered by curated-small/bitvectors/qf_bv_xor_zero.smt2",
       "source": "curated-small"
     },
+    "QF_DT": {
+      "reason": "covered by curated-small/datatypes/qf_dt_color.smt2",
+      "source": "curated-small"
+    },
     "QF_LIA": {
       "reason": "covered by curated-small/ints/qf_lia_bounds.smt2",
       "source": "curated-small"
@@ -23,6 +27,10 @@
     },
     "QF_UF": {
       "reason": "covered by curated-small/uf/qf_uf_congruence.smt2",
+      "source": "curated-small"
+    },
+    "QF_UFDT": {
+      "reason": "covered by curated-small/datatypes/qf_ufdt_uf_color.smt2",
       "source": "curated-small"
     }
   },

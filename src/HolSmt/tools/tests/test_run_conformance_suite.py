@@ -84,6 +84,11 @@ class ConformanceSuiteTests(unittest.TestCase):
             "QF_NIA", "QF_NRA", "QF_LIRA", "QF_UFLIA", "QF_UFLRA",
             "QF_BV", "BV", "UFBV", "QF_ABV", "QF_AUFBV",
             "QF_AX", "QF_AUFLIA", "AUFLIA", "QF_ALIA", "ALL",
+            "QF_DT", "QF_UFDT", "QF_UFDTLIA", "QF_UFDTLIRA",
+            "QF_UFDTNIA", "UFDT", "UFDTLIA", "UFDTLIRA", "UFDTNIA",
+            "UFDTNIRA", "UFBVDT", "AUFDTLIA", "AUFDTLIRA",
+            "AUFDTNIRA", "AUFBVDT", "AUFBVDTLIA", "AUFBVDTNIA",
+            "AUFBVDTNIRA",
         ]
         for logic in supported:
             proof = smoke_cases[(logic, "proof")]
@@ -130,6 +135,8 @@ class ConformanceSuiteTests(unittest.TestCase):
                     "LRA",
                     "--logic",
                     "QF_FP",
+                    "--logic",
+                    "QF_DT",
                     "--mode",
                     conformance.MODE_Z3_ORACLE,
                     "--mode",
@@ -148,7 +155,7 @@ class ConformanceSuiteTests(unittest.TestCase):
             )
             self.assertEqual(report["conformance_status_counts"][conformance.FAIL], 0)
             summary = report["summary"]["by_logic_mode"]
-            for logic in ("QF_UF", "QF_BV", "LRA"):
+            for logic in ("QF_UF", "QF_BV", "LRA", "QF_DT"):
                 self.assertGreater(
                     summary[logic][conformance.MODE_Z3_ORACLE][conformance.PASS], 0, logic
                 )
