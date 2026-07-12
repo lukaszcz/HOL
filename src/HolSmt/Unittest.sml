@@ -2797,7 +2797,7 @@ let
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
             smt_theory = "Datatypes", parse = true, typecheck = true,
-            translate = true, replay = false, notes, ...} =>
+            translate = true, replay = true, notes, ...} =>
             contains "native SMT-LIB Datatypes" notes
         | _ => false) records
   val has_bag_matrix_row =
@@ -3132,7 +3132,7 @@ let
     {encoding = "strings/UnicodeStrings",
      status = "HOL string sort and selected string operations translate with \
               \native SMT-LIB records; replay remains unsupported"},
-    {encoding = "floating point, regex, datatypes, sequences, sets, bags",
+    {encoding = "floating point, regex, sequences, sets, bags",
      status = "parse/typecheck matrix entries only unless a HOLTheoryEncoding \
               \record explicitly marks translate=true; replay remains false"}
   ]
@@ -3141,7 +3141,7 @@ let
     String.isSubstring "round-trips" status andalso
     String.isSubstring "select/store" status
   fun has_advanced_gap {encoding, status} =
-    encoding = "floating point, regex, datatypes, sequences, sets, bags" andalso
+    encoding = "floating point, regex, sequences, sets, bags" andalso
     String.isSubstring "parse/typecheck" status andalso
     String.isSubstring "replay remains false" status
 in

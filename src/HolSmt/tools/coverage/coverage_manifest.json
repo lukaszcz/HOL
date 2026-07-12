@@ -1063,29 +1063,29 @@
         "translated",
         "reconstructed"
       ],
-      "expected_status": "unsupported_diagnostic",
-      "positive_tests": [],
-      "negative_tests": [
+      "expected_status": "implemented",
+      "positive_tests": [
         {
           "kind": "source",
-          "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point"
+          "path": "src/HolSmt/selftest.sml",
+          "match": "dtConsF t f <> f"
         },
         {
           "kind": "source",
-          "path": "src/HolSmt/z3_tac_driver.sml",
-          "match": "datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
+          "path": "src/HolSmt/SmtDatatypeProve.sml",
+          "match": "datatype_prove"
         }
       ],
+      "negative_tests": [],
       "z3_versions": [],
       "artifacts": [
         {
           "kind": "source",
-          "path": "src/HolSmt/SmtLib_Parser.sml",
-          "match": "CmdDeclareDatatype"
+          "path": "src/HolSmt/Z3_ProofReplay.sml",
+          "match": "z3_th_lemma_datatype"
         }
       ],
-      "notes": "Covers datatype dictionary installation plus checked Z3_TAC datatype reconstruction diagnostics."
+      "notes": "Covers datatype dictionary installation plus checked Z3_TAC datatype reconstruction through TypeBase-backed replay."
     },
     {
       "section": "commands",
@@ -4256,17 +4256,24 @@
         "translated",
         "solved"
       ],
-      "expected_status": "parse_only",
-      "positive_tests": [],
+      "expected_status": "implemented",
+      "positive_tests": [
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "dt1_CASE foo f b z = f"
+        }
+      ],
       "negative_tests": [],
       "z3_versions": [],
       "artifacts": [
         {
-          "kind": "manual",
-          "description": "Datatype support is a parser/typechecker embedding; solver and HOL translation completeness are not claimed."
+          "kind": "source",
+          "path": "src/HolSmt/SmtLib.sml",
+          "match": "datatypes are emitted as native SMT-LIB Datatypes"
         }
       ],
-      "notes": "Conservative parse/typecheck embedding."
+      "notes": "HOL TypeBase datatypes are emitted as native SMT-LIB Datatypes for supported free datatype families."
     },
     {
       "section": "theories",
@@ -4275,24 +4282,29 @@
       "phases": [
         "reconstructed"
       ],
-      "expected_status": "unsupported_diagnostic",
-      "positive_tests": [],
-      "negative_tests": [
+      "expected_status": "implemented",
+      "positive_tests": [
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "theory=datatype"
+          "match": "datatype_prove harvest disjointness rung"
+        },
+        {
+          "kind": "source",
+          "path": "src/HolSmt/selftest.sml",
+          "match": "h::l <> l"
         }
       ],
+      "negative_tests": [],
       "z3_versions": [],
       "artifacts": [
         {
           "kind": "source",
           "path": "src/HolSmt/Z3_ProofReplay.sml",
-          "match": "proof-format limitation"
+          "match": "SmtDatatypeProve.datatype_prove"
         }
       ],
-      "notes": "Datatype th-lemma replay fails explicitly."
+      "notes": "Datatype th-lemma and datatype rewrite replay route through SmtDatatypeProve for TypeBase disjointness, injectivity, selectors, testers, exhaustiveness, and acyclicity."
     },
     {
       "section": "theories",
@@ -4692,7 +4704,7 @@
           "match": "proof-format limitation"
         }
       ],
-      "notes": "Non-arithmetic advanced th-lemma replay reports exact unsupported diagnostics."
+      "notes": "Datatype th-lemma has graduated to checked replay; FP, string, regexp and seq advanced th-lemma families remain explicit unsupported diagnostics."
     },
     {
       "section": "soundness_audit",
@@ -5068,7 +5080,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "unsupported higher-order rator expression"
+          "match": "higher-order abstraction expected QF_AX"
         }
       ],
       "z3_versions": [],
@@ -5101,7 +5113,7 @@
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "tuple-selector-current-uf"
+          "match": "tuple-selector-native-dt"
         },
         {
           "kind": "source",
@@ -5239,17 +5251,16 @@
         },
         {
           "kind": "source",
-          "path": "src/HolSmt/Unittest.sml",
-          "match": "datatype-constructor-current-uf"
-        }
-      ],
-      "negative_tests": [
+          "path": "src/HolSmt/selftest.sml",
+          "match": "dtConsF t f <> f"
+        },
         {
           "kind": "source",
           "path": "src/HolSmt/Unittest.sml",
-          "match": "datatype case selector current gap"
+          "match": "datatype-constructor-native-dt"
         }
       ],
+      "negative_tests": [],
       "z3_versions": [],
       "artifacts": [
         {
@@ -5258,7 +5269,7 @@
           "match": "HOL datatypes and recursive datatypes"
         }
       ],
-      "notes": "Current HOL datatype constructors follow UF encoding; datatype case-selector higher-order gaps are diagnostic-gated."
+      "notes": "HOL datatypes now use native SMT-LIB Datatypes with checked Z3 proof replay for constructor distinctness, injectivity, list/option constructor coverage, acyclicity and mutual-family selftests. HOL case and record syntax remain covered by the existing non-Z3 selftest paths."
     },
     {
       "section": "selftest_categories",

@@ -127,11 +127,14 @@ New features
 
 -   `HolSmt` has substantially expanded checked SMT-LIB coverage:
     ArraysEx select/store and nonlinear arithmetic now have native
-    checked Z3 proof replay paths, and the SMT-LIB command frontend
-    covers the current command-completeness matrix, including scoped
-    assertion commands, `check-sat-assuming`, unsat cores,
-    unsat assumptions, recursive function commands on the legacy
-    path, and model-query passthrough in oracle mode.
+    checked Z3 proof replay paths, HOL TypeBase datatypes are emitted
+    as native SMT-LIB `declare-datatypes`, and datatype proof replay
+    now checks constructor disjointness, injectivity, selectors,
+    testers, exhaustiveness and acyclicity without oracle tags.  The
+    SMT-LIB command frontend covers the current command-completeness
+    matrix, including scoped assertion commands, `check-sat-assuming`,
+    unsat cores, unsat assumptions, recursive function commands on the
+    legacy path, and model-query passthrough in oracle mode.
 
 Bugs fixed
 ----------

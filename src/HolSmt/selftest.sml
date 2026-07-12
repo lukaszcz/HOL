@@ -222,6 +222,10 @@ val _ = bossLib.Hol_datatype `dt1 = foo | bar | baz`
 
 val _ = bossLib.Hol_datatype `person = <| employed :bool; age :num |>`
 
+val _ = bossLib.Hol_datatype `
+  dt_tree = dtLeaf | dtNode of dt_forest ;
+  dt_forest = dtNilF | dtConsF of dt_tree => dt_forest`
+
 in
 
 (*****************************************************************************)
@@ -1542,12 +1546,17 @@ in
 
     (* data types: constructors *)
 
-    (``foo <> bar``, [thm_AUTO, thm_YO]),
-    (``foo <> baz``, [thm_AUTO, thm_YO]),
-    (``bar <> baz``, [thm_AUTO, thm_YO]),
-    (``[] <> x::xs``, [thm_AUTO, thm_YO]),
-    (``xs <> x::xs``, [thm_AUTO, thm_YO]),
-    (``(x::xs = y::ys) <=> (x = y) /\ (xs = ys)``, [thm_AUTO, thm_YO]),
+    (``foo <> bar``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``foo <> baz``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``bar <> baz``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``[] <> x::xs``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``NONE <> SOME (x:'a)``, [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
+    (``h::l <> l``, [thm_Z3p, thm_Z3p_v4]),
+    (``dtConsF t f <> f``, [thm_Z3p, thm_Z3p_v4]),
+    (``xs <> x::xs``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``(x::xs = y::ys) <=> (x = y) /\ (xs = ys)``,
+      [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``(SOME x = SOME y) <=> (x = y)``, [thm_AUTO]),
 
     (* data types: case constants *)
 
@@ -1556,7 +1565,10 @@ in
     (``dt1_CASE baz f b z = z``, [thm_AUTO, thm_YO]),
     (``dt1_CASE x c c c = c``, [(*thm_AUTO,*) thm_YO]),
     (``list_CASE [] n c = n``, [thm_AUTO, thm_YO]),
-    (``list_CASE (x::xs) n c = c x xs``, [thm_AUTO, thm_YO]),
+    (``list_CASE (x::xs) n c = c x xs``,
+      [thm_AUTO, thm_YO]),
+    (``option_CASE (SOME x) n s = s x``, [thm_AUTO]),
+    (``option_CASE NONE n s = n``, [thm_AUTO]),
 
     (* records: field selectors *)
 
@@ -1565,15 +1577,20 @@ in
 
     (* records: field updates *)
 
-    (``(x with employed := e).employed = e``, [thm_AUTO, thm_YO]),
+    (``(x with employed := e).employed = e``,
+      [thm_AUTO, thm_YO]),
+    (``(x with age := a).employed = x.employed``,
+      [thm_AUTO]),
 
     (``x with <| employed := e; age := a |> =
-     y with <| employed := e; age := a |>``, [thm_AUTO, thm_YO]),
+     y with <| employed := e; age := a |>``,
+      [thm_AUTO, thm_YO]),
 
     (* records: literals *)
 
     (``(<| employed := e1; age := a1 |> = <| employed := e2; age := a2 |>)
-     <=> (e1 = e2) /\ (a1 = a2)``, [thm_AUTO, thm_YO]),
+     <=> (e1 = e2) /\ (a1 = a2)``,
+      [thm_AUTO, thm_YO]),
 
     (* sets (as predicates -- every set expression must be applied to an
        argument!) *)

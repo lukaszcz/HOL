@@ -558,12 +558,12 @@ TH_LEMMA_PROOF_RULE_OBLIGATIONS: tuple[ProofRuleObligation, ...] = (
     ProofRuleObligation(
         rule="th-lemma-datatype",
         file_slug="th_lemma_datatype",
-        diagnostic="datatype th-lemma replay is diagnostic-only",
+        diagnostic="datatype th-lemma replay is checked by SmtDatatypeProve",
         notes=(
-            "Diagnostic-only synthetic coverage exists; keep this row red until "
-            "checked replay and real proof-corpus evidence are added."
+            "Datatype th-lemma parser/replay is checked through the shared "
+            "SmtDatatypeProve TypeBase fact harvester."
         ),
-        behavior="diagnostic-only",
+        behavior="checked-replay",
     ),
     ProofRuleObligation(
         rule="th-lemma-fp",
@@ -687,27 +687,56 @@ def proof_rule_th_lemma_basic_case() -> GeneratedCase:
 
 def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
     feature = f"proof-rule:{obligation.rule}"
-    expected = {
-        "proof-parse": expected_result(
-            "red",
-            diagnostic=obligation.diagnostic,
-            failure_phase="proof-parse",
-            proof_rule_histogram={obligation.rule: 1},
-        ),
-        "proof-replay": expected_result(
-            "red",
-            diagnostic=obligation.diagnostic,
+    if obligation.behavior == "checked-replay":
+        expected = {
+            "proof-parse": expected_result(
+                "pass",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+            "proof-replay": expected_result(
+                "pass",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+            "z3-tac": expected_result(
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+        }
+        obligation_record = None
+    else:
+        expected = {
+            "proof-parse": expected_result(
+                "red",
+                diagnostic=obligation.diagnostic,
+                failure_phase="proof-parse",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+            "proof-replay": expected_result(
+                "red",
+                diagnostic=obligation.diagnostic,
+                failure_phase="proof-replay",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+            "z3-tac": expected_result(
+                "red",
+                diagnostic="diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
+                failure_phase="proof-replay",
+                theorem_shape="closed theorem without oracle tags",
+                proof_rule_histogram={obligation.rule: 1},
+            ),
+        }
+        obligation_record = implementation_obligation(
+            files=(
+                "src/HolSmt/Z3_ProofParser.sml",
+                "src/HolSmt/Z3_ProofReplay.sml",
+                "src/HolSmt/Unittest.sml",
+            ),
+            feature=feature,
+            test_ids=[feature],
             failure_phase="proof-replay",
-            proof_rule_histogram={obligation.rule: 1},
-        ),
-        "z3-tac": expected_result(
-            "red",
-            diagnostic="diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
-            failure_phase="proof-replay",
-            theorem_shape="closed theorem without oracle tags",
-            proof_rule_histogram={obligation.rule: 1},
-        ),
-    }
+            notes=obligation.notes,
+        )
     entry = manifest_entry(
         case_id=feature,
         file=f"cases/proof_rules/proof_rule_{obligation.file_slug}.smt2",
@@ -722,17 +751,7 @@ def th_lemma_proof_rule_case(obligation: ProofRuleObligation) -> GeneratedCase:
         modes=("proof-parse", "proof-replay", "z3-tac"),
         versions=SUPPORTED_Z3_VERSIONS,
         expected=expected,
-        implementation_obligation=implementation_obligation(
-            files=(
-                "src/HolSmt/Z3_ProofParser.sml",
-                "src/HolSmt/Z3_ProofReplay.sml",
-                "src/HolSmt/Unittest.sml",
-            ),
-            feature=feature,
-            test_ids=[feature],
-            failure_phase="proof-replay",
-            notes=obligation.notes,
-        ),
+        implementation_obligation=obligation_record,
         source=source("Z3-proof", f"Z3 proof rule {obligation.rule}"),
     )
     return GeneratedCase(entry=entry, script=PROOF_RULE_SCRIPT)
@@ -1457,24 +1476,14 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         ),
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
-            "parser-only": expected_result(
-                "red",
-                diagnostic="match term parsing is not implemented",
-                failure_phase="parser",
-                notes="flips in TASK_16",
-            ),
+            "parser-only": expected_result("pass"),
             "typecheck-only": expected_result(
-                "red",
+                "fail",
                 diagnostic="match term typechecking is not implemented",
                 failure_phase="typecheck",
                 notes="flips in TASK_16",
             ),
-            "z3-oracle": expected_result(
-                "red",
-                diagnostic="match term oracle path is not implemented",
-                failure_phase="translation",
-                notes="flips in TASK_16",
-            ),
+            "z3-oracle": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1508,24 +1517,14 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         ),
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
-            "parser-only": expected_result(
-                "red",
-                diagnostic="match term parsing is not implemented",
-                failure_phase="parser",
-                notes="flips in TASK_16",
-            ),
+            "parser-only": expected_result("pass"),
             "typecheck-only": expected_result(
-                "red",
+                "fail",
                 diagnostic="nested match typechecking is not implemented",
                 failure_phase="typecheck",
                 notes="flips in TASK_16",
             ),
-            "z3-oracle": expected_result(
-                "red",
-                diagnostic="nested match oracle path is not implemented",
-                failure_phase="translation",
-                notes="flips in TASK_16",
-            ),
+            "z3-oracle": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1557,24 +1556,14 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         ),
         modes=("parser-only", "typecheck-only", "z3-oracle"),
         expected={
-            "parser-only": expected_result(
-                "red",
-                diagnostic="match term parsing is not implemented",
-                failure_phase="parser",
-                notes="flips in TASK_16/TASK_17",
-            ),
+            "parser-only": expected_result("pass"),
             "typecheck-only": expected_result(
-                "red",
+                "fail",
                 diagnostic="match default variable pattern is not implemented",
                 failure_phase="typecheck",
                 notes="flips in TASK_16/TASK_17",
             ),
-            "z3-oracle": expected_result(
-                "red",
-                diagnostic="match default variable oracle path is not implemented",
-                failure_phase="translation",
-                notes="flips in TASK_16/TASK_17",
-            ),
+            "z3-oracle": expected_result("pass"),
         },
         features=(
             "command-case:datatype-corpus",
@@ -1707,23 +1696,10 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         expected={
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
-            "z3-oracle": expected_result(
-                "red",
-                diagnostic=(
-                    "datatype parametric instantiation at multiple instances "
-                    "is incomplete"
-                ),
-                failure_phase="translation",
-                notes="flips in TASK_10/TASK_17",
-            ),
+            "z3-oracle": expected_result("pass"),
             "z3-tac": expected_result(
-                "red",
-                diagnostic=(
-                    "checked Z3_TAC reconstruction for datatype "
-                    "parametric instantiation is incomplete"
-                ),
-                failure_phase="translation",
-                notes="flips in TASK_13/TASK_17",
+                "pass",
+                notes="checked Z3_TAC preserves the satisfiable datatype instance result",
             ),
         },
         features=(
@@ -1789,20 +1765,10 @@ DATATYPE_COMMAND_CORPUS_CASES: tuple[ScriptedCase, ...] = (
         expected={
             "parser-only": expected_result("pass"),
             "typecheck-only": expected_result("pass"),
-            "z3-oracle": expected_result(
-                "red",
-                diagnostic="datatype equality chains are not translated natively",
-                failure_phase="translation",
-                notes="flips in TASK_10/TASK_17",
-            ),
+            "z3-oracle": expected_result("pass"),
             "z3-tac": expected_result(
-                "red",
-                diagnostic=(
-                    "checked Z3_TAC reconstruction for datatype equality "
-                    "chains is incomplete"
-                ),
-                failure_phase="translation",
-                notes="flips in TASK_13/TASK_17",
+                "pass",
+                theorem_shape="closed theorem without oracle tags",
             ),
         },
         features=(
@@ -3529,30 +3495,37 @@ def datatype_symbolic_proof_expected(
     proof_diagnostic: str,
     replay_diagnostic: str,
     tac_diagnostic: str,
+    z3_tac_status: str = "pass",
 ) -> dict[str, dict[str, object]]:
+    if z3_tac_status == "pass":
+        z3_tac = expected_result(
+            "pass",
+            theorem_shape="closed theorem without oracle tags",
+            proof_rule_histogram={"th-lemma-datatype": 1},
+        )
+    elif z3_tac_status == "fail":
+        z3_tac = expected_result(
+            "fail",
+            diagnostic=tac_diagnostic,
+            failure_phase="proof-replay",
+            theorem_shape="closed theorem without oracle tags",
+            proof_rule_histogram={"th-lemma-datatype": 1},
+        )
+    else:
+        raise GeneratorError("datatype symbolic z3-tac status must be pass or fail")
     return {
         "parser-only": expected_result("pass"),
         "typecheck-only": expected_result("pass"),
         "z3-oracle": expected_result("pass"),
         "proof-parse": expected_result(
-            "red",
-            diagnostic=proof_diagnostic,
-            failure_phase="proof-parse",
+            "pass",
             proof_rule_histogram={"th-lemma-datatype": 1},
         ),
         "proof-replay": expected_result(
-            "red",
-            diagnostic=replay_diagnostic,
-            failure_phase="proof-replay",
+            "pass",
             proof_rule_histogram={"th-lemma-datatype": 1},
         ),
-        "z3-tac": expected_result(
-            "red",
-            diagnostic=tac_diagnostic,
-            failure_phase="proof-replay",
-            theorem_shape="closed theorem without oracle tags",
-            proof_rule_histogram={"th-lemma-datatype": 1},
-        ),
+        "z3-tac": z3_tac,
     }
 
 
@@ -3614,21 +3587,15 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
             "proof-parse": expected_result(
-                "red",
-                diagnostic="datatype disjointness proof parsing evidence is incomplete",
-                failure_phase="proof-parse",
+                "pass",
                 proof_rule_histogram={"th-lemma[datatype]": 1},
             ),
             "proof-replay": expected_result(
-                "red",
-                diagnostic="datatype constructor disjointness replay is incomplete",
-                failure_phase="proof-replay",
+                "pass",
                 proof_rule_histogram={"th-lemma[datatype]": 1},
             ),
             "z3-tac": expected_result(
-                "red",
-                diagnostic="checked Z3_TAC reconstruction for datatype disjointness is incomplete",
-                failure_phase="proof-replay",
+                "pass",
                 theorem_shape="closed theorem without oracle tags",
             ),
         },
@@ -3638,11 +3605,11 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-case:unsat-proof",
             "theory-behavior:constructor",
             "theory-behavior:disjointness",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
         ),
-        implementation_feature="datatypes-reconstruction:constructor-disjointness",
-        implementation_files=("src/HolSmt/SmtLib_Datatypes.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-        implementation_phase="proof-replay",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes theory constructor disjointness",
     ),
@@ -3659,21 +3626,15 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "typecheck-only": expected_result("pass"),
             "z3-oracle": expected_result("pass"),
             "proof-parse": expected_result(
-                "red",
-                diagnostic="datatype selector proof parsing evidence is incomplete",
-                failure_phase="proof-parse",
+                "pass",
                 proof_rule_histogram={"th-lemma[datatype]": 1},
             ),
             "proof-replay": expected_result(
-                "red",
-                diagnostic="datatype selector theorem replay is incomplete",
-                failure_phase="proof-replay",
+                "pass",
                 proof_rule_histogram={"th-lemma[datatype]": 1},
             ),
             "z3-tac": expected_result(
-                "red",
-                diagnostic="checked Z3_TAC reconstruction for datatype selector theorem is incomplete",
-                failure_phase="proof-replay",
+                "pass",
                 theorem_shape="closed theorem without oracle tags",
             ),
         },
@@ -3682,11 +3643,11 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-entry:Datatypes:selector-theorem",
             "theory-case:unsat-proof",
             "theory-behavior:selector",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
         ),
-        implementation_feature="datatypes-reconstruction:selector-theorem",
-        implementation_files=("src/HolSmt/SmtLib_Datatypes.sml", "src/HolSmt/Z3_ProofReplay.sml"),
-        implementation_phase="proof-replay",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes theory selector theorem",
     ),
@@ -3781,12 +3742,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:recursive-datatype",
             "theory-behavior:acyclicity",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:acyclicity",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference="Z3 datatype th-lemma proof shape: acyclicity",
         source_kind="Z3-proof",
@@ -3812,6 +3773,7 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype tester "
                 "exhaustiveness is incomplete"
             ),
+            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3820,12 +3782,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:tester",
             "theory-behavior:exhaustiveness",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:tester-exhaustiveness",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference=(
             "Z3 datatype th-lemma proof shape: tester exhaustiveness"
@@ -3857,6 +3819,7 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype constructor "
                 "injectivity is incomplete"
             ),
+            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3865,12 +3828,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:constructor",
             "theory-behavior:injectivity",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:constructor-injectivity",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference=(
             "Z3 datatype th-lemma proof shape: constructor injectivity"
@@ -3898,6 +3861,7 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype "
                 "selector/constructor interaction is incomplete"
             ),
+            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3906,12 +3870,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:selector",
             "theory-behavior:constructor",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:selector-constructor",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference=(
             "Z3 datatype th-lemma proof shape: selector/constructor"
@@ -3947,12 +3911,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:mutual-datatype",
             "theory-behavior:acyclicity",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:mutual-family",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference="Z3 datatype th-lemma proof shape: mutual family",
         source_kind="Z3-proof",
@@ -3977,6 +3941,7 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype "
                 "parametric-instance reasoning is incomplete"
             ),
+            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3985,12 +3950,12 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
             "theory-behavior:parametric-datatype",
             "theory-behavior:selector",
             "theory-behavior:symbolic-datatype-proof",
-            "theory-behavior:proof-gap",
+            "theory-behavior:checked-replay",
             "proof-rule:th-lemma-datatype",
         ),
-        implementation_feature="datatypes-reconstruction:parametric-instance",
-        implementation_files=DATATYPE_SYMBOLIC_PROOF_FILES,
-        implementation_phase="proof-parse",
+        implementation_feature=None,
+        implementation_files=(),
+        implementation_phase=None,
         logic="ALL",
         source_reference=(
             "Z3 datatype th-lemma proof shape: parametric instance"

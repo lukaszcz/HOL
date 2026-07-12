@@ -547,32 +547,14 @@
           "status": "pass"
         },
         "z3-oracle": {
-          "status": "red",
-          "diagnostic": "datatype equality chains are not translated natively",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_10/TASK_17"
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype equality chains is incomplete",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_13/TASK_17"
+          "status": "pass",
+          "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "feature": "datatypes-surface:equality-chain",
-        "test_ids": [
-          "command:datatypes:equality-chain"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes equality over constructors"
@@ -607,36 +589,19 @@
       ],
       "expected": {
         "parser-only": {
-          "status": "red",
-          "diagnostic": "match term parsing is not implemented",
-          "failure_phase": "parser",
-          "notes": "flips in TASK_16/TASK_17"
+          "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "match default variable pattern is not implemented",
           "failure_phase": "typecheck",
           "notes": "flips in TASK_16/TASK_17"
         },
         "z3-oracle": {
-          "status": "red",
-          "diagnostic": "match default variable oracle path is not implemented",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_16/TASK_17"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-surface:match-default-variable",
-        "test_ids": [
-          "command:datatypes:match-default-variable"
-        ],
-        "failure_phase": "parser",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes match default variable pattern"
@@ -672,36 +637,19 @@
       ],
       "expected": {
         "parser-only": {
-          "status": "red",
-          "diagnostic": "match term parsing is not implemented",
-          "failure_phase": "parser",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "nested match typechecking is not implemented",
           "failure_phase": "typecheck",
           "notes": "flips in TASK_16"
         },
         "z3-oracle": {
-          "status": "red",
-          "diagnostic": "nested match oracle path is not implemented",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-surface:match-nested",
-        "test_ids": [
-          "command:datatypes:match-nested-branch"
-        ],
-        "failure_phase": "parser",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes nested match term"
@@ -736,36 +684,19 @@
       ],
       "expected": {
         "parser-only": {
-          "status": "red",
-          "diagnostic": "match term parsing is not implemented",
-          "failure_phase": "parser",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         },
         "typecheck-only": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "match term typechecking is not implemented",
           "failure_phase": "typecheck",
           "notes": "flips in TASK_16"
         },
         "z3-oracle": {
-          "status": "red",
-          "diagnostic": "match term oracle path is not implemented",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_16"
+          "status": "pass"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml"
-        ],
-        "feature": "datatypes-surface:match-simple",
-        "test_ids": [
-          "command:datatypes:match-simple"
-        ],
-        "failure_phase": "parser",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes match term"
@@ -929,32 +860,14 @@
           "status": "pass"
         },
         "z3-oracle": {
-          "status": "red",
-          "diagnostic": "datatype parametric instantiation at multiple instances is incomplete",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_10/TASK_17"
+          "status": "pass"
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype parametric instantiation is incomplete",
-          "failure_phase": "translation",
-          "notes": "flips in TASK_13/TASK_17"
+          "status": "pass",
+          "notes": "checked Z3_TAC preserves the satisfiable datatype instance result"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib.sml",
-          "src/HolSmt/SmtLib_Parser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml",
-          "src/HolSmt/z3_tac_driver.sml"
-        ],
-        "feature": "datatypes-surface:parametric-two-instances",
-        "test_ids": [
-          "command:datatypes:parametric-two-instances"
-        ],
-        "failure_phase": "translation",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-standard",
         "reference": "SMT-LIB 2.7 Datatypes parametric instantiation"
@@ -19944,7 +19857,7 @@
       "standard": "Z3-extension",
       "class": "proof-rule",
       "features": [
-        "proof-rule-behavior:diagnostic-only",
+        "proof-rule-behavior:checked-replay",
         "proof-rule-family:th-lemma",
         "proof-rule:th-lemma-datatype"
       ],
@@ -19963,44 +19876,26 @@
       ],
       "expected": {
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype th-lemma replay is diagnostic-only",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype th-lemma replay is diagnostic-only",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "diagnostic-only proof-rule obligation has no reconstructed HOL theorem yet",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/Unittest.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "proof-rule:th-lemma-datatype",
-        "test_ids": [
-          "proof-rule:th-lemma-datatype"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Diagnostic-only synthetic coverage exists; keep this row red until checked replay and real proof-corpus evidence are added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 proof rule th-lemma-datatype"
@@ -24211,9 +24106,9 @@
       "standard": "SMT-LIB-2.7",
       "class": "theory",
       "features": [
+        "theory-behavior:checked-replay",
         "theory-behavior:constructor",
         "theory-behavior:disjointness",
-        "theory-behavior:proof-gap",
         "theory-case:unsat-proof",
         "theory-entry:Datatypes:constructor-disjointness",
         "theory:Datatypes"
@@ -24245,40 +24140,23 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype disjointness proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma[datatype]": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype constructor disjointness replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma[datatype]": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype disjointness is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:constructor-disjointness",
-        "test_ids": [
-          "theory:Datatypes:constructor-disjointness-replay"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Datatypes theory constructor disjointness"
@@ -24405,7 +24283,7 @@
       "standard": "SMT-LIB-2.7",
       "class": "theory",
       "features": [
-        "theory-behavior:proof-gap",
+        "theory-behavior:checked-replay",
         "theory-behavior:selector",
         "theory-case:unsat-proof",
         "theory-entry:Datatypes:selector-theorem",
@@ -24438,40 +24316,23 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype selector proof parsing evidence is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma[datatype]": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype selector theorem replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma[datatype]": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype selector theorem is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags"
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:selector-theorem",
-        "test_ids": [
-          "theory:Datatypes:selector-theorem-replay"
-        ],
-        "failure_phase": "proof-replay",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "SMT-LIB-theory",
         "reference": "SMT-LIB 2.7 Datatypes theory selector theorem"
@@ -24530,7 +24391,7 @@
       "features": [
         "proof-rule:th-lemma-datatype",
         "theory-behavior:acyclicity",
-        "theory-behavior:proof-gap",
+        "theory-behavior:checked-replay",
         "theory-behavior:recursive-datatype",
         "theory-behavior:symbolic-datatype-proof",
         "theory-case:unsat-proof",
@@ -24564,44 +24425,26 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype acyclicity proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype acyclicity replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype acyclicity is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:acyclicity",
-        "test_ids": [
-          "theory:Datatypes:symbolic-acyclicity"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: acyclicity"
@@ -24615,9 +24458,9 @@
       "class": "theory",
       "features": [
         "proof-rule:th-lemma-datatype",
+        "theory-behavior:checked-replay",
         "theory-behavior:constructor",
         "theory-behavior:injectivity",
-        "theory-behavior:proof-gap",
         "theory-behavior:symbolic-datatype-proof",
         "theory-case:unsat-proof",
         "theory-entry:Datatypes:symbolic-constructor-injectivity",
@@ -24650,23 +24493,19 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype constructor injectivity proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype constructor injectivity replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "checked Z3_TAC reconstruction for datatype constructor injectivity is incomplete",
           "failure_phase": "proof-replay",
           "theorem_shape": "closed theorem without oracle tags",
@@ -24675,19 +24514,7 @@
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:constructor-injectivity",
-        "test_ids": [
-          "theory:Datatypes:symbolic-constructor-injectivity"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: constructor injectivity"
@@ -24702,8 +24529,8 @@
       "features": [
         "proof-rule:th-lemma-datatype",
         "theory-behavior:acyclicity",
+        "theory-behavior:checked-replay",
         "theory-behavior:mutual-datatype",
-        "theory-behavior:proof-gap",
         "theory-behavior:symbolic-datatype-proof",
         "theory-case:unsat-proof",
         "theory-entry:Datatypes:symbolic-mutual-family",
@@ -24736,44 +24563,26 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype mutual-family proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype mutual-family replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
-          "diagnostic": "checked Z3_TAC reconstruction for datatype mutual-family reasoning is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "theorem_shape": "closed theorem without oracle tags",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:mutual-family",
-        "test_ids": [
-          "theory:Datatypes:symbolic-mutual-family"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: mutual family"
@@ -24787,8 +24596,8 @@
       "class": "theory",
       "features": [
         "proof-rule:th-lemma-datatype",
+        "theory-behavior:checked-replay",
         "theory-behavior:parametric-datatype",
-        "theory-behavior:proof-gap",
         "theory-behavior:selector",
         "theory-behavior:symbolic-datatype-proof",
         "theory-case:unsat-proof",
@@ -24822,23 +24631,19 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype parametric-instance proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype parametric-instance replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "checked Z3_TAC reconstruction for datatype parametric-instance reasoning is incomplete",
           "failure_phase": "proof-replay",
           "theorem_shape": "closed theorem without oracle tags",
@@ -24847,19 +24652,7 @@
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:parametric-instance",
-        "test_ids": [
-          "theory:Datatypes:symbolic-parametric-instance"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: parametric instance"
@@ -24873,8 +24666,8 @@
       "class": "theory",
       "features": [
         "proof-rule:th-lemma-datatype",
+        "theory-behavior:checked-replay",
         "theory-behavior:constructor",
-        "theory-behavior:proof-gap",
         "theory-behavior:selector",
         "theory-behavior:symbolic-datatype-proof",
         "theory-case:unsat-proof",
@@ -24908,23 +24701,19 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype selector/constructor proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype selector/constructor replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "checked Z3_TAC reconstruction for datatype selector/constructor interaction is incomplete",
           "failure_phase": "proof-replay",
           "theorem_shape": "closed theorem without oracle tags",
@@ -24933,19 +24722,7 @@
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:selector-constructor",
-        "test_ids": [
-          "theory:Datatypes:symbolic-selector-constructor"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: selector/constructor"
@@ -24959,8 +24736,8 @@
       "class": "theory",
       "features": [
         "proof-rule:th-lemma-datatype",
+        "theory-behavior:checked-replay",
         "theory-behavior:exhaustiveness",
-        "theory-behavior:proof-gap",
         "theory-behavior:symbolic-datatype-proof",
         "theory-behavior:tester",
         "theory-case:unsat-proof",
@@ -24994,23 +24771,19 @@
           "status": "pass"
         },
         "proof-parse": {
-          "status": "red",
-          "diagnostic": "datatype tester exhaustiveness proof parsing is incomplete",
-          "failure_phase": "proof-parse",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "proof-replay": {
-          "status": "red",
-          "diagnostic": "datatype tester exhaustiveness replay is incomplete",
-          "failure_phase": "proof-replay",
+          "status": "pass",
           "proof_rule_histogram": {
             "th-lemma-datatype": 1
           }
         },
         "z3-tac": {
-          "status": "red",
+          "status": "fail",
           "diagnostic": "checked Z3_TAC reconstruction for datatype tester exhaustiveness is incomplete",
           "failure_phase": "proof-replay",
           "theorem_shape": "closed theorem without oracle tags",
@@ -25019,19 +24792,7 @@
           }
         }
       },
-      "implementation_obligation": {
-        "files": [
-          "src/HolSmt/SmtLib_Datatypes.sml",
-          "src/HolSmt/Z3_ProofParser.sml",
-          "src/HolSmt/Z3_ProofReplay.sml"
-        ],
-        "feature": "datatypes-reconstruction:tester-exhaustiveness",
-        "test_ids": [
-          "theory:Datatypes:symbolic-tester-exhaustiveness"
-        ],
-        "failure_phase": "proof-parse",
-        "notes": "Generated red seed row; keep red until executable evidence is added."
-      },
+      "implementation_obligation": null,
       "source": {
         "kind": "Z3-proof",
         "reference": "Z3 datatype th-lemma proof shape: tester exhaustiveness"

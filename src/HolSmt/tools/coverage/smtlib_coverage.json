@@ -540,27 +540,33 @@
       "item": "declare-datatype, declare-datatypes",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "unsupported_diagnostic",
+      "translated": "implemented",
       "solved": "not_applicable",
-      "reconstructed": "unsupported_diagnostic",
+      "reconstructed": "implemented",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; declare-datatype and arity-0 declare-datatypes install parser/typecheck dictionaries; checked Z3_TAC rejects datatype reconstruction with explicit diagnostics.",
-      "notes": "Datatype declarations are parse/typecheck embeddings. Parametric legacy benchmark parsing and Z3 datatype theory replay remain explicitly unsupported.",
+      "evidence": "SmtLib_Parser typed AST parser produces CmdDeclareDatatype and CmdDeclareDatatypes with datatype parameters, constructors, selectors, and derived tester records; declare-datatype and arity-0 declare-datatypes install parser/typecheck dictionaries; checked Z3_TAC reconstructs datatype proof obligations through TypeBase-backed replay.",
+      "notes": "Datatype declarations install HOL datatypes for parser/typecheck and checked Z3_TAC reconstruction paths.",
       "test_ids": [
-        "source:src/HolSmt/Unittest.sml#parse_file_datatype_dictionary_success"
+        "source:src/HolSmt/Unittest.sml#parse_file_datatype_dictionary_success",
+        "source:src/HolSmt/selftest.sml#dtConsF t f <> f",
+        "source:src/HolSmt/SmtDatatypeProve.sml#datatype_prove"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": [
-        "source:src/HolSmt/z3_tac_driver.sml#datatype declaration command declare-datatype is outside checked Z3_TAC command-line entry point",
-        "source:src/HolSmt/z3_tac_driver.sml#datatype declaration command declare-datatypes is outside checked Z3_TAC command-line entry point"
-      ],
-      "current_status": "unsupported_diagnostic",
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
       "complete_test_ids": [
+        "command:datatypes:equality-chain",
+        "command:datatypes:match-default-variable",
+        "command:datatypes:match-nested-branch",
+        "command:datatypes:match-simple",
         "command:datatypes:mutual-tree-forest",
         "command:datatypes:parametric-box",
+        "command:datatypes:parametric-two-instances",
         "command:datatypes:recursive-list",
+        "command:datatypes:selector-misapplication-sat",
         "command:datatypes:simple-enum",
         "command:declare-datatype-declare-datatypes",
+        "command:declare-datatype-declare-datatypes:reconstruction",
         "command:declare-datatype-declare-datatypes:state"
       ],
       "red_obligation_ids": [],
@@ -809,6 +815,7 @@
         "theory:Ints:div:unsat-proof",
         "theory:Ints:divisible:boundary",
         "theory:Ints:divisible:sat",
+        "theory:Ints:divisible:unsat-proof",
         "theory:Ints:ge:boundary",
         "theory:Ints:ge:sat",
         "theory:Ints:ge:unsat-proof",
@@ -838,6 +845,7 @@
         "theory:Ints:plus:unsat-proof",
         "theory:Ints:pow:boundary",
         "theory:Ints:pow:sat",
+        "theory:Ints:pow:unsat-proof",
         "theory:Ints:sub:boundary",
         "theory:Ints:sub:sat",
         "theory:Ints:sub:unsat-proof",
@@ -849,7 +857,6 @@
         "theory:Ints:abs:type-error",
         "theory:Ints:div:type-error",
         "theory:Ints:divisible:type-error",
-        "theory:Ints:divisible:unsat-proof",
         "theory:Ints:ge:type-error",
         "theory:Ints:gt:type-error",
         "theory:Ints:int:type-error",
@@ -860,7 +867,6 @@
         "theory:Ints:numeral:type-error",
         "theory:Ints:plus:type-error",
         "theory:Ints:pow:type-error",
-        "theory:Ints:pow:unsat-proof",
         "theory:Ints:sub:type-error",
         "theory:Ints:times:type-error"
       ],
@@ -889,8 +895,10 @@
       "complete_test_ids": [
         "theory:Reals:decimal:boundary",
         "theory:Reals:decimal:sat",
+        "theory:Reals:decimal:unsat-proof",
         "theory:Reals:div:boundary",
         "theory:Reals:div:sat",
+        "theory:Reals:div:unsat-proof",
         "theory:Reals:ge:boundary",
         "theory:Reals:ge:sat",
         "theory:Reals:ge:unsat-proof",
@@ -924,9 +932,7 @@
       ],
       "red_obligation_ids": [
         "theory:Reals:decimal:type-error",
-        "theory:Reals:decimal:unsat-proof",
         "theory:Reals:div:type-error",
-        "theory:Reals:div:unsat-proof",
         "theory:Reals:ge:type-error",
         "theory:Reals:gt:type-error",
         "theory:Reals:le:type-error",
@@ -961,6 +967,7 @@
       "complete_test_ids": [
         "theory:Reals_Ints:is-int:boundary",
         "theory:Reals_Ints:is-int:sat",
+        "theory:Reals_Ints:is-int:unsat-proof",
         "theory:Reals_Ints:to-int:boundary",
         "theory:Reals_Ints:to-int:sat",
         "theory:Reals_Ints:to-int:unsat-proof",
@@ -970,7 +977,6 @@
       ],
       "red_obligation_ids": [
         "theory:Reals_Ints:is-int:type-error",
-        "theory:Reals_Ints:is-int:unsat-proof",
         "theory:Reals_Ints:to-int:type-error",
         "theory:Reals_Ints:to-real:type-error"
       ],
@@ -1663,35 +1669,47 @@
       "item": "Datatypes",
       "class": "SMT-LIB 2.7",
       "parsed": "implemented",
-      "translated": "parse_only",
-      "solved": "parse_only",
-      "reconstructed": "unsupported_diagnostic",
+      "translated": "implemented",
+      "solved": "implemented",
+      "reconstructed": "implemented",
       "tested": "implemented",
-      "evidence": "SmtLib_Parser typed AST parser represents SMT-LIB datatype declarations; conformance cases all_simple_datatype_typecheck, all_recursive_datatype_type_error, all_mutual_datatype_type_error, and all_parametric_datatype_type_error cover constructor/selector/tester embeddings and exact unsupported diagnostics; Z3_Proof.TH_LEMMA_ADVANCED gates datatype/dt th-lemma replay with a versioned proof-format diagnostic.",
-      "notes": "External SMT-LIB datatype declarations are parse/typecheck embeddings. Recursive, mutual, and parametric datatype declarations remain explicit diagnostics in the legacy benchmark parser. Z3 datatype th-lemma replay is explicitly unsupported until constructor/selector/tester certificate evidence is available.",
+      "evidence": "SmtLib_Parser typed AST parser represents SMT-LIB datatype declarations; conformance cases cover constructor/selector/tester embeddings; SmtDatatypeProve and Z3_ProofReplay check datatype th-lemma and datatype rewrite replay from TypeBase facts.",
+      "notes": "Datatype replay checks constructor disjointness, injectivity, selectors, testers, exhaustiveness and acyclicity for supported TypeBase-backed datatype families.",
       "test_ids": [
-        "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#all_simple_datatype_typecheck"
+        "source:src/HolSmt/tools/conformance-corpus/v1/manifest.json#all_simple_datatype_typecheck",
+        "source:src/HolSmt/selftest.sml#dt1_CASE foo f b z = f",
+        "source:src/HolSmt/Unittest.sml#datatype_prove harvest disjointness rung",
+        "source:src/HolSmt/selftest.sml#h::l <> l"
       ],
       "last_verified_by": "coverage_manifest.json",
-      "diagnostic_test_ids": [
-        "source:src/HolSmt/Unittest.sml#theory=datatype"
-      ],
-      "current_status": "unsupported_diagnostic",
+      "diagnostic_test_ids": [],
+      "current_status": "implemented",
       "complete_test_ids": [
+        "command:datatypes:equality-chain",
+        "command:datatypes:match-default-variable",
+        "command:datatypes:match-nested-branch",
+        "command:datatypes:match-simple",
         "command:datatypes:mutual-tree-forest",
         "command:datatypes:parametric-box",
+        "command:datatypes:parametric-two-instances",
         "command:datatypes:recursive-list",
+        "command:datatypes:selector-misapplication-sat",
         "command:datatypes:simple-enum",
+        "theory:Datatypes:constructor-disjointness-replay",
         "theory:Datatypes:mutual-datatypes",
         "theory:Datatypes:parametric-datatype",
         "theory:Datatypes:recursive-datatype",
-        "theory:Datatypes:simple-constructors-selectors-testers"
+        "theory:Datatypes:selector-theorem-replay",
+        "theory:Datatypes:simple-constructors-selectors-testers",
+        "theory:Datatypes:symbolic-acyclicity",
+        "theory:Datatypes:symbolic-constructor-injectivity",
+        "theory:Datatypes:symbolic-mutual-family",
+        "theory:Datatypes:symbolic-parametric-instance",
+        "theory:Datatypes:symbolic-selector-constructor",
+        "theory:Datatypes:symbolic-tester-exhaustiveness"
       ],
-      "red_obligation_ids": [
-        "theory:Datatypes:constructor-disjointness-replay",
-        "theory:Datatypes:selector-theorem-replay"
-      ],
-      "complete_required_status": "red"
+      "red_obligation_ids": [],
+      "complete_required_status": "reconstructed"
     },
     {
       "item": "Sequences, sets, bags",
@@ -2756,8 +2774,8 @@
       "solved": "not_applicable",
       "reconstructed": "unsupported_diagnostic",
       "tested": "implemented",
-      "evidence": "Z3_Proof.TH_LEMMA_ADVANCED, Z3_ProofParser indexed metadata preservation for fp/fpa, seq, string/str, regexp/regex/re, and datatype/dt labels, Z3_ProofReplay proof-format diagnostics, and src/HolSmt/Unittest.sml z3_th_lemma_advanced_unsupported_diagnostic. Nonlinear arithmetic th-lemmas route through the arithmetic replay ladder.",
-      "notes": "Non-arithmetic advanced theory lemmas fail at replay with Z3 version, theory, subkind, proof indices, conclusion, and an explicit proof-format limitation instead of using an oracle or falling through to an unknown-rule error.",
+      "evidence": "Z3_Proof.TH_LEMMA_ADVANCED, Z3_ProofParser indexed metadata preservation for fp/fpa, seq, string/str, and regexp/regex/re labels, Z3_ProofReplay proof-format diagnostics, and src/HolSmt/Unittest.sml z3_th_lemma_advanced_unsupported_diagnostic. Nonlinear arithmetic th-lemmas route through the arithmetic replay ladder.",
+      "notes": "Non-arithmetic advanced theory lemmas fail at replay with Z3 version, theory, subkind, proof indices, conclusion, and an explicit proof-format limitation instead of using an oracle or falling through to an unknown-rule error. Datatype th-lemmas are tracked by the Datatypes theory row.",
       "test_ids": [
         "source:src/HolSmt/Unittest.sml#z3_th_lemma_advanced_unsupported_diagnostic"
       ],
@@ -2766,12 +2784,8 @@
         "source:src/HolSmt/Unittest.sml#proof-format limitation"
       ],
       "current_status": "unsupported_diagnostic",
-      "complete_test_ids": [
-        "proof-rule:th-lemma-basic",
-        "proof-rule:th-lemma-nonlinear-arith"
-      ],
+      "complete_test_ids": [],
       "red_obligation_ids": [
-        "proof-rule:th-lemma-datatype",
         "proof-rule:th-lemma-fp",
         "proof-rule:th-lemma-regexp",
         "proof-rule:th-lemma-seq",
@@ -3043,7 +3057,7 @@
       "notes": "HOL translation coverage, not official SMT-LIB tuple syntax.",
       "test_ids": [
         "source:src/HolSmt/selftest.sml#(* tuples, FST, SND *)",
-        "source:src/HolSmt/Unittest.sml#tuple-selector-current-uf",
+        "source:src/HolSmt/Unittest.sml#tuple-selector-native-dt",
         "source:src/HolSmt/Unittest.sml#pair selector simplification validation"
       ],
       "last_verified_by": "coverage_manifest.json",
@@ -3111,7 +3125,8 @@
       "notes": "Does not imply SMT-LIB declare-datatype command support.",
       "test_ids": [
         "source:src/HolSmt/selftest.sml#Hol_datatype `dt1 = foo | bar | baz`",
-        "source:src/HolSmt/Unittest.sml#datatype-constructor-current-uf"
+        "source:src/HolSmt/selftest.sml#dtConsF t f <> f",
+        "source:src/HolSmt/Unittest.sml#datatype-constructor-native-dt"
       ],
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [],
@@ -3206,10 +3221,10 @@
       "last_verified_by": "coverage_manifest.json",
       "diagnostic_test_ids": [],
       "current_status": "implemented",
-      "complete_test_ids": [
+      "complete_test_ids": [],
+      "red_obligation_ids": [
         "soundness-audit:soundness-oracle-tag-boundary"
       ],
-      "red_obligation_ids": [],
       "complete_required_status": "not_applicable",
       "outside_complete_scope_reason": "non-SMT-LIB extension"
     },

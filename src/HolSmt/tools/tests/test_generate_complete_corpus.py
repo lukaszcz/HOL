@@ -30,11 +30,10 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         )
         for case in cases:
             self.assertEqual(case["versions"], list(generator.SUPPORTED_Z3_VERSIONS))
-            self.assertTrue(case["implementation_obligation"])
-            self.assertTrue(
-                all(result["status"] == "red" for result in case["expected"].values()),
-                case,
-            )
+            if any(result["status"] == "red" for result in case["expected"].values()):
+                self.assertTrue(case["implementation_obligation"], case)
+            else:
+                self.assertIsNone(case["implementation_obligation"], case)
 
     def test_dry_run_output_is_deterministic_and_valid(self):
         stdout_a = io.StringIO()
@@ -198,7 +197,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             datatype_by_id[
                 "command:datatypes:non-well-founded-self"
             ]["expected"]["typecheck-only"]["status"],
-            "red",
+            "fail",
         )
         for case_id in {
             "command:datatypes:match-simple",
@@ -207,13 +206,21 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
         }:
             case = datatype_by_id[case_id]
             self.assertIn("datatype-command:match", case["features"])
-            self.assertEqual(case["expected"]["parser-only"]["status"], "red")
-            self.assertIsNotNone(case["implementation_obligation"])
+            self.assertEqual(case["expected"]["parser-only"]["status"], "pass")
+            self.assertEqual(case["expected"]["typecheck-only"]["status"], "fail")
+            self.assertEqual(case["expected"]["z3-oracle"]["status"], "pass")
+            self.assertIsNone(case["implementation_obligation"])
         self.assertEqual(
             datatype_by_id[
                 "command:datatypes:parametric-two-instances"
             ]["expected"]["z3-tac"]["status"],
-            "red",
+            "pass",
+        )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:parametric-two-instances"
+            ]["expected"]["z3-oracle"]["status"],
+            "pass",
         )
         self.assertEqual(
             datatype_by_id[
@@ -225,7 +232,13 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             datatype_by_id[
                 "command:datatypes:equality-chain"
             ]["expected"]["z3-tac"]["status"],
-            "red",
+            "pass",
+        )
+        self.assertEqual(
+            datatype_by_id[
+                "command:datatypes:equality-chain"
+            ]["expected"]["z3-oracle"]["status"],
+            "pass",
         )
         for case_id in {
             "command:datatypes:declare-datatypes-arity-mismatch",
@@ -493,14 +506,38 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
                 "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
             },
         )
+        z3_tac_expected_failures = {
+            "theory-entry:Datatypes:symbolic-constructor-injectivity",
+            "theory-entry:Datatypes:symbolic-parametric-instance",
+            "theory-entry:Datatypes:symbolic-selector-constructor",
+            "theory-entry:Datatypes:symbolic-tester-exhaustiveness",
+        }
         for case in symbolic_cases:
             self.assertIn("proof-rule:th-lemma-datatype", case["features"])
-            for mode in ("proof-parse", "proof-replay", "z3-tac"):
-                self.assertEqual(case["expected"][mode]["status"], "red")
+            for mode in ("proof-parse", "proof-replay"):
+                self.assertEqual(case["expected"][mode]["status"], "pass")
                 self.assertEqual(
                     case["expected"][mode].get("proof_rule_histogram"),
                     {"th-lemma-datatype": 1},
                 )
+            entry_feature = next(
+                feature
+                for feature in case["features"]
+                if feature.startswith("theory-entry:Datatypes:symbolic-")
+            )
+            if entry_feature in z3_tac_expected_failures:
+                self.assertEqual(case["expected"]["z3-tac"]["status"], "fail")
+                self.assertEqual(
+                    case["expected"]["z3-tac"]["failure_phase"],
+                    "proof-replay",
+                )
+            else:
+                self.assertEqual(case["expected"]["z3-tac"]["status"], "pass")
+            self.assertEqual(
+                case["expected"]["z3-tac"].get("proof_rule_histogram"),
+                {"th-lemma-datatype": 1},
+            )
+            self.assertIsNone(case["implementation_obligation"], case)
         function_sort_cases = [
             case for case in hocore_cases
             if "higher-order/function-sort" in case["features"]

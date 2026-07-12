@@ -52,6 +52,21 @@ it through `--z3 2.19.1:PATH`.
 
 ## Local Source Build Notes
 
+Datatype replay coverage is part of the checked proof matrix.  The datatype
+rows are considered passing only when the verifier sees `th-lemma-datatype`
+proof-rule evidence, `datatype:<none>` theory-subkind evidence, and the
+HolSmt selftest goals for constructor disjointness, injectivity, selectors,
+testers, exhaustiveness, acyclicity, mutual families, option constructor
+distinctness and lists all complete without oracle tags.  Record and HOL case
+syntax coverage remains in the broader selftest suite, but those frontend
+forms are not part of the checked datatype proof-replay matrix.
+
+```text
+Datatype th-lemma parser/replay     required by record_z3_proof_corpus.py
+Datatype symbolic proof shapes      required for Z3 4.11.2 corpus recordings
+Datatype native selftests           required by src/HolSmt/selftest.exe
+```
+
 On 2026-06-30 and 2026-07-01, the following source-built Z3 versions were
 checked on `Linux-aarch64` using versioned binaries in `~/.local/bin`:
 

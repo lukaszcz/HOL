@@ -1056,12 +1056,13 @@ local
           parse = true,
           typecheck = true,
           translate = true,
-          replay = false,
+          replay = true,
           notes =
             "SMT-LIB datatype commands are parsed/typechecked; HOL TypeBase " ^
-            "datatypes are emitted as native SMT-LIB Datatypes.",
+            "datatypes are emitted as native SMT-LIB Datatypes with checked " ^
+            "constructor, selector, tester, exhaustiveness, and acyclicity replay.",
           proof_obligation =
-            "A checked soundness argument must connect constructor disjointness, injectivity, selectors, testers, and recursion axioms before native replay support."
+            "Replay is checked for TypeBase-backed constructor disjointness, injectivity, selectors, testers, exhaustiveness, and acyclicity; unsupported certificate shapes remain explicit diagnostics."
         }
       val fp_record =
         HOLTheoryEncoding {
