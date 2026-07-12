@@ -207,7 +207,7 @@ class CompleteCorpusGeneratorTests(unittest.TestCase):
             case = datatype_by_id[case_id]
             self.assertIn("datatype-command:match", case["features"])
             self.assertEqual(case["expected"]["parser-only"]["status"], "pass")
-            self.assertEqual(case["expected"]["typecheck-only"]["status"], "fail")
+            self.assertEqual(case["expected"]["typecheck-only"]["status"], "pass")
             self.assertEqual(case["expected"]["z3-oracle"]["status"], "pass")
             self.assertIsNone(case["implementation_obligation"])
         self.assertEqual(
