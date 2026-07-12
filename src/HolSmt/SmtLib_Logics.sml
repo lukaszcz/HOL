@@ -339,6 +339,35 @@ in
   structure QF_UFLIRA = QF_LIRA
   structure QF_UFNIRA = QF_LIRA
 
+  structure QF_DT = QF_UF
+  structure QF_UFDT = QF_UF
+  structure QF_UFDTLIA = QF_UFLIA
+  structure QF_UFDTLIRA = QF_UFLIRA
+  structure QF_UFDTNIA = QF_UFLIA
+  structure UFDT = UF
+  structure UFDTLIA = UFLIA
+  structure UFDTLIRA = QF_UFLIRA
+  structure UFDTNIA = UFNIA
+  structure UFDTNIRA = QF_UFNIRA
+  structure AUFDTLIA = AUFLIA
+  structure AUFDTLIRA = AUFLIRA
+  structure AUFDTNIRA = AUFNIRA
+  structure UFBVDT = UFBV
+  structure AUFBVDT = QF_AUFBV
+  structure AUFBVDTLIA = QF_AUFBV
+  structure AUFBVDTNIA = QF_AUFBV
+
+  structure AUFBVDTNIRA =
+  struct
+    val tydict = union_dicts [Core.tydict, Reals_Ints.tydict,
+      Fixed_Size_BitVectors.tydict, ArraysEx.tydict]
+    val tmdict = union_dicts [Core.tmdict, Reals_Ints.tmdict,
+      Fixed_Size_BitVectors.tmdict, ArraysEx.tmdict, BV_extension_tmdict]
+    val metadata = union_metadata [Core.metadata, Reals_Ints.metadata,
+      Fixed_Size_BitVectors.metadata, ArraysEx.metadata,
+      BV_extension_metadata]
+  end
+
   (* structural term/type helpers shared via Library (see Library.sml) *)
   val type_contains = Library.type_contains
   val type_contains_int = Library.type_contains_int
@@ -382,7 +411,8 @@ in
     reals : bool,
     bitvectors : bool,
     strings : bool,
-    floatingpoint : bool
+    floatingpoint : bool,
+    datatypes : bool
   }
 
   fun logic_stem logic =
@@ -408,7 +438,7 @@ in
   fun logic_fragment_of_logic "ALL" = {
       quantifiers = true, uninterpreted = true, arrays = true,
       arith = NONLINEAR, ints = true, reals = true, bitvectors = true,
-      strings = true, floatingpoint = true
+      strings = true, floatingpoint = true, datatypes = true
     }
     | logic_fragment_of_logic logic =
     let
@@ -416,6 +446,7 @@ in
       val arith = arith_fragment_of_stem stem
       val strings = String.isSubstring "S" stem
       val floatingpoint = String.isSubstring "FP" stem
+      val datatypes = String.isSubstring "DT" stem
       val bitvectors = String.isSubstring "BV" stem orelse floatingpoint
       val ints =
         strings orelse floatingpoint orelse
@@ -441,7 +472,8 @@ in
       reals = reals,
       bitvectors = bitvectors,
       strings = strings,
-      floatingpoint = floatingpoint
+      floatingpoint = floatingpoint,
+      datatypes = datatypes
     } end
 
   fun is_linear_arith_logic logic =
@@ -492,6 +524,43 @@ in
     orelse symbol_name_is_prefix "fp." tm
     orelse symbol_name_is_prefix "to_fp" tm
 
+  fun free_datatype_tyinfo tyinfo =
+    not (List.null (TypeBasePure.constructors_of tyinfo)) andalso
+    Lib.can TypeBasePure.nchotomy_of tyinfo andalso
+    Lib.can TypeBasePure.case_def_of tyinfo andalso
+    Lib.can TypeBasePure.induction_of tyinfo
+
+  fun type_is_builtin_sort ty =
+    Type.compare (ty, Type.bool) = EQUAL orelse
+    Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
+    Type.compare (ty, numSyntax.num) = EQUAL orelse
+    Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
+    Type.compare (ty, realSyntax.real_ty) = EQUAL orelse
+    Type.compare (ty, stringSyntax.string_ty) = EQUAL orelse
+    Lib.can fcpSyntax.dest_numeric_type ty orelse
+    (case Lib.total Type.dest_type ty of
+       SOME ("itself", [_]) => true
+     | _ => false) orelse
+    Lib.can listSyntax.dest_list_type ty orelse
+    Lib.can Type.dom_rng ty orelse
+    Lib.can wordsSyntax.dest_word_type ty
+
+  fun type_is_typebase_datatype ty =
+    not (Type.is_vartype ty) andalso
+    not (type_is_builtin_sort ty) andalso
+    (case TypeBase.fetch ty of
+       SOME tyinfo => free_datatype_tyinfo tyinfo
+     | NONE => false)
+    handle Feedback.HOL_ERR _ => false
+
+  fun type_is_datatype_sort ty =
+    (Type.is_vartype ty andalso
+     String.isPrefix "'smtlib_dt_" (Type.dest_vartype ty)) orelse
+    type_is_typebase_datatype ty
+
+  fun term_mentions_datatype_sort tm =
+    term_type_contains type_is_datatype_sort tm
+
   fun term_mentions_string_theory tm =
     term_type_contains type_contains_string tm
     orelse term_mentions_reglan tm
@@ -513,7 +582,8 @@ in
         in
           not (String.isPrefix "'smtlib_FloatingPoint" name) andalso
           not (String.isPrefix "'smtlib_RoundingMode" name) andalso
-          not (String.isPrefix "'smtlib_RegLan" name)
+          not (String.isPrefix "'smtlib_RegLan" name) andalso
+          not (String.isPrefix "'smtlib_dt_" name)
         end)
       ty
 
@@ -619,6 +689,7 @@ in
       val has_real = some_subterm (term_type_contains type_contains_real)
       val has_word = some_subterm (term_type_contains type_contains_word)
       val has_string = some_subterm (term_type_contains type_contains_string)
+      val has_datatype = some_subterm term_mentions_datatype_sort
       fun qf_violation () =
         not (#quantifiers fragment) andalso List.exists has_quantifier assertions
       fun nonlinear_violation () =
@@ -656,6 +727,8 @@ in
       fun floatingpoint_sort_violation () =
         not (#floatingpoint fragment) andalso
         some_subterm term_mentions_floatingpoint
+      fun datatype_sort_violation () =
+        not (#datatypes fragment) andalso has_datatype
       fun free_sort_violation () =
         not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
         some_subterm (term_type_contains type_contains_free_sort)
@@ -684,6 +757,8 @@ in
         SOME ("string term sort is outside logic fragment " ^ logic)
       else if floatingpoint_sort_violation () then
         SOME ("floating-point term sort is outside logic fragment " ^ logic)
+      else if datatype_sort_violation () then
+        SOME ("datatype sort is outside logic fragment " ^ logic)
       else if free_sort_violation () then
         SOME ("free sort is outside logic fragment " ^ logic)
       else
@@ -726,6 +801,20 @@ in
       (AUFLIRA.tydict, AUFLIRA.tmdict)
     | "AUFNIRA" =>
       (AUFNIRA.tydict, AUFNIRA.tmdict)
+    | "AUFDTLIA" =>
+      (AUFDTLIA.tydict, AUFDTLIA.tmdict)
+    | "AUFDTLIRA" =>
+      (AUFDTLIRA.tydict, AUFDTLIRA.tmdict)
+    | "AUFDTNIRA" =>
+      (AUFDTNIRA.tydict, AUFDTNIRA.tmdict)
+    | "AUFBVDT" =>
+      (AUFBVDT.tydict, AUFBVDT.tmdict)
+    | "AUFBVDTLIA" =>
+      (AUFBVDTLIA.tydict, AUFBVDTLIA.tmdict)
+    | "AUFBVDTNIA" =>
+      (AUFBVDTNIA.tydict, AUFBVDTNIA.tmdict)
+    | "AUFBVDTNIRA" =>
+      (AUFBVDTNIRA.tydict, AUFBVDTNIRA.tmdict)
     | "BV" =>
       (BV.tydict, BV.tmdict)
     | "LIA" =>
@@ -740,8 +829,20 @@ in
       (UF.tydict, UF.tmdict)
     | "UFBV" =>
       (UFBV.tydict, UFBV.tmdict)
+    | "UFBVDT" =>
+      (UFBVDT.tydict, UFBVDT.tmdict)
     | "UFIDL" =>
       (UFIDL.tydict, UFIDL.tmdict)
+    | "UFDT" =>
+      (UFDT.tydict, UFDT.tmdict)
+    | "UFDTLIA" =>
+      (UFDTLIA.tydict, UFDTLIA.tmdict)
+    | "UFDTLIRA" =>
+      (UFDTLIRA.tydict, UFDTLIRA.tmdict)
+    | "UFDTNIA" =>
+      (UFDTNIA.tydict, UFDTNIA.tmdict)
+    | "UFDTNIRA" =>
+      (UFDTNIRA.tydict, UFDTNIRA.tmdict)
     | "UFLIA" =>
       (UFLIA.tydict, UFLIA.tmdict)
     | "QF_ABV" =>
@@ -768,6 +869,8 @@ in
       (QF_AX.tydict, QF_AX.tmdict)
     | "QF_BV" =>
       (QF_BV.tydict, QF_BV.tmdict)
+    | "QF_DT" =>
+      (QF_DT.tydict, QF_DT.tmdict)
     | "QF_IDL" =>
       (QF_IDL.tydict, QF_IDL.tmdict)
     | "QF_LIA" =>
@@ -788,6 +891,14 @@ in
       (QF_UF.tydict, QF_UF.tmdict)
     | "QF_UFBV" =>
       (QF_UFBV.tydict, QF_UFBV.tmdict)
+    | "QF_UFDT" =>
+      (QF_UFDT.tydict, QF_UFDT.tmdict)
+    | "QF_UFDTLIA" =>
+      (QF_UFDTLIA.tydict, QF_UFDTLIA.tmdict)
+    | "QF_UFDTLIRA" =>
+      (QF_UFDTLIRA.tydict, QF_UFDTLIRA.tmdict)
+    | "QF_UFDTNIA" =>
+      (QF_UFDTNIA.tydict, QF_UFDTNIA.tmdict)
     | "QF_UFIDL" =>
       (QF_UFIDL.tydict, QF_UFIDL.tmdict)
     | "QF_UFLIA" =>
@@ -829,6 +940,13 @@ in
     | "AUFLIA" => AUFLIA.metadata
     | "AUFLIRA" => AUFLIRA.metadata
     | "AUFNIRA" => AUFNIRA.metadata
+    | "AUFDTLIA" => AUFDTLIA.metadata
+    | "AUFDTLIRA" => AUFDTLIRA.metadata
+    | "AUFDTNIRA" => AUFDTNIRA.metadata
+    | "AUFBVDT" => AUFBVDT.metadata
+    | "AUFBVDTLIA" => AUFBVDTLIA.metadata
+    | "AUFBVDTNIA" => AUFBVDTNIA.metadata
+    | "AUFBVDTNIRA" => AUFBVDTNIRA.metadata
     | "BV" => BV.metadata
     | "LIA" => LIA.metadata
     | "LRA" => LRA.metadata
@@ -836,7 +954,13 @@ in
     | "NRA" => NRA.metadata
     | "UF" => UF.metadata
     | "UFBV" => UFBV.metadata
+    | "UFBVDT" => UFBVDT.metadata
     | "UFIDL" => UFIDL.metadata
+    | "UFDT" => UFDT.metadata
+    | "UFDTLIA" => UFDTLIA.metadata
+    | "UFDTLIRA" => UFDTLIRA.metadata
+    | "UFDTNIA" => UFDTNIA.metadata
+    | "UFDTNIRA" => UFDTNIRA.metadata
     | "UFLIA" => UFLIA.metadata
     | "QF_ABV" => QF_ABV.metadata
     | "QF_ALIA" => QF_ALIA.metadata
@@ -850,6 +974,7 @@ in
     | "QF_AUFNIRA" => QF_AUFNIRA.metadata
     | "QF_AX" => QF_AX.metadata
     | "QF_BV" => QF_BV.metadata
+    | "QF_DT" => QF_DT.metadata
     | "QF_IDL" => QF_IDL.metadata
     | "QF_LIA" => QF_LIA.metadata
     | "QF_LIRA" => QF_LIRA.metadata
@@ -860,6 +985,10 @@ in
     | "QF_RDL" => QF_RDL.metadata
     | "QF_UF" => QF_UF.metadata
     | "QF_UFBV" => QF_UFBV.metadata
+    | "QF_UFDT" => QF_UFDT.metadata
+    | "QF_UFDTLIA" => QF_UFDTLIA.metadata
+    | "QF_UFDTLIRA" => QF_UFDTLIRA.metadata
+    | "QF_UFDTNIA" => QF_UFDTNIA.metadata
     | "QF_UFIDL" => QF_UFIDL.metadata
     | "QF_UFLIA" => QF_UFLIA.metadata
     | "QF_UFLIRA" => QF_UFLIRA.metadata

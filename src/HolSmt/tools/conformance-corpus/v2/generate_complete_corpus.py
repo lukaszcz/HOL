@@ -1012,10 +1012,10 @@ COMMAND_GROUPS: tuple[CommandGroup, ...] = (
     CommandGroup(
         slug="declare-datatype-declare-datatypes",
         commands=("declare-datatype", "declare-datatypes"),
-        positive_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(check-sat)\n",
-        negative_script="(set-logic QF_UF)\n(declare-datatypes ((Tree 1)) (((node (left Tree) (right Tree)))))\n",
-        state_script="(set-logic QF_UF)\n(declare-datatypes ((Color 0)) (((red) (blue))))\n(declare-const c Color)\n(check-sat)\n",
-        reconstruction_script="(set-logic QF_UF)\n(declare-datatype Color ((red) (blue)))\n(assert (= red blue))\n(check-sat)\n",
+        positive_script="(set-logic QF_DT)\n(declare-datatype Color ((red) (blue)))\n(check-sat)\n",
+        negative_script="(set-logic QF_DT)\n(declare-datatypes ((Tree 1)) (((node (left Tree) (right Tree)))))\n",
+        state_script="(set-logic QF_DT)\n(declare-datatypes ((Color 0)) (((red) (blue))))\n(declare-const c Color)\n(check-sat)\n",
+        reconstruction_script="(set-logic QF_DT)\n(declare-datatype Color ((red) (blue)))\n(assert (= red blue))\n(check-sat)\n",
         negative_diagnostic="declare-datatypes arity for 'Tree'",
         negative_phase="typecheck",
         reconstruction_applies=True,
@@ -1409,7 +1409,9 @@ def command_case(
     entry = manifest_entry(
         case_id=case_id,
         file=deterministic_case_file("command", case_id),
-        logic="QF_UF",
+        logic="QF_DT"
+        if group.slug == "declare-datatype-declare-datatypes"
+        else "QF_UF",
         standard="SMT-LIB-2.7",
         row_class="command",
         features=command_features(group) + [f"command-case:{kind}"],
@@ -3773,7 +3775,6 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype tester "
                 "exhaustiveness is incomplete"
             ),
-            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3819,7 +3820,6 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype constructor "
                 "injectivity is incomplete"
             ),
-            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3861,7 +3861,6 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype "
                 "selector/constructor interaction is incomplete"
             ),
-            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -3941,7 +3940,6 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
                 "checked Z3_TAC reconstruction for datatype "
                 "parametric-instance reasoning is incomplete"
             ),
-            z3_tac_status="fail",
         ),
         features=(
             "theory:Datatypes",
@@ -4603,6 +4601,11 @@ def logic_fragment_violation_script(logic: str) -> str:
                 "(declare-fun outside_fragment (Int) Int)",
                 "(assert (= (outside_fragment 0) 0))",
             )
+        if "BV" in stem:
+            return script(
+                "(declare-const outside_fragment String)",
+                "(assert (= outside_fragment \"\"))",
+            )
         return script(
             "(declare-const outside_fragment (_ BitVec 1))",
             "(assert (= outside_fragment #b0))",
@@ -4632,6 +4635,8 @@ def logic_fragment_violation_diagnostic(logic: str) -> str:
     elif stem.endswith("NIRA"):
         if "UF" not in stem and not stem.startswith("A"):
             prefix = "uninterpreted function application"
+        elif "BV" in stem:
+            prefix = "string term sort"
         else:
             prefix = "bit-vector term sort"
     elif "BV" in stem or "FP" in stem:
@@ -4639,6 +4644,48 @@ def logic_fragment_violation_diagnostic(logic: str) -> str:
     else:
         prefix = "integer term sort"
     return f"{prefix} is outside logic fragment {logic}"
+
+
+def datatype_fragment_violation_script() -> str:
+    return (
+        "(set-logic QF_UF)\n"
+        "(declare-datatype D ((mkD)))\n"
+        "(declare-const d D)\n"
+        "(assert (= d mkD))\n"
+        "(check-sat)\n"
+    )
+
+
+def datatype_fragment_violation_case(logic: str) -> GeneratedCase:
+    case_id = f"logic:{logic}:datatype-fragment-violation"
+    diagnostic = "datatype sort is outside logic fragment QF_UF"
+    entry = manifest_entry(
+        case_id=case_id,
+        file=deterministic_case_file("logic", case_id),
+        logic="QF_UF",
+        standard="SMT-LIB-2.7",
+        row_class="logic",
+        features=logic_features(logic, "datatype-fragment-violation")
+        + ["logic-fragment:datatypes"],
+        modes=("parser-only", "typecheck-only", "z3-tac"),
+        versions=SUPPORTED_Z3_VERSIONS,
+        expected={
+            "parser-only": expected_result("pass"),
+            "typecheck-only": expected_result(
+                "fail",
+                diagnostic=diagnostic,
+                failure_phase="typecheck",
+            ),
+            "z3-tac": expected_result(
+                "fail",
+                diagnostic=diagnostic,
+                failure_phase="typecheck",
+            ),
+        },
+        implementation_obligation=None,
+        source=logic_source(logic),
+    )
+    return GeneratedCase(entry=entry, script=datatype_fragment_violation_script())
 
 
 def logic_nonlinear_replay_script(logic: str) -> str:
@@ -4877,6 +4924,10 @@ def logic_packet_cases(
                 },
             )
         )
+
+        stem = logic.removeprefix("QF_")
+        if "DT" in stem:
+            cases.append(datatype_fragment_violation_case(logic))
 
         cases.append(
             logic_case(

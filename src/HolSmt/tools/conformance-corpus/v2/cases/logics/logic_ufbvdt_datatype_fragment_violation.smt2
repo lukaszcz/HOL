@@ -1,0 +1,5 @@
+(set-logic QF_UF)
+(declare-datatype D ((mkD)))
+(declare-const d D)
+(assert (= d mkD))
+(check-sat)

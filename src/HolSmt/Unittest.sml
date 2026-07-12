@@ -1908,6 +1908,12 @@ fun smtlib_logic_fragment_diagnostics () =
       in
         SmtLib_Logics.fragment_violation_diagnostic logic (#assertions state)
       end
+    fun fragment_with_options options logic text =
+      let
+        val state = parse_smtlib_state_with_options options text
+      in
+        SmtLib_Logics.fragment_violation_diagnostic logic (#assertions state)
+      end
     fun expect_fragment label logic text expected =
       case fragment logic text of
         SOME msg =>
@@ -1916,6 +1922,11 @@ fun smtlib_logic_fragment_diagnostics () =
       | NONE => die (label ^ " fragment violation was not detected")
     fun expect_no_fragment label logic text =
       case fragment logic text of
+        SOME msg =>
+          die (label ^ " reported a spurious fragment violation: " ^ msg)
+      | NONE => ()
+    fun expect_no_fragment_with_options label options logic text =
+      case fragment_with_options options logic text of
         SOME msg =>
           die (label ^ " reported a spurious fragment violation: " ^ msg)
       | NONE => ()
@@ -2029,6 +2040,23 @@ fun smtlib_logic_fragment_diagnostics () =
        "(declare-sort U 0)\n" ^
        "(declare-const u U)\n" ^
        "(assert (= u u))\n");
+    expect_fragment "datatype sort unavailable" "QF_UF"
+      (script_for_checker "ALL"
+       "(declare-datatype D ((mkD)))\n" ^
+       "(declare-const d D)\n" ^
+       "(assert (= d mkD))\n")
+      "datatype sort is outside logic fragment QF_UF";
+    expect_no_fragment "placeholder datatype sort available" "QF_DT"
+      (script "QF_DT"
+       "(declare-datatype D ((mkD)))\n" ^
+       "(declare-const d D)\n" ^
+       "(assert (= d mkD))\n");
+    expect_no_fragment_with_options "TypeBase datatype sort available"
+      {dict_logic = NONE, elaborate_datatypes = true} "QF_DT"
+      (script "QF_DT"
+       "(declare-datatype E ((mkE)))\n" ^
+       "(declare-const e E)\n" ^
+       "(assert (= e mkE))\n");
     expect_fragment "pure bit-vector integer-only term" "UFBV"
       (script "UFBV"
        "(declare-const outside_fragment Int)\n" ^
@@ -2428,13 +2456,17 @@ fun smtlib_scoped_logic_dictionary_success () =
 let
   val logics = [
     "ALL", "ALIA", "ALIRA", "ANIA", "ANIRA", "AUFLIA", "AUFLIRA",
-    "AUFNIRA", "BV", "LIA", "LRA", "NIA", "NRA", "UF",
-    "UFBV", "UFIDL", "UFLIA", "UFLRA", "UFNIA", "UFNRA",
+    "AUFNIRA", "AUFDTLIA", "AUFDTLIRA", "AUFDTNIRA", "AUFBVDT",
+    "AUFBVDTLIA", "AUFBVDTNIA", "AUFBVDTNIRA", "BV", "LIA", "LRA",
+    "NIA", "NRA", "UF", "UFBV", "UFBVDT", "UFIDL", "UFDT",
+    "UFDTLIA", "UFDTLIRA", "UFDTNIA", "UFDTNIRA", "UFLIA", "UFLRA",
+    "UFNIA", "UFNRA",
     "QF_ABV", "QF_ALIA", "QF_ALRA", "QF_ANIA", "QF_ANRA",
     "QF_AUFBV", "QF_AUFLIA", "QF_AUFLIRA", "QF_AUFNIA",
-    "QF_AUFNIRA", "QF_AX", "QF_BV", "QF_IDL", "QF_LIA",
+    "QF_AUFNIRA", "QF_AX", "QF_BV", "QF_DT", "QF_IDL", "QF_LIA",
     "QF_LIRA", "QF_LRA", "QF_NIA", "QF_NIRA", "QF_NRA",
-    "QF_RDL", "QF_UF", "QF_UFBV", "QF_UFIDL", "QF_UFLIA",
+    "QF_RDL", "QF_UF", "QF_UFBV", "QF_UFDT", "QF_UFDTLIA",
+    "QF_UFDTLIRA", "QF_UFDTNIA", "QF_UFIDL", "QF_UFLIA",
     "QF_UFLIRA", "QF_UFLRA", "QF_UFNIRA", "QF_UFNRA",
     "QF_S", "QF_SLIA", "QF_SNIA", "QF_FP", "QF_FPBV",
     "QF_BVFP", "QF_UFFP", "QF_UFBVFP"
@@ -2450,17 +2482,22 @@ let
     let
       val _ = SmtLib_Logics.parsedicts_of_logic logic
       val metadata = SmtLib_Logics.metadata_of_logic logic
-      val _ = SmtLib_Logics.logic_fragment_of_logic logic
+      val fragment = SmtLib_Logics.logic_fragment_of_logic logic
       val was_legacy_linear =
         List.exists (fn linear_logic => logic = linear_logic)
           legacy_linear_logics
+      val has_dt = String.isSubstring "DT"
+        (if String.isPrefix "QF_" logic then String.extract (logic, 3, NONE)
+         else logic)
     in
       assert (not (List.null metadata),
         "logic metadata was empty for " ^ logic);
       assert (not was_legacy_linear orelse
               SmtLib_Logics.is_linear_arith_logic logic,
         "legacy linear-arithmetic logic no longer classified linear: " ^
-        logic)
+        logic);
+      assert (#datatypes fragment = (logic = "ALL" orelse has_dt),
+        "datatype fragment bit was wrong for " ^ logic)
     end
 in
   List.app require_logic logics
