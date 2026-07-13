@@ -30166,6 +30166,57 @@
       }
     },
     {
+      "id": "theory:Datatypes:cvc5-alethe-datatype-export",
+      "file": "cases/theories/datatypes/theory_datatypes_cvc5_alethe_datatype_export.smt2",
+      "logic": "QF_DT",
+      "standard": "SMT-LIB-2.7",
+      "class": "theory",
+      "features": [
+        "cvc5-alethe:datatype-export",
+        "theory-behavior:alethe-proof-export",
+        "theory-behavior:constructor",
+        "theory-behavior:disjointness",
+        "theory-case:unsat-proof",
+        "theory:Datatypes",
+        "upstream-blocker:cvc5-dummy-skolem"
+      ],
+      "modes": [
+        "proof-replay"
+      ],
+      "versions": [
+        "2.19.1",
+        "4.11.2",
+        "4.12.4",
+        "4.13.0",
+        "4.14.1",
+        "4.15.3"
+      ],
+      "expected": {
+        "proof-replay": {
+          "status": "red",
+          "diagnostic": "Proof unsupported by Alethe: contains operator DUMMY_SKOLEM",
+          "failure_phase": "version-drift"
+        }
+      },
+      "implementation_obligation": {
+        "files": [
+          "src/HolSmt/Alethe_ProofReplay.sml",
+          "src/HolSmt/SmtDatatypeProve.sml",
+          "src/HolSmt/tools/cvc5-version-matrix.md"
+        ],
+        "feature": "cvc5 Alethe post-processor rejects datatype skolems",
+        "test_ids": [
+          "theory:Datatypes:cvc5-alethe-datatype-export"
+        ],
+        "failure_phase": "version-drift",
+        "notes": "Repro command: printf '%s\\n' '(set-logic QF_DT)' '(set-option :produce-proofs true)' '(declare-datatypes ((Color 0)) (((red) (blue))))' '(assert (= red blue))' '(check-sat)' | $HOME/.local/bin/cvc5 --produce-proofs --dump-proofs --proof-format-mode=alethe --lang smt2 -. Expected on cvc5 1.3.4: (error \"Proof unsupported by Alethe: contains operator DUMMY_SKOLEM\"). Re-evaluate on every cvc5 bump."
+      },
+      "source": {
+        "kind": "HolSmt-internal",
+        "reference": "HolSmt D8 cvc5 Alethe datatype export blocker"
+      }
+    },
+    {
       "id": "theory:Datatypes:mutual-datatypes",
       "file": "cases/theories/datatypes/theory_datatypes_mutual_datatypes.smt2",
       "logic": "ALL",

@@ -208,6 +208,7 @@ class ScriptedCase:
     standard: str = "SMT-LIB-2.7"
     source_kind: str = "SMT-LIB-theory"
     source_reference: str = ""
+    obligation_notes: str = GENERATED_OBLIGATION_NOTES
 
 
 def slug(value: str) -> str:
@@ -2032,7 +2033,7 @@ def scripted_obligation(case: ScriptedCase, case_id: str) -> dict[str, object] |
         feature=case.implementation_feature,
         test_ids=[case_id],
         failure_phase=case.implementation_phase,
-        notes=GENERATED_OBLIGATION_NOTES,
+        notes=case.obligation_notes,
     )
 
 
@@ -3785,6 +3786,56 @@ DATATYPE_THEORY_CASES: tuple[ScriptedCase, ...] = (
         implementation_phase=None,
         logic="ALL",
         source_reference="SMT-LIB 2.7 Datatypes theory constructor disjointness",
+    ),
+    ScriptedCase(
+        slug="cvc5-alethe-datatype-export",
+        script=proof_script(
+            "QF_DT",
+            "(declare-datatypes ((Color 0)) (((red) (blue))))\n"
+            "(assert (= red blue))\n",
+        ),
+        modes=("proof-replay",),
+        expected={
+            "proof-replay": expected_result(
+                "red",
+                diagnostic=(
+                    "Proof unsupported by Alethe: contains operator "
+                    "DUMMY_SKOLEM"
+                ),
+                failure_phase="version-drift",
+            ),
+        },
+        features=(
+            "cvc5-alethe:datatype-export",
+            "theory:Datatypes",
+            "theory-behavior:alethe-proof-export",
+            "theory-behavior:constructor",
+            "theory-behavior:disjointness",
+            "theory-case:unsat-proof",
+            "upstream-blocker:cvc5-dummy-skolem",
+        ),
+        implementation_feature=(
+            "cvc5 Alethe post-processor rejects datatype skolems"
+        ),
+        implementation_files=(
+            "src/HolSmt/Alethe_ProofReplay.sml",
+            "src/HolSmt/SmtDatatypeProve.sml",
+            "src/HolSmt/tools/cvc5-version-matrix.md",
+        ),
+        implementation_phase="version-drift",
+        logic="QF_DT",
+        source_reference="HolSmt D8 cvc5 Alethe datatype export blocker",
+        source_kind="HolSmt-internal",
+        obligation_notes=(
+            "Repro command: printf '%s\\n' '(set-logic QF_DT)' "
+            "'(set-option :produce-proofs true)' "
+            "'(declare-datatypes ((Color 0)) (((red) (blue))))' "
+            "'(assert (= red blue))' '(check-sat)' | "
+            "$HOME/.local/bin/cvc5 --produce-proofs --dump-proofs "
+            "--proof-format-mode=alethe --lang smt2 -. Expected on cvc5 "
+            "1.3.4: (error \"Proof unsupported by Alethe: contains "
+            "operator DUMMY_SKOLEM\"). Re-evaluate on every cvc5 bump."
+        ),
     ),
     ScriptedCase(
         slug="selector-theorem-replay",

@@ -59,6 +59,50 @@ upstream question for `array_store_commute` under `.agent-files/reports/`
 because that proof shape appears to involve named subterms under a `choice`
 binder.
 
+## Datatype Alethe Export
+
+On 2026-07-12, datatype proof export was re-checked for the Phase-2 D8
+blocker.  The local candidates were:
+
+```text
+$HOME/.local/bin/cvc5  cvc5 1.3.4 [git f3b21c4 on branch HEAD]
+/usr/bin/cvc5          cvc5 1.1.2
+```
+
+No cvc5 binary newer than 1.3.4 was available locally.  The cvc5 `NEWS.md`
+main branch listed 1.3.4 as its latest entry at the time of this check, so no
+newer release-note evidence for an Alethe datatype export fix was found there.
+
+| Feature | Version checked | Status | Notes |
+| --- | --- | --- | --- |
+| Datatype Alethe proof export | 1.3.4 | fail | `DUMMY_SKOLEM` blocker; see command below. |
+
+cvc5 prints `unsat` followed by:
+
+```text
+(error "Proof unsupported by Alethe: contains operator DUMMY_SKOLEM")
+```
+
+Re-evaluate on every cvc5 bump.
+
+Exact repro command:
+
+```sh
+printf '%s\n' \
+  '(set-logic QF_DT)' \
+  '(set-option :produce-proofs true)' \
+  '(declare-datatypes ((Color 0)) (((red) (blue))))' \
+  '(assert (= red blue))' \
+  '(check-sat)' |
+  $HOME/.local/bin/cvc5 --produce-proofs --dump-proofs \
+    --proof-format-mode=alethe --lang smt2 -
+```
+
+This is tracked as conformance row
+`theory:Datatypes:cvc5-alethe-datatype-export`.  Alethe datatype rule
+handlers stay out of scope until a newer cvc5 binary is locally available and
+validated to export the proof.
+
 ## Restored 1.3.4 Rows
 
 The following historical cvc5 1.1.2 blocker families now pass checked replay
