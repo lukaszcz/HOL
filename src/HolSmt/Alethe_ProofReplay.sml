@@ -1030,14 +1030,14 @@ local
       (if has_word_type target then prove_word_rewrite target
        else raise ERR "" "")
       handle Feedback.HOL_ERR _ =>
-      (* Array simplification rules normalize select/store terms.  Keep this
-         on the shared solver-neutral ladder used by Z3 replay. *)
-      SmtArrayProve.array_prove target
-      handle Feedback.HOL_ERR _ =>
       (* Arithmetic simplification rules normalize comparisons, signs, and
          small algebraic contexts.  Discharge those with the arithmetic prover
          before trying broader rewrite libraries. *)
       arith_prove target
+      handle Feedback.HOL_ERR _ =>
+      (* Array simplification rules normalize select/store terms.  Keep this
+         on the shared solver-neutral ladder used by Z3 replay. *)
+      SmtArrayProve.array_prove target
       handle Feedback.HOL_ERR _ =>
       (* Alethe simplification rules normalize literals, Boolean connectives,
          and theory definitions such as SMT real division. *)
