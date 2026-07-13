@@ -3353,25 +3353,22 @@ local
               (fn branch =>
                 case branch of
                   CheckedMatchConstructor {hol_name, ...} => hol_name = cname
-                | CheckedMatchDefault _ => false)
+                | CheckedMatchDefault _ => true)
               checked_branches of
             SOME (CheckedMatchConstructor {pattern, body, ...}) =>
               (pattern, checked_term body)
-          | SOME (CheckedMatchDefault _) =>
-              raise ERR "typecheck_match" "internal default branch lookup"
+          | SOME (CheckedMatchDefault {var, body, ...}) =>
+              let
+                val (pattern, _) = generated_constructor_pattern ctor
+                val rhs = Term.subst
+                  [{redex = var, residue = pattern}]
+                  (checked_term body)
+              in
+                (pattern, rhs)
+              end
           | NONE =>
-              (case default of
-                 SOME (CheckedMatchDefault {var, body, ...}) =>
-                   let
-                     val (pattern, _) = generated_constructor_pattern ctor
-                     val rhs = Term.subst
-                       [{redex = var, residue = pattern}]
-                       (checked_term body)
-                   in
-                     (pattern, rhs)
-                   end
-               | _ => raise ERR "typecheck_match"
-                   "missing constructor without default branch")
+              raise ERR "typecheck_match"
+                "missing constructor without a matching branch"
         end
       val case_term =
         TypeBase.mk_case (scrutinee_term,

@@ -967,7 +967,7 @@ local
       fun type_contains_datatype ty =
         type_contains type_is_datatype ty
       fun term_is_datatype_constructor tm =
-        Lib.can TypeBase.is_constructor tm
+        TypeBase.is_constructor tm
       fun term_is_datatype_record_selector tm =
         let
           val (dom, _) = Type.dom_rng (Term.type_of tm)
@@ -985,7 +985,9 @@ local
       fun term_is_datatype_native ((tm, arity), _) =
         (arity = 0 andalso type_contains_datatype (Term.type_of tm)) orelse
         term_is_datatype_constructor tm orelse
-        Lib.can term_is_datatype_record_selector tm
+        (case Lib.total term_is_datatype_record_selector tm of
+           SOME result => result
+         | NONE => false)
       val datatypes =
         subterm_types type_contains_datatype orelse
         Redblackmap.foldl (fn (ty, _, b) =>

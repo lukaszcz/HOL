@@ -532,7 +532,6 @@ in
 
   fun type_is_builtin_sort ty =
     Type.compare (ty, Type.bool) = EQUAL orelse
-    Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
     Type.compare (ty, numSyntax.num) = EQUAL orelse
     Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
     Type.compare (ty, realSyntax.real_ty) = EQUAL orelse
@@ -541,7 +540,6 @@ in
     (case Lib.total Type.dest_type ty of
        SOME ("itself", [_]) => true
      | _ => false) orelse
-    Lib.can listSyntax.dest_list_type ty orelse
     Lib.can Type.dom_rng ty orelse
     Lib.can wordsSyntax.dest_word_type ty
 
@@ -553,9 +551,15 @@ in
      | NONE => false)
     handle Feedback.HOL_ERR _ => false
 
+  fun type_is_native_datatype_sort ty =
+    Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
+    (Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
+     Lib.can listSyntax.dest_list_type ty)
+
   fun type_is_datatype_sort ty =
     (Type.is_vartype ty andalso
      String.isPrefix "'smtlib_dt_" (Type.dest_vartype ty)) orelse
+    type_is_native_datatype_sort ty orelse
     type_is_typebase_datatype ty
 
   fun term_mentions_datatype_sort tm =

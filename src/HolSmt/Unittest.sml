@@ -252,6 +252,7 @@ val _ = new_type ("smt_nonfree", 1)
 val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
+val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
 val smt_nonfree_ind = new_axiom
   ("smt_nonfree_ind",
    ``!P. P smt_nonfree_nil /\
@@ -1145,6 +1146,55 @@ in
     "match elaboration did not build TypeBase case terms")
 end
 
+fun parse_file_datatype_dependency_elaboration_success () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val state =
+    SmtLib_Parser.typecheck_script_string_with_options options
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype DependencyColorA2_17 " ^
+       "((dependencyRedA2_17) (dependencyGreenA2_17)))\n" ^
+       "(declare-datatype DependencyBoxA2_17 " ^
+       "((dependencyBoxA2_17 " ^
+       "(dependencyValueA2_17 DependencyColorA2_17))))\n" ^
+       "(declare-const dependencyBoxValueA2_17 DependencyBoxA2_17)\n" ^
+       "(assert (= (dependencyValueA2_17 dependencyBoxValueA2_17) " ^
+       "dependencyRedA2_17))\n" ^
+       "(declare-datatype DependencyWeirdA2_17 " ^
+       "(par (L R) ((dependencyWeirdA2_17 " ^
+       "(dependencyLeftA2_17 L) (dependencyRightA2_17 R)))))\n" ^
+       "(declare-datatype DependencyHolderA2_17 " ^
+       "(par (T) ((dependencyHolderA2_17 " ^
+       "(dependencyPayloadA2_17 (DependencyWeirdA2_17 Int T))))))\n" ^
+       "(declare-const dependencyHolderValueA2_17 " ^
+       "(DependencyHolderA2_17 Bool))\n" ^
+       "(assert (= (dependencyPayloadA2_17 dependencyHolderValueA2_17) " ^
+       "(dependencyWeirdA2_17 1 true)))\n" ^
+       "(exit)\n")
+in
+  assert (List.length (#assertions state) = 2,
+    "datatype dependency elaboration produced the wrong assertion count");
+  assert (List.all (fn tm => Term.type_of tm = Type.bool) (#assertions state),
+    "datatype dependency elaboration produced a non-Bool assertion")
+end
+
+fun parse_file_datatype_match_source_order_success () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val state =
+    SmtLib_Parser.typecheck_script_string_with_options options
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype MatchOrderColorA2_17 " ^
+       "((matchOrderRedA2_17) (matchOrderGreenA2_17)))\n" ^
+       "(assert (match matchOrderRedA2_17 " ^
+       "((matchOrderFallbackA2_17 true) (matchOrderRedA2_17 false))))\n" ^
+       "(exit)\n")
+  val assertion = hd (#assertions state)
+in
+  assert (not (term_has_subterm (fn tm => tm ~~ boolSyntax.F) assertion),
+    "match lowering ignored an earlier default branch")
+end
+
 fun parse_file_datatype_match_negatives () =
 let
   val options = {dict_logic = NONE, elaborate_datatypes = true}
@@ -2021,6 +2071,12 @@ fun smtlib_logic_fragment_diagnostics () =
         SOME msg =>
           die (label ^ " reported a spurious fragment violation: " ^ msg)
       | NONE => ()
+    fun expect_term_fragment label logic term expected =
+      case SmtLib_Logics.fragment_violation_diagnostic logic [term] of
+        SOME msg =>
+          assert (contains expected msg,
+            label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
+      | NONE => die (label ^ " fragment violation was not detected")
     fun script logic body =
       "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
     fun script_for_checker parse_logic body =
@@ -2148,6 +2204,12 @@ fun smtlib_logic_fragment_diagnostics () =
        "(declare-datatype E ((mkE)))\n" ^
        "(declare-const e E)\n" ^
        "(assert (= e mkE))\n");
+    expect_term_fragment "native list datatype sort unavailable" "QF_UFLIA"
+      ``([]:int list) = []``
+      "datatype sort is outside logic fragment QF_UFLIA";
+    expect_term_fragment "native unit datatype sort unavailable" "QF_UFLIA"
+      ``(():unit) = ()``
+      "datatype sort is outside logic fragment QF_UFLIA";
     expect_fragment "pure bit-vector integer-only term" "UFBV"
       (script "UFBV"
        "(declare-const outside_fragment Int)\n" ^
@@ -2799,6 +2861,7 @@ in
   expect_logic "QF_LIA" ``(x:int) <= x + 1``;
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
+  expect_logic "QF_UFLIA" ``smtlib_uf_logic_foo (x:int) = x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
   expect_logic "QF_DT" ``(x:ordering) = y``;
@@ -4489,6 +4552,10 @@ let
       parse_file_datatype_elaboration_flag_off_success),
     ("parse_file_datatype_match_elaboration_success",
       parse_file_datatype_match_elaboration_success),
+    ("parse_file_datatype_dependency_elaboration_success",
+      parse_file_datatype_dependency_elaboration_success),
+    ("parse_file_datatype_match_source_order_success",
+      parse_file_datatype_match_source_order_success),
     ("parse_file_datatype_match_negatives",
       parse_file_datatype_match_negatives),
     ("parse_file_datatype_match_placeholder_rejection",

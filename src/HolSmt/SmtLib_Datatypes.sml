@@ -202,7 +202,8 @@ struct
               ("type parameter '" ^ name ^ "' used with arguments")
         | NONE =>
             (case assoc_smt name type_names of
-               SOME hol_ty => PD.dTyop {Tyop = hol_ty, Thy = NONE, Args = []}
+               SOME hol_ty =>
+                 PD.dTyop {Tyop = hol_ty, Thy = NONE, Args = args}
              | NONE =>
                  (case (builtin_pretype name, args) of
                     (SOME pty, []) => pty
@@ -343,9 +344,13 @@ struct
           (param_names, PD.Constructors (List.map constructor constructors))
         end
 
+  fun cached_type_names () =
+    List.concat (List.map (fn {result, ...} => #types (#names result)) (!cache))
+
   fun build_names_and_asts group =
     let
       val type_names = allocate_type_names group
+      val available_type_names = type_names @ cached_type_names ()
       val ctor_names = allocate_constructors group
       val base_names =
         List.foldl (fn (pair, acc) => add_name TypeName acc pair)
@@ -358,7 +363,8 @@ struct
         let
           val hol_ty = option_get ("missing type name map for " ^ node name)
             (assoc_smt (node name) type_names)
-          val (param_names, form) = elaborate_decl type_names ctor_names decl
+          val (param_names, form) =
+            elaborate_decl available_type_names ctor_names decl
           fun constructor_data constructor =
             case node constructor of
               P.DatatypeConstructor (ctor_name, tester, selectors) =>
