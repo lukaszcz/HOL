@@ -955,6 +955,8 @@ def case_has_sat_no_theorem_diagnostic(case: dict[str, object]) -> bool:
 
 def red_implementation_category(feature: object) -> str:
     feature_text = str(feature).lower()
+    if "cvc5" in feature_text and "alethe" in feature_text and "datatype" in feature_text:
+        return "alethe-upstream-blocker"
     if "higher-order/function-sort" in feature_text or "hocore" in feature_text:
         return "higher-order/function-sort"
     if "datatype" in feature_text or "datatypes-reconstruction" in feature_text:

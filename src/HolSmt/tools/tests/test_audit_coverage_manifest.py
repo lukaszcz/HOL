@@ -386,6 +386,33 @@ class CoverageManifestAuditTests(unittest.TestCase):
             [issue.render() for issue in issues],
         )
 
+    def test_alethe_datatype_blocker_does_not_demote_datatypes_row(self):
+        coverage = {"theories": [row("Datatypes", "implemented")]}
+        complete_cases = [
+            {
+                "id": "theory:Datatypes:simple-constructors-selectors-testers",
+                "class": "theory",
+                "features": ["theory:Datatypes"],
+                "expected": {"z3-tac": {"status": "pass"}},
+            },
+            {
+                "id": "theory:Datatypes:cvc5-alethe-datatype-export",
+                "class": "theory",
+                "features": ["theory:Datatypes"],
+                "expected": {"proof-parse": {"status": "red"}},
+            },
+        ]
+
+        enriched = audit.enrich_complete_metadata(coverage, complete_cases)
+        datatype_row = enriched["theories"][0]
+
+        self.assertEqual(datatype_row["complete_required_status"], "reconstructed")
+        self.assertEqual(
+            datatype_row["complete_test_ids"],
+            ["theory:Datatypes:simple-constructors-selectors-testers"],
+        )
+        self.assertEqual(datatype_row["red_obligation_ids"], [])
+
     def test_complete_audit_requires_outside_scope_reason(self):
         coverage = {
             **minimal_coverage([]),

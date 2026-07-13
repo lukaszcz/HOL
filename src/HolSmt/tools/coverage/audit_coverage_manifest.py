@@ -293,6 +293,23 @@ def is_red_case(case: dict[str, object]) -> bool:
     return "red" in complete_case_statuses(case)
 
 
+def is_alethe_upstream_blocker_case(case: dict[str, object]) -> bool:
+    values: list[str] = []
+    for key in ("id", "file", "implementation_obligation"):
+        value = case.get(key)
+        if isinstance(value, str):
+            values.append(value)
+    features = case.get("features")
+    if isinstance(features, list):
+        values.extend(feature for feature in features if isinstance(feature, str))
+    text = " ".join(values).lower()
+    return "cvc5-alethe-datatype-export" in text
+
+
+def is_coverage_red_case(case: dict[str, object]) -> bool:
+    return is_red_case(case) and not is_alethe_upstream_blocker_case(case)
+
+
 def is_complete_evidence_case(case: dict[str, object]) -> bool:
     statuses = complete_case_statuses(case)
     return "pass" in statuses and "red" not in statuses
@@ -401,7 +418,7 @@ def enrich_complete_metadata(
             section_name, row, complete_cases, is_complete_evidence_case
         )
         row["red_obligation_ids"] = complete_case_ids_for_row(
-            section_name, row, complete_cases, is_red_case
+            section_name, row, complete_cases, is_coverage_red_case
         )
         if str(row.get("class")) not in COMPLETE_REQUIRED_CLASSES:
             row["complete_required_status"] = "not_applicable"

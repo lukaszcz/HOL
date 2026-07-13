@@ -77,8 +77,9 @@ class ConformanceSuiteTests(unittest.TestCase):
             smoke_cases[(case.logic, kind)] = case
 
         # Currently-supported theories (Core/UF, integer and real arithmetic,
-        # bit-vectors and their array/UF combinations) exercise every mode on
-        # the refutable proof case and parse/typecheck/oracle on the sat smoke.
+        # bit-vectors and their array/UF combinations) exercise every default
+        # mode on the refutable proof case and parse/typecheck/oracle on the sat
+        # smoke.  Placeholder datatype mode is covered by explicit corpus rows.
         supported = [
             "QF_UF", "UF", "QF_IDL", "QF_LIA", "LIA", "QF_RDL", "QF_LRA", "LRA",
             "QF_NIA", "QF_NRA", "QF_LIRA", "QF_UFLIA", "QF_UFLRA",
@@ -93,7 +94,7 @@ class ConformanceSuiteTests(unittest.TestCase):
         for logic in supported:
             proof = smoke_cases[(logic, "proof")]
             oracle = smoke_cases[(logic, "oracle")]
-            self.assertEqual(proof.modes, tuple(conformance.ALL_MODES), logic)
+            self.assertEqual(proof.modes, tuple(conformance.DEFAULT_MODES), logic)
             self.assertEqual(oracle.modes, conformance.SAT_SMOKE_MODES, logic)
             self.assertNotIn("theory-pending", proof.tags, logic)
             self.assertNotIn("theory-pending", oracle.tags, logic)

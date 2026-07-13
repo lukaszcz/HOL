@@ -313,6 +313,21 @@ class CompleteConformanceAuditTests(unittest.TestCase):
         self.assertIn("datatypes-reconstruction", categories)
         self.assertIn("higher-order/function-sort", categories)
 
+    def test_alethe_datatype_blocker_has_dedicated_category(self):
+        case = v2_case(
+            "theory:Datatypes:cvc5-alethe-datatype-export",
+            expected={"proof-replay": {"status": "red"}},
+            impl=obligation("cvc5 Alethe post-processor rejects datatype skolems"),
+            row_class="theory",
+        )
+        case["file"] = "cases/theories/datatypes/cvc5-alethe-datatype-export.smt2"
+
+        issues = audit.audit_cases([case], [])
+        categories = {issue.category for issue in issues if issue.code == "red_implementation_obligation"}
+
+        self.assertIn("alethe-upstream-blocker", categories)
+        self.assertNotIn("datatypes-reconstruction", categories)
+
     def test_complete_required_row_cannot_be_only_parse_or_unsupported_evidence(self):
         rows = [
             audit.CoverageRow(

@@ -549,6 +549,7 @@ def first_red_category_counts(
 ) -> dict[str, int]:
     all_items = manifest_items + proof_items
     categories: dict[str, tuple[str, ...]] = {
+        "Alethe upstream blockers": ("cvc5-alethe-datatype-export",),
         "function sorts": ("function-sort", "function-valued"),
         "arrays": ("array", "arraysex"),
         "FP": ("floatingpoint", "fp.", "float16", "float32", "float64", "float128", "th-lemma-fp"),
@@ -577,6 +578,8 @@ def first_red_category_counts(
         count = 0
         for item in all_items:
             text = obligation_search_text(item)
+            if category == "datatypes" and "cvc5-alethe-datatype-export" in text:
+                continue
             if any(needle in text for needle in needles):
                 count += 1
         counts[category] = count
