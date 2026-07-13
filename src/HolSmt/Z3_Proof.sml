@@ -23,7 +23,7 @@ struct
      to a large number of SMT-LIB benchmarks.  'proofterm' provides a
      constructor for each inference rule that appears (at least once)
      in the generated proofs.  Rules that only appear in compressed Z3
-     proofs (PROOF_MODE=1) are NOT supported.
+     proofs are NOT supported.
 
      To add another inference rule, extend 'proof_rule_registry' below.
      If the rule has a new replay behavior, add a replay handler and
@@ -135,14 +135,13 @@ struct
     mk_rule ("and-elim", [], OnePremise, "and_elim"),
     (* Version gates are traceable to
        .agent-files/reports/C1/histograms/rules_by_version.tsv.
-       C1 measured 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3;
-       2.19.1 could not execute on the aarch64 host.  Therefore we only
-       gate rules with measured 4.x evidence to the 4.x dialect when
-       that remains consistent with verify_z3_versions.sh.  The verifier
-       shows some C1 4.11.2 non-observations are corpus gaps, not version
-       gaps.  Never-observed legacy/residual rules stay at the default
-       AllZ3Versions until a legacy-capable measurement or TASK_24 owner
-       decision says otherwise. *)
+       C1 measured 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3 (Z3 4.x is the
+       only supported dialect).  We gate rules with measured 4.x evidence to
+       the 4.x dialect when that remains consistent with
+       verify_z3_versions.sh.  The verifier shows some C1 4.11.2
+       non-observations are corpus gaps, not version gaps.  Never-observed
+       residual rules stay at the default AllZ3Versions until a later
+       measurement or owner decision says otherwise. *)
     mk_z3_4_rule ("apply-def", [], OnePremise, "apply_def"),
     mk_rule ("asserted", [], ZeroPremises, "asserted"),
     mk_rule ("commutativity", [], ZeroPremises, "commutativity"),

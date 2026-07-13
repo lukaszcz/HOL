@@ -20,7 +20,6 @@ DEFAULT_LOGICS_JSON = CORPUS_DIR / "logics.json"
 MANIFEST_SCHEMA_VERSION = "2"
 
 SUPPORTED_Z3_VERSIONS = (
-    "2.19.1",
     "4.11.2",
     "4.12.4",
     "4.13.0",

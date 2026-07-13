@@ -95,10 +95,6 @@
       "positive_tests": [
         {
           "kind": "proof_version",
-          "version": "2.19.1"
-        },
-        {
-          "kind": "proof_version",
           "version": "4.12.4"
         },
         {
@@ -108,7 +104,6 @@
       ],
       "negative_tests": [],
       "z3_versions": [
-        "2.19.1",
         "4.12.4",
         "4.13.0"
       ],
@@ -166,42 +161,6 @@
         }
       ],
       "notes": "Z3 v4 proof options are represented in the recorder and validated by checked-in 4.12.4/4.13.0 corpus artifacts."
-    },
-    {
-      "section": "version_targets",
-      "item": "Z3 pre-4 proof mode",
-      "class": "Z3 extension",
-      "phases": [
-        "parsed",
-        "translated",
-        "solved",
-        "reconstructed",
-        "tested"
-      ],
-      "expected_status": "implemented",
-      "positive_tests": [
-        {
-          "kind": "proof_version",
-          "version": "2.19.1"
-        }
-      ],
-      "negative_tests": [],
-      "z3_versions": [
-        "2.19.1"
-      ],
-      "artifacts": [
-        {
-          "kind": "source",
-          "path": "src/HolSmt/tools/proof-corpus/supported_versions/manifest.json",
-          "match": "PROOF_MODE=2"
-        },
-        {
-          "kind": "source",
-          "path": "src/HolSmt/tools/record_z3_proof_corpus.py",
-          "match": "PROOF_MODE=2"
-        }
-      ],
-      "notes": "The legacy proof option is represented in the recorder and validated by the checked-in 2.19.1 corpus artifact."
     },
     {
       "section": "version_targets",
@@ -2453,7 +2412,6 @@
       ],
       "negative_tests": [],
       "z3_versions": [
-        "2.19.1",
         "4.12.4",
         "4.13.0"
       ],
@@ -2514,7 +2472,6 @@
       ],
       "negative_tests": [],
       "z3_versions": [
-        "2.19.1",
         "4.12.4",
         "4.13.0"
       ],

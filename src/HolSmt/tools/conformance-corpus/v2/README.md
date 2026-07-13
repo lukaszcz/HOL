@@ -86,7 +86,6 @@ python3 src/HolSmt/tools/conformance-corpus/v2/generate_complete_corpus.py audit
 
 The generator centralizes the supported Z3 versions:
 
-- `2.19.1`
 - `4.11.2`
 - `4.12.4`
 - `4.13.0`

@@ -102,18 +102,15 @@ structure Z3 = struct
       SOME version => version
     | NONE => "<undiscoverable>"
 
-  val is_v4 = String.isPrefix "4" Z3version
+  (* Only Z3 4.x is supported; legacy 2.x (PROOF_MODE) has been removed, so
+     there is no longer a version conditional here.  A non-4.x binary is simply
+     unsupported. *)
+  fun is_v4_configured () = is_configured ()
 
-  fun is_v4_configured () = is_configured () andalso is_v4
-
-  val proof_option =
-    if is_v4 then
-      (* disable `pp.simplify_implies` so that Z3's AST pretty-printer doesn't
-         mangle `asserted` proof rules, which would cause a mismatch against the
-         goal's assumption list *)
-      " proof=true pp.simplify_implies=false"
-    else
-      " PROOF_MODE=2"
+  (* disable `pp.simplify_implies` so that Z3's AST pretty-printer doesn't
+     mangle `asserted` proof rules, which would cause a mismatch against the
+     goal's assumption list *)
+  val proof_option = " proof=true pp.simplify_implies=false"
 
   val proof_cmd_stem = proof_option ^ " -smt2 -file:"
 

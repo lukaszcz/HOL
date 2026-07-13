@@ -1,9 +1,9 @@
 {
-  "kind": "proof-rule-discovery-gate",
-  "malformed_fragments": [],
-  "parse_only_rules": [],
-  "passed": true,
-  "replay_unknown_rules": [],
   "schema": "holsmt-z3-proof-corpus-v1",
-  "unseen_rules": []
+  "kind": "proof-rule-discovery-gate",
+  "passed": true,
+  "unseen_rules": [],
+  "replay_unknown_rules": [],
+  "parse_only_rules": [],
+  "malformed_fragments": []
 }

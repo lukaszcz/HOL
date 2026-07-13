@@ -31,8 +31,8 @@ DEFAULT_SUPPORTED_VERSION_MANIFEST = (
 DEFAULT_COMPLETE_CORPUS_MANIFEST = (
     pathlib.Path(__file__).resolve().parent / "proof-corpus" / "complete" / "manifest.json"
 )
-SUPPORTED_Z3_VERSIONS = ("2.19.1", "4.12.4", "4.13.0")
-COMPLETE_CORPUS_Z3_VERSIONS = ("2.19.1", "4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3")
+SUPPORTED_Z3_VERSIONS = ("4.12.4", "4.13.0")
+COMPLETE_CORPUS_Z3_VERSIONS = ("4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3")
 SUCCESS_STATUSES = {"pass", "passed", "success", "succeeded"}
 
 REPLAY_SUPPORTED_RULES = {

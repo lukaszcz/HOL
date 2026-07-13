@@ -8,7 +8,7 @@ out_dir=".holsmt-ci"
 include_docker=false
 clean_first=true
 allow_unsupported_z3=false
-supported_z3_versions="2.19.1, or 4.11.2 through 4.15.x"
+supported_z3_versions="4.11.2 through 4.15.x"
 
 usage() {
   cat <<'EOF'
@@ -37,12 +37,6 @@ die() {
 is_supported_z3_version() {
   local output=$1
   local major minor patch
-
-  case "$output" in
-    *"Z3 version 2.19.1"*)
-      return 0
-      ;;
-  esac
 
   if [[ "$output" =~ Z3[[:space:]]version[[:space:]]([0-9]+)\.([0-9]+)\.([0-9]+) ]]; then
     major=${BASH_REMATCH[1]}
@@ -353,7 +347,7 @@ if "$include_docker"; then
       holsmt-nosolver:ci \
       sh -lc 'src/HolSmt/selftest.exe'
 
-  for z3_version in 2.19.1 4.12.4 4.13.0; do
+  for z3_version in 4.12.4 4.13.0; do
     run "Build Docker image for Z3 $z3_version" \
       docker buildx build \
         --load \

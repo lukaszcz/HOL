@@ -933,7 +933,6 @@ def is_string_regex_or_extension_theory_case(case: dict[str, object]) -> bool:
 
 def case_has_all_supported_versions(case: dict[str, object]) -> bool:
     return set(str(version) for version in case.get("versions", [])) == {
-        "2.19.1",
         "4.11.2",
         "4.12.4",
         "4.13.0",

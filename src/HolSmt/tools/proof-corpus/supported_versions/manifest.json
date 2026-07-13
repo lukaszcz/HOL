@@ -2,7 +2,6 @@
   "schema": "holsmt-z3-proof-corpus-matrix-v1",
   "description": "Checked-in raw proof corpus artifacts for the HolSmt supported Z3 version matrix.",
   "supported_z3_versions": [
-    "2.19.1",
     "4.12.4",
     "4.13.0"
   ],
@@ -17,28 +16,6 @@
     }
   ],
   "versions": [
-    {
-      "version": "2.19.1",
-      "input": "minimal_bool_unsat",
-      "proof_options": [
-        "PROOF_MODE=2"
-      ],
-      "stdout": "z3-2.19.1/minimal_bool_unsat.stdout",
-      "stdout_sha256": "ea3ec1f7ccee84c7c141c77881a78008c431b5b655fae3d60b1760c366546a90",
-      "stderr": "z3-2.19.1/minimal_bool_unsat.stderr",
-      "stderr_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b",
-      "proof": "z3-2.19.1/minimal_bool_unsat.proof",
-      "proof_sha256": "5ef8bbd89f13e071cca7949aa11f9955729b7aed71f5cf747c3d40adfd1244b1",
-      "expected_rule_sets": {
-        "replay_supported": [
-          "asserted",
-          "unit-resolution"
-        ],
-        "parse_only": [],
-        "unsupported": [],
-        "unknown": []
-      }
-    },
     {
       "version": "4.12.4",
       "input": "minimal_bool_unsat",

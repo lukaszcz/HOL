@@ -58,7 +58,7 @@ python3 src/HolSmt/tools/record_z3_proof_corpus.py \
 ```
 
 This validates `supported_versions/manifest.json`, the raw stdout/stderr/proof
-artifacts for Z3 2.19.1, 4.12.4, and 4.13.0, the normalized
+artifacts for Z3 4.12.4 and 4.13.0, the normalized
 `supported_versions/summary.json`, and `supported_versions/rule-gate.json`.
 The validation recomputes input and artifact hashes, extracts the proof-rule
 histogram from the raw proof text, checks the expected replay-supported,

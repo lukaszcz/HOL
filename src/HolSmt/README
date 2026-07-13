@@ -60,13 +60,12 @@ it is outside the checked `Z3_TAC` trusted-code-base boundary.
 Supported Z3 versions:
 
   Version range      Proof options used by HolSmt                  Support status
-  2.19.1             PROOF_MODE=2                                  legacy proof path
-  4.11.2 - 4.15.x    proof=true pp.simplify_implies=false          modern v4 proof path
+  4.11.2 - 4.15.x    proof=true pp.simplify_implies=false          v4 proof path
 
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
 The checked-in proof corpus and CI jobs use exact representative versions from
-the supported ranges.  The current full matrix is 2.19.1, 4.11.2, 4.12.4,
+the supported ranges.  The current full matrix is 4.11.2, 4.12.4,
 4.13.0, 4.14.1 and 4.15.3.  The local contract runner accepts any discovered
 Z3 version in the supported ranges.
 Use `src/HolSmt/tools/verify_z3_versions.sh` to download representative Z3
@@ -82,10 +81,9 @@ releases locally with the TPTP frontend and install versioned binaries under
 Unsupported or deprecated Z3 versions:
 
   Version class              Reason
-  2.19                       Deprecated by the exact 2.19.1 CI target; use
-                             2.19.1 when checking the legacy proof path.
-  Other pre-4 versions       Legacy proof format drift is not in the CI matrix;
-                             no support claim is made without corpus evidence.
+  All pre-4 versions         Legacy 2.x/3.x proof support (incl. 2.19.1 and the
+  (incl. 2.19.1)             PROOF_MODE path) has been removed from the
+                             contract.  Only Z3 4.x is supported.
   4.x before 4.11.2          Outside the modern proof-mode support floor.
   4.x after 4.15.x           Outside the currently documented support range;
                              use --allow-unsupported-z3 to investigate drift.
@@ -296,7 +294,6 @@ Z3 4.x:
     > /tmp/holsmt-replay-repro/manual.stdout \
     2> /tmp/holsmt-replay-repro/manual.stderr
 
-For the legacy 2.19.1 path, replace the proof options with `PROOF_MODE=2`.
 Keep reducing the preserved `input.smt2` until the same unknown rule,
 unsupported th-lemma shape or replay error remains, then record the minimized
 input through the proof-corpus recorder:
@@ -419,7 +416,7 @@ Local CI contract commands:
 
   # Z3 selftest matrix, matching the exact CI Docker anchors inside the
   # supported ranges
-  for z3_version in 2.19.1 4.12.4 4.13.0; do
+  for z3_version in 4.12.4 4.13.0; do
     docker buildx build \
       --load \
       --tag "holsmt-z3:${z3_version}" \
@@ -471,11 +468,11 @@ Updating the Z3 version matrix:
 
 Pull-request CI runs the PolyML expk build against the Z3 versions already
 provided by the docker-ci base image as exact anchors for the supported ranges:
-2.19.1, 4.12.4 and 4.13.0.  The equivalent local hook is:
+4.12.4 and 4.13.0.  The equivalent local hook is:
 
   docker buildx build \
     --build-arg SML=poly \
-    --build-arg Z3_VERSION=<2.19.1|4.12.4|4.13.0> \
+    --build-arg Z3_VERSION=<4.12.4|4.13.0> \
     --build-arg CVC_VERSION=5 \
     --build-arg CSDP_VERSION=1 \
     --build-arg 'BUILDOPTS=--no-cache --expk -j4 -t' \

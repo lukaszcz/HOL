@@ -2,7 +2,6 @@
   "schema": "holsmt-z3-proof-complete-corpus-v1",
   "description": "Complete Z3 proof reconstruction corpus target. This corpus is intentionally initially red: missing real proof occurrences remain implementation obligations until recorded for the supported version matrix.",
   "supported_z3_versions": [
-    "2.19.1",
     "4.11.2",
     "4.12.4",
     "4.13.0",

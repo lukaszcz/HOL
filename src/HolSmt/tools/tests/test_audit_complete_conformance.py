@@ -144,7 +144,6 @@ class CompleteConformanceAuditTests(unittest.TestCase):
             impl=obligation("logic unsat"),
         )
         unsat["versions"] = [
-            "2.19.1",
             "4.11.2",
             "4.12.4",
             "4.13.0",

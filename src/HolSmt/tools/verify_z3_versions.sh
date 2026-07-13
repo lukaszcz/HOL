@@ -5,10 +5,15 @@ set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 repo_root=$(cd "$script_dir/../../.." && pwd)
 
-versions=(2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
+versions=(4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
 out_dir=".holsmt-z3-version-matrix"
 download_dir=""
-timeout_seconds=900
+# Per-shard selftest timeout.  The functional selftest is run sharded (see
+# tools/run_sharded_selftest.sh), so this bounds a single shard, not the whole
+# suite -- generous enough that a healthy shard never trips it.
+timeout_seconds=1800
+shards=${SHARDS:-8}
+jobs=${JOBS:-4}
 declare -a local_z3s=()
 
 usage() {
@@ -21,14 +26,16 @@ were verified.
 
 Options:
   --versions LIST       Space/comma-separated Z3 versions to test
-                        (default: 2.19.1 4.11.2 4.12.4 4.13.0
-                         4.14.1 4.15.3)
+                        (default: 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3).
+                        Only Z3 4.x is supported; legacy 2.x is not.
   --z3 VERSION:PATH     Use an existing local Z3 executable for VERSION.
                         Repeatable; useful when GitHub has no binary for the
                         local architecture.
   --out-dir DIR         Output directory (default: .holsmt-z3-version-matrix)
   --download-dir DIR    Download/cache directory (default: OUT_DIR/downloads)
-  --timeout SECONDS     Per-version selftest timeout (default: 900)
+  --timeout SECONDS     Per-shard selftest timeout (default: 1800)
+  --shards N            Selftest shards per version (default: 8; env SHARDS)
+  --jobs J              Concurrent shards (default: 4; env JOBS)
   -h, --help            Show this help
 
 The report is written to OUT_DIR/report.json.  Per-version stdout/stderr and
@@ -78,6 +85,16 @@ while [ "$#" -gt 0 ]; do
     --timeout)
       [ "$#" -ge 2 ] || die "--timeout requires seconds"
       timeout_seconds=$2
+      shift 2
+      ;;
+    --shards)
+      [ "$#" -ge 2 ] || die "--shards requires a count"
+      shards=$2
+      shift 2
+      ;;
+    --jobs)
+      [ "$#" -ge 2 ] || die "--jobs requires a count"
+      jobs=$2
       shift 2
       ;;
     -h|--help)
@@ -167,23 +184,6 @@ download_z3() {
   fi
 
   mkdir -p "$version_dir"
-  if [ "$version" = "2.19.1" ]; then
-    url="https://github.com/Z3Prover/bin/raw/master/legacy/z3-2.19.1.tar.gz"
-    zip="$version_dir/z3-2.19.1.tar.gz"
-    printf 'Trying %s\n' "$url" >&2
-    if curl -fL --retry 3 --connect-timeout 20 -o "$zip"; then
-      tar -xzf "$zip" -C "$version_dir"
-      for z3_path in $(find "$version_dir" -path '*/bin/z3' -type f -perm -u+x 2>/dev/null | sort); do
-        if is_usable_z3 "$z3_path"; then
-          printf '%s\n' "$z3_path"
-          return 0
-        fi
-        printf 'Ignoring unusable downloaded Z3 binary: %s\n' "$z3_path" >&2
-      done
-    fi
-    return 1
-  fi
-
   while IFS= read -r asset; do
     [ -n "$asset" ] || continue
     url="https://github.com/Z3Prover/z3/releases/download/z3-${version}/${asset}"
@@ -245,9 +245,14 @@ run_version() {
   z3_output=$("$z3_path" -version 2>&1 || true)
   printf '%s\n' "$z3_output" > "$result_dir/z3-version.txt"
 
+  # Only Z3 4.x is supported; legacy 2.x (PROOF_MODE) has been removed.
   case "$version" in
     4.*) z3_opts=(proof=true pp.simplify_implies=false) ;;
-    *) z3_opts=(PROOF_MODE=2) ;;
+    *)
+      write_result "$result_json" "$version" "error" "$z3_path" "$z3_output" \
+        "setup" "unsupported Z3 version $version (only 4.x is supported)"
+      return 0
+      ;;
   esac
 
   "$z3_path" "${z3_opts[@]}" -smt2 \
@@ -304,11 +309,20 @@ EOF
     return 0
   fi
 
-  if ! (cd src/HolSmt && timeout "$timeout_seconds" env HOL4_Z3_EXECUTABLE="$z3_path" \
-      ./selftest.exe) \
+  # Run the functional selftest sharded across fresh, heap-capped processes so
+  # a single long-lived run cannot exhaust memory and be OOM-killed (which
+  # would masquerade as a skipped verification).  The driver returns nonzero
+  # if any shard fails or times out.
+  if ! env HOL4_Z3_EXECUTABLE="$z3_path" SHARD_TIMEOUT="$timeout_seconds" \
+      src/HolSmt/tools/run_sharded_selftest.sh \
+        --shards "$shards" --jobs "$jobs" --out "$result_dir/shards" \
       > "$result_dir/selftest.stdout" \
       2> "$result_dir/selftest.stderr"; then
     phase="selftest"
+    # Fold the per-shard output into the aggregate log so CSDP detection and
+    # the failure detail see the actual selftest output, not just the summary.
+    cat "$result_dir"/shards/shard-*.stdout >> "$result_dir/selftest.stdout" \
+      2>/dev/null || true
     detail=$(tail -n 80 "$result_dir/selftest.stderr" "$result_dir/selftest.stdout" 2>/dev/null)
     if grep -q "CSDP not found" "$result_dir/selftest.stdout" "$result_dir/selftest.stderr"; then
       write_result "$result_json" "$version" "blocked" "$z3_path" "$z3_output" \

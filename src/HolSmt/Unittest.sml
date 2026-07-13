@@ -3474,7 +3474,11 @@ fun z3_proof_parser_unknown_rule_diagnostic () =
 fun z3_proof_parser_version_gate_diagnostic () =
 let
   val gated_rule = "apply-def"
-  val gated_version = "2.19.1"
+  (* A hypothetical non-4.x version used purely to probe that the version gate
+     REJECTS out-of-range versions.  It is not a supported version (only Z3 4.x
+     is supported); it must merely fail the "4." prefix so `apply-def` does not
+     resolve. *)
+  val gated_version = "3.0.0"
 in
   assert (not (Option.isSome
       (Z3_Proof.lookup_rule gated_version gated_rule)),

@@ -22,7 +22,6 @@ MANIFEST_SCHEMA_VERSION = "2"
 PINNED_SCHEMA_VERSION = "holsmt-external-benchmarks-pinned-v1"
 LOCK_SCHEMA_VERSION = "holsmt-external-benchmark-sources-lock-v1"
 SUPPORTED_Z3_VERSIONS = (
-    "2.19.1",
     "4.11.2",
     "4.12.4",
     "4.13.0",

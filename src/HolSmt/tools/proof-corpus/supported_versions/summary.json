@@ -1,28 +1,66 @@
 {
-  "aggregate_inferred_rule_histogram": {},
-  "aggregate_rule_histogram": {
-    "asserted": 6,
-    "unit-resolution": 3
-  },
-  "aggregate_theory_lemma_histogram": {},
+  "schema": "holsmt-z3-proof-corpus-v1",
+  "kind": "proof-corpus-summary",
+  "entry_count": 2,
+  "proof_count": 2,
+  "z3_versions": [
+    {
+      "version": "4.12.4",
+      "entry_count": 1,
+      "proof_count": 1
+    },
+    {
+      "version": "4.13.0",
+      "entry_count": 1,
+      "proof_count": 1
+    }
+  ],
   "discovered_rules": [
     "asserted",
     "unit-resolution"
   ],
-  "entries": [
-    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
-    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
-    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2"
-  ],
-  "entry_count": 3,
+  "aggregate_rule_histogram": {
+    "asserted": 4,
+    "unit-resolution": 2
+  },
   "inferred_rules": [],
-  "kind": "proof-corpus-summary",
-  "malformed_fragment_count": 0,
-  "proof_count": 3,
+  "aggregate_inferred_rule_histogram": {},
+  "theory_lemma_subkinds": [],
+  "aggregate_theory_lemma_histogram": {},
+  "rules_by_version": [
+    {
+      "z3_version": "4.12.4",
+      "rules": [
+        "asserted",
+        "unit-resolution"
+      ],
+      "rule_histogram": {
+        "asserted": 2,
+        "unit-resolution": 1
+      },
+      "inferred_rules": [],
+      "inferred_rule_histogram": {},
+      "theory_lemma_subkinds": [],
+      "theory_lemma_histogram": {}
+    },
+    {
+      "z3_version": "4.13.0",
+      "rules": [
+        "asserted",
+        "unit-resolution"
+      ],
+      "rule_histogram": {
+        "asserted": 2,
+        "unit-resolution": 1
+      },
+      "inferred_rules": [],
+      "inferred_rule_histogram": {},
+      "theory_lemma_subkinds": [],
+      "theory_lemma_histogram": {}
+    }
+  ],
+  "unknown_rule_coverage": [],
   "proof_rule_support": {
-    "parse_only": [
-      "proof-bind"
-    ],
     "replay_supported": [
       "and-elim",
       "asserted",
@@ -78,73 +116,14 @@
       "trans-star",
       "true-axiom",
       "unit-resolution"
+    ],
+    "parse_only": [
+      "proof-bind"
     ]
   },
-  "rules_by_version": [
-    {
-      "inferred_rule_histogram": {},
-      "inferred_rules": [],
-      "rule_histogram": {
-        "asserted": 2,
-        "unit-resolution": 1
-      },
-      "rules": [
-        "asserted",
-        "unit-resolution"
-      ],
-      "theory_lemma_histogram": {},
-      "theory_lemma_subkinds": [],
-      "z3_version": "2.19.1"
-    },
-    {
-      "inferred_rule_histogram": {},
-      "inferred_rules": [],
-      "rule_histogram": {
-        "asserted": 2,
-        "unit-resolution": 1
-      },
-      "rules": [
-        "asserted",
-        "unit-resolution"
-      ],
-      "theory_lemma_histogram": {},
-      "theory_lemma_subkinds": [],
-      "z3_version": "4.12.4"
-    },
-    {
-      "inferred_rule_histogram": {},
-      "inferred_rules": [],
-      "rule_histogram": {
-        "asserted": 2,
-        "unit-resolution": 1
-      },
-      "rules": [
-        "asserted",
-        "unit-resolution"
-      ],
-      "theory_lemma_histogram": {},
-      "theory_lemma_subkinds": [],
-      "z3_version": "4.13.0"
-    }
-  ],
-  "schema": "holsmt-z3-proof-corpus-v1",
-  "theory_lemma_subkinds": [],
-  "unknown_rule_coverage": [],
-  "z3_versions": [
-    {
-      "entry_count": 1,
-      "proof_count": 1,
-      "version": "2.19.1"
-    },
-    {
-      "entry_count": 1,
-      "proof_count": 1,
-      "version": "4.12.4"
-    },
-    {
-      "entry_count": 1,
-      "proof_count": 1,
-      "version": "4.13.0"
-    }
+  "malformed_fragment_count": 0,
+  "entries": [
+    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2",
+    "src/HolSmt/tools/proof-corpus/minimal_bool_unsat.smt2"
   ]
 }

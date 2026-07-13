@@ -197,13 +197,13 @@ val thm_Z3p = mk_Z3p (expect_thm true)
 val sat_Z3p = mk_Z3p expect_sat
 
 fun mk_Z3_v4 expect_fun =
-  mk_test_fun (Z3.is_v4_configured ()) expect_fun "Z3 (v4 only)" HolSmtLib.Z3_ORACLE_TAC
+  mk_test_fun (Z3.is_v4_configured ()) expect_fun "Z3" HolSmtLib.Z3_ORACLE_TAC
 
 val thm_Z3_v4 = mk_Z3_v4 (expect_thm false)
 val sat_Z3_v4 = mk_Z3_v4 expect_sat
 
 fun mk_Z3p_v4 expect_fun =
-  mk_test_fun (Z3.is_v4_configured ()) expect_fun "Z3 (proofs, v4 only)" HolSmtLib.Z3_TAC
+  mk_test_fun (Z3.is_v4_configured ()) expect_fun "Z3 (proofs)" HolSmtLib.Z3_TAC
 
 val thm_Z3p_v4 = mk_Z3p_v4 (expect_thm true)
 val sat_Z3p_v4 = mk_Z3p_v4 expect_sat
@@ -1265,7 +1265,6 @@ in
     (``~ 0w = 0w:word32``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
 
     (* Yices does not support bit-vector division *)
-    (* Z3 2.19 prints "extract" wrongly in its proofs *)
 
     (``x:word32 / 4w = x / 2w / 2w``, [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
     (``x:word32 / 6w = x / 2w / 3w``, [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
@@ -1294,8 +1293,6 @@ in
     (``y:word8 <> 0w ==> (x = x / y * y + word_rem x y)``,
       [(*thm_AUTO, thm_YO,*) thm_CVC, thm_Z3(*, thm_Z3p*)]),
 
-    (* Z3 2.19 does not handle "bvsrem ... bv0" correctly *)
-
     (``x:word8 < 0w /\ y < 0w  ==> (word_rem x y = -word_mod (-x) (-y))``,
       [(*thm_AUTO, thm_YO,*)thm_CVC, thm_Z3(*, thm_Z3p*)]),
     (``x:word8 < 0w /\ y >= 0w ==> (word_rem x y = -word_mod (-x) y)``,
@@ -1310,7 +1307,6 @@ in
     (``x:word8 < 0w /\ y >= 0w ==> (word_smod x y = -word_mod (-x) y + y)``,
       [sat_CVC, (*sat_YO,*) sat_Z3, sat_Z3p, sat_CVCp]),
     (``x:word8 >= 0w /\ y < 0w ==> (word_smod x y = word_mod x (-y) + y)``,
-      (* z3 v2 is unsound here since it returns unsat for this test case *)
       [sat_CVC, (*sat_YO,*) sat_Z3_v4, sat_Z3p_v4, sat_CVCp]),
     (``x:word8 >= 0w /\ y >= 0w ==> (word_smod x y = word_mod x y)``,
       [thm_CVC, (*thm_AUTO, thm_YO,*) thm_Z3_v4(*, thm_Z3p_v4*)]),
@@ -1646,14 +1642,96 @@ end
 (* actually perform tests                                                    *)
 (*****************************************************************************)
 
-val () = Unittest.run_unittests ()
+(* Optional sharding.  HOL4_SELFTEST_SHARD="k/N" runs only the k-th (0-based)
+   slice of the functional tests; N fresh `selftest.exe` processes then cover
+   the whole suite in parallel.  Each process keeps its Poly/ML heap to a
+   single shard's working set instead of accumulating the entire suite (the
+   whole-suite run reaches >200 GB RSS unbounded; a shard stays a few GB).
+   Tests are assigned round-robin by index (i mod N = k) so slow cases are
+   spread across shards rather than piling into one contiguous block.  The
+   fast unit tests run once, in shard 0 (or whenever unsharded). *)
+val (shard_k, shard_n) =
+  case OS.Process.getEnv "HOL4_SELFTEST_SHARD" of
+    NONE => (0, 1)
+  | SOME s =>
+    (case String.tokens (fn c => c = #"/") s of
+       [ks, ns] =>
+         (case (Int.fromString ks, Int.fromString ns) of
+            (SOME k, SOME n) =>
+              if n >= 1 andalso 0 <= k andalso k < n then (k, n)
+              else Unittest.die ("Invalid HOL4_SELFTEST_SHARD='" ^ s ^
+                "' (need 0 <= k < N, N >= 1)")
+          | _ => Unittest.die ("Invalid HOL4_SELFTEST_SHARD='" ^ s ^ "'"))
+     | _ => Unittest.die ("Invalid HOL4_SELFTEST_SHARD='" ^ s ^ "'"))
 
-val () = print "Running functional tests...\n"
-val _ = map (fn (term, test_funs) =>
-               map (fn test_fun => test_fun term) test_funs) tests
+fun keep_shard k n xs =
+  let
+    fun go _ [] = []
+      | go i (x :: rest) =
+          if i mod n = k then x :: go (i + 1) rest else go (i + 1) rest
+  in
+    go 0 xs
+  end
+
+val () = if shard_k = 0 then Unittest.run_unittests () else ()
+
+val sharded_tests = keep_shard shard_k shard_n tests
+
+val () =
+  if shard_n = 1 then print "Running functional tests...\n"
+  else print ("Running functional tests (shard " ^ Int.toString shard_k ^
+    "/" ^ Int.toString shard_n ^ ", " ^
+    Int.toString (length sharded_tests) ^ " cases)...\n")
+
+(* Continue-on-failure.  With HOL4_SELFTEST_KEEP_GOING=1 the suite records
+   every failing goal and reports them all at the end, instead of aborting at
+   the first failure.  This is what lets a single (sharded) pass enumerate the
+   full set of failures.  We enable it by making `Unittest.die` raise `Fail`
+   rather than exit (it does so when `Globals.interactive` is set), then catch
+   per test.  Default behaviour (fail-fast) is unchanged. *)
+val keep_going = OS.Process.getEnv "HOL4_SELFTEST_KEEP_GOING" = SOME "1"
+val () = if keep_going then Globals.interactive := true else ()
+
+val failures = ref ([] : string list)
+
+fun run_test term test_fun =
+  if keep_going then
+    (test_fun term
+       handle e =>
+         (* A failed `expect_sat` may have left `include_theorems` disabled;
+            restore it so the failure does not cascade into later tests. *)
+         (SmtLib.include_theorems := true;
+          let val msg = exnMessage e in
+            failures := msg :: !failures;
+            (* Emit the full failure record inline and immediately (not only in
+               the end-of-run summary) so a shard later killed mid-run - e.g. by
+               a wall-clock timeout - still leaves its failures on disk. *)
+            print ("\nFAILED: " ^ msg ^ "\n")
+          end);
+     (* Flush after every test so a killed shard leaves a complete record of the
+        tests it finished, rather than losing block-buffered stdout. *)
+     TextIO.flushOut TextIO.stdOut)
+  else
+    test_fun term
+
+val () =
+  List.app
+    (fn (term, test_funs) =>
+       List.app (fn test_fun => run_test term test_fun) test_funs)
+    sharded_tests
 
 (*****************************************************************************)
 
-val _ = print " done, all tests successful.\n"
+val () =
+  case List.rev (!failures) of
+    [] => print "\n done, all tests successful.\n"
+  | fs =>
+    (print ("\n\n==== " ^ Int.toString (length fs) ^
+      " FUNCTIONAL TEST FAILURE(S) (shard " ^ Int.toString shard_k ^ "/" ^
+      Int.toString shard_n ^ ") ====\n");
+     (* The individual `FAILED:` lines were already emitted inline as each
+        failure occurred (see `run_test`), so we only print the summary count
+        here to avoid duplicating them. *)
+     OS.Process.exit OS.Process.failure)
 
 val _ = OS.Process.exit OS.Process.success

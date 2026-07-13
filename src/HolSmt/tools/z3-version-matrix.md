@@ -11,7 +11,7 @@ src/HolSmt/tools/verify_z3_versions.sh
 By default it tests the representative supported Z3 releases:
 
 ```text
-2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3
+4.11.2 4.12.4 4.13.0 4.14.1 4.15.3
 ```
 
 The tool downloads compatible official release binaries when available, runs
@@ -47,8 +47,7 @@ z3-4.14.1      z3_tptp-4.14.1
 z3-4.15.3      z3_tptp-4.15.3
 ```
 
-The verifier downloads the legacy 2.19.1 binary on compatible hosts or accepts
-it through `--z3 2.19.1:PATH`.
+Only Z3 4.x is supported; legacy 2.x (including 2.19.1) has been removed.
 
 ## Local Source Build Notes
 
@@ -71,7 +70,6 @@ On 2026-06-30 and 2026-07-01, the following source-built Z3 versions were
 checked on `Linux-aarch64` using versioned binaries in `~/.local/bin`:
 
 ```text
-2.19.1  not-run     no local Linux-aarch64 legacy binary
 4.11.2  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
 4.12.4  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
 4.13.0  incomplete  proof-corpus gate, nonlinear replay smoke test, TPTP smoke test
@@ -85,8 +83,7 @@ the verifier without suppressing any phase:
 
 ```sh
 src/HolSmt/tools/verify_z3_versions.sh \
-  --versions "2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
-  --z3 2.19.1:$HOME/.local/bin/z3-2.19.1 \
+  --versions "4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
   --z3 4.11.2:$HOME/.local/bin/z3-4.11.2 \
   --z3 4.12.4:$HOME/.local/bin/z3-4.12.4 \
   --z3 4.13.0:$HOME/.local/bin/z3-4.13.0 \
@@ -155,8 +152,7 @@ the full selftest and is not a passing version matrix.  The required command is:
 
 ```sh
 src/HolSmt/tools/verify_z3_versions.sh \
-  --versions "2.19.1 4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
-  --z3 2.19.1:$HOME/.local/bin/z3-2.19.1 \
+  --versions "4.11.2 4.12.4 4.13.0 4.14.1 4.15.3" \
   --z3 4.11.2:$HOME/.local/bin/z3-4.11.2 \
   --z3 4.12.4:$HOME/.local/bin/z3-4.12.4 \
   --z3 4.13.0:$HOME/.local/bin/z3-4.13.0 \

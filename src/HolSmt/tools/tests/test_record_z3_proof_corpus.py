@@ -160,7 +160,7 @@ class ProofRuleExtractionTests(unittest.TestCase):
         summary = build_summary(
             [
                 entry("a.smt2", "4.13.0", proof_a),
-                entry("b.smt2", "2.19.1", proof_b),
+                entry("b.smt2", "4.12.4", proof_b),
             ]
         )
         self.assertEqual(summary["discovered_rules"], ["asserted", "unit-resolution"])
@@ -171,7 +171,7 @@ class ProofRuleExtractionTests(unittest.TestCase):
             summary["rules_by_version"],
             [
                 {
-                    "z3_version": "2.19.1",
+                    "z3_version": "4.12.4",
                     "rules": ["asserted"],
                     "rule_histogram": {"asserted": 1},
                     "inferred_rules": [],
@@ -212,7 +212,7 @@ class ProofRuleExtractionTests(unittest.TestCase):
             expected_rules_for_version(manifest, "4.13.0"),
             {"asserted", "unit-resolution", "rewrite"},
         )
-        self.assertEqual(expected_rules_for_version(manifest, "2.19.1"), {"asserted"})
+        self.assertEqual(expected_rules_for_version(manifest, "3.0.0"), {"asserted"})
 
     def test_gate_flags_unseen_rule_with_version_input_and_context(self):
         proof = extract_rule_report("(proof (unit-resolution (asserted a) false))")
