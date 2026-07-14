@@ -102,6 +102,8 @@ local
     simpLib.rewrites [realTheory.REAL_ADD_LINV, realTheory.REAL_ADD_RINV,
                       realTheory.POW_ONE, realaxTheory.real_div,
                       realTheory.REAL_INV_0, realTheory.REAL_MUL_RZERO,
+                      Conv.GSYM integerTheory.INT_NEG_MINUS1,
+                      integerTheory.INT_NEG_ADD,
                       intrealTheory.real_of_int_neg,
                       intrealTheory.real_of_int_num,
                       wordsTheory.WORD_AND_IDEM,
@@ -168,15 +170,56 @@ local
 
   (* prove an arithmetic tautology *)
   fun arith_prove_raw t =
+    (* Polynomial identities do not require splitting conditionals: the
+       ring normalizer treats their branches as opaque integer atoms.  This
+       avoids an exponential case split in Alethe steps produced while
+       eliminating MIN/MAX or truncated subtraction. *)
+    Tactical.TAC_PROOF (([], t), intLib.INT_RING_TAC)
+    handle Feedback.HOL_ERR _ =>
     intLib.ARITH_PROVE t
     handle Feedback.HOL_ERR _ =>
     RealField.REAL_ARITH t
     handle Feedback.HOL_ERR _ =>
-    (* nonlinear arithmetic fallback *)
+    raise ERR "arith_prove_raw" ("failed: " ^ Hol_pp.term_to_string t)
+
+  (* Arithmetic proof steps sometimes retain a HOL conditional after MIN/MAX
+     or natural subtraction has been lowered.  Expand it into Boolean cases
+     before entering the arithmetic decision procedures.  This is a fallback
+     after the ordinary normalization rung, so uncomplicated arithmetic keeps
+     its existing fast path. *)
+  fun arith_prove_conditional t =
+    let
+      val t_eq_t' =
+        simpLib.SIMP_CONV alethe_ss
+          [boolTheory.COND_EXPAND, boolTheory.COND_RAND,
+           boolTheory.COND_RATOR, arithmeticTheory.MIN_DEF,
+           arithmeticTheory.MAX_DEF] t
+        handle Conv.UNCHANGED => Thm.REFL t
+      val t' = boolSyntax.rhs (Thm.concl t_eq_t')
+    in
+      if Term.aconv t t' then
+        raise ERR "arith_prove_conditional" "no conditional normalization"
+      else
+        Thm.EQ_MP (Thm.SYM t_eq_t') (arith_prove_raw t')
+    end
+
+  (* NLA can spend an unbounded amount of time searching terms with ite
+     branches despite their arithmetic being linear in every branch.  Try the
+     explicit conditional split first; reserve NLA for genuine residual
+     nonlinear goals only. *)
+  fun arith_prove_with_cases t =
+    arith_prove_raw t
+    handle Feedback.HOL_ERR _ =>
+    arith_prove_conditional t
+    handle Feedback.HOL_ERR _ =>
     if Library.is_nonlinear t then Library.nla_prove t
-    else raise ERR "arith_prove_raw" ("failed: " ^ Hol_pp.term_to_string t)
+    else raise ERR "arith_prove_with_cases"
+      ("failed: " ^ Hol_pp.term_to_string t)
 
   fun arith_prove t =
+    simpLib.SIMP_PROVE (bossLib.srw_ss())
+      [HolSmtTheory.smt_rdiv_eq_div] t
+    handle Feedback.HOL_ERR _ =>
     let
       val _ =
         if replay_progress_enabled () then
@@ -198,9 +241,10 @@ local
            print ("\nAlethe arith raw: " ^ Library.term_to_string t ^ "\n")
          else
            ();
-         arith_prove_raw t)
+         arith_prove_with_cases t)
       else
-        Thm.EQ_MP (Thm.SYM t_eq_t') (arith_prove_raw t')
+        Thm.EQ_MP (Thm.SYM t_eq_t')
+          (arith_prove_with_cases t')
     end
 
   fun prove_arith_from_prems prems target =
@@ -440,6 +484,8 @@ local
           val target = clause_to_disj clause
         in
           metis_prove prems target
+          handle Feedback.HOL_ERR _ =>
+            prove_arith_from_prems prems target
         end
   in
     (cache_step s id thm, thm)
@@ -821,6 +867,8 @@ local
     val target = clause_to_disj clause
     val thm = case prems of
         [p] => metis_prove [p] target
+          handle Feedback.HOL_ERR _ =>
+            prove_arith_from_prems [p] target
       | _ => prove_tautology clause
   in
     (cache_step s id thm, thm)
@@ -1102,6 +1150,25 @@ local
     (cache_step s id thm, thm)
   end
 
+  (* cvc5's to_int_intro clauses state one or both defining bounds of
+     SMT-LIB to_int.  In HOL these are precisely INT_FLOOR_BOUNDS; keep the
+     handler clause-driven so it also accepts the equivalent ceiling form. *)
+  fun replay_to_int_intro (s : state) (id : string)
+                          (clause : Term.term list) =
+  let
+    val target = clause_to_disj clause
+    val thm =
+      metis_prove [intrealTheory.INT_FLOOR_BOUNDS,
+                   intrealTheory.INT_CEILING_BOUNDS,
+                   HolSmtTheory.int_floor_remainder_bounds] target
+      handle Feedback.HOL_ERR _ => arith_prove target
+      handle Feedback.HOL_ERR _ =>
+        raise ERR "replay_to_int_intro"
+          ("failed: " ^ Library.term_to_string target)
+  in
+    (cache_step s id thm, thm)
+  end
+
   (* --- distinct_elim --- *)
   fun replay_distinct_elim (s : state) (id : string)
                            (prems : Thm.thm list) (clause : Term.term list) =
@@ -1294,7 +1361,14 @@ local
         (* 8. Evaluation *)
         Drule.EQT_ELIM (bossLib.EVAL target)
         handle Feedback.HOL_ERR _ =>
-        (* 9. Nonlinear arithmetic (handles ARITH_MULT_SIGN etc.) *)
+        (* 9. A trusted cvc5 hole may depend on an asserted input literal.
+           Replay it in that explicit context, simplifying conditionals before
+           invoking integer arithmetic. *)
+        Tactical.TAC_PROOF
+          ((HOLset.listItems (#asserted_hyps s), target),
+           bossLib.FULL_SIMP_TAC alethe_ss [] >> intLib.ARITH_TAC)
+        handle Feedback.HOL_ERR _ =>
+        (* 10. Nonlinear arithmetic (handles ARITH_MULT_SIGN etc.) *)
         (if Library.is_nonlinear target then Library.nla_prove target
          else raise ERR "" "")
         handle Feedback.HOL_ERR _ =>
@@ -1409,6 +1483,7 @@ local
     | "lia_generic"        => replay_arith s id clause prems
     | "la_tautology"       => replay_arith s id clause prems
     | "la_disequality"     => replay_la_disequality s id clause
+    | "to_int_intro"       => replay_to_int_intro s id clause
     | "distinct_elim"      => replay_distinct_elim s id prems clause
     | "hole"               => replay_hole s id prems clause
     | "let"                => replay_bind s id prems clause
@@ -1584,8 +1659,9 @@ local
   fun remove_hyps (asl, g, thm) =
   let
     val hyps = Thm.hypset thm
+    val neg_g = boolSyntax.mk_neg g
     val expected = HOLset.addList (Term.empty_tmset,
-      boolSyntax.mk_neg g :: asl)
+      neg_g :: asl)
     val bad_hyps = HOLset.difference (hyps, expected)
     fun try_prove_hyp hyp =
       (* Try REFL for x = x *)
@@ -1598,8 +1674,17 @@ local
       (* Try EVAL for definitional truths *)
       SOME (Drule.EQT_ELIM (bossLib.EVAL hyp))
       handle Feedback.HOL_ERR _ =>
-      (* Try METIS_TAC with the assumptions as context *)
-      SOME (Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC []))
+      (* Alethe's arithmetic rules may unfold ceiling and total real division
+         while the solver-facing goal keeps their closed-form encodings.
+         Normalize both the original negated goal and the replay hypothesis
+         before falling back to proof search. *)
+      SOME (Tactical.TAC_PROOF ((neg_g :: asl, hyp),
+        bossLib.FULL_SIMP_TAC alethe_ss
+          [HolSmtTheory.int_ceiling_floor,
+           HolSmtTheory.real_div_smt_rdiv]))
+      handle Feedback.HOL_ERR _ =>
+      (* Try METIS_TAC with the original goal context as a last resort. *)
+      SOME (Tactical.TAC_PROOF ((neg_g :: asl, hyp), metisLib.METIS_TAC []))
       handle Feedback.HOL_ERR _ => NONE
     fun remove_hyp (hyp, thm) =
       case try_prove_hyp hyp of
@@ -1642,6 +1727,22 @@ in
 
     (* Remove any remaining extra hyps *)
     val thm = remove_hyps (asl, g, thm)
+    val _ =
+      if replay_progress_enabled () then
+        let
+          val expected = HOLset.addList (Term.empty_tmset,
+            boolSyntax.mk_neg g :: asl)
+          val residual = HOLset.difference (Thm.hypset thm, expected)
+        in
+          if HOLset.isEmpty residual then ()
+          else print ("\nAlethe residual hypotheses:\n" ^
+            String.concatWith "\n"
+              (List.map Library.term_to_string (HOLset.listItems residual)) ^
+            "\nExpected negated goal:\n" ^
+            Library.term_to_string (boolSyntax.mk_neg g) ^
+            "\n")
+        end
+      else ()
   in
     thm
   end

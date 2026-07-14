@@ -736,6 +736,8 @@ local
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
+    arith_prove_smt_rdiv t
+    handle Feedback.HOL_ERR _ =>
     arith_prove_linear t
     handle Feedback.HOL_ERR _ =>
     int_product_prove t
@@ -747,6 +749,20 @@ local
       if Library.is_nonlinear t then
         profile "arith_prove(nla)" Library.nla_prove t
       else raise ERR "arith_prove" (Hol_pp.term_to_string t)
+
+  and arith_prove_smt_rdiv t =
+    let
+      val t_eq_t' =
+        simpLib.SIMP_CONV (bossLib.srw_ss())
+          [HolSmtTheory.smt_rdiv_eq_div] t
+        handle Conv.UNCHANGED => Thm.REFL t
+      val t' = boolSyntax.rhs (Thm.concl t_eq_t')
+    in
+      if Term.aconv t t' then
+        raise ERR "arith_prove_smt_rdiv" "no concrete division normalization"
+      else
+        Thm.EQ_MP (Thm.SYM t_eq_t') (arith_prove_linear t')
+    end
 
   and arith_prove_linear t =
     let
@@ -1318,9 +1334,26 @@ local
 
         handle Feedback.HOL_ERR _ =>
 
+        (* Z3 emits algebraic rewrites over its totalized division.  Before
+           invoking nonlinear arithmetic, use the semantic bridge whenever
+           simp can discharge the non-zero divisor condition. *)
+        profile "rewrite(10.5)(smt-rdiv)"
+          (simpLib.SIMP_PROVE (bossLib.srw_ss())
+            [HolSmtTheory.smt_rdiv_eq_div]) t
+        handle Feedback.HOL_ERR _ =>
+
         profile "rewrite(11)(arith)" arith_prove t
 
         | HolSatLib.SAT_cex _ => profile "rewrite(11)(arith)" arith_prove t)
+        handle Feedback.HOL_ERR _ =>
+
+        (* Rewrites emitted by Z3 may contain the solver's totalized real
+           division.  Re-enter HOL division only after the non-zero side
+           condition has been discharged by simp; this preserves the
+           intentionally unconstrained zero-divisor case. *)
+        profile "rewrite(11.05)(smt-rdiv)"
+          (simpLib.SIMP_PROVE (bossLib.srw_ss())
+            [HolSmtTheory.smt_rdiv_eq_div]) t
         handle Feedback.HOL_ERR _ =>
 
         profile "rewrite(11.1)(datatype)" SmtDatatypeProve.datatype_prove t
@@ -2245,15 +2278,104 @@ local
     val bad_hyps = HOLset.difference (hyps, asms)
     val smt_normalize_ss = bossLib.arith_ss ++ intSimps.INT_RWTS_ss ++
       intSimps.INT_ARITH_ss ++ realSimps.REAL_ARITH_ss
+    (* Normalize Z3's total inverse macro before expanding ordinary division
+       into smt_rdiv.  The two encodings are equivalent away from zero but
+       have different useful normal forms for nested inverses. *)
+    val smt_semantic_normalize_tac =
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+        [realaxTheory.real_abs,
+         HolSmtTheory.int_ceiling_floor,
+         HolSmtTheory.smt_rinv_def,
+         HolSmtTheory.smt_rinv_inv,
+         Conv.GSYM realTheory.REAL_INV_1OVER,
+         realTheory.REAL_INV_INV,
+         HolSmtTheory.real_div_smt_rdiv,
+         HolSmtTheory.smt_rdiv_lneg,
+         HolSmtTheory.smt_rdiv_rneg]
+    (* Normalize the two total-division encodings to their common semantic
+       form.  The bridge to field division is conditional, so it is used only
+       when simplification discharges its nonzero premise. *)
+    fun smt_total_real_normalize_tac rdiv_bridges =
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+        [realaxTheory.real_abs,
+         HolSmtTheory.int_ceiling_floor,
+         HolSmtTheory.smt_rinv_def,
+         HolSmtTheory.smt_rinv_inv,
+         Conv.GSYM realTheory.REAL_INV_1OVER,
+         realTheory.REAL_INV_INV,
+         HolSmtTheory.real_div_smt_rdiv] >>
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+        [HolSmtTheory.smt_rdiv_eq_div] >>
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) rdiv_bridges
+    (* Solver literals reach replay as ``real_of_int i``.  REAL_INJ reduces
+       their non-zero side conditions, allowing the semantic rdiv boundary
+       lemma to align the solver form with HOL division without unfolding
+       arbitrary divisions. *)
+    fun smt_numeral_normalize_tac rdiv_bridges =
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+        [realTheory.REAL_INJ,
+         realaxTheory.real_abs,
+         HolSmtTheory.int_ceiling_floor,
+         HolSmtTheory.smt_rinv_def,
+         HolSmtTheory.smt_rinv_inv,
+         Conv.GSYM realTheory.REAL_INV_1OVER,
+         realTheory.REAL_INV_INV] >>
+      bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) rdiv_bridges
+    val (_, smt_rdiv_eq_body) =
+      boolSyntax.strip_forall (Thm.concl HolSmtTheory.smt_rdiv_eq_div)
+    val (_, smt_rdiv_eq_concl) = boolSyntax.dest_imp smt_rdiv_eq_body
+    val smt_rdiv_const =
+      Lib.fst (strip_comb
+        (Lib.fst (boolSyntax.dest_eq smt_rdiv_eq_concl)))
+    fun literal_rdiv_bridge tm =
+      case strip_comb tm of
+        (f, [x, y]) =>
+      let
+        val i = realSyntax.dest_injected y
+        val _ = if intSyntax.is_int_literal i then () else raise ERR "" ""
+        val y_ne_zero =
+          Tactical.TAC_PROOF
+            (([], boolSyntax.mk_neg (boolSyntax.mk_eq (y, realSyntax.zero_tm))),
+             bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [realTheory.REAL_INJ])
+      in
+        if Term.same_const f smt_rdiv_const then
+          SOME (Thm.MP (Drule.SPECL [x, y] HolSmtTheory.smt_rdiv_eq_div)
+                       y_ne_zero)
+        else NONE
+      end handle _ => NONE
+      | _ => NONE
+    fun literal_rdiv_bridges tm =
+      List.mapPartial literal_rdiv_bridge
+        (HolKernel.find_terms (fn t =>
+           let val (f, _) = strip_comb t
+           in Term.same_const f smt_rdiv_const end
+           handle _ => false) tm)
+      handle _ => []
     fun smt_normalize_tac thms =
       bossLib.RW_TAC smt_normalize_ss
-        (HolSmtTheory.real_div_smt_rdiv ::
+        (realaxTheory.real_abs ::
+         HolSmtTheory.int_ceiling_floor ::
+         HolSmtTheory.smt_rinv_def ::
+         HolSmtTheory.smt_rinv_inv ::
+         Conv.GSYM realTheory.REAL_INV_1OVER ::
+         realTheory.REAL_INV_INV ::
+         HolSmtTheory.real_div_smt_rdiv ::
+         HolSmtTheory.smt_rdiv_lneg ::
+         HolSmtTheory.smt_rdiv_rneg ::
          intrealTheory.is_int_alt ::
          intrealTheory.is_int_thm ::
          thms)
     fun smt_full_normalize_tac thms =
       bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-        (HolSmtTheory.real_div_smt_rdiv ::
+        (realaxTheory.real_abs ::
+         HolSmtTheory.int_ceiling_floor ::
+         HolSmtTheory.smt_rinv_def ::
+         HolSmtTheory.smt_rinv_inv ::
+         Conv.GSYM realTheory.REAL_INV_1OVER ::
+         realTheory.REAL_INV_INV ::
+         HolSmtTheory.real_div_smt_rdiv ::
+         HolSmtTheory.smt_rdiv_lneg ::
+         HolSmtTheory.smt_rdiv_rneg ::
          intrealTheory.is_int_alt ::
          intrealTheory.is_int_thm ::
          thms)
@@ -2272,17 +2394,26 @@ local
       val datatype_thms =
         SmtDatatypeProve.datatype_rewrite_thms
           (boolSyntax.list_mk_conj (hyp :: asl))
-        handle Feedback.HOL_ERR _ => []
+        handle _ => []
+      val rdiv_bridges = literal_rdiv_bridges
+        (boolSyntax.list_mk_conj (hyp :: asl))
+      fun try_tac tac =
+        SOME (Tactical.TAC_PROOF ((asl, hyp), tac)) handle _ => NONE
+      fun first_success [] = NONE
+        | first_success (tac :: tacs) =
+            case try_tac tac of
+              SOME th => SOME th
+            | NONE => first_success tacs
       val hyp_thm =
-        Tactical.TAC_PROOF ((asl, hyp), smt_normalize_tac [])
-        handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((asl, hyp),
-            smt_full_normalize_tac datatype_thms)
-        handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((asl, hyp),
-            datatype_normalize_tac datatype_thms)
-        handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
+        case first_success
+          [smt_numeral_normalize_tac rdiv_bridges,
+           smt_semantic_normalize_tac,
+           smt_total_real_normalize_tac rdiv_bridges,
+           smt_normalize_tac [],
+           smt_full_normalize_tac datatype_thms,
+           datatype_normalize_tac datatype_thms] of
+          SOME th => th
+        | NONE => Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
     in
       Drule.PROVE_HYP hyp_thm thm
     end

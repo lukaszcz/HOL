@@ -48,6 +48,79 @@ Ancestors[qualified]
     realTheory.REAL_INV_0, realTheory.REAL_MUL_RZERO, smt_rdiv_def]
     ``!x y. x / y = if y = 0 then 0 else smt_rdiv x y``)
 
+Theorem smt_rdiv_zero:
+  !y. y <> 0r ==> (smt_rdiv 0r y = 0r)
+Proof
+  simp [smt_rdiv_def, realTheory.REAL_DIV_LZERO]
+QED
+
+(* The solver-side division interface agrees with HOL division exactly away
+   from zero.  Export this directional form for proof replayers, which must
+   never unfold the unconstrained zero-divisor branch. *)
+Theorem smt_rdiv_eq_div:
+  !x y. y <> 0r ==> (smt_rdiv x y = x / y)
+Proof
+  simp [smt_rdiv_def]
+QED
+
+Theorem smt_rdiv_refl:
+    !x. x <> 0r ==> (smt_rdiv x x = 1r)
+Proof
+    simp [smt_rdiv_def, realTheory.REAL_DIV_REFL]
+QED
+
+Theorem smt_rdiv_one:
+    !x. smt_rdiv x 1r = x
+Proof
+    simp [smt_rdiv_def, realaxTheory.real_div,
+          realTheory.REAL_INV_1, realTheory.REAL_MUL_RID]
+QED
+
+Theorem smt_rdiv_neg_refl:
+    !x. x <> 0r ==> (smt_rdiv x (-x) = -1r)
+Proof
+    simp [smt_rdiv_def, realTheory.REAL_DIV_REFL,
+          realTheory.REAL_DIV_RNEG]
+QED
+
+Theorem smt_rdiv_neg_one:
+  !x. smt_rdiv x (-1r) = -x
+Proof
+  simp [smt_rdiv_def, realTheory.REAL_DIV_RNEG,
+        realaxTheory.real_div, realTheory.REAL_INV_1]
+QED
+
+(* Sign normalization for totalized SMT division.  These are guarded exactly
+   where the specification agrees with HOL division, so they are useful
+   replay lemmas without assigning a meaning to division by zero. *)
+Theorem smt_rdiv_lneg:
+  !x y. y <> 0r ==> (smt_rdiv (-x) y = -smt_rdiv x y)
+Proof
+  simp [smt_rdiv_def, realTheory.REAL_DIV_LNEG]
+QED
+
+Theorem smt_rdiv_rneg:
+  !x y. y <> 0r ==> (smt_rdiv x (-y) = -smt_rdiv x y)
+Proof
+  simp [smt_rdiv_def, realTheory.REAL_DIV_RNEG]
+QED
+
+(* Z3 represents inverse by this explicit totalization.  These boundary
+   lemmas identify that macro with HOL's total inverse, including at zero. *)
+Theorem smt_rinv_def:
+  !x. (if x = 0r then 0r else 1r / x) = realinv x
+Proof
+  rw [GSYM realTheory.REAL_INV_1OVER] >>
+  Cases_on `x = 0r` >> simp [realTheory.REAL_INV_0]
+QED
+
+Theorem smt_rinv_inv:
+  !x. (if (if x = 0r then 0r else 1r / x) = 0r then 0r
+       else 1r / (if x = 0r then 0r else 1r / x)) = x
+Proof
+  simp [smt_rinv_def, realTheory.REAL_INV_INV]
+QED
+
   (* exclusive or *)
   val xor_def = bossLib.Define `xor x y = ~(x <=> y)`
 
@@ -57,7 +130,7 @@ Ancestors[qualified]
 
   (* translation of HOL constants *)
 
-  val _ = s ("int_ceiling_floor",
+  val int_ceiling_floor = s ("int_ceiling_floor",
     M [intrealTheory.INT_CEILING_NEG, realTheory.REAL_NEGNEG]
       ``!r. clgtoks r = -flrtoks (-r)``)
 
@@ -108,6 +181,143 @@ Ancestors[qualified]
   val _ = s ("NUM_TO_INT_GUARDED",
     M [integerTheory.INT_OF_NUM]
       ``!i :int. 0 <= i ==> (integer$int_of_num (Num i) = i)``)
+
+  (* NUM_FLOOR is the natural-valued floor.  Below zero it is definitionally
+     zero, so this closes the non-positive branch before num-to-int transfer
+     instead of leaving a num-valued operator for the SMT encoder. *)
+  val num_floor_nonpos = s ("num_floor_nonpos",
+    M [realTheory.NUM_FLOOR_BASE, realTheory.REAL_LT_01,
+       realTheory.REAL_LET_TRANS]
+      ``!r. r <= 0 ==> (realax$NUM_FLOOR r = 0)``)
+
+  (* Associativity of saturated natural subtraction.  Normalizing this
+     identity before SMT translation avoids an otherwise large ite-expanded
+     Alethe arithmetic hole. *)
+Theorem num_sub_assoc:
+    !x y z:num. x - y - z = x - (y + z)
+Proof
+    Induct_on `x` >> simp[]
+QED
+
+Theorem num_floor_zero:
+    realax$NUM_FLOOR 0r = 0n
+Proof
+    simp[]
+QED
+
+Theorem num_ceiling_zero:
+    realax$NUM_CEILING 0r = 0n
+Proof
+    simp [int_ceiling_floor]
+QED
+
+  (* Alethe's to_int_intro rule uses the remainder formulation of the floor
+     bounds.  Derive it once from HOL's canonical floor interval theorem. *)
+Theorem int_floor_remainder_bounds:
+    !r.
+      (0r <= r - real_of_int (intreal$INT_FLOOR r) /\
+       r - real_of_int (intreal$INT_FLOOR r) < 1r)
+Proof
+    METIS_TAC [intrealTheory.INT_FLOOR_BOUNDS',
+      R ``!r f:real.
+          (r - 1r < f /\ f <= r) ==>
+          (0r <= r - f /\ r - f < 1r)``]
+QED
+
+Theorem int_floor_zero[local]:
+    intreal$INT_FLOOR 0r = 0i
+Proof
+    simp [intrealTheory.INT_FLOOR]
+QED
+
+Theorem int_floor_nonneg[local]:
+    !r. 0r <= r ==> 0i <= intreal$INT_FLOOR r
+Proof
+    rpt strip_tac >> Cases_on `r = 0r` >- simp [int_floor_zero] >>
+    `0r < r` by metis_tac [realTheory.REAL_LE_LT] >>
+    `intreal$INT_FLOOR 0r <= intreal$INT_FLOOR r` by
+      metis_tac [intrealTheory.INT_FLOOR_MONO] >>
+    metis_tac [int_floor_zero]
+QED
+
+Theorem int_floor_nonpos[local]:
+    !r. r <= 0r ==> intreal$INT_FLOOR r <= 0i
+Proof
+    rpt strip_tac >> Cases_on `r = 0r` >- simp [int_floor_zero] >>
+    `r < 0r` by metis_tac [realTheory.REAL_LE_LT] >>
+    `intreal$INT_FLOOR r <= intreal$INT_FLOOR 0r` by
+      metis_tac [intrealTheory.INT_FLOOR_MONO] >>
+    metis_tac [int_floor_zero]
+QED
+
+Theorem int_max_id[local]:
+    !i:int. 0i <= i ==> (integer$int_max 0 i = i)
+Proof
+    rpt strip_tac >> simp [integerTheory.INT_MAX] >> intLib.ARITH_TAC
+QED
+
+Theorem int_max_zero[local]:
+    !i:int. i <= 0i ==> (integer$int_max 0 i = 0)
+Proof
+    rpt strip_tac >> simp [integerTheory.INT_MAX] >> intLib.ARITH_TAC
+QED
+
+Theorem int_ceiling_nonneg[local]:
+    !r. 0r <= r ==> 0i <= intreal$INT_CEILING r
+Proof
+    rpt strip_tac >>
+    `-r <= 0r` by simp[] >>
+    `intreal$INT_FLOOR (-r) <= 0i` by
+      metis_tac [int_floor_nonpos] >>
+    rw [int_ceiling_floor] >> intLib.ARITH_TAC
+QED
+
+Theorem int_ceiling_nonpos[local]:
+    !r. r <= 0r ==> intreal$INT_CEILING r <= 0i
+Proof
+    rpt strip_tac >>
+    `0r <= -r` by simp[] >>
+    `0i <= intreal$INT_FLOOR (-r)` by
+      metis_tac [int_floor_nonneg] >>
+    rw [int_ceiling_floor] >> intLib.ARITH_TAC
+QED
+
+Theorem int_num_ceiling_total:
+    !r. &(realax$NUM_CEILING r) =
+        integer$int_max 0 (intreal$INT_CEILING r)
+Proof
+    gen_tac >> Cases_on `0r <= r`
+    >- (rw [intrealTheory.INT_NUM_CEILING] >>
+        sym_tac >> metis_tac [int_max_id, int_ceiling_nonneg])
+    >- (`r <= 0r` by metis_tac [realTheory.REAL_NOT_LE,
+                                 realTheory.REAL_LT_IMP_LE] >>
+        rw [realTheory.NUM_CEILING_BASE] >>
+        sym_tac >> metis_tac [int_max_zero, int_ceiling_nonpos,
+                              int_ceiling_floor])
+QED
+
+  val _ = s ("num_ceiling_to_int_eq",
+    M [int_num_ceiling_total, integerTheory.INT_INJ]
+      ``!r n. (realax$NUM_CEILING r = n) <=>
+          (integer$int_max 0 (intreal$INT_CEILING r) = &n)``)
+
+Theorem int_num_floor_total:
+    !r. &(realax$NUM_FLOOR r) =
+        integer$int_max 0 (intreal$INT_FLOOR r)
+Proof
+    gen_tac >> Cases_on `0r <= r`
+    >- (rw [intrealTheory.INT_NUM_FLOOR] >>
+        sym_tac >> metis_tac [int_max_id, int_floor_nonneg])
+    >- (`r <= 0r` by metis_tac [realTheory.REAL_NOT_LE,
+                                 realTheory.REAL_LT_IMP_LE] >>
+        rw [num_floor_nonpos] >>
+        sym_tac >> metis_tac [int_max_zero, int_floor_nonpos])
+QED
+
+  val _ = s ("num_floor_to_int_eq",
+    M [int_num_floor_total, integerTheory.INT_INJ]
+      ``!r n. (realax$NUM_FLOOR r = n) <=>
+          (integer$int_max 0 (intreal$INT_FLOOR r) = &n)``)
 
   val _ = s ("INT_NUM_EDIV",
     prove(

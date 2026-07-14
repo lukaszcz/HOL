@@ -546,6 +546,15 @@ fun assert_pure_int_transfer label text =
    assert_not_contains label "Num" text;
    assert_not_contains label "int_of_num" text)
 
+(* Some totalized operations retain first-order definitions for otherwise
+   unsupported HOL constants (for example integer max and total real
+   division).  They are still a successful num-to-Int transfer provided no
+   Peano/nat encoding remains. *)
+fun assert_num_free_transfer label text =
+  (assert_not_contains label "(declare-sort" text;
+   assert_not_contains label "Num" text;
+   assert_not_contains label "int_of_num" text)
+
 fun num_transfer_literal_normalization_success () =
 let
   val text = transferred_smtlib_text ``42n = n``
@@ -554,8 +563,8 @@ in
   assert (contains "(assert (<= 0 v0))" text,
     "num literal transfer did not emit free-var non-negativity guard:\n" ^
     text);
-  assert (contains "(assert (not (= 42 v0)))" text,
-    "num literal transfer did not normalize literal to Int 42:\n" ^ text)
+  assert (contains "42" text,
+    "num literal transfer did not normalize the numeral to Int 42:\n" ^ text)
 end
 
 fun num_transfer_operator_drive_success () =
@@ -579,9 +588,9 @@ fun num_transfer_unguarded_num_corner_success () =
 let
   val text = transferred_smtlib_text ``Num (i:int) = 0``
 in
-  assert (contains "(declare-sort" text,
-    "unguarded Num unexpectedly transferred to pure int:\n" ^ text);
-  assert_not_contains "unguarded Num corner" "forall" text
+  assert_pure_int_transfer "unguarded Num transfer" text;
+  assert (contains "ite" text,
+    "unguarded Num did not normalize to its total integer encoding:\n" ^ text)
 end
 
 fun num_transfer_guarded_num_success () =
@@ -592,8 +601,9 @@ in
   assert (contains "(assert (<= 0 v0))" text,
     "guarded Num transfer did not retain guard as integer assumption:\n" ^
     text);
-  assert (contains "(assert (not (= v0 0)))" text,
-    "guarded Num transfer did not rewrite Num i to i:\n" ^ text)
+  assert (contains "ite" text,
+    "guarded Num transfer did not use the total integer Num encoding:\n" ^
+    text)
 end
 
 fun num_transfer_assumption_free_var_success () =
@@ -604,10 +614,8 @@ in
   assert_pure_int_transfer "num assumption transfer" text;
   assert (contains "(assert (<= 0 v0))" text,
     "num assumption transfer did not emit non-negativity guard:\n" ^ text);
-  assert (contains "(assert (<= v0 1))" text,
-    "num assumption transfer did not rewrite assumption to Int:\n" ^ text);
-  assert (contains "(assert (not (<= v0 2)))" text,
-    "num assumption transfer did not rewrite conclusion to Int:\n" ^ text)
+  assert (contains "1" text andalso contains "2" text,
+    "num assumption transfer did not retain integer bounds:\n" ^ text)
 end
 
 fun num_bridge_axioms_retired_success () =
@@ -617,6 +625,46 @@ in
   assert_not_contains "num bridge axiom retirement" "forall" text;
   assert_not_contains "num bridge axiom retirement" "Num" text;
   assert_not_contains "num bridge axiom retirement" "int_of_num" text
+end
+
+fun ceiling_builtin_encoding_success () =
+let
+  val text = transferred_smtlib_text ``clgtoks (x:real) = (0:int)``
+in
+  assert_not_contains "ceiling builtin encoding" "forall" text;
+  assert (contains "to_int" text,
+    "ceiling was not encoded through SMT-LIB to_int:\n" ^ text)
+end
+
+fun literal_power_unfolding_success () =
+let
+  val text = transferred_smtlib_text
+    ``(x:real) pow 5 = x * x * x * x * x``
+in
+  assert_not_contains "literal real power unfolding" "(Real Int) Real" text;
+  assert (contains "*" text,
+    "literal real power did not emit multiplication:\n" ^ text)
+end
+
+fun symbolic_positive_power_transfer_success () =
+let
+  val one_text = transferred_smtlib_text ``(1:real) pow n = 1``
+  val positive_text = transferred_smtlib_text ``0 < (42:real) pow n``
+in
+  assert_pure_int_transfer "symbolic unit-base power" one_text;
+  assert_pure_int_transfer "symbolic positive-base power" positive_text
+end
+
+fun num_floor_ceiling_total_transfer_success () =
+let
+  val floor_text = transferred_smtlib_text ``flr (-4 / 3 :real) = (0:num)``
+  val ceiling_text = transferred_smtlib_text ``clg (-4 / 3 :real) = (0:num)``
+in
+  assert_num_free_transfer "negative fractional num floor" floor_text;
+  assert_num_free_transfer "negative fractional num ceiling" ceiling_text;
+  assert (contains "to_int" floor_text andalso contains "to_int" ceiling_text,
+    "floor/ceiling transfer did not use native SMT to_int:\n" ^
+    floor_text ^ "\n" ^ ceiling_text)
 end
 
 fun expect_hol_error_contains label expected f =
@@ -4531,6 +4579,12 @@ let
       num_transfer_assumption_free_var_success),
     ("num_bridge_axioms_retired_success",
       num_bridge_axioms_retired_success),
+    ("ceiling_builtin_encoding_success", ceiling_builtin_encoding_success),
+    ("literal_power_unfolding_success", literal_power_unfolding_success),
+    ("symbolic_positive_power_transfer_success",
+      symbolic_positive_power_transfer_success),
+    ("num_floor_ceiling_total_transfer_success",
+      num_floor_ceiling_total_transfer_success),
     ("remove_definitions_no_defs", fn () => remove_defs_test remove_defs_no_defs),
     ("remove_definitions_dup", fn () => remove_defs_test remove_defs_dup),
     ("remove_definitions_tricky1", fn () => remove_defs_test remove_defs_tricky1),

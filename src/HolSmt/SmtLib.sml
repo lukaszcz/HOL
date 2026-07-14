@@ -181,6 +181,13 @@ local
     (realSyntax.greater_tm, apfst_K ">"),
     (intrealSyntax.real_of_int_tm, apfst_K "to_real"),
     (intrealSyntax.INT_FLOOR_tm, apfst_K "to_int"),
+    (* SMT-LIB has no ceiling operator, but HOL's integer ceiling has the
+       closed-form definition ceil r = -floor (-r).  Encode that expression
+       directly instead of introducing a quantified defining axiom. *)
+    (intrealSyntax.INT_CEILING_tm, fn (_, ts) =>
+      SmtLib_Theories.one_arg (fn r =>
+        ("-", [Term.mk_comb (intrealSyntax.INT_FLOOR_tm,
+          Term.mk_comb (realSyntax.negate_tm, r))])) ts),
     (intrealSyntax.is_int_tm, apfst_K "is_int"),
     (* bit-vector constants *)
     (Term.mk_var ("x", wordsSyntax.mk_word_type Type.alpha), Lib.apfst (fn tm =>
@@ -1946,6 +1953,66 @@ local
         [realTheory.POW_2, realTheory.REAL_MUL_ASSOC] th)
   end
 
+  (* Unfold a real power with an arbitrary numeral exponent.  The recursive
+     equations only syntactically match zero/SUC, whereas HOL numerals are
+     binary terms; specialize the step equation to the predecessor and reduce
+     that numeral before descending into the remaining power. *)
+  fun REAL_POW_NUMERAL_CONV tm =
+  let
+    val (rator, args) = boolSyntax.strip_comb tm
+    val _ =
+      if Term.same_const rator realSyntax.exp_tm then ()
+      else raise Conv.UNCHANGED
+    val (x, n) = Lib.pair_of_list args
+    val n = numSyntax.dest_numeral n
+    val th =
+      if n = Arbnum.zero then
+        Thm.SPEC x (Thm.CONJUNCT1 realTheory.pow)
+      else
+        numLib.REDUCE_RULE
+          (Thm.SPEC (numSyntax.mk_numeral (Arbnum.- (n, Arbnum.one)))
+            (Thm.SPEC x (Thm.CONJUNCT2 realTheory.pow)))
+    val rhs = boolSyntax.rhs (Thm.concl th)
+    val rhs_th = Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV rhs
+      handle Conv.UNCHANGED => Thm.REFL rhs
+  in
+    Thm.TRANS th rhs_th
+  end
+
+  (* Discharge a positive real power with a concrete base before its symbolic
+     nat exponent reaches the serializer.  This uses the general REAL_POW_LT
+     theorem; only its closed arithmetic side-goal is evaluated here. *)
+  fun REAL_POW_POS_LITERAL_CONV tm =
+  let
+    val (rel, args) = boolSyntax.strip_comb tm
+    val _ =
+      if Term.same_const rel realSyntax.less_tm then ()
+      else raise Conv.UNCHANGED
+    val (zero, pow_tm) = Lib.pair_of_list args
+    val (pow_const, pow_args) = boolSyntax.strip_comb pow_tm
+    val _ =
+      if Term.same_const pow_const realSyntax.exp_tm then ()
+      else raise Conv.UNCHANGED
+    val (base, exponent) = Lib.pair_of_list pow_args
+    val positive =
+      Tactical.TAC_PROOF
+        (([], realSyntax.mk_less (zero, base)),
+         Tactical.THEN
+           (simpLib.SIMP_TAC pureSimps.pure_ss
+             [Conv.GSYM intrealTheory.real_of_int_num,
+              intrealTheory.real_of_int_lt],
+            intLib.ARITH_TAC))
+    val pow_positive =
+      Thm.MP
+        (Thm.SPEC exponent (Thm.SPEC base realTheory.REAL_POW_LT)) positive
+    val _ =
+      if Term.aconv (Thm.concl pow_positive) tm then ()
+      else raise Conv.UNCHANGED
+  in
+    Drule.EQT_INTRO pow_positive
+  end
+  handle Feedback.HOL_ERR _ => raise Conv.UNCHANGED
+
   fun thm_rhs_is_true th =
   let
     val (_, rhs) = boolSyntax.dest_eq (Thm.concl th)
@@ -1983,15 +2050,46 @@ local
   end
 
   val num_transfer_rewrites = [
-    HolSmtTheory.NUM_TO_INT_GUARDED,
+    HolSmtTheory.int_num_floor_total,
+    HolSmtTheory.int_num_ceiling_total,
+    HolSmtTheory.num_floor_to_int_eq,
+    HolSmtTheory.num_ceiling_to_int_eq,
+    HolSmtTheory.num_floor_nonpos,
+    HolSmtTheory.num_sub_assoc,
     integerTheory.NUM_OF_INT,
+    integerTheory.Num_EQ_ABS,
+    integerTheory.INT_ABS,
+    (* Prefer the guarded cancellation when a transferred natural has its
+       standard non-negativity hypothesis; Num_EQ_ABS remains the total
+       fallback for genuinely unguarded integer-to-natural conversions. *)
+    HolSmtTheory.NUM_TO_INT_GUARDED,
+    intrealTheory.INT_NUM_FLOOR,
+    intrealTheory.INT_NUM_CEILING,
+    realTheory.NUM_CEILING_BASE,
+    (* Eliminate symbolic natural exponents whenever their real base makes
+       the result independent of the exponent or establishes its sign. *)
+    realTheory.POW_ONE,
+    realTheory.REAL_POW_LT,
+    (* These definitions can be introduced by ADD_THEOREMS_TAC after the
+       first transfer pass.  Keep the final pass in the SMT-LIB fragment
+       rather than serializing their quantified HOL definitions. *)
+    integerTheory.INT_MAX,
+    integerTheory.INT_MIN,
+    HolSmtTheory.real_div_smt_rdiv,
     integerTheory.INT_POS,
     Conv.GSYM integerTheory.INT_INJ,
     Conv.GSYM integerTheory.INT_LE,
     Conv.GSYM integerTheory.INT_LT,
     Conv.GSYM integerTheory.INT_ADD,
     Conv.GSYM integerTheory.INT_MUL
-  ] @ exp_one_rewrites @ [
+  ] @ exp_one_rewrites @
+    (* These equations only match syntactic numerals.  Keeping both base and
+       step equations lets SIMP unfold every literal exponent, rather than
+       the historical 1/2/3 subset, while leaving symbolic exponents alone. *)
+    [Thm.CONJUNCT1 arithmeticTheory.EXP,
+     Thm.CONJUNCT2 arithmeticTheory.EXP,
+     Thm.CONJUNCT1 integerTheory.int_exp,
+     Thm.CONJUNCT2 integerTheory.int_exp] @ [
     arithmeticTheory.ZERO_LT_EXP,
     Conv.GSYM integerTheory.INT_EXP,
     INT_EXP_1,
@@ -2086,7 +2184,7 @@ local
       | ("integer", "int_of_num") => []
       | ("integer", "int_quot") => [ I.INT_QUOT_EDIV ]
       | ("integer", "int_rem") => [ I.INT_REM_EMOD ]
-      | ("intreal", "INT_CEILING") => [ HolSmtTheory.int_ceiling_floor ]
+      | ("intreal", "INT_CEILING") => []
       | ("marker", "Abbrev") => [ markerTheory.Abbrev_def ]
       | ("min", "=") =>
           if Type.compare (Ty, num --> num --> bool) = EQUAL then
@@ -2146,7 +2244,13 @@ local
            conversion introduces constants that might trigger new theorems to be
            added in subsequent iterations *)
         fun conv_thm (thm, acc) =
-          HOLset.add (acc, Conv.CONV_RULE NUM_TO_INT_CONV thm)
+          let
+            val thm = Conv.CONV_RULE NUM_TO_INT_CONV thm
+            val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl thm)
+          in
+            if Term.aconv lhs rhs then acc else HOLset.add (acc, thm)
+          end
+          handle Feedback.HOL_ERR _ => HOLset.add (acc, thm)
         val wanted_thms = HOLset.foldl conv_thm empty_thmset wanted_thms
 
         (* Since some of the theorems might have already been added in a
@@ -2222,6 +2326,8 @@ in
       | SOME {Thy = "prim_rec", Name = "<", ...} => true
       | SOME {Thy = "integer", Name = "Num", ...} => true
       | SOME {Thy = "integer", Name = "int_of_num", ...} => true
+      | SOME {Thy = "realax", Name = "NUM_FLOOR", ...} => true
+      | SOME {Thy = "realax", Name = "NUM_CEILING", ...} => true
       | _ => false
 
   fun atom_needs_num_transfer atom =
@@ -2291,6 +2397,34 @@ in
     tactic g
   end
 
+  (* ADD_THEOREMS_TAC contributes global definition theorems as assumptions.
+     Simplify each one in isolation afterwards: this removes definitions that
+     have become reflexive after the semantic num-to-int transfer, without
+     treating the assumptions themselves as rewrite rules. *)
+  fun CLEANUP_ASSUMPTIONS_TAC g =
+  let
+    open Tactic Tactical
+    val assumptions = #1 g
+    fun is_true tm =
+      Term.aconv tm boolSyntax.T orelse
+      (let val (_, body) = boolSyntax.dest_forall tm
+       in is_true body end
+       handle Feedback.HOL_ERR _ => false)
+    fun cleanup thm =
+    let
+      val thm = simpLib.SIMP_RULE pureSimps.pure_ss
+        (boolTheory.REFL_CLAUSE :: num_transfer_rewrites) thm
+    in
+      if is_true (Thm.concl thm) then
+        ALL_TAC
+      else
+        ASSUME_TAC thm
+    end
+    val cleanup_one = POP_ASSUM cleanup
+  in
+    MAP_EVERY (fn _ => cleanup_one) assumptions g
+  end
+
   (* Eliminates some HOL terms that are not supported by the SMT-LIB
      translation. It also adds some useful theorems to the list of assumptions
      so that SMT solvers can reason about some symbols defined in HOL4 theories. *)
@@ -2298,8 +2432,19 @@ in
   let
     open Tactical simpLib
   in
+    (* This must precede num transfer: the native real numeral form lets the
+       closed positivity proof erase the whole pow term, including its nat
+       exponent. *)
+    Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_POS_LITERAL_CONV) THEN
+    (* Close algebraic natural identities while their saturated subtraction
+       is still in its native form, before lowering introduces nested ites. *)
+    SIMP_TAC pureSimps.pure_ss
+      [HolSmtTheory.num_sub_assoc, HolSmtTheory.num_floor_zero,
+       HolSmtTheory.num_ceiling_zero, arithmeticTheory.MAX_0,
+       arithmeticTheory.MIN_0, boolTheory.REFL_CLAUSE] THEN
     NUM_TO_INT_TAC THEN
     (if simp_let then Library.LET_SIMP_TAC else ALL_TAC) THEN
+    Tactic.CONV_TAC (Conv.DEPTH_CONV REAL_POW_NUMERAL_CONV) THEN
     SIMP_TAC pureSimps.pure_ss [
       (* FIXME: polymorphic functions seem to be highly problematic at the
          moment because after HolSmt's translation, the symbols in these
@@ -2313,8 +2458,15 @@ in
       combinTheory.UPDATE_APPLY1, combinTheory.APPLY_UPDATE_THM,
       combinTheory.UPDATE_EQ, boolTheory.REFL_CLAUSE,
       HolSmtTheory.ALL_DISTINCT_NIL, HolSmtTheory.ALL_DISTINCT_CONS,
-      listTheory.MEM, realTheory.POW_1, realTheory.POW_2, REAL_POW_3
+      listTheory.MEM, realTheory.POW_1, realTheory.POW_2, REAL_POW_3,
+      Thm.CONJUNCT1 realTheory.pow, Thm.CONJUNCT2 realTheory.pow,
+      integerTheory.INT_MAX, integerTheory.INT_MIN,
+      HolSmtTheory.real_div_smt_rdiv, HolSmtTheory.smt_rdiv_zero
     ] THEN
+    SIMP_TAC realSimps.real_ss
+      [HolSmtTheory.smt_rdiv_zero, HolSmtTheory.smt_rdiv_refl,
+       HolSmtTheory.smt_rdiv_one, HolSmtTheory.smt_rdiv_neg_refl,
+       HolSmtTheory.smt_rdiv_neg_one] THEN
     SIMP_TAC pureSimps.pure_ss [
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
     ] THEN
@@ -2325,7 +2477,13 @@ in
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
     Tactic.BETA_TAC THEN
     NUM_TO_INT_TAC THEN
-    ADD_THEOREMS_TAC
+    ADD_THEOREMS_TAC THEN
+    CLEANUP_ASSUMPTIONS_TAC THEN
+    (* The theorem-discovery pass may expose a fresh num-valued occurrence.
+       Run the semantic transfer last, then simplify its newly-added
+       assumptions even when they no longer mention num themselves. *)
+    NUM_TO_INT_TAC THEN
+    CLEANUP_ASSUMPTIONS_TAC
   end
 end  (* local *)
 
