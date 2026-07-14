@@ -1,6 +1,0 @@
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (= (fp.mul RNE x y) (fp.mul RNE x y)))
-(check-sat)

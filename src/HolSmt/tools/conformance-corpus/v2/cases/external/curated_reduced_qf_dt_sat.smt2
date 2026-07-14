@@ -1,7 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_DT)
-(set-info :status sat)
-(declare-datatype Color ((red) (blue)))
-(declare-const c Color)
-(assert (or (= c red) (= c blue)))
-(check-sat)

@@ -1,5 +1,0 @@
-(set-logic ALL)
-(declare-datatype Box ((box (value Int))))
-(declare-const b Box)
-(assert (= (match b (((box x) x))) 0))
-(check-sat)

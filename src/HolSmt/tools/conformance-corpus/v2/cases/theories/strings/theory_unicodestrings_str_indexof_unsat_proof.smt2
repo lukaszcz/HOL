@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_SLIA)
-(assert (not (= (str.indexof "abc" "b" 0) (str.indexof "abc" "b" 0))))
-(check-sat)
-(get-proof)

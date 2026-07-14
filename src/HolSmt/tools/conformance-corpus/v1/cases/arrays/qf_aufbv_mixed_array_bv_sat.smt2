@@ -1,5 +1,0 @@
-(set-logic QF_AUFBV)
-(declare-const ab (Array (_ BitVec 8) (_ BitVec 16)))
-(assert (= (select (store ab #x2a #x00ff) #x2a) #x00ff))
-(check-sat)
-(exit)

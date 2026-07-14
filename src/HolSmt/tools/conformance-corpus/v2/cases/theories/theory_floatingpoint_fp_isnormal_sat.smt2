@@ -1,6 +1,0 @@
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (or (fp.isNormal x) (not (fp.isNormal x))))
-(check-sat)

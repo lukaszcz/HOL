@@ -1,8 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_LRA)
-(set-info :status unsat)
-(declare-const x Real)
-(assert (< x 0.0))
-(assert (<= 0.0 x))
-(check-sat)
-(get-proof)

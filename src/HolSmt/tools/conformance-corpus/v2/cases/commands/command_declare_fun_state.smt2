@@ -1,6 +1,0 @@
-(set-logic QF_UF)
-(declare-sort U 0)
-(declare-fun pred (U) Bool)
-(declare-const x U)
-(assert (pred x))
-(check-sat)

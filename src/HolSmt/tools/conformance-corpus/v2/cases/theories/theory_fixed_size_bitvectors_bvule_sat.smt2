@@ -1,5 +1,0 @@
-(set-logic QF_BV)
-(declare-const a (_ BitVec 8))
-(declare-const b (_ BitVec 8))
-(assert (or (bvule a b) (not (bvule a b))))
-(check-sat)

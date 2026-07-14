@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (and (fp.eq x y) (not (fp.eq x y))))
-(check-sat)
-(get-proof)

@@ -1,5 +1,0 @@
-(set-logic QF_UF)
-(declare-const p Bool)
-(reset-assertions)
-(check-sat)
-(reset)

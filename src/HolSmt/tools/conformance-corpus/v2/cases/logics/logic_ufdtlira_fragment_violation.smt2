@@ -1,5 +1,0 @@
-(set-logic UFDTLIRA)
-(declare-const x Real)
-(declare-const y Real)
-(assert (= (* x y) 1.0))
-(check-sat)

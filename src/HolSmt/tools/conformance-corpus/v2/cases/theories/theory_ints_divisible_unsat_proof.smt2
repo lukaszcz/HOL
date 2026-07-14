@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_LIA)
-(assert ((_ divisible 3) 7))
-(check-sat)
-(get-proof)

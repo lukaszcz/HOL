@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_LIA)
-(assert (not (ite true true false)))
-(check-sat)
-(get-proof)

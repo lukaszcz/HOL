@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-datatype List ((nil) (cons (head Int) (tail List))))
-(declare-const l List)
-(declare-const h Int)
-(assert (= l (cons h l)))
-(check-sat)
-(get-proof)

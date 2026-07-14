@@ -1,5 +1,0 @@
-(set-logic ALL)
-(declare-datatype Box (par (T) ((box (value T)))))
-(declare-const bi (Box Int))
-(assert ((_ is box) bi))
-(check-sat)

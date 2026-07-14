@@ -1,6 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-datatype Color ((red) (blue)))
-(assert (= red blue))
-(check-sat)
-(get-proof)

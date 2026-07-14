@@ -1,6 +1,0 @@
-(set-logic QF_AX)
-(declare-const a (Array Bool Bool))
-(assert (not (= (select (store a true false) true) false)))
-(check-sat)
-(get-proof)
-(exit)

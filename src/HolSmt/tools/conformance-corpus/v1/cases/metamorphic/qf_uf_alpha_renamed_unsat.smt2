@@ -1,6 +1,0 @@
-(set-logic QF_UF)
-(declare-const renamed Bool)
-(assert (not (= renamed renamed)))
-(check-sat)
-(get-proof)
-(exit)

@@ -1,6 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic NRA)
-(declare-const x Real)
-(assert (not (>= (* x x) 0.0)))
-(check-sat)
-(get-proof)

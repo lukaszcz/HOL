@@ -1,5 +1,0 @@
-(set-logic QF_UFNIRA)
-(declare-const x Int)
-(declare-fun p (Real) Bool)
-(assert (p x))
-(check-sat)

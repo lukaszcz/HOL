@@ -1,5 +1,0 @@
-(set-logic AUFLIA)
-(declare-fun lam (Int) Bool)
-(assert (forall ((x Int)) (= (lam x) (> x 0))))
-(assert (lam 1))
-(check-sat)

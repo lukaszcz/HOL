@@ -1,7 +1,0 @@
-(set-logic AUFLIA)
-(declare-const a (Array Int Bool))
-(declare-const b (Array Int Bool))
-(declare-const i Int)
-(assert (not (= a b)))
-(assert (not (= (select a i) (select b i))))
-(check-sat)

@@ -1,5 +1,0 @@
-(set-logic ALL)
-(declare-const s (Set Int))
-(declare-const t (Set Int))
-(assert (= (set.subset s t) true))
-(check-sat)

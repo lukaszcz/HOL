@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_AX)
-(declare-sort I 0)
-(declare-sort E 0)
-(declare-const a (Array I E))
-(assert (not (= a a)))
-(check-sat)
-(get-proof)

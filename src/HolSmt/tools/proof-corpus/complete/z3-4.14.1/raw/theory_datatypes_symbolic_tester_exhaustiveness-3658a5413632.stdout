@@ -1,8 +1,0 @@
-unsat
-((set-logic ALL)
-(proof
-(let (($x28 (not ((_ is blue ) c))))
-(let ((@x29 (asserted $x28)))
-(let (($x25 (not ((_ is red ) c))))
-(let ((@x26 (asserted $x25)))
-((_ th-lemma datatype) (mp @x26 (rewrite (= $x25 $x25)) $x25) (mp @x29 (rewrite (= $x28 $x28)) $x28) false)))))))

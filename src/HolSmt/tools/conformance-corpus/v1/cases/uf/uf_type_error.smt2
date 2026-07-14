@@ -1,7 +1,0 @@
-(set-logic UF)
-
-(declare-sort U 0)
-(declare-const a U)
-(assert a)
-(check-sat)
-(exit)

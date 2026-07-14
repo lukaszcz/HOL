@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_LIA)
-(declare-const x Int)
-(declare-const y Int)
-(assert (= x y))
-(assert (not (= y x)))
-(check-sat)
-(get-proof)

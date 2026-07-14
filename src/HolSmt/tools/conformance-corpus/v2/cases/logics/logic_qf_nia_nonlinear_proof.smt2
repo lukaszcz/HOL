@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_NIA)
-(declare-const x Int)
-(declare-const y Int)
-(assert (not (=> (and (>= x 0) (>= y 0)) (>= (* x y) 0))))
-(check-sat)
-(get-proof)

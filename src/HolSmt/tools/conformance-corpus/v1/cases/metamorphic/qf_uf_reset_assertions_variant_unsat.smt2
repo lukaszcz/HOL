@@ -1,7 +1,0 @@
-(set-logic QF_UF)
-(assert true)
-(reset-assertions)
-(assert false)
-(check-sat)
-(get-proof)
-(exit)

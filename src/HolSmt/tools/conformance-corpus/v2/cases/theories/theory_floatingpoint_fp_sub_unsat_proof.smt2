@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (not (= (fp.sub RNE x y) (fp.sub RNE x y))))
-(check-sat)
-(get-proof)

@@ -1,7 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_LRA)
-(set-info :status sat)
-(declare-const x Real)
-(assert (< 0.0 x))
-(assert (< x 1.0))
-(check-sat)

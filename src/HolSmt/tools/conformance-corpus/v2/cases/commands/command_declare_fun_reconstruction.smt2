@@ -1,6 +1,0 @@
-(set-logic QF_UF)
-(declare-const id (-> Bool Bool))
-(declare-fun h ((-> Bool Bool)) Bool)
-(assert (h id))
-(assert (not (h id)))
-(check-sat)

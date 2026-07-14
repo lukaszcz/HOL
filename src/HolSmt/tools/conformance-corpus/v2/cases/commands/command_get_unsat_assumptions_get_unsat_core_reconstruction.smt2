@@ -1,7 +1,0 @@
-(set-option :produce-unsat-cores true)
-(set-logic QF_UF)
-(declare-const p Bool)
-(assert (! p :named p_name))
-(check-sat-assuming ((not p)))
-(get-unsat-core)
-(get-unsat-assumptions)

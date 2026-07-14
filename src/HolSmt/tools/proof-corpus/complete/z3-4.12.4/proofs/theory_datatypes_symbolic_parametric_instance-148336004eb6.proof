@@ -1,6 +1,0 @@
-((set-logic ALL)
-(proof
-(let (($x27 (= bx (box (value bx)))))
- (let (($x28 (not $x27)))
- (let ((@x29 (asserted $x28)))
- (unit-resolution ((_ th-lemma datatype) $x27) (mp @x29 (rewrite (= $x28 $x28)) $x28) false))))))

@@ -1,6 +1,0 @@
-(set-logic QF_BV)
-(declare-const x (_ BitVec 8))
-(assert (not (= (bvxor x #x00) x)))
-(check-sat)
-(get-proof)
-(exit)

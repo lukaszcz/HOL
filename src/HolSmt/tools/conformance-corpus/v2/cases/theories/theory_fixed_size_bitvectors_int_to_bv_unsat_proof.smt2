@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_BV)
-(assert (not (= ((_ int_to_bv 8) 3) ((_ int_to_bv 8) 3))))
-(check-sat)
-(get-proof)

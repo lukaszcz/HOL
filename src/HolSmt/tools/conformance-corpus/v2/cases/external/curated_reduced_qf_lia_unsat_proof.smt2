@@ -1,8 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_LIA)
-(set-info :status unsat)
-(declare-const x Int)
-(assert (< x 0))
-(assert (<= 0 x))
-(check-sat)
-(get-proof)

@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_SLIA)
-(assert (not (= (str.to_code "A") (str.to_code "A"))))
-(check-sat)
-(get-proof)

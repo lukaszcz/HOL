@@ -1,9 +1,0 @@
-{
-  "schema": "holsmt-z3-proof-rule-allowlist-v1",
-  "description": "Expected raw Z3 proof rules for proof-corpus/minimal_bool_unsat.smt2.",
-  "default": [
-    "asserted",
-    "unit-resolution"
-  ],
-  "versions": {}
-}

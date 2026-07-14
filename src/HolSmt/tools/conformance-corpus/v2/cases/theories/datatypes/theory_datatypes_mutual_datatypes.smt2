@@ -1,5 +1,0 @@
-(set-logic ALL)
-(declare-datatypes ((Tree 0) (Forest 0))
-  (((leaf) (node (children Forest)))
-   ((nilF) (consF (head Tree) (tail Forest)))))
-(check-sat)

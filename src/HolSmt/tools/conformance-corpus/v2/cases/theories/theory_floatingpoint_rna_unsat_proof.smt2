@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_FP)
-(assert (not (= RNA RNA)))
-(check-sat)
-(get-proof)

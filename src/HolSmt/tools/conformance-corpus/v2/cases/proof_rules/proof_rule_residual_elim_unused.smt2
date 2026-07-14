@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic UF)
-(assert (forall ((x Bool)) false))
-(check-sat)
-(get-proof)

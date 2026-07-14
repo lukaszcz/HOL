@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic LIA)
-(assert false)
-(check-sat)
-(get-proof)

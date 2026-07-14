@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic NIA)
-(declare-const x Int)
-(declare-const y Int)
-(assert (not (=> (and (>= x 5) (>= y 5)) (>= (* x y) 25))))
-(check-sat)
-(get-proof)

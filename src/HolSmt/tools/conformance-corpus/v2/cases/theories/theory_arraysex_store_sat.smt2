@@ -1,8 +1,0 @@
-(set-logic QF_AX)
-(declare-sort I 0)
-(declare-sort E 0)
-(declare-const a (Array I E))
-(declare-const i I)
-(declare-const e E)
-(assert (= (store a i e) (store a i e)))
-(check-sat)

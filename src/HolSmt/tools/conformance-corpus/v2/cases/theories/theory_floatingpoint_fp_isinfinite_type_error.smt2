@@ -1,6 +1,0 @@
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (= (fp.isInfinite x) x))
-(check-sat)

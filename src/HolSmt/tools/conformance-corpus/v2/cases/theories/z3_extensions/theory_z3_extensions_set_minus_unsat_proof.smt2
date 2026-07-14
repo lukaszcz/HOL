@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-const s (Set Int))
-(declare-const t (Set Int))
-(assert (not (= (set.minus s t) (set.minus s t))))
-(check-sat)
-(get-proof)

@@ -1,6 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-datatype Pair ((mk-pair (left Int) (right Bool))))
-(assert (not (= (left (mk-pair 7 true)) 7)))
-(check-sat)
-(get-proof)

@@ -1,5 +1,0 @@
-(set-logic UFLRA)
-(push 1)
-(assert true)
-(pop 1)
-(check-sat)

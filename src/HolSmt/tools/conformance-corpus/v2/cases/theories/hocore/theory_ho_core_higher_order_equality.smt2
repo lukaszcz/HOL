@@ -1,5 +1,0 @@
-(set-logic QF_AUFLIA)
-(declare-const f (Array Int Bool))
-(declare-const g (Array Int Bool))
-(assert (= f g))
-(check-sat)

@@ -1,7 +1,0 @@
-((set-logic QF_UF)
-(proof
-(let (($x25 (not a)))
- (let ((@x26 (asserted $x25)))
- (let ((@x24 (asserted a)))
- (unit-resolution @x24 @x26 false))))))
-

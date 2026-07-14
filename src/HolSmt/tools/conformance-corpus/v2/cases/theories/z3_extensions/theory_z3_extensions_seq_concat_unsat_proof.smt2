@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-const xs (Seq Int))
-(declare-const ys (Seq Int))
-(assert (not (= (seq.++ xs ys) (seq.++ xs ys))))
-(check-sat)
-(get-proof)

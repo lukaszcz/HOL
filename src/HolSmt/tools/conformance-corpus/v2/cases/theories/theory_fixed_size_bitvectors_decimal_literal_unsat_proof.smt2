@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_BV)
-(assert (not (= (_ bv15 8) (_ bv15 8))))
-(check-sat)
-(get-proof)

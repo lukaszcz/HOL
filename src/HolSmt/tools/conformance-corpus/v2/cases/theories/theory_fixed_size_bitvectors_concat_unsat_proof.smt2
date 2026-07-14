@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_BV)
-(assert (not (= (concat #b1010 #b0101) (concat #b1010 #b0101))))
-(check-sat)
-(get-proof)

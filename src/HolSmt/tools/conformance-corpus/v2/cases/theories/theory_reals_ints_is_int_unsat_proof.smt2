@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_NIRA)
-(assert (is_int 2.5))
-(check-sat)
-(get-proof)

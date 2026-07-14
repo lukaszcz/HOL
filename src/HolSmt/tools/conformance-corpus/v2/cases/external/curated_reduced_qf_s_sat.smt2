@@ -1,6 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_S)
-(set-info :status sat)
-(declare-const s String)
-(assert (= (str.++ s "b") "ab"))
-(check-sat)

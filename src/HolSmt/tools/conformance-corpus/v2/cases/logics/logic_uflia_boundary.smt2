@@ -1,5 +1,0 @@
-(set-logic UFLIA)
-(push 1)
-(assert true)
-(pop 1)
-(check-sat)

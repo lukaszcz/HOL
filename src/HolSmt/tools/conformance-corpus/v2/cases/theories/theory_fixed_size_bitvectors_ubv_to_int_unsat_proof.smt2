@@ -1,7 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_BV)
-(declare-const a (_ BitVec 8))
-(declare-const b (_ BitVec 8))
-(assert (not (= (ubv_to_int a) (ubv_to_int a))))
-(check-sat)
-(get-proof)

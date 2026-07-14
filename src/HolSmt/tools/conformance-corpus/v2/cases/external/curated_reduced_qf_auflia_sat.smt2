@@ -1,7 +1,0 @@
-(set-info :smt-lib-version 2.7)
-(set-logic QF_AUFLIA)
-(set-info :status sat)
-(declare-const a (Array Int Int))
-(declare-const i Int)
-(assert (= (select (store a i 7) i) 7))
-(check-sat)

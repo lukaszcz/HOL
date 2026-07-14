@@ -1,7 +1,0 @@
-unsat
-((set-logic ALL)
-(proof
-(let (($x29 (= x (cons (head x) (tail x)))))
-(let (($x30 (not $x29)))
-(let ((@x31 (asserted $x30)))
-(unit-resolution ((_ th-lemma datatype) (or $x29 (not ((_ is cons ) x)))) (mp (asserted ((_ is cons ) x)) (rewrite (= ((_ is cons ) x) ((_ is cons ) x))) ((_ is cons ) x)) (mp @x31 (rewrite (= $x30 $x30)) $x30) false))))))

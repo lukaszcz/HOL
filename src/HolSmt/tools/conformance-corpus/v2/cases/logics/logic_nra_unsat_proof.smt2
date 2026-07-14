@@ -1,5 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic NRA)
-(assert false)
-(check-sat)
-(get-proof)

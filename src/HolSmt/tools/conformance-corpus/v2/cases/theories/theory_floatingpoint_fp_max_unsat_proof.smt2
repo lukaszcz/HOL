@@ -1,8 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_FP)
-(declare-const x Float32)
-(declare-const y Float32)
-(declare-const z Float32)
-(assert (not (= (fp.max x y) (fp.max x y))))
-(check-sat)
-(get-proof)

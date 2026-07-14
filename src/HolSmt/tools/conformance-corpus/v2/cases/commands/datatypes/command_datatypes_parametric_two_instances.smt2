@@ -1,7 +1,0 @@
-(set-logic ALL)
-(declare-datatype Box (par (T) ((box (value T)))))
-(declare-const bi (Box Int))
-(declare-const bb (Box Bool))
-(assert (= (value bi) 7))
-(assert (= (value bb) true))
-(check-sat)

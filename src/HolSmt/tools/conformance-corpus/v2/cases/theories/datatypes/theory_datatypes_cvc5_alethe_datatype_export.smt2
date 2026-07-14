@@ -1,6 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic QF_DT)
-(declare-datatypes ((Color 0)) (((red) (blue))))
-(assert (= red blue))
-(check-sat)
-(get-proof)

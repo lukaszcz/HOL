@@ -1,5 +1,0 @@
-(set-logic QF_UF)
-(push 1)
-(assert false)
-(check-sat)
-(pop 1)

@@ -1,5 +1,0 @@
-(set-logic ALL)
-(declare-const xs (Seq Int))
-(declare-const ys (Seq Int))
-(assert (or (seq.contains xs ys) (not (seq.contains xs ys))))
-(check-sat)

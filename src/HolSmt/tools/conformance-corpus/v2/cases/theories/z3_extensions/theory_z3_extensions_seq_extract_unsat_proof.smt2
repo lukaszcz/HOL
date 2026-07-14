@@ -1,6 +1,0 @@
-(set-option :produce-proofs true)
-(set-logic ALL)
-(declare-const xs (Seq Int))
-(assert (not (= (seq.extract xs 0 1) (seq.extract xs 0 1))))
-(check-sat)
-(get-proof)
