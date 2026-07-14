@@ -9,7 +9,7 @@ versions=(4.11.2 4.12.4 4.13.0 4.14.1 4.15.3)
 out_dir=".holsmt-z3-version-matrix"
 download_dir=""
 # Per-shard selftest timeout.  The functional selftest is run sharded (see
-# tools/run_sharded_selftest.sh), so this bounds a single shard, not the whole
+# tools/run_selftest.sh), so this bounds a single shard, not the whole
 # suite -- generous enough that a healthy shard never trips it.
 timeout_seconds=1800
 shards=${SHARDS:-8}
@@ -314,7 +314,7 @@ EOF
   # would masquerade as a skipped verification).  The driver returns nonzero
   # if any shard fails or times out.
   if ! env HOL4_Z3_EXECUTABLE="$z3_path" SHARD_TIMEOUT="$timeout_seconds" \
-      src/HolSmt/tools/run_sharded_selftest.sh \
+      src/HolSmt/tools/run_selftest.sh --no-build \
         --shards "$shards" --jobs "$jobs" --out "$result_dir/shards" \
       > "$result_dir/selftest.stdout" \
       2> "$result_dir/selftest.stderr"; then

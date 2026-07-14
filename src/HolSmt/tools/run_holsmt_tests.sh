@@ -222,13 +222,18 @@ if "$clean_first"; then
 fi
 
 run "Build HolSmt test binaries and conformance drivers" \
-  bin/Holmake -C src/HolSmt selftest.exe holsmt-typecheck holsmt-z3-tac
+  bin/Holmake -C src/HolSmt smtheap selftest.exe holsmt-typecheck holsmt-z3-tac
 
 run "Build real SOS/CSDP selftest" \
   bin/Holmake -C src/real selftest_sos.exe
 
-run_in_dir "Run HolSmt SML selftest" src/HolSmt \
-  ./selftest.exe
+# Run the functional selftest sharded across fresh, heap-capped processes.
+# A single unsharded run reaches >200 GB RSS and is OOM-killed on a
+# memory-capped runner (masquerading as a skipped/failed verification), so
+# the whole-suite ./selftest.exe is never run here.  --no-build: the build
+# step above already produced smtheap + selftest.exe.
+run "Run HolSmt SML selftest (sharded)" \
+  src/HolSmt/tools/run_selftest.sh --no-build
 
 run_in_dir "Run real SOS/CSDP selftest" src/real \
   ./selftest_sos.exe
