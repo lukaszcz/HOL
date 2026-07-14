@@ -31,14 +31,9 @@ Z3_ProofReplay.sml      Proof reconstruction for Z3: replaying Z3's proofs in
 Validation assets:
 
 The conformance corpora, recorded solver proofs, coverage reports, and their
-validation tools live in the separately versioned `validation` dependency, not
-in this source tree.  In an AGM workspace, select it with:
+validation tools live in the separately versioned `holsmt-validation` dependency, not in this source tree. The `holsmt-validation` repository is available at https://github.com/lukaszcz/holsmt-validation.git.
 
-  export HOLSMT_ROOT=$PWD
-  export HOLSMT_VALIDATION_DIR=$PROJ_DIR/deps/validation/repo
-
-The commands below use `$HOLSMT_VALIDATION_DIR`; see that repository's README
-for the dependency contract and standalone validation instructions.
+The commands below assume `$HOLSMT_VALIDATION_DIR` points at the check-out of `holsmt-validation`; see that repository's README for the dependency contract and standalone validation instructions.
 
 User contract:
 
@@ -93,9 +88,7 @@ releases locally with the TPTP frontend and install versioned binaries under
 Unsupported or deprecated Z3 versions:
 
   Version class              Reason
-  All pre-4 versions         Legacy 2.x/3.x proof support (incl. 2.19.1 and the
-  (incl. 2.19.1)             PROOF_MODE path) has been removed from the
-                             contract.  Only Z3 4.x is supported.
+  All pre-4 versions         Legacy 2.x/3.x proof support has been removed from the                             contract.  Only Z3 4.x is supported.
   4.x before 4.11.2          Outside the modern proof-mode support floor.
   4.x after 4.15.x           Outside the currently documented support range;
                              use --allow-unsupported-z3 to investigate drift.
