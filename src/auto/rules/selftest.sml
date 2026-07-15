@@ -1,5 +1,5 @@
 open HolKernel Parse Tactic testutils boolSyntax
-open NTactical clasetNet clasetRules clasetLib
+open NTactical clasetNet clasetRules clasetLib clasetSeedTheory
 
 fun test (name, check) =
   (tprint name;
@@ -8,6 +8,67 @@ fun test (name, check) =
 (* This deliberately precedes the first [the_claset] demand below. *)
 val _ = Datatype.Datatype
   `claset_hook_before_demand = ClasetHookA | ClasetHookB num`
+
+fun same_seed_spec
+  ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
+  ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
+  kind1 = kind2 andalso safe1 = safe2 andalso prio1 = prio2
+
+val seed_initialisation_start = Time.now ()
+val seed_claset = the_claset ()
+val seed_initialisation_time =
+  Time.- (Time.now (), seed_initialisation_start)
+
+val seed_sintro_spec =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+val seed_intro_spec =
+  {kind = clasetRules.Intro, safe = false, prio = NONE}
+val seed_selim_spec =
+  {kind = clasetRules.Elim, safe = true, prio = NONE}
+val seed_elim_spec =
+  {kind = clasetRules.Elim, safe = false, prio = NONE}
+
+val seed_expected_rules =
+  [(seed_sintro_spec, "bool$TRUTH"),
+   (seed_sintro_spec, "bool$EQ_REFL"),
+   (seed_sintro_spec, "clasetSeed$DISJ_CINTRO_THM"),
+   (seed_sintro_spec, "bool$IMP_F"),
+   (seed_sintro_spec, "clasetSeed$EX_EX1_INTRO_THM"),
+   (seed_sintro_spec, "bool$AND_INTRO_THM"),
+   (seed_sintro_spec, "bool$IMP_ANTISYM_AX"),
+   (seed_selim_spec, "bool$FALSITY"),
+   (seed_selim_spec, "clasetSeed$EX1_ELIM_THM"),
+   (seed_selim_spec, "clasetSeed$EXISTS_ELIM_THM"),
+   (seed_selim_spec, "clasetSeed$IFF_CELIM_THM"),
+   (seed_selim_spec, "clasetSeed$IMP_CELIM_THM"),
+   (seed_selim_spec, "clasetSeed$CONJ_ELIM_THM"),
+   (seed_selim_spec, "bool$OR_ELIM_THM"),
+   (seed_intro_spec, "clasetSeed$EXISTS_INTRO_THM"),
+   (seed_intro_spec, "bool$EQ_EXT"),
+   (seed_intro_spec, "clasetSeed$EX1_INTRO_THM"),
+   (seed_elim_spec, "clasetSeed$FORALL_ELIM_THM")]
+
+fun is_seed_rule (_, (name, _)) =
+  List.exists (fn (_, expected_name) => name = expected_name)
+    seed_expected_rules
+
+val _ =
+  test
+    ("seed claset contains the HOL.thy rules in canonical order",
+     fn () =>
+       ListPair.allEq
+         (fn ((spec, (name, _)), (expected_spec, expected_name)) =>
+            name = expected_name andalso same_seed_spec spec expected_spec)
+         (List.filter is_seed_rule (rules_of seed_claset), seed_expected_rules)
+       andalso
+       not (List.exists
+              (fn (_, (name, _)) => name = "clasetSeed$NOT_ELIM_THM")
+              (rules_of seed_claset)))
+
+val _ =
+  test
+    ("seed claset initialisation stays within its load-time budget",
+     fn () => Time.< (seed_initialisation_time, Time.fromSeconds 30))
 
 fun same_terms ts1 ts2 =
   ListPair.allEq (fn (tm1, tm2) => Term.aconv tm1 tm2) (ts1, ts2)

@@ -3,9 +3,11 @@ all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 clasetLib.uo: clasetMarkerTheory.uo
+clasetSeedTheory.uo: clasetLib.uo
+selftest.uo: clasetSeedTheory.uo
 
 selftest.exe: selftest.uo NTactical.uo clasetNet.uo clasetRules.uo \
-              clasetLib.uo clasetMarkerTheory.uo
+              clasetLib.uo clasetMarkerTheory.uo clasetSeedTheory.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
