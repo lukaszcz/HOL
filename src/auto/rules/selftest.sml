@@ -736,6 +736,9 @@ fun refl_intro vars tm = GENL vars (DISCH tm (ASSUME tm))
 fun candidate_indices candidates =
   map (fn (({index, ...} : tag), _) => index) candidates
 
+fun candidate_weights candidates =
+  map (fn (({weight, ...} : tag), _) => weight) candidates
+
 val _ =
   test
     ("clasetLib orders six matching rules by subgoals then recency",
@@ -758,6 +761,8 @@ val _ =
          val candidates =
            match_intro_candidates (unsafe_part cs) ``p /\ p``
        in
+         candidate_weights candidates = [2, 2, 2, 2, 2, 2,
+                                         3, 3, 3, 3, 3, 3] andalso
          candidate_indices candidates =
            [~11, ~9, ~7, ~5, ~3, ~1, ~12, ~10, ~8, ~6, ~4, ~2]
        end)
