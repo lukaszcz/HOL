@@ -1,1 +1,8 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
+all: $(DEFAULT_TARGETS)
+.PHONY: all
+
+ifeq ($(KERNELID),otknl)
+all: $(patsubst %Script.sml,%.ot.art,$(wildcard *Script.sml))
+
+endif
