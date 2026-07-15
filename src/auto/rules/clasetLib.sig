@@ -28,6 +28,16 @@ sig
   val remove_rule : string -> claset -> claset
   val merge_cs : claset * claset -> claset
 
+  val the_claset : unit -> claset
+  val export_rule : rulespec -> string -> unit
+  val temp_add_rule : rulespec -> string * thm -> unit
+  val delrule : string -> unit
+  val temp_delrule : string -> unit
+  val augment_claset : (claset -> claset) -> unit
+  val claset_of_theory : {thyname : string} -> claset option
+  val merge_clasets : string list -> claset option
+  val with_claset : claset -> ('a -> 'b) -> ('a -> 'b)
+
   val add_safe_wrapper : string * NTactical.wrapper -> claset -> claset
   val add_unsafe_wrapper : string * NTactical.wrapper -> claset -> claset
   val del_safe_wrapper : string -> claset -> claset

@@ -35,38 +35,39 @@ fun is_elim Intro = false
 
 fun rule_brl kind th = (is_elim kind, th)
 
-fun indexed_rule kind tag ((th, _) : rl) =
+fun indexed_brl is_elim tag th =
   let
     val {patvars, ...} = canonical_form th
+    val kind = if is_elim then Elim else Intro
     val pat = rule_index kind th
   in
-    ({pat = pat, patvars = patvars}, (tag, rule_brl kind th))
+    ({pat = pat, patvars = patvars}, (tag, (is_elim, th)))
   end
 
-fun insert_brl kind tag rl (inet, enet) =
+fun insert_brl is_elim tag th (inet, enet) =
   let
-    val entry = indexed_rule kind tag rl
+    val entry = indexed_brl is_elim tag th
   in
-    if is_elim kind then (inet, clasetNet.insert entry enet)
+    if is_elim then (inet, clasetNet.insert entry enet)
     else (clasetNet.insert entry inet, enet)
   end
 
 fun insert_rl kind index (rl : rl) netpair =
   let
     val (th, swapped) = rl
-    val tag = {weight = subgoals_of (rule_brl kind th),
+    val is_elim' = is_elim kind
+    val tag = {weight = subgoals_of (is_elim', th),
                index = 2 * index + 1}
-    val netpair' = insert_brl kind tag rl netpair
+    val netpair' = insert_brl is_elim' tag th netpair
   in
     case swapped of
         NONE => netpair'
       | SOME th' =>
           let
-            val swapped_rl = (th', NONE)
-            val tag' = {weight = subgoals_of (rule_brl kind th'),
+            val tag' = {weight = subgoals_of (true, th'),
                         index = 2 * index}
           in
-            insert_brl kind tag' swapped_rl netpair'
+            insert_brl true tag' th' netpair'
           end
   end
 
@@ -328,6 +329,146 @@ fun unify_intro_candidates (inet, _) tm =
 
 fun unify_elim_candidates (_, enet) tm =
   sorted (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
+
+(* The false state defers persistent updates until the first demand.  TASK_10
+   extends [catch_up_typebase] with its TypeBase sweep. *)
+datatype pending = ApplyDelta of cdelta | Modify of (claset -> claset)
+type cstate = claset * bool * pending list
+
+val state0 : cstate = (empty_cs, false, [])
+
+fun apply_cdelta (ADD {name, spec}) cs =
+      (case load_delta (ADD {name = name, spec = spec}) of
+           NONE => cs
+         | SOME ({Name, ...}, spec', th) => add_rule spec' (Name, th) cs)
+  | apply_cdelta (RM name) cs = remove_rule name cs
+
+fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
+  | apply_pending (Modify f) cs = f cs
+
+(* Values reconstructed for an ancestry always contain their complete set of
+   persistent declarations, so they need no delayed replay. *)
+fun apply_delta delta (cs, _, _) = (apply_cdelta delta cs, true, [])
+
+(* Add all declarations before rebuilding the nets.  Theory loading uses this
+   once for a delta batch, rather than extending a net for each declaration. *)
+fun update_decls (ADD {name, spec}) decls =
+      (case load_delta (ADD {name = name, spec = spec}) of
+           NONE => decls
+         | SOME ({Name, ...}, spec', th) =>
+             #2 (extend_decl (make_rule_decl spec' (Name, th)) decls))
+  | update_decls (RM name) decls = #2 (remove_decl name decls)
+
+fun rebuild_claset decls
+  (CS {safe_wrappers, unsafe_wrappers, ...}) =
+  let
+    val (safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair) =
+      List.foldl
+        (fn (decl, nets) => add_decl decl nets)
+        (empty_netpair, empty_netpair, empty_netpair, empty_netpair)
+        (dest_decls decls)
+  in
+    CS {decls = decls,
+        safe_wrappers = safe_wrappers,
+        unsafe_wrappers = unsafe_wrappers,
+        safe0_netpair = safe0_netpair,
+        safep_netpair = safep_netpair,
+        unsafe_netpair = unsafe_netpair,
+        dup_netpair = dup_netpair}
+  end
+
+fun batch_apply deltas (cs as CS {decls, ...}) =
+  rebuild_claset
+    (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas) cs
+
+fun catch_up_typebase cs = cs
+
+fun init_state (state as (cs, initialised, pending)) =
+  if initialised then state
+  else
+    (catch_up_typebase
+       (List.foldl (fn (update, acc) => apply_pending update acc)
+          cs (List.rev pending)),
+     true, [])
+
+fun apply_to_global delta (cs, initialised, pending) =
+  if initialised then apply_delta delta (cs, initialised, pending)
+  else (cs, false, ApplyDelta delta :: pending)
+
+(* Loading invokes this once for all a theory's deltas.  In particular, an
+   unforced global state retains the complete batch for one lazy replay. *)
+fun batch_finaliser _ deltas (cs, initialised, pending) =
+  if initialised then (batch_apply deltas cs, true, [])
+  else
+    (cs, false,
+     List.revAppend (List.map ApplyDelta deltas, pending))
+
+val adresult : (cdelta, cstate) AncestryData.fullresult =
+  AncestryData.fullmake {
+    adinfo = {tag = "claset", initial_values = [("min", state0)],
+              apply_delta = apply_delta},
+    uptodate_delta = uptodate_delta,
+    sexps = {dec = decode_delta, enc = encode_delta},
+    globinfo = {apply_to_global = apply_to_global,
+                thy_finaliser = SOME batch_finaliser,
+                initial_value = state0}
+  }
+
+fun update_claset f =
+  #update_global_value adresult
+    (fn (cs, initialised, pending) =>
+       if initialised then (f cs, true, [])
+       else (cs, false, Modify f :: pending))
+
+fun the_claset () =
+  (#update_global_value adresult init_state;
+   #1 (#get_global_value adresult ()))
+
+fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
+fun temp_delrule name = update_claset (remove_rule name)
+fun augment_claset f = update_claset f
+
+fun export_rule spec name =
+  let
+    val thname = ThmSetData.toKName name
+    val delta = ADD {name = thname, spec = spec}
+  in
+    #record_delta adresult delta;
+    #update_global_value adresult (apply_to_global delta)
+  end
+
+fun delrule name =
+  let val delta = RM name
+  in
+    #record_delta adresult delta;
+    #update_global_value adresult (apply_to_global delta)
+  end
+
+fun claset_of_theory thy = Option.map #1 (#DB adresult thy)
+fun merge_clasets thys = Option.map #1 (#merge adresult thys)
+fun with_claset cs = AncestryData.with_temp_value adresult (cs, true, [])
+
+fun attribute_error attrname =
+  raise mk_HOL_ERR "clasetLib" "attribute"
+    ("Arguments not allowed for attribute " ^ attrname ^
+     "; priorities arrive in a later phase")
+
+fun register_rule_attribute (attrname, spec) =
+  let
+    fun storedf {name, args, ...} =
+      if List.null args then export_rule spec name else attribute_error attrname
+    fun localf {name, args, thm, ...} =
+      if List.null args then temp_add_rule spec (name, thm)
+      else attribute_error attrname
+  in
+    ThmAttribute.register_attribute
+      (attrname, {storedf = storedf, localf = localf})
+  end
+
+val _ = List.app register_rule_attribute
+  [("intro", intro_spec), ("sintro", sintro_spec),
+   ("elim", elim_spec), ("selim", selim_spec),
+   ("dest", dest_spec), ("sdest", sdest_spec)]
 
 fun default_goal_size (asl, w) =
   List.foldl (fn (asm, size) => Term.term_size asm + size)

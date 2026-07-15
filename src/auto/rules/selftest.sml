@@ -761,22 +761,25 @@ val _ =
          val candidates =
            match_intro_candidates (unsafe_part cs) ``p /\ p``
        in
-         candidate_weights candidates = [2, 2, 2, 2, 2, 2,
-                                         3, 3, 3, 3, 3, 3] andalso
-         candidate_indices candidates =
-           [~11, ~9, ~7, ~5, ~3, ~1, ~12, ~10, ~8, ~6, ~4, ~2]
+         candidate_weights candidates = [2, 2, 2, 2, 2, 2] andalso
+         candidate_indices candidates = [~11, ~9, ~7, ~5, ~3, ~1]
        end)
 
 val _ =
   test
-    ("clasetLib retrieves swapped unsafe intros on negated queries",
+    ("clasetLib routes swapped intros to elimination lookup",
      fn () =>
        let
          val cs = add_intros [("andI", boolTheory.AND_INTRO_THM)] empty_cs
          val swapped = Option.valOf (SWAP_INTRO_RULE boolTheory.AND_INTRO_THM)
+         val query = ``~(p /\ q)``
+         val intros = match_intro_candidates (unsafe_part cs) query
+         val elims = match_elim_candidates (unsafe_part cs) query
        in
-         has_thm swapped
-           (match_intro_candidates (unsafe_part cs) ``~(p /\ q)``)
+         List.null intros andalso
+         has_thm swapped elims andalso
+         List.exists (fn (tag, (is_elim, th)) =>
+           is_elim andalso #index tag = ~2 andalso same_thm th swapped) elims
        end)
 
 fun indexed_term (is_elim, th) =
@@ -795,12 +798,14 @@ fun same_candidates (cs1 : (tag * brl) list) (cs2 : (tag * brl) list) =
 
 fun rule_entries index kind (th, swapped) =
   let
-    fun entry index th =
-      ({weight = subgoals_of (kind <> Intro, th), index = index},
-       (kind <> Intro, th))
+    fun entry is_elim index th =
+      ({weight = subgoals_of (is_elim, th), index = index},
+       (is_elim, th))
   in
-    entry (2 * index + 1) th ::
-    (case swapped of NONE => [] | SOME th' => [entry (2 * index) th'])
+    entry (kind <> Intro) (2 * index + 1) th ::
+    (case swapped of
+         NONE => []
+       | SOME th' => [entry true (2 * index) th'])
   end
 
 fun brute_unsafe_entries declarations =
@@ -1022,3 +1027,96 @@ val _ =
              [(_, goal)] => Term.aconv goal p
            | _ => false)
        end)
+
+
+(* clasetLib: persistent state and theorem attributes. *)
+fun has_named_rule name cs =
+  List.exists (fn (_, (name', _)) => name = name') (rules_of cs)
+
+val state_rule = DISCH p (ASSUME p)
+val state_intro_rule = DISCH q (ASSUME q)
+val state_export_rule = DISCH r (ASSUME r)
+val state_temp_rule = DISCH ``p /\ q`` (ASSUME ``p /\ q``)
+val state_pending_name = "claset_state_pending"
+val state_sintro_name = "claset_state_sintro"
+val state_intro_name = "claset_state_intro"
+val state_export_name = "claset_state_export"
+val state_temp_name = "claset_state_temp"
+val state_spec = {kind = Intro, safe = true, prio = NONE}
+
+val _ =
+  test
+    ("claset replays temporary updates in order at first demand",
+     fn () =>
+       let
+         val _ = boolLib.save_thm (state_pending_name, state_rule)
+         val _ = export_rule state_spec state_pending_name
+         val _ = temp_delrule state_pending_name
+       in
+         not (has_named_rule state_pending_name (the_claset ()))
+       end)
+
+val _ =
+  test
+    ("claset attributes register and update the global state",
+     fn () =>
+       let
+         val _ = boolLib.save_thm
+           (state_sintro_name ^ "[sintro]", state_rule)
+         val attrs = ["intro", "sintro", "elim", "selim", "dest", "sdest"]
+       in
+         List.all ThmAttribute.is_attribute attrs andalso
+         has_named_rule state_sintro_name (the_claset ())
+       end)
+
+val _ =
+  test
+    ("claset local attributes and temporary additions are not persisted",
+     fn () =>
+       let
+         val _ = boolLib.save_thm
+           (state_intro_name ^ "[intro,local]", state_intro_rule)
+         val _ = temp_add_rule state_spec (state_temp_name, state_temp_rule)
+         val cs_before = the_claset ()
+         val persisted = Option.valOf (merge_clasets ["min"])
+         val _ = temp_delrule state_temp_name
+         val cs_after = the_claset ()
+       in
+         has_named_rule state_intro_name cs_before andalso
+         has_named_rule state_temp_name cs_before andalso
+         not (has_named_rule state_intro_name persisted) andalso
+         not (has_named_rule state_temp_name persisted) andalso
+         has_named_rule state_intro_name cs_after andalso
+         not (has_named_rule state_temp_name cs_after)
+       end)
+
+val _ =
+  test
+    ("claset persistent API updates state correctly",
+     fn () =>
+       let
+         val _ = boolLib.save_thm (state_export_name, state_export_rule)
+         val _ = export_rule state_spec state_export_name
+         val exported = the_claset ()
+         val merged = merge_clasets ["min"]
+         val by_theory = claset_of_theory {thyname = "min"}
+         val only_local = add_sintros [("local-only", state_rule)] empty_cs
+         val scoped = with_claset only_local
+           (fn () => has_named_rule "local-only" (the_claset ())) ()
+         val _ = delrule state_export_name
+       in
+         has_named_rule state_export_name exported andalso
+         Option.isSome merged andalso Option.isSome by_theory andalso
+         scoped andalso not (has_named_rule state_export_name (the_claset ()))
+       end)
+
+val _ =
+  test
+    ("claset attributes reject arguments until priorities are implemented",
+     fn () =>
+       Option.isSome
+         (hol_err_msg
+           (fn () =>
+             ThmAttribute.local_attribute
+               {attrname = "intro", name = "bad-priority", args = ["10"],
+                thm = state_rule})))
