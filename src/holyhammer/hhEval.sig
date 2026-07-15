@@ -69,4 +69,12 @@ sig
   val write_run_header : string -> run_header -> unit
 
   val sample_goal : int -> string -> bool
+
+  val set_worker_settings : {conditions : condition list, sample : int} -> unit
+  val write_evalscript : string -> string -> condition list -> int -> string
+  val journal_theory_error : string -> string -> string -> unit
+  val eval_thy : string -> string -> unit
+  val run_eval :
+    {expname : string, ncore : int, thyl : string list,
+     conditions : condition list} -> unit
 end

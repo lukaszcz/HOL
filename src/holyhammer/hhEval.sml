@@ -6,6 +6,8 @@
 structure hhEval :> hhEval =
 struct
 
+open HolKernel boolLib aiLib
+
 datatype regime = Bushy | Chainy
 datatype selector = Deps | Knn of int
 
@@ -473,5 +475,339 @@ fun sample_hash text =
 fun sample_goal factor goal_id =
   if factor < 1 then raise Fail "--sample must be a positive integer"
   else IntInf.mod (sample_hash goal_id, IntInf.fromInt factor) = 0
+
+(* -------------------------------------------------------------------------
+   Evaluation driver and per-theory workers
+   ------------------------------------------------------------------------- *)
+
+val worker_conditions = ref ([] : condition list)
+val worker_sample = ref 1
+
+fun set_worker_settings {conditions, sample} =
+  if sample < 1 then raise Fail "eval.sample must be a positive integer"
+  else (worker_conditions := conditions; worker_sample := sample)
+
+fun run_name expdir = OS.Path.file expdir
+
+fun safe_component text =
+  String.map (fn character =>
+    if Char.isAlphaNum character orelse character = #"_" orelse
+       character = #"-" then character else #"_") text
+
+fun goal_id thy name = thy ^ "." ^ name
+
+fun szs_name hhProver.SzsTheorem = "Theorem"
+  | szs_name hhProver.SzsCounterSat = "CounterSatisfiable"
+  | szs_name hhProver.SzsSatisfiable = "Satisfiable"
+  | szs_name hhProver.SzsGaveUp = "GaveUp"
+  | szs_name hhProver.SzsTimeout = "Timeout"
+  | szs_name hhProver.SzsResourceOut = "ResourceOut"
+  | szs_name hhProver.SzsInappropriate = "Inappropriate"
+  | szs_name (hhProver.SzsUnknown name) = name
+  | szs_name (hhProver.RunFailure _) = "RunFailure"
+
+fun run_failure_error (hhProver.RunFailure message) = SOME message
+  | run_failure_error _ = NONE
+
+fun base_entry expdir thy name condition nfacts szs t_prover axioms version =
+  {run = run_name expdir, thy = thy, thm = name, goal_id = goal_id thy name,
+   cond = #cond_id condition, regime = #regime condition,
+   selector = #selector condition, prover = #prover condition,
+   prover_version = version, nfacts = nfacts, timeout = #timeout condition,
+   szs = szs, t_prover = t_prover, axioms_used = axioms,
+   recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+   error = NONE} : journal_entry
+
+fun journal_theory_error expdir thy message =
+  let
+    val condition : condition =
+      {cond_id = "__load__", regime = Bushy, selector = Deps,
+       prover = "", timeout = 0, reconstruct = false}
+    val entry = base_entry expdir thy "__load__" condition 0 "LoadFailure"
+      0.0 NONE NONE
+    val entry =
+      {run = #run entry, thy = #thy entry, thm = #thm entry,
+       goal_id = #goal_id entry, cond = #cond entry, regime = #regime entry,
+       selector = #selector entry, prover = #prover entry,
+       prover_version = #prover_version entry, nfacts = #nfacts entry,
+       timeout = #timeout entry, szs = #szs entry, t_prover = #t_prover entry,
+       axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
+       recon_method = #recon_method entry, t_recon = #t_recon entry,
+       stac = #stac entry, error = SOME message}
+  in
+    append_journal (journal_path expdir thy) entry
+  end
+
+fun pool_ids (thyl, thmidl) =
+  map (fn (theory, name) => theory ^ "Theory." ^ name)
+    (List.concat (map hhExportLib.thmidl_in_thy thyl) @ thmidl)
+
+fun chainy_pools thy =
+  let
+    val order = hhExportLib.sorted_ancestry [thy]
+    fun one ((_, name), pool) = (name, pool_ids pool)
+  in
+    map one (hhExportLib.chainy_dep order thy (DB.theorems thy))
+  end
+
+fun lookup_pool name pools =
+  case List.find (fn (other, _) => other = name) pools of
+      SOME (_, pool) => pool
+    | NONE => []
+
+fun select_knn pool count goal =
+  let
+    val (weights, features) = mlThmData.create_thmdata ()
+    val permitted = List.filter (fn (name, _) =>
+      List.exists (fn allowed => allowed = name) pool) features
+  in
+    mlNearestNeighbor.thmknn_wdep (weights, permitted) count
+      (mlFeature.fea_of_goal true goal)
+  end
+
+fun selected_premises condition pool thm goal =
+  case #selector condition of
+      Deps =>
+        let val dependencies = #2 (mlThmData.intactdep_of_thm thm) in
+          case #regime condition of
+              Bushy => dependencies
+            | Chainy => List.filter (fn name =>
+                List.exists (fn allowed => allowed = name) pool) dependencies
+        end
+    | Knn count => select_knn pool count goal
+
+fun reconstruct condition result goal =
+  if not (#reconstruct condition) orelse
+     #szs result <> hhProver.SzsTheorem then
+    (NONE, NONE, NONE, NONE)
+  else
+    case #used_axioms result of
+        NONE => (NONE, NONE, NONE, NONE)
+      | SOME axioms =>
+          ((let
+              val ((stac, _), elapsed) =
+                add_time (hhReconstruct.hh_reconstruct axioms) goal
+            in
+              (SOME true, SOME "metis", SOME elapsed, SOME stac)
+            end)
+           handle Interrupt => raise Interrupt
+                | error =>
+                    (SOME false, SOME "metis", NONE,
+                     SOME (General.exnMessage error)))
+
+fun run_cell expdir thy (name, thm) pool condition =
+  let
+    val goal = dest_thm thm
+    val premises = selected_premises condition pool thm goal
+    val named_premises = mlThmData.thml_of_namel premises
+    val nfacts = length named_premises
+    val directory = join (join (join expdir "pb") (safe_component thy))
+      (safe_component (name ^ "-" ^ #cond_id condition))
+    val _ = ensure_dir directory
+    val _ = hhExportFof.fof_export_pb directory
+      (list_mk_imp goal, named_premises)
+  in
+    case hhProver.lookup (#prover condition) of
+        NONE =>
+          let
+            val entry = base_entry expdir thy name condition nfacts
+              "RunFailure" 0.0 NONE NONE
+            val entry =
+              {run = #run entry, thy = #thy entry, thm = #thm entry,
+               goal_id = #goal_id entry, cond = #cond entry,
+               regime = #regime entry, selector = #selector entry,
+               prover = #prover entry, prover_version = #prover_version entry,
+               nfacts = #nfacts entry, timeout = #timeout entry,
+               szs = #szs entry, t_prover = #t_prover entry,
+               axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
+               recon_method = #recon_method entry, t_recon = #t_recon entry,
+               stac = #stac entry,
+               error = SOME ("unknown HolyHammer prover: " ^ #prover condition)}
+          in
+            append_journal (journal_path expdir thy) entry
+          end
+      | SOME prover =>
+          let
+            val result = hhProver.run prover
+              {timeout = #timeout condition,
+               problem = join directory "atp_in", extra = [],
+               debug_dir = SOME (join expdir "out")}
+            val (recon_ok, recon_method, t_recon, stac_or_error) =
+              reconstruct condition result goal
+            val entry = base_entry expdir thy name condition nfacts
+              (szs_name (#szs result)) (#time result) (#used_axioms result)
+              (#version result)
+            val (stac, recon_error) =
+              case recon_ok of
+                  SOME false => (NONE, stac_or_error)
+                | _ => (stac_or_error, NONE)
+            val entry =
+              {run = #run entry, thy = #thy entry, thm = #thm entry,
+               goal_id = #goal_id entry, cond = #cond entry,
+               regime = #regime entry, selector = #selector entry,
+               prover = #prover entry, prover_version = #prover_version entry,
+               nfacts = #nfacts entry, timeout = #timeout entry,
+               szs = #szs entry, t_prover = #t_prover entry,
+               axioms_used = #axioms_used entry, recon_ok = recon_ok,
+               recon_method = recon_method, t_recon = t_recon, stac = stac,
+               error = case recon_error of
+                           SOME message => SOME message
+                         | NONE => run_failure_error (#szs result)}
+          in
+            append_journal (journal_path expdir thy) entry
+          end
+  end
+  handle Interrupt => raise Interrupt
+       | error =>
+           let
+             val entry = base_entry expdir thy name condition 0 "Error" 0.0
+               NONE NONE
+             val entry =
+               {run = #run entry, thy = #thy entry, thm = #thm entry,
+                goal_id = #goal_id entry, cond = #cond entry,
+                regime = #regime entry, selector = #selector entry,
+                prover = #prover entry, prover_version = #prover_version entry,
+                nfacts = #nfacts entry, timeout = #timeout entry,
+                szs = #szs entry, t_prover = #t_prover entry,
+                axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
+                recon_method = #recon_method entry, t_recon = #t_recon entry,
+                stac = #stac entry, error = SOME (General.exnMessage error)}
+           in
+             append_journal (journal_path expdir thy) entry
+           end
+
+fun broken_deps_cell expdir thy name condition =
+  let
+    val entry = base_entry expdir thy name condition 0 "BrokenDeps" 0.0
+      NONE NONE
+  in
+    append_journal (journal_path expdir thy) entry
+  end
+
+fun eval_loaded_theory expdir thy =
+  let
+    val completed = read_completed (journal_path expdir thy)
+    val pools = chainy_pools thy
+    fun evaluate (name, thm) =
+      let
+        val id = goal_id thy name
+        val (dependencies_ok, intact_deps) =
+          mlThmData.intactdep_of_thm thm
+        val pool = lookup_pool name pools
+        fun one condition =
+          if cell_completed completed (id, #cond_id condition) then ()
+          else if #regime condition = Bushy andalso not dependencies_ok then
+            broken_deps_cell expdir thy name condition
+          else
+            run_cell expdir thy (name, thm)
+              (case #regime condition of
+                   Bushy => intact_deps
+                 | Chainy => pool)
+              condition
+      in
+        if sample_goal (!worker_sample) id then app one (!worker_conditions)
+        else ()
+      end
+  in
+    app evaluate (DB.theorems thy)
+  end
+
+fun eval_thy expdir thy =
+  (eval_loaded_theory expdir thy
+   handle Interrupt => raise Interrupt
+        | error => journal_theory_error expdir thy (General.exnMessage error))
+
+fun condition_text condition =
+  "hhEval.parse_condition " ^ Portable.mlquote (encode_condition condition)
+
+fun write_evalscript expdir thy conditions sample =
+  let
+    val scripts = join expdir "scripts"
+    val _ = ensure_dir scripts
+    val path = join scripts (safe_component thy ^ "_hheval.sml")
+    val conditions_text = String.concatWith ", " (map condition_text conditions)
+    val settings =
+      "val _ = hhEval.set_worker_settings {conditions = [" ^
+      conditions_text ^ "], sample = " ^ Int.toString sample ^ "};"
+    val action = "val _ = hhEval.eval_thy " ^ Portable.mlquote expdir ^
+      " " ^ Portable.mlquote thy ^ ";"
+    val output = TextIO.openOut path
+    val _ = TextIO.output (output,
+      "load " ^ Portable.mlquote (thy ^ "Theory") ^ ";\n" ^
+      "load \"hhEval\";\n" ^ settings ^ "\n" ^ action ^ "\n")
+    val _ = TextIO.closeOut output
+  in
+    path
+  end
+
+fun configured_sample () =
+  case hhConfig.get_int "eval.sample" of
+      NONE => 1
+    | SOME sample =>
+        if sample < 1 then raise Fail "eval.sample must be a positive integer"
+        else sample
+
+fun theory_cells thy conditions sample =
+  let
+    val _ = load (thy ^ "Theory")
+    fun cells (name, _) =
+      let val id = goal_id thy name in
+        if sample_goal sample id then map (fn condition =>
+          (id, #cond_id condition)) conditions
+        else []
+      end
+  in
+    SOME (List.concat (map cells (DB.theorems thy)))
+  end
+  handle Interrupt => raise Interrupt | _ => NONE
+
+fun file_exists path =
+  OS.FileSys.access (path, [OS.FileSys.A_READ]) handle OS.SysErr _ => false
+
+fun run_eval {expname, ncore, thyl, conditions} =
+  if ncore < 1 then raise Fail "run_eval requires at least one worker"
+  else
+    let
+      val sample = configured_sample ()
+      val expdir = experiment_dir expname
+      val _ = ensure_dir expdir
+      val _ = ensure_dir (join expdir "journal")
+      val _ = ensure_dir (join expdir "out")
+      val _ = ensure_dir (join expdir "pb")
+      val _ = ensure_dir (join expdir "scripts")
+      fun corpus_entry thy =
+        ((load (thy ^ "Theory"); loaded_corpus_entry thy)
+         handle Interrupt => raise Interrupt
+              | _ => {thy = thy, theorem_count = 0, dep_stamp = ""})
+      val _ =
+        if file_exists (join expdir "run.json") then ()
+        else write_run_header expdir
+          (new_run_header {expname = expname, corpus = map corpus_entry thyl,
+            added_from_dat = [], conditions = conditions, sample = sample})
+      val states = map (fn thy =>
+        (thy, theory_cells thy conditions sample)) thyl
+      fun pending (thy, NONE) =
+            (journal_theory_error expdir thy
+               "theory could not be loaded by the evaluation driver";
+             false)
+        | pending (thy, SOME cells) =
+            not (journal_complete (journal_path expdir thy) cells)
+      val queued_names = map #1 (List.filter pending states)
+      val scripts = map (fn thy =>
+        (thy, write_evalscript expdir thy conditions sample)) thyl
+      val queued = List.filter (fn (thy, _) =>
+        List.exists (fn name => name = thy) queued_names) scripts
+      val _ = smlExecScripts.buildheap_dir := join expdir "out"
+      val _ = smlParallel.parapp_queue ncore
+        (fn (_, script) => smlExecScripts.exec_script script) queued
+      fun note_unfinished (thy, NONE) = ()
+        | note_unfinished (thy, SOME cells) =
+            if journal_complete (journal_path expdir thy) cells then ()
+            else journal_theory_error expdir thy
+              "evaluation worker ended before completing its journal"
+      val _ = app note_unfinished (List.filter pending states)
+    in
+      ()
+    end
 
 end

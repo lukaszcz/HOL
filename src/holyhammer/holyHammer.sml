@@ -207,37 +207,6 @@ fun hh goal = let val tac = hh_goal goal in hidef tac goal end
 fun holyhammer tm = hidef TAC_PROOF (([],tm), hh_goal ([],tm));
 
 (* -------------------------------------------------------------------------
-   HolyHammer evaluation without premise selection:
-   trying to re-prove theorems from their dependencies
-   ------------------------------------------------------------------------- *)
-
-fun hh_pb_eval_thm atpl (s,thm) =
-  let
-    val _ = print_endline ("\nTheorem: " ^ s)
-    val _ = log_eval ("\nTheorem: " ^ s)
-    val goal = dest_thm thm
-    val (b,premises) = intactdep_of_thm thm
-    val _ = log_eval ("  dependencies:\n    " ^
-      (String.concatWith "\n    " premises))
-  in
-    if not b then (print_endline "  broken_dependencies (not tested)";
-                   log_eval "  broken dependencies (not tested)")
-    else
-      let val (_,t) = add_time (can (hh_pb bindir atpl premises)) goal in
-        log_eval ("  time: " ^ Real.toString t)
-      end
-  end
-
-fun hh_pb_eval_thy atpl thy =
-  let val b = !premise_selection_flag in
-    premise_selection_flag := false; eval_flag := true; eval_thy := thy;
-    mkDir_err hh_eval_dir;
-    remove_file (hh_eval_dir ^ "/" ^ thy);
-    app (hh_pb_eval_thm atpl) (DB.theorems thy);
-    premise_selection_flag := b; eval_flag := false; eval_thy := "scratch"
-  end
-
-(* -------------------------------------------------------------------------
    Function called by the tactictoe evaluation framework
    ------------------------------------------------------------------------- *)
 

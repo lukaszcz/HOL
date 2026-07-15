@@ -98,9 +98,15 @@ fun test_child root =
       (is_some "user" (hhConfig.get "priority"))
     val _ = expect "environment key mangling"
       (is_some "environment" (hhConfig.get "mangled.key"))
+    val expected_eval =
+      case OS.Process.getEnv "HHEVAL_INTEGRATION_TEST" of
+          SOME path =>
+            (case OS.Process.getEnv "HOL4_HAMMER_EVAL_DIR" of
+                 SOME directory => directory
+               | NONE => path)
+        | NONE => join (join (join holdir "src") "holyhammer") "eval"
     val _ = expect "built-in default"
-      (is_some (join (join (join holdir "src") "holyhammer") "eval")
-               (hhConfig.get "eval.dir"))
+      (is_some expected_eval (hhConfig.get "eval.dir"))
     val _ = expect "system configuration"
       (is_some "system only" (hhConfig.get "system.only"))
     val _ = expect "integer configuration"
@@ -536,6 +542,18 @@ fun test_hhEval root =
       (hhEval.sample_goal 7 "list.nil" = hhEval.sample_goal 7 "list.nil")
     val _ = expect "invalid sample factor is rejected"
       ((hhEval.sample_goal 0 "list.nil"; false) handle Fail _ => true)
+    val script = hhEval.write_evalscript expdir "list" [condition] 7
+    val script_text = String.concat (read_lines script)
+    val _ = expect "worker script loads hhEval"
+      (String.isSubstring "load \"hhEval\";" script_text)
+    val _ = expect "worker script loads its theory"
+      (String.isSubstring "load \"listTheory\";" script_text)
+    val _ = expect "worker script reflects condition settings"
+      (String.isSubstring "hhEval.set_worker_settings" script_text andalso
+       String.isSubstring "knn-e" script_text andalso
+       String.isSubstring "sample = 7" script_text)
+    val _ = expect "worker script calls eval_thy"
+      (String.isSubstring "hhEval.eval_thy" script_text)
   in
     ()
   end
@@ -568,6 +586,53 @@ val _ = test_szs_status_words ()
 val _ = test_hhProver ()
 val _ = test_runner ()
 val _ = test_installed_provers ()
+
+fun test_hhEval_integration () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+  case OS.Process.getEnv "HHEVAL_INTEGRATION_TEST" of
+      SOME _ =>
+        let
+          val root =
+            case OS.Process.getEnv "HOL4_HAMMER_EVAL_DIR" of
+                SOME path => path
+              | NONE => raise Fail "integration test has no evaluation dir"
+          val condition : hhEval.condition =
+            {cond_id = "bushy-deps-e", regime = hhEval.Bushy,
+             selector = hhEval.Deps, prover = "e", timeout = 1,
+             reconstruct = false}
+          val _ = hhEval.run_eval
+            {expname = "smoke", ncore = 1, thyl = ["pair", "option"],
+             conditions = [condition]}
+          val expdir = join root "smoke"
+          val pair_journal = hhEval.journal_path expdir "pair"
+          val option_journal = hhEval.journal_path expdir "option"
+          val journal_before = String.concat (read_lines pair_journal) ^
+            String.concat (read_lines option_journal)
+          val _ = expect "hhEval integration journals are valid"
+            (not (null (hhEval.read_journal pair_journal)) andalso
+             not (null (hhEval.read_journal option_journal)) andalso
+             OS.FileSys.access (join expdir "run.json", [OS.FileSys.A_READ]))
+          val _ = hhEval.run_eval
+            {expname = "smoke", ncore = 1, thyl = ["pair", "option"],
+             conditions = [condition]}
+          val journal_after = String.concat (read_lines pair_journal) ^
+            String.concat (read_lines option_journal)
+          val _ = expect "hhEval integration resume is a no-op"
+            (journal_before = journal_after)
+        in
+          ()
+        end
+    | NONE =>
+        (case hhProver.probe (prover "e") of
+             NONE => (tprint "hhEval integration (skipped: e absent)"; OK ())
+           | SOME _ =>
+               (tprint
+                  "hhEval integration (skipped: set HHEVAL_INTEGRATION_TEST)";
+                OK ()))
+
+val _ = test_hhEval_integration ()
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver in end
