@@ -303,7 +303,99 @@ fun test_hhProver () =
     ()
   end
 
+fun contains needle haystack =
+  String.isSubstring needle haystack
+
+fun fake_config name exec_name args parser : hhProver.prover_config =
+  {name = name, exec_names = [exec_name], env_var = "",
+   version_args = ["--version"], parse_version = fn _ => SOME "test",
+   tested_versions = ["test"], formats = ["fof"],
+   mk_command = fn executable => fn _ => (executable, args),
+   parse_output = parser, default_nfacts = 0, slices = fn () => [],
+   legacy = false}
+
+fun test_runner () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+  let
+    val e = prover "e"
+    val good = fake_config "runner-good" "echo"
+      ["% SZS status Theorem"] (#parse_output e)
+    val debug_dir = OS.FileSys.tmpName ()
+    val _ = remove_tree debug_dir
+    val good_request : hhProver.run_request =
+      {timeout = 1, problem = "unused", extra = [], debug_dir = SOME debug_dir}
+    val good_result = hhProver.run good good_request
+    val _ = expect "runner parses stdout"
+      (#szs good_result = hhProver.SzsTheorem)
+    val _ = expect "runner saves debug output"
+      (OS.FileSys.access (#output_file good_result, [OS.FileSys.A_READ]))
+    val _ = remove_tree debug_dir
+    val timeout = fake_config "runner-timeout" "sleep" ["30"]
+      (#parse_output e)
+    val timeout_request : hhProver.run_request =
+      {timeout = 0, problem = "unused", extra = [], debug_dir = NONE}
+    val timeout_result = hhProver.run timeout timeout_request
+    val _ = expect "runner watchdog timeout"
+      (#szs timeout_result = hhProver.SzsTimeout orelse
+       #szs timeout_result = hhProver.SzsResourceOut)
+    val missing : hhProver.prover_config =
+      {name = "runner-missing", exec_names = ["missing-hh-prover"],
+       env_var = "", version_args = [], parse_version = fn _ => NONE,
+       tested_versions = [], formats = ["fof"],
+       mk_command = fn executable => fn _ => (executable, []),
+       parse_output = #parse_output e, default_nfacts = 0,
+       slices = fn () => [], legacy = false}
+    val missing_result = hhProver.run missing timeout_request
+    val _ = expect "missing prover names downloader"
+      (case #szs missing_result of
+           hhProver.RunFailure message =>
+             contains "tools/download-provers" message
+         | _ => false)
+  in
+    ()
+  end
+
+fun write_tiny_problem () =
+  let
+    val path = OS.FileSys.tmpName ()
+    val _ = write_file path
+      "fof(thm_2Ekeep__name, axiom, p).\nfof(conjecture, conjecture, p).\n"
+  in
+    path
+  end
+
+fun test_installed_prover problem config =
+  case hhProver.probe config of
+      NONE => (tprint ("runner smoke " ^ #name config ^ " (skipped: absent)");
+               OK ())
+    | SOME _ =>
+        let
+          val request : hhProver.run_request =
+            {timeout = 5, problem = problem, extra = [], debug_dir = NONE}
+          val result = hhProver.run config request
+        in
+          expect ("runner smoke " ^ #name config)
+            (#szs result = hhProver.SzsTheorem)
+        end
+
+fun test_installed_provers () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+        let
+          val problem = write_tiny_problem ()
+          val _ = List.app (test_installed_prover problem)
+            (map prover ["e", "vampire", "zipperposition"])
+          val _ = OS.FileSys.remove problem handle OS.SysErr _ => ()
+        in
+          ()
+        end
+
 val _ = test_hhProver ()
+val _ = test_runner ()
+val _ = test_installed_provers ()
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver in end

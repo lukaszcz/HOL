@@ -397,20 +397,193 @@ fun register (config : prover_config) =
       | NONE => registry := !registry @ [config]
   end
 
-(* TASK_04 adds version probing; executable discovery is deliberately kept
-   here as the small hook needed to make the default portfolio useful. *)
-fun is_found ({name, exec_names, ...} : prover_config) =
-  Option.isSome (hhConfig.find_exec name exec_names)
+fun find_exec ({name, exec_names, ...} : prover_config) =
+  hhConfig.find_exec name exec_names
+
+fun is_found config = Option.isSome (find_exec config)
 
 fun default_provers () =
   map #name (List.filter (fn config =>
     not (#legacy config) andalso is_found config) (!registry))
 
-fun unavailable what =
-  raise Fail ("hhProver." ^ what ^ " is implemented by TASK_04")
+fun elapsed started = Time.toReal (Time.- (Time.now (), started))
 
-fun find_exec _ = unavailable "find_exec"
-fun probe _ = unavailable "probe"
-fun run _ _ = unavailable "run"
+fun read_process path args limit =
+  let
+    val process = Unix.execute (path, args)
+    val (input, output) = Unix.streamsOf process
+    val _ = TextIO.closeOut output
+    val chunks = ref []
+    val finished = ref false
+    fun read_stdout () =
+      let
+        fun loop () =
+          case TextIO.input input of
+              "" => ()
+            | chunk => (chunks := chunk :: !chunks; loop ())
+      in
+        (loop () handle _ => ();
+         finished := true)
+      end
+    val _ = Thread.fork (read_stdout, [])
+    val started = Time.now ()
+    fun wait killed =
+      if !finished then killed
+      else if not killed andalso elapsed started >= limit then
+        (Unix.kill (process, Posix.Signal.kill) handle OS.SysErr _ => ();
+         wait true)
+      else
+        (OS.Process.sleep (Time.fromMilliseconds 20); wait killed)
+    val killed = wait false
+    val status = Unix.reap process
+    fun await_reader () =
+      if !finished then ()
+      else (OS.Process.sleep (Time.fromMilliseconds 20); await_reader ())
+    val _ = await_reader ()
+    val result =
+      {output = String.concat (List.rev (!chunks)), killed = killed,
+       status = status, time = elapsed started}
+    val _ = TextIO.closeIn input
+  in
+    result
+  end
+
+val probes : (string *
+  {path : string, version : string option, tested : bool} option) list ref =
+  ref []
+
+fun warn_untested name path version =
+  TextIO.output (TextIO.stdErr,
+    "HolyHammer: " ^ name ^ " at " ^ path ^ " has untested version " ^
+    version ^ "\n")
+
+fun probe (config : prover_config) =
+  let
+    val name = #name config
+    fun discover () =
+      case find_exec config of
+          NONE => NONE
+        | SOME path =>
+            let
+              val result =
+                (let
+                   val {output, killed, ...} =
+                     read_process path (#version_args config) 7.0
+                   val version =
+                     if killed then NONE else (#parse_version config output)
+                   val tested =
+                     case version of
+                         NONE => false
+                       | SOME value => List.exists
+                           (fn prefix => String.isPrefix prefix value)
+                           (#tested_versions config)
+                   val _ =
+                     case version of
+                         SOME value =>
+                           if tested then ()
+                           else warn_untested name path value
+                       | NONE => warn_untested name path "unknown"
+                 in
+                   SOME {path = path, version = version, tested = tested}
+                 end
+                 handle OS.SysErr _ =>
+                   SOME {path = path, version = NONE, tested = false}
+                      | IO.Io _ =>
+                   SOME {path = path, version = NONE, tested = false})
+            in
+              result
+            end
+  in
+    case List.find (fn (other, _) => other = name) (!probes) of
+        SOME (_, result) => result
+      | NONE =>
+          let val result = discover () in
+            probes := (name, result) :: !probes;
+            result
+          end
+  end
+
+fun is_dir path = OS.FileSys.isDir path handle OS.SysErr _ => false
+
+fun ensure_dir path =
+  if is_dir path then ()
+  else
+    let
+      val parent = OS.Path.dir path
+      val _ =
+        if parent = "" orelse parent = path then () else ensure_dir parent
+    in
+      OS.FileSys.mkDir path
+      handle OS.SysErr _ =>
+        if is_dir path then ()
+        else raise Fail ("cannot create debug directory " ^ path)
+    end
+
+fun save_output directory name contents =
+  let
+    val _ = ensure_dir directory
+    val path = OS.Path.concat
+      (directory, name ^ "-" ^ OS.Path.file (OS.FileSys.tmpName ()) ^ ".out")
+    val stream = TextIO.openOut path
+    val _ = TextIO.output (stream, contents)
+    val _ = TextIO.closeOut stream
+  in
+    path
+  end
+
+fun missing_prover name =
+  "HolyHammer prover '" ^ name ^
+  "' was not found; install it with tools/download-provers"
+
+fun run (config : prover_config) request =
+  let
+    val started = Time.now ()
+    val version =
+      case probe config of
+          NONE => NONE
+        | SOME {version, ...} => version
+    val result =
+      case find_exec config of
+          NONE =>
+            {szs = RunFailure (missing_prover (#name config)),
+             used_axioms = NONE, output = "", killed = false,
+             time = elapsed started}
+        | SOME executable =>
+            ((let
+                val (path, args) = #mk_command config executable request
+                val {output, killed, status, time} =
+                  read_process path args
+                    (Real.fromInt (#timeout request + 2))
+                val (parsed, used_axioms) = #parse_output config
+                  (String.fields (fn c => c = #"\n") output)
+                val szs =
+                  if killed then SzsTimeout
+                  else
+                    case parsed of
+                        RunFailure _ =>
+                          if OS.Process.isSuccess status then parsed
+                          else RunFailure "prover exited unsuccessfully"
+                      | value => value
+              in
+                {szs = szs, used_axioms = used_axioms, output = output,
+                 killed = killed, time = time}
+              end)
+             handle OS.SysErr _ =>
+               {szs = RunFailure "could not execute prover",
+                used_axioms = NONE, output = "", killed = false,
+                time = elapsed started}
+                  | IO.Io _ =>
+               {szs = RunFailure "could not execute prover",
+                used_axioms = NONE, output = "", killed = false,
+                time = elapsed started})
+    val output_file =
+      case #debug_dir request of
+          NONE => ""
+        | SOME directory =>
+            save_output directory (#name config) (#output result)
+  in
+    {szs = #szs result, used_axioms = #used_axioms result,
+     time = #time result, version = version, output_file = output_file}
+  end
 
 end
