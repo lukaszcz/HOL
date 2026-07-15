@@ -554,6 +554,86 @@ fun test_hhEval root =
        String.isSubstring "sample = 7" script_text)
     val _ = expect "worker script calls eval_thy"
       (String.isSubstring "hhEval.eval_thy" script_text)
+    val reportdir = join root "hheval-report"
+    val report_journal = join reportdir "journal"
+    val fixture_journal = join "test-data" "hheval-report/journal"
+    fun copy_fixture name =
+      write_file (join report_journal name)
+        (String.concat (read_lines (join fixture_journal name)))
+    val _ = remove_tree reportdir
+    val _ = mkdirs report_journal
+    val _ = copy_fixture "list.jsonl"
+    val _ = copy_fixture "arithmetic.jsonl"
+    val corrupt = TextIO.openAppend (join report_journal "list.jsonl")
+    val _ = TextIO.output (corrupt, "{in-progress")
+    val _ = TextIO.closeOut corrupt
+    val _ = hhEval.report reportdir
+    val summary = JSONParser.parseFile (join reportdir "summary.json")
+    fun array_field name value =
+      JSONUtil.arrayMap (fn item => item) (JSONUtil.lookupField value name)
+    fun named name wanted values =
+      case List.find (fn value =>
+        JSONUtil.asString (JSONUtil.lookupField value name) = wanted) values of
+          SOME value => value
+        | NONE => raise Fail ("missing report item: " ^ wanted)
+    fun metric name value =
+      JSONUtil.asInt (JSONUtil.lookupField
+        (JSONUtil.lookupField value "metrics") name)
+    val conditions = array_field "conditions" summary
+    val e_condition = named "cond" "deps-e" conditions
+    val vampire_condition = named "cond" "deps-vampire" conditions
+    val portfolios = array_field "portfolios" summary
+    val portfolio = named "key" "bushy/5s" portfolios
+    val prover_rows = array_field "provers" portfolio
+    val e_prover = named "prover" "e" prover_rows
+    val vampire_prover = named "prover" "vampire" prover_rows
+    val report_text = String.concat (read_lines (join reportdir "report.md"))
+    val _ = expect "report writes both output files"
+      (OS.FileSys.access (join reportdir "summary.json", [OS.FileSys.A_READ])
+       andalso
+       OS.FileSys.access (join reportdir "report.md", [OS.FileSys.A_READ]))
+    val _ = expect "report condition counts and quantiles"
+      (metric "goals" e_condition = 5 andalso
+       metric "attempted" e_condition = 4 andalso
+       metric "proved" e_condition = 2 andalso
+       metric "reconstructed" e_condition = 1 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField e_condition "metrics") "t_prover_p50"))
+         0.2 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField e_condition "metrics") "t_prover_p90"))
+         1.0 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField e_condition "metrics") "t_prover_max"))
+         1.0 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField e_condition "metrics") "proved_pct"))
+         50.0 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField e_condition "metrics") "reconstructed_pct"))
+         25.0)
+    val _ = expect "report second prover counts"
+      (metric "goals" vampire_condition = 5 andalso
+       metric "attempted" vampire_condition = 4 andalso
+       metric "proved" vampire_condition = 3 andalso
+       metric "reconstructed" vampire_condition = 2)
+    val _ = expect "report portfolio union and unique solves"
+      (metric "goals" portfolio = 6 andalso
+       metric "attempted" portfolio = 5 andalso
+       metric "proved" portfolio = 4 andalso
+       metric "reconstructed" portfolio = 2 andalso
+       JSONUtil.asInt (JSONUtil.lookupField e_prover "unique_proved") =
+         1 andalso
+       JSONUtil.asInt (JSONUtil.lookupField vampire_prover "unique_proved") =
+         2 andalso
+       JSONUtil.asInt (JSONUtil.lookupField e_prover
+         "unique_reconstructed") = 0 andalso
+       JSONUtil.asInt (JSONUtil.lookupField vampire_prover
+         "unique_reconstructed") = 1)
+    val _ = expect "report includes per-theory markdown table"
+      (String.isSubstring "## Theories" report_text andalso
+       String.isSubstring "| arithmetic | deps-e" report_text andalso
+       String.isSubstring "| list | deps-vampire" report_text)
   in
     ()
   end

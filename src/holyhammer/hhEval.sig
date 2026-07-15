@@ -60,6 +60,8 @@ sig
   val cell_completed : completed -> string * string -> bool
   val journal_complete : string -> (string * string) list -> bool
 
+  val report : string -> unit
+
   val loaded_corpus_entry : string -> corpus_entry
   val current_prover_identities : condition list -> prover_identity list
   val new_run_header :

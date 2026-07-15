@@ -477,6 +477,295 @@ fun sample_goal factor goal_id =
   else IntInf.mod (sample_hash goal_id, IntInf.fromInt factor) = 0
 
 (* -------------------------------------------------------------------------
+   Experiment reports
+   ------------------------------------------------------------------------- *)
+
+type metrics =
+  {goals : int, attempted : int, proved : int, reconstructed : int,
+   proved_pct : real option, reconstructed_pct : real option,
+   p50 : real option, p90 : real option, maximum : real option}
+
+fun read_journal_partial path =
+  let
+    fun parse line =
+      if trim line = "" then NONE
+      else (SOME (parse_journal_line line)
+            handle Interrupt => raise Interrupt | _ => NONE)
+  in
+    List.mapPartial parse (read_lines path)
+  end
+  handle OS.SysErr _ => [] | IO.Io _ => []
+
+fun journal_files expdir =
+  let
+    val directory = join expdir "journal"
+    fun is_journal name = ends_with ".jsonl" name
+  in
+    sort (List.filter is_journal (directory_names directory))
+  end
+
+fun cell_key entry = (#goal_id entry, #cond entry)
+
+fun latest_cells entries =
+  List.foldl (fn (entry, cells) =>
+    entry :: List.filter (fn old => cell_key old <> cell_key entry) cells)
+    [] entries
+
+fun regular_cell entry =
+  #cond entry <> "__load__" andalso #thm entry <> "__load__"
+
+fun goal_ids entries predicate =
+  sorted_unique (map #goal_id (List.filter predicate entries))
+
+fun proven_cell entry = #szs entry = "Theorem"
+fun reconstructed_cell entry = #recon_ok entry = SOME true
+fun attempted_cell entry = #szs entry <> "BrokenDeps"
+
+fun real_insert item [] = [item]
+  | real_insert item (head :: tail) =
+      if Real.compare (item, head) = LESS then item :: head :: tail
+      else head :: real_insert item tail
+
+fun real_sort [] = []
+  | real_sort (head :: tail) = real_insert head (real_sort tail)
+
+fun nth (item :: _) 0 = item
+  | nth (_ :: items) index = nth items (index - 1)
+  | nth [] _ = raise Fail "hhEval report: bad quantile index"
+
+fun quantiles values =
+  case real_sort values of
+      [] => (NONE, NONE, NONE)
+    | ordered =>
+        let
+          val count = length ordered
+          val p50_index = (count + 1) div 2 - 1
+          val p90_index = (9 * count + 9) div 10 - 1
+        in
+          (SOME (nth ordered p50_index), SOME (nth ordered p90_index),
+           SOME (List.last ordered))
+        end
+
+fun percentage numerator denominator =
+  if denominator = 0 then NONE
+  else SOME (100.0 * Real.fromInt numerator / Real.fromInt denominator)
+
+fun make_metrics entries : metrics =
+  let
+    val goals = length (goal_ids entries (fn _ => true))
+    val attempted = length (goal_ids entries attempted_cell)
+    val proved = length (goal_ids entries proven_cell)
+    val reconstructed = length (goal_ids entries reconstructed_cell)
+    val times = map #t_prover (List.filter proven_cell entries)
+    val (p50, p90, maximum) = quantiles times
+  in
+    {goals = goals, attempted = attempted, proved = proved,
+     reconstructed = reconstructed, proved_pct = percentage proved attempted,
+     reconstructed_pct = percentage reconstructed attempted, p50 = p50,
+     p90 = p90, maximum = maximum}
+  end
+
+fun json_int number = JSON.INT (IntInf.fromInt number)
+
+fun json_metrics
+    {goals, attempted, proved, reconstructed, proved_pct, reconstructed_pct,
+     p50, p90, maximum} =
+  JSON.OBJECT
+    [("goals", json_int goals), ("attempted", json_int attempted),
+     ("proved", json_int proved),
+     ("proved_pct", json_real_option proved_pct),
+     ("reconstructed", json_int reconstructed),
+     ("reconstructed_pct", json_real_option reconstructed_pct),
+     ("t_prover_p50", json_real_option p50),
+     ("t_prover_p90", json_real_option p90),
+     ("t_prover_max", json_real_option maximum)]
+
+fun entries_for_condition name entries =
+  List.filter (fn entry => #cond entry = name) entries
+
+fun condition_json name entries =
+  let
+    val first = hd entries
+  in
+    JSON.OBJECT
+      [("cond", JSON.STRING name), ("regime",
+        JSON.STRING (string_of_regime (#regime first))),
+       ("selector", JSON.STRING (string_of_selector (#selector first))),
+       ("prover", JSON.STRING (#prover first)),
+       ("timeout", json_int (#timeout first)),
+       ("metrics", json_metrics (make_metrics entries))]
+  end
+
+fun portfolio_key entry =
+  string_of_regime (#regime entry) ^ "/" ^
+  Int.toString (#timeout entry) ^ "s"
+
+fun entries_for_key key entries =
+  List.filter (fn entry => portfolio_key entry = key) entries
+
+fun proof_ids entries = goal_ids entries proven_cell
+fun reconstruction_ids entries = goal_ids entries reconstructed_cell
+
+fun unique_count prover ids_of entries =
+  let
+    val own = ids_of (List.filter (fn entry => #prover entry = prover) entries)
+    val others = ids_of (List.filter (fn entry => #prover entry <> prover)
+                           entries)
+  in
+    length (List.filter (fn goal => not (List.exists (fn other =>
+      other = goal) others)) own)
+  end
+
+fun portfolio_prover_json prover entries =
+  JSON.OBJECT
+    [("prover", JSON.STRING prover),
+     ("unique_proved", json_int (unique_count prover proof_ids entries)),
+     ("unique_reconstructed",
+      json_int (unique_count prover reconstruction_ids entries))]
+
+fun portfolio_json key entries =
+  let
+    val first = hd entries
+    val provers = sorted_unique (map #prover entries)
+  in
+    JSON.OBJECT
+      [("key", JSON.STRING key), ("regime",
+        JSON.STRING (string_of_regime (#regime first))),
+       ("selectors", JSON.ARRAY (map JSON.STRING
+        (sorted_unique (map (string_of_selector o #selector) entries)))),
+       ("timeout", json_int (#timeout first)),
+       ("condition_ids", JSON.ARRAY
+        (map JSON.STRING (sorted_unique (map #cond entries)))),
+       ("metrics", json_metrics (make_metrics entries)),
+       ("provers", JSON.ARRAY
+        (map (fn prover => portfolio_prover_json prover entries) provers))]
+  end
+
+fun theory_json theory entries =
+  let
+    val in_theory = List.filter (fn entry => #thy entry = theory) entries
+    val conditions = sorted_unique (map #cond in_theory)
+  in
+    JSON.OBJECT
+      [("theory", JSON.STRING theory), ("conditions", JSON.ARRAY
+        (map (fn name => condition_json name
+          (entries_for_condition name in_theory)) conditions))]
+  end
+
+fun option_text NONE = "-"
+  | option_text (SOME number) = Real.fmt (StringCvt.FIX (SOME 2)) number
+
+fun metrics_markdown metrics =
+  Int.toString (#goals metrics) ^ " | " ^
+  Int.toString (#attempted metrics) ^ " | " ^
+  Int.toString (#proved metrics) ^ " | " ^
+  option_text (#proved_pct metrics) ^ " | " ^
+  Int.toString (#reconstructed metrics) ^ " | " ^
+  option_text (#reconstructed_pct metrics) ^ " | " ^
+  option_text (#p50 metrics) ^ " | " ^ option_text (#p90 metrics) ^
+  " | " ^ option_text (#maximum metrics)
+
+fun condition_markdown name entries =
+  let val first = hd entries in
+    "| " ^ name ^ " | " ^ #prover first ^ " | " ^
+    metrics_markdown (make_metrics entries) ^ " |\n"
+  end
+
+fun portfolio_markdown key entries =
+  "| " ^ key ^ " | " ^ metrics_markdown (make_metrics entries) ^ " |\n"
+
+fun theory_markdown theory name entries =
+  "| " ^ theory ^ " | " ^ name ^ " | " ^
+  metrics_markdown (make_metrics entries) ^ " |\n"
+
+fun write_report_markdown expdir entries =
+  let
+    val conditions = sorted_unique (map #cond entries)
+    val portfolios = sorted_unique (map portfolio_key entries)
+    val theories = sorted_unique (map #thy entries)
+    val output = TextIO.openOut (join expdir "report.md")
+    val _ = TextIO.output (output, "# hhEval report\n\n")
+    val _ = TextIO.output (output,
+      "Partial journals are reported as observed cells only.\n\n")
+    val _ = TextIO.output (output,
+      "## Conditions\n\n| condition | prover | G | A | P | P% | R | R% | " ^
+      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
+      "---:|---:|---:|\n")
+    val _ = app (fn name => TextIO.output (output,
+      condition_markdown name (entries_for_condition name entries))) conditions
+    val _ = TextIO.output (output,
+      "\n## Portfolio unions\n\n| portfolio | G | A | P | P% | R | R% | " ^
+      "p50 | p90 | max |\n|---|---:|---:|---:|---:|---:|---:|---:|" ^
+      "---:|---:|\n")
+    val _ = app (fn key => TextIO.output (output,
+      portfolio_markdown key (entries_for_key key entries))) portfolios
+    val _ = TextIO.output (output,
+      "\n## Unique solves\n\n| portfolio | prover | proved | " ^
+      "reconstructed |\n|---|---|---:|---:|\n")
+    fun unique_rows key =
+      let
+        val cells = entries_for_key key entries
+        fun row prover = TextIO.output (output,
+          "| " ^ key ^ " | " ^ prover ^ " | " ^
+          Int.toString (unique_count prover proof_ids cells) ^ " | " ^
+          Int.toString (unique_count prover reconstruction_ids cells) ^
+          " |\n")
+      in
+        app row (sorted_unique (map #prover cells))
+      end
+    val _ = app unique_rows portfolios
+    val _ = TextIO.output (output,
+      "\n## Theories\n\n| theory | condition | G | A | P | P% | R | R% | " ^
+      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
+      "---:|---:|---:|\n")
+    fun theory_rows theory =
+      let
+        val cells = List.filter (fn entry => #thy entry = theory) entries
+        fun row name = TextIO.output (output,
+          theory_markdown theory name (entries_for_condition name cells))
+      in
+        app row (sorted_unique (map #cond cells))
+      end
+    val _ = app theory_rows theories
+    val _ = TextIO.closeOut output
+  in
+    ()
+  end
+
+fun write_summary expdir entries =
+  let
+    val conditions = sorted_unique (map #cond entries)
+    val portfolios = sorted_unique (map portfolio_key entries)
+    val theories = sorted_unique (map #thy entries)
+    val summary = JSON.OBJECT
+      [("schema", JSON.STRING "hhEval-summary-v1"),
+       ("conditions", JSON.ARRAY (map (fn name => condition_json name
+         (entries_for_condition name entries)) conditions)),
+       ("portfolios", JSON.ARRAY (map (fn key => portfolio_json key
+         (entries_for_key key entries)) portfolios)),
+       ("theories", JSON.ARRAY (map (fn theory => theory_json theory entries)
+         theories))]
+    val output = TextIO.openOut (join expdir "summary.json")
+    val _ = JSONPrinter.printFmt (output, summary)
+    val _ = TextIO.output (output, "\n")
+    val _ = TextIO.flushOut output
+    val _ = TextIO.closeOut output
+  in
+    ()
+  end
+
+fun report expdir =
+  let
+    val paths = map (join (join expdir "journal")) (journal_files expdir)
+    val entries = List.filter regular_cell
+      (latest_cells (List.concat (map read_journal_partial paths)))
+    val _ = ensure_dir expdir
+    val _ = write_report_markdown expdir entries
+  in
+    write_summary expdir entries
+  end
+
+(* -------------------------------------------------------------------------
    Evaluation driver and per-theory workers
    ------------------------------------------------------------------------- *)
 
