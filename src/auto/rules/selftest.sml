@@ -346,7 +346,7 @@ val _ =
          val merged_names = map #name (dest_decls merged)
        in
          fresh_names = ["b", "d", "c"] andalso
-         merged_names = ["c", "d", "b", "a"]
+         merged_names = ["d", "b", "a", "c"]
        end)
 
 val _ =

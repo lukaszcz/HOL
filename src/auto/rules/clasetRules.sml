@@ -300,14 +300,30 @@ fun same_kind ({kind = kind1, safe = safe1, ...} : rulespec)
 fun is_elim Intro = false
   | is_elim _ = true
 
+fun kind_index Intro = 0
+  | kind_index Elim = 1
+  | kind_index Dest = 2
+
+(* Match Bires.decl_ord: declarations are grouped by kind-class before
+   their decreasing insertion tags establish recency within that class. *)
 fun decl_order (d1 : decl, d2 : decl) =
   let
-    val safe1 = #safe (#spec d1)
-    val safe2 = #safe (#spec d2)
+    val spec1 = #spec d1
+    val spec2 = #spec d2
+    val safe1 = #safe spec1
+    val safe2 = #safe spec2
+    val safe_order =
+      if safe1 andalso not safe2 then LESS
+      else if safe2 andalso not safe1 then GREATER
+      else EQUAL
   in
-    if safe1 andalso not safe2 then LESS
-    else if safe2 andalso not safe1 then GREATER
-    else compare_tag (#tag d1, #tag d2)
+    case safe_order of
+        EQUAL =>
+          (case Int.compare (kind_index (#kind spec1),
+                             kind_index (#kind spec2)) of
+               EQUAL => compare_tag (#tag d1, #tag d2)
+             | order => order)
+      | order => order
   end
 
 (* This is Bires.decl_merge_ord.  Replaying an incoming claset in this
