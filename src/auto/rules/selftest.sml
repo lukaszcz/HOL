@@ -788,33 +788,119 @@ fun same_candidates (cs1 : (tag * brl) list) (cs2 : (tag * brl) list) =
        #1 brl1 = #1 brl2 andalso same_thm (#2 brl1) (#2 brl2))
     (cs1, cs2)
 
+fun rule_entries index kind (th, swapped) =
+  let
+    fun entry index th =
+      ({weight = subgoals_of (kind <> Intro, th), index = index},
+       (kind <> Intro, th))
+  in
+    entry (2 * index + 1) th ::
+    (case swapped of NONE => [] | SOME th' => [entry (2 * index) th'])
+  end
+
+fun brute_unsafe_entries declarations =
+  let
+    fun add ((kind, th), (index, entries)) =
+      let
+        val spec = {kind = kind, safe = false, prio = NONE}
+        val info = ext_info spec th
+      in
+        (index - 1, rule_entries index kind (#rl info) @ entries)
+      end
+  in
+    candidate_order (#2 (List.foldl add (~1, []) declarations))
+  end
+
+fun exactly_unifies (is_elim, th) query =
+  let
+    val {patvars, ...} = canonical_form th
+  in
+    really_unifies (indexed_term (is_elim, th)) patvars query
+      (tmset (free_vars query))
+  end
+
 val _ =
   test
-    ("clasetLib match and unify candidates agree with brute filtering",
+    ("clasetLib match introduction candidates agree with brute filtering",
+     fn () =>
+       let
+         val declarations =
+           [(Elim, boolTheory.OR_ELIM_THM),
+            (Intro, boolTheory.AND_INTRO_THM)]
+         val cs =
+           add_intros [("andI", boolTheory.AND_INTRO_THM)]
+             (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
+         val entries = brute_unsafe_entries declarations
+         val iq = ``p /\ q``
+         val eq = ``p \/ q``
+         fun matching is_elim query = candidate_order
+           (List.filter
+             (fn (_, brl) => #1 brl = is_elim andalso
+                             exactly_matches brl query) entries)
+       in
+         same_candidates
+           (match_intro_candidates (unsafe_part cs) iq) (matching false iq)
+       end)
+
+val _ =
+  test
+    ("clasetLib match elimination candidates agree with brute filtering",
      fn () =>
        let
          val cs =
            add_intros [("andI", boolTheory.AND_INTRO_THM)]
              (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
-         val all_intro =
-           unify_intro_candidates (unsafe_part cs) ``z : bool``
-         val all_elim =
-           unify_elim_candidates (unsafe_part cs) ``z : bool``
-         val iq = ``p /\ q``
-         val eq = ``p \/ q``
-         val intro_brute = candidate_order
-           (List.filter (fn (_, brl) => exactly_matches brl iq) all_intro)
-         val elim_brute = candidate_order
-           (List.filter (fn (_, brl) => exactly_matches brl eq) all_elim)
+         val entries = brute_unsafe_entries
+           [(Elim, boolTheory.OR_ELIM_THM),
+            (Intro, boolTheory.AND_INTRO_THM)]
+         val query = ``p \/ q``
+         val expected = candidate_order
+           (List.filter
+             (fn (_, brl) => #1 brl andalso exactly_matches brl query)
+             entries)
        in
-         same_candidates
-           (match_intro_candidates (unsafe_part cs) iq) intro_brute andalso
-         same_candidates
-           (match_elim_candidates (unsafe_part cs) eq) elim_brute andalso
-         same_candidates
-           (unify_intro_candidates (unsafe_part cs) iq) all_intro andalso
-         same_candidates
-           (unify_elim_candidates (unsafe_part cs) eq) all_elim
+         same_candidates (match_elim_candidates (unsafe_part cs) query)
+           expected
+       end)
+
+val _ =
+  test
+    ("clasetLib unify introduction candidates agree with brute filtering",
+     fn () =>
+       let
+         val cs =
+           add_intros [("andI", boolTheory.AND_INTRO_THM)]
+             (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
+         val entries = brute_unsafe_entries
+           [(Elim, boolTheory.OR_ELIM_THM),
+            (Intro, boolTheory.AND_INTRO_THM)]
+         val query = ``p /\ q``
+       in
+         same_candidates (unify_intro_candidates (unsafe_part cs) query)
+           (candidate_order
+             (List.filter
+               (fn (_, brl) => not (#1 brl) andalso
+                               exactly_unifies brl query) entries))
+       end)
+
+val _ =
+  test
+    ("clasetLib unify elimination candidates agree with brute filtering",
+     fn () =>
+       let
+         val cs =
+           add_intros [("andI", boolTheory.AND_INTRO_THM)]
+             (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
+         val entries = brute_unsafe_entries
+           [(Elim, boolTheory.OR_ELIM_THM),
+            (Intro, boolTheory.AND_INTRO_THM)]
+         val query = ``p \/ q``
+       in
+         same_candidates (unify_elim_candidates (unsafe_part cs) query)
+           (candidate_order
+             (List.filter
+               (fn (_, brl) => #1 brl andalso exactly_unifies brl query)
+               entries))
        end)
 
 fun same_rules xs ys =
@@ -830,30 +916,56 @@ val _ =
        let
          val a = ("a", DISCH p (ASSUME p))
          val b = ("b", DISCH q (ASSUME q))
-         val c = ("c", DISCH r (ASSUME r))
-         val left = add_sintros [a] empty_cs
-         val right = add_sintros [b, c] empty_cs
+         val left =
+           add_intros [("andI", boolTheory.AND_INTRO_THM)]
+             (add_selims [("falseE", boolTheory.FALSITY)] empty_cs)
+         val right =
+           add_sintros [a, b]
+             (add_selims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
          val merged = merge_cs (left, right)
-         val incremented = add_sintros [b, c] left
+         val incremented =
+           add_sintros [a, b]
+             (add_selims [("orE", boolTheory.OR_ELIM_THM)] left)
          val removed = remove_rule "b" merged
        in
          same_rules (rules_of merged) (rules_of incremented) andalso
-         map (fn (_, (name, _)) => name) (rules_of removed) = ["c", "a"]
+         map (fn (_, (name, _)) => name) (rules_of removed) =
+           ["a", "falseE", "orE", "andI"]
        end)
 
 val _ =
   test
-    ("clasetLib removes unsafe and duplicating net entries by declaration tag",
+    ("clasetLib removes tagged rules from every netpair",
      fn () =>
        let
-         val cs = add_intros [("andI", boolTheory.AND_INTRO_THM)] empty_cs
-         val cs' = remove_rule "andI" cs
+         val cs =
+           add_elims [("orE", boolTheory.OR_ELIM_THM)]
+             (add_intros [("andI", boolTheory.AND_INTRO_THM)]
+               (add_selims [("orES", boolTheory.OR_ELIM_THM)]
+                 (add_sintros [("andIS", boolTheory.AND_INTRO_THM)]
+                   (add_selims [("falseE", boolTheory.FALSITY)]
+                     (add_sintros [("truthI", boolTheory.TRUTH)] empty_cs)))))
+         val cs' =
+           List.foldl (fn (name, acc) => remove_rule name acc) cs
+             ["truthI", "falseE", "andIS", "orES", "andI", "orE"]
          val variable = ``z : bool``
+         fun has_intro part =
+           not (List.null (unify_intro_candidates part variable))
+         fun has_elim part =
+           not (List.null (unify_elim_candidates part variable))
+         fun no_intro part =
+           List.null (unify_intro_candidates part variable)
+         fun no_elim part =
+           List.null (unify_elim_candidates part variable)
        in
-         not (List.null (unify_intro_candidates (unsafe cs) variable)) andalso
-         not (List.null (unify_intro_candidates (dup cs) variable)) andalso
-         List.null (unify_intro_candidates (unsafe cs') variable) andalso
-         List.null (unify_intro_candidates (dup cs') variable)
+         has_intro (safe0 cs) andalso has_elim (safe0 cs) andalso
+         has_intro (safep cs) andalso has_elim (safep cs) andalso
+         has_intro (unsafe cs) andalso has_elim (unsafe cs) andalso
+         has_intro (dup cs) andalso has_elim (dup cs) andalso
+         no_intro (safe0 cs') andalso no_elim (safe0 cs') andalso
+         no_intro (safep cs') andalso no_elim (safep cs') andalso
+         no_intro (unsafe cs') andalso no_elim (unsafe cs') andalso
+         no_intro (dup cs') andalso no_elim (dup cs')
        end)
 
 val _ =
