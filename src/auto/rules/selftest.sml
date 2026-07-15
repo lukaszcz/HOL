@@ -1,5 +1,5 @@
 open HolKernel Parse Tactic testutils boolSyntax
-open NTactical clasetNet clasetRules
+open NTactical clasetNet clasetRules clasetLib
 
 fun test (name, check) =
   (tprint name;
@@ -674,4 +674,193 @@ val _ =
        in
          Option.isSome one andalso not (Option.isSome two) andalso
          Option.isSome three andalso length (dest_decls ds'') = 2
+       end)
+
+
+(* clasetLib: value operations and netpair lookup. *)
+fun has_thm th = List.exists (fn (_, (_, th')) => same_thm th th')
+
+val _ =
+  test
+    ("clasetLib routes safe zero- and positive-subgoal rules",
+     fn () =>
+       let
+         val cs =
+           add_selims [("falseE", boolTheory.FALSITY)]
+             (add_sintros [("truthI", boolTheory.TRUTH)]
+                (add_selims [("orE", boolTheory.OR_ELIM_THM)]
+                   (add_sintros [("andI", boolTheory.AND_INTRO_THM)]
+                      empty_cs)))
+         val safe0_intro =
+           match_intro_candidates (safe0_part cs) ``T``
+         val safe0_elim =
+           match_elim_candidates (safe0_part cs) ``F``
+         val safep_intro =
+           match_intro_candidates (safep_part cs) ``p /\ q``
+         val safep_elim =
+           match_elim_candidates (safep_part cs) ``p \/ q``
+       in
+         has_thm boolTheory.TRUTH safe0_intro andalso
+         has_thm boolTheory.FALSITY safe0_elim andalso
+         has_thm boolTheory.AND_INTRO_THM safep_intro andalso
+         has_thm boolTheory.OR_ELIM_THM safep_elim
+       end)
+
+fun refl_intro vars tm = GENL vars (DISCH tm (ASSUME tm))
+
+fun candidate_indices candidates =
+  map (fn (({index, ...} : tag), _) => index) candidates
+
+val _ =
+  test
+    ("clasetLib orders six matching rules by subgoals then recency",
+     fn () =>
+       let
+         val a = ``p /\ p``
+         val b = ``p /\ q``
+         val c = ``q /\ p``
+         val d = ``x /\ x``
+         val e = ``x /\ y``
+         val f = ``y /\ x``
+         val rules =
+           [("one", refl_intro [] a),
+            ("two", refl_intro [q] b),
+            ("three", refl_intro [q] c),
+            ("four", refl_intro [x] d),
+            ("five", refl_intro [x, y] e),
+            ("six", refl_intro [x, y] f)]
+         val cs = add_intros rules empty_cs
+         val candidates =
+           match_intro_candidates (unsafe_part cs) ``p /\ p``
+       in
+         candidate_indices candidates =
+           [~11, ~9, ~7, ~5, ~3, ~1, ~12, ~10, ~8, ~6, ~4, ~2]
+       end)
+
+val _ =
+  test
+    ("clasetLib retrieves swapped unsafe intros on negated queries",
+     fn () =>
+       let
+         val cs = add_intros [("andI", boolTheory.AND_INTRO_THM)] empty_cs
+         val swapped = Option.valOf (SWAP_INTRO_RULE boolTheory.AND_INTRO_THM)
+       in
+         has_thm swapped
+           (match_intro_candidates (unsafe_part cs) ``~(p /\ q)``)
+       end)
+
+fun indexed_term (is_elim, th) =
+  rule_index (if is_elim then Elim else Intro) th
+
+fun exactly_matches (is_elim, th) query =
+  let val {patvars, ...} = canonical_form th
+  in really_matches (indexed_term (is_elim, th)) patvars query end
+
+fun same_candidates (cs1 : (tag * brl) list) (cs2 : (tag * brl) list) =
+  ListPair.allEq
+    (fn ((tag1, brl1), (tag2, brl2)) =>
+       #weight tag1 = #weight tag2 andalso #index tag1 = #index tag2 andalso
+       #1 brl1 = #1 brl2 andalso same_thm (#2 brl1) (#2 brl2))
+    (cs1, cs2)
+
+val _ =
+  test
+    ("clasetLib match and unify candidates agree with brute filtering",
+     fn () =>
+       let
+         val cs =
+           add_intros [("andI", boolTheory.AND_INTRO_THM)]
+             (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
+         val all_intro =
+           unify_intro_candidates (unsafe_part cs) ``z : bool``
+         val all_elim =
+           unify_elim_candidates (unsafe_part cs) ``z : bool``
+         val iq = ``p /\ q``
+         val eq = ``p \/ q``
+         val intro_brute = candidate_order
+           (List.filter (fn (_, brl) => exactly_matches brl iq) all_intro)
+         val elim_brute = candidate_order
+           (List.filter (fn (_, brl) => exactly_matches brl eq) all_elim)
+       in
+         same_candidates
+           (match_intro_candidates (unsafe_part cs) iq) intro_brute andalso
+         same_candidates
+           (match_elim_candidates (unsafe_part cs) eq) elim_brute andalso
+         same_candidates
+           (unify_intro_candidates (unsafe_part cs) iq) all_intro andalso
+         same_candidates
+           (unify_elim_candidates (unsafe_part cs) eq) all_elim
+       end)
+
+fun same_rules xs ys =
+  ListPair.allEq
+    (fn ((spec1, (name1, th1)), (spec2, (name2, th2))) =>
+       same_spec spec1 spec2 andalso name1 = name2 andalso same_thm th1 th2)
+    (xs, ys)
+
+val _ =
+  test
+    ("clasetLib add, remove, and merge preserve canonical rule order",
+     fn () =>
+       let
+         val a = ("a", DISCH p (ASSUME p))
+         val b = ("b", DISCH q (ASSUME q))
+         val c = ("c", DISCH r (ASSUME r))
+         val left = add_sintros [a] empty_cs
+         val right = add_sintros [b, c] empty_cs
+         val merged = merge_cs (left, right)
+         val incremented = add_sintros [b, c] left
+         val removed = remove_rule "b" merged
+       in
+         same_rules (rules_of merged) (rules_of incremented) andalso
+         map (fn (_, (name, _)) => name) (rules_of removed) = ["c", "a"]
+       end)
+
+val _ =
+  test
+    ("clasetLib removes unsafe and duplicating net entries by declaration tag",
+     fn () =>
+       let
+         val cs = add_intros [("andI", boolTheory.AND_INTRO_THM)] empty_cs
+         val cs' = remove_rule "andI" cs
+         val variable = ``z : bool``
+       in
+         not (List.null (unify_intro_candidates (unsafe cs) variable)) andalso
+         not (List.null (unify_intro_candidates (dup cs) variable)) andalso
+         List.null (unify_intro_candidates (unsafe cs') variable) andalso
+         List.null (unify_intro_candidates (dup cs') variable)
+       end)
+
+val _ =
+  test
+    ("clasetLib wrappers update by name and compose in declaration order",
+     fn () =>
+       let
+         fun first tac = NORELSE (labelled p, tac)
+         fun second tac = NORELSE (labelled q, tac)
+         val cs =
+           add_safe_wrapper ("one", first)
+             (add_safe_wrapper ("two", second) empty_cs)
+         val labels' = labels (app_safe_wrappers cs (labelled r)) label_goal
+         val cs' = del_safe_wrapper "two"
+           (add_safe_wrapper ("one", second) cs)
+       in
+         same_terms labels' [p] andalso
+         same_terms (labels (app_safe_wrappers cs' (labelled r)) label_goal)
+           [q]
+       end)
+
+val _ =
+  test
+    ("clasetLib config uses VAR_EQ_TAC and sizes all goal terms",
+     fn () =>
+       let
+         val {hyp_subst_tac, size_of} = claset_config
+         val variable_goal = ([``x : bool = p``], ``x : bool``)
+       in
+         size_of variable_goal =
+           Term.term_size ``x : bool = p`` + Term.term_size ``x : bool`` andalso
+         (case #1 (hyp_subst_tac variable_goal) of
+             [(_, goal)] => Term.aconv goal p
+           | _ => false)
        end)

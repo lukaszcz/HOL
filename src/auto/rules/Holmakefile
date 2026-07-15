@@ -2,7 +2,7 @@ HOLHEAP = $(HOLDIR)/bin/hol.state0
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.exe: selftest.uo NTactical.uo clasetNet.uo clasetRules.uo
+selftest.exe: selftest.uo NTactical.uo clasetNet.uo clasetRules.uo clasetLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

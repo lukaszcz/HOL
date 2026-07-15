@@ -1,0 +1,56 @@
+signature clasetLib =
+sig
+  include Abbrev
+
+  type rulekind = clasetRules.rulekind
+  type rulespec = clasetRules.rulespec
+  type tag = clasetRules.tag
+  type brl = clasetRules.brl
+
+  val Intro : rulekind
+  val Elim : rulekind
+  val Dest : rulekind
+
+  type claset
+  type claset_part
+
+  datatype part = Safe0Part | SafePPart | UnsafePart | DupPart
+
+  val empty_cs : claset
+
+  val add_rule : rulespec -> string * thm -> claset -> claset
+  val add_sintros : (string * thm) list -> claset -> claset
+  val add_intros : (string * thm) list -> claset -> claset
+  val add_selims : (string * thm) list -> claset -> claset
+  val add_elims : (string * thm) list -> claset -> claset
+  val add_sdests : (string * thm) list -> claset -> claset
+  val add_dests : (string * thm) list -> claset -> claset
+  val remove_rule : string -> claset -> claset
+  val merge_cs : claset * claset -> claset
+
+  val add_safe_wrapper : string * NTactical.wrapper -> claset -> claset
+  val add_unsafe_wrapper : string * NTactical.wrapper -> claset -> claset
+  val del_safe_wrapper : string -> claset -> claset
+  val del_unsafe_wrapper : string -> claset -> claset
+  val app_safe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
+  val app_unsafe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
+
+  val rules_of : claset -> (rulespec * (string * thm)) list
+  val pp_claset : claset Parse.pprinter
+
+  val claset_part : part -> claset -> claset_part
+  val safe0_part : claset -> claset_part
+  val safep_part : claset -> claset_part
+  val unsafe_part : claset -> claset_part
+  val dup_part : claset -> claset_part
+  val safe0 : claset -> claset_part
+  val safep : claset -> claset_part
+  val unsafe : claset -> claset_part
+  val dup : claset -> claset_part
+  val match_intro_candidates : claset_part -> term -> (tag * brl) list
+  val match_elim_candidates : claset_part -> term -> (tag * brl) list
+  val unify_intro_candidates : claset_part -> term -> (tag * brl) list
+  val unify_elim_candidates : claset_part -> term -> (tag * brl) list
+
+  val claset_config : {hyp_subst_tac : tactic, size_of : goal -> int}
+end
