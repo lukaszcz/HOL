@@ -157,7 +157,12 @@ fun config_entries () =
     first_hits (read_config user @ system)
   end
 
-val defaults = [("eval.dir", fn () => join (state_dir ()) "eval")]
+fun default_eval_dir () =
+  case holdir () of
+      SOME directory => join (join (join directory "src") "holyhammer") "eval"
+    | NONE => join (state_dir ()) "eval"
+
+val defaults = [("eval.dir", default_eval_dir)]
 
 fun default key =
   case List.find (fn (key', _) => key = key') defaults of

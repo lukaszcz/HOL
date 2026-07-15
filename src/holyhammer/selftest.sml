@@ -99,7 +99,7 @@ fun test_child root =
     val _ = expect "environment key mangling"
       (is_some "environment" (hhConfig.get "mangled.key"))
     val _ = expect "built-in default"
-      (is_some (join (hhConfig.state_dir ()) "eval")
+      (is_some (join (join (join holdir "src") "holyhammer") "eval")
                (hhConfig.get "eval.dir"))
     val _ = expect "system configuration"
       (is_some "system only" (hhConfig.get "system.only"))
@@ -163,12 +163,14 @@ fun run_parent () =
       " HOL4_HAMMER_MANGLED_KEY=environment" ^
       " HOL4_EPROVER_EXECUTABLE=" ^ env_exec ^
       " HHCONFIG_TEST_ROOT=" ^ root ^
+      " HOLDIR=" ^ holdir ^
       " PATH=" ^ path ^
       " ./selftest.exe"
     val env_command =
       "/usr/bin/env HOL4_HAMMER_EVAL_DIR=environment-eval" ^
       " HHCONFIG_ENV_DEFAULT_TEST=environment-eval" ^
       " HHCONFIG_TEST_ROOT=" ^ root ^
+      " HOLDIR=" ^ holdir ^
       " PATH=" ^ path ^
       " ./selftest.exe"
     val _ = tprint "hhConfig hermetic selftests"
@@ -414,6 +416,153 @@ fun test_installed_provers () =
         in
           ()
         end
+
+fun same_real left right = Real.== (left, right)
+
+fun same_real_option NONE NONE = true
+  | same_real_option (SOME left) (SOME right) = same_real left right
+  | same_real_option _ _ = false
+
+fun same_journal_entry (expected : hhEval.journal_entry)
+    (actual : hhEval.journal_entry) =
+  #run expected = #run actual andalso #thy expected = #thy actual andalso
+  #thm expected = #thm actual andalso
+  #goal_id expected = #goal_id actual andalso
+  #cond expected = #cond actual andalso
+  hhEval.string_of_regime (#regime expected) =
+    hhEval.string_of_regime (#regime actual) andalso
+  hhEval.string_of_selector (#selector expected) =
+    hhEval.string_of_selector (#selector actual) andalso
+  #prover expected = #prover actual andalso
+  #prover_version expected = #prover_version actual andalso
+  #nfacts expected = #nfacts actual andalso
+  #timeout expected = #timeout actual andalso
+  #szs expected = #szs actual andalso
+  same_real (#t_prover expected) (#t_prover actual) andalso
+  #axioms_used expected = #axioms_used actual andalso
+  #recon_ok expected = #recon_ok actual andalso
+  #recon_method expected = #recon_method actual andalso
+  same_real_option (#t_recon expected) (#t_recon actual) andalso
+  #stac expected = #stac actual andalso #error expected = #error actual
+
+fun test_hhEval root =
+  let
+    val holdir = join root "holdir"
+    val sigobj = join holdir "sigobj"
+    val src = join holdir "src"
+    val _ = mkdirs sigobj
+    val _ = mkdirs (join (join (join src "one") ".hol") "objs")
+    val _ = mkdirs (join (join (join src "two") ".hol") "objs")
+    val _ = write_file (join sigobj "SRCFILES")
+      (join src "one/listTheory" ^ "\n" ^
+       join src "two/arithmeticTheory" ^ "\n")
+    val _ = write_file (join (join (join (join src "one") ".hol") "objs")
+      "listTheory.dat") ""
+    val _ = write_file (join (join (join (join src "two") ".hol") "objs")
+      "arithmeticTheory.dat") ""
+    val _ = write_file (join (join (join (join src "two") ".hol") "objs")
+      "missingTheory.dat") ""
+    val coverage = hhEval.stdlib_coverage ()
+    val _ = expect_equal "SRCFILES corpus parser"
+      ["arithmetic", "list"] (#srcfiles coverage)
+    val _ = expect_equal "coverage check records discrepancy" ["missing"]
+      (#added_from_dat coverage)
+    val _ = expect_equal "stdlib corpus explicitly adds discrepancy"
+      ["arithmetic", "list", "missing"] (hhEval.stdlib_theories ())
+    val expdir = join root "hheval"
+    val _ = remove_tree expdir
+    val journal = hhEval.journal_path expdir "list"
+    val null_entry : hhEval.journal_entry =
+      {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
+       cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
+       prover = "e", prover_version = NONE, nfacts = 0, timeout = 5,
+       szs = "BrokenDeps", t_prover = 0.0, axioms_used = NONE,
+       recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+       error = NONE}
+    val full_entry : hhEval.journal_entry =
+      {run = "fixture", thy = "list", thm = "cons", goal_id = "list.cons",
+       cond = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
+       prover = "e", prover_version = SOME "3.2.5", nfacts = 128,
+       timeout = 10, szs = "Theorem", t_prover = 1.25,
+       axioms_used = SOME ["list.nil", "arithmetic.add"], recon_ok = SOME true,
+       recon_method = SOME "metis", t_recon = SOME 0.5,
+       stac = SOME "metis_tac [list_nil]", error = SOME "fixture"}
+    val _ = expect "journal null-field round trip"
+      (same_journal_entry null_entry
+       (hhEval.parse_journal_line (hhEval.encode_journal_line null_entry)))
+    val _ = expect "journal populated-field round trip"
+      (same_journal_entry full_entry
+       (hhEval.parse_journal_line (hhEval.encode_journal_line full_entry)))
+    val _ = hhEval.append_journal journal null_entry
+    val _ = hhEval.append_journal journal full_entry
+    val entries = hhEval.read_journal journal
+    val _ = expect "journal append flushes both lines"
+      (length entries = 2 andalso same_journal_entry null_entry (hd entries))
+    val complete = [("list.nil", "deps-e"), ("list.cons", "knn-e")]
+    val _ = expect "resume complete journal"
+      (hhEval.journal_complete journal complete)
+    val partial = hhEval.journal_path expdir "partial"
+    val _ = hhEval.append_journal partial null_entry
+    val _ = expect "resume partial journal"
+      (not (hhEval.journal_complete partial complete))
+    val empty = hhEval.journal_path expdir "empty"
+    val _ = expect "resume empty journal"
+      (not (hhEval.journal_complete empty complete))
+    val condition : hhEval.condition =
+      {cond_id = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
+       prover = "e", timeout = 10, reconstruct = true}
+    val parsed_condition =
+      hhEval.parse_condition (hhEval.encode_condition condition)
+    val _ = expect "condition serialization"
+      (#cond_id parsed_condition = #cond_id condition andalso
+       hhEval.string_of_regime (#regime parsed_condition) = "chainy" andalso
+       hhEval.string_of_selector (#selector parsed_condition) = "knn128" andalso
+       #prover parsed_condition = "e" andalso
+       #timeout parsed_condition = 10 andalso #reconstruct parsed_condition)
+    val header : hhEval.run_header =
+      {expname = "fixture", date = "today", host = "host", hol_commit = "abc",
+       provers = [{name = "e", path = SOME "/e", version = SOME "3.2.5",
+                   sha256 = SOME "123"}],
+       corpus = [{thy = "list", theorem_count = 2, dep_stamp = "stamp"}],
+       added_from_dat = ["missing"], conditions = [condition], sample = 1}
+    val _ = hhEval.write_run_header expdir header
+    val header_json = JSONParser.parseFile (join expdir "run.json")
+    val _ = expect "run header writer"
+      (JSONUtil.asString (JSONUtil.lookupField header_json "expname") =
+       "fixture")
+    val _ = expect "sample one selects every goal"
+      (hhEval.sample_goal 1 "list.nil")
+    val _ = expect "sample selection is deterministic"
+      (hhEval.sample_goal 7 "list.nil" = hhEval.sample_goal 7 "list.nil")
+    val _ = expect "invalid sample factor is rejected"
+      ((hhEval.sample_goal 0 "list.nil"; false) handle Fail _ => true)
+  in
+    ()
+  end
+
+val _ =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      NONE => ()
+    | SOME root => test_hhEval root
+
+fun test_actual_hhEval_corpus () =
+  let
+    val theories = hhEval.stdlib_theories ()
+    val coverage = hhEval.stdlib_coverage ()
+    val _ = expect "stdlib corpus contains list and arithmetic"
+      (List.exists (fn theory => theory = "list") theories andalso
+       List.exists (fn theory => theory = "arithmetic") theories)
+    val _ = expect "stdlib coverage discrepancies are recorded"
+      (List.all (fn theory => List.exists (fn item => item = theory) theories)
+       (#added_from_dat coverage))
+  in
+    ()
+  end
+
+val _ =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      NONE => test_actual_hhEval_corpus ()
+    | SOME _ => ()
 
 val _ = test_szs_status_words ()
 val _ = test_hhProver ()

@@ -1,8 +1,10 @@
-all: $(DEFAULT_TARGETS) hhConfig.uo hhProver.uo selftest.exe
+all: $(DEFAULT_TARGETS) hhConfig.uo hhProver.uo hhEval.uo selftest.exe
 
 hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
-selftest.uo: selftest.sml hhConfig.uo hhProver.uo
+hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo
+
+selftest.uo: selftest.sml hhConfig.uo hhProver.uo hhEval.uo
 .PHONY: all
 
 selftest.exe: selftest.uo
