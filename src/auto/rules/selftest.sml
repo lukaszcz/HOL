@@ -617,6 +617,27 @@ val _ =
          same_thm (DUP_INTRO_RULE ex_intro) (hand_dup_exists ())
        end)
 
+fun no_swap NONE = true
+  | no_swap _ = false
+
+val _ =
+  test
+    ("swap declines negation-headed conclusions",
+     fn () =>
+       let
+         val negp = mk_neg p
+         val neg_intro = GEN p (DISCH negp (ASSUME negp))
+       in
+         no_swap (SWAP_INTRO_RULE neg_intro)
+       end)
+
+val _ =
+  test
+    ("swap declines variable-headed conclusions",
+     fn () =>
+       let val var_intro = GEN p (DISCH p (ASSUME p))
+       in no_swap (SWAP_INTRO_RULE var_intro) end)
+
 fun simple_elim () =
   let
     val p = ``p : bool``
@@ -643,6 +664,9 @@ val _ =
     ("DUP_ELIM_RULE retains the major premise in every side premise",
      fn () => same_thm (DUP_ELIM_RULE (simple_elim ())) (hand_dup_elim ()))
 
+fun hol_err_msg f =
+  (f (); NONE) handle HOL_ERR e => SOME (Feedback.message_of e)
+
 val _ =
   test
     ("ext_info rejects premise-free eliminations and classifies safe rules",
@@ -654,7 +678,8 @@ val _ =
        in
          same_thm (CLASSICAL_RULE boolTheory.FALSITY)
            (canonical_rule boolTheory.FALSITY) andalso
-         not (can (ext_info safe_elim) boolTheory.TRUTH) andalso
+         hol_err_msg (fn () => (ext_info safe_elim boolTheory.TRUTH; ())) =
+           SOME "Ill-formed elimination rule" andalso
          safe_class_of safe_elim safe0 = SOME Safe0 andalso
          safe_class_of safe_elim safep = SOME SafeP
        end)

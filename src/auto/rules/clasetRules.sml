@@ -22,17 +22,18 @@ type canonical =
 fun specl [] th = th
   | specl (tm :: tms) th = specl tms (SPEC tm th)
 
+(* Keep explicit negations opaque: dest_imp also treats ~P as P ==> F. *)
 fun undisch th =
-  MP th (ASSUME (fst (dest_imp (concl th))))
+  MP th (ASSUME (fst (dest_imp_only (concl th))))
 
 fun curry_conj_premises th =
-  case total dest_imp (concl th) of
+  case total dest_imp_only (concl th) of
       NONE => th
     | SOME (prem, _) =>
         if is_conj prem then
           let
             val (left, right) = dest_conj prem
-            val tail = snd (dest_imp (concl th))
+            val tail = snd (dest_imp_only (concl th))
             val curry =
               SYM (specl [left, right, tail] boolTheory.AND_IMP_INTRO)
           in
