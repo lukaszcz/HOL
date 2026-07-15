@@ -227,6 +227,26 @@ fun test_recording file parser expected_szs expected_axioms =
     expect_equal ("recording axioms " ^ file) expected_axioms axioms
   end
 
+fun test_szs_status_words () =
+  let
+    val words =
+      ["Theorem", "Unsatisfiable", "CounterSatisfiable", "Satisfiable",
+       "GaveUp", "Unknown", "Incomplete", "Timeout", "ResourceOut",
+       "MemoryOut", "Forced", "User", "Inappropriate", "NewStatus"]
+    val expected =
+      [hhProver.SzsTheorem, hhProver.SzsTheorem,
+       hhProver.SzsCounterSat, hhProver.SzsSatisfiable,
+       hhProver.SzsGaveUp, hhProver.SzsGaveUp, hhProver.SzsGaveUp,
+       hhProver.SzsTimeout, hhProver.SzsResourceOut,
+       hhProver.SzsResourceOut, hhProver.SzsGaveUp, hhProver.SzsGaveUp,
+       hhProver.SzsInappropriate, hhProver.SzsUnknown "NewStatus"]
+    val actual = map (fn word =>
+      hhProver.szs_of_line ("% SZS status " ^ word ^ " for problem"))
+      words
+  in
+    expect_equal "SZS status words" (map SOME expected) actual
+  end
+
 fun test_hhProver () =
   let
     val e = prover "e"
@@ -261,6 +281,8 @@ fun test_hhProver () =
       (SOME ["keep_name"])
     val _ = test_recording "zipperposition-counter-sat.out"
       (#parse_output zipperposition) hhProver.SzsCounterSat NONE
+    val _ = test_recording "zipperposition-gave-up.out"
+      (#parse_output zipperposition) hhProver.SzsGaveUp NONE
     val _ = test_recording "zipperposition-timeout.out"
       (#parse_output zipperposition) hhProver.SzsResourceOut NONE
     val _ = expect_equal "E version parser" (SOME "3.2.5-ho")
@@ -393,6 +415,7 @@ fun test_installed_provers () =
           ()
         end
 
+val _ = test_szs_status_words ()
 val _ = test_hhProver ()
 val _ = test_runner ()
 val _ = test_installed_provers ()

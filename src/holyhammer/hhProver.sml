@@ -85,6 +85,8 @@ fun status_of_word word =
     | "Timeout" => SzsTimeout
     | "ResourceOut" => SzsResourceOut
     | "MemoryOut" => SzsResourceOut
+    | "Forced" => SzsGaveUp
+    | "User" => SzsGaveUp
     | "Inappropriate" => SzsInappropriate
     | other => SzsUnknown other
 

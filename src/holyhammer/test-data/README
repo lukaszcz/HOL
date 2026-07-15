@@ -8,5 +8,6 @@ The theorem recordings use an escaped HolyHammer axiom name
 of the `thm.` prefix.  The E theorem recording also retains its
 `--auto-schedule` comment chatter.  Pigeonhole instances produced E's
 `GaveUp`, Vampire's `Timeout`, and Zipperposition's `ResourceOut` (the
-Zipperposition timeout spelling).  Version recordings are the corresponding
-raw `--version` output.
+Zipperposition timeout spelling).  The Zipperposition `GaveUp` recording is
+from a small higher-order counterexample.  Version recordings are the
+corresponding raw `--version` output.
