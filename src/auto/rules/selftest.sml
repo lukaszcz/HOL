@@ -858,21 +858,37 @@ val _ =
 
 val _ =
   test
-    ("clasetLib wrappers update by name and compose in declaration order",
+    ("clasetLib wrappers update by name and preserve choice semantics",
      fn () =>
        let
-         fun first tac = NORELSE (labelled p, tac)
-         fun second tac = NORELSE (labelled q, tac)
-         val cs =
-           add_safe_wrapper ("one", first)
-             (add_safe_wrapper ("two", second) empty_cs)
-         val labels' = labels (app_safe_wrappers cs (labelled r)) label_goal
-         val cs' = del_safe_wrapper "two"
-           (add_safe_wrapper ("one", second) cs)
+         fun safe_first tac = NORELSE (labelled p, tac)
+         fun safe_second tac = NORELSE (labelled q, tac)
+         fun unsafe_first tac = NAPPEND (labelled p, tac)
+         fun unsafe_second tac = NAPPEND (labelled q, tac)
+         val safe_cs =
+           add_safe_wrapper ("one", safe_first)
+             (add_safe_wrapper ("two", safe_second) empty_cs)
+         val unsafe_cs =
+           add_unsafe_wrapper ("one", unsafe_first)
+             (add_unsafe_wrapper ("two", unsafe_second) empty_cs)
+         val safe_cs' = del_safe_wrapper "two"
+           (add_safe_wrapper ("one", safe_second) safe_cs)
+         val unsafe_cs' = del_unsafe_wrapper "two"
+           (add_unsafe_wrapper ("one", unsafe_second) unsafe_cs)
        in
-         same_terms labels' [p] andalso
-         same_terms (labels (app_safe_wrappers cs' (labelled r)) label_goal)
-           [q]
+         same_terms
+           (labels (app_safe_wrappers safe_cs (labelled r)) label_goal) [p]
+         andalso
+         same_terms
+           (labels (app_unsafe_wrappers unsafe_cs (labelled r)) label_goal)
+           [p, q, r]
+         andalso
+         same_terms
+           (labels (app_safe_wrappers safe_cs' (labelled r)) label_goal) [q]
+         andalso
+         same_terms
+           (labels (app_unsafe_wrappers unsafe_cs' (labelled r)) label_goal)
+           [q, r]
        end)
 
 val _ =
