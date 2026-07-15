@@ -1,4 +1,4 @@
-all: $(DEFAULT_TARGETS) selftest.exe
+all: $(DEFAULT_TARGETS) hhConfig.uo selftest.exe
 .PHONY: all
 
 selftest.exe: selftest.uo
