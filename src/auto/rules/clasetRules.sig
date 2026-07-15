@@ -19,8 +19,10 @@ sig
   val canonical_rule : thm -> thm
   val canonical_form : thm -> canonical
   val rule_index : rulekind -> thm -> term
+  val rule_index_of : rulekind -> canonical -> term
   val rule_premises : thm -> term list
   val rule_conclusion : thm -> term
+  val is_elim : rulekind -> bool
 
   val MAKE_ELIM_RULE : thm -> thm
   val CLASSICAL_RULE : thm -> thm

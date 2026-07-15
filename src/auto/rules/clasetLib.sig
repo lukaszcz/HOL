@@ -49,10 +49,6 @@ sig
   val safep_part : claset -> claset_part
   val unsafe_part : claset -> claset_part
   val dup_part : claset -> claset_part
-  val safe0 : claset -> claset_part
-  val safep : claset -> claset_part
-  val unsafe : claset -> claset_part
-  val dup : claset -> claset_part
   val match_intro_candidates : claset_part -> term -> (tag * brl) list
   val match_elim_candidates : claset_part -> term -> (tag * brl) list
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list

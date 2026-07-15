@@ -1033,14 +1033,14 @@ val _ =
          fun no_elim part =
            List.null (unify_elim_candidates part variable)
        in
-         has_intro (safe0 cs) andalso has_elim (safe0 cs) andalso
-         has_intro (safep cs) andalso has_elim (safep cs) andalso
-         has_intro (unsafe cs) andalso has_elim (unsafe cs) andalso
-         has_intro (dup cs) andalso has_elim (dup cs) andalso
-         no_intro (safe0 cs') andalso no_elim (safe0 cs') andalso
-         no_intro (safep cs') andalso no_elim (safep cs') andalso
-         no_intro (unsafe cs') andalso no_elim (unsafe cs') andalso
-         no_intro (dup cs') andalso no_elim (dup cs')
+         has_intro (safe0_part cs) andalso has_elim (safe0_part cs) andalso
+         has_intro (safep_part cs) andalso has_elim (safep_part cs) andalso
+         has_intro (unsafe_part cs) andalso has_elim (unsafe_part cs) andalso
+         has_intro (dup_part cs) andalso has_elim (dup_part cs) andalso
+         no_intro (safe0_part cs') andalso no_elim (safe0_part cs') andalso
+         no_intro (safep_part cs') andalso no_elim (safep_part cs') andalso
+         no_intro (unsafe_part cs') andalso no_elim (unsafe_part cs') andalso
+         no_intro (dup_part cs') andalso no_elim (dup_part cs')
        end)
 
 val _ =

@@ -39,18 +39,15 @@ val empty_cs =
       unsafe_netpair = empty_netpair,
       dup_netpair = empty_netpair}
 
-fun is_elim Intro = false
-  | is_elim _ = true
-
 fun rule_brl kind th = (is_elim kind, th)
 
 fun indexed_brl is_elim tag th =
   let
-    val {patvars, ...} = canonical_form th
     val kind = if is_elim then Elim else Intro
-    val pat = rule_index kind th
+    val form = canonical_form th
+    val pat = rule_index_of kind form
   in
-    ({pat = pat, patvars = patvars}, (tag, (is_elim, th)))
+    ({pat = pat, patvars = #patvars form}, (tag, (is_elim, th)))
   end
 
 fun insert_brl is_elim tag th (inet, enet) =
@@ -124,20 +121,13 @@ fun make_rule_decl spec (name, th) =
   end
 
 fun add_rule spec named_th
-  (CS {decls, safe_wrappers, unsafe_wrappers,
-       safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair}) =
+  (cs as CS {decls, safe_wrappers, unsafe_wrappers,
+             safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair}) =
   let
     val decl = make_rule_decl spec named_th
   in
     case extend_decl decl decls of
-        (NONE, _) =>
-          CS {decls = decls,
-              safe_wrappers = safe_wrappers,
-              unsafe_wrappers = unsafe_wrappers,
-              safe0_netpair = safe0_netpair,
-              safep_netpair = safep_netpair,
-              unsafe_netpair = unsafe_netpair,
-              dup_netpair = dup_netpair}
+        (NONE, _) => cs
       | (SOME new_decl, decls') =>
           let
             val (safe0_netpair', safep_netpair',
@@ -321,23 +311,19 @@ val safe0_part = claset_part Safe0Part
 val safep_part = claset_part SafePPart
 val unsafe_part = claset_part UnsafePart
 val dup_part = claset_part DupPart
-val safe0 = safe0_part
-val safep = safep_part
-val unsafe = unsafe_part
-val dup = dup_part
 
-fun sorted candidates = candidate_order candidates
-
-fun match_intro_candidates (inet, _) tm = sorted (clasetNet.match tm inet)
-fun match_elim_candidates (_, enet) tm = sorted (clasetNet.match tm enet)
+fun match_intro_candidates (inet, _) tm =
+  candidate_order (clasetNet.match tm inet)
+fun match_elim_candidates (_, enet) tm =
+  candidate_order (clasetNet.match tm enet)
 
 fun free_var_set tm = HOLset.fromList Term.compare (free_vars tm)
 
 fun unify_intro_candidates (inet, _) tm =
-  sorted (clasetNet.unify {q = tm, qvars = free_var_set tm} inet)
+  candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} inet)
 
 fun unify_elim_candidates (_, enet) tm =
-  sorted (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
+  candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
 
 (* The false state defers persistent updates until the first demand.  TASK_10
    extends [catch_up_typebase] with its TypeBase sweep. *)
@@ -358,11 +344,22 @@ fun normalise_rule_name name =
         (persistent_name (ThmSetData.toKName name)
          handle HOL_ERR _ => name)
 
+(* Reconstruction replays deltas recorded by ancestor theories.  A rule that
+   is ill-formed for its declared kind makes add_rule/make_rule_decl raise, so
+   guard it: warn and drop, exactly as load_delta does for a stale theorem,
+   rather than letting one bad delta abort every descendant theory's load. *)
+fun drop_illformed fname name cs =
+  (HOL_WARNING "clasetLib" fname
+     ("Dropping ill-formed persistent rule " ^ name); cs)
+
 fun apply_cdelta (ADD {name, spec}) cs =
       (case load_delta (ADD {name = name, spec = spec}) of
            NONE => cs
          | SOME (name', spec', th) =>
-             add_rule spec' (persistent_name name', th) cs)
+             let val pname = persistent_name name' in
+               add_rule spec' (pname, th) cs
+               handle HOL_ERR _ => drop_illformed "apply_cdelta" pname cs
+             end)
   | apply_cdelta (RM name) cs = remove_rule name cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
@@ -375,8 +372,10 @@ fun update_decls (ADD {name, spec}) decls =
       (case load_delta (ADD {name = name, spec = spec}) of
            NONE => decls
          | SOME (name', spec', th) =>
-             #2 (extend_decl
-                   (make_rule_decl spec' (persistent_name name', th)) decls))
+             let val pname = persistent_name name' in
+               #2 (extend_decl (make_rule_decl spec' (pname, th)) decls)
+               handle HOL_ERR _ => drop_illformed "update_decls" pname decls
+             end)
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
 fun rebuild_claset decls
@@ -499,13 +498,10 @@ fun typebase_update tyi =
 
 val _ = TypeBase.register_update_fn typebase_update
 
-fun specl [] th = th
-  | specl (tm :: tms) th = specl tms (SPEC tm th)
-
 fun distinct_elim_rule th =
   let
     val (vars, _) = strip_forall (concl th)
-    val core = specl vars th
+    val core = Drule.SPECL vars th
     val eq = dest_neg (concl core)
     val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
     val false_th = MP (NOT_ELIM core) (ASSUME eq)
@@ -518,7 +514,7 @@ fun iff_dest_rule th =
   let
     val (vars, _) = strip_forall (concl th)
   in
-    GENL vars (#1 (EQ_IMP_RULE (specl vars th)))
+    GENL vars (#1 (EQ_IMP_RULE (Drule.SPECL vars th)))
   end
 
 fun tyinfo_stem tyi =
@@ -586,8 +582,12 @@ fun delrule name =
     #update_global_value adresult (apply_to_global delta)
   end
 
-fun claset_of_theory thy = Option.map #1 (#DB adresult thy)
-fun merge_clasets thys = Option.map #1 (#merge adresult thys)
+(* Reconstruction replays only persistent deltas; TypeBase-derived rules are
+   never deltas, so add them here to match the live [the_claset]. *)
+fun claset_of_theory thy =
+  Option.map (catch_up_typebase o #1) (#DB adresult thy)
+fun merge_clasets thys =
+  Option.map (catch_up_typebase o #1) (#merge adresult thys)
 fun with_claset cs = AncestryData.with_temp_value adresult (cs, true, [])
 
 fun attribute_error attrname =

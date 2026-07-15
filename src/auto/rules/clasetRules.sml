@@ -19,9 +19,6 @@ type decl =
 type canonical =
   {thm : thm, patvars : term HOLset.set, prems : term list, concl : term}
 
-fun specl [] th = th
-  | specl (tm :: tms) th = specl tms (SPEC tm th)
-
 (* Keep explicit negations opaque: dest_imp also treats ~P as P ==> F. *)
 fun undisch th =
   MP th (ASSUME (fst (dest_imp_only (concl th))))
@@ -35,19 +32,35 @@ fun curry_conj_premises th =
             val (left, right) = dest_conj prem
             val tail = snd (dest_imp_only (concl th))
             val curry =
-              SYM (specl [left, right, tail] boolTheory.AND_IMP_INTRO)
+              SYM (Drule.SPECL [left, right, tail] boolTheory.AND_IMP_INTRO)
           in
             curry_conj_premises (EQ_MP curry th)
           end
         else DISCH prem (curry_conj_premises (undisch th))
 
-fun canonical_rule th =
+(* [curry_conj_premises] only rewrites a theorem whose implication spine has
+   a top-level conjunction premise, so a theorem without one is already
+   canonical.  ext_info re-derives from an already canonical theorem many
+   times; short-circuiting keeps those calls from redoing the kernel work. *)
+fun is_canonical th =
   let
-    val (vars, _) = strip_forall (concl th)
-    val body = specl vars th
+    fun spine tm =
+      case total dest_imp_only tm of
+          NONE => true
+        | SOME (prem, rest) => not (is_conj prem) andalso spine rest
   in
-    GENL vars (curry_conj_premises body)
+    spine (snd (strip_forall (concl th)))
   end
+
+fun canonical_rule th =
+  if is_canonical th then th
+  else
+    let
+      val (vars, _) = strip_forall (concl th)
+      val body = Drule.SPECL vars th
+    in
+      GENL vars (curry_conj_premises body)
+    end
 
 fun canonical_form th =
   let
@@ -70,11 +83,13 @@ fun illformed_rule fname kind =
   raise mk_HOL_ERR "clasetRules" fname
     ("Ill-formed " ^ kind_name kind ^ " rule")
 
-fun rule_index Intro th = rule_conclusion th
-  | rule_index (kind as (Elim | Dest)) th =
-      (case rule_premises th of
+fun rule_index_of Intro (form : canonical) = #concl form
+  | rule_index_of (kind as (Elim | Dest)) form =
+      (case #prems form of
           prem :: _ => prem
         | [] => illformed_rule "rule_index" kind)
+
+fun rule_index kind th = rule_index_of kind (canonical_form th)
 
 (* The derived rules below operate on this outer spine only.  In
    particular, a premise such as !x. P x ==> q is always one premise. *)
@@ -82,7 +97,7 @@ fun rule_spine th =
   let
     val th' = canonical_rule th
     val (vars, _) = strip_forall (concl th')
-    val core = specl vars th'
+    val core = Drule.SPECL vars th'
     val (prems, cncl) = strip_imp_only (concl core)
   in
     {thm = th', vars = vars, core = core, prems = prems, concl = cncl}

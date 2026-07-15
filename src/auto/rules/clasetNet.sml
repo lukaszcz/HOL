@@ -1,3 +1,18 @@
+(* =====================================================================
+ * Term-indexing net for the claset.
+ *
+ * The [match] direction (stored pattern variables act as wildcards, the
+ * query is rigid) is exactly what src/1/Ho_Net provides.  This net is a
+ * separate implementation because it must ALSO support [unify], where the
+ * query's own variables act as wildcards and so may match any stored
+ * subterm.  That reverse direction needs [skip_one] to step over a whole
+ * stored subterm, which relies on the uniform one-node-per-application
+ * labelling below (Cmb/Lam/Cnst/V).  Ho_Net folds the argument count into
+ * its labels (Cnet of ... * int), so it cannot skip a subterm without
+ * knowing that arity, and extending it lives on a path shared with every
+ * simpset.  Keep [match] here consistent with Ho_Net's semantics.
+ * ===================================================================== *)
+
 structure clasetNet :> clasetNet =
 struct
 
