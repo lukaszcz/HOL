@@ -405,7 +405,34 @@ fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
   | apply_pending (ApplyBatch deltas) cs = batch_apply deltas cs
   | apply_pending (Modify f) cs = f cs
 
-fun catch_up_typebase cs = cs
+(* TypeBase facts are derived data: they are never ancestry deltas.  A
+   contribution may decline a tyinfo by raising (as TypeBasePure's datatype
+   accessors do for non-datatypes), so make the listener total. *)
+type tyinfo_contribution =
+  string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
+
+val tyinfo_contributions = ref ([] : tyinfo_contribution list)
+
+fun add_tyinfo_rule spec (named_th as (_, th))
+  (cs as CS {decls, ...}) =
+  if has_decls decls th then cs else add_rule spec named_th cs
+
+fun add_tyinfo (tyi : TypeBasePure.tyinfo) (cs : claset) =
+  let
+    fun add_contribution
+      ((_, contribution) : tyinfo_contribution, acc : claset) =
+      case Lib.total contribution tyi of
+          NONE => acc
+        | SOME rules =>
+            List.foldl
+              (fn ((spec, named_th), cs) => add_tyinfo_rule spec named_th cs)
+              acc rules
+  in
+    List.foldl add_contribution cs (!tyinfo_contributions)
+  end
+
+fun catch_up_typebase cs =
+  List.foldl (fn (tyi, acc) => add_tyinfo tyi acc) cs (TypeBase.elts ())
 
 fun init_state (state as (cs, initialised, pending)) =
   if initialised then state
@@ -452,6 +479,96 @@ fun temp_delrule name =
   update_claset (remove_rule name o remove_rule (normalise_rule_name name))
 
 fun augment_claset f = update_claset f
+
+fun replace_tyinfo_contribution entry [] = [entry]
+  | replace_tyinfo_contribution (entry as (name, _))
+      ((old as (old_name, _)) :: entries) =
+      if name = old_name then entry :: entries
+      else old :: replace_tyinfo_contribution entry entries
+
+fun register_tyinfo_contribution entry =
+  (tyinfo_contributions :=
+     replace_tyinfo_contribution entry (!tyinfo_contributions);
+   update_claset
+     (fn cs =>
+        List.foldl (fn (tyi, acc) => add_tyinfo tyi acc) cs
+          (TypeBase.elts ())))
+
+fun typebase_update tyi =
+  (update_claset (add_tyinfo tyi); tyi)
+
+val _ = TypeBase.register_update_fn typebase_update
+
+fun specl [] th = th
+  | specl (tm :: tms) th = specl tms (SPEC tm th)
+
+fun distinct_elim_rule th =
+  let
+    val (vars, _) = strip_forall (concl th)
+    val core = specl vars th
+    val eq = dest_neg (concl core)
+    val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
+    val false_th = MP (NOT_ELIM core) (ASSUME eq)
+    val result = MP (SPEC r boolTheory.FALSITY) false_th
+  in
+    GENL (vars @ [r]) (DISCH eq result)
+  end
+
+fun iff_dest_rule th =
+  let
+    val (vars, _) = strip_forall (concl th)
+  in
+    GENL vars (#1 (EQ_IMP_RULE (specl vars th)))
+  end
+
+fun tyinfo_stem tyi =
+  case Lib.total TypeBasePure.ty_name_of tyi of
+      SOME (thy, tyop) => "__claset_tyinfo_" ^ thy ^ "_" ^ tyop
+    | NONE => "__claset_tyinfo_unknown"
+
+fun number_contribution make_rule ths =
+  let
+    fun number _ [] = []
+      | number index (th :: rest) =
+          make_rule index th @ number (index + 1) rest
+  in
+    number 0 ths
+  end
+
+fun distinctness_contribution tyi =
+  case Lib.total TypeBasePure.distinct_of tyi of
+      SOME (SOME th) =>
+        let
+          val stem = tyinfo_stem tyi ^ "_distinct_"
+          fun make_rule index conjunct =
+            [(selim_spec,
+              (stem ^ Int.toString index, distinct_elim_rule conjunct)),
+             (selim_spec,
+              (stem ^ "sym_" ^ Int.toString index,
+               distinct_elim_rule (GSYM conjunct)))]
+        in
+          number_contribution make_rule (CONJUNCTS th)
+        end
+    | _ => []
+
+fun injectivity_contribution tyi =
+  case Lib.total TypeBasePure.one_one_of tyi of
+      SOME (SOME th) =>
+        let
+          val stem = tyinfo_stem tyi ^ "_inject_"
+          fun make_rule index conjunct =
+            [(sdest_spec,
+              (stem ^ Int.toString index, iff_dest_rule conjunct))]
+        in
+          number_contribution make_rule (CONJUNCTS th)
+        end
+    | _ => []
+
+val _ = register_tyinfo_contribution
+  ("claset-distinctness", distinctness_contribution)
+
+val _ = register_tyinfo_contribution
+  ("claset-injectivity", injectivity_contribution)
 
 fun export_rule spec name =
   let

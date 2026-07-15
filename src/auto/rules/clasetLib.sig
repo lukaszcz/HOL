@@ -76,5 +76,9 @@ sig
 
   val process_claset_tags : thm list -> claset -> claset * thm list
 
+  val register_tyinfo_contribution :
+      string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
+      -> unit
+
   val claset_config : {hyp_subst_tac : tactic, size_of : goal -> int}
 end

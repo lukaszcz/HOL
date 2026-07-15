@@ -5,6 +5,10 @@ fun test (name, check) =
   (tprint name;
    if check () then OK () else die "failed")
 
+(* This deliberately precedes the first [the_claset] demand below. *)
+val _ = Datatype.Datatype
+  `claset_hook_before_demand = ClasetHookA | ClasetHookB num`
+
 fun same_terms ts1 ts2 =
   ListPair.allEq (fn (tm1, tm2) => Term.aconv tm1 tm2) (ts1, ts2)
 
@@ -1153,6 +1157,101 @@ val _ =
              ThmAttribute.local_attribute
                {attrname = "intro", name = "bad-priority", args = ["10"],
                 thm = state_rule})))
+
+
+(* clasetLib: TypeBase hook and contribution registry. *)
+fun typebase_specl [] th = th
+  | typebase_specl (tm :: tms) th = typebase_specl tms (SPEC tm th)
+
+fun typebase_distinct_elim th =
+  let
+    val (vars, _) = strip_forall (concl th)
+    val core = typebase_specl vars th
+    val eq = dest_neg (concl core)
+    val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
+    val false_th = MP (NOT_ELIM core) (ASSUME eq)
+  in
+    GENL (vars @ [r])
+      (DISCH eq (MP (SPEC r boolTheory.FALSITY) false_th))
+  end
+
+fun typebase_iff_dest th =
+  let
+    val (vars, _) = strip_forall (concl th)
+  in
+    GENL vars (#1 (EQ_IMP_RULE (typebase_specl vars th)))
+  end
+
+fun typebase_hook_tyinfo () =
+  case List.filter
+    (fn tyi => #2 (TypeBasePure.ty_name_of tyi) =
+               "claset_hook_before_demand")
+    (TypeBase.elts ()) of
+      [tyi] => tyi
+    | _ => raise Fail "missing TypeBase selftest datatype"
+
+fun has_typebase_rule spec th =
+  List.exists
+    (fn (spec', (_, th')) =>
+       same_spec spec spec' andalso same_thm (canonical_rule th) th')
+    (rules_of (the_claset ()))
+
+val typebase_selim_spec =
+  {kind = clasetRules.Elim, safe = true, prio = NONE}
+val typebase_sdest_spec =
+  {kind = clasetRules.Dest, safe = true, prio = NONE}
+
+val _ =
+  test
+    ("claset catches up TypeBase facts before its first demand",
+     fn () =>
+       let
+         val tyi = typebase_hook_tyinfo ()
+         val distinct = Option.valOf (TypeBasePure.distinct_of tyi)
+         val injective = Option.valOf (TypeBasePure.one_one_of tyi)
+         val distinct_rules =
+           List.concat
+             (map (fn th => [typebase_distinct_elim th,
+                             typebase_distinct_elim (Conv.GSYM th)])
+                  (Drule.CONJUNCTS distinct))
+         val injective_rules =
+           map typebase_iff_dest (Drule.CONJUNCTS injective)
+       in
+         List.all (has_typebase_rule typebase_selim_spec) distinct_rules
+           andalso
+         List.all (has_typebase_rule typebase_sdest_spec) injective_rules
+       end)
+
+val tyinfo_idempotence_p = ``claset_tyinfo_idempotence_p : bool``
+val tyinfo_idempotence_rule =
+  DISCH tyinfo_idempotence_p
+    (CONJ (ASSUME tyinfo_idempotence_p) (ASSUME tyinfo_idempotence_p))
+val tyinfo_idempotence_spec =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+
+fun tyinfo_idempotence_contribution _ =
+  [(tyinfo_idempotence_spec,
+    ("claset-tyinfo-idempotence", tyinfo_idempotence_rule))]
+
+fun count_typebase_rules th =
+  length
+    (List.filter
+       (fn (_, (_, th')) => same_thm (canonical_rule th) th')
+       (rules_of (the_claset ())))
+
+val _ =
+  test
+    ("claset TypeBase contributions silently deduplicate reprocessing",
+     fn () =>
+       let
+         val name = "claset-selftest-idempotence"
+         val _ = register_tyinfo_contribution
+           (name, tyinfo_idempotence_contribution)
+         val _ = register_tyinfo_contribution
+           (name, tyinfo_idempotence_contribution)
+       in
+         count_typebase_rules tyinfo_idempotence_rule = 1
+       end)
 
 
 (* clasetLib: per-invocation markers. *)
