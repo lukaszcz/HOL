@@ -1,0 +1,42 @@
+signature clasetRules =
+sig
+  type term = Term.term
+  type thm = Thm.thm
+  type thname = KernelSig.kernelname
+
+  datatype rulekind = Intro | Elim | Dest
+  type rulespec = {kind : rulekind, safe : bool, prio : int option}
+  type tag = {weight : int, index : int}
+  type brl = bool * thm
+  type rl = thm * thm option
+  type info = {rl : rl, dup_rl : rl}
+  type decl =
+    {name : string, spec : rulespec, tag : tag, info : info, orig : thm}
+
+  type canonical =
+    {thm : thm, patvars : term HOLset.set, prems : term list, concl : term}
+
+  val canonical_rule : thm -> thm
+  val canonical_form : thm -> canonical
+  val rule_index : rulekind -> thm -> term
+  val rule_premises : thm -> term list
+  val rule_conclusion : thm -> term
+
+  type decls
+  val empty_decls : decls
+  val make_decl : {name : string, spec : rulespec, weight : int,
+                   info : info, orig : thm} -> decl
+  val extend_decl : decl -> decls -> decl option * decls
+  val remove_decl : string -> decls -> decl list * decls
+  val has_decls : decls -> thm -> bool
+  val get_decls : decls -> thm -> decl list
+  val dest_decls : decls -> decl list
+  val merge_decls : decls * decls -> decl list * decls
+  val candidate_order : (tag * brl) list -> (tag * brl) list
+
+  datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
+  val encode_delta : cdelta -> ThyDataSexp.t
+  val decode_delta : ThyDataSexp.t -> cdelta option
+  val load_delta : cdelta -> (thname * rulespec * thm) option
+  val uptodate_delta : cdelta -> bool
+end

@@ -1,5 +1,5 @@
 open HolKernel Parse Tactic testutils
-open NTactical clasetNet
+open NTactical clasetNet clasetRules
 
 fun test (name, check) =
   (tprint name;
@@ -241,4 +241,159 @@ val _ =
          val net' = vfilter (fn i => i <> 1) net
        in
          List.null (match p net') andalso listItems net' = [2]
+       end)
+
+(* clasetRules: normalize only the implication spine. *)
+fun aconv_thm th1 th2 = Term.aconv (concl th1) (concl th2)
+
+fun thm_prem_conj () =
+  let val pq = ``p /\ q``
+  in DISCH pq (DISCH r (CONJUNCT1 (ASSUME pq))) end
+
+fun thm_nested_conj () =
+  let val pqr = ``(p /\ q) /\ r``
+  in DISCH pqr (CONJUNCT1 (CONJUNCT1 (ASSUME pqr))) end
+
+val _ =
+  test
+    ("canonical_rule curries top-level conjunction premises",
+     fn () =>
+       Term.aconv (concl (canonical_rule (thm_prem_conj ())))
+         ``p ==> q ==> r ==> p``)
+
+val _ =
+  test
+    ("canonical_rule recursively curries nested conjunctions",
+     fn () =>
+       Term.aconv (concl (canonical_rule (thm_nested_conj ())))
+         ``p ==> q ==> r ==> p``)
+
+val _ =
+  test
+    ("canonical_rule leaves premise-internal binders intact",
+     fn () =>
+       let
+         val P = ``P : bool -> bool``
+         val z = ``z : bool``
+         val internal = ``!z : bool. P z ==> q``
+         val th = DISCH internal (ASSUME internal)
+       in
+         Term.aconv (concl (canonical_rule th))
+           ``(!z : bool. P z ==> q) ==> (!z : bool. P z ==> q)``
+       end)
+
+val _ =
+  test
+    ("canonical_form records outer quantified variables as patvars",
+     fn () =>
+       let
+         val z = ``z : bool``
+         val P = ``P : bool -> bool``
+         val Pz = mk_comb (P, z)
+         val th = GEN z (DISCH Pz (ASSUME Pz))
+         val form = canonical_form th
+       in
+         HOLset.member (#patvars form, z) andalso
+         Term.aconv (#concl form) Pz
+       end)
+
+val _ =
+  test
+    ("rule_index rejects premise-free elimination rules",
+     fn () =>
+       not (can (rule_index Elim) boolTheory.TRUTH))
+
+fun info_of th = {rl = (th, NONE), dup_rl = (th, NONE)}
+val safe_intro = {kind = Intro, safe = true, prio = NONE}
+val safe_elim = {kind = Elim, safe = true, prio = NONE}
+
+fun decl name spec th =
+  make_decl {name = name, spec = spec, weight = 1,
+             info = info_of th, orig = th}
+
+fun add d ds =
+  case extend_decl d ds of
+      (SOME _, ds') => ds'
+    | (NONE, _) => raise Fail "test declaration unexpectedly rejected"
+
+val decl_a = decl "a" safe_intro (DISCH p (ASSUME p))
+val decl_b = decl "b" safe_intro (DISCH q (ASSUME q))
+val decl_c = decl "c" safe_elim (DISCH r (ASSUME r))
+val decl_d = decl "d" safe_intro (DISCH ``p /\ q`` (ASSUME ``p /\ q``))
+
+val _ =
+  test
+    ("decls use decreasing indices and remove by declaration name",
+     fn () =>
+       let
+         val ds = add decl_b (add decl_a empty_decls)
+         val names = map #name (dest_decls ds)
+         val (removed, ds') = remove_decl "a" ds
+       in
+         names = ["b", "a"] andalso map #name removed = ["a"] andalso
+         map #name (dest_decls ds') = ["b"]
+       end)
+
+val _ =
+  test
+    ("merge_decls replays Bires merge order by kind-class and reverse index",
+     fn () =>
+       let
+         val left = add decl_a empty_decls
+         val right = add decl_d (add decl_c (add decl_b empty_decls))
+         val (fresh, merged) = merge_decls (left, right)
+         val fresh_names = map #name fresh
+         val merged_names = map #name (dest_decls merged)
+       in
+         fresh_names = ["b", "d", "c"] andalso
+         merged_names = ["c", "d", "b", "a"]
+       end)
+
+val _ =
+  test
+    ("candidate_order prefers fewer subgoals, then recent declarations",
+     fn () =>
+       let
+         val th = thm_prem_conj ()
+         val ordered = candidate_order
+           [({weight = 2, index = ~1}, (false, th)),
+            ({weight = 1, index = ~1}, (false, th)),
+            ({weight = 1, index = ~3}, (false, th))]
+       in
+         map (fn ({index, ...}, _) => index) ordered = [~3, ~1, ~1]
+       end)
+
+fun same_spec ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
+              ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
+  kind1 = kind2 andalso safe1 = safe2 andalso prio1 = prio2
+
+val _ =
+  test
+    ("claset delta codec round-trips version-one ADD and RM deltas",
+     fn () =>
+       let
+         val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
+         val spec = {kind = Dest, safe = false, prio = SOME 75}
+       in
+         (case decode_delta (encode_delta (ADD {name = name, spec = spec})) of
+             SOME (ADD {name = name', spec = spec'}) =>
+               name = name' andalso same_spec spec spec'
+           | _ => false)
+         andalso decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
+       end)
+
+val _ =
+  test
+    ("claset ADD deltas load their theorem by name and check liveness",
+     fn () =>
+       let
+         val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
+         val spec = {kind = Intro, safe = true, prio = NONE}
+       in
+         (case load_delta (ADD {name = name, spec = spec}) of
+             SOME (name', spec', th) =>
+               name = name' andalso same_spec spec spec' andalso
+               aconv_thm th boolTheory.AND_IMP_INTRO
+           | NONE => false)
+         andalso uptodate_delta (ADD {name = name, spec = spec})
        end)
