@@ -341,19 +341,29 @@ fun unify_elim_candidates (_, enet) tm =
 
 (* The false state defers persistent updates until the first demand.  TASK_10
    extends [catch_up_typebase] with its TypeBase sweep. *)
-datatype pending = ApplyDelta of cdelta | Modify of (claset -> claset)
+datatype pending =
+    ApplyDelta of cdelta
+  | ApplyBatch of cdelta list
+  | Modify of (claset -> claset)
 type cstate = claset * bool * pending list
 
 val state0 : cstate = (empty_cs, false, [])
 
+fun persistent_name name = KernelSig.name_toString name
+
+fun normalise_rule_name name =
+  case String.fields (equal #"$") name of
+      [_, _] => name
+    | _ =>
+        (persistent_name (ThmSetData.toKName name)
+         handle HOL_ERR _ => name)
+
 fun apply_cdelta (ADD {name, spec}) cs =
       (case load_delta (ADD {name = name, spec = spec}) of
            NONE => cs
-         | SOME ({Name, ...}, spec', th) => add_rule spec' (Name, th) cs)
+         | SOME (name', spec', th) =>
+             add_rule spec' (persistent_name name', th) cs)
   | apply_cdelta (RM name) cs = remove_rule name cs
-
-fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
-  | apply_pending (Modify f) cs = f cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
    persistent declarations, so they need no delayed replay. *)
@@ -364,8 +374,9 @@ fun apply_delta delta (cs, _, _) = (apply_cdelta delta cs, true, [])
 fun update_decls (ADD {name, spec}) decls =
       (case load_delta (ADD {name = name, spec = spec}) of
            NONE => decls
-         | SOME ({Name, ...}, spec', th) =>
-             #2 (extend_decl (make_rule_decl spec' (Name, th)) decls))
+         | SOME (name', spec', th) =>
+             #2 (extend_decl
+                   (make_rule_decl spec' (persistent_name name', th)) decls))
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
 fun rebuild_claset decls
@@ -390,6 +401,10 @@ fun batch_apply deltas (cs as CS {decls, ...}) =
   rebuild_claset
     (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas) cs
 
+fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
+  | apply_pending (ApplyBatch deltas) cs = batch_apply deltas cs
+  | apply_pending (Modify f) cs = f cs
+
 fun catch_up_typebase cs = cs
 
 fun init_state (state as (cs, initialised, pending)) =
@@ -408,9 +423,7 @@ fun apply_to_global delta (cs, initialised, pending) =
    unforced global state retains the complete batch for one lazy replay. *)
 fun batch_finaliser _ deltas (cs, initialised, pending) =
   if initialised then (batch_apply deltas cs, true, [])
-  else
-    (cs, false,
-     List.revAppend (List.map ApplyDelta deltas, pending))
+  else (cs, false, ApplyBatch deltas :: pending)
 
 val adresult : (cdelta, cstate) AncestryData.fullresult =
   AncestryData.fullmake {
@@ -434,7 +447,10 @@ fun the_claset () =
    #1 (#get_global_value adresult ()))
 
 fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
-fun temp_delrule name = update_claset (remove_rule name)
+
+fun temp_delrule name =
+  update_claset (remove_rule name o remove_rule (normalise_rule_name name))
+
 fun augment_claset f = update_claset f
 
 fun export_rule spec name =
@@ -447,7 +463,7 @@ fun export_rule spec name =
   end
 
 fun delrule name =
-  let val delta = RM name
+  let val delta = RM (normalise_rule_name name)
   in
     #record_delta adresult delta;
     #update_global_value adresult (apply_to_global delta)

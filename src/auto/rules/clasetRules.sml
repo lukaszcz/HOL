@@ -483,7 +483,12 @@ fun load_delta (ADD {name, spec}) =
   | load_delta (RM _) = NONE
 
 fun uptodate_delta (ADD {name, ...}) =
-      can (fn n => Theory.uptodate_thm (DB.fetch_knm n)) name
+      (Theory.uptodate_thm (DB.fetch_knm name)
+       handle HOL_ERR _ =>
+         (HOL_WARNING "clasetRules" "uptodate_delta"
+            ("Bad claset add command, dropping theorem " ^
+             KernelSig.name_toString name);
+          false))
   | uptodate_delta (RM _) = true
 
 end

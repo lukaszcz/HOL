@@ -1037,12 +1037,17 @@ val state_rule = DISCH p (ASSUME p)
 val state_intro_rule = DISCH q (ASSUME q)
 val state_export_rule = DISCH r (ASSUME r)
 val state_temp_rule = DISCH ``p /\ q`` (ASSUME ``p /\ q``)
+val state_elim_rule = DISCH ``p \/ q`` (ASSUME ``p \/ q``)
+val state_dest_rule = DISCH ``~p`` (ASSUME ``~p``)
 val state_pending_name = "claset_state_pending"
 val state_sintro_name = "claset_state_sintro"
 val state_intro_name = "claset_state_intro"
 val state_export_name = "claset_state_export"
 val state_temp_name = "claset_state_temp"
 val state_spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
+
+fun persistent_rule_name name =
+  KernelSig.name_toString (ThmSetData.toKName name)
 
 val _ =
   test
@@ -1053,20 +1058,46 @@ val _ =
          val _ = export_rule state_spec state_pending_name
          val _ = temp_delrule state_pending_name
        in
-         not (has_named_rule state_pending_name (the_claset ()))
+         not (has_named_rule (persistent_rule_name state_pending_name)
+                (the_claset ()))
        end)
+
+val state_attribute_cases =
+  [("intro", {kind = clasetRules.Intro, safe = false, prio = NONE},
+    state_rule),
+   ("sintro", {kind = clasetRules.Intro, safe = true, prio = NONE},
+    state_intro_rule),
+   ("elim", {kind = clasetRules.Elim, safe = false, prio = NONE},
+    state_export_rule),
+   ("selim", {kind = clasetRules.Elim, safe = true, prio = NONE},
+    state_temp_rule),
+   ("dest", {kind = clasetRules.Dest, safe = false, prio = NONE},
+    state_elim_rule),
+   ("sdest", {kind = clasetRules.Dest, safe = true, prio = NONE},
+    state_dest_rule)]
 
 val _ =
   test
     ("claset attributes register and update the global state",
      fn () =>
        let
-         val _ = boolLib.save_thm
-           (state_sintro_name ^ "[sintro]", state_rule)
-         val attrs = ["intro", "sintro", "elim", "selim", "dest", "sdest"]
+         fun add_attribute (attr, _, th) =
+           let val name = state_sintro_name ^ "_" ^ attr
+           in
+             boolLib.save_thm (name ^ "[" ^ attr ^ "]", th);
+             ()
+           end
+         fun has_attribute (_, spec, th) =
+           List.exists
+             (fn (spec', (_, th')) =>
+                same_spec spec spec' andalso
+                same_thm (canonical_rule th) th')
+             (rules_of (the_claset ()))
        in
-         List.all ThmAttribute.is_attribute attrs andalso
-         has_named_rule state_sintro_name (the_claset ())
+         List.app add_attribute state_attribute_cases;
+         List.all (fn (attr, _, _) => ThmAttribute.is_attribute attr)
+           state_attribute_cases andalso
+         List.all has_attribute state_attribute_cases
        end)
 
 val _ =
@@ -1103,11 +1134,13 @@ val _ =
          val only_local = add_sintros [("local-only", state_rule)] empty_cs
          val scoped = with_claset only_local
            (fn () => has_named_rule "local-only" (the_claset ())) ()
-         val _ = delrule state_export_name
+         val _ = delrule (persistent_rule_name state_export_name)
        in
-         has_named_rule state_export_name exported andalso
+         has_named_rule (persistent_rule_name state_export_name) exported andalso
          Option.isSome merged andalso Option.isSome by_theory andalso
-         scoped andalso not (has_named_rule state_export_name (the_claset ()))
+         scoped andalso
+         not (has_named_rule (persistent_rule_name state_export_name)
+                (the_claset ()))
        end)
 
 val _ =
