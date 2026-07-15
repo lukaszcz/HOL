@@ -7,10 +7,6 @@ sig
   type tag = clasetRules.tag
   type brl = clasetRules.brl
 
-  val Intro : rulekind
-  val Elim : rulekind
-  val Dest : rulekind
-
   type claset
   type claset_part
 
@@ -61,6 +57,24 @@ sig
   val match_elim_candidates : claset_part -> term -> (tag * brl) list
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list
   val unify_elim_candidates : claset_part -> term -> (tag * brl) list
+
+  val SIntro : thm -> thm
+  val Intro : thm -> thm
+  val SElim : thm -> thm
+  val Elim : thm -> thm
+  val SDest : thm -> thm
+  val Dest : thm -> thm
+  val Del : string -> thm
+
+  val destSIntro : thm -> thm option
+  val destIntro : thm -> thm option
+  val destSElim : thm -> thm option
+  val destElim : thm -> thm option
+  val destSDest : thm -> thm option
+  val destDest : thm -> thm option
+  val destDel : thm -> string option
+
+  val process_claset_tags : thm list -> claset -> claset * thm list
 
   val claset_config : {hyp_subst_tac : tactic, size_of : goal -> int}
 end

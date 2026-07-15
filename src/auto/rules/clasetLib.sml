@@ -1,7 +1,16 @@
 structure clasetLib :> clasetLib =
 struct
 
-open Abbrev HolKernel clasetRules
+open Abbrev HolKernel boolLib
+
+type rulekind = clasetRules.rulekind
+type rulespec = clasetRules.rulespec
+type tag = clasetRules.tag
+type brl = clasetRules.brl
+
+local
+  open clasetRules
+in
 
 type net_entry = tag * brl
 type netpair = net_entry clasetNet.net * net_entry clasetNet.net
@@ -478,8 +487,96 @@ val claset_config =
   {hyp_subst_tac = BasicProvers.VAR_EQ_TAC,
    size_of = default_goal_size}
 
-val Intro = clasetRules.Intro
-val Elim = clasetRules.Elim
-val Dest = clasetRules.Dest
+end
+
+(* The theorem markers retain their payload in their conclusion.  Restrict
+   destruction to a marker at the conclusion root, so unrelated theorems
+   mentioning a marker remain available to later tag processors. *)
+fun mk_thm_marker def th =
+  EQ_MP (SYM (SPEC (concl th) def)) th
+
+fun dest_thm_marker marker def th =
+  (if same_const marker (rator (concl th)) then
+     SOME (PURE_REWRITE_RULE [def] th)
+   else NONE)
+  handle HOL_ERR _ => NONE
+
+fun mk_marker_const name =
+  prim_mk_const {Thy = "clasetMarker", Name = name}
+
+val SIntro_t = mk_marker_const "SIntro"
+val Intro_t = mk_marker_const "Intro"
+val SElim_t = mk_marker_const "SElim"
+val Elim_t = mk_marker_const "Elim"
+val SDest_t = mk_marker_const "SDest"
+val Dest_t = mk_marker_const "Dest"
+val Del_t = mk_marker_const "Del"
+
+val SIntro = mk_thm_marker clasetMarkerTheory.SIntro_def
+val Intro = mk_thm_marker clasetMarkerTheory.Intro_def
+val SElim = mk_thm_marker clasetMarkerTheory.SElim_def
+val Elim = mk_thm_marker clasetMarkerTheory.Elim_def
+val SDest = mk_thm_marker clasetMarkerTheory.SDest_def
+val Dest = mk_thm_marker clasetMarkerTheory.Dest_def
+
+val destSIntro = dest_thm_marker SIntro_t clasetMarkerTheory.SIntro_def
+val destIntro = dest_thm_marker Intro_t clasetMarkerTheory.Intro_def
+val destSElim = dest_thm_marker SElim_t clasetMarkerTheory.SElim_def
+val destElim = dest_thm_marker Elim_t clasetMarkerTheory.Elim_def
+val destSDest = dest_thm_marker SDest_t clasetMarkerTheory.SDest_def
+val destDest = dest_thm_marker Dest_t clasetMarkerTheory.Dest_def
+
+fun Del name =
+  let val marker_name = mk_var (name, alpha)
+  in EQT_ELIM (SPEC marker_name clasetMarkerTheory.Del_def)
+  end
+
+fun destDel th =
+  let
+    val tm = concl th
+  in
+    if same_const Del_t (rator tm) then SOME (#1 (dest_var (rand tm)))
+    else NONE
+  end
+  handle HOL_ERR _ => NONE
+
+fun marker_name cs =
+  let
+    fun already_used name =
+      List.exists (fn (_, (name', _)) => name = name') (rules_of cs)
+    fun find index =
+      let val name = "__claset_marker_" ^ Int.toString index
+      in if already_used name then find (index + 1) else name
+      end
+  in
+    find 0
+  end
+
+val theorem_markers =
+  [(destSIntro, sintro_spec), (destIntro, intro_spec),
+   (destSElim, selim_spec), (destElim, elim_spec),
+   (destSDest, sdest_spec), (destDest, dest_spec)]
+
+fun dest_rule_marker [] th = NONE
+  | dest_rule_marker ((dest, spec) :: markers) th =
+      case dest th of
+          NONE => dest_rule_marker markers th
+        | SOME rule => SOME (spec, rule)
+
+fun process_claset_tags thms cs =
+  let
+    fun add spec th cs = add_rule spec (marker_name cs, th) cs
+
+    fun process (cs, rest) [] = (cs, List.rev rest)
+      | process (cs, rest) (th :: ths) =
+          case dest_rule_marker theorem_markers th of
+              SOME (spec, rule) => process (add spec rule cs, rest) ths
+            | NONE =>
+                (case destDel th of
+                     SOME name => process (remove_rule name cs, rest) ths
+                   | NONE => process (cs, th :: rest) ths)
+  in
+    process (cs, []) thms
+  end
 
 end

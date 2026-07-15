@@ -301,11 +301,11 @@ val _ =
   test
     ("rule_index rejects premise-free elimination rules",
      fn () =>
-       not (can (rule_index Elim) boolTheory.TRUTH))
+       not (can (rule_index clasetRules.Elim) boolTheory.TRUTH))
 
 fun info_of th = {rl = (th, NONE), dup_rl = (th, NONE)}
-val safe_intro = {kind = Intro, safe = true, prio = NONE}
-val safe_elim = {kind = Elim, safe = true, prio = NONE}
+val safe_intro = {kind = clasetRules.Intro, safe = true, prio = NONE}
+val safe_elim = {kind = clasetRules.Elim, safe = true, prio = NONE}
 
 fun decl name spec th =
   make_decl {name = name, spec = spec, weight = 1,
@@ -373,7 +373,7 @@ val _ =
      fn () =>
        let
          val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
-         val spec = {kind = Dest, safe = false, prio = SOME 75}
+         val spec = {kind = clasetRules.Dest, safe = false, prio = SOME 75}
        in
          (case decode_delta (encode_delta (ADD {name = name, spec = spec})) of
              SOME (ADD {name = name', spec = spec'}) =>
@@ -388,7 +388,7 @@ val _ =
      fn () =>
        let
          val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
-         val spec = {kind = Intro, safe = true, prio = NONE}
+         val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
        in
          (case load_delta (ADD {name = name, spec = spec}) of
              SOME (name', spec', th) =>
@@ -454,7 +454,7 @@ val _ =
     ("dest declarations make and classically repair the injD analogue",
      fn () =>
        let
-         val spec = {kind = Dest, safe = true, prio = NONE}
+         val spec = {kind = clasetRules.Dest, safe = true, prio = NONE}
          val expected = repaired_inj_elim ()
          val info = ext_info spec (injD_analogue ())
        in
@@ -672,7 +672,7 @@ val _ =
     ("ext_info rejects premise-free eliminations and classifies safe rules",
      fn () =>
        let
-         val safe_elim = {kind = Elim, safe = true, prio = NONE}
+         val safe_elim = {kind = clasetRules.Elim, safe = true, prio = NONE}
          val safe0 = ext_info safe_elim boolTheory.FALSITY
          val safep = ext_info safe_elim boolTheory.OR_ELIM_THM
        in
@@ -783,7 +783,7 @@ val _ =
        end)
 
 fun indexed_term (is_elim, th) =
-  rule_index (if is_elim then Elim else Intro) th
+  rule_index (if is_elim then clasetRules.Elim else clasetRules.Intro) th
 
 fun exactly_matches (is_elim, th) query =
   let val {patvars, ...} = canonical_form th
@@ -802,7 +802,7 @@ fun rule_entries index kind (th, swapped) =
       ({weight = subgoals_of (is_elim, th), index = index},
        (is_elim, th))
   in
-    entry (kind <> Intro) (2 * index + 1) th ::
+    entry (kind <> clasetRules.Intro) (2 * index + 1) th ::
     (case swapped of
          NONE => []
        | SOME th' => [entry true (2 * index) th'])
@@ -835,8 +835,8 @@ val _ =
      fn () =>
        let
          val declarations =
-           [(Elim, boolTheory.OR_ELIM_THM),
-            (Intro, boolTheory.AND_INTRO_THM)]
+           [(clasetRules.Elim, boolTheory.OR_ELIM_THM),
+            (clasetRules.Intro, boolTheory.AND_INTRO_THM)]
          val cs =
            add_intros [("andI", boolTheory.AND_INTRO_THM)]
              (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
@@ -861,8 +861,8 @@ val _ =
            add_intros [("andI", boolTheory.AND_INTRO_THM)]
              (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
          val entries = brute_unsafe_entries
-           [(Elim, boolTheory.OR_ELIM_THM),
-            (Intro, boolTheory.AND_INTRO_THM)]
+           [(clasetRules.Elim, boolTheory.OR_ELIM_THM),
+            (clasetRules.Intro, boolTheory.AND_INTRO_THM)]
          val query = ``p \/ q``
          val expected = candidate_order
            (List.filter
@@ -882,8 +882,8 @@ val _ =
            add_intros [("andI", boolTheory.AND_INTRO_THM)]
              (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
          val entries = brute_unsafe_entries
-           [(Elim, boolTheory.OR_ELIM_THM),
-            (Intro, boolTheory.AND_INTRO_THM)]
+           [(clasetRules.Elim, boolTheory.OR_ELIM_THM),
+            (clasetRules.Intro, boolTheory.AND_INTRO_THM)]
          val query = ``p /\ q``
        in
          same_candidates (unify_intro_candidates (unsafe_part cs) query)
@@ -902,8 +902,8 @@ val _ =
            add_intros [("andI", boolTheory.AND_INTRO_THM)]
              (add_elims [("orE", boolTheory.OR_ELIM_THM)] empty_cs)
          val entries = brute_unsafe_entries
-           [(Elim, boolTheory.OR_ELIM_THM),
-            (Intro, boolTheory.AND_INTRO_THM)]
+           [(clasetRules.Elim, boolTheory.OR_ELIM_THM),
+            (clasetRules.Intro, boolTheory.AND_INTRO_THM)]
          val query = ``p \/ q``
        in
          same_candidates (unify_elim_candidates (unsafe_part cs) query)
@@ -1042,7 +1042,7 @@ val state_sintro_name = "claset_state_sintro"
 val state_intro_name = "claset_state_intro"
 val state_export_name = "claset_state_export"
 val state_temp_name = "claset_state_temp"
-val state_spec = {kind = Intro, safe = true, prio = NONE}
+val state_spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
 
 val _ =
   test
@@ -1120,3 +1120,79 @@ val _ =
              ThmAttribute.local_attribute
                {attrname = "intro", name = "bad-priority", args = ["10"],
                 thm = state_rule})))
+
+
+(* clasetLib: per-invocation markers. *)
+fun has_marker_rule spec th cs =
+  List.exists
+    (fn (spec', (_, th')) =>
+       same_spec spec spec' andalso same_thm (canonical_rule th) th')
+    (rules_of cs)
+
+val marker_sintro_spec =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+val marker_intro_spec =
+  {kind = clasetRules.Intro, safe = false, prio = NONE}
+val marker_selim_spec =
+  {kind = clasetRules.Elim, safe = true, prio = NONE}
+val marker_elim_spec =
+  {kind = clasetRules.Elim, safe = false, prio = NONE}
+val marker_sdest_spec =
+  {kind = clasetRules.Dest, safe = true, prio = NONE}
+val marker_dest_spec =
+  {kind = clasetRules.Dest, safe = false, prio = NONE}
+
+val marker_cases =
+  [("SIntro", SIntro, destSIntro, marker_sintro_spec,
+    boolTheory.AND_INTRO_THM),
+   ("Intro", Intro, destIntro, marker_intro_spec, boolTheory.AND_INTRO_THM),
+   ("SElim", SElim, destSElim, marker_selim_spec, boolTheory.OR_ELIM_THM),
+   ("Elim", Elim, destElim, marker_elim_spec, boolTheory.OR_ELIM_THM),
+   ("SDest", SDest, destSDest, marker_sdest_spec, boolTheory.OR_ELIM_THM),
+   ("Dest", Dest, destDest, marker_dest_spec, boolTheory.OR_ELIM_THM)]
+
+val _ =
+  test
+    ("claset markers round-trip and add their temporary rules",
+     fn () =>
+       List.all
+         (fn (_, mark, dest, spec, th) =>
+            let
+              val marked = mark th
+              val (cs, rest) = process_claset_tags [marked] empty_cs
+            in
+              (case dest marked of
+                   SOME th' => same_thm th th'
+                 | NONE => false) andalso
+              List.null rest andalso has_marker_rule spec th cs
+            end)
+         marker_cases)
+
+val _ =
+  test
+    ("Del removes a rule from the invocation claset only",
+     fn () =>
+       let
+         val name = "claset-marker-deleted"
+         val base = add_sintros [(name, boolTheory.AND_INTRO_THM)] empty_cs
+         val marked = Del name
+         val (cs, rest) = process_claset_tags [marked] base
+       in
+         destDel marked = SOME name andalso List.null rest andalso
+         has_named_rule name base andalso not (has_named_rule name cs)
+       end)
+
+val _ =
+  test
+    ("claset marker processing passes simp markers and plain theorems through",
+     fn () =>
+       let
+         val plain = boolTheory.TRUTH
+         val cong = markerLib.Cong (ASSUME p)
+         val excl = markerLib.Excl "claset-marker-pass"
+         val input = [cong, excl, plain]
+         val (cs, rest) = process_claset_tags input empty_cs
+       in
+         List.null (rules_of cs) andalso
+         ListPair.allEq (fn (th1, th2) => same_thm th1 th2) (input, rest)
+       end)
