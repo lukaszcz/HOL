@@ -1,6 +1,18 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-all: $(DEFAULT_TARGETS)
+all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
+
+selftest.exe: selftest.uo NTactical.uo
+	$(HOLMOSMLC) -o $@ $<
+
+ifdef HOLSELFTESTLEVEL
+all: ntactical-selftest.log
+
+ntactical-selftest.log: selftest.exe
+	$(tee ./selftest.exe 2>&1,$@)
+endif
+
+EXTRA_CLEANS = selftest.exe ntactical-selftest.log
 
 ifeq ($(KERNELID),otknl)
 all: $(patsubst %Script.sml,%.ot.art,$(wildcard *Script.sml))
