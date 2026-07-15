@@ -22,6 +22,17 @@ sig
   val rule_premises : thm -> term list
   val rule_conclusion : thm -> term
 
+  val MAKE_ELIM_RULE : thm -> thm
+  val CLASSICAL_RULE : thm -> thm
+  val SWAP_INTRO_RULE : thm -> thm option
+  val DUP_INTRO_RULE : thm -> thm
+  val DUP_ELIM_RULE : thm -> thm
+  val ext_info : rulespec -> thm -> info
+
+  datatype safe_class = Safe0 | SafeP
+  val subgoals_of : brl -> int
+  val safe_class_of : rulespec -> info -> safe_class option
+
   type decls
   val empty_decls : decls
   val make_decl : {name : string, spec : rulespec, weight : int,

@@ -1,4 +1,4 @@
-open HolKernel Parse Tactic testutils
+open HolKernel Parse Tactic testutils boolSyntax
 open NTactical clasetNet clasetRules
 
 fun test (name, check) =
@@ -396,4 +396,282 @@ val _ =
                aconv_thm th boolTheory.AND_IMP_INTRO
            | NONE => false)
          andalso uptodate_delta (ADD {name = name, spec = spec})
+       end)
+
+
+(* clasetRules: primitive preprocessing derived rules. *)
+fun same_thm th1 th2 = Term.aconv (concl th1) (concl th2)
+
+fun specs [] th = th
+  | specs (tm :: tms) th = specs tms (SPEC tm th)
+
+fun contradiction not_tm tm_th = MP (NOT_ELIM not_tm) tm_th
+
+fun injD_analogue () =
+  let
+    val inj = ``\f : bool -> bool. !x : bool y : bool.
+                 f x = f y ==> x = y``
+    val f = ``f : bool -> bool``
+    val x = ``x : bool``
+    val y = ``y : bool``
+    val injf = mk_comb (inj, f)
+    val injf_th = EQ_MP (BETA_CONV injf) (ASSUME injf)
+    val inst = specs [x, y] injf_th
+    val (fxy, xeqy) = dest_imp (concl inst)
+    val xeqy_th = MP inst (ASSUME fxy)
+  in
+    GENL [f, x, y] (DISCH injf (DISCH fxy xeqy_th))
+  end
+
+fun repaired_inj_elim () =
+  let
+    val f = ``f : bool -> bool``
+    val x = ``x : bool``
+    val y = ``y : bool``
+    val r = ``r : bool``
+    val source = specs [f, x, y] (injD_analogue ())
+    val (injf, tail) = dest_imp (concl source)
+    val (fxy, xeqy) = dest_imp tail
+    val notr = mk_neg r
+    val hfxy = ASSUME (mk_imp (notr, fxy))
+    val hkr = ASSUME (mk_imp (xeqy, r))
+    val negative =
+      MP hkr
+        (MP (MP source (ASSUME injf)) (MP hfxy (ASSUME notr)))
+    val body =
+      DISJ_CASES (SPEC r boolTheory.EXCLUDED_MIDDLE) (ASSUME r) negative
+  in
+    GENL [f, x, y, r]
+      (DISCH injf (DISCH (mk_imp (notr, fxy))
+        (DISCH (mk_imp (xeqy, r)) body)))
+  end
+
+val _ = test ("injD analogue is locally proved", fn () =>
+  (injD_analogue (); true))
+
+val _ =
+  test
+    ("dest declarations make and classically repair the injD analogue",
+     fn () =>
+       let
+         val spec = {kind = Dest, safe = true, prio = NONE}
+         val expected = repaired_inj_elim ()
+         val info = ext_info spec (injD_analogue ())
+       in
+         same_thm (#1 (#rl info)) expected
+       end)
+
+fun hand_swap_and () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val r = ``r : bool``
+    val pq = mk_conj (p, q)
+    val notpq = mk_neg pq
+    val notr = mk_neg r
+    val hp = ASSUME (mk_imp (notr, p))
+    val hq = ASSUME (mk_imp (notr, q))
+    val body =
+      CCONTR r (contradiction (ASSUME notpq)
+        (CONJ (MP hp (ASSUME notr)) (MP hq (ASSUME notr))))
+  in
+    GENL [p, q, r]
+      (DISCH notpq (DISCH (mk_imp (notr, p))
+        (DISCH (mk_imp (notr, q)) body)))
+  end
+
+fun hand_dup_and () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val pq = mk_conj (p, q)
+    val notpq = mk_neg pq
+    val hp = ASSUME (mk_imp (notpq, p))
+    val hq = ASSUME (mk_imp (notpq, q))
+    val negative =
+      CONJ (MP hp (ASSUME notpq)) (MP hq (ASSUME notpq))
+    val body =
+      DISJ_CASES (SPEC pq boolTheory.EXCLUDED_MIDDLE) (ASSUME pq) negative
+  in
+    GENL [p, q]
+      (DISCH (mk_imp (notpq, p)) (DISCH (mk_imp (notpq, q)) body))
+  end
+
+fun cdisj_intro () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val notq = mk_neg q
+    val h = ASSUME (mk_imp (notq, p))
+    val body =
+      DISJ_CASES (SPEC q boolTheory.EXCLUDED_MIDDLE)
+        (DISJ2 p (ASSUME q)) (DISJ1 (MP h (ASSUME notq)) q)
+  in
+    GENL [p, q] (DISCH (mk_imp (notq, p)) body)
+  end
+
+fun cdisj_from h =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val notq = mk_neg q
+  in
+    DISJ_CASES (SPEC q boolTheory.EXCLUDED_MIDDLE)
+      (DISJ2 p (ASSUME q)) (DISJ1 (MP h (ASSUME notq)) q)
+  end
+
+fun hand_swap_cdisj () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val r = ``r : bool``
+    val c = mk_disj (p, q)
+    val notc = mk_neg c
+    val notr = mk_neg r
+    val h = ASSUME (mk_imp (notr, mk_imp (mk_neg q, p)))
+    val body =
+      CCONTR r (contradiction (ASSUME notc)
+        (cdisj_from (MP h (ASSUME notr))))
+  in
+    GENL [p, q, r]
+      (DISCH notc (DISCH (mk_imp (notr, mk_imp (mk_neg q, p))) body))
+  end
+
+fun hand_dup_cdisj () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val c = mk_disj (p, q)
+    val notc = mk_neg c
+    val h = ASSUME (mk_imp (notc, mk_imp (mk_neg q, p)))
+    val negative = cdisj_from (MP h (ASSUME notc))
+    val body =
+      DISJ_CASES (SPEC c boolTheory.EXCLUDED_MIDDLE) (ASSUME c) negative
+  in
+    GENL [p, q] (DISCH (mk_imp (notc, mk_imp (mk_neg q, p))) body)
+  end
+
+fun exists_intro () =
+  let
+    val P = ``P : bool -> bool``
+    val x = ``x : bool``
+    val px = mk_comb (P, x)
+    val ex = mk_exists (x, px)
+  in
+    GENL [P, x] (DISCH px (EXISTS (ex, x) (ASSUME px)))
+  end
+
+fun hand_swap_exists () =
+  let
+    val P = ``P : bool -> bool``
+    val x = ``x : bool``
+    val r = ``r : bool``
+    val px = mk_comb (P, x)
+    val ex = mk_exists (x, px)
+    val notex = mk_neg ex
+    val notr = mk_neg r
+    val hp = ASSUME (mk_imp (notr, px))
+    val body =
+      CCONTR r (contradiction (ASSUME notex)
+        (EXISTS (ex, x) (MP hp (ASSUME notr))))
+  in
+    GENL [P, x, r]
+      (DISCH notex (DISCH (mk_imp (notr, px)) body))
+  end
+
+fun hand_dup_exists () =
+  let
+    val P = ``P : bool -> bool``
+    val x = ``x : bool``
+    val px = mk_comb (P, x)
+    val ex = mk_exists (x, px)
+    val notex = mk_neg ex
+    val hp = ASSUME (mk_imp (notex, px))
+    val negative = EXISTS (ex, x) (MP hp (ASSUME notex))
+    val body =
+      DISJ_CASES (SPEC ex boolTheory.EXCLUDED_MIDDLE) (ASSUME ex) negative
+  in
+    GENL [P, x] (DISCH (mk_imp (notex, px)) body)
+  end
+
+val _ =
+  test
+    ("swap and duplication rules agree with hand proofs for seed intros",
+     fn () =>
+       let
+         val and_intro = boolTheory.AND_INTRO_THM
+         val disj_intro = cdisj_intro ()
+         val ex_intro = exists_intro ()
+       in
+         Option.isSome (SWAP_INTRO_RULE and_intro) andalso
+         same_thm (Option.valOf (SWAP_INTRO_RULE and_intro))
+           (hand_swap_and ()) andalso
+         same_thm (DUP_INTRO_RULE and_intro) (hand_dup_and ()) andalso
+         Option.isSome (SWAP_INTRO_RULE disj_intro) andalso
+         same_thm (Option.valOf (SWAP_INTRO_RULE disj_intro))
+           (hand_swap_cdisj ()) andalso
+         same_thm (DUP_INTRO_RULE disj_intro) (hand_dup_cdisj ()) andalso
+         Option.isSome (SWAP_INTRO_RULE ex_intro) andalso
+         same_thm (Option.valOf (SWAP_INTRO_RULE ex_intro))
+           (hand_swap_exists ()) andalso
+         same_thm (DUP_INTRO_RULE ex_intro) (hand_dup_exists ())
+       end)
+
+fun simple_elim () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val hp = ASSUME p
+    val hpq = ASSUME (mk_imp (p, q))
+  in
+    GENL [p, q] (DISCH p (DISCH (mk_imp (p, q)) (MP hpq hp)))
+  end
+
+fun hand_dup_elim () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val hp = ASSUME p
+    val h = ASSUME (mk_imp (p, mk_imp (p, q)))
+  in
+    GENL [p, q]
+      (DISCH p (DISCH (mk_imp (p, mk_imp (p, q))) (MP (MP h hp) hp)))
+  end
+
+val _ =
+  test
+    ("DUP_ELIM_RULE retains the major premise in every side premise",
+     fn () => same_thm (DUP_ELIM_RULE (simple_elim ())) (hand_dup_elim ()))
+
+val _ =
+  test
+    ("ext_info rejects premise-free eliminations and classifies safe rules",
+     fn () =>
+       let
+         val safe_elim = {kind = Elim, safe = true, prio = NONE}
+         val safe0 = ext_info safe_elim boolTheory.FALSITY
+         val safep = ext_info safe_elim boolTheory.OR_ELIM_THM
+       in
+         same_thm (CLASSICAL_RULE boolTheory.FALSITY)
+           (canonical_rule boolTheory.FALSITY) andalso
+         not (can (ext_info safe_elim) boolTheory.TRUTH) andalso
+         safe_class_of safe_elim safe0 = SOME Safe0 andalso
+         safe_class_of safe_elim safep = SOME SafeP
+       end)
+
+val _ =
+  test
+    ("duplicate and cross-kind declarations warn as appropriate",
+     fn () =>
+       let
+         val th = DISCH p (ASSUME p)
+         val first = decl "duplicate-one" safe_intro th
+         val second = decl "duplicate-two" safe_intro th
+         val other = decl "cross-kind" safe_elim th
+         val (one, ds) = extend_decl first empty_decls
+         val (two, ds') = extend_decl second ds
+         val (three, ds'') = extend_decl other ds'
+       in
+         Option.isSome one andalso not (Option.isSome two) andalso
+         Option.isSome three andalso length (dest_decls ds'') = 2
        end)

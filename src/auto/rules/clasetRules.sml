@@ -61,13 +61,226 @@ fun canonical_form th =
 fun rule_premises th = #prems (canonical_form th)
 fun rule_conclusion th = #concl (canonical_form th)
 
+fun kind_name Intro = "introduction"
+  | kind_name Elim = "elimination"
+  | kind_name Dest = "destruction"
+
+fun illformed_rule fname kind =
+  raise mk_HOL_ERR "clasetRules" fname
+    ("Ill-formed " ^ kind_name kind ^ " rule")
+
 fun rule_index Intro th = rule_conclusion th
-  | rule_index (Elim | Dest) th =
+  | rule_index (kind as (Elim | Dest)) th =
       (case rule_premises th of
           prem :: _ => prem
-        | [] =>
-            raise mk_HOL_ERR "clasetRules" "rule_index"
-              "Ill-formed elimination rule: no major premise")
+        | [] => illformed_rule "rule_index" kind)
+
+(* The derived rules below operate on this outer spine only.  In
+   particular, a premise such as !x. P x ==> q is always one premise. *)
+fun rule_spine th =
+  let
+    val th' = canonical_rule th
+    val (vars, _) = strip_forall (concl th')
+    val core = specl vars th'
+    val (prems, cncl) = strip_imp_only (concl core)
+  in
+    {thm = th', vars = vars, core = core, prems = prems, concl = cncl}
+  end
+
+fun apply_assumed th [] = th
+  | apply_assumed th (prem :: prems) =
+      apply_assumed (MP th (ASSUME prem)) prems
+
+fun apply_thms th [] = th
+  | apply_thms th (prem :: prems) = apply_thms (MP th prem) prems
+
+fun discharge_prems [] th = th
+  | discharge_prems (prem :: prems) th =
+      DISCH prem (discharge_prems prems th)
+
+fun finish_rule vars extras prems th =
+  GENL vars
+    (List.foldr (fn (v, body) => GEN v body) (discharge_prems prems th)
+       extras)
+
+fun fresh_bool th =
+  variant (free_varsl (concl th :: hyp th)) (mk_var ("r", bool))
+
+fun false_of not_tm tm_th = MP (NOT_ELIM not_tm) tm_th
+
+fun MAKE_ELIM_RULE th =
+  let
+    val {vars, core, prems, concl, ...} = rule_spine th
+    val r = fresh_bool core
+    val br = mk_imp (concl, r)
+    val bth = apply_assumed core prems
+    val rth = MP (ASSUME br) bth
+  in
+    finish_rule vars [r] (prems @ [br]) rth
+  end
+
+fun CLASSICAL_RULE th =
+  let
+    val {thm, vars, core, prems, concl, ...} = rule_spine th
+  in
+    case prems of
+        [] => illformed_rule "CLASSICAL_RULE" Elim
+      | major :: rest =>
+          if not (is_var concl) then thm
+          else
+            let
+              fun needs_repair prem =
+                not (Term.aconv (snd (strip_imp_only prem)) concl)
+              val repairs = map needs_repair rest
+              fun repair (prem, true) = mk_imp (mk_neg concl, prem)
+                | repair (prem, false) = prem
+              val rest' = ListPair.map repair (rest, repairs)
+            in
+              if not (List.exists (fn b => b) repairs) then thm
+              else
+                let
+                  val hmajor = ASSUME major
+                  val hprems = map ASSUME rest'
+                  fun old_prem (h, true) = MP h (ASSUME (mk_neg concl))
+                    | old_prem (h, false) = h
+                  val negative' =
+                    apply_thms core
+                      (hmajor ::
+                       ListPair.map old_prem (hprems, repairs))
+                  val body =
+                    DISJ_CASES (SPEC concl boolTheory.EXCLUDED_MIDDLE)
+                      (ASSUME concl) negative'
+                in
+                  finish_rule vars [] (major :: rest') body
+                end
+            end
+  end
+
+fun patvars vars = HOLset.fromList Term.compare vars
+
+fun rigid_frees pat vars =
+  HOLset.fromList Term.compare
+    (List.filter (fn v => not (HOLset.member (vars, v))) (free_vars pat))
+
+fun is_instance pat vars tm =
+  can (Term.raw_match [] (rigid_frees pat vars) pat tm) ([], [])
+
+fun negation_headed tm =
+  is_neg tm orelse
+  (case total dest_imp tm of
+       SOME (_, rhs) => Term.aconv rhs F
+     | NONE => false)
+
+fun SWAP_INTRO_RULE th =
+  let
+    val {vars, core, prems, concl, ...} = rule_spine th
+    val not_concl = mk_neg concl
+  in
+    if negation_headed concl orelse
+       is_instance concl (patvars vars) not_concl
+    then NONE
+    else
+      let
+        val r = fresh_bool core
+        val not_r = mk_neg r
+        val lifted = map (fn prem => mk_imp (not_r, prem)) prems
+        val hnot_concl = ASSUME not_concl
+        val hprems = map ASSUME lifted
+        val args = map (fn h => MP h (ASSUME not_r)) hprems
+        val cth = apply_thms core args
+        val body = CCONTR r (false_of hnot_concl cth)
+      in
+        SOME (finish_rule vars [r] (not_concl :: lifted) body)
+      end
+  end
+
+fun DUP_INTRO_RULE th =
+  let
+    val {vars, core, prems, concl, ...} = rule_spine th
+    val not_concl = mk_neg concl
+    val lifted = map (fn prem => mk_imp (not_concl, prem)) prems
+    val hprems = map ASSUME lifted
+    val args = map (fn h => MP h (ASSUME not_concl)) hprems
+    val cth = apply_thms core args
+    val body = CCONTR concl (false_of (ASSUME not_concl) cth)
+  in
+    finish_rule vars [] lifted body
+  end
+
+fun DUP_ELIM_RULE th =
+  let
+    val {thm, vars, core, prems, ...} = rule_spine th
+  in
+    case prems of
+        [] => illformed_rule "DUP_ELIM_RULE" Elim
+      | major :: rest =>
+          let
+            val lifted = map (fn prem => mk_imp (major, prem)) rest
+            val hmajor = ASSUME major
+            val hprems = map ASSUME lifted
+            val args = map (fn h => MP h hmajor) hprems
+            val body = apply_thms core (hmajor :: args)
+          in
+            finish_rule vars [] (major :: lifted) body
+          end
+  end
+
+fun ext_info ({kind, safe, ...} : rulespec) th =
+  let
+    val th' = canonical_rule th
+    fun elim_rule () =
+      let
+        val _ = (case rule_premises th' of
+                    [] => illformed_rule "ext_info" kind
+                  | _ => ())
+        val elim = if kind = Dest then MAKE_ELIM_RULE th' else th'
+      in
+        CLASSICAL_RULE elim
+      end
+    fun intro_info () =
+      let
+        val rl = (th', SWAP_INTRO_RULE th')
+      in
+        if safe then {rl = rl, dup_rl = rl}
+        else
+          let
+            val dup = DUP_INTRO_RULE th'
+              handle HOL_ERR _ => illformed_rule "ext_info" Intro
+          in
+            {rl = rl, dup_rl = (dup, SWAP_INTRO_RULE dup)}
+          end
+      end
+    fun elim_info () =
+      let
+        val elim = elim_rule ()
+        val rl = (elim, NONE)
+      in
+        if safe then {rl = rl, dup_rl = rl}
+        else
+          let
+            val dup = DUP_ELIM_RULE elim
+              handle HOL_ERR _ => illformed_rule "ext_info" kind
+          in
+            {rl = rl, dup_rl = (dup, NONE)}
+          end
+      end
+  in
+    case kind of
+        Intro => intro_info ()
+      | Elim => elim_info ()
+      | Dest => elim_info ()
+  end
+
+datatype safe_class = Safe0 | SafeP
+
+fun subgoals_of (is_elim, th) =
+  let val n = length (rule_premises th)
+  in if is_elim then n - 1 else n end
+
+fun safe_class_of ({kind, safe, ...} : rulespec) ({rl, ...} : info) =
+  if not safe then NONE
+  else if subgoals_of (kind <> Intro, #1 rl) = 0 then SOME Safe0
+  else SOME SafeP
 
 fun compare_tag ({weight = w1, index = i1} : tag,
                  {weight = w2, index = i2} : tag) =
@@ -135,16 +348,30 @@ fun dest_decls (Decls {byconcl, ...}) =
 fun duplicate decl ds =
   List.exists (fn old => same_kind (#spec decl) (#spec old)) ds
 
+fun rule_description ({kind, safe, ...} : rulespec) =
+  (if safe then "safe " else "unsafe ") ^ kind_name kind ^ " rule"
+
 fun extend_decl (decl : decl) (Decls {next, byconcl, byname}) =
   let
     val key = canonical_key (#orig decl)
     val old = Option.getOpt (Termtab.lookup byconcl key, [])
+    val unchanged = Decls {next = next, byconcl = byconcl, byname = byname}
   in
     if duplicate decl old orelse
        Option.isSome (Symtab.lookup byname (#name decl))
-    then (NONE, Decls {next = next, byconcl = byconcl, byname = byname})
+    then
+      (HOL_WARNING "clasetRules" "extend_decl"
+         ("Ignoring duplicate " ^ rule_description (#spec decl));
+       (NONE, unchanged))
     else
       let
+        val _ =
+          if List.exists (fn old => not (same_kind (#spec decl) (#spec old)))
+                         old
+          then HOL_WARNING "clasetRules" "extend_decl"
+                 ("Rule already declared as a different " ^
+                  rule_description (#spec (hd old)))
+          else ()
         val {weight, ...} = #tag decl
         val decl' =
           {name = #name decl, spec = #spec decl,
