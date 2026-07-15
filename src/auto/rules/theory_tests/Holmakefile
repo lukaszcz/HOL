@@ -1,0 +1,22 @@
+INCLUDES = ..
+
+all: $(DEFAULT_TARGETS) reload-check
+.PHONY: all reload-check
+
+# This is deliberately phony: each Holmake invocation starts a fresh HOL
+# process, reloads the datatype theory, and verifies hook idempotence.
+reload-check: reloadCheck.exe
+	./reloadCheck.exe
+
+reloadCheck.uo: reloadBaseTheory.uo
+reloadCheck.exe: reloadCheck.uo reloadBaseTheory.uo ../NTactical.uo \
+                 ../clasetNet.uo ../clasetRules.uo ../clasetLib.uo \
+                 ../clasetMarkerTheory.uo ../clasetSeedTheory.uo
+	$(HOLMOSMLC) -o $@ $<
+
+declBTheory.uo: declATheory.uo
+diamondAddTheory.uo: diamondRootTheory.uo
+diamondRemoveTheory.uo: diamondRootTheory.uo
+diamondChildTheory.uo: diamondAddTheory.uo diamondRemoveTheory.uo
+
+EXTRA_CLEANS = reloadCheck.exe
