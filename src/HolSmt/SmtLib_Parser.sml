@@ -1390,8 +1390,40 @@ local
 
   and parse_binder_term cfg get_token (tydict, tmdict) mk_binder : Term.term =
   let
-    val vars = parse_sorted_vars get_token tydict
-    val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+    (* CVC's CPC printer represents a binder list as ``(@list @t1 ...)``.
+       This is deliberately accepted only for the explicit marker; ordinary
+       SMT-LIB binders continue through [parse_sorted_vars].  The referenced
+       entries must already be terms in the current dictionary and, crucially,
+       must be HOL variables. *)
+    val binder_open = get_token ()
+    val binder_head = get_token ()
+    val (vars, cpc_binders, get_token) =
+      if binder_open = "(" andalso binder_head = "@list" then
+        let
+          fun parse_vars acc =
+            let val token = get_token () in
+              if token = ")" then List.rev acc
+              else
+                let
+                  val tm = parse_term_aux cfg get_token (tydict, tmdict)
+                    token []
+                  val _ = Term.is_var tm orelse
+                    raise ERR "parse_binder_term"
+                      "CPC @list binder contains a non-variable term"
+                in parse_vars ((Lib.fst (Term.dest_var tm), tm) :: acc) end
+            end
+        in
+          (parse_vars [], true, get_token)
+        end
+      else
+        let
+          val get_token = Library.undo_look_ahead
+            [binder_open, binder_head] get_token
+          val sorted_vars = parse_sorted_vars get_token tydict
+        in
+          (List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) sorted_vars,
+           false, get_token)
+        end
     (* variables don't take arguments *)
     fun parsefn var token indices args =
       if List.null indices andalso List.null args then
@@ -1399,8 +1431,9 @@ local
       else
         raise ERR ("<" ^ Hol_pp.term_to_string var ^ ">")
           "wrong number of arguments"
-    val tmdict = List.foldl Library.extend_dict tmdict
-      (List.map (Lib.apsnd parsefn) vars)
+    val tmdict = if cpc_binders then tmdict else
+      List.foldl Library.extend_dict tmdict
+        (List.map (Lib.apsnd parsefn) vars)
     val body = parse_term_with_cfg cfg get_token (tydict, tmdict)
     val _ = Library.expect_token ")" (get_token ())
   in

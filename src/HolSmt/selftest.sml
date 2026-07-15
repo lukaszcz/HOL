@@ -58,7 +58,7 @@ fun expect_thm check_oracles name smt_tac t =
           " " ^ locn.toString (top_location_of holerr) ^
           ", message: " ^ message_of holerr ^ ")")
     val (oracles, _) = Tag.dest_tag (Thm.tag thm)
-    val oracle_tags = List.filter (String.isPrefix "Alethe_") oracles
+    val oracle_tags = List.filter (String.isPrefix "CPC_") oracles
   in
     if not (null oracle_tags) then
       die ("Test of solver '" ^ name ^ "' failed on term '" ^
@@ -413,11 +413,10 @@ in
     (``MIN (x:num) 0 = 0``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``MIN (x:num) y = a ==> MIN a z <= x``,
-      [thm_AUTO, thm_CVC, thm_Z3
+      [thm_AUTO, thm_CVC, thm_Z3, thm_CVCp
        (*, thm_Z3p_v4: Z3 4.11 proof replay can leave ite-expansion
           definition hypotheses after the num-to-int MIN lowering. *)
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          METIS fallback fails on MIN/MAX with ite expansion. *)]),
+       ]),
 
     (``MAX (x:num) y >= x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -429,11 +428,10 @@ in
     (``MAX (x:num) 0 = x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``MAX (x:num) y = a ==> x <= MAX a z``,
-      [thm_AUTO, thm_CVC, thm_Z3
+      [thm_AUTO, thm_CVC, thm_Z3, thm_CVCp
        (*, thm_Z3p_v4: Z3 4.11 proof replay can leave ite-expansion
           definition hypotheses after the num-to-int MAX lowering. *)
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          METIS fallback fails on MIN/MAX with ite expansion. *)]),
+       ]),
 
     (* int *)
 
@@ -731,9 +729,8 @@ in
     (``(x:int) >= 0 ==> (int_min x 0 = 0)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``int_min (x:int) y = a ==> int_min a z <= x``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          METIS fallback fails on MIN/MAX with ite expansion. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
 
     (``int_max (x:int) y >= x``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
@@ -881,9 +878,8 @@ in
     (``(x:real) >= 0 ==> (max x 0 = x)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``max (x:real) y = a ==> x <= max a z``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          METIS fallback fails on MIN/MAX with ite expansion. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
 
     (* nonlinear arithmetic *)
 
@@ -1039,9 +1035,8 @@ in
     (``(x:num) < 42 ==> &x < (42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``(x:num) < 42 ==> &x < (42:real)``,
-      [thm_AUTO, thm_CVC, thm_Z3(*, thm_Z3p_v4*)
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          fails in a real_of_int hole; see cvc5-version-matrix.md. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_CVCp (*, thm_Z3p_v4*)
+       ]),
     (``(42:int) < x ==> (42:num) < Num x``,
       [thm_AUTO, thm_CVC, thm_CVCp
        (*, thm_Z3, thm_Z3p_v4: after retiring the num bridge axioms,
@@ -1052,11 +1047,11 @@ in
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p*), thm_CVCp]),
 
     (``flr (42:real) = (42:num)``,
-      [thm_AUTO, thm_CVC]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (-42:real) = (0:num)``,
       [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (4/3:real) = (1:num)``,
-      [thm_AUTO, thm_CVC]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (-4/3:real) = (0:num)``,
       [thm_AUTO, thm_CVC, thm_CVCp]),
     (``flr (0:real) = (0:num)``,
@@ -1067,11 +1062,11 @@ in
       [(*thm_AUTO,*) thm_CVC, thm_CVCp]),
 
     (``clg (42:real) = (42:num)``,
-      [thm_AUTO, thm_CVC]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (-42:real) = (0:num)``,
       [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (4/3:real) = (2:num)``,
-      [thm_AUTO, thm_CVC]),
+      [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (-4/3:real) = (0:num)``,
       [thm_AUTO, thm_CVC, thm_CVCp]),
     (``clg (0:real) = (0:num)``,
@@ -1086,13 +1081,11 @@ in
     (``flrtoks (-42:real) = (-42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p, thm_CVCp]),
     (``flrtoks (4/3:real) = (1:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          does not support Alethe to_int_intro yet. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
     (``flrtoks (-4/3:real) = (-2:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          does not support Alethe to_int_intro yet. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
     (``0 < (x:real) ==> ((flrtoks x): int) = &((flr x): num)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``0 <= (x:real) ==> ((flrtoks x): int) = &((flr x): num)``,
@@ -1103,13 +1096,11 @@ in
     (``clgtoks (-42:real) = (-42:int)``,
       [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp]),
     (``clgtoks (4/3:real) = (2:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          does not support Alethe to_int_intro yet. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
     (``clgtoks (-4/3:real) = (-1:int)``,
-      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 proof production succeeds, but replay
-          does not support Alethe to_int_intro yet. *)]),
+      [thm_AUTO, thm_CVC, thm_Z3, thm_Z3p_v4, thm_CVCp
+       ]),
     (``0 < (x:real) ==> ((clgtoks x): int) = &((clg x): num)``,
       [(*thm_AUTO,*) thm_CVC, thm_Z3(*, thm_Z3p_v4*)]),
     (``0 <= (x:real) ==> ((clgtoks x): int) = &((clg x): num)``,
@@ -1130,9 +1121,7 @@ in
     (``i <> j ==>
         (j =+ f) ((i =+ e) (a :int -> int)) =
         (i =+ e) ((j =+ f) a)``,
-      [thm_Z3p, thm_Z3p_v4
-       (*, thm_CVCp: cvc5 1.3.4 emits an Alethe choice/named-term
-          binder shape that HolSmt records in cvc5-version-matrix.md. *)]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``(!i. (a :int -> int) i = b i) ==> (a = b)``,
       [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
 
@@ -1542,7 +1531,7 @@ in
 
     (* data types: constructors *)
 
-    (``foo <> bar``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
+    (``foo <> bar``, [thm_AUTO, thm_CVCp, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``foo <> baz``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``bar <> baz``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),
     (``[] <> x::xs``, [thm_AUTO, thm_YO, thm_Z3p, thm_Z3p_v4]),

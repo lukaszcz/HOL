@@ -1,7 +1,7 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
            ../res_quan/src ../sort ../string
 
-all: $(DEFAULT_TARGETS) selftest.exe holsmt-typecheck holsmt-z3-tac
+all: $(DEFAULT_TARGETS) selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-cvc-cpc-tac
 .PHONY: all
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
@@ -50,6 +50,24 @@ holsmt-z3-tac: z3_tac_driver.uo
 	  > $@
 	chmod +x $@
 
+holsmt-cvc-cpc-tac: cvc_cpc_tac_driver.uo
+	printf '%s\n' \
+	  '#!/bin/sh' \
+	  'set -e' \
+	  'if [ "$$#" -ne 2 ]; then' \
+	  '  echo "Usage: $$0 <input.smt2> <logic>" >&2' \
+	  '  exit 1' \
+	  'fi' \
+	  'case "$$1" in' \
+	  '  /*) input=$$1 ;;' \
+	  '  *) input=$$(pwd)/$$1 ;;' \
+	  'esac' \
+	  'cd "$$(dirname "$$0")"' \
+	  'extra=$$(printf "%s\n%s" "$$input" "$$2")' \
+	  'HOL4_CVC_EXECUTABLE=$${HOL4_CVC_EXECUTABLE:-$${CVC5:-cvc5}} $(HOLDIR)/bin/hol --gcthreads=1 run --holstate=$(HOLDIR)/src/HolSmt/smtheap --extra "$$extra" cvc_cpc_tac_driver' \
+	  > $@
+	chmod +x $@
+
 ifdef HOLSELFTESTLEVEL
 all: holsmt-selftest.log
 
@@ -57,7 +75,7 @@ holsmt-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1,$@)
 endif
 
-EXTRA_CLEANS = selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-selftest.log
+EXTRA_CLEANS = selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-cvc-cpc-tac holsmt-selftest.log
 
 ifdef HOLBUILD
 all: link-to-sigobj

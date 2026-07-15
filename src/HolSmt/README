@@ -5,6 +5,9 @@ Files:
 
 COPYRIGHT               Copyright notice, license and disclaimer.
 CVC.sml                 Functions to invoke the cvc5 SMT solver.
+CPC_Proof.sml           Version-gated cvc5 CPC proof-rule registry.
+CPC_ProofParser.sml     Parser for untrusted cvc5 CPC proof text.
+CPC_ProofReplay.sml     Kernel-checked replay of supported CPC rules.
 Holmakefile             Makefile for Holmake (to build selftest.exe).
 HolSmtLib.{sig,sml}     Entry point into HolSmtLib. Provides GENERIC_SMT_TAC
                         and derived tactics to call SMT solvers.
@@ -63,6 +66,17 @@ outputs with unexpected oracle tags.  It has no oracle fallback in the complete
 target: `UNSAT NONE` from the generic SMT tactic is not an acceptable
 `Z3_TAC` result.  Use `Z3_ORACLE_TAC` only when an oracle result is intended;
 it is outside the checked `Z3_TAC` trusted-code-base boundary.
+
+`CVC_TAC` is the checked cvc5 tactic.  Its default proof format is cvc5 CPC
+with `--proof-granularity=dsl-rewrite`; the CPC parser version-gates every
+rule and the replay engine reconstructs a HOL theorem before `CVC.sml` checks
+its hypotheses, conclusion, and oracle tags.  Set `HOL4_CVC_EXECUTABLE` to
+select cvc5.  CPC is the sole checked cvc5 replay format.
+
+For a cvc5 upgrade, capture the generated post-preprocessing queries and run
+the checked matrix rather than accepting proof-format drift.  The pinned cvc5
+evidence and commands are in
+`$HOLSMT_VALIDATION_DIR/tools/cvc5-version-matrix.md`.
 
 Supported Z3 versions:
 

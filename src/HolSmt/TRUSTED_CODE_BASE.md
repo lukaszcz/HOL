@@ -1,6 +1,6 @@
 # HolSmt Trusted-Code-Base Boundary
 
-This note documents the checked boundary for `Z3_TAC`. It is an audit guide,
+This note documents the checked boundaries for `Z3_TAC` and `CVC_TAC`. It is an audit guide,
 not a completeness claim. The generated coverage report
 `$HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md` contains the cross-referenced
 support and semantic-mismatch matrix. The report is generated from
@@ -31,6 +31,24 @@ For a theorem-producing result, the trusted path is:
 `Z3_ORACLE_TAC` and `Z3.Z3_SMT_Oracle` are outside this checked boundary. The
 generic tactic's `UNSAT NONE` oracle branch is not an acceptable result for
 `Z3_TAC`; `Z3.Z3_SMT_Prover` must return `UNSAT (SOME thm)` after proof replay.
+
+## Checked `CVC_TAC` Path
+
+`CVC_TAC` is `HolSmtLib.GENERIC_SMT_TAC CVC.CVC_SMT_Prover`.  Its default
+cvc5 proof format is CPC at `dsl-rewrite` granularity.
+
+- `src/HolSmt/CVC.sml` records the original goal, invokes cvc5 in CPC mode,
+  validates the reconstructed theorem against that goal, and rejects oracle
+  tags.
+- `src/HolSmt/CPC_Proof.sml` version-gates the cvc5 CPC rule vocabulary.
+- `src/HolSmt/CPC_ProofParser.sml` treats CPC proof text as untrusted input;
+  unknown constructs or rules fail with the cvc5 version in the diagnostic.
+- `src/HolSmt/CPC_ProofReplay.sml` reconstructs supported steps through HOL
+  kernel inferences and checked tactic certificates.
+
+`CVC_ORACLE_TAC` and `CVC.CVC_SMT_Oracle` are outside this checked boundary.
+For `CVC_TAC`, `UNSAT NONE` is not accepted: CPC replay must produce
+`UNSAT (SOME thm)` and pass the original-goal and no-oracle checks.
 
 Nonlinear real arithmetic replay may invoke CSDP through `SOSLib.REAL_SOS`.
 CSDP is an untrusted semidefinite-solver dependency: it searches for SOS

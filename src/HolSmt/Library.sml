@@ -608,6 +608,55 @@ struct
       handle Feedback.HOL_ERR _ =>
       wrap_csdp_missing SOSLib.NUM_SOS_RULE tm
 
+  (* Polynomial arithmetic should treat conditional branches as opaque atoms;
+     splitting them first is both unnecessary and potentially exponential. *)
+  fun arith_prove_raw tm =
+    Tactical.TAC_PROOF (([], tm), intLib.INT_RING_TAC)
+    handle Feedback.HOL_ERR _ =>
+    intLib.ARITH_PROVE tm
+    handle Feedback.HOL_ERR _ =>
+    RealField.REAL_ARITH tm
+    handle Feedback.HOL_ERR _ =>
+    raise Feedback.mk_HOL_ERR "Library" "arith_prove_raw"
+      ("failed: " ^ term_to_string tm)
+
+  fun contains_conditional tm =
+    List.exists (Lib.can boolSyntax.dest_cond) (subterms tm)
+
+  (* cvc5 and Z3 may lower MIN/MAX or natural subtraction to conditionals.
+     Normalize just that shape before arithmetic, rather than broadening the
+     ordinary arithmetic path to case-split every goal. *)
+  fun arith_prove_conditional tm =
+    if not (contains_conditional tm) then
+      raise Feedback.mk_HOL_ERR "Library" "arith_prove_conditional"
+        "no conditional arithmetic subterm"
+    else
+      let
+        val tm_eq_tm' =
+          simpLib.SIMP_CONV (bossLib.srw_ss())
+            [boolTheory.COND_EXPAND, boolTheory.COND_RAND,
+             boolTheory.COND_RATOR, arithmeticTheory.MIN_DEF,
+             arithmeticTheory.MAX_DEF, integerTheory.INT_MIN,
+             integerTheory.INT_MAX, realTheory.min_def, realTheory.max_def] tm
+          handle Conv.UNCHANGED => Thm.REFL tm
+        val tm' = boolSyntax.rhs (Thm.concl tm_eq_tm')
+      in
+        if Term.aconv tm tm' then
+          raise Feedback.mk_HOL_ERR "Library" "arith_prove_conditional"
+            "conditional normalization made no progress"
+        else
+          Thm.EQ_MP (Thm.SYM tm_eq_tm') (arith_prove_raw tm')
+      end
+
+  fun arith_prove_with_cases tm =
+    arith_prove_raw tm
+    handle Feedback.HOL_ERR _ =>
+    arith_prove_conditional tm
+    handle Feedback.HOL_ERR _ =>
+    if is_nonlinear tm then nla_prove tm
+    else raise Feedback.mk_HOL_ERR "Library" "arith_prove_with_cases"
+      ("failed: " ^ term_to_string tm)
+
   fun NLA_TAC (goal as (_, term)) =
     if term_contains_real_ty term then
       NLArith.NLA_TAC goal

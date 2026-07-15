@@ -3405,6 +3405,285 @@ in
   Z3_ProofParser.parse_stream_with_version dicts version instream
 end
 
+fun parse_cpc_proof_string contents =
+let
+  val dicts = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val instream = TextIO.openString contents
+in
+  CPC_ProofParser.parse_stream_with_version dicts "1.3.4" instream
+end
+
+fun cpc_proof_parser_define_and_optional_conclusion_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () false) (assume @p1 @t1) \
+    \(step @p2 false :rule refl :args (false)))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  case commands of
+    [CPC_Proof.ASSUME ("@p1", tm), CPC_Proof.STEP
+      {id = "@p2", conclusion = SOME conclusion, rule, premises = [],
+       args = [arg]}] =>
+       (assert (tm ~~ ``F``, "CPC define reference did not resolve");
+        assert (conclusion ~~ ``F``, "CPC explicit conclusion did not parse");
+        assert (arg ~~ ``F``, "CPC :args term did not parse");
+        assert (#name rule = "refl", "CPC rule registry did not bind refl"))
+  | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
+end
+
+fun cpc_proof_parser_declarations_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const c Bool) (declare-fun f (Int) Int) \
+    \(assume @p1 (and c (= (f 0) (f 0)))))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  case commands of
+    [CPC_Proof.ASSUME ("@p1", tm)] =>
+      assert (Term.type_of tm = Type.bool,
+        "CPC declaration parser did not make declared symbols available")
+  | _ => die "FAIL: CPC declaration parser did not preserve the assumption"
+end
+
+fun cpc_proof_parser_singleton_premise_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 false) (step @p2 :rule true_elim :premises @p1))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  case commands of
+    [CPC_Proof.ASSUME _, CPC_Proof.STEP {premises = ["@p1"], ...}] => ()
+  | _ => die "FAIL: CPC parser did not accept a singleton bare :premises id"
+end
+
+fun cpc_proof_parser_version_gate_diagnostic () =
+let
+  val gated_rule = "refl"
+  val gated_version = "1.4.0"
+  val dicts = SmtLib_Logics.parsedicts_of_logic "ALL"
+  val instream = TextIO.openString
+    "((step @p1 :rule refl :args (false)))"
+in
+  assert (not (Option.isSome
+      (CPC_Proof.lookup_rule gated_version gated_rule)),
+    "version-gated CPC proof rule unexpectedly resolved");
+  (ignore (CPC_ProofParser.parse_stream_with_version dicts gated_version
+      instream);
+   die "FAIL: version-gated CPC proof rule parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr in
+      assert (String.isSubstring
+          ("rule " ^ gated_rule ^ " is not supported by cvc5 version " ^
+           gated_version) msg,
+        "CPC version-gate diagnostic did not report the precise rule/version: " ^
+        msg)
+    end
+end
+
+fun cpc_proof_replay_contra_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 true) (assume @p2 (not true)) \
+    \(step @p3 false :rule contra :premises (@p1 @p2)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``F``,
+    "CPC contra did not replay to false")
+end
+
+fun cpc_proof_replay_eq_refl_cong_chain_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (not (= true true))) (assume @p1 @t1) \
+    \(step @p2 :rule evaluate :args ((not true))) \
+    \(step @p3 :rule eq-refl :args (true)) \
+    \(step @p4 :rule cong :premises (@p3) :args (@t1)) \
+    \(step @p5 :rule trans :premises (@p4 @p2)) \
+    \(step @p6 false :rule eq_resolve :premises (@p1 @p5)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``F``,
+    "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
+end
+
+fun cpc_proof_replay_and_elim_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (and true false true)) \
+    \(step @p2 :rule and_elim :premises (@p1) :args (1)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``F``,
+    "CPC and_elim did not select the requested conjunct")
+end
+
+fun cpc_proof_replay_boolean_rewrites_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule bool-double-not-elim :args (true)) \
+    \(step @p2 :rule bool-impl-false1 :args (true)) \
+    \(step @p3 :rule bool-eq-nrefl :args (true)) \
+    \(step @p4 :rule eq-symm :args (true false)) \
+    \(step @p5 :rule bool-not-eq-elim2 :args (true false)))"
+  val commands = CPC_Proof.proof_commands proof
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (List.length commands = 5,
+    "CPC boolean rewrite proof did not parse all rewrite steps");
+  assert (Thm.concl thm ~~ ``~(T = F) = (T = ~F)``,
+    "CPC boolean rewrite replay returned an unexpected final equality")
+end
+
+fun cpc_proof_replay_bool_impl_true2_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule bool-impl-true2 :args (false)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``(T ==> F) = F``,
+    "CPC bool-impl-true2 did not rewrite true implication")
+end
+
+fun cpc_proof_replay_integer_tightening_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule arith-geq-tighten :args (0 1)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``~(0i >= 1i) = (1i >= 0i + 1i)``,
+    "CPC arith-geq-tighten replay returned an unexpected equality")
+end
+
+fun cpc_proof_replay_ite_elim2_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (ite true false true)) \
+    \(step @p2 :rule ite_elim2 :premises (@p1)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T \/ T``,
+    "CPC ite_elim2 did not produce the condition-or-else clause")
+end
+
+fun cpc_proof_replay_factoring_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (or true true)) \
+    \(step @p2 :rule factoring :premises (@p1)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T``,
+    "CPC factoring did not eliminate the duplicate literal")
+end
+
+fun cpc_proof_parser_unknown_rule_diagnostic () =
+  (ignore (parse_cpc_proof_string
+    "((step @p1 false :rule made-up-cpc-rule))");
+   die "FAIL: unknown CPC proof rule parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "registry lookup failed" msg,
+        "CPC unknown-rule diagnostic omitted registry failure: " ^ msg);
+      assert (String.isSubstring "made-up-cpc-rule" msg,
+        "CPC unknown-rule diagnostic omitted the rule name: " ^ msg);
+      assert (String.isSubstring "1.3.4" msg,
+        "CPC unknown-rule diagnostic omitted the cvc5 version: " ^ msg)
+    end
+
+fun cpc_live_checked_replay_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``T``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``T``,
+        "live CPC replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for the negation of true"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for true"
+
+fun cpc_live_checked_replay_equality_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``(cpc_x : int) = cpc_x``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``(cpc_x : int) = cpc_x``,
+        "live CPC equality replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live equality replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC equality replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for a reflexive equality"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for a reflexive equality"
+
+fun cpc_live_checked_replay_datatype_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``foo <> bar``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``foo <> bar``,
+        "live CPC datatype replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live datatype replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC datatype replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for distinct constructors"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for datatype test"
+
+fun cpc_live_checked_replay_selector_success () =
+  case CVC.CVC_SMT_CPC_Prover
+    ([], ``((x : person) with age := 7).age = 7``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``((x : person) with age := 7).age = 7``,
+        "live CPC selector replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live selector replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC selector replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for selector theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for selector test"
+
+fun cpc_live_checked_replay_bv_xor_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``(x : word32) ?? x = 0w``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``(x : word32) ?? x = 0w``,
+        "live CPC bit-vector xor replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live bit-vector replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector xor theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector xor test"
+
+fun cpc_live_checked_replay_bv_bitblast_success () =
+  case CVC.CVC_SMT_CPC_Prover
+    ([], ``((x : word32) || y) || z = x || y || z``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``((x : word32) || y) || z = x || y || z``,
+        "live CPC bit-blast replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live bit-blast replay unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for bit-vector OR theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for bit-vector OR test"
+
+fun cpc_live_checked_replay_boolean_resolution_success () =
+  case CVC.CVC_SMT_CPC_Prover
+    ([], ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``((p : bool) ==> q) /\ (q ==> p) ==> (p = q)``,
+        "live CPC Boolean resolution replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live Boolean resolution unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC Boolean resolution returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for Boolean equivalence theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for Boolean equivalence theorem"
+
+fun cpc_live_checked_replay_nat_max_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``MAX (x : num) y >= y``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``MAX (x : num) y >= y``,
+        "live CPC natural MAX replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live natural MAX unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC natural MAX replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for natural MAX theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for natural MAX theorem"
+
+fun cpc_live_checked_replay_int_abs_success () =
+  case CVC.CVC_SMT_CPC_Prover ([], ``(x : int) >= 0 ==> ABS x = x``) of
+    SolverSpec.UNSAT (SOME thm) =>
+      (assert (Thm.concl thm ~~ ``(x : int) >= 0 ==> ABS x = x``,
+        "live CPC integer ABS replay returned an unexpected theorem");
+       Library.check_oracle_tags "CPC live integer ABS unit test" thm)
+  | SolverSpec.UNSAT NONE => die "FAIL: live CPC integer ABS replay returned no theorem"
+  | SolverSpec.SAT _ => die "FAIL: cvc5 reported sat for integer ABS theorem"
+  | SolverSpec.UNKNOWN _ => die "FAIL: cvc5 returned unknown for integer ABS theorem"
+
 fun z3_proof_registry_metadata_success () =
   case Z3_Proof.lookup_rule "4.12.4" "mp-eq" of
     SOME ({name, premise_shape, conclusion_shape, replay_handler, ...}
@@ -4714,6 +4993,50 @@ let
       smtlib_roundtrip_current_theories_success),
     ("smtlib_roundtrip_known_gap_matrix_success",
       smtlib_roundtrip_known_gap_matrix_success),
+    ("cpc_proof_parser_define_and_optional_conclusion_success",
+      cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_proof_parser_declarations_success",
+      cpc_proof_parser_declarations_success),
+    ("cpc_proof_parser_singleton_premise_success",
+      cpc_proof_parser_singleton_premise_success),
+    ("cpc_proof_parser_version_gate_diagnostic",
+      cpc_proof_parser_version_gate_diagnostic),
+    ("cpc_proof_replay_contra_success",
+      cpc_proof_replay_contra_success),
+    ("cpc_proof_replay_eq_refl_cong_chain_success",
+      cpc_proof_replay_eq_refl_cong_chain_success),
+    ("cpc_proof_replay_and_elim_success",
+      cpc_proof_replay_and_elim_success),
+    ("cpc_proof_replay_boolean_rewrites_success",
+      cpc_proof_replay_boolean_rewrites_success),
+    ("cpc_proof_replay_bool_impl_true2_success",
+      cpc_proof_replay_bool_impl_true2_success),
+    ("cpc_proof_replay_integer_tightening_success",
+      cpc_proof_replay_integer_tightening_success),
+    ("cpc_proof_replay_ite_elim2_success",
+      cpc_proof_replay_ite_elim2_success),
+    ("cpc_proof_replay_factoring_success",
+      cpc_proof_replay_factoring_success),
+    ("cpc_proof_parser_unknown_rule_diagnostic",
+      cpc_proof_parser_unknown_rule_diagnostic),
+    ("cpc_live_checked_replay_success",
+      cpc_live_checked_replay_success),
+    ("cpc_live_checked_replay_equality_success",
+      cpc_live_checked_replay_equality_success),
+    ("cpc_live_checked_replay_datatype_success",
+      cpc_live_checked_replay_datatype_success),
+    ("cpc_live_checked_replay_selector_success",
+      cpc_live_checked_replay_selector_success),
+    ("cpc_live_checked_replay_bv_xor_success",
+      cpc_live_checked_replay_bv_xor_success),
+    ("cpc_live_checked_replay_bv_bitblast_success",
+      cpc_live_checked_replay_bv_bitblast_success),
+    ("cpc_live_checked_replay_boolean_resolution_success",
+      cpc_live_checked_replay_boolean_resolution_success),
+    ("cpc_live_checked_replay_nat_max_success",
+      cpc_live_checked_replay_nat_max_success),
+    ("cpc_live_checked_replay_int_abs_success",
+      cpc_live_checked_replay_int_abs_success),
     ("z3_proof_registry_metadata_success",
       z3_proof_registry_metadata_success),
     ("z3_proof_parser_normalizes_rule_alias_success",

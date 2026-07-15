@@ -192,7 +192,7 @@ QED
 
   (* Associativity of saturated natural subtraction.  Normalizing this
      identity before SMT translation avoids an otherwise large ite-expanded
-     Alethe arithmetic hole. *)
+     checked cvc5 arithmetic replay. *)
 Theorem num_sub_assoc:
     !x y z:num. x - y - z = x - (y + z)
 Proof
@@ -211,7 +211,8 @@ Proof
     simp [int_ceiling_floor]
 QED
 
-  (* Alethe's to_int_intro rule uses the remainder formulation of the floor
+  (* The cvc5 floor-introduction replay rule uses the remainder formulation
+     of the floor
      bounds.  Derive it once from HOL's canonical floor interval theorem. *)
 Theorem int_floor_remainder_bounds:
     !r.

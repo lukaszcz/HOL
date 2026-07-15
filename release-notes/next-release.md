@@ -20,6 +20,11 @@ Contents
 
 New features
 ------------
+-   `CVC_TAC` now uses cvc5's native CPC proof format by default.  CPC proof
+    text is untrusted input: HOL parses the version-gated rule vocabulary,
+    reconstructs the proof, and checks the resulting theorem has no oracle
+    tags.  cvc5 1.3.4 is covered by a 60-query checked replay matrix.
+
 -   `Theory` syntax now supports disabling the generation of documentation in `<thyname>Theory.sig` by following the theory name with the `[no_sig_docs]` annotation.
     Files that use this feature do not need to mention `Feedback.set_trace "TheoryPP.include_docs" 0` anymore.
     (Indeed, see below, that trace doesn’t exist with that name anymore.)
@@ -183,6 +188,9 @@ New examples
 
 Incompatibilities
 -----------------
+
+-   The cvc5 Alethe checked-replay path and `HOL4_CVC_PROOF_FORMAT` selector
+    have been removed. `CVC_TAC` uses native CPC proof replay exclusively.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.
