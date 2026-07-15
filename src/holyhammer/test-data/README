@@ -1,0 +1,12 @@
+These are raw stdout recordings captured on 2026-07-15 from the pinned
+Phase 0 prover binaries:
+
+  E 3.2.5-ho, Vampire 5.0.1, and Zipperposition 2.1.
+
+The theorem recordings use an escaped HolyHammer axiom name
+`thm_2Ekeep__name`; parser tests therefore check both unescaping and removal
+of the `thm.` prefix.  The E theorem recording also retains its
+`--auto-schedule` comment chatter.  Pigeonhole instances produced E's
+`GaveUp`, Vampire's `Timeout`, and Zipperposition's `ResourceOut` (the
+Zipperposition timeout spelling).  Version recordings are the corresponding
+raw `--version` output.

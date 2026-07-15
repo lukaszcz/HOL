@@ -194,5 +194,116 @@ val _ =
            SOME value => test_environment_default value
          | NONE => test_child root)
 
+fun read_lines path =
+  let
+    val input = TextIO.openIn path
+    fun loop lines =
+      case TextIO.inputLine input of
+          NONE => List.rev lines
+        | SOME line => loop (line :: lines)
+    val lines = loop []
+    val _ = TextIO.closeIn input
+  in
+    lines
+  end
+
+fun expect_equal message expected actual =
+  expect message (expected = actual)
+
+fun prover name =
+  case hhProver.lookup name of
+      SOME config => config
+    | NONE => raise Fail ("missing prover " ^ name)
+
+val sample_request : hhProver.run_request =
+  {timeout = 7, problem = "problem.p", extra = ["--extra"],
+   debug_dir = NONE}
+
+fun test_recording file parser expected_szs expected_axioms =
+  let
+    val (szs, axioms) = parser (read_lines (join "test-data" file))
+    val _ = expect_equal ("recording status " ^ file) expected_szs szs
+  in
+    expect_equal ("recording axioms " ^ file) expected_axioms axioms
+  end
+
+fun test_hhProver () =
+  let
+    val e = prover "e"
+    val vampire = prover "vampire"
+    val zipperposition = prover "zipperposition"
+    val z3 = prover "z3"
+    val e_legacy = prover "e-legacy"
+    val vampire_legacy = prover "vampire-legacy"
+    val names = map #name (hhProver.all ())
+    val _ = expect "all built-in provers"
+      (names = ["e", "vampire", "zipperposition", "z3", "e-legacy",
+                "vampire-legacy"])
+    val _ = expect "default provers are found and non-legacy"
+      (List.all (fn name => not (#legacy (prover name)))
+       (hhProver.default_provers ()))
+    val _ = expect "duplicate prover names are rejected"
+      ((hhProver.register e; false) handle Fail _ => true)
+    val _ = test_recording "e-theorem-chatter.out" (#parse_output e)
+      hhProver.SzsTheorem (SOME ["keep_name"])
+    val _ = test_recording "e-counter-sat.out" (#parse_output e)
+      hhProver.SzsCounterSat NONE
+    val _ = test_recording "e-gave-up.out" (#parse_output e)
+      hhProver.SzsGaveUp NONE
+    val _ = test_recording "vampire-theorem.out" (#parse_output vampire)
+      hhProver.SzsTheorem (SOME ["keep_name"])
+    val _ = test_recording "vampire-counter-sat.out" (#parse_output vampire)
+      hhProver.SzsCounterSat NONE
+    val _ = test_recording "vampire-timeout.out" (#parse_output vampire)
+      hhProver.SzsTimeout NONE
+    val _ = test_recording "zipperposition-theorem.out"
+      (#parse_output zipperposition) hhProver.SzsTheorem
+      (SOME ["keep_name"])
+    val _ = test_recording "zipperposition-counter-sat.out"
+      (#parse_output zipperposition) hhProver.SzsCounterSat NONE
+    val _ = test_recording "zipperposition-timeout.out"
+      (#parse_output zipperposition) hhProver.SzsResourceOut NONE
+    val _ = expect_equal "E version parser" (SOME "3.2.5-ho")
+      (#parse_version e (String.concat (read_lines "test-data/e-version.out")))
+    val _ = expect_equal "Vampire version parser" (SOME "5.0.1")
+      (#parse_version vampire
+       (String.concat (read_lines "test-data/vampire-version.out")))
+    val _ = expect_equal "Zipperposition version parser" (SOME "2.1")
+      (#parse_version zipperposition
+       (String.concat (read_lines "test-data/zipperposition-version.out")))
+    val _ = expect_equal "E command"
+      ("e", ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
+             "--cpu-limit=7", "--proof-object=1", "--extra", "problem.p"])
+      (#mk_command e "e" sample_request)
+    val _ = expect_equal "Vampire command"
+      ("vampire", ["--mode", "portfolio", "--schedule", "casc",
+        "--input_syntax", "tptp", "--proof", "tptp",
+        "--output_axiom_names", "on", "-t", "7", "--input_file",
+        "--extra", "problem.p"])
+      (#mk_command vampire "vampire" sample_request)
+    val _ = expect_equal "Zipperposition command"
+      ("zipperposition", ["--input", "tptp", "--output", "tptp",
+        "--timeout", "7", "--extra", "problem.p"])
+      (#mk_command zipperposition "zipperposition" sample_request)
+    val _ = expect_equal "Z3 legacy command"
+      ("z3", ["-tptp", "DISPLAY_UNSAT_CORE=true",
+        "ELIM_QUANTIFIERS=true", "PULL_NESTED_QUANTIFIERS=true", "-T:7",
+        "--extra", "problem.p"])
+      (#mk_command z3 "z3" sample_request)
+    val _ = expect_equal "E legacy command"
+      ("e", ["-s", "--cpu-limit=7", "--auto-schedule", "--tstp-in",
+        "-R", "--print-statistics", "-p", "--tstp-format", "--extra",
+        "problem.p"])
+      (#mk_command e_legacy "e" sample_request)
+    val _ = expect_equal "Vampire legacy command"
+      ("vampire", ["--time_limit", "7", "--proof", "tptp",
+        "--output_axiom_names", "on", "--extra", "problem.p"])
+      (#mk_command vampire_legacy "vampire" sample_request)
+  in
+    ()
+  end
+
+val _ = test_hhProver ()
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
-  hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig in end
+  hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver in end
