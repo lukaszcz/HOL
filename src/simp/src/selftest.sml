@@ -1595,6 +1595,88 @@ val _ = let
 in
 end
 
+(* ---------------------------------------------------------------------- *)
+(* Splitter integration: registration, caching, fragment, and rule APIs.  *)
+
+val _ = let
+  val if_split = type_split_of ``:bool``
+  val if_split_again = type_split_of ``:bool``
+  val if_asm_split = type_asm_split_of ``:bool``
+  val if_asm_split_again = type_asm_split_of ``:bool``
+  val named_if_split =
+    Feedback.quiet_messages save_thm
+      ("simp_split_selftest_rule", if_split)
+  val named_if_asm_split =
+    Feedback.quiet_messages save_thm
+      ("simp_split_selftest_asm_rule",
+       mk_asm_split (TypeBase.case_pred_disj_of ``:bool``))
+
+  val _ = tprint "split settype and attribute are registered"
+  val _ =
+    if List.exists (equal "split") (ThmSetData.all_set_types ()) andalso
+       ThmAttribute.is_attribute "split"
+    then OK()
+    else die "split registration is absent"
+
+  val _ = tprint "datatype split cache returns the same rules twice"
+  val _ =
+    if aconv (concl if_split) (concl if_split_again) andalso
+       aconv (concl if_asm_split) (concl if_asm_split_again)
+    then OK()
+    else die "cached datatype splits changed"
+
+  val split_goal =
+    ([], ``P (if b then x:'a else y) : bool``)
+  val split_result =
+    ``(b ==> P (x:'a)) /\ (~b ==> P y)``
+  val _ = tprint "split_ss splits a conditional in the conclusion"
+  val _ =
+    case #1 (VALID (SIMP_TAC (bool_ss ++ split_ss) []) split_goal) of
+        [([], result)] =>
+          if not (aconv result (#2 split_goal)) andalso
+             not (can (find_term is_cond) result)
+          then OK()
+          else die "split_ss did not eliminate the conditional"
+      | _ => die "split_ss produced the wrong conditional subgoals"
+
+  val _ = convtest
+    ("split_ss cases_simp collapses a trivial split",
+     SIMP_CONV (empty_ss ++ split_ss) [],
+     ``(b ==> t) /\ (~b ==> t)``,
+     ``t:bool``)
+
+  val with_split = add_split named_if_split bool_ss
+  val without_split =
+    del_split (Theory.current_theory () ^ "$simp_split_selftest_rule")
+      with_split
+  val _ = tprint "add_split installs a conclusion looper by theorem name"
+  val _ =
+    case #1 (VALID (SIMP_TAC with_split []) split_goal) of
+        [([], result)] =>
+          if aconv result split_result then OK()
+          else die "add_split installed the wrong looper"
+      | _ => die "add_split produced the wrong subgoals"
+
+  val _ = tprint "del_split removes a conclusion looper by theorem name"
+  val _ =
+    case #1 (VALID (SIMP_TAC without_split []) split_goal) of
+        [([], result)] =>
+          if aconv result (#2 split_goal) then OK()
+          else die "del_split left the conclusion looper active"
+      | _ => die "del_split produced the wrong subgoals"
+
+  val asm_goal =
+    ([``P (if b then x:'a else y) : bool``], ``G:bool``)
+  val with_asm_split = add_split named_if_asm_split bool_ss
+  val _ = tprint "add_split auto-routes an assumption split rule"
+  val _ =
+    case #1 (VALID (SIMP_TAC with_asm_split []) asm_goal) of
+        [_, _] => OK()
+      | _ => die "assumption split rule was not routed to the asm looper"
+in
+  ()
+end
+
 (* These theories are later than simp in the build sequence.  Exercise their
    actual case constants when their already-built objects are available; the
    bool tests above remain the bootstrap regression test for this directory. *)
@@ -1642,6 +1724,18 @@ in
                         (f:'a -> 'a list -> 'b)) : bool``,
          ``(xs = [] ==> P (n:'b)) /\
            !h:'a t. xs = h::t ==> P (f h t)``)
+      val _ = tprint "split_ss splits a list case using TypeBase"
+      val list_goal =
+        ``P (list_CASE xs (n:'b) (f:'a -> 'a list -> 'b)) : bool``
+      val _ =
+        case #1
+          (VALID (SIMP_TAC (bool_ss ++ split_ss) []) ([], list_goal)) of
+            [([], result)] =>
+              if not (aconv result list_goal) andalso
+                 not (can (find_term TypeBase.is_case) result)
+              then OK()
+              else die "split_ss did not eliminate the list case"
+          | _ => die "split_ss produced the wrong list subgoals"
     in
       ()
     end

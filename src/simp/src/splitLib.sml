@@ -59,6 +59,102 @@ fun analyse_rule th =
     {thm=th, head=head, pattern=pattern, arity=length args, asm=asm}
   end
 
+fun is_asm_split th = #asm (analyse_rule th)
+
+fun persistent_name {Thy,Name} = Thy ^ "$" ^ Name
+
+fun split_thm_name th =
+  let
+    fun stored [] = NONE
+      | stored (DB.Stored name :: _) = SOME (persistent_name name)
+      | stored (_ :: rest) = stored rest
+    fun local_location [] = NONE
+      | local_location (DB.Local name :: _) =
+          SOME (Theory.current_theory () ^ "$" ^ name)
+      | local_location (_ :: rest) = local_location rest
+    val locations = DB.revlookup th
+  in
+    case local_location locations of
+        SOME name => name
+      | NONE =>
+          (case stored locations of
+               SOME name => name
+             | NONE =>
+                 raise ERR "split_thm_name"
+                   "split theorem has no database name")
+  end
+
+fun remove_name name db =
+  let
+    val key =
+      if String.isSubstring "$" name then name
+      else persistent_name (ThmSetData.toKName name)
+  in
+    Symtab.delete_safe key db
+  end
+
+fun apply_split_delta delta db =
+  case delta of
+      ThmSetData.ADD (name, th) =>
+        let val _ = is_asm_split th
+        in Symtab.update (persistent_name name, th) db
+        end
+    | ThmSetData.REMOVE name => remove_name name db
+
+val _ =
+  if List.exists (equal "split") (ThmSetData.all_set_types ()) orelse
+     ThmAttribute.is_attribute "split"
+  then raise ERR "registration" "settype or attribute split already exists"
+  else ()
+
+val split_data =
+  ThmSetData.export_with_ancestry
+    {settype="split",
+     delta_ops=
+       {apply_to_global=apply_split_delta,
+        thy_finaliser=NONE,
+        uptodate_delta=K true,
+        initial_value=Symtab.empty,
+        apply_delta=apply_split_delta}}
+
+fun named_split_thms () = Symtab.dest (#get_global_value split_data ())
+fun split_thms () = map #2 (named_split_thms ())
+
+type type_splits = {split : thm, asm_split : thm}
+val type_split_cache =
+  Sref.new (Symtab.empty : type_splits Symtab.table)
+
+fun type_key tyinfo =
+  let val (thy, tyop) = TypeBasePure.ty_name_of tyinfo
+  in thy ^ "$" ^ tyop
+  end
+
+fun type_splits_of ty =
+  let
+    val tyinfo =
+      case TypeBase.fetch ty of
+          SOME tyinfo => tyinfo
+        | NONE =>
+            raise ERR "type_splits_of" "type has no TypeBase information"
+    val key = type_key tyinfo
+  in
+    case Symtab.lookup (Sref.value type_split_cache) key of
+        SOME splits => splits
+      | NONE =>
+          let
+            val splits =
+              {split=TypeBase.case_pred_imp_of ty,
+               asm_split=TypeBasePure.case_elim_of tyinfo}
+            val _ =
+              Sref.update type_split_cache (Symtab.update (key, splits))
+          in
+            splits
+          end
+  end
+
+fun type_split_of ty = #split (type_splits_of ty)
+fun type_asm_split_of ty = #asm_split (type_splits_of ty)
+
 fun same_type_shape (ty1, ty2) =
   let
     fun lookup_left _ [] = NONE

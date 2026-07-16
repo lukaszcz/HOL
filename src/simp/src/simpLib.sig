@@ -156,6 +156,9 @@ sig
   val add_looper : string * (simpset -> tactic) -> simpset -> simpset
   val del_looper : string -> simpset -> simpset
   val set_looper : string * (simpset -> tactic) -> simpset -> simpset
+  val add_split : thm -> simpset -> simpset
+  val del_split : string -> simpset -> simpset
+  val split_ss : ssfrag
   val add_unsafe_solver : Traverse.ssolver -> simpset -> simpset
   val add_safe_solver : Traverse.ssolver -> simpset -> simpset
   val set_unsafe_solvers : Traverse.ssolver list -> simpset -> simpset

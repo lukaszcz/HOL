@@ -555,6 +555,94 @@ fun del_looper name (ss as SS s) =
     (HOL_WARNING "simpLib" "del_looper" ("No looper called " ^ name);
      ss)
 
+fun split_looper_name name th =
+  (if splitLib.is_asm_split th then "split_asm " else "split ") ^ name
+
+fun add_split th =
+  add_looper
+    (split_looper_name (splitLib.split_thm_name th) th,
+     K (splitLib.SPLIT_TAC [th]))
+
+fun del_split name ss =
+  let
+    val names =
+      if String.isPrefix "split " name orelse
+         String.isPrefix "split_asm " name
+      then [name]
+      else ["split " ^ name, "split_asm " ^ name]
+    fun present candidate (SS s) =
+      List.exists (fn (name,_) => name = candidate) (#loopers s)
+    fun remove (candidate, result) =
+      if present candidate result then del_looper candidate result
+      else result
+  in
+    List.foldl remove ss names
+  end
+
+fun case_types goal_terms =
+  let
+    fun case_info tyinfo =
+      SOME (TypeBasePure.case_const_of tyinfo,
+            TypeBasePure.ty_of tyinfo)
+      handle HOL_ERR _ => NONE
+    val cases = List.mapPartial case_info (TypeBase.elts ())
+    fun occurs head tm =
+      can (find_term
+        (fn subtm =>
+          let val (subhead, args) = strip_comb subtm
+              val arity = length (#1 (strip_fun (type_of head)))
+          in
+            same_const head subhead andalso length args >= arity
+          end)) tm
+    fun add ((head, ty), result) =
+      if List.exists (occurs head) goal_terms then ty :: result else result
+  in
+    List.foldl add [] cases
+  end
+
+fun splitter_looper (SS s) (asms, goal) =
+  let
+    val excluded = #excl_loopers s
+    fun enabled name = not (Binaryset.member (excluded, name))
+    fun enabled_named (name, th) = enabled (split_looper_name name th)
+    val persistent =
+      splitLib.named_split_thms ()
+      |> List.filter enabled_named
+      |> map #2
+    fun type_name ty =
+      let val {Thy,Tyop,...} = dest_thy_type ty
+      in (Thy ^ "$" ^ Tyop, Tyop)
+      end
+    fun type_enabled ty =
+      let val (full, short) = type_name ty
+      in
+        enabled ("split.case " ^ full) andalso
+        enabled ("split.case " ^ short)
+      end
+    fun type_rules ty = [splitLib.type_split_of ty]
+    val datatype_rules =
+      case_types (goal :: asms)
+      |> List.filter type_enabled
+      |> map type_rules
+      |> List.concat
+  in
+    splitLib.SPLIT_TAC (persistent @ datatype_rules) (asms, goal)
+  end
+
+val cases_simp =
+  let
+    val b = mk_var ("b", bool)
+    val t = mk_var ("t", bool)
+    val expand = SPECL [b,t,t] boolTheory.COND_EXPAND_IMP
+    val identity = ISPECL [b,t] boolTheory.COND_ID
+  in
+    TRANS (SYM expand) identity
+  end
+
+val split_ss =
+  named_merge_ss "split"
+    [looper_ss ("splitter", splitter_looper), rewrites [cases_simp]]
+
 fun set_looper looper ss =
   map_strategy
     (fn s =>
