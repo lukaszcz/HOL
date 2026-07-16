@@ -244,7 +244,10 @@ fun parse_tstp lines =
     val status =
       case first_some szs_of_line lines of
           SOME result => result
-        | NONE => RunFailure "no SZS status"
+        | NONE =>
+            if List.exists (String.isSubstring "Time limit reached!") lines
+            then SzsTimeout
+            else RunFailure "no SZS status"
     val axioms = axioms_from_tstp lines
   in
     case status of
@@ -254,7 +257,7 @@ fun parse_tstp lines =
 
 fun core_axioms lines =
   let
-    fun from_line line =
+    fun old_core line =
       case String.fields (fn c => c = #"[") line of
           _ :: tail =>
             (case String.fields (fn c => c = #"]") (String.concat tail) of
@@ -263,9 +266,18 @@ fun core_axioms lines =
                      (String.fields (fn c => c = #",") names)
                | [] => [])
         | [] => []
+    val szs_marker = "% SZS core "
+    fun from_line line =
+      let val stripped = trim_left line in
+        if String.isPrefix "core" stripped then old_core stripped
+        else if String.isPrefix szs_marker stripped then
+          List.mapPartial unescape_axiom
+            (String.tokens Char.isSpace
+              (String.extract (stripped, String.size szs_marker, NONE)))
+        else []
+      end
   in
-    distinct (List.concat (map from_line (List.filter
-      (String.isPrefix "core" o trim_left) lines)))
+    distinct (List.concat (map from_line lines))
   end
 
 fun parse_z3 lines =
@@ -297,7 +309,33 @@ fun version_after marker text =
 fun e_version output = version_after "E " output
 fun vampire_version output = version_after "Vampire " output
 fun zipperposition_version output = version_after "zipperposition " output
-fun z3_version output = version_after "Z3 version " output
+
+fun version_between left right text =
+  let
+    val left_size = String.size left
+    fun seek index =
+      if index + left_size > String.size text then NONE
+      else if String.substring (text, index, left_size) = left then
+        let
+          val start = index + left_size
+          fun finish cursor =
+            if cursor = String.size text then NONE
+            else if String.isPrefix right
+              (String.extract (text, cursor, NONE)) then
+              SOME (String.substring (text, start, cursor - start))
+            else finish (cursor + 1)
+        in
+          finish start
+        end
+      else seek (index + 1)
+  in
+    seek 0
+  end
+
+fun z3_version output =
+  case version_after "Z3 version " output of
+      SOME version => SOME version
+    | NONE => version_between "Z3tptp [" "]" output
 
 fun one_slice name nfacts extra_opts () =
   [{prover = name, format = "fof", type_enc = "", lam_trans = "",
@@ -322,10 +360,15 @@ fun zipperposition_command executable {timeout, problem, extra, ...} =
     Int.toString timeout] @ extra @ [problem])
 
 fun z3_command executable {timeout, problem, extra, ...} =
-  (executable,
-   ["-tptp", "DISPLAY_UNSAT_CORE=true", "ELIM_QUANTIFIERS=true",
-    "PULL_NESTED_QUANTIFIERS=true", "-T:" ^ Int.toString timeout] @
-   extra @ [problem])
+  if String.isSubstring "z3_tptp" (OS.Path.file executable) then
+    (executable,
+     ["-c", "-smt.pull_nested_quantifiers:true",
+      "-t:" ^ Int.toString timeout] @ extra @ ["-file:" ^ problem])
+  else
+    (executable,
+     ["-tptp", "DISPLAY_UNSAT_CORE=true", "ELIM_QUANTIFIERS=true",
+      "PULL_NESTED_QUANTIFIERS=true", "-T:" ^ Int.toString timeout] @
+     extra @ [problem])
 
 fun e_legacy_command executable {timeout, problem, extra, ...} =
   (executable,
@@ -361,9 +404,10 @@ val zipperposition_config : prover_config =
    slices = one_slice "zipperposition" 128 [], legacy = false}
 
 val z3_config : prover_config =
-  {name = "z3", exec_names = ["z3"], env_var = "HOL4_Z3_EXECUTABLE",
+  {name = "z3", exec_names = ["z3_tptp", "z3"],
+   env_var = "HOL4_Z3_EXECUTABLE",
    version_args = ["--version"], parse_version = z3_version,
-   tested_versions = ["4.16.0"], formats = ["fof"], mk_command = z3_command,
+   tested_versions = ["4.11.2"], formats = ["fof"], mk_command = z3_command,
    parse_output = parse_z3, default_nfacts = 32,
    slices = one_slice "z3" 32 [], legacy = true}
 

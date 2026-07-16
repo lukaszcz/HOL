@@ -28,6 +28,7 @@
 *.toc
 *.dvi
 *.out
+**/.hheval_*.sml
 *.idx
 *.ilg
 *.ind

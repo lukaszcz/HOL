@@ -203,19 +203,24 @@ fun directory_names path =
   end
   handle OS.SysErr _ => []
 
-fun dat_theories_under root =
+fun dat_paths_under root =
   let
     fun walk directory =
       List.concat (map (fn name =>
         let val path = join directory name in
           if is_dir path then walk path
-          else if ends_with "Theory.dat" name then
-            [String.substring (name, 0, String.size name - 10)]
+          else if ends_with "Theory.dat" name then [path]
           else []
         end) (directory_names directory))
   in
-    sorted_unique (walk root)
+    walk root
   end
+
+fun dat_theories_under root =
+  sorted_unique (map (fn path =>
+    let val name = OS.Path.file path in
+      String.substring (name, 0, String.size name - 10)
+    end) (dat_paths_under root))
 
 val theory_dat_theories = dat_theories_under
 
@@ -335,9 +340,12 @@ fun read_journal path =
   handle OS.SysErr _ => []
 
 fun add_completed entry pairs =
-  let val pair = (#goal_id entry, #cond entry) in
-    if List.exists (fn item => item = pair) pairs then pairs else pair :: pairs
-  end
+  if #szs entry = "Error" then pairs
+  else
+    let val pair = (#goal_id entry, #cond entry) in
+      if List.exists (fn item => item = pair) pairs then pairs
+      else pair :: pairs
+    end
 
 fun read_completed path =
   List.foldl (fn (entry, pairs) => add_completed entry pairs) []
@@ -834,9 +842,20 @@ fun pool_ids (thyl, thmidl) =
 fun chainy_pools thy =
   let
     val order = hhExportLib.sorted_ancestry [thy]
-    fun one ((_, name), pool) = (name, pool_ids pool)
+    val earlier_theories =
+      if List.exists (fn name => name = thy) order then
+        hhExportLib.before_elem thy order
+      else order
+    fun one (name, thm) =
+      let
+        val earlier_theorems =
+          List.filter (hhExportLib.older_than thm) (DB.thms thy)
+        val current_ids = map (fn (other, _) => (thy, other)) earlier_theorems
+      in
+        (name, pool_ids (earlier_theories, current_ids))
+      end
   in
-    map one (hhExportLib.chainy_dep order thy (DB.theorems thy))
+    map one (DB.theorems thy)
   end
 
 fun lookup_pool name pools =
@@ -973,26 +992,52 @@ fun broken_deps_cell expdir thy name condition =
     append_journal (journal_path expdir thy) entry
   end
 
+fun evaluation_error_cell expdir thy name condition message =
+  let
+    val entry = base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
+    val entry =
+      {run = #run entry, thy = #thy entry, thm = #thm entry,
+       goal_id = #goal_id entry, cond = #cond entry, regime = #regime entry,
+       selector = #selector entry, prover = #prover entry,
+       prover_version = #prover_version entry, nfacts = #nfacts entry,
+       timeout = #timeout entry, szs = #szs entry, t_prover = #t_prover entry,
+       axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
+       recon_method = #recon_method entry, t_recon = #t_recon entry,
+       stac = #stac entry, error = SOME message}
+  in
+    append_journal (journal_path expdir thy) entry
+  end
+
 fun eval_loaded_theory expdir thy =
   let
     val completed = read_completed (journal_path expdir thy)
-    val pools = chainy_pools thy
+    val pools =
+      if List.exists (fn condition => #regime condition = Chainy)
+         (!worker_conditions)
+      then SOME (chainy_pools thy)
+           handle Interrupt => raise Interrupt | error => NONE
+      else SOME []
     fun evaluate (name, thm) =
       let
         val id = goal_id thy name
         val (dependencies_ok, intact_deps) =
           mlThmData.intactdep_of_thm thm
-        val pool = lookup_pool name pools
         fun one condition =
           if cell_completed completed (id, #cond_id condition) then ()
-          else if #regime condition = Bushy andalso not dependencies_ok then
-            broken_deps_cell expdir thy name condition
           else
-            run_cell expdir thy (name, thm)
-              (case #regime condition of
-                   Bushy => intact_deps
-                 | Chainy => pool)
-              condition
+            case pools of
+                NONE => evaluation_error_cell expdir thy name condition
+                  "could not construct the chainy premise pool"
+              | SOME pool_map =>
+                  let val pool = lookup_pool name pool_map in
+                    if #regime condition = Bushy andalso not dependencies_ok
+                    then broken_deps_cell expdir thy name condition
+                    else run_cell expdir thy (name, thm)
+                      (case #regime condition of
+                           Bushy => intact_deps
+                         | Chainy => pool)
+                      condition
+                  end
       in
         if sample_goal (!worker_sample) id then app one (!worker_conditions)
         else ()
@@ -1009,11 +1054,66 @@ fun eval_thy expdir thy =
 fun condition_text condition =
   "hhEval.parse_condition " ^ Portable.mlquote (encode_condition condition)
 
+val source_script_directories = ref (NONE : (string * string) list option)
+
+fun source_script_directory thy =
+  let
+    fun source_entry line =
+      let
+        val path = trim line
+        val file = OS.Path.file path
+      in
+        if ends_with "Theory" file then
+          SOME (String.substring (file, 0, String.size file - 6),
+                OS.Path.dir path)
+        else NONE
+      end
+    fun dat_entry path =
+      let val file = OS.Path.file path in
+        if ends_with "Theory.dat" file then
+          SOME (String.substring (file, 0, String.size file - 10),
+                OS.Path.dir (OS.Path.dir (OS.Path.dir path)))
+        else NONE
+      end
+    fun directories () =
+      case !source_script_directories of
+          SOME result => result
+        | NONE =>
+            let
+              val root = holdir ()
+              val srcfiles = read_lines
+                (join (join root "sigobj") "SRCFILES")
+              val result = List.mapPartial source_entry srcfiles @
+                List.mapPartial dat_entry (dat_paths_under (join root "src"))
+              val _ = source_script_directories := SOME result
+            in
+              result
+            end
+  in
+    case List.find (fn (name, _) => name = thy) (directories ()) of
+        SOME (_, directory) => directory
+      | NONE => raise Fail ("no source directory for theory " ^ thy)
+  end
+
+fun load_theory thy =
+  let
+    val old_directory = OS.FileSys.getDir ()
+    fun restore () = OS.FileSys.chDir old_directory
+    val _ = OS.FileSys.chDir (source_script_directory thy)
+  in
+    (load (thy ^ "Theory") before restore ())
+    handle error => (restore (); raise error)
+  end
+
 fun write_evalscript expdir thy conditions sample =
   let
-    val scripts = join expdir "scripts"
-    val _ = ensure_dir scripts
-    val path = join scripts (safe_component thy ^ "_hheval.sml")
+    (* A theory UI is found relative to its source directory.  In
+       particular, a script in <expdir>/scripts run from hol.state cannot
+       load theories outside the default heap. *)
+    val scripts = source_script_directory thy
+    val path = join scripts
+      (".hheval_" ^ safe_component (OS.Path.file expdir) ^ "_" ^
+       safe_component thy ^ ".sml")
     val conditions_text = String.concatWith ", " (map condition_text conditions)
     val settings =
       "val _ = hhEval.set_worker_settings {conditions = [" ^
@@ -1038,7 +1138,7 @@ fun configured_sample () =
 
 fun theory_cells thy conditions sample =
   let
-    val _ = load (thy ^ "Theory")
+    val _ = load_theory thy
     fun cells (name, _) =
       let val id = goal_id thy name in
         if sample_goal sample id then map (fn condition =>
@@ -1064,15 +1164,19 @@ fun run_eval {expname, ncore, thyl, conditions} =
       val _ = ensure_dir (join expdir "out")
       val _ = ensure_dir (join expdir "pb")
       val _ = ensure_dir (join expdir "scripts")
+      val {added_from_dat, ...} = stdlib_coverage ()
+      val included_from_dat = List.filter (fn name =>
+        List.exists (fn thy => thy = name) thyl) added_from_dat
       fun corpus_entry thy =
-        ((load (thy ^ "Theory"); loaded_corpus_entry thy)
+        ((load_theory thy; loaded_corpus_entry thy)
          handle Interrupt => raise Interrupt
               | _ => {thy = thy, theorem_count = 0, dep_stamp = ""})
       val _ =
         if file_exists (join expdir "run.json") then ()
         else write_run_header expdir
           (new_run_header {expname = expname, corpus = map corpus_entry thyl,
-            added_from_dat = [], conditions = conditions, sample = sample})
+            added_from_dat = included_from_dat,
+            conditions = conditions, sample = sample})
       val states = map (fn thy =>
         (thy, theory_cells thy conditions sample)) thyl
       fun pending (thy, NONE) =
@@ -1082,13 +1186,16 @@ fun run_eval {expname, ncore, thyl, conditions} =
         | pending (thy, SOME cells) =
             not (journal_complete (journal_path expdir thy) cells)
       val queued_names = map #1 (List.filter pending states)
-      val scripts = map (fn thy =>
-        (thy, write_evalscript expdir thy conditions sample)) thyl
-      val queued = List.filter (fn (thy, _) =>
-        List.exists (fn name => name = thy) queued_names) scripts
+      val queued = map (fn thy =>
+        (thy, write_evalscript expdir thy conditions sample)) queued_names
       val _ = smlExecScripts.buildheap_dir := join expdir "out"
-      val _ = smlParallel.parapp_queue ncore
-        (fn (_, script) => smlExecScripts.exec_script script) queued
+      fun cleanup_scripts () = app (fn (_, script) =>
+        OS.FileSys.remove script handle OS.SysErr _ => ()) queued
+      val _ =
+        ((smlParallel.parapp_queue ncore
+            (fn (_, script) => smlExecScripts.exec_script script) queued;
+          cleanup_scripts ())
+         handle error => (cleanup_scripts (); raise error))
       fun note_unfinished (thy, NONE) = ()
         | note_unfinished (thy, SOME cells) =
             if journal_complete (journal_path expdir thy) cells then ()

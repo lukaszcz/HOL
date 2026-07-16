@@ -284,6 +284,10 @@ fun test_hhProver () =
       hhProver.SzsCounterSat NONE
     val _ = test_recording "vampire-timeout.out" (#parse_output vampire)
       hhProver.SzsTimeout NONE
+    val _ = test_recording "vampire-legacy-timeout.out"
+      (#parse_output vampire_legacy) hhProver.SzsTimeout NONE
+    val _ = test_recording "z3-tptp-theorem.out" (#parse_output z3)
+      hhProver.SzsTheorem (SOME ["keep_name"])
     val _ = test_recording "zipperposition-theorem.out"
       (#parse_output zipperposition) hhProver.SzsTheorem
       (SOME ["keep_name"])
@@ -301,6 +305,8 @@ fun test_hhProver () =
     val _ = expect_equal "Zipperposition version parser" (SOME "2.1")
       (#parse_version zipperposition
        (String.concat (read_lines "test-data/zipperposition-version.out")))
+    val _ = expect_equal "Z3 TPTP version parser" (SOME "4.11.2.0")
+      (#parse_version z3 "Z3tptp [4.11.2.0] (c) Microsoft Corp.")
     val _ = expect_equal "E command"
       ("e", ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
              "--cpu-limit=7", "--proof-object=1", "--extra", "problem.p"])
@@ -320,6 +326,10 @@ fun test_hhProver () =
         "ELIM_QUANTIFIERS=true", "PULL_NESTED_QUANTIFIERS=true", "-T:7",
         "--extra", "problem.p"])
       (#mk_command z3 "z3" sample_request)
+    val _ = expect_equal "Z3 standalone TPTP command"
+      ("z3_tptp", ["-c", "-smt.pull_nested_quantifiers:true", "-t:7",
+        "--extra", "-file:problem.p"])
+      (#mk_command z3 "z3_tptp" sample_request)
     val _ = expect_equal "E legacy command"
       ("e", ["-s", "--cpu-limit=7", "--auto-schedule", "--tstp-in",
         "-R", "--print-statistics", "-p", "--tstp-format", "--extra",
@@ -417,7 +427,7 @@ fun test_installed_provers () =
         let
           val problem = write_tiny_problem ()
           val _ = List.app (test_installed_prover problem)
-            (map prover ["e", "vampire", "zipperposition"])
+            (map prover ["e", "vampire", "zipperposition", "z3"])
           val _ = OS.FileSys.remove problem handle OS.SysErr _ => ()
         in
           ()
@@ -514,6 +524,18 @@ fun test_hhEval root =
     val empty = hhEval.journal_path expdir "empty"
     val _ = expect "resume empty journal"
       (not (hhEval.journal_complete empty complete))
+    val retry = hhEval.journal_path expdir "retry"
+    val retry_entry : hhEval.journal_entry =
+      {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
+       cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
+       prover = "e", prover_version = NONE, nfacts = 0, timeout = 5,
+       szs = "Error", t_prover = 0.0, axioms_used = NONE,
+       recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+       error = SOME "transient harness failure"}
+    val _ = hhEval.append_journal retry retry_entry
+    val _ = expect "resume retries harness errors"
+      (not (hhEval.cell_completed (hhEval.read_completed retry)
+        ("list.nil", "deps-e")))
     val condition : hhEval.condition =
       {cond_id = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
        prover = "e", timeout = 10, reconstruct = true}
@@ -544,6 +566,8 @@ fun test_hhEval root =
       ((hhEval.sample_goal 0 "list.nil"; false) handle Fail _ => true)
     val script = hhEval.write_evalscript expdir "list" [condition] 7
     val script_text = String.concat (read_lines script)
+    val _ = expect "worker script is beside its theory"
+      (OS.Path.dir script = join src "one")
     val _ = expect "worker script loads hhEval"
       (String.isSubstring "load \"hhEval\";" script_text)
     val _ = expect "worker script loads its theory"
