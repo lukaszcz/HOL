@@ -100,7 +100,11 @@ sig
                  dprocs: reducer list,
                  travrules: travrules,
                  relation: term,
-                 limit : int option}
+                 limit : int option,
+                 subgoaler : subgoaler option,
+                 solvers : ssolver list,
+                 cond_depth : int option,
+                 term_ord : (term * term -> order) option}
                 -> thm list -> conv
 
      Implements a procedure which tries to prove a term is related
@@ -135,14 +139,12 @@ sig
                          limit : int option,
                          dprocs: reducer list,
                          travrules: Travrules.travrules,
-                         relation: term};
+                         relation: term,
+                         subgoaler: subgoaler option,
+                         solvers: ssolver list,
+                         cond_depth: int option,
+                         term_ord: (term * term -> order) option};
 
    val TRAVERSE : traverse_data -> thm list -> conv
-
-   (* Staging seam for configuring the prover pipeline before its fields
-      become part of traverse_data. *)
-   val TRAVERSE_WITH_PROVERS :
-       {subgoaler : subgoaler option, solvers : ssolver list} ->
-       traverse_data -> thm list -> conv
 
 end (* sig *)

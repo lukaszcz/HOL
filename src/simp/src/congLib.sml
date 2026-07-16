@@ -272,9 +272,13 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
     val traversedata = traversedata_for_ss ss;
     val data = {rewriters= (#cong_reducer csdata)::
           (map eq_reducer_wrapper (#rewriters traversedata)),
-          dprocs= (#dprocs csdata)@(map eq_reducer_wrapper (#dprocs traversedata)),
-          relation= relation, limit = #limit csdata,
-          travrules= merge_travrules ([eq_congsTravrule,#travrules traversedata]@(#travrules csdata))}
+          dprocs= #dprocs csdata @
+                  map eq_reducer_wrapper (#dprocs traversedata),
+          relation=relation, limit= #limit csdata,
+          travrules=merge_travrules
+            ([eq_congsTravrule,#travrules traversedata] @
+             #travrules csdata),
+          subgoaler=NONE, solvers=[], cond_depth=NONE, term_ord=NONE}
   in
     TRAVERSE data
   end;

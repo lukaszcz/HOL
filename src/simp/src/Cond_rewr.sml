@@ -89,6 +89,7 @@ in
 end
 val empty_dict = Termtab.empty
 val ac_term_ord = ac_term_ord0 0 (empty_dict, empty_dict)
+val term_ord = ref ac_term_ord
 
 (* bad old implementation, has a loop between
 
@@ -160,7 +161,7 @@ fun ac_term_ord(tm1,tm2) =
                  failwith "looping rewrite")
               else ()
 
-            val _ = if isperm andalso ac_term_ord(l, r) <> GREATER andalso
+            val _ = if isperm andalso (!term_ord) (l, r) <> GREATER andalso
                        not bounded
                     then
                       (trace(4, IGNORE("possibly looping",conditional_eqn));

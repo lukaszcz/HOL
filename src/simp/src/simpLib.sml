@@ -780,7 +780,11 @@ fun force_add (ss as SS sset) f =
        dprocs= #dprocs ssdata,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
-       limit = #limit ssdata};
+       limit = #limit ssdata,
+       subgoaler=NONE,
+       solvers=[],
+       cond_depth=NONE,
+       term_ord=NONE};
 
  fun SIMP_QCONV ss = TRAVERSE (traversedata_for_ss ss);
 

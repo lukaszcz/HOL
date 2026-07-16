@@ -71,7 +71,8 @@ datatype trav_state =
 fun initial_context {rewriters:reducer list,
                      dprocs:reducer list,
                      travrules=TRAVRULES tsdata,
-                     relation, limit} =
+                     relation, limit, subgoaler, solvers,
+                     cond_depth, term_ord} =
   TSTATE{contexts1=map (#initial o dest_reducer) rewriters,
          contexts2=map (#initial o dest_reducer) dprocs,
          context_thms=[],
@@ -334,19 +335,28 @@ type traverse_data = {limit : int option,
                       rewriters: reducer list,
                       dprocs: reducer list,
                       travrules: Travrules.travrules,
-                      relation: term};
+                      relation: term,
+                      subgoaler: subgoaler option,
+                      solvers: ssolver list,
+                      cond_depth: int option,
+                      term_ord: (term * term -> order) option};
 
-fun TRAVERSE_WITH_PROVERS {subgoaler,solvers}
-                          (data as {limit,dprocs,rewriters,travrules,relation})
-                          thms =
+fun with_option_flag _ NONE f x = f x
+  | with_option_flag flag (SOME value) f x =
+      Lib.with_flag (flag,value) f x
+
+fun TRAVERSE
+      (data as {limit,dprocs,rewriters,travrules,relation,subgoaler,
+                solvers,cond_depth,term_ord}) thms tm =
    let
      val context' = add_context rewriters dprocs (initial_context data,thms)
+     fun traverse tm =
+       TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs
+                           travrules relation [] context' tm
+     fun with_order tm =
+       with_option_flag Cond_rewr.term_ord term_ord traverse tm
    in
-     TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
-                         relation [] context'
+     with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
    end;
-
-fun TRAVERSE data =
-  TRAVERSE_WITH_PROVERS {subgoaler=NONE,solvers=[]} data;
 
 end (* struct *)

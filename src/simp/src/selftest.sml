@@ -617,10 +617,9 @@ in
   val solver_data =
     {rewriters=[solver_reducer], dprocs=[],
      relation= #relation pure_data, travrules= #travrules pure_data,
-     limit=NONE}
-  val solver_conv =
-    Traverse.TRAVERSE_WITH_PROVERS
-      {subgoaler=NONE,solvers=[toy_solver]} solver_data []
+     limit=NONE, subgoaler=NONE, solvers=[toy_solver],
+     cond_depth=NONE, term_ord=NONE}
+  val solver_conv = Traverse.TRAVERSE solver_data []
 
   val _ = convtest
     ("solver pipeline: unsafe solver proves residual condition",
@@ -637,19 +636,17 @@ in
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn {solver,stack,...} => context_rewr solver stack}
   val bool_data = traversedata_for_ss bool_ss
-  val context_data =
-    {rewriters=[context_reducer], dprocs=[],
-     relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=NONE}
   fun context_solver {context_thms,...} tm =
     case List.find (fn th => aconv tm (concl th)) context_thms of
         SOME th => th
       | NONE => raise prover_error "Condition absent from context"
-  val context_conv =
-    Traverse.TRAVERSE_WITH_PROVERS
-      {subgoaler=NONE,
-       solvers=[{name="context lookup",solve=context_solver}]}
-      context_data []
+  val context_data =
+    {rewriters=[context_reducer], dprocs=[],
+     relation= #relation bool_data, travrules= #travrules bool_data,
+     limit=NONE, subgoaler=NONE,
+     solvers=[{name="context lookup",solve=context_solver}],
+     cond_depth=NONE, term_ord=NONE}
+  val context_conv = Traverse.TRAVERSE context_data []
 
   val _ = convtest
     ("solver pipeline: congruence context theorem is visible",
@@ -662,12 +659,10 @@ in
   val limited_data =
     {rewriters= #rewriters bool_data, dprocs= #dprocs bool_data,
      relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=SOME 1}
-  val solver_failure_conv =
-    Traverse.TRAVERSE_WITH_PROVERS
-      {subgoaler=NONE,
-       solvers=[{name="always fails",solve=failing_solver}]}
-      limited_data [failed_rwt]
+     limit=SOME 1, subgoaler=NONE,
+     solvers=[{name="always fails",solve=failing_solver}],
+     cond_depth=NONE, term_ord=NONE}
+  val solver_failure_conv = Traverse.TRAVERSE limited_data [failed_rwt]
 
   val _ = convtest
     ("solver pipeline: solver failure restores traversal limit",
@@ -681,16 +676,18 @@ in
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn {solver,stack,...} => solver stack}
+  fun raising_solver _ _ =
+    if !Cond_rewr.stack_limit = 31 andalso
+       (!Cond_rewr.term_ord) (boolSyntax.T, boolSyntax.F) = GREATER
+    then raise Fail "non-HOL solver exception"
+    else raise Fail "dynamic flags not installed before solver exception"
   val exception_data =
     {rewriters=[passthrough_reducer], dprocs=[],
      relation= #relation bool_data, travrules= #travrules bool_data,
-     limit=NONE}
-  fun raising_solver _ _ = raise Fail "non-HOL solver exception"
-  val exception_conv =
-    Traverse.TRAVERSE_WITH_PROVERS
-      {subgoaler=SOME (fn _ => REFL),
-       solvers=[{name="raises Fail",solve=raising_solver}]}
-      exception_data []
+     limit=NONE, subgoaler=SOME (fn _ => REFL),
+     solvers=[{name="raises Fail",solve=raising_solver}],
+     cond_depth=SOME 31, term_ord=SOME (fn _ => GREATER)}
+  val exception_conv = Traverse.TRAVERSE exception_data []
 
   val _ = shouldfail
     {testfn=exception_conv,
@@ -698,6 +695,194 @@ in
      printarg=K "solver pipeline propagates non-HOL exceptions",
      checkexn=fn Fail "non-HOL solver exception" => true | _ => false}
     ``solver_exception_p``
+
+  val _ = tprint "TRAVERSE restores dynamic flags after an exception"
+  val _ =
+    if !Cond_rewr.stack_limit = 4 andalso
+       (!Cond_rewr.term_ord) (``nested_x:'a``, ``nested_y:'a``) =
+       Cond_rewr.ac_term_ord (``nested_x:'a``, ``nested_y:'a``)
+    then OK()
+    else die "dynamic flags were not restored after an exception"
+
+  fun configure_data (data : Traverse.traverse_data)
+                     subgoaler solvers cond_depth term_ord =
+    {rewriters= #rewriters data, dprocs= #dprocs data,
+     relation= #relation data, travrules= #travrules data,
+     limit= #limit data, subgoaler=subgoaler, solvers=solvers,
+     cond_depth=cond_depth, term_ord=term_ord}
+
+  fun mk_depth_condition i =
+    mk_eq (mk_var ("depth_l" ^ Int.toString i, Type.alpha),
+           mk_var ("depth_r" ^ Int.toString i, Type.alpha))
+  val depth10_conditions =
+    List.tabulate (10, fn i => mk_depth_condition (i + 1))
+  fun mk_depth_chain [last] = [ASSUME (mk_eq (last, boolSyntax.T))]
+    | mk_depth_chain (current :: (rest as next :: _)) =
+        cond_true next current :: mk_depth_chain rest
+    | mk_depth_chain [] = raise Fail "empty condition chain"
+  val depth10_root =
+    ASSUME
+      (mk_imp (hd depth10_conditions,
+               mk_eq (``(depth10_f : 'a -> 'b) depth10_x``,
+                      ``depth10_y : 'b``)))
+  val depth10_rwts = depth10_root :: mk_depth_chain depth10_conditions
+  val depth_default_data =
+    configure_data pure_data NONE [] NONE NONE
+  val depth40_data =
+    configure_data pure_data NONE [] (SOME 40) NONE
+  val depth_default_conv =
+    Traverse.TRAVERSE depth_default_data depth10_rwts
+  val depth40_conv = Traverse.TRAVERSE depth40_data depth10_rwts
+  val depth10_lhs = ``(depth10_f : 'a -> 'b) depth10_x``
+  val depth10_rhs = ``depth10_y : 'b``
+
+  fun unchanged_on_hol_err conv tm =
+    conv tm handle HOL_ERR _ => REFL tm | Conv.UNCHANGED => REFL tm
+  val _ = convtest
+    ("cond_depth: depth ten fails at the default four",
+     unchanged_on_hol_err depth_default_conv, depth10_lhs, depth10_lhs)
+
+  val _ = convtest
+    ("cond_depth: per-traversal depth forty succeeds",
+     depth40_conv, depth10_lhs, depth10_rhs)
+
+  val _ =
+    Lib.with_flag (Cond_rewr.stack_limit,40)
+      (fn () =>
+          convtest
+            ("cond_depth: NONE honors the global stack limit",
+             depth_default_conv, depth10_lhs, depth10_rhs)) ()
+
+  val _ = tprint "cond_depth binding restores the global stack limit"
+  val _ =
+    if !Cond_rewr.stack_limit = 4 then OK()
+    else die "cond_depth did not restore the global stack limit"
+
+  fun reverse_order pair =
+    case Cond_rewr.ac_term_ord pair of
+        LESS => GREATER
+      | EQUAL => EQUAL
+      | GREATER => LESS
+  val reverse_order_data =
+    configure_data pure_data NONE [] NONE (SOME reverse_order)
+  val reverse_order_conv =
+    Traverse.TRAVERSE reverse_order_data [boolTheory.EQ_SYM_EQ]
+  val default_order_conv =
+    Traverse.TRAVERSE depth_default_data [boolTheory.EQ_SYM_EQ]
+
+  val _ = convtest
+    ("term_ord: default order chooses the ascending equality",
+     default_order_conv, ``nested_y:'a = nested_x``,
+     ``nested_x:'a = nested_y``)
+
+  val _ = convtest
+    ("term_ord: custom order flips the equality normal form",
+     reverse_order_conv, ``nested_x:'a = nested_y``,
+     ``nested_y:'a = nested_x``)
+
+  val once_order_data =
+    configure_data pure_data NONE [] NONE (SOME (fn _ => LESS))
+  val once_order_conv =
+    Traverse.TRAVERSE once_order_data [Once boolTheory.EQ_SYM_EQ]
+
+  val _ = convtest
+    ("term_ord: Once bypasses a custom rejecting order",
+     once_order_conv, ``once_x:'a = once_y``, ``once_y:'a = once_x``)
+
+  val order_probe = (``nested_order_x:'a``, ``nested_order_y:'a``)
+  fun has_dynamic_flags depth expected =
+    !Cond_rewr.stack_limit = depth andalso
+    (!Cond_rewr.term_ord) order_probe = expected
+  val nested_inner_condition =
+    SPEC ``nested_inner_q:bool`` boolTheory.EXCLUDED_MIDDLE
+  val nested_inner_lhs =
+    ``(nested_inner_f : 'a -> 'b) nested_inner_x``
+  val nested_inner_rhs = ``nested_inner_y:'b``
+  val nested_inner_rwt =
+    ASSUME
+      (mk_imp (concl nested_inner_condition,
+               mk_eq (nested_inner_lhs,nested_inner_rhs)))
+  fun nested_inner_apply {solver,stack,...} tm =
+    if aconv tm nested_inner_lhs then
+      MP nested_inner_rwt (solver stack (concl nested_inner_condition))
+    else NO_CONV tm
+  val nested_inner_reducer =
+    Traverse.REDUCER
+      {name=SOME "nested inner rewrite", initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt, apply=nested_inner_apply}
+  val inner_simp_tm = boolSyntax.T
+  fun nested_inner_solver _ tm =
+    if not (aconv tm (concl nested_inner_condition)) then
+      raise Fail "inner solver received an unexpected condition"
+    else if not (has_dynamic_flags 23 LESS) then
+      raise Fail "inner TRAVERSE flags not installed"
+    else let
+      val simp_th = QCONV (SIMP_CONV bool_ss []) inner_simp_tm
+      val _ = aconv (rhs (concl simp_th)) boolSyntax.T orelse
+              raise Fail "inner solver's SIMP_CONV failed"
+      val _ = has_dynamic_flags 23 LESS orelse
+              raise Fail "SIMP_CONV disturbed inner TRAVERSE flags"
+    in
+      nested_inner_condition
+    end
+  val nested_inner_data =
+    {rewriters=[nested_inner_reducer], dprocs=[],
+     relation= #relation pure_data, travrules= #travrules pure_data,
+     limit=NONE, subgoaler=SOME (fn _ => REFL),
+     solvers=[{name="nested inner",solve=nested_inner_solver}],
+     cond_depth=SOME 23, term_ord=SOME Cond_rewr.ac_term_ord}
+  val nested_inner_conv = Traverse.TRAVERSE nested_inner_data []
+  val nested_outer_lhs =
+    ``(nested_outer_f : bool -> bool) nested_outer_x``
+  val nested_outer_rhs = ``nested_outer_y:bool``
+  val nested_outer_rwt =
+    ASSUME (mk_eq (nested_outer_lhs,nested_outer_rhs))
+  fun nested_outer_apply _ tm =
+    if not (aconv tm nested_outer_lhs) then NO_CONV tm
+    else let
+      val _ = has_dynamic_flags 17 GREATER orelse
+              raise Fail "outer TRAVERSE flags not installed"
+      val nested_th =
+        nested_inner_conv nested_inner_lhs
+        handle HOL_ERR _ => raise Fail "inner TRAVERSE raised HOL_ERR"
+      val _ = aconv (rhs (concl nested_th)) nested_inner_rhs orelse
+              raise Fail "inner TRAVERSE failed"
+      val _ = has_dynamic_flags 17 GREATER orelse
+              raise Fail "inner TRAVERSE flags were not restored"
+    in
+      nested_outer_rwt
+    end
+  val nested_outer_reducer =
+    Traverse.REDUCER
+      {name=SOME "nested outer rewrite", initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt, apply=nested_outer_apply}
+  val nested_outer_data =
+    {rewriters=[nested_outer_reducer], dprocs=[],
+     relation= #relation pure_data, travrules= #travrules pure_data,
+     limit=NONE, subgoaler=NONE, solvers=[],
+     cond_depth=SOME 17, term_ord=SOME reverse_order}
+  val nested_outer_conv = Traverse.TRAVERSE nested_outer_data []
+
+  val _ = convtest
+    ("TRAVERSE reentrancy restores flags around solver SIMP_CONV",
+     nested_outer_conv, nested_outer_lhs, nested_outer_rhs)
+
+  val _ = tprint "nested TRAVERSE restores the global dynamic flags"
+  val _ =
+    if !Cond_rewr.stack_limit = 4 andalso
+       (!Cond_rewr.term_ord) (boolSyntax.T, boolSyntax.F) =
+       Cond_rewr.ac_term_ord (boolSyntax.T, boolSyntax.F)
+    then OK()
+    else die "nested TRAVERSE did not restore its dynamic flags"
+
+  val conglib_rwt =
+    ASSUME ``(conglib_f : 'a -> 'b) conglib_x = conglib_y``
+  val conglib_cs =
+    congLib.mk_congset [congLib.csfrag_rewrites [conglib_rwt]]
+  val _ = convtest
+    ("congLib equality simplification smoke test",
+     congLib.CONGRUENCE_EQ_SIMP_CONV conglib_cs pureSimps.pure_ss [],
+     ``(conglib_f : 'a -> 'b) conglib_x``, ``conglib_y:'b``)
 end
 
 (* ---------------------------------------------------------------------- *)
