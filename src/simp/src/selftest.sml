@@ -1,4 +1,4 @@
-open HolKernel Parse boolLib simpLib
+open HolKernel Parse boolLib simpLib splitLib
 open testutils boolSimps
 
 val failcount = ref 0
@@ -1396,6 +1396,139 @@ local
     then OK()
     else die "SIMP_TAC changed with empty strategy hooks"
 in
+end
+
+(* ---------------------------------------------------------------------- *)
+(* Splitter core: conclusion splits.                                     *)
+
+val _ = let
+  val if_split = TypeBase.case_pred_imp_of ``:bool``
+
+  val _ = convtest
+    ("splitter: conditional",
+     SPLIT_CONV [if_split],
+     ``P (if b then x:'a else y) : bool``,
+     ``(b ==> P (x:'a)) /\ (~b ==> P y)``)
+
+  val _ = convtest
+    ("splitter: conditional under a referenced forall binder",
+     SPLIT_CONV [if_split],
+     ``!z:'a. P z (if Q z then x:'b else y)``,
+     ``!z:'a. (Q z ==> P z (x:'b)) /\ (~Q z ==> P z y)``)
+
+  val _ = convtest
+    ("splitter: unreferenced binder remains in the context",
+     SPLIT_CONV [if_split],
+     ``!z:'a. P (if b then x:'b else y) z``,
+     ``(b ==> !z:'a. P (x:'b) z) /\
+       (~b ==> !z:'a. P (y:'b) z)``)
+
+  val _ = convtest
+    ("splitter: all alpha-equivalent occurrences are replaced",
+     SPLIT_CONV [if_split],
+     ``P (if b then (\z:'a. z) else f) /\
+       Q (if b then (\w:'a. w) else f)``,
+     ``(b ==> P (\z:'a. z) /\ Q (\w:'a. w)) /\
+       (~b ==> P f /\ Q f)``)
+
+  val _ = convtest
+    ("splitter: outermost pack is selected first",
+     SPLIT_CONV [if_split],
+     ``P (if (if b then c else d) then x:'a else y) : bool``,
+     ``((if b then c else d) ==> P (x:'a)) /\
+       (~(if b then c else d) ==> P y)``)
+
+  val _ = convtest
+    ("splitter: one split per conversion invocation",
+     SPLIT_CONV [if_split],
+     ``P (if b then x:'a else y) /\ Q (if c then u else v)``,
+     ``(b ==> P (x:'a) /\ Q (if c then u else v)) /\
+       (~b ==> P y /\ Q (if c then u else v))``)
+
+  val generic_k_split =
+    GEN_ALL (REFL ``P (K (x:'a) (y:'b)) : bool``)
+  val bool_k_split =
+    INST_TYPE [alpha |-> bool, beta |-> bool] generic_k_split
+  val _ = convtest
+    ("splitter: distinct constant type shapes are not merged",
+     SPLIT_CONV [bool_k_split, generic_k_split],
+     ``P (K T (f:bool -> bool)) : bool``,
+     ``P (K T (f:bool -> bool)) : bool``)
+
+  val _ = shouldfail
+    {testfn=fn () => SPLIT_CONV [REFL ``P (if b then x else y)``],
+     printresult=K "unexpected conversion",
+     printarg=K "splitter rejects a rule with a free context variable",
+     checkexn=fn HOL_ERR _ => true | _ => false} ()
+
+  val _ = shouldfail
+    {testfn=fn () => SPLIT_CONV [boolTheory.TRUTH],
+     printresult=K "unexpected conversion",
+     printarg=K "splitter rejects a non-equational rule",
+     checkexn=fn HOL_ERR _ => true | _ => false} ()
+
+  val _ = shouldfail
+    {testfn=SPLIT_CONV [if_split],
+     printresult=thm_to_string,
+     printarg=K "splitter rejects a partial case application",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    ``P (COND b) : bool``
+
+  val _ = shouldfail
+    {testfn=SPLIT_CONV [if_split],
+     printresult=thm_to_string,
+     printarg=K "splitter enforces the binder-body type test",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    ``P (\z:'a. if Q z then x:'b else y) : bool``
+
+  val tactic_goal =
+    ([], ``P (if b then x:'a else y) : bool``)
+  val tactic_result =
+    ``(b ==> P (x:'a)) /\ (~b ==> P y)``
+  val _ = tprint "splitter: SPLIT_TAC performs one conclusion split"
+  val _ =
+    case #1 (VALID (SPLIT_TAC [if_split]) tactic_goal) of
+        [([], result)] =>
+          if aconv result tactic_result then OK()
+          else die "SPLIT_TAC produced the wrong conclusion"
+      | _ => die "SPLIT_TAC produced the wrong subgoals"
+in
+end
+
+(* These theories are later than simp in the build sequence.  Exercise their
+   actual case constants when their already-built objects are available; the
+   bool tests above remain the bootstrap regression test for this directory. *)
+val _ = let
+  fun object_exists path =
+    OS.FileSys.access (OS.Path.concat (HOLDIR, path), [])
+  val have_datatypes =
+    object_exists "sigobj/optionTheory.uo" andalso
+    object_exists "sigobj/listTheory.uo"
+in
+  if not have_datatypes then ()
+  else
+    let
+      val _ = load "optionTheory"
+      val option_split = TypeBase.case_pred_imp_of ``:'a option``
+      val _ = convtest
+        ("splitter: option case",
+         SPLIT_CONV [option_split],
+         ``P (option_CASE x (n:'b) (f:'a -> 'b)) : bool``,
+         ``(x = NONE ==> P (n:'b)) /\
+           !a:'a. x = SOME a ==> P (f a)``)
+
+      val _ = load "listTheory"
+      val list_split = TypeBase.case_pred_imp_of ``:'a list``
+      val _ = convtest
+        ("splitter: list case",
+         SPLIT_CONV [list_split],
+         ``P (list_CASE xs (n:'b)
+                        (f:'a -> 'a list -> 'b)) : bool``,
+         ``(xs = [] ==> P (n:'b)) /\
+           !h:'a t. xs = h::t ==> P (f h t)``)
+    in
+      ()
+    end
 end
 
 (* ---------------------------------------------------------------------- *)
