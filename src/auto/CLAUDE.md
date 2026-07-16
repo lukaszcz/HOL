@@ -1,7 +1,7 @@
 This file provides guidance to AI agents when working with code in
-this repository.
+the automation project of the HOL4 repository.
 
-Scope: `src/auto/` — the opt-in Isabelle/HOL-parity automation layer.
+Scope: `src/auto/` — the opt-in automation project: Isabelle/HOL-parity automation layer.
 
 ## Project ground rules
 
