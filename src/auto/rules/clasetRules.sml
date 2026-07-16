@@ -52,14 +52,29 @@ fun is_canonical th =
     spine (snd (strip_forall (concl th)))
   end
 
+(* A quantified variable may also occur free in a theorem hypothesis (the
+   quantifier then shadows that free variable in the conclusion).  Such a
+   theorem is valid, but specializing and later generalizing with the
+   stripped binder itself would make GEN reject the free hypothesis. *)
+fun fresh_forall_vars th vars =
+  let
+    fun freshen avoids [] = []
+      | freshen avoids (v :: vs) =
+          let val v' = variant avoids v
+          in v' :: freshen (v' :: avoids) vs end
+  in
+    freshen (free_varsl (hyp th)) vars
+  end
+
 fun canonical_rule th =
   if is_canonical th then th
   else
     let
       val (vars, _) = strip_forall (concl th)
-      val body = Drule.SPECL vars th
+      val vars' = fresh_forall_vars th vars
+      val body = Drule.SPECL vars' th
     in
-      GENL vars (curry_conj_premises body)
+      GENL vars' (curry_conj_premises body)
     end
 
 fun canonical_form th =
@@ -97,10 +112,11 @@ fun rule_spine th =
   let
     val th' = canonical_rule th
     val (vars, _) = strip_forall (concl th')
-    val core = Drule.SPECL vars th'
+    val vars' = fresh_forall_vars th' vars
+    val core = Drule.SPECL vars' th'
     val (prems, cncl) = strip_imp_only (concl core)
   in
-    {thm = th', vars = vars, core = core, prems = prems, concl = cncl}
+    {thm = th', vars = vars', core = core, prems = prems, concl = cncl}
   end
 
 fun apply_assumed th prems = Drule.LIST_MP (map ASSUME prems) th

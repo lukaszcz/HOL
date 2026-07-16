@@ -325,13 +325,19 @@ fun unify_intro_candidates (inet, _) tm =
 fun unify_elim_candidates (_, enet) tm =
   candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
 
-(* The false state defers persistent updates until the first demand.  TASK_10
-   extends [catch_up_typebase] with its TypeBase sweep. *)
+type tyinfo_contribution =
+  string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
+
+type typebase_catchup =
+  {contributions : tyinfo_contribution list,
+   replaced : tyinfo_contribution option}
+
+(* The false state defers persistent updates until the first demand. *)
 datatype pending =
     ApplyDelta of cdelta
   | ApplyBatch of cdelta list
   | Modify of (claset -> claset)
-  | CatchUpTypeBase
+  | CatchUpTypeBase of typebase_catchup
 type cstate = claset * bool * pending list
 
 val state0 : cstate = (empty_cs, false, [])
@@ -419,16 +425,20 @@ fun batch_apply deltas (cs as CS {decls, ...}) =
    accessors do for non-datatypes), so make the listener total.  Contributions
    are value providers and must be pure and deterministic: their invocation
    count and timing are deliberately not part of the public API. *)
-type tyinfo_contribution =
-  string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
-
 val tyinfo_contributions = ref ([] : tyinfo_contribution list)
 
 fun add_tyinfo_rule spec (named_th as (_, th))
   (cs as CS {decls, ...}) =
-  if has_decls decls th then cs else add_rule spec named_th cs
+  let
+    fun same_class (decl : decl) =
+      #kind (#spec decl) = #kind spec andalso
+      #safe (#spec decl) = #safe spec
+  in
+    if List.exists same_class (get_decls decls th) then cs
+    else add_rule spec named_th cs
+  end
 
-fun rules_for_tyinfo (tyi : TypeBasePure.tyinfo) =
+fun rules_for_tyinfo contributions (tyi : TypeBasePure.tyinfo) =
   let
     fun add_contribution
       ((_, contribution) : tyinfo_contribution, rev_rules) =
@@ -436,7 +446,7 @@ fun rules_for_tyinfo (tyi : TypeBasePure.tyinfo) =
           NONE => rev_rules
         | SOME rules => List.revAppend (rules, rev_rules)
   in
-    List.rev (List.foldl add_contribution [] (!tyinfo_contributions))
+    List.rev (List.foldl add_contribution [] contributions)
   end
 
 fun apply_tyinfo_rules rules cs =
@@ -444,29 +454,64 @@ fun apply_tyinfo_rules rules cs =
     (fn ((spec, named_th), acc) => add_tyinfo_rule spec named_th acc)
     cs rules
 
-fun add_tyinfo tyi cs = apply_tyinfo_rules (rules_for_tyinfo tyi) cs
-
-fun collect_typebase_rules () =
+fun collect_typebase_rules contributions =
   let
     fun collect (tyi, rev_rules) =
-      List.revAppend (rules_for_tyinfo tyi, rev_rules)
+      List.revAppend (rules_for_tyinfo contributions tyi, rev_rules)
   in
     List.rev (List.foldl collect [] (TypeBase.elts ()))
   end
 
-fun catch_up_typebase cs = apply_tyinfo_rules (collect_typebase_rules ()) cs
+fun catch_up_typebase cs =
+  apply_tyinfo_rules (collect_typebase_rules (!tyinfo_contributions)) cs
+
+fun contribution_rules (_, contribution) =
+  let
+    fun collect (tyi, rev_rules) =
+      case Lib.total contribution tyi of
+          NONE => rev_rules
+        | SOME rules => List.revAppend (rules, rev_rules)
+  in
+    List.rev (List.foldl collect [] (TypeBase.elts ()))
+  end
+
+(* Remove only declarations that the replaced provider actually installed.
+   Matching the name, canonical theorem, and rule class prevents a provider
+   whose output was rejected as a duplicate from deleting the winner. *)
+fun remove_contribution_rule (spec, (name, th))
+  (cs as CS {decls, ...}) =
+  let
+    fun matches (decl : decl) =
+      #name decl = name andalso
+      #kind (#spec decl) = #kind spec andalso
+      #safe (#spec decl) = #safe spec
+  in
+    if List.exists matches (get_decls decls th) then remove_rule name cs
+    else cs
+  end
+
+fun reconcile_typebase
+  ({contributions, replaced} : typebase_catchup) cs =
+  let
+    val cs' =
+      case replaced of
+          NONE => cs
+        | SOME old =>
+            List.foldl
+              (fn (rule, acc) => remove_contribution_rule rule acc)
+              cs (contribution_rules old)
+  in
+    apply_tyinfo_rules (collect_typebase_rules contributions) cs'
+  end
 
 fun replay_pending typebase_rules [] (cs, caught_up) =
       if caught_up then cs
       else apply_tyinfo_rules typebase_rules cs
   | replay_pending typebase_rules (update :: updates) (cs, caught_up) =
       (case update of
-           CatchUpTypeBase =>
-             if caught_up then
-               replay_pending typebase_rules updates (cs, true)
-             else
-               replay_pending typebase_rules updates
-                 (apply_tyinfo_rules typebase_rules cs, true)
+           CatchUpTypeBase catchup =>
+             replay_pending typebase_rules updates
+               (reconcile_typebase catchup cs, true)
          | ApplyDelta delta =>
              replay_pending typebase_rules updates
                (apply_cdelta delta cs, false)
@@ -479,7 +524,9 @@ fun replay_pending typebase_rules [] (cs, caught_up) =
 fun init_state (state as (cs, initialised, pending)) =
   if initialised then state
   else
-    let val typebase_rules = collect_typebase_rules ()
+    let
+      val typebase_rules =
+        collect_typebase_rules (!tyinfo_contributions)
     in
       (replay_pending typebase_rules (List.rev pending) (cs, false), true, [])
     end
@@ -522,36 +569,57 @@ fun temp_delrule name =
 
 val augment_claset = update_claset
 
-fun request_typebase_catchup (cs, initialised, pending) =
-  if initialised then (catch_up_typebase cs, true, [])
-  else (cs, false, CatchUpTypeBase :: pending)
+fun request_typebase_catchup catchup (cs, initialised, pending) =
+  if initialised then (reconcile_typebase catchup cs, true, [])
+  else (cs, false, CatchUpTypeBase catchup :: pending)
 
-fun register_tyinfo_contribution entry =
-  (tyinfo_contributions := update_alist entry (!tyinfo_contributions);
-   #update_global_value adresult request_typebase_catchup)
+fun register_tyinfo_contribution (entry as (key, _)) =
+  let
+    val old = List.find (fn (key', _) => key = key') (!tyinfo_contributions)
+    val contributions = update_alist entry (!tyinfo_contributions)
+    val catchup = {contributions = contributions, replaced = old}
+  in
+    tyinfo_contributions := contributions;
+    #update_global_value adresult (request_typebase_catchup catchup)
+  end
 
 fun typebase_update tyi =
-  (update_claset (add_tyinfo tyi); tyi)
+  let val rules = rules_for_tyinfo (!tyinfo_contributions) tyi
+  in update_claset (apply_tyinfo_rules rules); tyi end
 
 val _ = TypeBase.register_update_fn typebase_update
 
+fun fresh_outer_vars th vars =
+  let
+    fun freshen avoids [] = []
+      | freshen avoids (v :: vs) =
+          let val v' = variant avoids v
+          in v' :: freshen (v' :: avoids) vs end
+  in
+    freshen (free_varsl (hyp th)) vars
+  end
+
 fun distinct_elim_rule th =
   let
-    val (vars, _) = strip_forall (concl th)
-    val core = Drule.SPECL vars th
+    val th' = canonical_rule th
+    val (vars, _) = strip_forall (concl th')
+    val vars' = fresh_outer_vars th' vars
+    val core = Drule.SPECL vars' th'
     val eq = dest_neg (concl core)
     val r = variant (free_varsl (concl core :: hyp core)) (mk_var ("r", bool))
     val false_th = MP (NOT_ELIM core) (ASSUME eq)
     val result = MP (SPEC r boolTheory.FALSITY) false_th
   in
-    GENL (vars @ [r]) (DISCH eq result)
+    GENL (vars' @ [r]) (DISCH eq result)
   end
 
 fun iff_dest_rule th =
   let
-    val (vars, _) = strip_forall (concl th)
+    val th' = canonical_rule th
+    val (vars, _) = strip_forall (concl th')
+    val vars' = fresh_outer_vars th' vars
   in
-    GENL vars (#1 (EQ_IMP_RULE (Drule.SPECL vars th)))
+    GENL vars' (#1 (EQ_IMP_RULE (Drule.SPECL vars' th')))
   end
 
 fun tyinfo_stem tyi =

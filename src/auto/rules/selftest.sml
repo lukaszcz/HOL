@@ -347,6 +347,38 @@ val _ =
            ``(!z : bool. P z ==> q) ==> (!z : bool. P z ==> q)``
        end)
 
+fun shadowed_outer_rule () =
+  let
+    val x = ``x : bool``
+    val pq = ``p /\ q``
+    val quantified = GEN x (DISCH pq (CONJUNCT1 (ASSUME pq)))
+  in
+    Drule.ADD_ASSUM x quantified
+  end
+
+fun shadowed_canonical_rule () =
+  let
+    val x = ``x : bool``
+    val quantified = GEN x (DISCH p (ASSUME p))
+  in
+    Drule.ADD_ASSUM x quantified
+  end
+
+val _ =
+  test
+    ("rule preprocessing freshens outer binders away from hypotheses",
+     fn () =>
+       let
+         val th = shadowed_outer_rule ()
+         val th' = canonical_rule th
+         val spec = {kind = clasetRules.Intro, safe = true, prio = NONE}
+       in
+         Term.aconv (concl th') ``!x : bool. p ==> q ==> p`` andalso
+         List.exists (Term.aconv ``x : bool``) (hyp th') andalso
+         can (ext_info spec) th andalso
+         can (ext_info spec) (shadowed_canonical_rule ())
+       end)
+
 val _ =
   test
     ("canonical_form records outer quantified variables as patvars",
@@ -1312,6 +1344,70 @@ val _ =
            (name, tyinfo_idempotence_contribution)
        in
          count_typebase_rules tyinfo_idempotence_rule = 1
+       end)
+
+val tyinfo_multispec_p = ``claset_tyinfo_multispec_p : bool``
+val tyinfo_multispec_rule =
+  DISCH tyinfo_multispec_p (ASSUME tyinfo_multispec_p)
+val tyinfo_multispec_intro =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+val tyinfo_multispec_elim =
+  {kind = clasetRules.Elim, safe = true, prio = NONE}
+
+fun tyinfo_multispec_contribution _ =
+  [(tyinfo_multispec_intro,
+    ("claset-tyinfo-multispec-intro", tyinfo_multispec_rule)),
+   (tyinfo_multispec_elim,
+    ("claset-tyinfo-multispec-elim", tyinfo_multispec_rule))]
+
+val _ =
+  test
+    ("claset TypeBase contributions keep cross-kind specifications",
+     fn () =>
+       let
+         val _ = register_tyinfo_contribution
+           ("claset-selftest-multispec", tyinfo_multispec_contribution)
+         val rules = rules_of (the_claset ())
+         fun present spec name =
+           List.exists
+             (fn (spec', (name', th')) =>
+                name = name' andalso same_spec spec spec' andalso
+                same_thm (canonical_rule tyinfo_multispec_rule) th')
+             rules
+       in
+         present tyinfo_multispec_intro "claset-tyinfo-multispec-intro"
+           andalso
+         present tyinfo_multispec_elim "claset-tyinfo-multispec-elim"
+       end)
+
+val tyinfo_replace_p = ``claset_tyinfo_replace_p : bool``
+val tyinfo_replace_q = ``claset_tyinfo_replace_q : bool``
+val tyinfo_replace_old_rule =
+  DISCH tyinfo_replace_p
+    (DISJ1 (ASSUME tyinfo_replace_p) tyinfo_replace_q)
+val tyinfo_replace_new_rule =
+  DISCH tyinfo_replace_q
+    (DISJ2 tyinfo_replace_p (ASSUME tyinfo_replace_q))
+
+fun tyinfo_replacement name th _ =
+  [(tyinfo_idempotence_spec, (name, th))]
+
+val _ =
+  test
+    ("replacing a TypeBase contribution removes its stale rules",
+     fn () =>
+       let
+         val key = "claset-selftest-replacement"
+         val old_name = "claset-tyinfo-replacement-old"
+         val new_name = "claset-tyinfo-replacement-new"
+         val _ = register_tyinfo_contribution
+           (key, tyinfo_replacement old_name tyinfo_replace_old_rule)
+         val _ = register_tyinfo_contribution
+           (key, tyinfo_replacement new_name tyinfo_replace_new_rule)
+         val rules = rules_of (the_claset ())
+         fun named name = List.exists (fn (_, (name', _)) => name = name') rules
+       in
+         not (named old_name) andalso named new_name
        end)
 
 
