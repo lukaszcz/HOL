@@ -487,4 +487,112 @@ in
   ]
 end
 
+(* ---------------------------------------------------------------------- *)
+(* Default-equivalence goldens for the traversal solver pipeline.         *)
+(* ---------------------------------------------------------------------- *)
+
+local
+  val recursive_rwt =
+    Q.ASSUME `(p /\ T) ==> ((f : 'a -> 'b) x = y)`
+  val failed_rwt =
+    Q.ASSUME `(p /\ T) ==> ((f : 'a -> 'b) x = y)`
+
+  val c1 = ``p = q``
+  val c2 = ``(f : bool -> bool) = g``
+  val c3 = ``(f : (bool -> bool) -> bool) = g``
+  val c4 = ``(f : ((bool -> bool) -> bool) -> bool) = g``
+  val c5 =
+    ``(f : (((bool -> bool) -> bool) -> bool) -> bool) = g``
+
+  fun cond_true condition lhs =
+    ASSUME (mk_imp (condition, mk_eq (lhs, T)))
+
+  val root_rwt =
+    ASSUME
+      (mk_imp (c1,
+               mk_eq (``(depth_f : 'a -> 'b) depth_x``, ``depth_y : 'b``)))
+  val depth4_rwts =
+    [root_rwt, cond_true c2 c1, cond_true c3 c2,
+     cond_true c4 c3, ASSUME (mk_eq (c4, T))]
+  val depth5_rwts =
+    [root_rwt, cond_true c2 c1, cond_true c3 c2,
+     cond_true c4 c3, cond_true c5 c4, ASSUME (mk_eq (c5, T))]
+
+  val no_beta_ss = bool_ss -* ["BETA_CONV"]
+  val raw_bool_conv =
+    Traverse.TRAVERSE (traversedata_for_ss bool_ss) []
+in
+  val _ = convtest
+    ("default pipeline: recursive traversal proves a side condition",
+     SIMP_CONV bool_ss [Q.ASSUME `p`, recursive_rwt],
+     ``(f : 'a -> 'b) x``, ``y : 'b``)
+
+  val _ = convtest
+    ("default pipeline: failed side condition restores traversal limit",
+     SIMP_CONV (limit 1 bool_ss) [failed_rwt],
+     ``(h : 'b -> bool -> 'c) ((f : 'a -> 'b) x) (q /\ T)``,
+     ``(h : 'b -> bool -> 'c) (f x) q``)
+
+  val _ = tprint "default conditional-rewrite stack limit is four"
+  val _ =
+    if !Cond_rewr.stack_limit = 4 then OK()
+    else die ("expected stack limit 4, got " ^
+              Int.toString (!Cond_rewr.stack_limit))
+
+  val _ = convtest
+    ("default pipeline: four nested side conditions succeed",
+     SIMP_CONV pureSimps.pure_ss depth4_rwts,
+     ``(depth_f : 'a -> 'b) depth_x``, ``depth_y : 'b``)
+
+  val _ = convtest
+    ("default pipeline: fifth nested side condition is rejected",
+     QCONV (SIMP_CONV pureSimps.pure_ss depth5_rwts),
+     ``(depth_f : 'a -> 'b) depth_x``,
+     ``(depth_f : 'a -> 'b) depth_x``)
+
+  val unchanged_tm = ``(unchanged_f : 'a -> 'b) unchanged_x``
+
+  val _ = shouldfail
+    {testfn = raw_bool_conv,
+     printresult = thm_to_string,
+     printarg = K "raw traversal maps congruence UNCHANGED to HOL_ERR",
+     checkexn = fn HOL_ERR _ => true | _ => false}
+    unchanged_tm
+
+  val _ = shouldfail
+    {testfn = SIMP_CONV bool_ss [],
+     printresult = thm_to_string,
+     printarg = K "public conversion propagates unchanged result",
+     checkexn = fn Conv.UNCHANGED => true | _ => false}
+    unchanged_tm
+
+  val _ = convtest
+    ("default pipeline: QCONV turns unchanged result into reflexivity",
+     QCONV (SIMP_CONV bool_ss []), unchanged_tm, unchanged_tm)
+
+  val _ = convtest
+    ("default pipeline: unchanged operator preserves changed argument",
+     SIMP_CONV bool_ss [],
+     ``(unchanged_f : bool -> 'a) (p /\ T)``,
+     ``(unchanged_f : bool -> 'a) p``)
+
+  val _ = convtest
+    ("default pipeline: changed operator preserves unchanged argument",
+     SIMP_CONV bool_ss [],
+     ``(unchanged_f : bool -> 'a -> 'b) (p /\ T) unchanged_x``,
+     ``(unchanged_f : bool -> 'a -> 'b) p unchanged_x``)
+
+  val _ = convtest
+    ("default pipeline: implication context rewrites its consequent",
+     SIMP_CONV bool_ss [], ``p ==> p /\ q``, ``p ==> q``)
+
+  val _ = convtest
+    ("default pipeline: let context rewrites its body",
+     SIMP_CONV no_beta_ss [Cong boolTheory.LET_CONG],
+     ``let x : 'a = a in if x = a then y : 'b else z``,
+     ``let x : 'a = a in y : 'b``)
+end
+
+(* ---------------------------------------------------------------------- *)
+
 val _ = exit_count0 failcount
