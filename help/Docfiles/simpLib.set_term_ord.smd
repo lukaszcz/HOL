@@ -1,0 +1,58 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `set_term_ord`
+
+``` hol4
+simpLib.set_term_ord : (term * term -> order) -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Sets the term ordering used for permutative rewrites in a simpset.
+
+A rewrite is permutative when its two sides differ only by a permutation
+of variables, as with commutativity.  For an instantiated permutative
+rewrite with left- and right-hand sides `l` and `r`, the simplifier
+applies the rewrite only when the configured function returns
+`GREATER` on `(l,r)`.  The ordering should be a total, AC-compatible
+term ordering; an unsuitable function can prevent normalization or
+make it unstable.
+
+The ordering is dynamically bound for each simplifier traversal.  The
+previous value of `Cond_rewr.term_ord` is restored on normal return and
+on an exception, and nested invocations restore their caller's value.
+A simpset on which `set_term_ord` has not been called uses
+`!Cond_rewr.term_ord` at invocation time.  That reference is initially
+`Cond_rewr.ac_term_ord`.
+
+The ordering guard is deliberately bypassed for bounded rewrites, such
+as rules marked with `Once` or `Ntimes`: their usage bound prevents the
+unrestricted permutative loop that the ordering normally avoids.
+Non-permutative rewrites are also unaffected by this setting.
+
+### Failure
+
+Never fails.  A permutative rewrite rejected by the ordering is simply
+not applied.  Exceptions raised by the supplied ordering function can
+propagate when the simpset is used.
+
+### Example
+
+This schematic example reverses the standard order and stores the
+resulting policy in a new simpset.
+
+``` hol4
+fun reverse_order pair =
+  case Cond_rewr.ac_term_ord pair of
+      LESS => GREATER
+    | EQUAL => EQUAL
+    | GREATER => LESS
+
+val reverse_ss = simpLib.set_term_ord reverse_order bool_ss
+```
+
+### See also
+
+[`simpLib.set_cond_depth`](#simpLib.set_cond_depth),
+[`BoundedRewrites.Once`](#BoundedRewrites.Once),
+[`BoundedRewrites.Ntimes`](#BoundedRewrites.Ntimes),
+[`simpLib.clear_rules`](#simpLib.clear_rules)

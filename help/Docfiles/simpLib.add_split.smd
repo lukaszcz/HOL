@@ -1,0 +1,67 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `add_split`
+
+``` hol4
+simpLib.add_split : thm -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Adds one named split rule to a simpset.
+
+A call `add_split th ss` returns a copy of `ss` with a looper that calls
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC) using `th`. The theorem must
+be a named database theorem in the split-rule format documented there.
+The input simpset is unchanged.
+
+If the right side of the rule is syntactically a negation, `add_split`
+installs an assumption looper named
+
+``` hol4
+split_asm thy$theorem
+```
+
+Otherwise it installs a conclusion looper named
+
+``` hol4
+split thy$theorem
+```
+
+Adding another looper with the same strategy name replaces the existing
+one in its current position. The rule is used by simplification tactics,
+whose looper pipeline repeatedly simplifies after successful splits. It
+is not run by conversion-only interfaces such as `SIMP_CONV`.
+
+Unlike the `[split]` attribute, `add_split` does not modify the persistent
+split theorem set; its effect is confined to the returned simpset.
+
+### Failure
+
+Fails if `th` is not a well-formed split rule or has no local or stored
+database name. Merely having no matching redex in a later goal is not an
+error in `add_split` itself.
+
+### Example
+
+Given a stored theorem named `pickTheory$pick_split`:
+
+``` hol4
+Theorem pick_split:
+  !P. P (pick b x y) <=>
+      (b ==> P x) /\ (~b ==> P y)
+Proof
+  ...
+QED
+
+val pick_ss = simpLib.add_split pick_split bool_ss;
+
+(* SIMP_TAC pick_ss [] can now split occurrences of pick. *)
+```
+
+### See also
+
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
+[`simpLib.del_split`](#simpLib.del_split),
+[`simpLib.split_ss`](#simpLib.split_ss),
+[`simpLib.Split`](#simpLib.Split),
+[`simpLib.add_looper`](#simpLib.add_looper)

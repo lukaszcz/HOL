@@ -1,0 +1,57 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `mk_tactic_solver`
+
+``` hol4
+simpLib.mk_tactic_solver : string * tactic -> Traverse.ssolver
+```
+
+------------------------------------------------------------------------
+
+Adapts a tactic into a named simplifier solver.
+
+`mk_tactic_solver (name,tac)` returns a solver named `name`. When asked
+to prove a condition `c`, the solver runs `tac` to completion on the
+goal
+
+``` hol4
+(map concl context_thms, c)
+```
+
+where `context_thms` is the theorem context supplied by the simplifier.
+It then uses `PROVE_HYP` with the actual context theorems. This replaces
+the temporary assumptions introduced for `TAC_PROOF` and preserves any
+hypotheses on which those context theorems themselves depend. The
+solver's `stack` and `recurse` context fields are not used by this
+adapter.
+
+The tactic must solve its goal completely. The resulting solver can be
+registered directly with `add_unsafe_solver` or `add_safe_solver`, or
+packaged in a fragment with `solver_ss` or `safe_solver_ss`.
+
+### Failure
+
+Constructing the solver never fails. At use time, a `HOL_ERR` from the
+tactic is treated as solver non-applicability, so the pipeline can try
+its next solver; other exceptions propagate.
+
+### Example
+
+``` hol4
+val assumption_solver =
+  simpLib.mk_tactic_solver
+    ("assumption", FIRST_ASSUM ACCEPT_TAC);
+
+val ss =
+  simpLib.add_unsafe_solver assumption_solver boolSimps.bool_ss;
+```
+
+This solver can close a side condition that one of the simplifier's
+context theorems proves exactly.
+
+### See also
+
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.add_safe_solver`](#simpLib.add_safe_solver),
+[`simpLib.solver_ss`](#simpLib.solver_ss),
+[`simpLib.safe_solver_ss`](#simpLib.safe_solver_ss),
+[`simpLib.set_subgoaler`](#simpLib.set_subgoaler)

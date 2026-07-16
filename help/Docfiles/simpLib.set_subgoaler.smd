@@ -1,0 +1,67 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `set_subgoaler`
+
+``` hol4
+simpLib.set_subgoaler : Traverse.subgoaler -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Sets the procedure that preprocesses simplifier side conditions.
+
+A `Traverse.subgoaler` has type
+
+``` hol4
+Traverse.simp_prover_ctxt -> term -> thm
+```
+
+Given a prover context and a condition `c`, it must return an equality
+of the form `|- c = c'`. The context contains the current
+side-condition stack, the available context theorems, and a `recurse`
+function which recursively simplifies a term under that same context.
+
+When a conditional rewrite requests a proof of `c`, the configured
+subgoaler is called first. If its result is `|- c = T`, the condition is
+solved. Otherwise the simpset's unsafe solvers are tried, in order, on
+`c'`; a proof of `c'` is transported through the equality to prove `c`.
+Thus a subgoaler may normalize a condition into a form suitable for a
+specialized solver, rather than proving the condition outright.
+
+`set_subgoaler subgoaler ss` replaces any subgoaler already configured
+on `ss`. The setting affects side conditions in `SIMP_CONV` and in the
+rewrite phase of simplification tactics. It does not configure a
+separate tactic-layer final solver.
+
+If no subgoaler is configured, recursive simplification itself is used.
+There is currently no public operation for restoring `NONE`; retain the
+original simpset if both configured and unconfigured variants are
+needed.
+
+### Failure
+
+`set_subgoaler` itself never fails. At use time, a malformed equality or
+an exception from the subgoaler causes the surrounding side-condition
+attempt to fail or propagate according to the exception involved.
+
+### Example
+
+A subgoaler that explicitly selects the standard recursive
+simplification is:
+
+``` hol4
+fun recursive_subgoaler
+      ({recurse,...} : Traverse.simp_prover_ctxt) condition =
+  recurse condition;
+
+val ss' = simpLib.set_subgoaler recursive_subgoaler ss;
+```
+
+More specialized subgoalers can inspect `stack` and `context_thms`
+before calling `recurse`.
+
+### See also
+
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.mk_tactic_solver`](#simpLib.mk_tactic_solver),
+[`simpLib.set_cond_depth`](#simpLib.set_cond_depth),
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV)

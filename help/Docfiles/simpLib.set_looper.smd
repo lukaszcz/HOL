@@ -1,0 +1,62 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `set_looper`
+
+``` hol4
+simpLib.set_looper :
+  string * (simpset -> tactic) -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Replaces all tactic loopers in a simpset with one named looper.
+
+A call to `set_looper (name, make_tac) ss` returns a new simpset whose
+looper list consists only of `(name, make_tac)`.  Rewrite rules, safe and
+unsafe solvers, and the other simpset strategy settings are unchanged.
+The replacement is recorded as a strategy update and survives later
+rebuilding of the simpset from fragment history.
+
+The supplied function receives the active simpset and returns a tactic.
+After rewriting and final solving fail, that tactic is tried.  On
+success the simplifier restarts rewriting, solving, and looping on every
+resulting subgoal.  The tactic must fail when inapplicable and must not
+succeed without progress; otherwise an unlimited simpset can loop.  A
+`Conv.UNCHANGED` exception is treated as tactic failure.
+
+`set_looper` discards registration order because it creates a singleton
+list.  A later `add_looper` with a different name appends after this
+looper; a later addition with the same name updates it in place.
+
+The bound set by `simpLib.limit n` permits at most `n` successful looper
+rounds during one top-level simplification-tactic call, shared over all
+subgoals.  `Excl name` in a theorem-list argument temporarily suppresses
+the singleton looper, without changing the simpset returned here.
+
+Loopers belong to the tactic layer used by `GEN_SIMP_TAC` and its
+clients.  They are not invoked by `SIMP_CONV`, `SIMP_PROVE`, `SIMP_RULE`,
+or `ASM_SIMP_RULE`.
+
+### Failure
+
+`set_looper` itself never fails and does not run the supplied function.
+A later simplification tactic may diverge if the looper repeatedly
+succeeds without progress and no finite limit is installed.
+
+### Example
+
+``` hol4
+val conjunction_only =
+  simpLib.set_looper
+    ("split conjunctions", fn _ => CONJ_TAC)
+    an_existing_simpset
+```
+
+The result has no loopers inherited from `an_existing_simpset`; only
+`"split conjunctions"` remains.
+
+### See also
+
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.del_looper`](#simpLib.del_looper),
+[`simpLib.looper_ss`](#simpLib.looper_ss),
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV)

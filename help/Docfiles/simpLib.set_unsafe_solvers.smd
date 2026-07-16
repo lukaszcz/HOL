@@ -1,0 +1,38 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `set_unsafe_solvers`
+
+``` hol4
+simpLib.set_unsafe_solvers : Traverse.ssolver list -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Replaces a simpset's unsafe solver list.
+
+`set_unsafe_solvers solvers ss` returns a version of `ss` whose unsafe
+solver list is `solvers`. Duplicate names are removed: the first entry
+with each name is retained, and the order of those first entries is
+preserved. The safe solver list is unchanged. Passing `[]` disables all
+unsafe solvers.
+
+Unsafe solvers discharge residual conditional-rewrite side conditions
+inside the simplifier engine. In unsafe tactic mode they are also tried
+as final solvers on the whole goal. See `add_unsafe_solver` for the full
+pipeline, solver context, and exception behavior.
+
+### Failure
+
+Never fails.
+
+### Example
+
+``` hol4
+val ss_without_unsafe_solvers =
+  simpLib.set_unsafe_solvers [] ss;
+```
+
+### See also
+
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.set_safe_solvers`](#simpLib.set_safe_solvers),
+[`simpLib.remove_solver`](#simpLib.remove_solver)

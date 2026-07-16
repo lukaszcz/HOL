@@ -1,0 +1,71 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `looper_ss`
+
+``` hol4
+simpLib.looper_ss : string * (simpset -> tactic) -> ssfrag
+```
+
+------------------------------------------------------------------------
+
+Packages one named tactic looper as a simpset fragment.
+
+A call to `looper_ss (name, make_tac)` creates an anonymous `ssfrag` that
+contains the looper and no rewrite rules, conversions, congruences,
+decision procedures, or solvers.  It can be merged into a simpset with
+`++`, or combined with other fragments using `merge_ss`.
+
+When a fragment is merged, looper registration follows the same rules as
+`add_looper`.  A new name is appended after existing loopers.  An
+existing name is updated in place, retaining its priority.  Multiple
+loopers in merged fragments are processed in fragment-list order.  At
+run time the first applicable registered looper is selected.
+
+The function `make_tac` is passed the active, per-invocation simpset.  Its
+tactic is tried only after ordinary rewriting and final solvers fail.
+If it succeeds, the complete simplifier sequence is restarted on each
+subgoal.  It must fail when inapplicable and must make progress whenever
+it succeeds; `Conv.UNCHANGED` is interpreted as failure.
+
+The simpset bound installed by `simpLib.limit n` permits at most `n`
+successful looper rounds in one top-level simplification-tactic call.
+The counter is shared by all subgoals.  With no bound, a looper that
+succeeds without progress may diverge.
+
+The looper registration name is independent of the fragment name.  The
+result of `looper_ss` is anonymous; apply `name_ss` if the fragment must
+be removable with `remove_ssfrags` or suppressible with `ExclSF`.
+Regardless of the fragment name, `Excl name` suppresses this particular
+looper for one theorem-list invocation.
+
+Looper payloads are tactic hooks.  They are used by simplification
+tactics based on `GEN_SIMP_TAC`, but ignored by the conversion and rule
+interfaces `SIMP_CONV`, `SIMP_PROVE`, `SIMP_RULE`, and `ASM_SIMP_RULE`.
+
+### Failure
+
+`looper_ss` never fails and does not run the supplied function.  Giving
+the resulting anonymous fragment to an operation that requires a named
+fragment can fail unless it has first been passed through `name_ss`.
+
+### Example
+
+``` hol4
+val CONJ_LOOP_ss =
+  simpLib.looper_ss
+    ("split conjunctions", fn _ => CONJ_TAC)
+  |> simpLib.name_ss "CONJ_LOOP"
+
+val ss = simpLib.empty_ss ++ CONJ_LOOP_ss
+```
+
+Here `Excl "split conjunctions"` disables the tactic while retaining the
+fragment.  `ExclSF "CONJ_LOOP"` removes the named fragment, including
+its looper, for that invocation.
+
+### See also
+
+[`simpLib.add_looper`](#simpLib.add_looper),
+[`simpLib.del_looper`](#simpLib.del_looper),
+[`simpLib.set_looper`](#simpLib.set_looper),
+[`simpLib.SSFRAG`](#simpLib.SSFRAG),
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV)

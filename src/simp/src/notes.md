@@ -1,112 +1,266 @@
 # Note on the Simplifier Code
 
+The simplifier has two layers.  `Traverse` is the conversion engine: it
+rewrites one term and proves a theorem relating the input and output.
+`simpLib` builds simpsets around that engine and supplies the tactic-level
+loop which may solve or split goals.
+
 ## Important Types
 
 **simpset**
 
 :   (From `simpLib`.)
-    Typically built by bundling *fragments* together, but is actually a collection of four important components:
+    A runtime simplification configuration, typically built by combining
+    *simpset fragments*.  Its main components are:
 
-    -   `mk_rewrs` function.
-        This processes “arbitrary” user-provided theorems to turn them into proper rewrites.
+    -   `mk_rewrs`, which turns arbitrary user theorems into controlled
+        rewrites;
+    -   `initial_net`, a higher-order term net containing rewrite and
+        simplifier conversions;
+    -   `dprocs`, the lower-priority decision procedures, represented as
+        *reducers*;
+    -   `travrules`, which contains relations and congruence procedures;
+    -   tactic strategy data: named loopers and separate named safe and
+        unsafe solver lists;
+    -   engine strategy data: an optional subgoaler, conditional-rewrite
+        depth, term order and traversal limit; and
+    -   fragment history and exclusion data used when rebuilding a simpset.
 
-    -   `net` a higher-order term-net containing simplifier-conversions
+    The solver distinction crosses the engine/tactic boundary.  The unsafe
+    list is used inside `Traverse` to prove rewrite side conditions.  At the
+    tactic layer, the invocation mode selects either the safe or unsafe list
+    as final solvers.  A safe tactic invocation therefore still uses unsafe
+    solvers for side conditions.
 
-    -   `dprocs` a list of “decision procedures” (lower priority routines), which are *reducer*s.
+    Loopers are named tactics of type `simpset -> tactic`.  They are tried in
+    registration order and receive the invocation simpset, including
+    temporary marker processing and exclusions.  A looper must fail when it
+    is inapplicable.  Simpset limits also bound successful looper rounds.
 
-    -   `travrules`, a *travrules* value
-
-**ssfrag** (a ‘simpset fragment’)
+**ssfrag** (a “simpset fragment”)
 
 :   (From `simpLib`.)
-    A collection of user-provided data that gets pushed into *simpset*s.
-    Includes rewrites, conversions, congruences, AC rewrites, decision procedures, relation-simplification data and an optional `filter`, which is used to adjust the simpset `mk_rewrs` function.
+    A composable collection of user-provided data which is pushed into a
+    *simpset*.  It can contain rewrites, conversions, theorem congruences,
+    procedural congruences, AC rewrites, decision procedures,
+    relation-simplification data, loopers, safe and unsafe solvers, and an
+    optional `filter` which adjusts the simpset's `mk_rewrs` function.
+
+    The optional subgoaler, conditional depth and term order are whole-
+    simpset strategy choices rather than fragment data.
 
 **reducer**
 
 :   (From `Traverse`.)
-    A bundled piece of code/data that is capable of producing theorems relating input terms to fresh “outputs”.
-    Each reducer has its own notion of “context”, values to which clients can add theorems.
-    (These contexts are implemented with exceptions to give existential types.)
-    Such added theorems may be goal assumptions, or provided by congruence rules.
+    A bundled piece of code and data capable of producing theorems relating
+    input terms to fresh outputs.  Each reducer has its own notion of
+    context, to which clients can add theorems.  These contexts use
+    exceptions to provide existential types.  Added theorems may be goal
+    assumptions or assumptions introduced by congruence rules.
 
-    Each reducer has an `apply` function, which is passed a context, a `solver` for handling side conditions, a `stack` of already attempted side conditions, a continuation `conv`, a `relation` field and an input term.
-    The `apply` function is expected to return a theorem of the form
+    Each reducer has an `apply` function.  It receives the reducer's
+    context, a `solver` for side conditions, a stack of side conditions
+    already being attempted, a recursive `conv`, the current relation and
+    an input term.  It should return a theorem of the form
 
-        |- input  R   output
+        |- input R output
 
-    where `R` might be as given in the `relation` field.
+    where `R` is normally the supplied relation.
 
-    Arithmetic decision procedures are `reducer`s.
-    Their context is the list of theorems that they believe to be relevant (*i.e.*, Presburger terms), and they ignore all of the information provided by `apply` except the context.
+    Arithmetic decision procedures are reducers.  Their private context is
+    the list of theorems they consider relevant (for example, Presburger
+    terms), and they may ignore all other `apply` information.
 
-    Reducers don’t depend on anything else in the simplification code base (though their `conv` and `solver`  continuations will call back into simplifier code).
+    Reducers do not depend on the rest of the simplification code, although
+    their `conv` and `solver` continuations call back into `Traverse`.
+
+**simp_prover_ctxt**, **ssolver** and **subgoaler**
+
+:   (From `Traverse`.)
+    A `simp_prover_ctxt` is the common context supplied to the two
+    side-condition proving seams:
+
+        {stack        : term list,
+         context_thms : thm list,
+         recurse      : term -> thm}
+
+    `stack` records nested side conditions.  `context_thms` contains the
+    theorems currently in scope.  `recurse c` recursively simplifies `c`
+    under equality in that same traversal context and returns a theorem
+    `|- c = c'`.
+
+    A `subgoaler` has type
+
+        simp_prover_ctxt -> term -> thm
+
+    and also returns a simplification equality.  An `ssolver` is a named
+    record whose `solve` field has type
+
+        simp_prover_ctxt -> term -> thm
+
+    but proves its input term.  `simpLib.mk_tactic_solver` adapts a tactic to
+    this interface while making `context_thms` available as assumptions.
 
 **preorder**
 
 :   (From `Travrules`.)
-    A preorder encodes information enough to identify a relation (type `'a -> 'a -> bool`) as something that is reflexive and transitive.
-    The preorder stores the constant of the particular relation, and two functions to implement transitivity and reflexivity.
-    The former takes two theorems as input, while the latter takes both the argument to the relation and a relation term itself, which, if polymorphic, must have been instantiated so that it can be applied to the argument.
-    For the equality case, this data is thus (`min$=`, `TRANS` and (essentially) `REFL`).
+    A preorder identifies a relation of type `'a -> 'a -> bool` as reflexive
+    and transitive.  It stores the relation constant and functions
+    implementing transitivity and reflexivity.  Transitivity takes two
+    theorems.  Reflexivity takes both the argument and an instantiated
+    relation term, because the relation may be polymorphic.  For equality,
+    the data is `min$=`, `TRANS` and essentially `REFL`.
 
 **travrules**
 
 :   (From `Travrules`.)
-    Embodies a list of *preorders* and two lists of *congprocs*: the “standard congprocs” (`congprocs`), and the “weakening congprocs” (`weakenprocs`).
-    The “default” travrules value is `EQ_tr`, and contains the equality preorder, and the equality congproc as a standard congproc.
-    (I.e., it has no weakening congprocs.)
+    A `travrules` value contains preorders and two lists of *congprocs*: the
+    standard `congprocs` and the weakening `weakenprocs`.  The default
+    `EQ_tr` contains the equality preorder and equality congruence procedure,
+    with no weakening congruence procedures.
 
-    The travrules is a static piece of information for guiding simplification.
-    The dynamic data that is maintained during simplification (containing context values, the relation currently being used and the context’s free variables) is a `trav_state`, which is private to module `Traverse`.
-
-    Each simpset contains a list of `travrules` values.
+    This is static traversal information.  The dynamic `trav_state`, private
+    to `Traverse`, stores the current relation, reducer contexts, context
+    theorems and context free variables.  A simpset contains one merged
+    `travrules` value.
 
 **congproc**
 
 :   (From `Opening`.)
-    A congproc is a function that will set up recursive simplification of an input term.
-    With the exception of the core equality congruences (`MK_COMB` and `ABS`) these are all built with the function `CONGPROC`.
-    In addition to the term, the congproc is passed a record of important data containing
+    A congproc sets up recursive simplification of an input term.  Apart from
+    the core equality congruences (`MK_COMB` and `ABS`), congprocs are built
+    with `CONGPROC`.  In addition to the term, a congproc receives:
 
-    -   `depther`: a function which will be applied to subterms to produce simplified sub-terms
-    -   `solver`: used to handle side-conditions in congruence rules
-    -   `relation`: identifies the relation we’re using
-    -   `freevars`: the free variables of the context, which may be relevant if descending under a binder
+    -   `depther`, which recursively simplifies subterms;
+    -   `solver`, which handles congruence-rule side conditions;
+    -   `relation`, identifying the current relation; and
+    -   `freevars`, the context's free variables, which matter when
+        descending under a binder.
 
-    `congproc` values are stored in `travrules`.
+    Congprocs are stored in `travrules`.
+
+## Context Accumulation
+
+`Traverse` keeps two forms of context in parallel.  Each reducer has its
+private existential context, while `trav_state.context_thms` retains the
+actual theorem list for generic solvers.
+
+The theorem list supplied to `TRAVERSE` initializes both forms.  Whenever a
+congruence procedure descends with additional assumptions, `add_context`
+passes the same theorem batch to every reducer and prepends it to
+`context_thms`.  Thus side-condition provers see goal assumptions and the
+assumptions introduced while traversing congruence rules, not merely the
+initial user rewrite theorems.
+
+## Engine Side-Condition Pipeline
+
+A reducer or congruence procedure calls the engine solver when a conditional
+rewrite or congruence rule has a condition `c`.  `Traverse` constructs a
+`simp_prover_ctxt` from the current side-condition stack, accumulated
+`context_thms` and recursive equality traversal.  It then runs this pipeline:
+
+1. Run the configured subgoaler on `c`, or use `recurse` when no subgoaler is
+   configured, obtaining `|- c = c'`.
+2. If `c'` is `T`, use `EQT_ELIM` to prove `c`.
+3. Otherwise, try the engine solver records in order on `c'`.  The first
+   solver which proves `c'` is transported back across the equality to prove
+   `c`.
+
+Only `HOL_ERR` means that a solver is inapplicable; unrelated exceptions
+propagate.  Traversal-limit state is restored when this pipeline fails.
+With no subgoaler and no solver records, a compatibility fast path performs
+the original operation, `EQT_ELIM` after recursive traversal.
+
+`traversedata_for_ss` always supplies the simpset's *unsafe* solver list to
+this pipeline.  This is true even when the surrounding tactic is in safe
+mode.
+
+## Dynamically Scoped Engine Settings
+
+`Cond_rewr.stack_limit` and `Cond_rewr.term_ord` remain global references for
+compatibility, but a simpset can override them with `set_cond_depth` and
+`set_term_ord`.  The corresponding fields in `Traverse.traverse_data` are
+options.
+
+At entry to `TRAVERSE` or `ROOT_REWRITE`, a present value is dynamically
+bound around the complete traversal with `Lib.with_flag`.  Restoration is
+exception-safe, and nested traversals restore the outer binding correctly.
+`NONE` leaves the global reference untouched.  Consequently old code which
+sets `Cond_rewr.stack_limit` still works for simpsets without an override,
+while different simpsets can select independent settings.
+
+The depth setting bounds nested conditional-rewrite attempts.  The term
+order controls the orientation guard for unbounded permutative rewrites;
+bounded rewrites continue to bypass that guard.
+
+## Tactic Loop and Conversion Boundary
+
+`GEN_SIMP_TAC` and the usual simplification tactics use the following
+per-goal strategy after processing theorem-list markers:
+
+1. Rewrite the goal with `SIMP_CONV`.
+2. On the residual goal, try final solvers in order.  Safe mode selects the
+   safe list; ordinary mode selects the unsafe list.
+3. If no final solver applies, run the first applicable enabled looper.
+4. Recursively run the whole strategy on every subgoal produced by that
+   looper.
+
+In schematic tactic notation, the shape is:
+
+    rewrite THEN
+      (final_solver ORELSE
+       TRY (first_looper THEN_LT ALLGOALS recurse))
+
+If rewriting proves the goal, there is no residual goal for later stages.  If
+neither a final solver nor a looper applies, `TRY` leaves the rewritten goal
+open.  Re-entering the complete strategy after a looper is important: every
+new subgoal is rewritten and gets its own solver and looper opportunity.
+
+The conversion APIs deliberately stop at the engine boundary.  `SIMP_CONV`,
+`SIMP_RULE` and `SIMP_PROVE` use unsafe solvers inside `Traverse` for rewrite
+side conditions, but never run tactic-level loopers or final solvers.  They
+also never use the safe solver list.  Assumption-rewriting passes in the
+full-simplification tactics use this conversion-only behavior; their final
+goal-directed simplification enters the tactic loop.
 
 ## Important Functions
 
 `SIMP_QCONV`
 
 :   (From `simpLib`.)
-    Calls `TRAVERSE` after building initial context values for all of the embedded reducers (giving a trav_state)
+    Builds initial reducer contexts and calls `TRAVERSE` with the simpset's
+    rewrite reducer, decision procedures, traversal rules and engine strategy
+    fields.
 
 `TRAVERSE`
 
 :   (From `Traverse`.)
-    Implements the logic of the simplifier’s traversal of terms.
-    In particular, this is where the preorder/top-down nature of the simplifier wrt its equality rewrites is decided, because of the way it begins with
+    Implements the simplifier's traversal of terms.  Its central ordering is
+    schematically
 
         repeat high_priority then descend ...
 
-    The `high_priority` stuff here is to do fire the equality reducer.
-    Descent is then the recursive simplification of sub-terms.
-    The `...` portion is where decision procedures get to fire, and where weakenprocs get a chance to fire.
-    These effectively see the term in bottom-up fashion as a result.
+    The high-priority phase fires the rewrite reducer.  Descent recursively
+    simplifies subterms.  The remaining phase gives lower-priority decision
+    procedures and weakening congruence procedures a chance to fire, so they
+    effectively see terms bottom-up.  `ROOT_REWRITE` uses the same data and
+    context machinery but applies a reducer only at the root.
 
 `CONGPROC`
 
 :   (From `Opening`.)
-    This builds a *congproc* given a `congrule` theorem and a general notion of reflexivity in the function `refl`.
-    It’s important that `refl` be able to generate reflexivity theorems for multiple relations at once: this allows different relations to appear in the assumptions of `congrule`; the conclusion might want to draw conclusions about equality even as one of the assumptions is about another relation again (as happens in weakening congruences).
+    Builds a congproc from a congruence theorem and a general reflexivity
+    operation.  Reflexivity must support several relations at once: premises
+    of a congruence theorem may use one relation while its conclusion uses
+    equality, as happens with weakening congruences.
 
-    One problem here is that reprocessing of assumptions can unnecessarily descend into terms that have already been processed once.
-    For example, in the rule for conditional expressions, we have
+    Reprocessing congruence assumptions can unnecessarily revisit terms.  For
+    example, the conditional-expression rule has the shape
 
-        p = p’ ==> (p’ ==> t = t’) ==> (~p’ ==> e = e’) ==>
-        (COND p t e = COND p’ t’ e’)
+        p = p' ==> (p' ==> t = t') ==> (~p' ==> e = e') ==>
+        (COND p t e = COND p' t' e')
 
-    and the reprocess flag will be set to true for the `~p’` assumption (it’s not just a variable).
-    Sure, if negation descends over a disjunction or similar, this is an important thing to do (though the `mk_cond_rewr` could presumably do it too), but if nothing simplifies at the top level, it’s painful to have to descend into `p’` again.
+    The reprocess flag is set for the `~p'` assumption because it is not just
+    a variable.  Reprocessing is important if negation exposes a simplifiable
+    form, but if nothing changes at the top level it repeats descent into
+    `p'`.

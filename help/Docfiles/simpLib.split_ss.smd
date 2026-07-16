@@ -1,0 +1,81 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `split_ss`
+
+``` hol4
+simpLib.split_ss : ssfrag
+```
+
+------------------------------------------------------------------------
+
+Provides the simplifier's rule-directed case splitter.
+
+`split_ss` is a named simpset fragment with the name `"split"`. Adding it
+to a simpset installs the looper named `"splitter"`. Whenever that
+looper runs, it builds its rule list from two sources:
+
+1. the persistent theorems registered with the `[split]` attribute; and
+2. cached split and assumption-split rules from `TypeBase` for datatype
+   case constants occurring in the current conclusion or assumptions.
+
+The looper invokes [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC), so each
+successful round performs one split and prefers the conclusion to the
+assumptions. The simplification tactic then recursively processes the
+resulting goals. A simpset bound installed by `simpLib.limit` bounds
+successful looper rounds, including splitter rounds.
+
+The fragment also contains an ordinary rewrite which collapses a
+vacuous conditional split:
+
+``` hol4
+(b ==> t) /\ (~b ==> t) = t
+```
+
+Loopers are part of the simplification *tactic* pipeline. Thus tactics
+built by `GEN_SIMP_TAC`, including `SIMP_TAC`, `ASM_SIMP_TAC`, and
+`FULL_SIMP_TAC`, run the splitter. `SIMP_CONV` and `SIMP_RULE` do not run
+loopers, although they can still use the fragment's ordinary rewrite.
+
+Persistent rules have strategy names `split thy$name` or
+`split_asm thy$name`. A datatype rule can be suppressed for one
+invocation with either its full name `Excl "split.case thy$tyop"` or
+its short name, for example `Excl "split.case bool"`.
+
+### Failure
+
+Constructing or adding `split_ss` never fails. If no rule applies, the
+looper makes no change and ordinary simplification continues.
+
+### Example
+
+This static example equips `bool_ss` with datatype splitting:
+
+``` hol4
+val case_ss = bool_ss ++ simpLib.split_ss;
+
+(* A SIMP_TAC using case_ss can change
+
+     P (if b then x else y)
+
+   to
+
+     (b ==> P x) /\ (~b ==> P y)
+*)
+```
+
+Custom persistent rules can be added at theorem declaration time:
+
+``` hol4
+Theorem pick_split[split]:
+  !P. P (pick b x y) <=>
+      (b ==> P x) /\ (~b ==> P y)
+Proof
+  ...
+QED
+```
+
+### See also
+
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.del_split`](#simpLib.del_split),
+[`simpLib.Split`](#simpLib.Split)

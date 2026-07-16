@@ -1,0 +1,67 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `Split`
+
+``` hol4
+simpLib.Split : thm -> thm
+```
+
+------------------------------------------------------------------------
+
+Marks a theorem as a split rule in a simplifier theorem-list argument.
+
+`Split th` is logically equivalent to `th`, but its conclusion is wrapped
+in a marker recognised by the simplifier. While processing a theorem
+list, the simplifier removes the marker and applies
+[`simpLib.add_split`](#simpLib.add_split) to the invocation's simpset.
+The marked theorem is therefore installed as a looper rather than as an
+ordinary rewrite.
+
+The theorem must have a database name and the split-rule shape documented
+for [`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC). Whether it is routed to
+conclusion or assumption splitting is determined structurally: a
+syntactically negated right-hand side denotes an assumption split rule.
+
+`Split` is a per-theorem-list mechanism. It neither changes the original
+simpset nor registers `th` in the persistent `[split]` theorem set.
+Use the lowercase `[split]` theorem attribute with `simpLib.split_ss` for
+persistent, ancestry-aware registration, or `add_split` to construct a
+modified simpset explicitly.
+
+The marker is processed by `SIMP_CONV`, `SIMP_PROVE`, simplification
+tactics and the `&&` simpset operation. The actual looper runs only in
+the tactic pipeline, so the marker alone causes no split in `SIMP_CONV`
+or `SIMP_PROVE`. For `&&`, it remains installed in the simpset that the
+operation returns.
+
+### Failure
+
+Constructing `Split th` does not validate the split rule. A simplifier
+operation that consumes the marker fails if `th` is malformed or lacks a
+local or stored database name.
+
+### Example
+
+Given the stored theorem `pick_split`, this static tactic fragment enables
+it only for the displayed simplifier call:
+
+``` hol4
+SIMP_TAC bool_ss [simpLib.Split pick_split]
+```
+
+For example, if
+
+``` hol4
+|- !P. P (pick b x y) <=>
+         (b ==> P x) /\ (~b ==> P y)
+```
+
+is the theorem's conclusion, the tactic can split a matching occurrence
+of `pick` without adding a persistent attribute or changing `bool_ss`.
+
+### See also
+
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC),
+[`simpLib.add_split`](#simpLib.add_split),
+[`simpLib.del_split`](#simpLib.del_split),
+[`simpLib.split_ss`](#simpLib.split_ss),
+[`simpLib.Cong`](#simpLib.Cong)

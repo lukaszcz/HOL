@@ -1,0 +1,108 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `GEN_GLOBAL_SIMP_TAC`
+
+``` hol4
+simpLib.GEN_GLOBAL_SIMP_TAC :
+  xsimptac_config -> simpset -> thm list -> tactic
+```
+
+------------------------------------------------------------------------
+
+Globally simplifies a goal under extended fixpoint control.
+
+The configuration type is
+
+``` hol4
+type xsimptac_config =
+  {base : simptac_config,
+   concl_in_fixpoint : bool,
+   imp_rebuild : bool}
+```
+
+where `simptac_config` is
+
+``` hol4
+type simptac_config =
+  {strip : bool,
+   elimvars : bool,
+   droptrues : bool,
+   oldestfirst : bool}
+```
+
+`GEN_GLOBAL_SIMP_TAC cfg ss ths` repeatedly simplifies every assumption
+using all of the other assumptions, `ths`, and `ss`.  This reaches a
+mutual fixpoint, so a rule exposed by a later assumption can cause an
+earlier one to be revisited.  Change counting avoids reprocessing a
+tail already known to be fixed; this scheduling optimization does not
+change the normal result.
+
+The fields of `#base cfg` control processing of each simplified
+assumption.  `strip` applies `STRIP_ALL_THEN` when putting it back;
+`elimvars` uses an eliminable equality as a variable substitution;
+`droptrues` discards an assumption simplified to `T`; and `oldestfirst`
+selects the oldest assumption first rather than the newest.
+
+The extra fields control the extent of the fixpoint:
+
+* If `concl_in_fixpoint` is `false`, assumptions first reach their
+  fixpoint and the conclusion is then simplified once.  If it is
+  `true`, the conclusion is simplified after every assumption pass.  A
+  changed or structurally split conclusion restarts the assumption
+  pass on each resulting goal.
+* If `imp_rebuild` is `true`, the tactic also looks for a root rewrite
+  of progressively nested, discharged forms `a ==> w`.  On the first
+  hit it replaces that implication, strips its leading implications
+  back into assumptions, and restarts the whole fixpoint.  This permits
+  implication-left rewrites to rebuild the assumption/conclusion
+  structure.  If the field is `false`, this extra root-rewrite search
+  is omitted.
+
+The final conclusion step uses `GEN_SIMP_TAC {safe=false}`.  It therefore
+honours the simpset's loopers and unsafe final solvers.  Simplification
+of each individual assumption is conversion-only: loopers and final
+solvers are not run during those passes.  Rewrite markers in `ths` are
+processed, and the remaining theorems are available throughout both the
+assumption and conclusion phases.
+
+The existing `global_simp_tac base` is equivalent to
+
+``` hol4
+simpLib.GEN_GLOBAL_SIMP_TAC
+  {base = base, concl_in_fixpoint = false, imp_rebuild = false}
+```
+
+Thus its conclusion remains outside the mutual fixpoint and implication
+rebuilding is disabled by default.
+
+### Failure
+
+The tactic does not fail merely because no simplification is possible,
+but it may diverge.  Exceptions from user conversions, loopers, solvers,
+or ordering functions may propagate.
+
+### Example
+
+The following schematic configuration enables both extended modes while
+using the usual stripping and truth-dropping policy.
+
+``` hol4
+val base_cfg =
+  {strip = true, elimvars = false,
+   droptrues = true, oldestfirst = true}
+
+val extended_global =
+  simpLib.GEN_GLOBAL_SIMP_TAC
+    {base = base_cfg,
+     concl_in_fixpoint = true,
+     imp_rebuild = true}
+    bool_ss
+```
+
+It can then be applied as `extended_global ths`.
+
+### See also
+
+[`bossLib.gs`](#bossLib.gs),
+[`simpLib.SIMP_TAC`](#simpLib.SIMP_TAC),
+[`simpLib.SIMP_RULE`](#simpLib.SIMP_RULE),
+[`simpLib.clear_rules`](#simpLib.clear_rules)

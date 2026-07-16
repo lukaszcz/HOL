@@ -1,0 +1,116 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `add_unsafe_solver`
+
+``` hol4
+simpLib.add_unsafe_solver : Traverse.ssolver -> simpset -> simpset
+```
+
+------------------------------------------------------------------------
+
+Adds a named unsafe solver to a simpset.
+
+A value of type `Traverse.ssolver` has the form
+
+``` hol4
+{name : string,
+ solve : Traverse.simp_prover_ctxt -> term -> thm}
+```
+
+Its `solve` function must prove the supplied Boolean term. The prover
+context passed to it has fields
+
+``` hol4
+{stack : term list, context_thms : thm list, recurse : term -> thm}
+```
+
+Here `stack` is the current conditional-rewrite side-condition stack,
+`context_thms` contains the supplied and congruence-derived context
+available at this point, and `recurse c` recursively simplifies `c`,
+returning an equality theorem. A solver may ignore fields it does not
+need.
+
+`add_unsafe_solver solver ss` appends `solver` to the unsafe solver list
+of `ss`. Solvers are tried in registration order. Names are keys: if the
+unsafe list already contains a solver with the same name, the existing
+solver is retained and no second active entry is created. The explicit
+addition is still recorded in the simpset history. Thus it survives a
+later history rebuild that removes a fragment which supplied the earlier
+entry. The safe and unsafe lists are independent, so the same name can
+occur once in each.
+
+Unsafe solvers have two distinct roles.
+
+* **Simplifier-engine side conditions.** When a conditional rewrite or
+  reducer produces a condition `c`, the engine first recursively
+  simplifies it, or applies the simpset's configured subgoaler. With a
+  solver pipeline active, failed recursive simplification is treated as
+  the reflexive equality on `c`, allowing the solvers to try the original
+  condition. If preprocessing produces `|- c = T`, the condition is
+  solved immediately. Otherwise,
+  each unsafe solver is asked to prove the residual right-hand side; a
+  proof of `c'` is transported back through `|- c = c'`. Safe solvers
+  are never used at this engine seam. This remains true when
+  `GEN_SIMP_TAC {safe=true}` is used: recursive rewrite side conditions
+  always use the unsafe list.
+
+* **Tactic-layer final solving.** After the rewrite phase of
+  `GEN_SIMP_TAC {safe=false}`, the unsafe solvers are tried on the whole
+  residual goal, before any looper. For `GEN_SIMP_TAC {safe=true}`, only
+  the safe list is used for this final step. Thus `SIMP_TAC`,
+  `ASM_SIMP_TAC`, and their usual unsafe-mode descendants use unsafe
+  solvers both inside rewriting and as final solvers. `SIMP_CONV` has no
+  tactic-layer final step, but does use unsafe solvers for rewrite side
+  conditions.
+
+For a final-solver call, `stack` is empty, `context_thms` contains the
+available tactic assumptions and supplied context theorems, and
+`recurse` simplifies with the invocation simpset and that context.
+
+At the engine seam, a `HOL_ERR` raised by one solver means that the next
+solver is tried; other exceptions propagate. A successful solver must
+return a theorem whose conclusion is the requested term. Final solving
+also rejects a theorem with the wrong conclusion or with hypotheses not
+accounted for by the tactic goal. Consequently, “unsafe” describes when
+the solver is selected, not a relaxation of HOL's kernel checking.
+
+A named solver can be suppressed for one simplifier invocation with
+`Excl name`, and can be removed persistently with `remove_solver`.
+
+### Failure
+
+`add_unsafe_solver` itself never fails. A registered solver may fail or
+raise an exception when it is later invoked, as described above.
+
+### Example
+
+The following solver proves a condition when that condition is already
+present among the simplifier's context theorems.
+
+``` hol4
+fun context_solver
+      ({context_thms,...} : Traverse.simp_prover_ctxt)
+      condition =
+  case List.find
+         (fn th => aconv (concl th) condition) context_thms of
+      SOME th => th
+    | NONE =>
+        raise mk_HOL_ERR "example" "context_solver" "not applicable";
+
+val ss =
+  simpLib.add_unsafe_solver
+    {name = "context lookup", solve = context_solver}
+    boolSimps.bool_ss;
+```
+
+For tactic-based solvers, `mk_tactic_solver` is usually more convenient.
+
+### See also
+
+[`simpLib.add_safe_solver`](#simpLib.add_safe_solver),
+[`simpLib.set_unsafe_solvers`](#simpLib.set_unsafe_solvers),
+[`simpLib.remove_solver`](#simpLib.remove_solver),
+[`simpLib.set_subgoaler`](#simpLib.set_subgoaler),
+[`simpLib.mk_tactic_solver`](#simpLib.mk_tactic_solver),
+[`simpLib.solver_ss`](#simpLib.solver_ss),
+[`simpLib.SIMP_CONV`](#simpLib.SIMP_CONV),
+[`simpLib.SIMP_TAC`](#simpLib.SIMP_TAC)

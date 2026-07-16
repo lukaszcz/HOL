@@ -1,0 +1,50 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"}; open simpLib;
+## `solver_ss`
+
+``` hol4
+simpLib.solver_ss : Traverse.ssolver -> ssfrag
+```
+
+------------------------------------------------------------------------
+
+Creates a simpset fragment containing one unsafe solver.
+
+`solver_ss solver` is an anonymous fragment with `solver` in its unsafe
+solver list and no rewrites, conversions, congruences, decision
+procedures, loopers, safe solvers, or procedural congruences. Adding the
+fragment to a simpset with `++` appends the solver unless that simpset's
+unsafe list already contains the same name. No duplicate active entry is
+created, and registration order is preserved.
+
+Once merged into a simpset, the solver is available for simplifier
+side conditions and for unsafe-mode final solving. See
+`add_unsafe_solver` for those two roles.
+
+Use `name_ss` if the fragment must later be identifiable by
+`remove_ssfrags` or `exclude_ssfrags`.
+
+### Failure
+
+Never fails.
+
+### Example
+
+``` hol4
+val assumption_solver =
+  simpLib.mk_tactic_solver
+    ("assumption", FIRST_ASSUM ACCEPT_TAC);
+
+val assumption_ss =
+  simpLib.name_ss "assumption solver"
+    (simpLib.solver_ss assumption_solver);
+
+val ss = boolSimps.bool_ss ++ assumption_ss;
+```
+
+### See also
+
+[`simpLib.safe_solver_ss`](#simpLib.safe_solver_ss),
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.mk_tactic_solver`](#simpLib.mk_tactic_solver),
+[`simpLib.remove_ssfrags`](#simpLib.remove_ssfrags),
+[`simpLib.++`](#simpLib..KAL)
