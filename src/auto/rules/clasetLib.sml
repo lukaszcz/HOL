@@ -352,14 +352,16 @@ fun drop_illformed fname name cs =
   (HOL_WARNING "clasetLib" fname
      ("Dropping ill-formed persistent rule " ^ name); cs)
 
-fun apply_cdelta (ADD {name, spec}) cs =
-      (case load_delta (ADD {name = name, spec = spec}) of
-           NONE => cs
-         | SOME (name', spec', th) =>
-             let val pname = persistent_name name' in
-               add_rule spec' (pname, th) cs
-               handle HOL_ERR _ => drop_illformed "apply_cdelta" pname cs
-             end)
+fun apply_add_delta fname {name, spec} cs =
+  case load_delta (ADD {name = name, spec = spec}) of
+      NONE => cs
+    | SOME (name', spec', th) =>
+        let val pname = persistent_name name' in
+          add_rule spec' (pname, th) cs
+          handle HOL_ERR _ => drop_illformed fname pname cs
+        end
+
+fun apply_cdelta (ADD args) cs = apply_add_delta "apply_cdelta" args cs
   | apply_cdelta (RM name) cs = remove_rule name cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
@@ -396,9 +398,20 @@ fun rebuild_claset decls
         dup_netpair = dup_netpair}
   end
 
+fun is_removal (RM _) = true
+  | is_removal (ADD _) = false
+
+fun apply_add_batch (ADD args, cs) =
+      apply_add_delta "update_decls" args cs
+  | apply_add_batch (RM _, _) =
+      raise Fail "batch_apply: unexpected removal in ADD-only batch"
+
 fun batch_apply deltas (cs as CS {decls, ...}) =
-  rebuild_claset
-    (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas) cs
+  if List.exists is_removal deltas then
+    rebuild_claset
+      (List.foldl (fn (delta, acc) => update_decls delta acc) decls deltas) cs
+  else
+    List.foldl apply_add_batch cs deltas
 
 fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
   | apply_pending (ApplyBatch deltas) cs = batch_apply deltas cs

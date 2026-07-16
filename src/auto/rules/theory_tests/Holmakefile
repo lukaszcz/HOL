@@ -15,6 +15,7 @@ reloadCheck.exe: reloadCheck.uo reloadBaseTheory.uo ../NTactical.uo \
 	$(HOLMOSMLC) -o $@ $<
 
 declBTheory.uo: declATheory.uo
+batchAddChildTheory.uo: batchAddBaseTheory.uo
 diamondAddTheory.uo: diamondRootTheory.uo
 diamondRemoveTheory.uo: diamondRootTheory.uo
 diamondChildTheory.uo: diamondAddTheory.uo diamondRemoveTheory.uo
