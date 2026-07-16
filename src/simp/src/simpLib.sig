@@ -61,6 +61,7 @@ sig
   type controlled_thm = BoundedRewrites.controlled_thm
 
   type ssfrag
+  type simpset
 
   val SSFRAG :
     {name : string option,
@@ -72,9 +73,9 @@ sig
      congs: thm list} -> ssfrag
 
   val empty_ssfrag : ssfrag
-  val ssf_upd_rewrs : ((thname option * thm) list -> (thname option * thm) list)
-                      ->
-                      ssfrag -> ssfrag
+  val ssf_upd_rewrs :
+    ((thname option * thm) list -> (thname option * thm) list) ->
+    ssfrag -> ssfrag
   val frag_rewrites : ssfrag -> thm list
   val frag_name : ssfrag -> string option
 
@@ -100,6 +101,11 @@ sig
   val ac_ss          : (thm * thm) list -> ssfrag
   val conv_ss        : convdata -> ssfrag
   val relsimp_ss     : relsimpdata -> ssfrag
+  val looper_ss      : string * (simpset -> tactic) -> ssfrag
+  val solver_ss      : Traverse.ssolver -> ssfrag
+  val safe_solver_ss : Traverse.ssolver -> ssfrag
+  val congproc_ss    : {name : string, relation : term,
+                        proc : Opening.congproc} -> ssfrag
   val std_conv_ss    : stdconvdata -> ssfrag
   val merge_ss       : ssfrag list -> ssfrag
   val name_ss        : string -> ssfrag -> ssfrag
@@ -124,7 +130,6 @@ sig
     * and rewrite makers.
     * ---------------------------------------------------------------------*)
 
-  type simpset
   type weakener_data = Travrules.preorder list * thm list * Traverse.reducer
 
   val empty_ss        : simpset
@@ -147,6 +152,20 @@ sig
   val limit           : int -> simpset -> simpset
   val unlimit         : simpset -> simpset
   val add_named_rwt   : (thname * thm) -> ssfrag -> ssfrag
+
+  val add_looper : string * (simpset -> tactic) -> simpset -> simpset
+  val del_looper : string -> simpset -> simpset
+  val set_looper : string * (simpset -> tactic) -> simpset -> simpset
+  val add_unsafe_solver : Traverse.ssolver -> simpset -> simpset
+  val add_safe_solver : Traverse.ssolver -> simpset -> simpset
+  val set_unsafe_solvers : Traverse.ssolver list -> simpset -> simpset
+  val set_safe_solvers : Traverse.ssolver list -> simpset -> simpset
+  val remove_solver : string -> simpset -> simpset
+  val set_subgoaler : Traverse.subgoaler -> simpset -> simpset
+  val set_cond_depth : int -> simpset -> simpset
+  val set_term_ord : (term * term -> order) -> simpset -> simpset
+  val mk_tactic_solver : string * tactic -> Traverse.ssolver
+  val clear_rules : simpset -> simpset
 
   val add_weakener : weakener_data -> simpset -> simpset
 

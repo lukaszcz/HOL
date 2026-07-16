@@ -227,7 +227,9 @@ val _ = let
   val doit = QCONV (SIMP_CONV (bool_ss ++ CONJ_ss) [])
   fun check th = th |> concl |> rhs |> aconv F
 in
-  infloop_protect "CONJ_ss with T=F and F=T assumptions (if hangs, it's failed)" check doit t
+  infloop_protect
+    "CONJ_ss with T=F and F=T assumptions (if hangs, it's failed)"
+    check doit t
 end
 
 (* ---------------------------------------------------------------------- *)
@@ -393,7 +395,8 @@ val _ = let
       end
   val oneone = Q.prove(‘ONE_ONE f ==> !x y. (f x = f y) <=> (x = y)’,
                        REWRITE_TAC[ONE_ONE_THM] >> rpt strip_tac >> eq_tac >>
-                       strip_tac >- (first_x_assum irule >> ASM_REWRITE_TAC[])>>
+                       strip_tac >-
+                         (first_x_assum irule >> ASM_REWRITE_TAC[]) >>
                        ASM_REWRITE_TAC[])
 in
 List.app (ignore o req_test) [
@@ -451,7 +454,8 @@ in
      [([], T_t)]),
     ("gs oldestfirst", gs gsc bool_ss [], ([“x:'a = y”, “x:'a = z”], “p:bool”),
      [([“x:'a = z”, “y:'a = z”], “p:bool”)]),
-    ("gs oldestfirst", gs gsc' bool_ss [], ([“x:'a = y”, “x:'a = z”], “p:bool”),
+    ("gs oldestfirst", gs gsc' bool_ss [],
+     ([“x:'a = y”, “x:'a = z”], “p:bool”),
      [([“z:'a = y”, “x:'a = y”], “p:bool”)]),
     ("fs + Excl (in assumptions)", fs bool_ss [Excl "EXISTS_SIMP"],
      ([“^T_t = X”], “p /\ q”), [([“^T_t = X”], “p /\ q”)]),
@@ -884,6 +888,298 @@ in
      congLib.CONGRUENCE_EQ_SIMP_CONV conglib_cs pureSimps.pure_ss [],
      ``(conglib_f : 'a -> 'b) conglib_x``, ``conglib_y:'b``)
 end
+
+(* ---------------------------------------------------------------------- *)
+(* simpLib strategy fields, fragment merges, and history rebuilding.      *)
+(* ---------------------------------------------------------------------- *)
+
+fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
+
+  fun occurrences needle haystack =
+    let
+      val needle_n = String.size needle
+      val haystack_n = String.size haystack
+      fun loop i n =
+        if i + needle_n > haystack_n then n
+        else if String.substring(haystack,i,needle_n) = needle then
+          loop (i + needle_n) (n + 1)
+        else loop (i + 1) n
+    in
+      if needle_n = 0 then 0 else loop 0 0
+    end
+
+  fun position needle haystack =
+    let
+      val needle_n = String.size needle
+      val haystack_n = String.size haystack
+      fun loop i =
+        if i + needle_n > haystack_n then NONE
+        else if String.substring(haystack,i,needle_n) = needle then SOME i
+        else loop (i + 1)
+    in
+      if needle_n = 0 then NONE else loop 0
+    end
+
+  fun check msg test =
+    (tprint msg; if test () then OK() else die "FAILED!")
+
+  val dummy_looper : simpset -> tactic = fn _ => NO_TAC
+  val other_looper : simpset -> tactic = fn _ => ALL_TAC
+
+  val loopers_added =
+    empty_ss
+    |> add_looper ("surface looper one",dummy_looper)
+    |> add_looper ("surface looper two",dummy_looper)
+    |> add_looper ("surface looper one",other_looper)
+  val loopers_added_pp = pp loopers_added
+
+  val _ = check "looper add updates by name without changing order"
+    (fn () =>
+       occurrences "surface looper one" loopers_added_pp = 1 andalso
+       occurrences "surface looper two" loopers_added_pp = 1 andalso
+       (case (position "surface looper one" loopers_added_pp,
+              position "surface looper two" loopers_added_pp) of
+            (SOME one,SOME two) => one < two
+          | _ => false))
+
+  val singleton_looper =
+    set_looper ("surface singleton looper",dummy_looper) loopers_added
+  val singleton_looper_pp = pp singleton_looper
+
+  val _ = check "set_looper replaces the registered looper list"
+    (fn () =>
+       occurrences "surface singleton looper" singleton_looper_pp = 1 andalso
+       occurrences "surface looper one" singleton_looper_pp = 0 andalso
+       occurrences "surface looper two" singleton_looper_pp = 0)
+
+  val no_loopers = del_looper "surface singleton looper" singleton_looper
+  val _ = check "del_looper removes a looper by name"
+    (fn () =>
+       occurrences "surface singleton looper" (pp no_loopers) = 0)
+
+  fun never_solver _ _ =
+    raise mk_HOL_ERR "selftest" "never_solver" "not applicable"
+  val unsafe_one : Traverse.ssolver =
+    {name="surface unsafe one",solve=never_solver}
+  val unsafe_duplicate : Traverse.ssolver =
+    {name="surface unsafe one",solve=never_solver}
+  val safe_one : Traverse.ssolver =
+    {name="surface safe one",solve=never_solver}
+
+  val solver_merge_ss =
+    empty_ss ++ solver_ss unsafe_one ++ solver_ss unsafe_duplicate
+  val solver_merge_data = traversedata_for_ss solver_merge_ss
+
+  val _ = check "solver fragments append and deduplicate by name"
+    (fn () =>
+       case #solvers solver_merge_data of
+           [{name,...}] => name = "surface unsafe one"
+         | _ => false)
+
+  val fragment_unsafe : Traverse.ssolver =
+    {name="surface fragment unsafe",solve=never_solver}
+  val fragment_safe : Traverse.ssolver =
+    {name="surface fragment safe",solve=never_solver}
+  val strategy_fragment =
+    named_merge_ss "surface strategy fragment"
+      [looper_ss ("surface fragment looper",dummy_looper),
+       solver_ss fragment_unsafe, safe_solver_ss fragment_safe]
+  val fragment_set = empty_ss ++ strategy_fragment
+  val fragment_removed =
+    remove_ssfrags ["surface strategy fragment"] fragment_set
+  val fragment_excluded =
+    exclude_ssfrags ["surface strategy fragment"] fragment_set
+  val replayed_duplicate =
+    fragment_set
+    |> add_unsafe_solver fragment_unsafe
+    |> add_safe_solver fragment_safe
+    |> remove_ssfrags ["surface strategy fragment"]
+  val replayed_duplicate_data = traversedata_for_ss replayed_duplicate
+
+  val _ = check "history replay retains later duplicate solver additions"
+    (fn () =>
+       length (#solvers replayed_duplicate_data) = 1 andalso
+       occurrences "surface fragment safe" (pp replayed_duplicate) = 1)
+
+  val _ = check "history rebuild removes fragment strategy payloads"
+    (fn () =>
+       occurrences "surface fragment looper" (pp fragment_removed) = 0 andalso
+       occurrences "surface fragment unsafe" (pp fragment_removed) = 0 andalso
+       occurrences "surface fragment safe" (pp fragment_removed) = 0 andalso
+       occurrences "surface fragment looper" (pp fragment_excluded) = 0 andalso
+       occurrences "surface fragment unsafe" (pp fragment_excluded) = 0 andalso
+       occurrences "surface fragment safe" (pp fragment_excluded) = 0)
+
+  val both_solvers =
+    empty_ss
+    |> add_unsafe_solver unsafe_one
+    |> add_safe_solver safe_one
+  val both_solvers_pp = pp both_solvers
+
+  val _ = check "pp_simpset prints unsafe and safe solver names"
+    (fn () =>
+       occurrences "surface unsafe one" both_solvers_pp = 1 andalso
+       occurrences "surface safe one" both_solvers_pp = 1)
+
+  val removed_solvers = remove_solver "surface unsafe one" both_solvers
+  val removed_solvers = remove_solver "surface safe one" removed_solvers
+
+  val _ = check "remove_solver removes names from both solver lists"
+    (fn () =>
+       occurrences "surface unsafe one" (pp removed_solvers) = 0 andalso
+       occurrences "surface safe one" (pp removed_solvers) = 0)
+
+  fun preserving_subgoaler
+        ({recurse,...} : Traverse.simp_prover_ctxt) = recurse
+  fun reverse_order pair =
+    case Cond_rewr.ac_term_ord pair of
+        LESS => GREATER
+      | EQUAL => EQUAL
+      | GREATER => LESS
+
+  val disposable =
+    named_rewrites "surface disposable"
+      [ASSUME ``surface_disposable_p = T``]
+  val configured =
+    empty_ss ++ disposable
+    |> add_looper ("surface rebuilt looper",dummy_looper)
+    |> add_unsafe_solver unsafe_one
+    |> add_safe_solver safe_one
+    |> set_subgoaler preserving_subgoaler
+    |> set_cond_depth 37
+    |> set_term_ord reverse_order
+  val rebuilt = remove_ssfrags ["surface disposable"] configured
+  val rebuilt_data = traversedata_for_ss rebuilt
+  val rebuilt_pp = pp rebuilt
+  val order_probe = (``surface_order_x:'a``, ``surface_order_y:'a``)
+  val subgoal_probe = ``surface_subgoal_x:'a``
+  val prover_ctxt =
+    {stack=[],context_thms=[],recurse=fn tm => REFL tm}
+
+  val _ = check "remove_ssfrags preserves all strategy fields"
+    (fn () =>
+       occurrences "surface rebuilt looper" rebuilt_pp = 1 andalso
+       occurrences "surface safe one" rebuilt_pp = 1 andalso
+       (case #solvers rebuilt_data of
+            [{name,...}] => name = "surface unsafe one"
+          | _ => false) andalso
+       #cond_depth rebuilt_data = SOME 37 andalso
+       (case #term_ord rebuilt_data of
+            SOME ord => ord order_probe = reverse_order order_probe
+          | NONE => false) andalso
+       (case #subgoaler rebuilt_data of
+            SOME sg =>
+              aconv (concl (sg prover_ctxt subgoal_probe))
+                    (mk_eq(subgoal_probe,subgoal_probe))
+          | NONE => false))
+
+  val cleared = clear_rules configured
+  val cleared_data = traversedata_for_ss cleared
+  val cleared_pp = pp cleared
+
+  val _ = check "clear_rules drops loopers but keeps strategy and solvers"
+    (fn () =>
+       occurrences "surface rebuilt looper" cleared_pp = 0 andalso
+       occurrences "surface safe one" cleared_pp = 1 andalso
+       (case #solvers cleared_data of
+            [{name,...}] => name = "surface unsafe one"
+          | _ => false) andalso
+       #cond_depth cleared_data = SOME 37 andalso
+       Option.isSome (#subgoaler cleared_data) andalso
+       Option.isSome (#term_ord cleared_data))
+
+  val _ = convtest
+    ("clear_rules removes ordinary rewrite rules",
+     QCONV (SIMP_CONV (clear_rules bool_ss) []),
+     ``surface_clear_p /\ T``, ``surface_clear_p /\ T``)
+
+  val dropping_filter =
+    SSFRAG
+      {name=SOME "surface dropping filter", convs=[], rewrs=[], ac=[],
+       filter=SOME (fn _ => []), dprocs=[], congs=[]}
+  val empty_named = name_ss "surface post-clear fragment" empty_ssfrag
+  val clear_rebuilt =
+    clear_rules (mk_simpset [dropping_filter]) ++ empty_named
+    |> remove_ssfrags ["surface post-clear fragment"]
+  val clear_rebuilt =
+    clear_rebuilt ++
+    rewrites [ASSUME ``surface_filtered_x:'a = surface_filtered_y``]
+
+  val _ = convtest
+    ("clear_rules preserves mk_rewrs through later history rebuilds",
+     QCONV (SIMP_CONV clear_rebuilt []),
+     ``surface_filtered_x:'a``, ``surface_filtered_x:'a``)
+
+  val tactic_condition =
+    ``surface_solver_x \/ ~surface_solver_x``
+  val tactic_rwt =
+    ASSUME
+      (mk_imp
+         (tactic_condition,
+          mk_eq(``(surface_solver_f : bool -> 'b) surface_solver_x``,
+                ``surface_solver_y:'b``)))
+  val tactic_solver =
+    mk_tactic_solver
+      ("surface tactic solver",
+       ACCEPT_TAC
+         (SPEC ``surface_solver_x:bool`` boolTheory.EXCLUDED_MIDDLE))
+  exception SURFACE_SOLVER_CONTEXT
+  val tactic_rewr =
+    Cond_rewr.COND_REWR_CONV ("surface tactic rewrite",tactic_rwt) false
+  val tactic_reducer =
+    Traverse.REDUCER
+      {name=SOME "surface tactic reducer", initial=SURFACE_SOLVER_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,stack,...} => tactic_rewr solver stack}
+  val tactic_solver_ss =
+    pureSimps.pure_ss ++ dproc_ss tactic_reducer
+    |> add_unsafe_solver tactic_solver
+
+  val context_fact =
+    SPEC ``surface_context_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val context_tactic_solver =
+    mk_tactic_solver ("surface context solver",FIRST_ASSUM ACCEPT_TAC)
+  val context_result =
+    #solve context_tactic_solver
+      {stack=[],context_thms=[context_fact],recurse=fn tm => REFL tm}
+      (concl context_fact)
+
+  val _ = check "mk_tactic_solver discharges context theorem assumptions"
+    (fn () => null (hyp context_result) andalso
+              aconv (concl context_result) (concl context_fact))
+
+  val _ = convtest
+    ("mk_tactic_solver discharges a SIMP_CONV side condition",
+     SIMP_CONV tactic_solver_ss [],
+     ``(surface_solver_f : bool -> 'b) surface_solver_x``,
+     ``surface_solver_y:'b``)
+
+  val depth_c1 = ``surface_depth_p1 = surface_depth_q1``
+  val depth_c2 = ``surface_depth_p2 = surface_depth_q2``
+  val depth_c3 = ``surface_depth_p3 = surface_depth_q3``
+  val depth_c4 = ``surface_depth_p4 = surface_depth_q4``
+  val depth_c5 = ``surface_depth_p5 = surface_depth_q5``
+  fun cond_true condition lhs =
+    ASSUME (mk_imp(condition,mk_eq(lhs,boolSyntax.T)))
+  val depth_lhs = ``(surface_depth_f : 'a -> 'b) surface_depth_x``
+  val depth_rhs = ``surface_depth_y:'b``
+  val depth_rwts =
+    [ASSUME (mk_imp(depth_c1,mk_eq(depth_lhs,depth_rhs))),
+     cond_true depth_c2 depth_c1, cond_true depth_c3 depth_c2,
+     cond_true depth_c4 depth_c3, cond_true depth_c5 depth_c4,
+     ASSUME (mk_eq(depth_c5,boolSyntax.T))]
+
+  val _ = convtest
+    ("set_cond_depth configures a simpset invocation",
+     SIMP_CONV (set_cond_depth 40 pureSimps.pure_ss) depth_rwts,
+     depth_lhs, depth_rhs)
+
+  val _ = convtest
+    ("set_term_ord configures permutative rewriting per simpset",
+     SIMP_CONV (set_term_ord reverse_order pureSimps.pure_ss)
+               [boolTheory.EQ_SYM_EQ],
+     ``surface_order_x:'a = surface_order_y``,
+     ``surface_order_y:'a = surface_order_x``)
 
 (* ---------------------------------------------------------------------- *)
 
