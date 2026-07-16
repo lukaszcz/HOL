@@ -1016,6 +1016,19 @@ fun mk_tactic_solver (name,tac) =
          SOME n => Binaryset.member(excluded, n)
        | NONE => false
 
+ fun keyed_congproc {relation,proc,...} current_relation =
+   if Opening.samerel relation current_relation orelse
+      same_const relation current_relation
+   then proc current_relation
+   else failwith "not applicable"
+
+ fun add_congprocs congprocs
+       (TRAVRULES {relations,congprocs=existing,weakenprocs}) =
+   TRAVRULES
+     {relations=relations,
+      congprocs=map keyed_congproc congprocs @ existing,
+      weakenprocs=weakenprocs}
+
  fun op++(ss as SS sset, f as SSFRAG_CON ssf) =
    if is_excluded ss f then ss
    else let
@@ -1024,7 +1037,7 @@ fun mk_tactic_solver (name,tac) =
    val travrules = #travrules sset
    val initial_net = #initial_net sset
    val dprocs' = #dprocs sset
-   val {convs,rewrs,filter,ac,dprocs,congs,relsimps,...} = ssf
+   val {convs,rewrs,filter,ac,dprocs,congs,relsimps,congprocs,...} = ssf
    val mk_rewrs = case filter of
                     SOME f => f oo mk_rewrs'
                   | _ => mk_rewrs'
@@ -1055,7 +1068,9 @@ fun mk_tactic_solver (name,tac) =
       initial_net=net, limit= #limit sset, dprocs=new_dprocs,
       excluded= #excluded sset,
       travrules=merge_travrules
-                  (travrules::mk_travrules relations congs::reltravs),
+                  (travrules::
+                   add_congprocs congprocs
+                     (mk_travrules relations congs)::reltravs),
       loopers=loopers, unsafe_solvers=unsafe_solvers,
       safe_solvers=safe_solvers, subgoaler= #subgoaler sset,
       cond_depth= #cond_depth sset, term_ord= #term_ord sset,

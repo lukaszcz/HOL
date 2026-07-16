@@ -1182,6 +1182,73 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      ``surface_order_y:'a = surface_order_x``)
 
 (* ---------------------------------------------------------------------- *)
+(* Procedural congruences in simpset fragments.                            *)
+(* ---------------------------------------------------------------------- *)
+
+local
+  val cond_cong =
+    REWRITE_RULE [GSYM boolTheory.AND_IMP_INTRO] boolTheory.COND_CONG
+  fun equality_refl {arg,...} = REFL arg
+  val cond_proc = Opening.CONGPROC equality_refl cond_cong
+  val cond_base = pureSimps.pure_ss ++ boolSimps.BOOL_ss
+  val cond_tm =
+    ``if congproc_p then
+        (congproc_f : bool -> 'a) congproc_p
+      else congproc_g congproc_p``
+  val cond_result =
+    ``if congproc_p then
+        (congproc_f : bool -> 'a) T
+      else congproc_g F``
+  val theorem_ss =
+    cond_base ++
+    SSFRAG
+      {name=NONE, convs=[], rewrs=[], ac=[], filter=NONE, dprocs=[],
+       congs=[boolTheory.COND_CONG]}
+  val proc_frag =
+    congproc_ss
+      {name="selftest COND procedure", relation=boolSyntax.equality,
+       proc=cond_proc}
+  val named_proc_frag =
+    name_ss "selftest procedural COND fragment" proc_frag
+  val procedural_ss = cond_base ++ named_proc_frag
+  val disposable =
+    name_ss "selftest congproc disposable" empty_ssfrag
+  val rebuild_seed = cond_base ++ disposable ++ named_proc_frag
+  val removed_rebuild =
+    remove_ssfrags ["selftest congproc disposable"] rebuild_seed
+  val excluded_rebuild =
+    exclude_ssfrags ["selftest congproc disposable"] rebuild_seed
+  val wrong_key_calls = ref 0
+  fun counted_proc relation args =
+    (wrong_key_calls := !wrong_key_calls + 1; cond_proc relation args)
+  val wrong_key_ss =
+    cond_base ++
+    congproc_ss
+      {name="selftest wrongly keyed COND procedure",
+       relation=boolSyntax.implication, proc=counted_proc}
+in
+  val _ = convtest
+    ("theorem COND congruence reference behavior",
+     QCONV (SIMP_CONV theorem_ss []), cond_tm, cond_result)
+  val _ = convtest
+    ("congproc_ss merges a procedural congruence across ++",
+     QCONV (SIMP_CONV procedural_ss []), cond_tm, cond_result)
+  val _ = convtest
+    ("remove_ssfrags rebuild replays a congproc fragment",
+     QCONV (SIMP_CONV removed_rebuild []), cond_tm, cond_result)
+  val _ = convtest
+    ("exclude_ssfrags rebuild replays a congproc fragment",
+     QCONV (SIMP_CONV excluded_rebuild []), cond_tm, cond_result)
+  val _ = convtest
+    ("congproc_ss keys procedures by relation",
+     QCONV (SIMP_CONV wrong_key_ss []), cond_tm, cond_tm)
+  val _ =
+    (tprint "wrong-relation congproc remains dormant";
+     if !wrong_key_calls = 0 then OK()
+     else die "wrong-relation congproc was invoked")
+end
+
+(* ---------------------------------------------------------------------- *)
 (* Tactic-layer solver and looper loop.                                    *)
 (* ---------------------------------------------------------------------- *)
 
