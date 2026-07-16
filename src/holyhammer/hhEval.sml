@@ -1185,7 +1185,16 @@ fun run_eval {expname, ncore, thyl, conditions} =
              false)
         | pending (thy, SOME cells) =
             not (journal_complete (journal_path expdir thy) cells)
-      val queued_names = map #1 (List.filter pending states)
+      val pending_states = List.filter pending states
+      fun work_size (_, NONE) = 0
+        | work_size (_, SOME cells) = length cells
+      fun insert_work item [] = [item]
+        | insert_work item (head :: tail) =
+            if work_size item >= work_size head then item :: head :: tail
+            else head :: insert_work item tail
+      fun schedule [] = []
+        | schedule (head :: tail) = insert_work head (schedule tail)
+      val queued_names = map #1 (schedule pending_states)
       val queued = map (fn thy =>
         (thy, write_evalscript expdir thy conditions sample)) queued_names
       val _ = smlExecScripts.buildheap_dir := join expdir "out"
@@ -1201,7 +1210,7 @@ fun run_eval {expname, ncore, thyl, conditions} =
             if journal_complete (journal_path expdir thy) cells then ()
             else journal_theory_error expdir thy
               "evaluation worker ended before completing its journal"
-      val _ = app note_unfinished (List.filter pending states)
+      val _ = app note_unfinished pending_states
     in
       ()
     end
