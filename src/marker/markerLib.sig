@@ -23,6 +23,12 @@ sig
   val Cong   : thm -> thm
   val unCong : thm -> thm
 
+  val mk_marker_const : string -> term
+  val genmktagged : thm -> string -> thm
+  val gendest_tagged : term -> thm -> string option
+  val genCong : thm -> thm -> thm
+  val genUnCong : term -> thm -> thm -> thm option
+
   val Excl   : string -> thm
   val destExcl : thm -> string option
   val ExclSF : string -> thm

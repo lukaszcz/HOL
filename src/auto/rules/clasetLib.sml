@@ -606,18 +606,6 @@ val claset_config =
 
 end
 
-(* The theorem markers retain their payload in their conclusion.  Restrict
-   destruction to a marker at the conclusion root, so unrelated theorems
-   mentioning a marker remain available to later tag processors. *)
-fun mk_thm_marker def th =
-  EQ_MP (SYM (SPEC (concl th) def)) th
-
-fun dest_thm_marker marker def th =
-  (if same_const marker (rator (concl th)) then
-     SOME (PURE_REWRITE_RULE [def] th)
-   else NONE)
-  handle HOL_ERR _ => NONE
-
 fun mk_marker_const name =
   prim_mk_const {Thy = "clasetMarker", Name = name}
 
@@ -627,35 +615,24 @@ val SElim_t = mk_marker_const "SElim"
 val Elim_t = mk_marker_const "Elim"
 val SDest_t = mk_marker_const "SDest"
 val Dest_t = mk_marker_const "Dest"
-val Del_t = mk_marker_const "Del"
 
-val SIntro = mk_thm_marker clasetMarkerTheory.SIntro_def
-val Intro = mk_thm_marker clasetMarkerTheory.Intro_def
-val SElim = mk_thm_marker clasetMarkerTheory.SElim_def
-val Elim = mk_thm_marker clasetMarkerTheory.Elim_def
-val SDest = mk_thm_marker clasetMarkerTheory.SDest_def
-val Dest = mk_thm_marker clasetMarkerTheory.Dest_def
+val SIntro = markerLib.genCong clasetMarkerTheory.SIntro_def
+val Intro = markerLib.genCong clasetMarkerTheory.Intro_def
+val SElim = markerLib.genCong clasetMarkerTheory.SElim_def
+val Elim = markerLib.genCong clasetMarkerTheory.Elim_def
+val SDest = markerLib.genCong clasetMarkerTheory.SDest_def
+val Dest = markerLib.genCong clasetMarkerTheory.Dest_def
 
-val destSIntro = dest_thm_marker SIntro_t clasetMarkerTheory.SIntro_def
-val destIntro = dest_thm_marker Intro_t clasetMarkerTheory.Intro_def
-val destSElim = dest_thm_marker SElim_t clasetMarkerTheory.SElim_def
-val destElim = dest_thm_marker Elim_t clasetMarkerTheory.Elim_def
-val destSDest = dest_thm_marker SDest_t clasetMarkerTheory.SDest_def
-val destDest = dest_thm_marker Dest_t clasetMarkerTheory.Dest_def
+val destSIntro =
+  markerLib.genUnCong SIntro_t clasetMarkerTheory.SIntro_def
+val destIntro = markerLib.genUnCong Intro_t clasetMarkerTheory.Intro_def
+val destSElim = markerLib.genUnCong SElim_t clasetMarkerTheory.SElim_def
+val destElim = markerLib.genUnCong Elim_t clasetMarkerTheory.Elim_def
+val destSDest = markerLib.genUnCong SDest_t clasetMarkerTheory.SDest_def
+val destDest = markerLib.genUnCong Dest_t clasetMarkerTheory.Dest_def
 
-fun Del name =
-  let val marker_name = mk_var (name, alpha)
-  in EQT_ELIM (SPEC marker_name clasetMarkerTheory.Del_def)
-  end
-
-fun destDel th =
-  let
-    val tm = concl th
-  in
-    if same_const Del_t (rator tm) then SOME (#1 (dest_var (rand tm)))
-    else NONE
-  end
-  handle HOL_ERR _ => NONE
+val Del = markerLib.Excl
+val destDel = markerLib.destExcl
 
 fun marker_name cs =
   let

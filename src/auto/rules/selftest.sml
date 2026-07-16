@@ -1377,13 +1377,12 @@ val _ =
 
 val _ =
   test
-    ("claset marker processing passes simp markers and plain theorems through",
+    ("claset marker processing passes other markers and plain theorems through",
      fn () =>
        let
          val plain = boolTheory.TRUTH
          val cong = markerLib.Cong (ASSUME p)
-         val excl = markerLib.Excl "claset-marker-pass"
-         val input = [cong, excl, plain]
+         val input = [cong, plain]
          val (cs, rest) = process_claset_tags input empty_cs
        in
          List.null (rules_of cs) andalso
