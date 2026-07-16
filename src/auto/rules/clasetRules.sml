@@ -103,21 +103,14 @@ fun rule_spine th =
     {thm = th', vars = vars, core = core, prems = prems, concl = cncl}
   end
 
-fun apply_assumed th [] = th
-  | apply_assumed th (prem :: prems) =
-      apply_assumed (MP th (ASSUME prem)) prems
+fun apply_assumed th prems = Drule.LIST_MP (map ASSUME prems) th
 
-fun apply_thms th [] = th
-  | apply_thms th (prem :: prems) = apply_thms (MP th prem) prems
+fun apply_thms th prems = Drule.LIST_MP prems th
 
-fun discharge_prems [] th = th
-  | discharge_prems (prem :: prems) th =
-      DISCH prem (discharge_prems prems th)
+fun discharge_prems prems th = Lib.itlist DISCH prems th
 
 fun finish_rule vars extras prems th =
-  GENL vars
-    (List.foldr (fn (v, body) => GEN v body) (discharge_prems prems th)
-       extras)
+  GENL (vars @ extras) (discharge_prems prems th)
 
 fun fresh_bool th =
   variant (free_varsl (concl th :: hyp th)) (mk_var ("r", bool))

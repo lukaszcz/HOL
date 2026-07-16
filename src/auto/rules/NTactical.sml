@@ -60,17 +60,13 @@ fun NTRY tac = NORELSE (tac, NALL_TAC)
 
 fun NREPEAT tac = LIFT (Tactical.REPEAT (DETERM tac))
 
-fun same_goal ((asms1, tm1), (asms2, tm2)) =
-  ListPair.allEq (fn (a1, a2) => Term.aconv a1 a2) (asms1, asms2)
-  andalso Term.aconv tm1 tm2
-
 fun NCHANGED tac g =
   seq.delay
     (fn () =>
        seq.filter
          (fn (gs, _) =>
             case gs of
-                [g'] => not (same_goal (g, g'))
+                [g'] => not (boolSyntax.goal_eq g g')
               | _ => true)
          (tac g))
 

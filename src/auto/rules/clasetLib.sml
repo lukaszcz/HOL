@@ -210,11 +210,11 @@ fun merge_cs
         dup_netpair = dup_netpair'}
   end
 
-fun update_wrapper (name, wrapper) [] = [(name, wrapper)]
-  | update_wrapper (entry as (name, wrapper))
-      ((old as (old_name, _)) :: rest) =
-      if name = old_name then entry :: rest
-      else old :: update_wrapper entry rest
+(* Replace the entry sharing [entry]'s key, else append it. *)
+fun update_alist (entry as (key, _)) [] = [entry]
+  | update_alist (entry as (key, _)) ((old as (old_key, _)) :: rest) =
+      if key = old_key then entry :: rest
+      else old :: update_alist entry rest
 
 fun delete_wrapper name wrappers =
   List.filter (fn (name', _) => name <> name') wrappers
@@ -241,8 +241,8 @@ fun map_unsafe_wrappers f
       unsafe_netpair = unsafe_netpair,
       dup_netpair = dup_netpair}
 
-fun add_safe_wrapper wrapper = map_safe_wrappers (update_wrapper wrapper)
-fun add_unsafe_wrapper wrapper = map_unsafe_wrappers (update_wrapper wrapper)
+fun add_safe_wrapper wrapper = map_safe_wrappers (update_alist wrapper)
+fun add_unsafe_wrapper wrapper = map_unsafe_wrappers (update_alist wrapper)
 fun del_safe_wrapper name = map_safe_wrappers (delete_wrapper name)
 fun del_unsafe_wrapper name = map_unsafe_wrappers (delete_wrapper name)
 
@@ -317,7 +317,7 @@ fun match_intro_candidates (inet, _) tm =
 fun match_elim_candidates (_, enet) tm =
   candidate_order (clasetNet.match tm enet)
 
-fun free_var_set tm = HOLset.fromList Term.compare (free_vars tm)
+fun free_var_set tm = boolSyntax.FVLset [tm]
 
 fun unify_intro_candidates (inet, _) tm =
   candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} inet)
@@ -477,21 +477,11 @@ fun temp_add_rule spec named_th = update_claset (add_rule spec named_th)
 fun temp_delrule name =
   update_claset (remove_rule name o remove_rule (normalise_rule_name name))
 
-fun augment_claset f = update_claset f
-
-fun replace_tyinfo_contribution entry [] = [entry]
-  | replace_tyinfo_contribution (entry as (name, _))
-      ((old as (old_name, _)) :: entries) =
-      if name = old_name then entry :: entries
-      else old :: replace_tyinfo_contribution entry entries
+val augment_claset = update_claset
 
 fun register_tyinfo_contribution entry =
-  (tyinfo_contributions :=
-     replace_tyinfo_contribution entry (!tyinfo_contributions);
-   update_claset
-     (fn cs =>
-        List.foldl (fn (tyi, acc) => add_tyinfo tyi acc) cs
-          (TypeBase.elts ())))
+  (tyinfo_contributions := update_alist entry (!tyinfo_contributions);
+   update_claset catch_up_typebase)
 
 fun typebase_update tyi =
   (update_claset (add_tyinfo tyi); tyi)
@@ -523,13 +513,7 @@ fun tyinfo_stem tyi =
     | NONE => "__claset_tyinfo_unknown"
 
 fun number_contribution make_rule ths =
-  let
-    fun number _ [] = []
-      | number index (th :: rest) =
-          make_rule index th @ number (index + 1) rest
-  in
-    number 0 ths
-  end
+  List.concat (Lib.mapi make_rule ths)
 
 fun distinctness_contribution tyi =
   case Lib.total TypeBasePure.distinct_of tyi of
