@@ -214,6 +214,8 @@ sig
     * These tactics never fail, though they may diverge.
     * ---------------------------------------------------------------------*)
 
+   type simp_mode = {safe : bool}
+   val GEN_SIMP_TAC  : simp_mode -> simpset -> thm list -> tactic
    val SIMP_TAC      : simpset -> thm list -> tactic
    val simp_tac      : simpset -> thm list -> tactic
    val ASM_SIMP_TAC  : simpset -> thm list -> tactic

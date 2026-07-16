@@ -114,6 +114,9 @@ sig
   val NoAsms : thm
 
   val process_taclist_then : {arg: thm list} -> (thm list -> tactic) -> tactic
+  val process_taclist_then_recur :
+    {arg: thm list} ->
+    (((thm list -> tactic) -> tactic) -> thm list -> tactic) -> tactic
 
   val suspend : string -> tactic
   val prim_resume : (thm * string * tactic) -> {updated_main: thm, subresult:thm}

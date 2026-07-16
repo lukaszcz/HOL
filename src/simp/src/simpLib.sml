@@ -1288,8 +1288,94 @@ fun SIMP_RULE ss l = CONV_RULE (SIMP_CONV ss l)
 
 fun ASM_SIMP_RULE ss l th = SIMP_RULE ss (l@map ASSUME (hyp th)) th;
 
-fun ASM_SIMP_TAC ss ths =
-    markerLib.process_taclist_then{arg=ths} (CONV_TAC o SIMP_CONV ss)
+type simp_mode = {safe : bool}
+
+fun reconcile_hyps asl th =
+  let
+    fun asm_for h =
+      case List.find (aconv h) asl of
+          SOME a => a
+        | NONE => raise ERR ("GEN_SIMP_TAC", "Solver introduced a hypothesis")
+    fun replace_hyp h result = PROVE_HYP (ASSUME (asm_for h)) result
+  in
+    Lib.itlist ADD_ASSUM asl (Lib.itlist replace_hyp (hyp th) th)
+  end
+
+fun final_solver_tac mode ss context_thms =
+  let
+    val SS s = ss
+    val solvers =
+      if #safe mode then #safe_solvers s else #unsafe_solvers s
+    val prover_ctxt =
+      {stack=[], context_thms=context_thms,
+       recurse=QCONV (SIMP_CONV ss context_thms)}
+    fun solve_with ({solve,...} : Traverse.ssolver) (asl,w) =
+      let
+        val th = solve prover_ctxt w
+        val _ = aconv (concl th) w orelse
+                raise ERR ("GEN_SIMP_TAC", "Solver proved the wrong term")
+      in
+        ACCEPT_TAC (reconcile_hyps asl th) (asl,w)
+      end
+  in
+    FIRST (map solve_with solvers)
+  end
+
+fun looper_tac (ss as SS s) =
+  let
+    fun enabled (name,_) =
+      not (Binaryset.member (#excl_loopers s,name))
+    fun apply (_,looper) g =
+      looper ss g
+      handle Conv.UNCHANGED => NO_TAC g
+  in
+    FIRST (map apply (List.filter enabled (#loopers s)))
+  end
+
+fun bounded_looper rounds tac g =
+  case !rounds of
+      SOME n =>
+        if n <= 0 then NO_TAC g
+        else
+          let val result = tac g
+          in
+            rounds := SOME (n - 1);
+            result
+          end
+    | NONE => tac g
+
+fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
+  fn g =>
+    let
+      val rounds = ref (getlimit ss)
+      fun start recur tagged_thms =
+        let
+          fun main tagged_thms =
+            let
+              val (invocation_ss,context_thms) =
+                process_tags ss tagged_thms
+              val rewr_tac =
+                CONV_TAC (SIMP_CONV invocation_ss context_thms)
+              val solve_tac =
+                final_solver_tac mode invocation_ss
+                                 (context_thms @ extra_context)
+              val loop_tac =
+                bounded_looper rounds (looper_tac invocation_ss)
+            in
+              rewr_tac THEN
+              (solve_tac ORELSE
+               TRY (loop_tac THEN_LT ALLGOALS (recur main)))
+            end
+        in
+          main tagged_thms
+        end
+    in
+      markerLib.process_taclist_then_recur {arg=ths} start g
+    end
+
+fun GEN_SIMP_TAC mode = gen_simp_tac [] mode
+
+fun ASM_SIMP_TAC ss = GEN_SIMP_TAC {safe=false} ss
 val asm_simp_tac = ASM_SIMP_TAC
 fun SIMP_TAC ss ths = ASM_SIMP_TAC ss (markerLib.NoAsms::ths)
 val simp_tac = SIMP_TAC
@@ -1386,7 +1472,7 @@ fun global_simp_tac cfg ss0 =
                val ss = ss1 ++ rewrites thl'
              in
                rpt (CHANGED_TAC (allasms cfg ss)) THEN
-               ASM_SIMP_TAC ss []
+               gen_simp_tac thl' {safe=false} ss []
              end
         )
       )

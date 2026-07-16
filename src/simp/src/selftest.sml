@@ -1182,5 +1182,222 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      ``surface_order_y:'a = surface_order_x``)
 
 (* ---------------------------------------------------------------------- *)
+(* Tactic-layer solver and looper loop.                                    *)
+(* ---------------------------------------------------------------------- *)
+
+local
+  fun tactic_result expected result =
+    case result of
+        Exn.Res (sgs,_) => list_eq goal_eq expected sgs
+      | Exn.Exn _ => false
+  fun run tac goal = Exn.capture (VALID tac) goal
+  fun inc r = r := !r + 1
+  fun solver_failure name =
+    raise mk_HOL_ERR "selftest" name "not applicable"
+
+  val loop_p = ``loop_p:bool``
+  val loop_q = ``loop_q:bool``
+  val loop_r = ``loop_r:bool``
+  val looper_calls = ref 0
+  fun conjunction_looper _ g =
+    (inc looper_calls; CONJ_TAC g)
+  val solver_calls = ref 0
+  fun loop_solver _ tm =
+    (inc solver_calls;
+     if aconv tm loop_p then ASSUME loop_p
+     else solver_failure "loop_solver")
+  val loop_ss =
+    empty_ss
+    |> add_looper ("selftest conjunction",conjunction_looper)
+    |> add_unsafe_solver {name="selftest loop solver",solve=loop_solver}
+  val loop_result =
+    run (GEN_SIMP_TAC {safe=false} loop_ss [markerLib.NoAsms])
+        ([loop_p],mk_conj(loop_p,loop_q))
+
+  val _ = tprint "GEN_SIMP_TAC restarts after a looper on every subgoal"
+  val _ =
+    if tactic_result [([loop_p],loop_q)] loop_result andalso
+       !solver_calls = 3 andalso !looper_calls = 2
+    then OK()
+    else die "looper restart or TRY termination failed"
+
+  val safe_tm =
+    ``safe_solver_p \/ ~safe_solver_p``
+  val unsafe_tm =
+    ``unsafe_solver_p \/ ~unsafe_solver_p``
+  val safe_th = SPEC ``safe_solver_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val unsafe_th =
+    SPEC ``unsafe_solver_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val safe_calls = ref 0
+  val unsafe_calls = ref 0
+  fun exact_solver calls th _ tm =
+    (inc calls;
+     if aconv tm (concl th) then th
+     else solver_failure "exact_solver")
+  val selection_ss =
+    empty_ss
+    |> add_safe_solver
+         {name="selftest safe",solve=exact_solver safe_calls safe_th}
+    |> add_unsafe_solver
+         {name="selftest unsafe",solve=exact_solver unsafe_calls unsafe_th}
+
+  val _ = tprint "GEN_SIMP_TAC safe mode selects only safe final solvers"
+  val _ =
+    if tactic_result []
+         (run (GEN_SIMP_TAC {safe=true} selection_ss []) ([],safe_tm))
+       andalso !safe_calls = 1 andalso !unsafe_calls = 0
+    then OK()
+    else die "safe mode selected the wrong final-solver list"
+
+  val _ = tprint "GEN_SIMP_TAC unsafe mode selects only unsafe solvers"
+  val _ =
+    if tactic_result []
+         (run (GEN_SIMP_TAC {safe=false} selection_ss []) ([],unsafe_tm))
+       andalso !safe_calls = 1 andalso !unsafe_calls = 1
+    then OK()
+    else die "unsafe mode selected the wrong final-solver list"
+
+  val context_p = ``final_context_p:bool``
+  val context_q = ``final_context_q:bool``
+  val context_imp = mk_imp(context_p,context_q)
+  val context_calls = ref 0
+  fun context_solver {context_thms,...} tm =
+    let
+      val _ = inc context_calls
+      fun find conclusion =
+        case List.find (aconv conclusion o concl) context_thms of
+            SOME th => th
+          | NONE => solver_failure "context_solver"
+    in
+      if aconv tm context_q then MP (find context_imp) (find context_p)
+      else solver_failure "context_solver"
+    end
+  val context_ss =
+    add_unsafe_solver
+      {name="selftest final context",solve=context_solver} empty_ss
+  val context_result =
+    run (GEN_SIMP_TAC {safe=false} context_ss [])
+        ([context_p,context_imp],context_q)
+
+  val _ = tprint "final solver sees tactic-layer context theorems"
+  val _ =
+    if tactic_result [] context_result andalso !context_calls = 1
+    then OK()
+    else die "final solver could not prove the goal from assumptions"
+
+  val global_p = ``global_context_x = global_context_x``
+  val global_pth = REFL ``global_context_x:'a``
+  val global_q = ``global_context_q \/ ~global_context_q``
+  val global_qth =
+    SPEC ``global_context_q:bool`` boolTheory.EXCLUDED_MIDDLE
+  val global_impth = DISCH global_p (ADD_ASSUM global_p global_qth)
+  val global_context_calls = ref 0
+  fun global_context_solver {context_thms,...} tm =
+    let
+      val _ = inc global_context_calls
+      fun find conclusion =
+        case List.find (aconv conclusion o concl) context_thms of
+            SOME th => th
+          | NONE => solver_failure "global_context_solver"
+    in
+      if aconv tm global_q then MP (find (concl global_impth))
+                                  (find global_p)
+      else solver_failure "global_context_solver"
+    end
+  val global_context_ss =
+    add_unsafe_solver
+      {name="selftest global context",solve=global_context_solver} empty_ss
+  val global_cfg =
+    {droptrues=true,elimvars=false,strip=true,oldestfirst=true}
+  val global_context_result =
+    run (global_simp_tac global_cfg global_context_ss
+                         [global_pth,global_impth])
+        ([],global_q)
+
+  val _ = tprint "global_simp_tac final solver sees supplied theorems"
+  val _ =
+    if tactic_result [] global_context_result andalso
+       !global_context_calls = 1
+    then OK()
+    else die "global_simp_tac lost the final solver context"
+
+  val entry_looper_ss =
+    add_looper ("selftest entry conjunction",fn _ => CONJ_TAC) empty_ss
+  val entry_goal = ([],mk_conj(loop_p,loop_q))
+  val entry_subgoals = [([],loop_p),([],loop_q)]
+
+  val _ = tprint "FULL_SIMP_TAC runs loopers in its final goal step"
+  val _ =
+    if tactic_result entry_subgoals
+         (run (FULL_SIMP_TAC entry_looper_ss []) entry_goal)
+    then OK()
+    else die "FULL_SIMP_TAC did not use GEN_SIMP_TAC"
+
+  val _ = tprint "global_simp_tac runs loopers in its final goal step"
+  val _ =
+    if tactic_result entry_subgoals
+         (run (global_simp_tac global_cfg entry_looper_ss []) entry_goal)
+    then OK()
+    else die "global_simp_tac did not use GEN_SIMP_TAC"
+
+  val bounded_calls = ref 0
+  fun bounded_conjunction_looper _ g =
+    (inc bounded_calls; CONJ_TAC g)
+  val bounded_ss =
+    empty_ss
+    |> add_looper ("selftest bounded conjunction",
+                   bounded_conjunction_looper)
+    |> limit 1
+  val bounded_goal = mk_conj(loop_p,mk_conj(loop_q,loop_r))
+  val bounded_result =
+    run (GEN_SIMP_TAC {safe=false} bounded_ss [markerLib.NoAsms])
+        ([],bounded_goal)
+
+  val _ = tprint "simpset limit bounds successful looper rounds"
+  val _ =
+    if tactic_result [([],loop_p),([],mk_conj(loop_q,loop_r))]
+                     bounded_result andalso
+       !bounded_calls = 1
+    then OK()
+    else die "looper ignored the simpset round limit"
+
+  fun legacy_asm_simp_tac ss ths =
+    markerLib.process_taclist_then {arg=ths}
+      (CONV_TAC o SIMP_CONV ss)
+  fun theorem_eq th1 th2 =
+    aconv (concl th1) (concl th2) andalso
+    list_eq aconv (hyp th1) (hyp th2)
+  fun compare_tactics tac1 tac2 goal =
+    let
+      val (sgs1,vf1) = tac1 goal
+      val (sgs2,vf2) = tac2 goal
+      val same_goals = list_eq goal_eq sgs1 sgs2
+      val th1 = vf1 (map mk_thm sgs1)
+      val th2 = vf2 (map mk_thm sgs2)
+    in
+      same_goals andalso theorem_eq th1 th2
+    end
+  val zero_goal =
+    ([``zero_x = F``],``zero_pred (zero_x:bool):bool``)
+
+  val _ = tprint "empty hooks preserve legacy ASM_SIMP_TAC theorems"
+  val _ =
+    if compare_tactics
+         (legacy_asm_simp_tac bool_ss [])
+         (ASM_SIMP_TAC bool_ss []) zero_goal
+    then OK()
+    else die "ASM_SIMP_TAC changed with empty strategy hooks"
+
+  val _ = tprint "empty hooks preserve legacy SIMP_TAC theorems"
+  val _ =
+    if compare_tactics
+         (legacy_asm_simp_tac bool_ss [markerLib.NoAsms])
+         (SIMP_TAC bool_ss []) zero_goal
+    then OK()
+    else die "SIMP_TAC changed with empty strategy hooks"
+in
+end
+
+(* ---------------------------------------------------------------------- *)
 
 val _ = exit_count0 failcount

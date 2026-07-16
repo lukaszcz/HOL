@@ -741,12 +741,21 @@ fun filter_then asms aslPs thltac (gl as (asl0,g)) =
       thltac (map ASSUME asl @ asms) gl
     end
 
-fun process_taclist_then {arg} thltac (gl as (asl,g)) =
-    let val tacoptions = map dest_tacmarked arg
-        val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+(* Decode markers and run pretactics once.  The callback's [recur] closure
+   reapplies only the saved assumption policy to a later subgoal. *)
+fun process_taclist_then_recur {arg} thltac (gl as (asl,g)) =
+    let
+      val tacoptions = map dest_tacmarked arg
+      val {pre,asms,aslPs} = process_tacoptions tacoptions asl [] [] []
+      fun recur (next : thm list -> tactic) : tactic =
+        filter_then asms aslPs next
     in
-      Tactical.THEN(pre, filter_then asms aslPs (mk_require_tac thltac)) gl
+      Tactical.THEN
+        (pre, filter_then asms aslPs (mk_require_tac (thltac recur))) gl
     end
+
+fun process_taclist_then args thltac =
+    process_taclist_then_recur args (fn _ => thltac)
 
 (* ----------------------------------------------------------------------
     suspend : string -> tactic
