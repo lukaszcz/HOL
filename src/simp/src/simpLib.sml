@@ -600,6 +600,25 @@ fun case_types goal_terms =
     List.foldl add [] cases
   end
 
+fun asm_split_rule split =
+  let
+    val (pred, _) = dest_forall (concl split)
+    val (domain, _) = dom_rng (type_of pred)
+    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
+    val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
+    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
+    val cleanup =
+      REDEPTH_CONV
+        (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
+  in
+    split
+      |> SPEC neg_pred
+      |> AP_TERM boolSyntax.negation
+      |> CONV_RULE cleanup
+      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
+      |> GEN pred
+  end
+
 fun splitter_looper (SS s) (asms, goal) =
   let
     val excluded = #excl_loopers s
@@ -619,7 +638,9 @@ fun splitter_looper (SS s) (asms, goal) =
         enabled ("split.case " ^ full) andalso
         enabled ("split.case " ^ short)
       end
-    fun type_rules ty = [splitLib.type_split_of ty]
+    fun type_rules ty =
+      [splitLib.type_split_of ty,
+       asm_split_rule (splitLib.type_asm_split_of ty)]
     val datatype_rules =
       case_types (goal :: asms)
       |> List.filter type_enabled

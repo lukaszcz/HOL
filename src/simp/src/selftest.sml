@@ -1639,6 +1639,20 @@ val _ = let
           else die "split_ss did not eliminate the conditional"
       | _ => die "split_ss produced the wrong conditional subgoals"
 
+  val typebase_asm_goal =
+    ([``P (if b then x:'a else y) : bool``], ``G:bool``)
+  fun clean_asm_goal (asms, goal) =
+    not (List.exists (can (find_term is_cond)) (goal :: asms)) andalso
+    not (goal_has_double_neg (asms, goal))
+  val _ = tprint "split_ss uses TypeBase splits in assumptions"
+  val _ =
+    case #1
+      (VALID (SIMP_TAC (bool_ss ++ split_ss) []) typebase_asm_goal) of
+        [goal1, goal2] =>
+          if List.all clean_asm_goal [goal1, goal2] then OK()
+          else die "TypeBase assumption split retained conditional syntax"
+      | _ => die "TypeBase assumption split produced the wrong subgoals"
+
   val _ = convtest
     ("split_ss cases_simp collapses a trivial split",
      SIMP_CONV (empty_ss ++ split_ss) [],
