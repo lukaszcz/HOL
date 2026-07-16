@@ -88,6 +88,7 @@ sig
   (*------------------------------------------------------------------------*)
 
   val Cong        : thm -> thm
+  val Split       : thm -> thm
   val AC          : thm -> thm -> thm
   val Excl        : string -> thm
   val ExclSF      : string -> thm

@@ -1239,7 +1239,8 @@ local
     |> add_safe_solver
          {name="selftest safe",solve=exact_solver safe_calls safe_th}
     |> add_unsafe_solver
-         {name="selftest unsafe",solve=exact_solver unsafe_calls unsafe_th}
+         {name="selftest.unsafe.solver",
+          solve=exact_solver unsafe_calls unsafe_th}
 
   val _ = tprint "GEN_SIMP_TAC safe mode selects only safe final solvers"
   val _ =
@@ -1256,6 +1257,16 @@ local
        andalso !safe_calls = 1 andalso !unsafe_calls = 1
     then OK()
     else die "unsafe mode selected the wrong final-solver list"
+
+  val _ = tprint "Excl removes a named solver for one invocation"
+  val _ =
+    if tactic_result [([],unsafe_tm)]
+         (run (GEN_SIMP_TAC {safe=false} selection_ss
+                            [Excl "selftest.unsafe.solver"])
+              ([],unsafe_tm)) andalso
+       !unsafe_calls = 1
+    then OK()
+    else die "Excl did not remove the named solver"
 
   val context_p = ``final_context_p:bool``
   val context_q = ``final_context_q:bool``
@@ -1322,7 +1333,7 @@ local
     else die "global_simp_tac lost the final solver context"
 
   val entry_looper_ss =
-    add_looper ("selftest entry conjunction",fn _ => CONJ_TAC) empty_ss
+    add_looper ("selftest.entry.conjunction",fn _ => CONJ_TAC) empty_ss
   val entry_goal = ([],mk_conj(loop_p,loop_q))
   val entry_subgoals = [([],loop_p),([],loop_q)]
 
@@ -1339,6 +1350,15 @@ local
          (run (global_simp_tac global_cfg entry_looper_ss []) entry_goal)
     then OK()
     else die "global_simp_tac did not use GEN_SIMP_TAC"
+
+  val _ = tprint "Excl removes a named looper for one invocation"
+  val _ =
+    if tactic_result [entry_goal]
+         (run (SIMP_TAC entry_looper_ss
+                        [Excl "selftest.entry.conjunction"])
+              entry_goal)
+    then OK()
+    else die "Excl did not remove the named looper"
 
   val bounded_calls = ref 0
   fun bounded_conjunction_looper _ g =
@@ -1679,6 +1699,51 @@ val _ = let
           else die "del_split left the conclusion looper active"
       | _ => die "del_split produced the wrong subgoals"
 
+  val _ = tprint "Split installs a split for one invocation"
+  val _ =
+    case #1 (VALID (SIMP_TAC bool_ss [Split named_if_split]) split_goal) of
+        [([], result)] =>
+          if not (aconv result (#2 split_goal)) andalso
+             not (can (find_term is_cond) result)
+          then OK()
+          else die "Split did not install its per-invocation rule"
+      | _ => die "Split produced the wrong subgoals"
+
+  val split_name =
+    "split " ^ Theory.current_theory () ^ "$simp_split_selftest_rule"
+  val _ = tprint "Excl suppresses a named split looper"
+  val _ =
+    case #1
+      (VALID (SIMP_TAC with_split [Excl split_name]) split_goal) of
+        [([], result)] =>
+          if aconv result (#2 split_goal) then OK()
+          else die "Excl left the named split looper active"
+      | _ => die "named split exclusion produced the wrong subgoals"
+
+  val _ = tprint "Excl split.case suppresses TypeBase splits"
+  val _ =
+    case #1
+      (VALID (SIMP_TAC (bool_ss ++ split_ss)
+                       [Excl "split.case bool"]) split_goal) of
+        [([], result)] =>
+          if aconv result (#2 split_goal) then OK()
+          else die "split.case exclusion left the TypeBase split active"
+      | _ => die "TypeBase split exclusion produced the wrong subgoals"
+
+  val limited_split_ss = limit 1 (bool_ss ++ split_ss)
+  val limited_goal =
+    ([], ``P (if b then x:'a else y) /\
+           Q (if c then u:'b else v)``)
+  val _ = tprint "simpset limit bounds splitter rounds"
+  val _ =
+    case #1 (VALID (SIMP_TAC limited_split_ss []) limited_goal) of
+        [(_,result)] =>
+          if not (aconv result (#2 limited_goal)) andalso
+             can (find_term is_cond) result
+          then OK()
+          else die "splitter limit did not stop after one round"
+      | _ => die "bounded splitter produced the wrong subgoals"
+
   val asm_goal =
     ([``P (if b then x:'a else y) : bool``], ``G:bool``)
   val with_asm_split = add_split named_if_asm_split bool_ss
@@ -1728,6 +1793,14 @@ in
               then OK()
               else die "option assumption split retained double negations"
           | _ => die "option assumption split produced the wrong cases"
+
+      val _ = load "pairTheory"
+      val pair_split = TypeBase.case_pred_imp_of ``:'a # 'b``
+      val _ = convtest
+        ("splitter: Generic.thy Cartesian-product example",
+         SPLIT_CONV [pair_split],
+         ``P (pair_CASE p (f:'a -> 'b -> 'c)) : bool``,
+         ``!a:'a b:'b. p = (a,b) ==> P (f a b)``)
 
       val _ = load "listTheory"
       val list_split = TypeBase.case_pred_imp_of ``:'a list``

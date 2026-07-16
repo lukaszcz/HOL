@@ -1289,6 +1289,7 @@ fun clear_rules (SS s) =
  fun SIMP_QCONV ss = TRAVERSE (traversedata_for_ss ss);
 
 val Cong   = markerLib.Cong
+val Split  = markerLib.Split
 val AC     = markerLib.AC;
 val Excl   = markerLib.Excl
 val ExclSF = markerLib.ExclSF
@@ -1299,6 +1300,9 @@ local open markerSyntax markerLib
 in
 fun is_AC thm = same_const(fst(strip_comb(concl thm))) AC_tm
 fun is_Cong thm = same_const(fst(strip_comb(concl thm))) Cong_tm
+fun is_Split thm =
+  same_const (fst (strip_comb (concl thm)))
+             (prim_mk_const {Thy="marker", Name="Split"})
 
 fun extract_excls (excls, exfrags, rest) l =
     case l of
@@ -1336,30 +1340,84 @@ fun SF ssfrag =
                     markerLib.FRAG nm)
 
 fun process_tags ss thl =
-    let val (Congs,rst) = Lib.partition is_Cong thl
-        val (ACs,rst) = Lib.partition is_AC rst
-        val (excludes, exclfrags, rst) = extract_excls ([],[],[]) rst
-        val (frags, rst) = extract_frags ([],[]) rst
+    let
+      val (Congs,rst) = Lib.partition is_Cong thl
+      val (Splits,rst) = Lib.partition is_Split rst
+      val (ACs,rst) = Lib.partition is_AC rst
+      val (excludes, exclfrags, rst) = extract_excls ([],[],[]) rst
+      val (frags, rst) = extract_frags ([],[]) rst
     in
-      if null Congs andalso null ACs andalso null excludes andalso
-         null frags andalso null exclfrags
+      if null Congs andalso null Splits andalso null ACs andalso
+         null excludes andalso null frags andalso null exclfrags
       then (ss,thl)
       else
-        let val base = remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
-            val cong_ac =
-                SSFRAG_CON
-                  {name=SOME "Cong and/or AC", relsimps=[],
-                   ac=map unAC ACs,
-                   congs=map (normCong o unCong) Congs,
-                   convs=[], rewrs=[], filter=NONE, dprocs=[], loopers=[],
-                   unsafe_solvers=[], safe_solvers=[], congprocs=[]}
-            (* Cong/AC is named but never user-excludable; SF-derived frags
-               go through force_add so they override any active exclusion. *)
-            val withCongAc = base ++ cong_ac
-            val withFrags = List.foldl (fn (f,ss) => force_add ss f)
-                                       withCongAc frags
+        let
+          val base =
+            remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
+          val cong_ac =
+            SSFRAG_CON
+              {name=SOME "Cong and/or AC", relsimps=[],
+               ac=map unAC ACs,
+               congs=map (normCong o unCong) Congs,
+               convs=[], rewrs=[], filter=NONE, dprocs=[], loopers=[],
+               unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+          (* Cong/AC is named but never user-excludable; SF-derived frags
+             go through force_add so they override any active exclusion. *)
+          val withCongAc = base ++ cong_ac
+          val withFrags =
+            List.foldl (fn (f,ss) => force_add ss f) withCongAc frags
+          val withSplits =
+            List.foldl (fn (th,ss) => add_split (destSplit th) ss)
+                       withFrags Splits
+          fun splitter_exclusion name =
+            String.isPrefix "split " name orelse
+            String.isPrefix "split_asm " name orelse
+            String.isPrefix "split.case " name
+          val ruleExcludes =
+            List.filter (not o splitter_exclusion) excludes
+          fun strategy_name name (SS s) =
+            List.exists (fn (name',_) => name = name') (#loopers s) orelse
+            List.exists (fn {name=name',...} => name = name')
+                        (#unsafe_solvers s) orelse
+            List.exists (fn {name=name',...} => name = name')
+                        (#safe_solvers s)
+          fun exclude_rule (name,result) =
+            result -* [name]
+            handle exn as HOL_ERR _ =>
+              if strategy_name name result then result else raise exn
+          val withoutRules =
+            List.foldl exclude_rule withSplits ruleExcludes
+          fun remove_looper (name,result) =
+            let val SS s = result
+            in
+              if List.exists (fn (name',_) => name = name') (#loopers s)
+              then del_looper name result
+              else result
+            end
+          val withoutLoopers = List.foldl remove_looper withoutRules excludes
+          val withoutSolvers =
+            List.foldl (fn (name,result) => remove_solver name result)
+                       withoutLoopers excludes
+          val splitExcludes = List.filter splitter_exclusion excludes
+          val invocation =
+            if null splitExcludes then withoutSolvers
+            else
+              map_strategy
+                (fn s =>
+                   let
+                     val excluded =
+                       Binaryset.addList (#excl_loopers s, splitExcludes)
+                   in
+                     {loopers= #loopers s,
+                      unsafe_solvers= #unsafe_solvers s,
+                      safe_solvers= #safe_solvers s,
+                      subgoaler= #subgoaler s,
+                      cond_depth= #cond_depth s,
+                      term_ord= #term_ord s,
+                      excl_loopers=excluded}
+                   end) withoutSolvers
         in
-          (withFrags -* excludes, rst)
+          (invocation, rst)
         end
     end
 
