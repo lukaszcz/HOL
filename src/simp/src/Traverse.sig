@@ -87,6 +87,14 @@ sig
 
   val addctxt : thm list -> reducer -> reducer
 
+  type simp_prover_ctxt =
+       {stack        : term list,
+        context_thms : thm list,
+        recurse      : term -> thm}
+  type ssolver =
+       {name : string, solve : simp_prover_ctxt -> term -> thm}
+  type subgoaler = simp_prover_ctxt -> term -> thm
+
  (* ----------------------------------------------------------------------
      TRAVERSE : {rewriters: reducer list,
                  dprocs: reducer list,
@@ -130,5 +138,11 @@ sig
                          relation: term};
 
    val TRAVERSE : traverse_data -> thm list -> conv
+
+   (* Staging seam for configuring the prover pipeline before its fields
+      become part of traverse_data. *)
+   val TRAVERSE_WITH_PROVERS :
+       {subgoaler : subgoaler option, solvers : ssolver list} ->
+       traverse_data -> thm list -> conv
 
 end (* sig *)

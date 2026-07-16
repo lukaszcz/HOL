@@ -48,6 +48,12 @@ fun addctxt ths (REDUCER {name,initial,addcontext,apply}) =
     REDUCER{name = name, initial = addcontext(initial,ths), apply = apply,
             addcontext = addcontext}
 
+type simp_prover_ctxt =
+  {stack : term list, context_thms : thm list, recurse : term -> thm}
+type ssolver =
+  {name : string, solve : simp_prover_ctxt -> term -> thm}
+type subgoaler = simp_prover_ctxt -> term -> thm
+
 
 (* ---------------------------------------------------------------------
  * Traversal states
@@ -59,6 +65,7 @@ datatype trav_state =
              relation : term,
              contexts1 : context list,
              contexts2 : context list,
+             context_thms : thm list,
              freevars : term list};
 
 fun initial_context {rewriters:reducer list,
@@ -67,6 +74,7 @@ fun initial_context {rewriters:reducer list,
                      relation, limit} =
   TSTATE{contexts1=map (#initial o dest_reducer) rewriters,
          contexts2=map (#initial o dest_reducer) dprocs,
+         context_thms=[],
          freevars=[],
          relation_info = find_relation relation (#relations tsdata),
          relation = relation};
@@ -80,7 +88,8 @@ fun add_context rewriters dprocs = let
   val rewrite_collectors' = map (#addcontext o dest_reducer) rewriters
   val dproc_collectors' = map (#addcontext o dest_reducer) dprocs
   fun doit (context, thms) = let
-    val TSTATE {contexts1,contexts2,freevars,relation_info, relation} = context
+    val TSTATE {contexts1,contexts2,context_thms,freevars,
+                relation_info,relation} = context
   in
     if null thms then context
     else let
@@ -99,6 +108,7 @@ fun add_context rewriters dprocs = let
       in
         TSTATE{contexts1=newcontexts1,
                contexts2=newcontexts2,
+               context_thms=thms @ context_thms,
                freevars=newfreevars,
                relation=relation, relation_info = relation_info}
       end
@@ -202,7 +212,8 @@ fun mapfilter2 f (h1::t1) (h2::t2) =
  * ---------------------------------------------------------------------*)
 
 
-fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack ctxt tm = let
+fun TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
+                        rel stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val add_context' = add_context rewriters dprocs
@@ -232,7 +243,7 @@ fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack ctxt tm = let
     end
 
     fun trav stack context = let
-      val TSTATE {contexts1,contexts2, freevars, ...} = context
+      val TSTATE {contexts1,contexts2,context_thms,freevars,...} = context
       fun trav_with_rel' new_relation stack context =
           if samerel relname new_relation then trav stack context
           else
@@ -240,9 +251,29 @@ fun TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules rel stack ctxt tm = let
 
       fun ctxt_solver stack tm = let
         val old = !lim_r
+        fun raw_recurse tm = trav_with_rel' equality stack context tm
+        fun recurse tm = raw_recurse tm handle HOL_ERR _ => REFL tm
+        val prover_ctxt =
+          {stack=stack, context_thms=context_thms, recurse=recurse}
+        fun first_solver [] _ =
+              raise ERR "ctxt_solver" "Unsolved condition"
+          | first_solver ({solve,...}::rest) tm =
+              solve prover_ctxt tm
+              handle HOL_ERR _ => first_solver rest tm
+        fun pipeline tm = let
+          val eq = case subgoaler of
+                       NONE => recurse tm
+                     | SOME subgoal => subgoal prover_ctxt tm
+          val tm' = rand (concl eq)
+        in
+          if aconv tm' boolSyntax.T then EQT_ELIM eq
+          else EQ_MP (SYM eq) (first_solver solvers tm')
+        end
       in
-        EQT_ELIM (trav_with_rel' equality stack context tm)
-        handle e as HOL_ERR _ => (lim_r := old ; raise e)
+        (case (subgoaler,solvers) of
+             (NONE,[]) => EQT_ELIM (raw_recurse tm)
+           | _ => pipeline tm)
+        handle e as HOL_ERR _ => (lim_r := old; raise e)
       end
       fun ctxt_conv stack tm = let
         val old = !lim_r
@@ -305,9 +336,17 @@ type traverse_data = {limit : int option,
                       travrules: Travrules.travrules,
                       relation: term};
 
-fun TRAVERSE (data as {limit,dprocs,rewriters,travrules,relation}) thms =
-   let val context' = add_context rewriters dprocs (initial_context data,thms)
-   in TRAVERSE_IN_CONTEXT limit rewriters dprocs travrules relation [] context'
+fun TRAVERSE_WITH_PROVERS {subgoaler,solvers}
+                          (data as {limit,dprocs,rewriters,travrules,relation})
+                          thms =
+   let
+     val context' = add_context rewriters dprocs (initial_context data,thms)
+   in
+     TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
+                         relation [] context'
    end;
+
+fun TRAVERSE data =
+  TRAVERSE_WITH_PROVERS {subgoaler=NONE,solvers=[]} data;
 
 end (* struct *)

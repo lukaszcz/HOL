@@ -591,6 +591,113 @@ in
      SIMP_CONV no_beta_ss [Cong boolTheory.LET_CONG],
      ``let x : 'a = a in if x = a then y : 'b else z``,
      ``let x : 'a = a in y : 'b``)
+
+  exception EMPTY_CONTEXT
+  val prover_error = mk_HOL_ERR "selftest" "toy_solver"
+  val excluded_middle =
+    SPEC ``toy_p (toy_x : 'a) : bool`` boolTheory.EXCLUDED_MIDDLE
+  val solver_rwt =
+    ASSUME
+      ``(toy_p (toy_x : 'a) \/ ~toy_p toy_x) ==>
+        ((toy_f : 'a -> 'b) toy_x = toy_y)``
+  fun excluded_middle_solver _ tm =
+    if aconv tm (concl excluded_middle) then excluded_middle
+    else raise prover_error "Condition not recognized"
+  val toy_solver =
+    {name="excluded middle", solve=excluded_middle_solver}
+  val solver_rewr =
+    Cond_rewr.COND_REWR_CONV ("solver_rwt",solver_rwt) false
+  val solver_reducer =
+    Traverse.REDUCER
+      {name=SOME "solver test reducer",
+       initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,stack,...} => solver_rewr solver stack}
+  val pure_data = traversedata_for_ss pureSimps.pure_ss
+  val solver_data =
+    {rewriters=[solver_reducer], dprocs=[],
+     relation= #relation pure_data, travrules= #travrules pure_data,
+     limit=NONE}
+  val solver_conv =
+    Traverse.TRAVERSE_WITH_PROVERS
+      {subgoaler=NONE,solvers=[toy_solver]} solver_data []
+
+  val _ = convtest
+    ("solver pipeline: unsafe solver proves residual condition",
+     solver_conv, ``(toy_f : 'a -> 'b) toy_x``, ``toy_y : 'b``)
+
+  val context_rwt =
+    ASSUME ``context_p ==> ((context_f : 'a -> 'b) context_x = context_y)``
+  val context_rewr =
+    Cond_rewr.COND_REWR_CONV ("context_rwt",context_rwt) false
+  val context_reducer =
+    Traverse.REDUCER
+      {name=SOME "context test reducer",
+       initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,stack,...} => context_rewr solver stack}
+  val bool_data = traversedata_for_ss bool_ss
+  val context_data =
+    {rewriters=[context_reducer], dprocs=[],
+     relation= #relation bool_data, travrules= #travrules bool_data,
+     limit=NONE}
+  fun context_solver {context_thms,...} tm =
+    case List.find (fn th => aconv tm (concl th)) context_thms of
+        SOME th => th
+      | NONE => raise prover_error "Condition absent from context"
+  val context_conv =
+    Traverse.TRAVERSE_WITH_PROVERS
+      {subgoaler=NONE,
+       solvers=[{name="context lookup",solve=context_solver}]}
+      context_data []
+
+  val _ = convtest
+    ("solver pipeline: congruence context theorem is visible",
+     context_conv,
+     ``context_p ==> (context_f : 'a -> 'b) context_x = context_z``,
+     ``context_p ==> (context_y : 'b) = context_z``)
+
+  fun failing_solver _ _ =
+    raise prover_error "Deliberate solver failure"
+  val limited_data =
+    {rewriters= #rewriters bool_data, dprocs= #dprocs bool_data,
+     relation= #relation bool_data, travrules= #travrules bool_data,
+     limit=SOME 1}
+  val solver_failure_conv =
+    Traverse.TRAVERSE_WITH_PROVERS
+      {subgoaler=NONE,
+       solvers=[{name="always fails",solve=failing_solver}]}
+      limited_data [failed_rwt]
+
+  val _ = convtest
+    ("solver pipeline: solver failure restores traversal limit",
+     solver_failure_conv,
+     ``(h : 'b -> bool -> 'c) ((f : 'a -> 'b) x) (q /\ T)``,
+     ``(h : 'b -> bool -> 'c) (f x) q``)
+
+  val passthrough_reducer =
+    Traverse.REDUCER
+      {name=SOME "solver exception test reducer",
+       initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=fn {solver,stack,...} => solver stack}
+  val exception_data =
+    {rewriters=[passthrough_reducer], dprocs=[],
+     relation= #relation bool_data, travrules= #travrules bool_data,
+     limit=NONE}
+  fun raising_solver _ _ = raise Fail "non-HOL solver exception"
+  val exception_conv =
+    Traverse.TRAVERSE_WITH_PROVERS
+      {subgoaler=SOME (fn _ => REFL),
+       solvers=[{name="raises Fail",solve=raising_solver}]}
+      exception_data []
+
+  val _ = shouldfail
+    {testfn=exception_conv,
+     printresult=thm_to_string,
+     printarg=K "solver pipeline propagates non-HOL exceptions",
+     checkexn=fn Fail "non-HOL solver exception" => true | _ => false}
+    ``solver_exception_p``
 end
 
 (* ---------------------------------------------------------------------- *)
