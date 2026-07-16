@@ -238,6 +238,10 @@ sig
      (* Pop, Simp, Rotate to back *)
    val allasms : simptac_config -> simpset -> tactic
      (* do the above to all the assumptions in turn *)
+   type xsimptac_config =
+        {base : simptac_config, concl_in_fixpoint : bool,
+         imp_rebuild : bool}
+   val GEN_GLOBAL_SIMP_TAC : xsimptac_config -> simpset -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)
 

@@ -147,4 +147,8 @@ sig
 
    val TRAVERSE : traverse_data -> thm list -> conv
 
+   (* Apply one reducer at the root, without descending.  Recursive
+      side-condition proving still uses the full traversal. *)
+   val ROOT_REWRITE : traverse_data -> thm list -> conv
+
 end (* sig *)

@@ -213,8 +213,8 @@ fun mapfilter2 f (h1::t1) (h2::t2) =
  * ---------------------------------------------------------------------*)
 
 
-fun TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
-                        rel stack ctxt tm = let
+fun TRAVERSE_IN_CONTEXT root_only subgoaler solvers limit rewriters dprocs
+                        travrules rel stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val add_context' = add_context rewriters dprocs
@@ -228,7 +228,7 @@ fun TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
                              else ()
   fun dec r = case !r of NONE => ()
     | SOME n => r := SOME (n - 1)
-  fun trav_with_rel rel_info stack context  = let
+  fun trav_with_rel root_only rel_info stack context  = let
     val PREORDER(relname , _, _) = rel_info
     fun apply_relation f = f relname
     val congprocs' = mapfilter apply_relation congprocs
@@ -246,9 +246,12 @@ fun TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
     fun trav stack context = let
       val TSTATE {contexts1,contexts2,context_thms,freevars,...} = context
       fun trav_with_rel' new_relation stack context =
-          if samerel relname new_relation then trav stack context
+          if samerel relname new_relation then
+            if root_only then
+              trav_with_rel false rel_info stack context
+            else trav stack context
           else
-              trav_with_rel (get_relation' new_relation) stack context
+            trav_with_rel false (get_relation' new_relation) stack context
 
       fun ctxt_solver stack tm = let
         val old = !lim_r
@@ -318,13 +321,13 @@ fun TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs travrules
         (trace(4,REDUCE ("Reducing",tm)); conv tm)
       end;
     in
-      loop
+      if root_only then high_priority ORELSEC low_priority else loop
     end
   in
     trav stack context
   end
 in
-  trav_with_rel (get_relation' rel) stack ctxt tm
+  trav_with_rel root_only (get_relation' rel) stack ctxt tm
 end
 
 (* ---------------------------------------------------------------------
@@ -345,18 +348,21 @@ fun with_option_flag _ NONE f x = f x
   | with_option_flag flag (SOME value) f x =
       Lib.with_flag (flag,value) f x
 
-fun TRAVERSE
+fun GEN_TRAVERSE root_only
       (data as {limit,dprocs,rewriters,travrules,relation,subgoaler,
                 solvers,cond_depth,term_ord}) thms tm =
    let
      val context' = add_context rewriters dprocs (initial_context data,thms)
      fun traverse tm =
-       TRAVERSE_IN_CONTEXT subgoaler solvers limit rewriters dprocs
+       TRAVERSE_IN_CONTEXT root_only subgoaler solvers limit rewriters dprocs
                            travrules relation [] context' tm
      fun with_order tm =
        with_option_flag Cond_rewr.term_ord term_ord traverse tm
    in
      with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
    end;
+
+val TRAVERSE = GEN_TRAVERSE false
+val ROOT_REWRITE = GEN_TRAVERSE true
 
 end (* struct *)

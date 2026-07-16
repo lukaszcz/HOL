@@ -1629,7 +1629,123 @@ fun psr (cfg : simptac_config) ss =
 
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
 
-fun global_simp_tac cfg ss0 =
+type xsimptac_config =
+     {base : simptac_config, concl_in_fixpoint : bool, imp_rebuild : bool}
+
+fun same_goal ((asl1,w1),(asl2,w2)) =
+    ListPair.allEq (fn (a1,a2) => aconv a1 a2) (asl1,asl2) andalso
+    aconv w1 w2
+
+fun same_goals (goals1,goals2) = ListPair.allEq same_goal (goals1,goals2)
+
+(* Apply a continuation independently to annotated goals, retaining all
+   validation functions. *)
+fun map_annotated next annotated =
+    let
+      val results = map (fn (g,state) => next state g) annotated
+      val output = List.concat (map #1 results)
+      val validations = map #2 results
+      val lengths = map (length o #1) results
+      fun validate ths =
+        if null output then map (fn validation => validation []) validations
+        else mapshape lengths validations ths
+    in
+      (output,validate)
+    end
+
+fun bind_annotated (annotated,validation) next =
+    let val (output,validate) = map_annotated next annotated
+    in (output,validation o validate)
+    end
+
+fun continue_annotated (annotated,validation) next =
+    let
+      fun tag_result state g =
+        let val (goals,validate) = next state g
+        in (map (fn goal => (goal,())) goals,validate)
+        end
+      val (tagged,validate) = map_annotated tag_result annotated
+    in
+      (map #1 tagged,validation o validate)
+    end
+
+fun rotate_assumption cfg =
+    let
+      val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
+    in
+      popper (BF_ASSUME_TAC (not (#oldestfirst cfg)))
+    end
+
+fun counted_psr cfg ss g =
+    let
+      val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
+      val old_concl = ref NONE
+      val new_concl = ref NONE
+      val expected = ref ([] : goal list)
+      fun simplify th =
+        ASSUM_LIST
+          (fn asms => fn popped_goal =>
+             let
+               val simplified = SIMP_RULE ss asms th
+               val ordinary =
+                 BF_ASSUME_TAC (not (#oldestfirst cfg)) simplified popped_goal
+               val _ = old_concl := SOME (concl th)
+               val _ = new_concl := SOME (concl simplified)
+               val _ = expected := #1 ordinary
+             in
+               stdcon cfg simplified popped_goal
+             end)
+      val (goals,validation) = popper simplify g
+      val changed =
+        case (!old_concl,!new_concl) of
+            (SOME old,SOME new) => not (aconv old new)
+          | _ => raise ERR ("counted_psr", "missing assumption")
+      val structural = not (same_goals (goals,!expected))
+      val info = {changed=changed orelse structural,
+                  structural=structural}
+    in
+      (map (fn goal => (goal,info)) goals,validation)
+    end
+
+fun counted_pass cfg ss initial_k (g as (asl,_)) =
+    let
+      val initial =
+        {last= ~1, structural=false, k=initial_k,
+         index=0, remaining=length asl}
+      fun loop state goal =
+        if #remaining state = 0 then ([(goal,state)],hd)
+        else
+          let
+            val step =
+              if #k state = 0 then
+                let val (goals,validation) = rotate_assumption cfg goal
+                    val info = {changed=false,structural=false}
+                in (map (fn g => (g,info)) goals,validation)
+                end
+              else counted_psr cfg ss goal
+            fun next {changed,structural} =
+              let
+                val k =
+                  if changed then ~1
+                  else if #k state < 0 then ~1
+                  else Int.max (0,#k state - 1)
+                val state' =
+                  {last=if changed then #index state else #last state,
+                   structural= #structural state orelse structural,
+                   k=k, index= #index state + 1,
+                   remaining= #remaining state - 1}
+              in
+                loop state'
+              end
+          in
+            bind_annotated step next
+          end
+    in
+      loop initial g
+    end
+
+fun GEN_GLOBAL_SIMP_TAC
+      ({base,concl_in_fixpoint,imp_rebuild} : xsimptac_config) ss0 =
     markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
         markerLib.LLABEL_RES_THEN (
@@ -1637,13 +1753,111 @@ fun global_simp_tac cfg ss0 =
              let
                val (ss1,thl') = process_tags ss0 thl
                val ss = ss1 ++ rewrites thl'
+               val conclusion_tac =
+                 gen_simp_tac thl' {safe=false} ss []
+               val root_rewrite =
+                 Traverse.ROOT_REWRITE (traversedata_for_ss ss)
+
+               fun strip_implications (g as (_,w)) =
+                 if can boolSyntax.dest_imp_only w then
+                   (DISCH_TAC THEN strip_implications) g
+                 else ALL_TAC g
+
+               fun pop_head_mp (a::asl,w) = MP_TAC (ASSUME a) (asl,w)
+                 | pop_head_mp ([],_) =
+                     raise ERR ("GEN_GLOBAL_SIMP_TAC", "no assumption")
+
+               fun find_rebuild nested outer count =
+                 case outer of
+                     [] => NONE
+                   | a::rest =>
+                       let
+                         val target = mk_imp (a,nested)
+                         val context = map ASSUME rest
+                       in
+                         case SOME (root_rewrite context target)
+                              handle HOL_ERR _ => NONE
+                                   | Conv.UNCHANGED => NONE of
+                             SOME eq => SOME (count,target,eq)
+                           | NONE =>
+                               find_rebuild target rest (count + 1)
+                       end
+
+               fun fixpoint k goal =
+                 let
+                   val pass as (annotated,validation) =
+                     counted_pass base ss k goal
+                   val unchanged =
+                     same_goals (map #1 annotated,[goal])
+                   fun clear_change state =
+                     if unchanged then
+                       {last= ~1,structural=false,k= #k state,
+                        index= #index state,remaining= #remaining state}
+                     else state
+                   val pass' =
+                     (map (fn (g,state) => (g,clear_change state)) annotated,
+                      validation)
+                 in
+                   continue_annotated pass' after_pass
+                 end
+
+               and after_pass state goal =
+                 if concl_in_fixpoint then
+                   let
+                     val result as (goals,validation) =
+                       conclusion_tac goal
+                     fun continue next =
+                       continue_annotated
+                         (map (fn g => (g,())) goals,validation)
+                         (fn () => next)
+                   in
+                     if not (same_goals (goals,[goal])) then
+                       continue (fixpoint ~1)
+                     else if #structural state then
+                       continue (fixpoint ~1)
+                     else if #last state > 0 then
+                       continue (fixpoint (#last state))
+                     else if imp_rebuild then continue rebuild
+                     else result
+                   end
+                 else if #structural state then fixpoint ~1 goal
+                 else if #last state > 0 then fixpoint (#last state) goal
+                 else final_conclusion goal
+
+               and final_conclusion goal =
+                 let
+                   val result as (goals,validation) = conclusion_tac goal
+                 in
+                   if imp_rebuild then
+                     continue_annotated
+                       (map (fn g => (g,())) goals,validation)
+                       (fn () => rebuild)
+                   else result
+                 end
+
+               and rebuild (goal as (asl,w)) =
+                 case find_rebuild w asl 1 of
+                     NONE => ALL_TAC goal
+                   | SOME (count,target,eq) =>
+                       let
+                         val _ = aconv (lhs (concl eq)) target orelse
+                           raise ERR ("GEN_GLOBAL_SIMP_TAC",
+                                      "bad root rewrite")
+                       in
+                         (ntac count pop_head_mp THEN
+                          CONV_TAC (K eq) THEN strip_implications THEN
+                          fixpoint ~1) goal
+                       end
              in
-               rpt (CHANGED_TAC (allasms cfg ss)) THEN
-               gen_simp_tac thl' {safe=false} ss []
+               fixpoint ~1
              end
         )
       )
     )
+
+fun global_simp_tac cfg =
+    GEN_GLOBAL_SIMP_TAC
+      {base=cfg,concl_in_fixpoint=false,imp_rebuild=false}
 
 
 

@@ -1756,6 +1756,174 @@ in
   ()
 end
 
+(* ---------------------------------------------------------------------- *)
+(* Mutual global simplification and extended fixpoint controls.            *)
+
+val _ = let
+  val base_cfg =
+    {droptrues=true,elimvars=false,strip=false,oldestfirst=true}
+  fun xcfg concl rebuild =
+    {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild}
+  fun result tac goal = #1 (VALID tac goal)
+  fun check msg expected tac goal =
+    let val _ = tprint msg
+    in
+      case result tac goal of
+          actual =>
+            if list_eq goal_eq expected actual then OK()
+            else die (msg ^ " produced " ^
+                      String.concatWith ", " (map printgoal actual))
+    end
+
+  val mutual_goal =
+    ([``P (a:'a) : bool``, ``a:'a = b``], ``mutual_q:bool``)
+  val mutual_expected =
+    [([``P (b:'a) : bool``, ``a:'a = b``], ``mutual_q:bool``)]
+  val _ =
+    check "GEN_GLOBAL_SIMP_TAC uses later assumptions mutually"
+      mutual_expected
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss []) mutual_goal
+
+  val chain_goal =
+    ([``(f:'a -> 'b) x = g x``, ``(g:'a -> 'b) x = z``,
+      ``R ((f:'a -> 'b) x) : bool``], ``chain_s:bool``)
+  val chain_expected =
+    [([``(f:'a -> 'b) x = z``, ``(g:'a -> 'b) x = z``,
+       ``R (z:'b) : bool``], ``chain_s:bool``)]
+  val _ =
+    check "GEN_GLOBAL_SIMP_TAC closes a three-assumption mutual chain"
+      chain_expected
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss []) chain_goal
+
+  val schedule_a = ``schedule_a:bool``
+  val schedule_b0 = ``schedule_b /\ T``
+  val schedule_b1 = ``schedule_b:bool``
+  val schedule_c = ``schedule_c:bool``
+  val schedule_calls = Array.array (4,0)
+  fun increment i =
+    Array.update (schedule_calls,i,Array.sub (schedule_calls,i) + 1)
+  fun schedule_conv _ _ tm =
+    if aconv tm schedule_a then (increment 0; NO_CONV tm)
+    else if aconv tm schedule_b0 then
+      (increment 1; REWRITE_CONV [boolTheory.AND_CLAUSES] tm)
+    else if aconv tm schedule_b1 then (increment 2; NO_CONV tm)
+    else if aconv tm schedule_c then (increment 3; NO_CONV tm)
+    else NO_CONV tm
+  val schedule_ss =
+    empty_ss ++
+    conv_ss {name="global schedule probe",key=NONE,trace=0,
+             conv=schedule_conv}
+  val schedule_goal =
+    ([schedule_a,schedule_b0,schedule_c], ``schedule_goal:bool``)
+  val schedule_expected =
+    [([schedule_a,schedule_b1,schedule_c], ``schedule_goal:bool``)]
+  val schedule_result =
+    result (GEN_GLOBAL_SIMP_TAC (xcfg false false) schedule_ss [])
+           schedule_goal
+  val _ = tprint "global change counting skips the provably-fixed tail"
+  val _ =
+    if list_eq goal_eq schedule_expected schedule_result andalso
+       List.tabulate (4,fn i => Array.sub (schedule_calls,i)) = [1,1,1,2]
+    then OK()
+    else die "global change-count schedule did not skip the fixed tail"
+
+  val conclusion_calls = ref 0
+  fun conclusion_probe _ _ tm =
+    if aconv tm (#2 schedule_goal) then
+      (conclusion_calls := !conclusion_calls + 1; NO_CONV tm)
+    else NO_CONV tm
+  val per_pass_ss =
+    schedule_ss ++
+    conv_ss {name="global conclusion pass probe",key=NONE,trace=0,
+             conv=conclusion_probe}
+  val _ =
+    result (GEN_GLOBAL_SIMP_TAC (xcfg true false) per_pass_ss [])
+           schedule_goal
+  val _ = tprint "concl_in_fixpoint simplifies the conclusion each pass"
+  val _ =
+    if !conclusion_calls = 2 then OK()
+    else die "conclusion was not simplified on every assumption pass"
+
+  val noop_a = ``global_noop_a:bool``
+  val noop_nested = ref false
+  fun noop_conv _ _ tm =
+    if aconv tm noop_a then
+      if !noop_nested then (noop_nested := false; NO_CONV tm)
+      else
+        let
+          val _ = noop_nested := true
+          val collapse =
+            REWRITE_CONV [boolTheory.AND_CLAUSES]
+                         (mk_conj (noop_a,boolSyntax.T))
+        in
+          SYM collapse
+        end
+    else NO_CONV tm
+  val noop_ss =
+    empty_ss ++
+    conv_ss {name="global net-noop probe",key=NONE,trace=0,
+             conv=noop_conv}
+  val noop_cfg =
+    {droptrues=true,elimvars=false,strip=true,oldestfirst=true}
+  val _ =
+    check "global structural net-noop pass terminates"
+      [([noop_a],``global_noop_goal:bool``)]
+      (GEN_GLOBAL_SIMP_TAC
+         {base=noop_cfg,concl_in_fixpoint=false,imp_rebuild=false}
+         noop_ss [])
+      ([noop_a],``global_noop_goal:bool``)
+
+  val fix_asm0 = ``fix_asm_p /\ T``
+  val fix_asm1 = ``fix_asm_p:bool``
+  val fix_concl0 = ``fix_concl_p /\ T``
+  val fix_concl1 = ``fix_concl_p:bool``
+  val unlocked = ref false
+  fun gate_conv _ _ tm =
+    if aconv tm fix_concl0 then
+      (unlocked := true; REWRITE_CONV [boolTheory.AND_CLAUSES] tm)
+    else if !unlocked andalso aconv tm fix_asm0 then
+      REWRITE_CONV [boolTheory.AND_CLAUSES] tm
+    else NO_CONV tm
+  val gate_ss =
+    empty_ss ++
+    conv_ss {name="global conclusion gate",key=NONE,trace=0,
+             conv=gate_conv}
+  val gate_goal = ([fix_asm0],fix_concl0)
+  val _ = unlocked := false
+  val _ =
+    check "default global simplification keeps conclusion outside fixpoint"
+      [([fix_asm0],fix_concl1)]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) gate_ss []) gate_goal
+  val _ = unlocked := false
+  val _ =
+    check "concl_in_fixpoint restarts changed assumptions"
+      [([fix_asm1],fix_concl1)]
+      (GEN_GLOBAL_SIMP_TAC (xcfg true false) gate_ss []) gate_goal
+
+  val root_target = ``root_a ==> root_b``
+  val root_result = ``root_c ==> root_d``
+  val root_condition = ``(root_side_P:bool -> bool) (T /\ T)``
+  val root_rule =
+    ASSUME (mk_imp (root_condition,mk_eq (root_target,root_result)))
+  val root_context = ASSUME ``(root_side_P:bool -> bool) T``
+  val root_ss =
+    pureSimps.pure_ss ++ rewrites [boolTheory.AND_CLAUSES,root_rule]
+  val _ = convtest
+    ("root rewriting fully simplifies conditional-rule side conditions",
+     Traverse.ROOT_REWRITE (traversedata_for_ss root_ss) [root_context],
+     root_target,root_result)
+
+  val imp_goal = ([``imp_p:bool``],``imp_q:bool``)
+  val imp_ss =
+    empty_ss ++ rewrites [Once (GSYM boolTheory.CONTRAPOS_THM)]
+  val _ =
+    check "imp_rebuild rewrites a discharged assumption at the root"
+      [([``~imp_q``],``~imp_p``)]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false true) imp_ss []) imp_goal
+in
+  ()
+end
+
 (* These theories are later than simp in the build sequence.  Exercise their
    actual case constants when their already-built objects are available; the
    bool tests above remain the bootstrap regression test for this directory. *)
