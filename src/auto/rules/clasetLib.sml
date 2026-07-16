@@ -331,6 +331,7 @@ datatype pending =
     ApplyDelta of cdelta
   | ApplyBatch of cdelta list
   | Modify of (claset -> claset)
+  | CatchUpTypeBase
 type cstate = claset * bool * pending list
 
 val state0 : cstate = (empty_cs, false, [])
@@ -413,13 +414,11 @@ fun batch_apply deltas (cs as CS {decls, ...}) =
   else
     List.foldl apply_add_batch cs deltas
 
-fun apply_pending (ApplyDelta delta) cs = apply_cdelta delta cs
-  | apply_pending (ApplyBatch deltas) cs = batch_apply deltas cs
-  | apply_pending (Modify f) cs = f cs
-
 (* TypeBase facts are derived data: they are never ancestry deltas.  A
    contribution may decline a tyinfo by raising (as TypeBasePure's datatype
-   accessors do for non-datatypes), so make the listener total. *)
+   accessors do for non-datatypes), so make the listener total.  Contributions
+   are value providers and must be pure and deterministic: their invocation
+   count and timing are deliberately not part of the public API. *)
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
 
@@ -429,30 +428,61 @@ fun add_tyinfo_rule spec (named_th as (_, th))
   (cs as CS {decls, ...}) =
   if has_decls decls th then cs else add_rule spec named_th cs
 
-fun add_tyinfo (tyi : TypeBasePure.tyinfo) (cs : claset) =
+fun rules_for_tyinfo (tyi : TypeBasePure.tyinfo) =
   let
     fun add_contribution
-      ((_, contribution) : tyinfo_contribution, acc : claset) =
+      ((_, contribution) : tyinfo_contribution, rev_rules) =
       case Lib.total contribution tyi of
-          NONE => acc
-        | SOME rules =>
-            List.foldl
-              (fn ((spec, named_th), cs) => add_tyinfo_rule spec named_th cs)
-              acc rules
+          NONE => rev_rules
+        | SOME rules => List.revAppend (rules, rev_rules)
   in
-    List.foldl add_contribution cs (!tyinfo_contributions)
+    List.rev (List.foldl add_contribution [] (!tyinfo_contributions))
   end
 
-fun catch_up_typebase cs =
-  List.foldl (fn (tyi, acc) => add_tyinfo tyi acc) cs (TypeBase.elts ())
+fun apply_tyinfo_rules rules cs =
+  List.foldl
+    (fn ((spec, named_th), acc) => add_tyinfo_rule spec named_th acc)
+    cs rules
+
+fun add_tyinfo tyi cs = apply_tyinfo_rules (rules_for_tyinfo tyi) cs
+
+fun collect_typebase_rules () =
+  let
+    fun collect (tyi, rev_rules) =
+      List.revAppend (rules_for_tyinfo tyi, rev_rules)
+  in
+    List.rev (List.foldl collect [] (TypeBase.elts ()))
+  end
+
+fun catch_up_typebase cs = apply_tyinfo_rules (collect_typebase_rules ()) cs
+
+fun replay_pending typebase_rules [] (cs, caught_up) =
+      if caught_up then cs
+      else apply_tyinfo_rules typebase_rules cs
+  | replay_pending typebase_rules (update :: updates) (cs, caught_up) =
+      (case update of
+           CatchUpTypeBase =>
+             if caught_up then
+               replay_pending typebase_rules updates (cs, true)
+             else
+               replay_pending typebase_rules updates
+                 (apply_tyinfo_rules typebase_rules cs, true)
+         | ApplyDelta delta =>
+             replay_pending typebase_rules updates
+               (apply_cdelta delta cs, false)
+         | ApplyBatch deltas =>
+             replay_pending typebase_rules updates
+               (batch_apply deltas cs, false)
+         | Modify f =>
+             replay_pending typebase_rules updates (f cs, false))
 
 fun init_state (state as (cs, initialised, pending)) =
   if initialised then state
   else
-    (catch_up_typebase
-       (List.foldl (fn (update, acc) => apply_pending update acc)
-          cs (List.rev pending)),
-     true, [])
+    let val typebase_rules = collect_typebase_rules ()
+    in
+      (replay_pending typebase_rules (List.rev pending) (cs, false), true, [])
+    end
 
 fun apply_to_global delta (cs, initialised, pending) =
   if initialised then apply_delta delta (cs, initialised, pending)
@@ -492,9 +522,13 @@ fun temp_delrule name =
 
 val augment_claset = update_claset
 
+fun request_typebase_catchup (cs, initialised, pending) =
+  if initialised then (catch_up_typebase cs, true, [])
+  else (cs, false, CatchUpTypeBase :: pending)
+
 fun register_tyinfo_contribution entry =
   (tyinfo_contributions := update_alist entry (!tyinfo_contributions);
-   update_claset catch_up_typebase)
+   #update_global_value adresult request_typebase_catchup)
 
 fun typebase_update tyi =
   (update_claset (add_tyinfo tyi); tyi)

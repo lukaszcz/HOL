@@ -72,6 +72,9 @@ sig
 
   val process_claset_tags : thm list -> claset -> claset * thm list
 
+  (* A contribution must be pure and deterministic.  Its result for a given
+     tyinfo may be evaluated more than once; invocation count and timing are
+     not API guarantees. *)
   val register_tyinfo_contribution :
       string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
       -> unit
