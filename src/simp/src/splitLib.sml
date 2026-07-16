@@ -137,10 +137,10 @@ type split_pack =
    path : int list,
    path_length : int}
 
-fun candidates cmap head =
+fun candidates want_asm cmap head =
   let
     fun add (({head=key_head,asm,...}, rules), acc) =
-      if not asm andalso same_const key_head head andalso
+      if asm = want_asm andalso same_const key_head head andalso
          can (Type.match_type (type_of key_head)) (type_of head)
       then rules @ acc
       else acc
@@ -154,7 +154,7 @@ fun prefix_path n i =
 fun matching rule redex =
   can (match_term (#pattern rule)) redex
 
-fun scan cmap tm =
+fun scan want_asm cmap tm =
   let
     val root_type = type_of tm
 
@@ -205,7 +205,7 @@ fun scan cmap tm =
             if is_const head then
               List.mapPartial
                 (mk_pack scan_path enter_path binders node)
-                (candidates cmap head)
+                (candidates want_asm cmap head)
             else []
           fun descend (arg, (i, packs)) =
             let
@@ -298,7 +298,7 @@ fun SPLIT_CONV thms =
   in
     fn tm =>
       let
-        val packs = sort pack_le (scan cmap tm)
+        val packs = sort pack_le (scan false cmap tm)
         (* Isabelle tries only the first sorted pack.  Trying later packs
            when instantiation fails avoids one rejected rule shadowing an
            otherwise applicable rule, while retaining one split per call. *)
@@ -309,7 +309,61 @@ fun SPLIT_CONV thms =
 
 fun split_concl_tac thms = CONV_TAC (SPLIT_CONV thms)
 
-(* TASK_08 adds the assumption-rule leg after split_concl_tac. *)
-fun SPLIT_TAC thms = CHANGED_TAC (split_concl_tac thms)
+fun contains_head heads tm =
+  can (find_term
+        (fn subtm =>
+            is_const subtm andalso
+            List.exists (fn head => same_const head subtm) heads)) tm
+
+fun clean_asm_eq th =
+  let
+    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
+    val cancel = REWR_CONV not_not
+    val negated = AP_TERM boolSyntax.negation th
+    val cleanup =
+      LAND_CONV cancel THENC
+      RAND_CONV cancel THENC
+      RAND_CONV (REDEPTH_CONV cancel)
+  in
+    (* Cancel the two outer negations without simplifying inside the
+       original assumption.  Then remove the double negations generated
+       in the case hypotheses.  This is the small fragment of the usual
+       NOT_CLAUSES/DE_MORGAN_THM cleanup needed here. *)
+    CONV_RULE cleanup negated
+  end
+
+fun asm_eq cmap asm =
+  let
+    val packs = sort pack_le (scan true cmap (mk_neg asm))
+  in
+    clean_asm_eq (first_success packs (mk_neg asm))
+  end
+
+fun SPLIT_ASM_TAC thms =
+  let
+    val cmap = cmap_of_rules thms
+    val heads =
+      map (#head o #1)
+        (List.filter (fn ({asm,...}, _) => asm) cmap)
+
+    fun tac (asms, goal) =
+      case List.find (contains_head heads) asms of
+          NONE =>
+            raise ERR "SPLIT_ASM_TAC" "no assumption contains a split key"
+        | SOME asm =>
+            let
+              val eq = asm_eq cmap asm
+              val cases = EQ_MP eq (ASSUME asm)
+            in
+              PRED_ASSUM (aconv asm) (K (STRIP_ASSUME_TAC cases))
+                (asms, goal)
+            end
+  in
+    tac
+  end
+
+fun SPLIT_TAC thms =
+  CHANGED_TAC (split_concl_tac thms) ORELSE
+  CHANGED_TAC (SPLIT_ASM_TAC thms)
 
 end

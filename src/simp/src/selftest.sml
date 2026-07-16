@@ -1399,10 +1399,38 @@ in
 end
 
 (* ---------------------------------------------------------------------- *)
-(* Splitter core: conclusion splits.                                     *)
+(* Splitter core: conclusion and assumption splits.                       *)
+
+fun mk_asm_split split =
+  let
+    val (pred, _) = dest_forall (concl split)
+    val (domain, _) = dom_rng (type_of pred)
+    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
+    val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
+    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
+    val cleanup =
+      REDEPTH_CONV
+        (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
+  in
+    split
+      |> SPEC neg_pred
+      |> AP_TERM boolSyntax.negation
+      |> CONV_RULE cleanup
+      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
+      |> GEN pred
+  end
+
+fun has_double_neg tm =
+  can (find_term (fn subtm =>
+    is_neg subtm andalso is_neg (dest_neg subtm))) tm
+
+fun goal_has_double_neg (asms, concl) =
+  List.exists has_double_neg (concl :: asms)
 
 val _ = let
   val if_split = TypeBase.case_pred_imp_of ``:bool``
+  val if_asm_split =
+    mk_asm_split (TypeBase.case_pred_disj_of ``:bool``)
 
   val _ = convtest
     ("splitter: conditional",
@@ -1492,6 +1520,78 @@ val _ = let
           if aconv result tactic_result then OK()
           else die "SPLIT_TAC produced the wrong conclusion"
       | _ => die "SPLIT_TAC produced the wrong subgoals"
+
+  fun has asm asms = List.exists (aconv asm) asms
+  val asm_goal =
+    ([``R (if b then x:'a else y) : bool``], ``G:bool``)
+  val _ =
+    tprint "splitter: conditional assumption split has clean cases"
+  val _ =
+    case #1
+      (VALID (SPLIT_ASM_TAC [if_split, if_asm_split]) asm_goal) of
+        [(left, left_concl), (right, right_concl)] =>
+          if aconv left_concl ``G:bool`` andalso
+             aconv right_concl ``G:bool`` andalso
+             has ``b:bool`` left andalso
+             has ``R (x:'a) : bool`` left andalso
+             has ``~b`` right andalso
+             has ``R (y:'a) : bool`` right andalso
+             not (goal_has_double_neg (left, left_concl)) andalso
+             not (goal_has_double_neg (right, right_concl))
+          then OK()
+          else die "SPLIT_ASM_TAC produced incorrect conditional cases"
+      | _ => die "SPLIT_ASM_TAC produced the wrong number of cases"
+
+  val double_neg_goal =
+    ([``~~R (if b then x:'a else y) : bool``], ``G:bool``)
+  val _ =
+    tprint "splitter: cleanup preserves a doubly negated assumption lhs"
+  val _ =
+    case #1 (VALID (SPLIT_ASM_TAC [if_asm_split]) double_neg_goal) of
+        [left, right] =>
+          if not (goal_has_double_neg left) andalso
+             not (goal_has_double_neg right)
+          then OK()
+          else die "SPLIT_ASM_TAC retained a double negation"
+      | _ => die "doubly negated assumption produced the wrong cases"
+
+  val order_goal =
+    ([``R (if b then x:'a else y) : bool``],
+     ``Q (if c then u:'b else v) : bool``)
+  val order_result =
+    ``(c ==> Q (u:'b)) /\ (~c ==> Q v)``
+  val _ = tprint "splitter: SPLIT_TAC prefers conclusion rules"
+  val _ =
+    case #1
+      (VALID (SPLIT_TAC [if_asm_split, if_split]) order_goal) of
+        [(asms, result)] =>
+          if aconv result order_result andalso
+             has ``R (if b then x:'a else y) : bool`` asms
+          then OK()
+          else die "SPLIT_TAC did not prefer the conclusion"
+      | _ => die "SPLIT_TAC split an assumption before the conclusion"
+
+  val _ = shouldfail
+    {testfn= #1 o VALID (SPLIT_ASM_TAC [if_split]),
+     printresult=K "unexpected tactic result",
+     printarg=K "splitter: rhs shape routes conclusion rules away from asms",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    asm_goal
+
+  val _ = shouldfail
+    {testfn= #1 o VALID (SPLIT_ASM_TAC [if_asm_split]),
+     printresult=K "unexpected tactic result",
+     printarg=K "splitter: first syntactic assumption match is selected",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    ([``COND b = (f:'a -> 'a -> 'a)``,
+      ``R (if b then x:'a else y) : bool``], ``G:bool``)
+
+  val _ = shouldfail
+    {testfn= #1 o VALID (SPLIT_TAC [if_split, if_asm_split]),
+     printresult=K "unexpected tactic result",
+     printarg=K "splitter: SPLIT_TAC fails when nothing splits",
+     checkexn=fn HOL_ERR _ => true | _ => false}
+    ([], ``R (z:'a) : bool``)
 in
 end
 
@@ -1510,12 +1610,28 @@ in
     let
       val _ = load "optionTheory"
       val option_split = TypeBase.case_pred_imp_of ``:'a option``
+      val option_asm_split =
+        mk_asm_split (TypeBase.case_pred_disj_of ``:'a option``)
       val _ = convtest
         ("splitter: option case",
          SPLIT_CONV [option_split],
          ``P (option_CASE x (n:'b) (f:'a -> 'b)) : bool``,
          ``(x = NONE ==> P (n:'b)) /\
            !a:'a. x = SOME a ==> P (f a)``)
+
+      val option_asm_goal =
+        ([``P (option_CASE x (n:'b) (f:'a -> 'b)) : bool``],
+         ``G:bool``)
+      val _ = tprint "splitter: option case in an assumption"
+      val _ =
+        case #1 (VALID (SPLIT_ASM_TAC [option_split, option_asm_split])
+                        option_asm_goal) of
+            [none_case, some_case] =>
+              if not (goal_has_double_neg none_case) andalso
+                 not (goal_has_double_neg some_case)
+              then OK()
+              else die "option assumption split retained double negations"
+          | _ => die "option assumption split produced the wrong cases"
 
       val _ = load "listTheory"
       val list_split = TypeBase.case_pred_imp_of ``:'a list``
