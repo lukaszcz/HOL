@@ -1344,6 +1344,13 @@ val marker_cases =
    ("SDest", SDest, destSDest, marker_sdest_spec, boolTheory.OR_ELIM_THM),
    ("Dest", Dest, destDest, marker_dest_spec, boolTheory.OR_ELIM_THM)]
 
+val marker_prefix = "__claset_marker_"
+
+fun named_marker_is name th cs =
+  case List.find (fn (_, (name', _)) => name = name') (rules_of cs) of
+      SOME (_, (_, th')) => same_thm (canonical_rule th) th'
+    | NONE => false
+
 val _ =
   test
     ("claset markers round-trip and add their temporary rules",
@@ -1377,6 +1384,68 @@ val _ =
 
 val _ =
   test
+    ("claset markers receive contiguous lowest-unused names",
+     fn () =>
+       let
+         val ths = [boolTheory.TRUTH, boolTheory.AND_INTRO_THM,
+                    boolTheory.IMP_ANTISYM_AX]
+         val (cs, rest) = process_claset_tags (map SIntro ths) empty_cs
+       in
+         List.null rest andalso
+         ListPair.allEq
+           (fn (index, th) =>
+              named_marker_is (marker_prefix ^ Int.toString index) th cs)
+           ([0, 1, 2], ths)
+       end)
+
+val _ =
+  test
+    ("claset marker allocation fills a name gap without dropping rules",
+     fn () =>
+       let
+         val base =
+           add_sintros
+             [(marker_prefix ^ "1", boolTheory.TRUTH)] empty_cs
+         val ths = [boolTheory.AND_INTRO_THM, boolTheory.IMP_ANTISYM_AX]
+         val (cs, rest) = process_claset_tags (map SIntro ths) base
+       in
+         List.null rest andalso length (rules_of cs) = 3 andalso
+         named_marker_is (marker_prefix ^ "0") (hd ths) cs andalso
+         named_marker_is (marker_prefix ^ "1") boolTheory.TRUTH cs andalso
+         named_marker_is (marker_prefix ^ "2") (List.last ths) cs
+       end)
+
+val _ =
+  test
+    ("a rejected duplicate marker does not consume its name",
+     fn () =>
+       let
+         val first = boolTheory.AND_INTRO_THM
+         val second = boolTheory.IMP_ANTISYM_AX
+         val input = [SIntro first, SIntro first, SIntro second]
+         val (cs, rest) = process_claset_tags input empty_cs
+       in
+         List.null rest andalso length (rules_of cs) = 2 andalso
+         named_marker_is (marker_prefix ^ "0") first cs andalso
+         named_marker_is (marker_prefix ^ "1") second cs
+       end)
+
+val _ =
+  test
+    ("deleting a marker makes its lowest name reusable",
+     fn () =>
+       let
+         val first = boolTheory.AND_INTRO_THM
+         val second = boolTheory.IMP_ANTISYM_AX
+         val input = [SIntro first, Del (marker_prefix ^ "0"), SIntro second]
+         val (cs, rest) = process_claset_tags input empty_cs
+       in
+         List.null rest andalso length (rules_of cs) = 1 andalso
+         named_marker_is (marker_prefix ^ "0") second cs
+       end)
+
+val _ =
+  test
     ("claset marker processing passes other markers and plain theorems through",
      fn () =>
        let
@@ -1387,4 +1456,25 @@ val _ =
        in
          List.null (rules_of cs) andalso
          ListPair.allEq (fn (th1, th2) => same_thm th1 th2) (input, rest)
+       end)
+
+
+val _ =
+  test
+    ("claset marker processing preserves mixed leftovers in input order",
+     fn () =>
+       let
+         val plain1 = boolTheory.TRUTH
+         val plain2 = boolTheory.IMP_F
+         val cong = markerLib.Cong (ASSUME p)
+         val input =
+           [plain1, SIntro boolTheory.AND_INTRO_THM, cong,
+            Del (marker_prefix ^ "0"), plain2,
+            SIntro boolTheory.IMP_ANTISYM_AX]
+         val (cs, rest) = process_claset_tags input empty_cs
+       in
+         named_marker_is (marker_prefix ^ "0") boolTheory.IMP_ANTISYM_AX cs
+           andalso
+         ListPair.allEq (fn (th1, th2) => same_thm th1 th2)
+           (rest, [plain1, cong, plain2])
        end)

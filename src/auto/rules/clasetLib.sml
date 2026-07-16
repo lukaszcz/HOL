@@ -634,13 +634,15 @@ val destDest = markerLib.genUnCong Dest_t clasetMarkerTheory.Dest_def
 val Del = markerLib.Excl
 val destDel = markerLib.destExcl
 
-fun marker_name cs =
+val marker_prefix = "__claset_marker_"
+
+fun marker_name (CS {decls, ...}) =
   let
-    fun already_used name =
-      List.exists (fn (_, (name', _)) => name = name') (rules_of cs)
     fun find index =
-      let val name = "__claset_marker_" ^ Int.toString index
-      in if already_used name then find (index + 1) else name
+      let val name = marker_prefix ^ Int.toString index
+      in
+        if clasetRules.decl_name_member decls name then find (index + 1)
+        else name
       end
   in
     find 0

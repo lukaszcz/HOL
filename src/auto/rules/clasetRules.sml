@@ -366,6 +366,9 @@ fun get_decls (Decls {byconcl, ...}) th =
 
 fun has_decls decls th = not (List.null (get_decls decls th))
 
+fun decl_name_member (Decls {byname, ...}) name =
+  Option.isSome (Symtab.lookup byname name)
+
 fun dest_decls (Decls {byconcl, ...}) =
   Listsort.sort decl_order
     (Termtab.fold (fn (_, ds) => fn acc => ds @ acc) byconcl [])

@@ -42,6 +42,7 @@ sig
   val extend_decl : decl -> decls -> decl option * decls
   val remove_decl : string -> decls -> decl list * decls
   val has_decls : decls -> thm -> bool
+  val decl_name_member : decls -> string -> bool
   val get_decls : decls -> thm -> decl list
   val dest_decls : decls -> decl list
   val merge_decls : decls * decls -> decl list * decls
