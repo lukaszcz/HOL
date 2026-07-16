@@ -83,8 +83,10 @@ fun genUnCong marker def th =
   handle HOL_ERR _ => NONE
 
 fun Cong th = genCong markerTheory.Cong_def th;
+fun Split th = genCong markerTheory.Split_def th;
 
 fun unCong th = PURE_REWRITE_RULE [Cong_def] th;
+fun destSplit th = PURE_REWRITE_RULE [Split_def] th;
 
 fun genmktagged th nm =
     let val v = mk_var(nm, alpha)

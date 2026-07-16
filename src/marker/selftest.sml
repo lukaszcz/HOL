@@ -111,6 +111,17 @@ val _ = require_msg
 fun thm_eq (hyps,t) th =
     HOLset.equal(hyps, hypset th) andalso t ~~ concl th
 
+val _ =
+    let val th = ASSUME “p:bool”
+    in
+      tprint "Split marker round-trip";
+      require_msg
+        (check_result (thm_eq (hypset th, concl th)))
+        thm_to_string
+        (destSplit o Split)
+        th
+    end
+
 fun mklab s t = mk_comb(mk_comb(“suspendlabel”, mk_var(s, “:ind”)), t)
 val rhyp = mklab "3 r" “!r q p. suspendimp p (suspendimp q r)”
 val shyp = mklab "3 s" “!s q p. suspendimp p (suspendimp q s)”

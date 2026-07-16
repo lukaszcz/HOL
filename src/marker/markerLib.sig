@@ -20,8 +20,10 @@ sig
   val AC     : thm -> thm -> thm
   val unAC   : thm -> thm * thm
 
-  val Cong   : thm -> thm
-  val unCong : thm -> thm
+  val Cong      : thm -> thm
+  val unCong    : thm -> thm
+  val Split     : thm -> thm
+  val destSplit : thm -> thm
 
   val mk_marker_const : string -> term
   val genmktagged : thm -> string -> thm
