@@ -3794,6 +3794,90 @@ in
     "CPC factoring did not eliminate the duplicate literal")
 end
 
+fun cpc_profile_call_count name =
+  case List.find (fn (result_name, _) => result_name = name)
+      (Profile.results ()) of
+    SOME (_, info) => #n info
+  | NONE => 0
+
+fun cpc_cache_repeated_conclusion_bypasses_handler_success () =
+if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
+  val proof = parse_cpc_proof_string
+    "((step @p1 (= true true) :rule refl :args (true)) \
+    \(step @p2 (= true true) :rule contra))"
+  val () = Profile.reset_all ()
+  val (thm, stats) =
+    CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T = T``,
+    "CPC cache hit returned the wrong explicit conclusion");
+  assert (#hits stats = 1,
+    "repeated CPC conclusion did not produce exactly one cache hit");
+  assert (#misses stats = 1,
+    "first CPC explicit conclusion did not produce exactly one miss");
+  assert (cpc_profile_call_count "CPC(handler:ProofRule/refl)" = 1,
+    "CPC cache test did not execute its seed handler exactly once");
+  assert (cpc_profile_call_count "CPC(handler:ProofRule/contra)" = 0,
+    "CPC cache hit did not bypass the deliberately invalid handler");
+  assert (cpc_profile_call_count "CPC(check:step_conclusion)" = 2,
+    "CPC cache reuse bypassed the certificate conclusion check")
+end
+
+fun cpc_cache_popped_scope_is_rejected_success () =
+if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
+  val proof = parse_cpc_proof_string
+    "((assume-push @p1 true) \
+    \(step @p2 :rule scope :premises (@p1)) \
+    \(step @p3 :rule refl :args (true)) \
+    \(step @p4 true :rule true_elim :premises (@p3)))"
+  val (thm, stats) =
+    CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T``,
+    "CPC scope cache regression replayed to the wrong conclusion");
+  assert (#context_rejections stats >= 1,
+    "theorem depending on a popped CPC scope was not context-rejected");
+  assert (#misses stats >= 1,
+    "popped-scope CPC theorem unexpectedly produced a cache hit")
+end
+
+fun cpc_cache_prefers_derived_over_assumption_success () =
+if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
+  val proof = parse_cpc_proof_string
+    "((step @p1 (= true true) :rule refl :args (true)) \
+    \(assume @p2 (= true true)) \
+    \(step @p3 (= true true) :rule contra))"
+  val () = Profile.reset_all ()
+  val (thm, stats) =
+    CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+in
+  assert (List.null (Thm.hyp thm),
+    "raw CPC assumption displaced a derived theorem in the cache");
+  assert (#hits stats = 1,
+    "derived/assumption CPC cache regression did not hit the cache");
+  assert (cpc_profile_call_count "CPC(handler:ProofRule/contra)" = 0,
+    "derived CPC cache theorem did not bypass the invalid handler")
+end
+
+fun cpc_cache_omitted_conclusion_bypasses_success () =
+if not CPC_ProofReplay.theorem_cache_enabled_for_test then () else let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule refl :args (true)))"
+  val (thm, stats) =
+    CPC_ProofReplay.replay_root_with_cache_stats_for_test proof
+in
+  assert (Thm.concl thm ~~ ``T = T``,
+    "omitted-conclusion CPC step replayed incorrectly");
+  assert (#omitted_bypasses stats = 1,
+    "omitted CPC conclusion did not record a cache bypass");
+  assert (#hits stats = 0 andalso #misses stats = 0,
+    "omitted CPC conclusion incorrectly probed the theorem cache");
+  assert (#cardinality stats = 1 andalso #peak_cardinality stats = 1,
+    "CPC per-proof cache cardinality counters are inconsistent");
+  assert (#step_cardinality stats = 1,
+    "CPC per-proof step cardinality counter is inconsistent")
+end
+
 fun cpc_proof_parser_unknown_rule_diagnostic () =
   (ignore (parse_cpc_proof_string
     "((step @p1 false :rule made-up-cpc-rule))");
@@ -5264,6 +5348,14 @@ let
       cpc_proof_replay_ite_elim2_success),
     ("cpc_proof_replay_factoring_success",
       cpc_proof_replay_factoring_success),
+    ("cpc_cache_repeated_conclusion_bypasses_handler_success",
+      cpc_cache_repeated_conclusion_bypasses_handler_success),
+    ("cpc_cache_popped_scope_is_rejected_success",
+      cpc_cache_popped_scope_is_rejected_success),
+    ("cpc_cache_prefers_derived_over_assumption_success",
+      cpc_cache_prefers_derived_over_assumption_success),
+    ("cpc_cache_omitted_conclusion_bypasses_success",
+      cpc_cache_omitted_conclusion_bypasses_success),
     ("cpc_proof_parser_unknown_rule_diagnostic",
       cpc_proof_parser_unknown_rule_diagnostic),
     ("cpc_live_checked_replay_success",

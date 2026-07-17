@@ -1675,6 +1675,14 @@ fun keep_shard k n xs =
 
 val () = if shard_k = 0 then Unittest.run_unittests () else ()
 
+(* Unit tests deliberately reset Profile counters around every case.  Start
+   the functional interval explicitly so profiling never depends on which
+   unit test happened to run last (and do the same on non-zero shards). *)
+val () = Profile.reset_all ()
+
+val functional_profile =
+  OS.Process.getEnv "HOL4_SELFTEST_PROFILE" = SOME "1"
+
 val sharded_tests = keep_shard shard_k shard_n tests
 
 val () =
@@ -1719,6 +1727,34 @@ val () =
     (fn (term, test_funs) =>
        List.app (fn test_fun => run_test term test_fun) test_funs)
     sharded_tests
+
+fun json_escape s =
+  let
+    fun escape #"\"" = "\\\""
+      | escape #"\\" = "\\\\"
+      | escape #"\n" = "\\n"
+      | escape #"\r" = "\\r"
+      | escape #"\t" = "\\t"
+      | escape c = str c
+  in
+    String.translate escape s
+  end
+
+fun profile_json (name, {usr, sys, gc, real, n}) =
+  "{\"name\":\"" ^ json_escape name ^ "\",\"usr\":" ^
+  Time.toString usr ^ ",\"sys\":" ^ Time.toString sys ^ ",\"gc\":" ^
+  Time.toString gc ^ ",\"real\":" ^ Time.toString real ^ ",\"n\":" ^
+  Int.toString n ^ "}"
+
+val () =
+  if functional_profile then
+    (print ("\nHOL4_SELFTEST_PROFILE {\"shard\":{\"index\":" ^
+       Int.toString shard_k ^ ",\"count\":" ^ Int.toString shard_n ^
+       "},\"profiles\":[" ^
+       String.concatWith "," (List.map profile_json (Profile.results ())) ^
+       "]}\n");
+     TextIO.flushOut TextIO.stdOut)
+  else ()
 
 (*****************************************************************************)
 

@@ -2391,29 +2391,37 @@ local
       end
     fun remove_hyp (hyp, thm) : Thm.thm =
     let
-      val datatype_thms =
-        SmtDatatypeProve.datatype_rewrite_thms
-          (boolSyntax.list_mk_conj (hyp :: asl))
+      val combined = boolSyntax.list_mk_conj (hyp :: asl)
+      val datatype_thms = profile
+        "check_proof(hyp_removal:datatype_facts)"
+        SmtDatatypeProve.datatype_rewrite_thms combined
         handle _ => []
-      val rdiv_bridges = literal_rdiv_bridges
-        (boolSyntax.list_mk_conj (hyp :: asl))
-      fun try_tac tac =
-        SOME (Tactical.TAC_PROOF ((asl, hyp), tac)) handle _ => NONE
+      val rdiv_bridges = profile
+        "check_proof(hyp_removal:rdiv_bridges)" literal_rdiv_bridges combined
+      fun try_tac name tac =
+        SOME (profile name Tactical.TAC_PROOF ((asl, hyp), tac))
+        handle _ => NONE
       fun first_success [] = NONE
-        | first_success (tac :: tacs) =
-            case try_tac tac of
+        | first_success ((name, tac) :: tacs) =
+            case try_tac name tac of
               SOME th => SOME th
             | NONE => first_success tacs
       val hyp_thm =
         case first_success
-          [smt_numeral_normalize_tac rdiv_bridges,
-           smt_semantic_normalize_tac,
-           smt_total_real_normalize_tac rdiv_bridges,
-           smt_normalize_tac [],
-           smt_full_normalize_tac datatype_thms,
-           datatype_normalize_tac datatype_thms] of
+          [("check_proof(hyp_removal:numeral_normalize)",
+              smt_numeral_normalize_tac rdiv_bridges),
+           ("check_proof(hyp_removal:semantic_normalize)",
+              smt_semantic_normalize_tac),
+           ("check_proof(hyp_removal:total_real_normalize)",
+              smt_total_real_normalize_tac rdiv_bridges),
+           ("check_proof(hyp_removal:normalize)", smt_normalize_tac []),
+           ("check_proof(hyp_removal:full_normalize)",
+              smt_full_normalize_tac datatype_thms),
+           ("check_proof(hyp_removal:datatype_normalize)",
+              datatype_normalize_tac datatype_thms)] of
           SOME th => th
-        | NONE => Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
+        | NONE => profile "check_proof(hyp_removal:METIS)"
+            Tactical.TAC_PROOF ((asl, hyp), metisLib.METIS_TAC [])
     in
       Drule.PROVE_HYP hyp_thm thm
     end
@@ -2472,7 +2480,7 @@ in
 
   (* returns a theorem that concludes ``F``, with its hypotheses (a
      subset of) those asserted in the proof *)
-  fun check_proof (asl, g, proof) : Thm.thm =
+  fun check_proof_impl (asl, g, proof) : Thm.thm =
   let
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: checking Z3 proof"
@@ -2525,6 +2533,10 @@ in
   in
     final_thm
   end
+
+
+  fun check_proof args : Thm.thm =
+    profile "check_proof(total)" check_proof_impl args
 
 end  (* local *)
 

@@ -8,47 +8,107 @@ local
 
   val ERR = Feedback.mk_HOL_ERR "CPC_ProofReplay"
 
+  fun profile name f x =
+    Profile.profile_with_exn_name name f x
+
+  fun profile_event name = Profile.profile name (fn () => ()) ()
+
+  (* Keep an instrumented form of the historical broken write side for
+     same-binary baseline comparisons.  Normal replay always enables the
+     cache; only an explicit benchmark environment setting disables it. *)
+  val theorem_cache_enabled =
+    OS.Process.getEnv "HOL4_CPC_THEOREM_CACHE" <> SOME "0"
+
+  type cache_stats = {
+    hits : int ref,
+    misses : int ref,
+    context_rejections : int ref,
+    omitted_bypasses : int ref,
+    cardinality : int ref,
+    peak_cardinality : int ref,
+    step_cardinality : int ref
+  }
+
+  fun new_cache_stats () : cache_stats = {
+    hits = ref 0,
+    misses = ref 0,
+    context_rejections = ref 0,
+    omitted_bypasses = ref 0,
+    cardinality = ref 0,
+    peak_cardinality = ref 0,
+    step_cardinality = ref 0
+  }
+
+  type cached_theorem = {
+    thm : Thm.thm,
+    origin : string,
+    size : int
+  }
+
   type state = {
     asserted_hyps : Term.term HOLset.set,
     scope_hyps : Term.term list,
     steps : (string, Thm.thm) Redblackmap.dict,
     (* The read side is intentional: CPC commonly repeats normalized facts. *)
-    thm_cache : Thm.thm Net.net
+    thm_cache : cached_theorem Net.net,
+    cache_stats : cache_stats
   }
 
   fun initial_state () : state = {
     asserted_hyps = Term.empty_tmset,
     scope_hyps = [],
     steps = Redblackmap.mkDict String.compare,
-    thm_cache = Net.empty
+    thm_cache = Net.empty,
+    cache_stats = new_cache_stats ()
   }
 
-  fun cache_thm state thm = {
-    asserted_hyps = #asserted_hyps state,
-    scope_hyps = #scope_hyps state,
-    steps = #steps state,
-    thm_cache = #thm_cache state
-  }
+  fun cache_thm state origin thm =
+    if not theorem_cache_enabled then
+      (profile_event "CPC(cache:insert_disabled)";
+       state)
+    else let
+      val stats = #cache_stats state
+      val cardinality = !(#cardinality stats) + 1
+      val () = #cardinality stats := cardinality
+      val () = #peak_cardinality stats :=
+        Int.max (!(#peak_cardinality stats), cardinality)
+      val () = profile_event "CPC(cache:insert)"
+    in {
+      asserted_hyps = #asserted_hyps state,
+      scope_hyps = #scope_hyps state,
+      steps = #steps state,
+      thm_cache = Net.insert (Thm.concl thm,
+        {thm = thm, origin = origin, size = Term.term_size (Thm.concl thm)})
+        (#thm_cache state),
+      cache_stats = stats
+    } end
 
-  fun cache_step state id thm = {
+  fun cache_step state id thm =
+  let
+    val stats = #cache_stats state
+    val () = #step_cardinality stats := !(#step_cardinality stats) + 1
+  in {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = #scope_hyps state,
     steps = Redblackmap.insert (#steps state, id, thm),
-    thm_cache = #thm_cache state
-  }
+    thm_cache = #thm_cache state,
+    cache_stats = stats
+  } end
 
   fun assert_hyp state tm = {
     asserted_hyps = HOLset.add (#asserted_hyps state, tm),
     scope_hyps = #scope_hyps state,
     steps = #steps state,
-    thm_cache = #thm_cache state
+    thm_cache = #thm_cache state,
+    cache_stats = #cache_stats state
   }
 
   fun push_scope_hyp state tm = {
     asserted_hyps = #asserted_hyps state,
     scope_hyps = tm :: #scope_hyps state,
     steps = #steps state,
-    thm_cache = #thm_cache state
+    thm_cache = #thm_cache state,
+    cache_stats = #cache_stats state
   }
 
   fun pop_scope_hyp state =
@@ -57,7 +117,8 @@ local
         asserted_hyps = #asserted_hyps state,
         scope_hyps = rest,
         steps = #steps state,
-        thm_cache = #thm_cache state
+        thm_cache = #thm_cache state,
+        cache_stats = #cache_stats state
       })
     | [] => raise ERR "scope" "CPC scope step has no matching assume-push"
 
@@ -69,20 +130,61 @@ local
   fun lookup_premises state ids = List.map (lookup_step state) ids
 
   fun cached_thm state tm =
-    let
+    profile "CPC(cache:probe)" (fn () => let
       val available = HOLset.addList (#asserted_hyps state, #scope_hyps state)
-      fun reusable thm =
-        Term.aconv (Thm.concl thm) tm andalso
-        HOLset.isSubset (Thm.hypset thm, available)
-      fun is_raw_assumption thm =
-        HOLset.member (Thm.hypset thm, Thm.concl thm)
-      val matches = List.filter reusable (Net.match tm (#thm_cache state))
+      val stats = #cache_stats state
+      fun conclusion_matches cached =
+        Term.aconv (Thm.concl (#thm cached)) tm
+      fun context_available cached =
+        HOLset.isSubset (Thm.hypset (#thm cached), available)
+      fun is_raw_assumption cached =
+        HOLset.member (Thm.hypset (#thm cached), Thm.concl (#thm cached))
+      val candidates = List.filter conclusion_matches
+        (Net.match tm (#thm_cache state))
+      val matches = List.filter context_available candidates
+      val rejected = List.filter (not o context_available) candidates
+      val () = #context_rejections stats :=
+        !(#context_rejections stats) + List.length rejected
+      val () = List.app (fn _ =>
+        profile_event "CPC(cache:context_rejected)") rejected
       val derived = List.filter (not o is_raw_assumption) matches
     in
     case List.find (fn _ => true)
       (case derived of [] => matches | _ => derived) of
-      SOME thm => thm
-    | NONE => raise ERR "cached_thm" "no alpha-identical cached CPC theorem"
+      SOME cached =>
+        (#hits stats := !(#hits stats) + 1;
+         profile_event "CPC(cache:hit)";
+         if HOLset.isEmpty (Thm.hypset (#thm cached)) then
+           profile_event ("CPC(cache:hypfree_hit:origin=" ^ #origin cached ^
+             ";size=" ^ Int.toString (#size cached) ^ ";conclusion=" ^
+             Library.term_to_string (Thm.concl (#thm cached)) ^ ")")
+         else ();
+         #thm cached)
+    | NONE =>
+        (#misses stats := !(#misses stats) + 1;
+         profile_event "CPC(cache:miss)";
+         raise ERR "cached_thm" "no alpha-identical cached CPC theorem")
+    end) ()
+
+  fun cache_stats state =
+    let val stats = #cache_stats state in {
+      hits = !(#hits stats),
+      misses = !(#misses stats),
+      context_rejections = !(#context_rejections stats),
+      omitted_bypasses = !(#omitted_bypasses stats),
+      cardinality = !(#cardinality stats),
+      peak_cardinality = !(#peak_cardinality stats),
+      step_cardinality = !(#step_cardinality stats)
+    } end
+
+  fun profile_cardinalities state =
+    let
+      val stats = cache_stats state
+      val peak = #peak_cardinality stats
+      val steps = #step_cardinality stats
+    in
+      profile_event ("CPC(cache:peak=" ^ Int.toString peak ^ ")");
+      profile_event ("CPC(steps:cardinality=" ^ Int.toString steps ^ ")")
     end
 
   (* Tactics receive the original theorems as lemmas, but their goal context
@@ -95,8 +197,8 @@ local
         (fn (thm, acc) => HOLset.union (acc, Thm.hypset thm))
         Term.empty_tmset thms
     in
-      Tactical.TAC_PROOF ((HOLset.listItems hyps, target),
-        metisLib.METIS_TAC thms)
+      profile "CPC(rung:resolution/METIS)" Tactical.TAC_PROOF
+        ((HOLset.listItems hyps, target), metisLib.METIS_TAC thms)
     end
 
   fun expect_one_arg name args =
@@ -155,7 +257,8 @@ local
       val (a, b) = boolSyntax.dest_eq left
       val target = boolSyntax.mk_eq (boolSyntax.mk_eq (b, a), left)
     in
-      Tactical.TAC_PROOF (([], target), metisLib.METIS_TAC [])
+      profile "CPC(rung:congruence/METIS)" Tactical.TAC_PROOF
+        (([], target), metisLib.METIS_TAC [])
     end
 
   fun replay_cong args prems =
@@ -358,6 +461,43 @@ local
                                      bossLib.ASM_SIMP_TAC
                                        (bossLib.srw_ss()) []))
                              end
+                           fun symmetry_bridge target =
+                             let
+                               fun align source target =
+                                 if Term.aconv source target then Thm.REFL source
+                                 else
+                                   (let
+                                      val (left, right) =
+                                        boolSyntax.dest_eq source
+                                      val (target_left, target_right) =
+                                        boolSyntax.dest_eq target
+                                      val _ =
+                                        (Term.aconv left target_right andalso
+                                         Term.aconv right target_left) orelse
+                                        raise ERR "trans"
+                                          "equality atoms are not symmetric"
+                                    in
+                                      Drule.ISPECL [left, right]
+                                        boolTheory.EQ_SYM_EQ
+                                    end
+                                    handle Feedback.HOL_ERR _ =>
+                                      let
+                                        val (source_rator, source_rand) =
+                                          Term.dest_comb source
+                                        val (target_rator, target_rand) =
+                                          Term.dest_comb target
+                                      in
+                                        Thm.MK_COMB
+                                          (align source_rator target_rator,
+                                           align source_rand target_rand)
+                                      end)
+                             in
+                               align acc_right target
+                             end
+                           fun symmetry_simp_bridge target =
+                             simpLib.SIMP_PROVE (bossLib.srw_ss())
+                               [boolTheory.EQ_SYM_EQ]
+                               (boolSyntax.mk_eq (acc_right, target))
                            fun orientation_bridge target =
                              let
                                val (left, right) =
@@ -377,6 +517,12 @@ local
                                val middle = orientation_bridge target
                                  handle Feedback.HOL_ERR _ =>
                                    contextual_bridge target
+                                 handle Feedback.HOL_ERR _ =>
+                                   profile "CPC(trans:middle_symmetry)"
+                                     (fn () => symmetry_bridge target) ()
+                                 handle Feedback.HOL_ERR _ =>
+                                   profile "CPC(trans:middle_symmetry_simp)"
+                                     (fn () => symmetry_simp_bridge target) ()
                                  handle Feedback.HOL_ERR _ =>
                                    prove_trans_bridge acc_right target
                              in
@@ -421,7 +567,9 @@ local
                     let
                       val rewrites =
                         [integerTheory.INT_GE, realTheory.real_ge,
-                         integerTheory.INT_SUB_LZERO]
+                         integerTheory.INT_SUB_LZERO,
+                         intrealTheory.real_of_int_neg,
+                         intrealTheory.real_of_int_num]
                       val left' = Rewrite.PURE_REWRITE_RULE rewrites left
                       val right' = Rewrite.PURE_REWRITE_RULE rewrites right
                     in
@@ -560,7 +708,8 @@ local
     end
 
   fun tautology name target =
-    Tactical.TAC_PROOF (([], target), metisLib.METIS_TAC [])
+    profile "CPC(rung:rewrite/METIS)" Tactical.TAC_PROOF
+      (([], target), metisLib.METIS_TAC [])
     handle Feedback.HOL_ERR _ =>
       raise ERR name "could not prove the captured CPC rewrite shape"
 
@@ -727,16 +876,20 @@ local
                Feedback.message_of holerr)
         end
     | ("absorb", [target]) =>
-        (Tactical.TAC_PROOF (([], target),
-           bossLib.SIMP_TAC boolSimps.bool_ss [])
-         handle Feedback.HOL_ERR _ => wordsLib.WORD_ARITH_PROVE target)
+        (profile "CPC(rung:RARE/absorb/simp)" Tactical.TAC_PROOF
+           (([], target), bossLib.SIMP_TAC boolSimps.bool_ss [])
+         handle Feedback.HOL_ERR _ =>
+           profile "CPC(rung:RARE/absorb/word_arith)"
+             wordsLib.WORD_ARITH_PROVE target)
     | _ => raise ERR name "unsupported CPC RARE rewrite argument shape"
 
   fun replay_aci_norm args =
     let val target = expect_one_arg "aci_norm" args
     in
-      wordsLib.WORD_ARITH_PROVE target
-      handle Feedback.HOL_ERR _ => tautology "aci_norm" target
+      profile "CPC(rung:word/aci_norm)" wordsLib.WORD_ARITH_PROVE target
+      handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:word/aci_norm_tautology)"
+          (tautology "aci_norm") target
     end
 
   fun replay_bv_xor_duplicate args =
@@ -856,8 +1009,10 @@ local
               if Term.aconv (Thm.concl thm) word_equality then thm else
                 raise ERR "bv_poly_norm" "XOR rotation theorem shape mismatch"
             end
-          val word_thm = xor_rotation ()
-            handle Feedback.HOL_ERR _ => wordsLib.WORD_ARITH_PROVE word_equality
+          val word_thm = profile "CPC(rung:word/xor_rotation)" xor_rotation ()
+            handle Feedback.HOL_ERR _ =>
+              profile "CPC(rung:word/xor_rotation_arith)"
+                wordsLib.WORD_ARITH_PROVE word_equality
           fun prove_bit tm = Tactical.TAC_PROOF (([], tm),
             Tactical.THEN
               (bossLib.SIMP_TAC (bossLib.srw_ss())
@@ -876,11 +1031,14 @@ local
             (Thm.SYM (Drule.EQT_INTRO bits_thm))
         end
     in
-      bitblast_equivalence ()
+      profile "CPC(rung:word/bitblast_equivalence)"
+        bitblast_equivalence ()
       handle Feedback.HOL_ERR _ =>
-      wordsLib.WORD_ARITH_PROVE target
+      profile "CPC(rung:word/poly_norm_arith)"
+        wordsLib.WORD_ARITH_PROVE target
       handle Feedback.HOL_ERR _ =>
-        Tactical.TAC_PROOF (([], target),
+        profile "CPC(rung:word/poly_norm_full_simp)" Tactical.TAC_PROOF
+          (([], target),
           Tactical.THEN
             (bossLib.FULL_SIMP_TAC
                (simpLib.++ (simpLib.++ (simpLib.++
@@ -1114,12 +1272,13 @@ local
     end
 
   fun arith_prove target =
-    Library.arith_prove_with_cases target
+    profile "CPC(rung:arith/cases)" Library.arith_prove_with_cases target
     handle Feedback.HOL_ERR _ =>
-      Tactical.TAC_PROOF (([], target),
-        bossLib.FULL_SIMP_TAC bossLib.arith_ss [])
+      profile "CPC(rung:arith/full_simp)" Tactical.TAC_PROOF
+        (([], target), bossLib.FULL_SIMP_TAC bossLib.arith_ss [])
     handle Feedback.HOL_ERR _ =>
-      Tactical.TAC_PROOF (([], target), intLib.ARITH_TAC)
+      profile "CPC(rung:arith/int_arith)" Tactical.TAC_PROOF
+        (([], target), intLib.ARITH_TAC)
 
   fun arith_prove_from_prems prems target =
     let
@@ -1409,19 +1568,22 @@ local
               (Tactical.TAC_PROOF (([], target'),
                 RealField.REAL_ARITH_TAC))
         in
-          Thm.EQ_MP (Thm.SYM target_eq_target')
-            (RealField.REAL_RING target')
+          profile "CPC(rung:arith/poly_norm_ring)" (fn () =>
+            Thm.EQ_MP (Thm.SYM target_eq_target')
+              (RealField.REAL_RING target')) ()
           handle Feedback.HOL_ERR _ =>
-            real_comm_norm ()
+            profile "CPC(rung:arith/poly_norm_comm)" real_comm_norm ()
           handle Feedback.HOL_ERR _ =>
-            real_factor_norm ()
+            profile "CPC(rung:arith/poly_norm_factor)" real_factor_norm ()
           handle Feedback.HOL_ERR _ =>
-            real_factor_norm_right ()
+            profile "CPC(rung:arith/poly_norm_factor_right)"
+              real_factor_norm_right ()
           handle Feedback.HOL_ERR _ =>
-            smt_rdiv_norm ()
+            profile "CPC(rung:arith/poly_norm_rdiv)" smt_rdiv_norm ()
           handle Feedback.HOL_ERR _ =>
-            real_linear_norm ()
-          handle Feedback.HOL_ERR _ => arith_prove target
+            profile "CPC(rung:arith/poly_norm_linear)" real_linear_norm ()
+          handle Feedback.HOL_ERR _ =>
+            profile "CPC(rung:arith/poly_norm_general)" arith_prove target
         end
       else arith_prove target
     end
@@ -1505,12 +1667,15 @@ local
               Thm.REFL left
             end
         in
-          valid_nonzero_rewrite ()
-          handle Feedback.HOL_ERR _ => irrelevant_zero_rewrite ()
+          profile "CPC(rung:trust/rdiv_nonzero)" valid_nonzero_rewrite ()
+          handle Feedback.HOL_ERR _ =>
+            profile "CPC(rung:trust/rdiv_zero_irrelevant)"
+              irrelevant_zero_rewrite ()
         end
     in
-      prove_scoped_arithmetic ()
-      handle Feedback.HOL_ERR _ => replay_rdiv ()
+      profile "CPC(rung:trust/scoped_arithmetic)" prove_scoped_arithmetic ()
+      handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:trust/rdiv)" replay_rdiv ()
     end
 
   fun replay_ite_eq args =
@@ -2075,36 +2240,46 @@ local
         in Thm.EQ_MP (Thm.SYM target_eq_target') thm end
     in
       if needs_real_normalization then
-        (mixed_ge_lift ()
-         handle Feedback.HOL_ERR _ => Tactical.TAC_PROOF (([], target),
-           bossLib.SIMP_TAC (bossLib.srw_ss())
-             [integerTheory.int_ge, realTheory.real_ge])
-         handle Feedback.HOL_ERR _ => int_real_geq_tighten ()
-         handle Feedback.HOL_ERR _ => direct ()
+        (profile "CPC(rung:arith_rel/mixed_ge_lift)" mixed_ge_lift ()
          handle Feedback.HOL_ERR _ =>
-           Tactical.TAC_PROOF (([], target),
-             bossLib.SIMP_TAC (bossLib.srw_ss()) [])
-         handle Feedback.HOL_ERR _ => arith_prove_from_prems prems target)
+           profile "CPC(rung:arith_rel/relation_simp)" Tactical.TAC_PROOF
+             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss())
+               [integerTheory.int_ge, realTheory.real_ge])
+         handle Feedback.HOL_ERR _ =>
+           profile "CPC(rung:arith_rel/geq_tighten)"
+             int_real_geq_tighten ()
+         handle Feedback.HOL_ERR _ =>
+           profile "CPC(rung:arith_rel/direct)" direct ()
+         handle Feedback.HOL_ERR _ =>
+           profile "CPC(rung:arith_rel/target_simp)" Tactical.TAC_PROOF
+             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss()) [])
+         handle Feedback.HOL_ERR _ =>
+           profile "CPC(rung:arith_rel/from_prems)"
+             (arith_prove_from_prems prems) target)
       else
-        (arith_prove_from_prems prems target
+        (profile "CPC(rung:arith_rel/from_prems_direct)"
+           (arith_prove_from_prems prems) target
          handle Feedback.HOL_ERR _ =>
-           Tactical.TAC_PROOF (([], target),
-             bossLib.SIMP_TAC (bossLib.srw_ss())
+           profile "CPC(rung:arith_rel/neg_eq_simp)" Tactical.TAC_PROOF
+             (([], target), bossLib.SIMP_TAC (bossLib.srw_ss())
                [realTheory.REAL_NEG_EQ, boolTheory.EQ_SYM_EQ])
          handle Feedback.HOL_ERR _ =>
-           (RealField.REAL_RING target
-            handle Feedback.HOL_ERR _ => arith_prove_from_prems prems target))
+           (profile "CPC(rung:arith_rel/ring)" RealField.REAL_RING target
+            handle Feedback.HOL_ERR _ =>
+              profile "CPC(rung:arith_rel/from_prems_retry)"
+                (arith_prove_from_prems prems) target))
     end
 
   fun replay_datatype args =
     case args of
       [left, right] =>
-        SmtDatatypeProve.datatype_prove
+        profile "CPC(rung:datatype/prove)" SmtDatatypeProve.datatype_prove
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)))
     | _ => raise ERR "datatype" "expected two constructor values"
 
   fun replay_datatype_eq args =
-    SmtDatatypeProve.datatype_prove (expect_one_arg "datatype_eq" args)
+    profile "CPC(rung:datatype/prove_eq)" SmtDatatypeProve.datatype_prove
+      (expect_one_arg "datatype_eq" args)
 
   fun replay_resolution prems conclusion args =
     let
@@ -2352,7 +2527,8 @@ local
             in mk_disj_terms (first_rest @ second_rest) end
         | _ => raise ERR "resolution" "expected two CPC resolution premises"
       fun prove target =
-        (if List.length prems > 2 then
+        (profile "CPC(rung:resolution/tautological)" (fn () =>
+         if List.length prems > 2 then
            let val n = List.length prems - 1 in
              case args of
                _ :: annotation =>
@@ -2361,12 +2537,14 @@ local
                  else tautological_consequences prems target
            | [] => raise ERR "resolution" "missing resolution-chain annotation"
            end
-         else tautological_consequences prems target
+         else tautological_consequences prems target) ()
          handle Feedback.HOL_ERR _ =>
-           (case resolve_complementary_literals prems target of
+           (case profile "CPC(rung:resolution/complementary)"
+             (fn () => resolve_complementary_literals prems target) () of
               SOME thm => thm
             | NONE =>
-                (case resolve_binary_disjunction prems target of
+                (case profile "CPC(rung:resolution/binary)"
+                  (fn () => resolve_binary_disjunction prems target) () of
                    SOME thm => thm
                  | NONE => raise ERR "resolution"
                      ("could not resolve target " ^ Library.term_to_string target ^
@@ -2415,18 +2593,34 @@ local
       val _ = ()
       (* Cache/proforma probe precedes general provers.  We can only probe a
          declared conclusion; omitted CPC conclusions are rule-derived. *)
-      val cached = case conclusion of
+      fun omitted_conclusion () =
+            (#omitted_bypasses (#cache_stats state) :=
+               !(#omitted_bypasses (#cache_stats state)) + 1;
+             profile_event "CPC(cache:omitted_conclusion)";
+             NONE)
+      val cached =
+        if #replay_handler rule = "scope" then
+          (case conclusion of
+             NONE => omitted_conclusion ()
+           | SOME _ =>
+               (profile_event "CPC(cache:scope_bypass)"; NONE))
+        else case conclusion of
           SOME target => (SOME (cached_thm state target)
             handle Feedback.HOL_ERR _ => NONE)
-        | NONE => NONE
+        | NONE => omitted_conclusion ()
       val (state, thm) =
-        if #replay_handler rule = "scope" then replay_scope state prems
+        if #replay_handler rule = "scope" then
+          profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
+            "/" ^ #name rule ^ ")")
+            (fn () => replay_scope state prems) ()
         else
           let
             val thm = case cached of
               SOME th => th
             | NONE =>
-              ((case #replay_handler rule of
+              (profile ("CPC(handler:" ^ namespace_name (#namespace rule) ^
+                 "/" ^ #name rule ^ ")") (fn () =>
+               (case #replay_handler rule of
            "refl" => replay_refl conclusion args
            | "eq_refl" => replay_eq_refl args
            | "symm" => replay_symm prems
@@ -2494,20 +2688,22 @@ local
            | "resolution" => replay_resolution prems conclusion args
            | "bool" => replay_bool prems conclusion
            | "arith" => replay_arith prems conclusion
-           | _ => unsupported_step step)
+           | _ => unsupported_step step)) ()
            handle Feedback.HOL_ERR holerr =>
              raise ERR "replay_step"
                ("CPC step " ^ id ^ " (rule " ^ #name rule ^ ") failed: " ^
                 Feedback.message_of holerr))
           in (state, thm) end
-      val _ = case conclusion of
+      val _ = profile "CPC(check:step_conclusion)" (fn () =>
+        case conclusion of
           NONE => ()
         | SOME target => if Term.aconv (Thm.concl thm) target then () else
             raise ERR "replay_step" ("CPC rule " ^ #name rule ^
-              " produced a conclusion different from its certificate")
+              " produced a conclusion different from its certificate")) ()
       val state = cache_step state id thm
+      val origin = namespace_name (#namespace rule) ^ "/" ^ #name rule
     in
-      (cache_thm state thm, thm)
+      (if Option.isSome cached then state else cache_thm state origin thm, thm)
     end
 
   fun replay_commands state commands =
@@ -2516,19 +2712,19 @@ local
     | [ASSUME (id, tm)] =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (assert_hyp state tm) id thm
-        in (cache_thm state thm, thm) end
+        in (cache_thm state "assume" thm, thm) end
     | ASSUME (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (assert_hyp state tm) id thm
-        in replay_commands (cache_thm state thm) rest end
+        in replay_commands (cache_thm state "assume" thm) rest end
     | [ASSUME_PUSH (id, tm)] =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (push_scope_hyp state tm) id thm
-        in (cache_thm state thm, thm) end
+        in (cache_thm state "assume-push" thm, thm) end
     | ASSUME_PUSH (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (push_scope_hyp state tm) id thm
-        in replay_commands (cache_thm state thm) rest end
+        in replay_commands (cache_thm state "assume-push" thm) rest end
     | [STEP step] => replay_step state step
     | STEP step :: rest =>
         let val (state, _) = replay_step state step
@@ -2556,7 +2752,7 @@ local
                   intLib.ARITH_TAC)))
         end
       fun prove_hyp hyp =
-        Lib.tryfind
+        profile "CPC(remove_extra_hyps:ceiling_floor)" Lib.tryfind
           (fn assumption =>
             let
               val rewritten = Rewrite.PURE_REWRITE_RULE
@@ -2568,17 +2764,22 @@ local
             end)
           (boolSyntax.mk_neg g :: asl)
         handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((boolSyntax.mk_neg g :: asl, hyp),
-            bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [])
+          profile "CPC(remove_extra_hyps:full_simp)" Tactical.TAC_PROOF
+            ((boolSyntax.mk_neg g :: asl, hyp),
+             bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [])
         handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((boolSyntax.mk_neg g :: asl, hyp),
-            bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
-              [intrealTheory.INT_FLOOR_NEG, intrealTheory.INT_CEILING_NEG])
+          profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
+            Tactical.TAC_PROOF
+            ((boolSyntax.mk_neg g :: asl, hyp),
+             bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+               [intrealTheory.INT_FLOOR_NEG, intrealTheory.INT_CEILING_NEG])
         handle Feedback.HOL_ERR _ =>
-          Tactical.TAC_PROOF ((boolSyntax.mk_neg g :: asl, hyp),
-            metisLib.METIS_TAC [])
+          profile "CPC(remove_extra_hyps:METIS)" Tactical.TAC_PROOF
+            ((boolSyntax.mk_neg g :: asl, hyp), metisLib.METIS_TAC [])
         handle Feedback.HOL_ERR _ =>
-          if Library.contains_conditional hyp then prove_from_context hyp
+          if Library.contains_conditional hyp then
+            profile "CPC(remove_extra_hyps:conditional_arith)"
+              prove_from_context hyp
           else raise ERR "remove_extra_hyps"
             "extra hypothesis is not a conditional arithmetic consequence"
       fun remove_hyp (hyp, result) =
@@ -2589,16 +2790,23 @@ local
     end
 
 in
-  fun check_proof (asl, g, proof : proof) =
+  val theorem_cache_enabled_for_test = theorem_cache_enabled
+
+  fun check_proof_impl (asl, g, proof : proof) =
     let
       val (state, thm) = replay_commands (initial_state ())
         (proof_commands proof)
-      val _ = Term.aconv (Thm.concl thm) boolSyntax.F orelse
+      val _ = profile_cardinalities state
+      val _ = profile "CPC(check:conclusion)"
+        (fn (left, right) => Term.aconv left right)
+        (Thm.concl thm, boolSyntax.F) orelse
         raise ERR "check_proof" "final CPC conclusion is not F"
-      val thm = remove_extra_hyps (asl, g, thm)
+      val thm = profile "CPC(check:remove_extra_hyps)" remove_extra_hyps
+        (asl, g, thm)
       val allowed = HOLset.addList (Term.empty_tmset,
         boolSyntax.mk_neg g :: asl)
-      val _ = HOLset.isSubset (Thm.hypset thm, allowed) orelse
+      val _ = profile "CPC(check:hypotheses)" HOLset.isSubset
+        (Thm.hypset thm, allowed) orelse
         raise ERR "check_proof"
           ("CPC proof retains unexpected hypotheses: " ^
            String.concatWith ", " (List.map Library.term_to_string
@@ -2609,8 +2817,22 @@ in
       thm
     end
 
+  fun check_proof args =
+    profile "CPC(check_proof:total)" check_proof_impl args
+
   fun replay_root_for_test proof =
-    Lib.snd (replay_commands (initial_state ()) (proof_commands proof))
+    let
+      val (state, thm) = replay_commands (initial_state ())
+        (proof_commands proof)
+      val _ = profile_cardinalities state
+    in thm end
+
+  fun replay_root_with_cache_stats_for_test proof =
+    let
+      val (state, thm) = replay_commands (initial_state ())
+        (proof_commands proof)
+      val _ = profile_cardinalities state
+    in (thm, cache_stats state) end
 end
 
 end
