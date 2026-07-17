@@ -443,8 +443,14 @@ fun register (config : prover_config) =
       | NONE => registry := !registry @ [config]
   end
 
-fun find_exec ({name, exec_names, ...} : prover_config) =
-  hhConfig.find_exec name exec_names
+fun discovery_name name =
+  case name of
+      "e-legacy" => "e"
+    | "vampire-legacy" => "vampire"
+    | other => other
+
+fun find_exec ({name, exec_names, env_var, ...} : prover_config) =
+  hhConfig.find_exec_with_env (discovery_name name) env_var exec_names
 
 fun is_found config = Option.isSome (find_exec config)
 
@@ -457,41 +463,86 @@ fun elapsed started = Time.toReal (Time.- (Time.now (), started))
 fun read_process path args limit =
   let
     val process = Unix.execute (path, args)
-    val (input, output) = Unix.streamsOf process
-    val _ = TextIO.closeOut output
-    val chunks = ref []
-    val finished = ref false
-    fun read_stdout () =
+    val reaped = ref (NONE : OS.Process.status option)
+    val input_ref = ref (NONE : TextIO.instream option)
+    val output_ref = ref (NONE : TextIO.outstream option)
+    fun kill () =
+      Unix.kill (process, Posix.Signal.kill) handle OS.SysErr _ => ()
+    fun reap () =
+      case !reaped of
+          SOME status => status
+        | NONE =>
+            let val status = Unix.reap process in
+              reaped := SOME status; status
+            end
+    fun close_input () =
+      case !input_ref of
+          NONE => ()
+        | SOME input =>
+            (TextIO.closeIn input; input_ref := NONE)
+            handle IO.Io _ => input_ref := NONE
+    fun close_output () =
+      case !output_ref of
+          NONE => ()
+        | SOME output =>
+            (TextIO.closeOut output; output_ref := NONE)
+            handle IO.Io _ => output_ref := NONE
+    fun run () =
       let
-        fun loop () =
-          case TextIO.input input of
-              "" => ()
-            | chunk => (chunks := chunk :: !chunks; loop ())
+        val (input, output) = Unix.streamsOf process
+        val _ = input_ref := SOME input
+        val _ = output_ref := SOME output
+        val _ = close_output ()
+        val chunks = ref []
+        val finished = ref false
+        fun read_stdout () =
+          let
+            fun loop () =
+              case TextIO.input input of
+                  "" => ()
+                | chunk => (chunks := chunk :: !chunks; loop ())
+          in
+            (loop () handle _ => ();
+             finished := true)
+          end
+        val _ = Thread.fork (read_stdout, [])
+        val started = Time.now ()
+        fun wait killed =
+          if !finished then killed
+          else if not killed andalso elapsed started >= limit then
+            (kill (); wait true)
+          else
+            (OS.Process.sleep (Time.fromMilliseconds 20); wait killed)
+        fun await_reader () =
+          if !finished then ()
+          else (OS.Process.sleep (Time.fromMilliseconds 20); await_reader ())
+        val killed = wait false
+        val status = reap ()
+        val _ = await_reader ()
+        val result =
+          {output = String.concat (List.rev (!chunks)), killed = killed,
+           status = status, time = elapsed started}
+        val _ = close_input ()
       in
-        (loop () handle _ => ();
-         finished := true)
+        result
       end
-    val _ = Thread.fork (read_stdout, [])
-    val started = Time.now ()
-    fun wait killed =
-      if !finished then killed
-      else if not killed andalso elapsed started >= limit then
-        (Unix.kill (process, Posix.Signal.kill) handle OS.SysErr _ => ();
-         wait true)
-      else
-        (OS.Process.sleep (Time.fromMilliseconds 20); wait killed)
-    val killed = wait false
-    val status = Unix.reap process
-    fun await_reader () =
-      if !finished then ()
-      else (OS.Process.sleep (Time.fromMilliseconds 20); await_reader ())
-    val _ = await_reader ()
-    val result =
-      {output = String.concat (List.rev (!chunks)), killed = killed,
-       status = status, time = elapsed started}
-    val _ = TextIO.closeIn input
+    fun cleanup exn =
+      let
+        val attributes = Thread.getAttributes ()
+        val synchronous =
+          [Thread.InterruptState Thread.InterruptSynch,
+           Thread.EnableBroadcastInterrupt true]
+        val _ = Thread.setAttributes synchronous
+        val _ = kill ()
+        val _ = (ignore (reap ()) handle _ => ())
+        val _ = (close_input () handle _ => ())
+        val _ = (close_output () handle _ => ())
+        val _ = Thread.setAttributes attributes
+      in
+        raise exn
+      end
   in
-    result
+    run () handle exn => cleanup exn
   end
 
 val probes : (string *

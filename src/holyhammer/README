@@ -1,31 +1,65 @@
-HOLyHammer is a machine learning for theorem proving framework.
-It automatically selects suitable premises (theorems) for the current goal and
-translates them together with the goal to automated theorem provers (ATPs).
-The final proof is reconstructed by calling Metis on the premises appearing in
-the ATP proof.
+HOLyHammer
+==========
 
-Usage (requires at least one installed external prover):
-  load "holyHammer"; open holyHammer;
-  hh ([],``1+1=2``);
-  holyhammer ``1+1=2``; (* alternatively *)
+HOLyHammer selects premises for a goal, translates the goal and premises to
+TPTP, races external provers, and reconstructs a proof with Metis.
 
-Install external provers:
-  1) Download provers
-  - Eprover 2.0 (latest version should work too):
-      Source: http://wwwlehre.dhbw-stuttgart.de/~sschulz/E/E.html
-      Installing Eprover produces the binary file PROVER/eprover.
-  - Z3 4.0 (only):
-      Linux binary: http://isabelle.in.tum.de/components/
-  - Vampire 4.2.2 (latest version should work too):
-      Linux binary: https://vprover.github.io/download.html
-      Source: https://github.com/vprover/vampire
-      Installing Vampire produces the binary file "vampire_rel_master_3993"
-      in the top directory.
-  2) Prover binaries should be copied or linked in
-     the directory src/holyhammer/provers.
-     They should be respectively renamed to eprover, z3 and vampire.
-  3) Make sure you have the permission to execute them (chmod +x).
+Usage
+-----
 
-Questions:
-  If you have any question, you can send an email to
-  email@thibaultgauthier.fr.
+At least one external prover must be installed.
+
+    load "holyHammer";
+    open holyHammer;
+    hh ([], ``1 + 1 = 2``);
+    holyhammer ``1 + 1 = 2``;
+
+The default prover registry names are `e`, `vampire`, and
+`zipperposition`.  To choose a portfolio explicitly, set for example:
+
+    all_atps := ["e", "vampire"];
+
+The legacy registry entries `z3`, `e-legacy`, and `vampire-legacy` remain
+available when explicitly requested.
+
+Installing provers
+------------------
+
+The recommended installation command is:
+
+    tools/download-provers
+
+Alternatively, put a supported binary on `PATH`.  HOLyHammer looks for
+`eprover-ho` or `eprover`, `vampire`, `zipperposition`, and, for the legacy
+Z3 entry, `z3_tptp` or `z3`.
+
+The tested versions are:
+
+* E 3.2.5-ho ("Puttabong Moondrop");
+* Vampire 5.0.1; and
+* Zipperposition 2.1, Isabelle component revision 2.
+
+Executable discovery
+--------------------
+
+A prover executable may also be selected in
+`$HOME/.hol4/hammer/config` or `$HOLDIR/etc/hammer-config`:
+
+    prover.e.executable = /opt/e/bin/eprover
+
+User configuration takes precedence over system configuration.  Dedicated
+environment variables are also supported:
+
+* `HOL4_EPROVER_EXECUTABLE`;
+* `HOL4_VAMPIRE_EXECUTABLE`;
+* `HOL4_ZIPPERPOSITION_EXECUTABLE`; and
+* `HOL4_Z3_EXECUTABLE`.
+
+Discovery checks configuration, the dedicated environment variable, `PATH`,
+and versioned installation directories under
+`$HOLDIR/src/holyhammer/provers` and `$HOME/.hol4/hammer/provers`.
+
+Questions
+---------
+
+Questions may be sent to email@thibaultgauthier.fr.

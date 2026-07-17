@@ -9,6 +9,7 @@ sig
   val dump : unit -> (string * string) list
 
   val platform : unit -> string
+  val find_exec_with_env : string -> string -> string list -> string option
   val find_exec : string -> string list -> string option
   val find_executable : string -> string list -> string option
 end

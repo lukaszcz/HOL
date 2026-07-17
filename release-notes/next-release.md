@@ -159,6 +159,13 @@ New theories
 New tools
 ---------
 
+-   HOLyHammer now invokes external provers through a declarative registry,
+    without shell scripts.  Pinned provers can be installed with
+    `tools/download-provers`; supported binaries on `PATH` also work.
+    Executables can be selected through `prover.<name>.executable` in the
+    hammer configuration or the `HOL4_<PROVER>_EXECUTABLE` environment
+    variables.
+
 New examples
 ------------
 
@@ -172,6 +179,15 @@ New examples
 
 Incompatibilities
 -----------------
+
+-   The `holyHammer.prover` datatype has been removed.  Provers are now
+    identified by registry strings such as `"e"`, `"vampire"`,
+    `"zipperposition"`, and `"z3"`.  Accordingly, `holyHammer.hh_pb` now
+    takes a `string list`, and `holyHammer.all_atps` is a public
+    `string list ref`.  The file-based `hhReconstruct.get_lemmas` API and
+    its status/output-file protocol have also been removed.  The types of
+    `hh`, `holyhammer`, `hh_fork`, `main_hh`, and `main_hh_lemmas` are
+    unchanged.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.

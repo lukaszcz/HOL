@@ -22,36 +22,6 @@ val reconstruct_flag = ref true
 val minimization_timeout = ref 1.0
 val reconstruction_timeout = ref 1.0
 
-(* --------------------------------------------------------------------------
-   ATP output
-   -------------------------------------------------------------------------- *)
-
-fun remove_white_spaces s =
-  let fun f c = if Char.isSpace c then "" else Char.toString c in
-    String.translate f s
-  end
-
-fun not_reserved s = String.isPrefix "thm." s
-fun is_dot c = c = #"."
-
-fun read_status atp_status =
-  remove_white_spaces (hd (readl atp_status))
-  handle Interrupt => raise Interrupt
-       | _         => "Unknown"
-
-fun read_lemmas atp_out =
-  let
-    val l = filter not_reserved (map unescape (readl atp_out))
-    fun f s = String.concatWith "." (tl (String.fields is_dot s))
-  in
-    mk_string_set (map f l)
-  end
-
-fun get_lemmas (atp_status,atp_out) =
-  if read_status atp_status = "Theorem"
-  then SOME (read_lemmas atp_out)
-  else NONE
-
 (*----------------------------------------------------------------------------
    Minimization and pretty-printing
  -----------------------------------------------------------------------------*)

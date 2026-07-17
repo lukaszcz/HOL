@@ -389,7 +389,7 @@ fun prover_env prover =
         if c = #"." orelse c = #"-" then #"_" else Char.toUpper c) prover ^
       "_EXECUTABLE"
 
-fun find_exec prover names =
+fun find_exec_with_env prover env_var names =
   let
     val config_key = "prover." ^ prover ^ ".executable"
     fun configured () =
@@ -397,7 +397,7 @@ fun find_exec prover names =
           SOME path => if executable path then SOME path else NONE
         | NONE => NONE
     fun environment () =
-      case OS.Process.getEnv (prover_env prover) of
+      case OS.Process.getEnv env_var of
           SOME path => if executable path then SOME path else NONE
         | NONE => NONE
     fun installed root = install_exec root prover names
@@ -423,6 +423,9 @@ fun find_exec prover names =
                        SOME path => SOME path
                      | NONE => user_install ())))
   end
+
+fun find_exec prover names =
+  find_exec_with_env prover (prover_env prover) names
 
 val find_executable = find_exec
 

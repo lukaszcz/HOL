@@ -4,7 +4,9 @@ hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
 hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo
 
-selftest.uo: selftest.sml hhConfig.uo hhProver.uo hhEval.uo
+holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo
+
+selftest.uo: selftest.sml hhConfig.uo hhProver.uo hhEval.uo holyHammer.uo
 .PHONY: all
 
 selftest.exe: selftest.uo

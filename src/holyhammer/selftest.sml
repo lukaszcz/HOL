@@ -270,6 +270,9 @@ fun test_hhProver () =
     val _ = expect "default provers are found and non-legacy"
       (List.all (fn name => not (#legacy (prover name)))
        (hhProver.default_provers ()))
+    val _ = expect "legacy entries reuse modern executable discovery"
+      (hhProver.find_exec e_legacy = hhProver.find_exec e andalso
+       hhProver.find_exec vampire_legacy = hhProver.find_exec vampire)
     val _ = expect "duplicate prover names are rejected"
       ((hhProver.register e; false) handle Fail _ => true)
     val _ = test_recording "e-theorem-chatter.out" (#parse_output e)
@@ -345,6 +348,55 @@ fun test_hhProver () =
 
 fun contains needle haystack =
   String.isSubstring needle haystack
+
+fun main_hh_error names =
+  let
+    val saved = !holyHammer.all_atps
+    fun restore result = (holyHammer.all_atps := saved; result)
+    fun call () =
+      ignore (holyHammer.main_hh "" mlThmData.empty_thmdata
+        ([], boolSyntax.T))
+  in
+    holyHammer.all_atps := names;
+    ((call (); restore NONE)
+     handle Feedback.HOL_ERR error =>
+       restore (SOME (Feedback.message_of error))
+          | exn => (holyHammer.all_atps := saved; raise exn))
+  end
+
+fun test_holyHammer_validation () =
+  let
+    val unknown = "not-a-holyhammer-prover"
+    val _ = holyHammer.lemmas_glob := SOME ["stale-result"]
+    val message = main_hh_error [unknown]
+    val _ = expect "failed calls clear saved HolyHammer lemmas"
+      (not (Option.isSome (!holyHammer.lemmas_glob)))
+    val _ = expect "all_atps rejects unknown registry names"
+      (case message of
+           SOME text =>
+             contains unknown text andalso
+             contains
+               ("known provers: e, vampire, zipperposition, z3, " ^
+                "e-legacy, vampire-legacy") text
+         | NONE => false)
+  in
+    case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+        NONE => ()
+      | SOME _ =>
+          let
+            val output = OS.FileSys.tmpName ()
+            val message = smlRedirect.hide_in_file output
+              (fn () => main_hh_error ["zipperposition"]) ()
+            val printed = String.concat (read_lines output)
+            val _ = OS.FileSys.remove output
+          in
+            expect "no-prover path prints downloader hint"
+              (contains "tools/download-provers" printed andalso
+               case message of
+                   SOME text => contains "tools/download-provers" text
+                 | NONE => false)
+          end
+  end
 
 fun fake_config name exec_name args parser : hhProver.prover_config =
   {name = name, exec_names = [exec_name], env_var = "",
@@ -686,10 +738,47 @@ val _ =
       NONE => test_actual_hhEval_corpus ()
     | SOME _ => ()
 
+fun test_holyHammer_e () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+        case hhProver.probe (prover "e") of
+            NONE =>
+              (tprint "holyHammer end-to-end e (skipped: absent)"; OK ())
+          | SOME _ =>
+              let
+                val saved = !holyHammer.all_atps
+                val root = OS.FileSys.tmpName ()
+                val _ = remove_tree root
+                val _ = mkdir root
+                val add1 = DB.fetch "arithmetic" "ADD1"
+                val success =
+                  ((holyHammer.all_atps := ["e"];
+                    holyHammer.set_timeout 10;
+                    ignore (holyHammer.hh ([], boolSyntax.T));
+                    ignore (holyHammer.hh_pb root ["e"]
+                      ["arithmeticTheory.ADD1"] (Thm.dest_thm add1));
+                    case !holyHammer.lemmas_glob of
+                        SOME (_ :: _) => true
+                      | _ => false)
+                   handle Interrupt =>
+                     (holyHammer.all_atps := saved; raise Interrupt)
+                        | Feedback.HOL_ERR error =>
+                     (print (Feedback.message_of error ^ "\n"); false)
+                        | exn =>
+                     (print (General.exnMessage exn ^ "\n"); false))
+                val _ = holyHammer.all_atps := saved
+                val _ = remove_tree root
+              in
+                expect "holyHammer end-to-end e with used axioms" success
+              end
+
 val _ = test_szs_status_words ()
 val _ = test_hhProver ()
+val _ = test_holyHammer_validation ()
 val _ = test_runner ()
 val _ = test_installed_provers ()
+val _ = test_holyHammer_e ()
 
 fun test_hhEval_integration () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
