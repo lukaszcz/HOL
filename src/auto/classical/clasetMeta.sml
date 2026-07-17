@@ -118,6 +118,8 @@ fun norm_ty store ty =
     recurse ty
   end
 
+val norm_type = norm_ty
+
 fun owned_meta store tm =
   case meta_name tm of
     NONE => false
@@ -208,11 +210,13 @@ fun metas_of store tm =
 fun same_var left right = aconv left right
 
 fun listed_as_eigen store variable =
-  is_genvar variable orelse
   List.exists
     (fn (eigen, ()) =>
       same_var (inst_types store variable) (inst_types store eigen))
     (Redblackmap.listItems (#eigens store))
+
+fun is_eigen store variable =
+  is_var variable andalso listed_as_eigen store variable
 
 fun eigen_allowed store allow variable =
   not (listed_as_eigen store variable) orelse
@@ -233,6 +237,24 @@ fun binding_respects_allow store (name, residue) =
     List.all (eigen_allowed store allow)
       (free_vars (norm store residue))
   end
+
+fun register_eigen eigen store =
+  if not (is_var eigen) orelse is_meta eigen then NONE
+  else
+    let
+      val candidate =
+        {allows = #allows store,
+         eigens = Redblackmap.insert (#eigens store, eigen, ()),
+         metas = #metas store,
+         tm_bindings = #tm_bindings store,
+         tymetas = #tymetas store,
+         ty_bindings = #ty_bindings store}
+      val permitted =
+        List.all (binding_respects_allow candidate)
+          (Redblackmap.listItems (#tm_bindings candidate))
+    in
+      if permitted then SOME candidate else NONE
+    end
 
 fun bind (m, tm) store =
   case meta_name m of

@@ -14,10 +14,14 @@ sig
   val new_tymeta : store -> tymeta * store
   val bind : meta * term -> store -> store option
   val bind_ty : tymeta * hol_type -> store -> store option
+  val register_eigen : term -> store -> store option
   val walk : store -> term -> term
   val norm : store -> term -> term
+  val norm_type : store -> hol_type -> hol_type
   val metas_of : store -> term -> meta list
   val is_meta : term -> bool
+  val is_tymeta : hol_type -> bool
+  val is_eigen : store -> term -> bool
   val ground : store -> store
   val collapse : store ->
                  (hol_type, hol_type) subst * (term, term) subst
