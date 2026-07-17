@@ -50,18 +50,14 @@ fun rule_parts th =
 
 fun analyse_rule th =
   let
-    val {asm,...} = rule_parts th
-    val sth = SPEC_ALL th
-    val (left, _) = dest_eq (concl sth)
-    val (_, pattern) = dest_comb left
-    val (head, args) = strip_comb pattern
+    val {pattern,head,args,asm,...} = rule_parts th
   in
     {thm=th, head=head, pattern=pattern, arity=length args, asm=asm}
   end
 
-fun is_asm_split th = #asm (analyse_rule th)
+fun is_asm_split th = #asm (rule_parts th)
 
-fun persistent_name {Thy,Name} = Thy ^ "$" ^ Name
+val persistent_name = KernelSig.name_toString
 
 fun split_thm_name th =
   let
@@ -120,13 +116,34 @@ val split_data =
 fun named_split_thms () = Symtab.dest (#get_global_value split_data ())
 fun split_thms () = map #2 (named_split_thms ())
 
-type type_splits = {split : thm, asm_split : thm}
+(* Turn a conclusion split rule [!P. P (c ...) = ...] into the rule for a
+   negated predicate, which is the form that splits an assumption. *)
+fun mk_asm_split split =
+  let
+    val (pred, _) = dest_forall (concl split)
+    val (domain, _) = dom_rng (type_of pred)
+    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
+    val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
+    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
+    val cleanup = REDEPTH_CONV (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
+  in
+    split
+      |> SPEC neg_pred
+      |> AP_TERM boolSyntax.negation
+      |> CONV_RULE cleanup
+      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
+      |> GEN pred
+  end
+
+(* [rules] is the derived form the splitter actually applies; it is cached
+   with the rules it comes from, as deriving it costs real inference. *)
+type type_splits = {split : thm, asm_split : thm, rules : thm list}
 val type_split_cache =
   Sref.new (Symtab.empty : type_splits Symtab.table)
 
 fun type_key tyinfo =
   let val (thy, tyop) = TypeBasePure.ty_name_of tyinfo
-  in thy ^ "$" ^ tyop
+  in KernelSig.name_toString {Thy=thy, Name=tyop}
   end
 
 fun type_splits_of ty =
@@ -142,9 +159,11 @@ fun type_splits_of ty =
         SOME splits => splits
       | NONE =>
           let
+            val split = TypeBase.case_pred_imp_of ty
+            val asm_split = TypeBasePure.case_elim_of tyinfo
             val splits =
-              {split=TypeBase.case_pred_imp_of ty,
-               asm_split=TypeBasePure.case_elim_of tyinfo}
+              {split=split, asm_split=asm_split,
+               rules=[split, mk_asm_split asm_split]}
             val _ =
               Sref.update type_split_cache (Symtab.update (key, splits))
           in
@@ -154,48 +173,12 @@ fun type_splits_of ty =
 
 fun type_split_of ty = #split (type_splits_of ty)
 fun type_asm_split_of ty = #asm_split (type_splits_of ty)
+fun type_split_rules ty = #rules (type_splits_of ty)
 
+(* Two types are alpha-variants exactly when each is an instance of the
+   other. *)
 fun same_type_shape (ty1, ty2) =
-  let
-    fun lookup_left _ [] = NONE
-      | lookup_left ty ((left, right) :: rest) =
-          if left = ty then SOME right else lookup_left ty rest
-    fun lookup_right _ [] = NONE
-      | lookup_right ty ((left, right) :: rest) =
-          if right = ty then SOME left else lookup_right ty rest
-
-    fun shapes env (left, right) =
-      if Type.is_vartype left then
-        if not (Type.is_vartype right) then NONE
-        else
-          (case (lookup_left left env, lookup_right right env) of
-               (NONE, NONE) => SOME ((left, right) :: env)
-             | (SOME right', SOME left') =>
-                 if right = right' andalso left = left'
-                 then SOME env
-                 else NONE
-             | _ => NONE)
-      else if Type.is_vartype right then NONE
-      else
-        let
-          val {Thy=thy1,Tyop=op1,Args=args1} =
-            Type.dest_thy_type left
-          val {Thy=thy2,Tyop=op2,Args=args2} =
-            Type.dest_thy_type right
-          fun arg_shapes ([], [], env) = SOME env
-            | arg_shapes (arg1 :: rest1, arg2 :: rest2, env) =
-                (case shapes env (arg1, arg2) of
-                     NONE => NONE
-                   | SOME env' => arg_shapes (rest1, rest2, env'))
-            | arg_shapes _ = NONE
-        in
-          if thy1 = thy2 andalso op1 = op2
-          then arg_shapes (args1, args2, env)
-          else NONE
-        end
-  in
-    Option.isSome (shapes [] (ty1, ty2))
-  end
+  can (Type.match_type ty1) ty2 andalso can (Type.match_type ty2) ty1
 
 fun same_key ({head=h1,asm=a1} : split_key,
               {head=h2,asm=a2} : split_key) =
@@ -217,17 +200,16 @@ fun insert_rule rule [] =
 fun cmap_of_rules thms =
   foldl (fn (th, cmap) => insert_rule (analyse_rule th) cmap) [] thms
 
-datatype direction = GoRator | GoRand | GoBody
-
+(* Paths are in [Conv.PATH_CONV] notation: "l" rator, "r" rand, "a" body. *)
 type binder_info =
   {var : term,
    body_type : hol_type,
-   body_path : direction list,
+   body_path : string,
    depth : int}
 
 type split_pack =
   {rule : split_rule,
-   enter_path : direction list,
+   enter_path : string,
    redex : term,
    binders : int,
    path : int list,
@@ -244,8 +226,10 @@ fun candidates want_asm cmap head =
     foldr add [] cmap
   end
 
+(* Reach argument [i] of an [n]-ary application: strip the later arguments
+   with rators, then take the rand. *)
 fun prefix_path n i =
-  List.tabulate (n - i - 1, K GoRator) @ [GoRand]
+  StringCvt.padLeft #"l" (n - i - 1) "" ^ "r"
 
 fun matching rule redex =
   can (match_term (#pattern rule)) redex
@@ -271,7 +255,7 @@ fun scan want_asm cmap tm =
               case List.rev refs of
                   [] =>
                     if root_type = bool then
-                      SOME {rule=rule, enter_path=[], redex=redex,
+                      SOME {rule=rule, enter_path="", redex=redex,
                             binders=0, path=scan_path,
                             path_length=length scan_path}
                     else NONE
@@ -288,7 +272,7 @@ fun scan want_asm cmap tm =
       if is_abs node then
         let
           val (var, body) = dest_abs node
-          val body_path = enter_path @ [GoBody]
+          val body_path = enter_path ^ "a"
           val info = {var=var, body_type=type_of body,
                       body_path=body_path, depth=length binders + 1}
         in
@@ -297,6 +281,7 @@ fun scan want_asm cmap tm =
       else
         let
           val (head, args) = strip_comb node
+          val arity = length args
           val here =
             if is_const head then
               List.mapPartial
@@ -305,8 +290,7 @@ fun scan want_asm cmap tm =
             else []
           fun descend (arg, (i, packs)) =
             let
-              val arg_path =
-                enter_path @ prefix_path (length args) i
+              val arg_path = enter_path ^ prefix_path arity i
             in
               (i + 1,
                packs @ walk (scan_path @ [i]) arg_path binders arg)
@@ -315,13 +299,10 @@ fun scan want_asm cmap tm =
           #2 (foldl descend (0, here) args)
         end
   in
-    walk [] [] [] tm
+    walk [] "" [] tm
   end
 
-fun path_le ([], _) = true
-  | path_le (_ :: _, []) = false
-  | path_le (x :: xs, y :: ys) =
-      x < y orelse (x = y andalso path_le (xs, ys))
+fun path_le paths = Lib.list_compare Int.compare paths <> GREATER
 
 fun pack_le (p1 : split_pack) (p2 : split_pack) =
   #binders p1 < #binders p2 orelse
@@ -329,20 +310,6 @@ fun pack_le (p1 : split_pack) (p2 : split_pack) =
    (#path_length p1 < #path_length p2 orelse
     (#path_length p1 = #path_length p2 andalso
      path_le (#path p1, #path p2))))
-
-fun replace_all target hole tm =
-  if aconv target tm then hole
-  else if is_comb tm then
-    let val (rator, rand) = dest_comb tm
-    in
-      mk_comb (replace_all target hole rator,
-               replace_all target hole rand)
-    end
-  else if is_abs tm then
-    let val (var, body) = dest_abs tm
-    in mk_abs (var, replace_all target hole body)
-    end
-  else tm
 
 fun fresh_parts th =
   let
@@ -359,7 +326,7 @@ fun instantiate rule target body =
     val (terminst, typeinst) = match_term pattern target
     val pred' = Term.inst typeinst pred
     val hole = genvar (type_of target)
-    val context = mk_abs (hole, replace_all target hole body)
+    val context = mk_abs (hole, Term.subst [target |-> hole] body)
     val subst = (pred' |-> context) :: terminst
     val ith = INST subst (INST_TYPE typeinst sth)
     val beta =
@@ -373,13 +340,8 @@ fun instantiate rule target body =
     result
   end
 
-fun at_path [] conv = conv
-  | at_path (GoRator :: rest) conv = RATOR_CONV (at_path rest conv)
-  | at_path (GoRand :: rest) conv = RAND_CONV (at_path rest conv)
-  | at_path (GoBody :: rest) conv = ABS_CONV (at_path rest conv)
-
 fun apply_pack ({rule,enter_path,redex,...} : split_pack) =
-  at_path enter_path (instantiate rule redex)
+  PATH_CONV enter_path (instantiate rule redex)
 
 fun first_success [] _ =
       raise ERR "SPLIT_CONV" "no applicable split rule"
@@ -388,20 +350,17 @@ fun first_success [] _ =
       handle HOL_ERR _ => first_success packs tm
            | Conv.UNCHANGED => first_success packs tm
 
-fun SPLIT_CONV thms =
+fun split_conv cmap tm =
   let
-    val cmap = cmap_of_rules thms
+    val packs = sort pack_le (scan false cmap tm)
+    (* Isabelle tries only the first sorted pack.  Trying later packs
+       when instantiation fails avoids one rejected rule shadowing an
+       otherwise applicable rule, while retaining one split per call. *)
   in
-    fn tm =>
-      let
-        val packs = sort pack_le (scan false cmap tm)
-        (* Isabelle tries only the first sorted pack.  Trying later packs
-           when instantiation fails avoids one rejected rule shadowing an
-           otherwise applicable rule, while retaining one split per call. *)
-      in
-        first_success packs tm
-      end
+    first_success packs tm
   end
+
+fun SPLIT_CONV thms = split_conv (cmap_of_rules thms)
 
 fun split_concl_tac thms = CONV_TAC (SPLIT_CONV thms)
 
@@ -435,9 +394,8 @@ fun asm_eq cmap asm =
     clean_asm_eq (first_success packs (mk_neg asm))
   end
 
-fun SPLIT_ASM_TAC thms =
+fun split_asm_tac cmap =
   let
-    val cmap = cmap_of_rules thms
     val heads =
       map (#head o #1)
         (List.filter (fn ({asm,...}, _) => asm) cmap)
@@ -458,8 +416,14 @@ fun SPLIT_ASM_TAC thms =
     tac
   end
 
+fun SPLIT_ASM_TAC thms = split_asm_tac (cmap_of_rules thms)
+
+(* Analyse the rules once and share the result between both attempts. *)
 fun SPLIT_TAC thms =
-  CHANGED_TAC (split_concl_tac thms) ORELSE
-  CHANGED_TAC (SPLIT_ASM_TAC thms)
+  let val cmap = cmap_of_rules thms
+  in
+    CHANGED_TAC (CONV_TAC (split_conv cmap)) ORELSE
+    CHANGED_TAC (split_asm_tac cmap)
+  end
 
 end

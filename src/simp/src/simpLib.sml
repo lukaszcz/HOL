@@ -142,14 +142,18 @@ and simpset = SS of {
     travrules      : travrules,
     limit          : int option,
     excluded       : string Binaryset.set,
-    loopers        : (string * (simpset -> tactic)) list,
-    unsafe_solvers : Traverse.ssolver list,
-    safe_solvers   : Traverse.ssolver list,
-    subgoaler      : Traverse.subgoaler option,
-    cond_depth     : int option,
-    term_ord       : (term * term -> order) option,
-    excl_loopers   : string Binaryset.set
+    strategy       : strategy_data
 }
+(* The traversal-strategy knobs are grouped so that the simpset updaters
+   that leave them alone do not have to mention them one by one. *)
+withtype strategy_data =
+  {loopers        : (string * (simpset -> tactic)) list,
+   unsafe_solvers : Traverse.ssolver list,
+   safe_solvers   : Traverse.ssolver list,
+   subgoaler      : Traverse.subgoaler option,
+   cond_depth     : int option,
+   term_ord       : (term * term -> order) option,
+   excl_loopers   : string Binaryset.set}
 
 fun frag_name (SSFRAG_CON {name,...}) = name
 
@@ -343,16 +347,16 @@ fun ssupd_net f (SS s) =
   SS{mk_rewrs= #mk_rewrs s, history= #history s,
      initial_net=f (#initial_net s), dprocs= #dprocs s,
      travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-     safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-     cond_depth= #cond_depth s, term_ord= #term_ord s,
-     excl_loopers= #excl_loopers s}
+     strategy= #strategy s}
+
+val empty_strategy : strategy_data =
+  {loopers=[], unsafe_solvers=[], safe_solvers=[], subgoaler=NONE,
+   cond_depth=NONE, term_ord=NONE, excl_loopers=empty_excluded}
 
 val empty_ss =
   SS{mk_rewrs=fn x => [x], history=[], limit=NONE, initial_net=empty,
-     dprocs=[], travrules=EQ_tr, excluded=empty_excluded, loopers=[],
-     unsafe_solvers=[], safe_solvers=[], subgoaler=NONE, cond_depth=NONE,
-     term_ord=NONE, excl_loopers=empty_excluded}
+     dprocs=[], travrules=EQ_tr, excluded=empty_excluded,
+     strategy=empty_strategy}
 
  fun ssfrags_of (SS x) =
      List.mapPartial (fn ADDFRAG sf => SOME sf | _ => NONE) (#history x)
@@ -405,10 +409,7 @@ fun (ss as SS s) -* nms =
          mk_rewrs= #mk_rewrs s,
          dprocs=filter_dprocs_by_names nms (#dprocs s),
          travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-         loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-         safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-         cond_depth= #cond_depth s, term_ord= #term_ord s,
-         excl_loopers= #excl_loopers s}
+         strategy= #strategy s}
 fun remove_simps nms ss = ss -* nms
 
 
@@ -475,10 +476,7 @@ fun remove_simps nms ss = ss -* nms
    SS{mk_rewrs= #mk_rewrs s, history= #history s,
       travrules= #travrules s, initial_net= #initial_net s,
       dprocs= #dprocs s, limit=f (#limit s), excluded= #excluded s,
-      loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-      safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-      cond_depth= #cond_depth s, term_ord= #term_ord s,
-      excl_loopers= #excl_loopers s}
+      strategy= #strategy s}
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -486,41 +484,55 @@ val unlimit = fupdlimit (fn _ => NONE)
 
 fun getlimit (SS ss) = #limit ss
 
-type strategy_data =
-  {loopers : (string * (simpset -> tactic)) list,
-   unsafe_solvers : Traverse.ssolver list,
-   safe_solvers : Traverse.ssolver list,
-   subgoaler : Traverse.subgoaler option,
-   cond_depth : int option,
-   term_ord : (term * term -> order) option,
-   excl_loopers : string Binaryset.set}
-
 fun map_strategy f (SS s) =
-  let
-    val strategy : strategy_data =
-      f {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-         safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-         cond_depth= #cond_depth s, term_ord= #term_ord s,
-         excl_loopers= #excl_loopers s}
-  in
-    SS{mk_rewrs= #mk_rewrs s, history= #history s,
-       initial_net= #initial_net s, dprocs= #dprocs s,
-       travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-       loopers= #loopers strategy,
-       unsafe_solvers= #unsafe_solvers strategy,
-       safe_solvers= #safe_solvers strategy,
-       subgoaler= #subgoaler strategy, cond_depth= #cond_depth strategy,
-       term_ord= #term_ord strategy, excl_loopers= #excl_loopers strategy}
-  end
+  SS{mk_rewrs= #mk_rewrs s, history= #history s,
+     initial_net= #initial_net s, dprocs= #dprocs s,
+     travrules= #travrules s, limit= #limit s, excluded= #excluded s,
+     strategy=f (#strategy s)}
+
+(* Field updaters for [strategy_data]; every strategy change is expressed
+   as a composition of these. *)
+fun upd_loopers f (s:strategy_data) : strategy_data =
+  {loopers=f (#loopers s), unsafe_solvers= #unsafe_solvers s,
+   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
+   cond_depth= #cond_depth s, term_ord= #term_ord s,
+   excl_loopers= #excl_loopers s}
+fun upd_unsafe_solvers f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers=f (#unsafe_solvers s),
+   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
+   cond_depth= #cond_depth s, term_ord= #term_ord s,
+   excl_loopers= #excl_loopers s}
+fun upd_safe_solvers f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
+   safe_solvers=f (#safe_solvers s), subgoaler= #subgoaler s,
+   cond_depth= #cond_depth s, term_ord= #term_ord s,
+   excl_loopers= #excl_loopers s}
+fun upd_subgoaler f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
+   safe_solvers= #safe_solvers s, subgoaler=f (#subgoaler s),
+   cond_depth= #cond_depth s, term_ord= #term_ord s,
+   excl_loopers= #excl_loopers s}
+fun upd_cond_depth f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
+   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
+   cond_depth=f (#cond_depth s), term_ord= #term_ord s,
+   excl_loopers= #excl_loopers s}
+fun upd_term_ord f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
+   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
+   cond_depth= #cond_depth s, term_ord=f (#term_ord s),
+   excl_loopers= #excl_loopers s}
+fun upd_excl_loopers f (s:strategy_data) : strategy_data =
+  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
+   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
+   cond_depth= #cond_depth s, term_ord= #term_ord s,
+   excl_loopers=f (#excl_loopers s)}
 
 fun fupdhistory f (SS s) =
   SS{mk_rewrs= #mk_rewrs s, history=f (#history s),
      initial_net= #initial_net s, dprocs= #dprocs s,
      travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-     safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-     cond_depth= #cond_depth s, term_ord= #term_ord s,
-     excl_loopers= #excl_loopers s}
+     strategy= #strategy s}
 
 fun record_strategy event =
   fupdhistory (fn history => STRATEGY_EVENT event::history)
@@ -530,30 +542,78 @@ fun update_looper ((name,tac),[]) = [(name,tac)]
       if name = name' then looper::rest
       else entry::update_looper(looper,rest)
 
-fun add_looper looper ss =
-  map_strategy
-    (fn s =>
-       {loopers=update_looper(looper,#loopers s),
-        unsafe_solvers= #unsafe_solvers s, safe_solvers= #safe_solvers s,
-        subgoaler= #subgoaler s, cond_depth= #cond_depth s,
-        term_ord= #term_ord s, excl_loopers= #excl_loopers s}) ss
-  |> record_strategy (ADD_LOOPER_EVENT looper)
+fun add_solver (solver : Traverse.ssolver,
+                solvers : Traverse.ssolver list) =
+  if List.exists (fn {name,...} => name = #name solver) solvers then solvers
+  else solvers @ [solver]
 
-fun del_looper name (ss as SS s) =
-  if List.exists (fn (name',_) => name = name') (#loopers s) then
-    map_strategy
-      (fn strategy =>
-         {loopers=List.filter (fn (name',_) => name <> name')
-                              (#loopers strategy),
-          unsafe_solvers= #unsafe_solvers strategy,
-          safe_solvers= #safe_solvers strategy,
-          subgoaler= #subgoaler strategy,
-          cond_depth= #cond_depth strategy, term_ord= #term_ord strategy,
-          excl_loopers= #excl_loopers strategy}) ss
-    |> record_strategy (DEL_LOOPER_EVENT name)
-  else
-    (HOL_WARNING "simpLib" "del_looper" ("No looper called " ^ name);
-     ss)
+fun dedup_solvers solvers = List.foldl add_solver [] solvers
+
+fun strategy_of (SS s) = #strategy s
+fun has_looper name ss =
+  List.exists (fn (name',_) => name = name') (#loopers (strategy_of ss))
+fun has_solver name ss =
+  let fun named {name=name',...} = name = name'
+  in
+    List.exists named (#unsafe_solvers (strategy_of ss)) orelse
+    List.exists named (#safe_solvers (strategy_of ss))
+  end
+
+(* The single implementation of every strategy change.  The exported
+   setters and the [build_from_history] replay both go through it, so the
+   simpset a user builds and the one rebuilt from its history cannot
+   drift apart. *)
+fun apply_strategy_event event =
+  map_strategy
+    (case event of
+         ADD_LOOPER_EVENT looper =>
+           upd_loopers (fn ls => update_looper(looper,ls))
+       | DEL_LOOPER_EVENT name =>
+           upd_loopers (List.filter (fn (name',_) => name <> name'))
+       | SET_LOOPER_EVENT looper => upd_loopers (K [looper])
+       | ADD_UNSAFE_SOLVER_EVENT solver =>
+           upd_unsafe_solvers (fn ss => add_solver(solver,ss))
+       | ADD_SAFE_SOLVER_EVENT solver =>
+           upd_safe_solvers (fn ss => add_solver(solver,ss))
+       | SET_UNSAFE_SOLVERS_EVENT solvers => upd_unsafe_solvers (K solvers)
+       | SET_SAFE_SOLVERS_EVENT solvers => upd_safe_solvers (K solvers)
+       | REMOVE_SOLVER_EVENT name =>
+           let fun keep {name=name',...} = name <> name'
+           in upd_unsafe_solvers (List.filter keep) o
+              upd_safe_solvers (List.filter keep)
+           end
+       | SET_SUBGOALER_EVENT subgoaler => upd_subgoaler (K subgoaler)
+       | SET_COND_DEPTH_EVENT cond_depth => upd_cond_depth (K cond_depth)
+       | SET_TERM_ORD_EVENT term_ord => upd_term_ord (K term_ord)
+       | SET_EXCL_LOOPERS_EVENT excl => upd_excl_loopers (K excl))
+
+fun strategy_op event ss =
+  apply_strategy_event event ss |> record_strategy event
+
+fun add_looper looper = strategy_op (ADD_LOOPER_EVENT looper)
+fun set_looper looper = strategy_op (SET_LOOPER_EVENT looper)
+fun add_unsafe_solver solver = strategy_op (ADD_UNSAFE_SOLVER_EVENT solver)
+fun add_safe_solver solver = strategy_op (ADD_SAFE_SOLVER_EVENT solver)
+fun set_unsafe_solvers solvers =
+  strategy_op (SET_UNSAFE_SOLVERS_EVENT (dedup_solvers solvers))
+fun set_safe_solvers solvers =
+  strategy_op (SET_SAFE_SOLVERS_EVENT (dedup_solvers solvers))
+fun set_subgoaler subgoaler =
+  strategy_op (SET_SUBGOALER_EVENT (SOME subgoaler))
+fun set_cond_depth depth = strategy_op (SET_COND_DEPTH_EVENT (SOME depth))
+fun set_term_ord term_ord = strategy_op (SET_TERM_ORD_EVENT (SOME term_ord))
+
+(* Deleting an absent looper is a no-op; only the exported [del_looper]
+   warns about it. *)
+fun del_looper_quiet name ss =
+  if has_looper name ss then strategy_op (DEL_LOOPER_EVENT name) ss else ss
+
+fun del_looper name ss =
+  if has_looper name ss then del_looper_quiet name ss
+  else (HOL_WARNING "simpLib" "del_looper" ("No looper called " ^ name); ss)
+
+fun remove_solver name ss =
+  if has_solver name ss then strategy_op (REMOVE_SOLVER_EVENT name) ss else ss
 
 fun split_looper_name name th =
   (if splitLib.is_asm_split th then "split_asm " else "split ") ^ name
@@ -570,13 +630,9 @@ fun del_split name ss =
          String.isPrefix "split_asm " name
       then [name]
       else ["split " ^ name, "split_asm " ^ name]
-    fun present candidate (SS s) =
-      List.exists (fn (name,_) => name = candidate) (#loopers s)
-    fun remove (candidate, result) =
-      if present candidate result then del_looper candidate result
-      else result
   in
-    List.foldl remove ss names
+    List.foldl (fn (candidate,result) => del_looper_quiet candidate result)
+               ss names
   end
 
 fun case_types goal_terms =
@@ -586,65 +642,44 @@ fun case_types goal_terms =
             TypeBasePure.ty_of tyinfo)
       handle HOL_ERR _ => NONE
     val cases = List.mapPartial case_info (TypeBase.elts ())
-    fun occurs head tm =
-      can (find_term
-        (fn subtm =>
+    fun occurs head =
+      let
+        (* depends only on [head]; hoisted out of the subterm test *)
+        val arity = length (#1 (strip_fun (type_of head)))
+        fun saturated subtm =
           let val (subhead, args) = strip_comb subtm
-              val arity = length (#1 (strip_fun (type_of head)))
-          in
-            same_const head subhead andalso length args >= arity
-          end)) tm
+          in same_const head subhead andalso length args >= arity
+          end
+      in
+        fn tm => can (find_term saturated) tm
+      end
     fun add ((head, ty), result) =
       if List.exists (occurs head) goal_terms then ty :: result else result
   in
     List.foldl add [] cases
   end
 
-fun asm_split_rule split =
+fun splitter_looper ss (asms, goal) =
   let
-    val (pred, _) = dest_forall (concl split)
-    val (domain, _) = dom_rng (type_of pred)
-    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
-    val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
-    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
-    val cleanup =
-      REDEPTH_CONV
-        (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
-  in
-    split
-      |> SPEC neg_pred
-      |> AP_TERM boolSyntax.negation
-      |> CONV_RULE cleanup
-      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
-      |> GEN pred
-  end
-
-fun splitter_looper (SS s) (asms, goal) =
-  let
-    val excluded = #excl_loopers s
+    val excluded = #excl_loopers (strategy_of ss)
     fun enabled name = not (Binaryset.member (excluded, name))
     fun enabled_named (name, th) = enabled (split_looper_name name th)
     val persistent =
       splitLib.named_split_thms ()
       |> List.filter enabled_named
       |> map #2
-    fun type_name ty =
-      let val {Thy,Tyop,...} = dest_thy_type ty
-      in (Thy ^ "$" ^ Tyop, Tyop)
-      end
     fun type_enabled ty =
-      let val (full, short) = type_name ty
+      let
+        val {Thy,Tyop,...} = dest_thy_type ty
+        val full = KernelSig.name_toString {Thy=Thy, Name=Tyop}
       in
         enabled ("split.case " ^ full) andalso
-        enabled ("split.case " ^ short)
+        enabled ("split.case " ^ Tyop)
       end
-    fun type_rules ty =
-      [splitLib.type_split_of ty,
-       asm_split_rule (splitLib.type_asm_split_of ty)]
     val datatype_rules =
       case_types (goal :: asms)
       |> List.filter type_enabled
-      |> map type_rules
+      |> map splitLib.type_split_rules
       |> List.concat
   in
     splitLib.SPLIT_TAC (persistent @ datatype_rules) (asms, goal)
@@ -663,115 +698,6 @@ val cases_simp =
 val split_ss =
   named_merge_ss "split"
     [looper_ss ("splitter", splitter_looper), rewrites [cases_simp]]
-
-fun set_looper looper ss =
-  map_strategy
-    (fn s =>
-       {loopers=[looper], unsafe_solvers= #unsafe_solvers s,
-        safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-        cond_depth= #cond_depth s, term_ord= #term_ord s,
-        excl_loopers= #excl_loopers s}) ss
-  |> record_strategy (SET_LOOPER_EVENT looper)
-
-fun add_solver (solver : Traverse.ssolver,
-                solvers : Traverse.ssolver list) =
-  if List.exists (fn {name,...} => name = #name solver) solvers then solvers
-  else solvers @ [solver]
-
-fun dedup_solvers solvers = List.foldl add_solver [] solvers
-
-fun add_unsafe_solver solver ss =
-  map_strategy
-    (fn strategy =>
-       {loopers= #loopers strategy,
-        unsafe_solvers=add_solver(solver,#unsafe_solvers strategy),
-        safe_solvers= #safe_solvers strategy,
-        subgoaler= #subgoaler strategy,
-        cond_depth= #cond_depth strategy, term_ord= #term_ord strategy,
-        excl_loopers= #excl_loopers strategy}) ss
-  |> record_strategy (ADD_UNSAFE_SOLVER_EVENT solver)
-
-fun add_safe_solver solver ss =
-  map_strategy
-    (fn strategy =>
-       {loopers= #loopers strategy,
-        unsafe_solvers= #unsafe_solvers strategy,
-        safe_solvers=add_solver(solver,#safe_solvers strategy),
-        subgoaler= #subgoaler strategy,
-        cond_depth= #cond_depth strategy, term_ord= #term_ord strategy,
-        excl_loopers= #excl_loopers strategy}) ss
-  |> record_strategy (ADD_SAFE_SOLVER_EVENT solver)
-
-fun set_unsafe_solvers solvers ss =
-  let val solvers = dedup_solvers solvers
-  in
-    map_strategy
-      (fn s =>
-         {loopers= #loopers s, unsafe_solvers=solvers,
-          safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-          cond_depth= #cond_depth s, term_ord= #term_ord s,
-          excl_loopers= #excl_loopers s}) ss
-    |> record_strategy (SET_UNSAFE_SOLVERS_EVENT solvers)
-  end
-
-fun set_safe_solvers solvers ss =
-  let val solvers = dedup_solvers solvers
-  in
-    map_strategy
-      (fn s =>
-         {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-          safe_solvers=solvers, subgoaler= #subgoaler s,
-          cond_depth= #cond_depth s, term_ord= #term_ord s,
-          excl_loopers= #excl_loopers s}) ss
-    |> record_strategy (SET_SAFE_SOLVERS_EVENT solvers)
-  end
-
-fun remove_solver name (ss as SS s) =
-  let
-    fun matches {name=name',...} = name = name'
-    fun keep solver = not (matches solver)
-    val found = List.exists matches (#unsafe_solvers s) orelse
-                List.exists matches (#safe_solvers s)
-  in
-    if not found then ss
-    else
-      map_strategy
-        (fn strategy =>
-           {loopers= #loopers strategy,
-            unsafe_solvers=List.filter keep (#unsafe_solvers strategy),
-            safe_solvers=List.filter keep (#safe_solvers strategy),
-            subgoaler= #subgoaler strategy,
-            cond_depth= #cond_depth strategy, term_ord= #term_ord strategy,
-            excl_loopers= #excl_loopers strategy}) ss
-      |> record_strategy (REMOVE_SOLVER_EVENT name)
-  end
-
-fun set_subgoaler subgoaler ss =
-  map_strategy
-    (fn s =>
-       {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-        safe_solvers= #safe_solvers s, subgoaler=SOME subgoaler,
-        cond_depth= #cond_depth s, term_ord= #term_ord s,
-        excl_loopers= #excl_loopers s}) ss
-  |> record_strategy (SET_SUBGOALER_EVENT (SOME subgoaler))
-
-fun set_cond_depth cond_depth ss =
-  map_strategy
-    (fn s =>
-       {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-        safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-        cond_depth=SOME cond_depth, term_ord= #term_ord s,
-        excl_loopers= #excl_loopers s}) ss
-  |> record_strategy (SET_COND_DEPTH_EVENT (SOME cond_depth))
-
-fun set_term_ord term_ord ss =
-  map_strategy
-    (fn s =>
-       {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-        safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-        cond_depth= #cond_depth s, term_ord=SOME term_ord,
-        excl_loopers= #excl_loopers s}) ss
-  |> record_strategy (SET_TERM_ORD_EVENT (SOME term_ord))
 
 fun mk_tactic_solver (name,tac) =
   let
@@ -806,10 +732,7 @@ fun mk_tactic_solver (name,tac) =
       travrules=merge_travrules
                   [#travrules s,wk_mk_travrules(rels,congs)],
       initial_net= #initial_net s, dprocs= #dprocs s @ [dp],
-      limit= #limit s, excluded= #excluded s, loopers= #loopers s,
-      unsafe_solvers= #unsafe_solvers s, safe_solvers= #safe_solvers s,
-      subgoaler= #subgoaler s, cond_depth= #cond_depth s,
-      term_ord= #term_ord s, excl_loopers= #excl_loopers s}
+      limit= #limit s, excluded= #excluded s, strategy= #strategy s}
 
 (* ----------------------------------------------------------------------
     add_relsimp : {trans,refl,weakenings,subsets} -> simpset -> simpset
@@ -1058,11 +981,13 @@ fun mk_tactic_solver (name,tac) =
    val reltravs = map rsd_travrules relsimps
    val relrels = List.concat (map travrel reltravs)
    val relations = sset_rels @ relrels
-   val loopers = List.foldl update_looper (#loopers sset) (#loopers ssf)
-   val unsafe_solvers =
-     List.foldl add_solver (#unsafe_solvers sset) (#unsafe_solvers ssf)
-   val safe_solvers =
-     List.foldl add_solver (#safe_solvers sset) (#safe_solvers ssf)
+   val strategy =
+     #strategy sset
+       |> upd_loopers (fn ls => List.foldl update_looper ls (#loopers ssf))
+       |> upd_unsafe_solvers
+            (fn ss => List.foldl add_solver ss (#unsafe_solvers ssf))
+       |> upd_safe_solvers
+            (fn ss => List.foldl add_solver ss (#safe_solvers ssf))
  in
    SS{mk_rewrs=mk_rewrs, history=ADDFRAG f :: history,
       initial_net=net, limit= #limit sset, dprocs=new_dprocs,
@@ -1071,95 +996,16 @@ fun mk_tactic_solver (name,tac) =
                   (travrules::
                    add_congprocs congprocs
                      (mk_travrules relations congs)::reltravs),
-      loopers=loopers, unsafe_solvers=unsafe_solvers,
-      safe_solvers=safe_solvers, subgoaler= #subgoaler sset,
-      cond_depth= #cond_depth sset, term_ord= #term_ord sset,
-      excl_loopers= #excl_loopers sset}
+      strategy=strategy}
  end
 
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
-
-fun apply_strategy_event event =
-  map_strategy
-    (fn s =>
-       case event of
-           ADD_LOOPER_EVENT looper =>
-             {loopers=update_looper(looper,#loopers s),
-              unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | DEL_LOOPER_EVENT name =>
-             {loopers=List.filter (fn (name',_) => name <> name')
-                                  (#loopers s),
-              unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | SET_LOOPER_EVENT looper =>
-             {loopers=[looper], unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | ADD_UNSAFE_SOLVER_EVENT solver =>
-             {loopers= #loopers s,
-              unsafe_solvers=add_solver(solver,#unsafe_solvers s),
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | ADD_SAFE_SOLVER_EVENT solver =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers=add_solver(solver,#safe_solvers s),
-              subgoaler= #subgoaler s, cond_depth= #cond_depth s,
-              term_ord= #term_ord s, excl_loopers= #excl_loopers s}
-         | SET_UNSAFE_SOLVERS_EVENT solvers =>
-             {loopers= #loopers s, unsafe_solvers=solvers,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | SET_SAFE_SOLVERS_EVENT solvers =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers=solvers, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | REMOVE_SOLVER_EVENT name =>
-             let fun keep {name=name',...} = name <> name'
-             in
-               {loopers= #loopers s,
-                unsafe_solvers=List.filter keep (#unsafe_solvers s),
-                safe_solvers=List.filter keep (#safe_solvers s),
-                subgoaler= #subgoaler s, cond_depth= #cond_depth s,
-                term_ord= #term_ord s, excl_loopers= #excl_loopers s}
-             end
-         | SET_SUBGOALER_EVENT subgoaler =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler=subgoaler,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | SET_COND_DEPTH_EVENT cond_depth =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth=cond_depth, term_ord= #term_ord s,
-              excl_loopers= #excl_loopers s}
-         | SET_TERM_ORD_EVENT term_ord =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord=term_ord,
-              excl_loopers= #excl_loopers s}
-         | SET_EXCL_LOOPERS_EVENT excl_loopers =>
-             {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-              safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-              cond_depth= #cond_depth s, term_ord= #term_ord s,
-              excl_loopers=excl_loopers})
 
 fun set_mk_rewrs mk_rewrs (SS s) =
   SS{mk_rewrs=mk_rewrs, history= #history s,
      initial_net= #initial_net s, dprocs= #dprocs s,
      travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-     safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-     cond_depth= #cond_depth s, term_ord= #term_ord s,
-     excl_loopers= #excl_loopers s}
+     strategy= #strategy s}
 
 fun build_from_history h0 =
     let
@@ -1168,8 +1014,7 @@ fun build_from_history h0 =
               ADDFRAG sf => ss ++ sf
             | DELETE_EVENT sl => ss -* sl
             | ADDWEAKENER wd => add_weakener wd ss
-            | STRATEGY_EVENT event =>
-                apply_strategy_event event ss |> record_strategy event
+            | STRATEGY_EVENT event => strategy_op event ss
             | SET_MK_REWRS mk_rewrs =>
                 set_mk_rewrs mk_rewrs ss
                 |> fupdhistory (fn h => SET_MK_REWRS mk_rewrs::h)
@@ -1181,10 +1026,7 @@ fun setexcluded e (SS s) =
   SS{mk_rewrs= #mk_rewrs s, history= #history s,
      initial_net= #initial_net s, dprocs= #dprocs s,
      travrules= #travrules s, limit= #limit s, excluded=e,
-     loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-     safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-     cond_depth= #cond_depth s, term_ord= #term_ord s,
-     excl_loopers= #excl_loopers s}
+     strategy= #strategy s}
 
 fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
     let
@@ -1245,20 +1087,21 @@ fun force_add (ss as SS sset) f =
 
 fun clear_rules (SS s) =
   let
+    val strategy = #strategy s
+    (* Rules are dropped; the strategy is kept, so the new history replays
+       exactly the surviving strategy.  Stored in reverse order. *)
     val history =
-      [STRATEGY_EVENT (SET_EXCL_LOOPERS_EVENT (#excl_loopers s)),
-       STRATEGY_EVENT (SET_TERM_ORD_EVENT (#term_ord s)),
-       STRATEGY_EVENT (SET_COND_DEPTH_EVENT (#cond_depth s)),
-       STRATEGY_EVENT (SET_SUBGOALER_EVENT (#subgoaler s)),
-       STRATEGY_EVENT (SET_SAFE_SOLVERS_EVENT (#safe_solvers s)),
-       STRATEGY_EVENT (SET_UNSAFE_SOLVERS_EVENT (#unsafe_solvers s)),
+      [STRATEGY_EVENT (SET_EXCL_LOOPERS_EVENT (#excl_loopers strategy)),
+       STRATEGY_EVENT (SET_TERM_ORD_EVENT (#term_ord strategy)),
+       STRATEGY_EVENT (SET_COND_DEPTH_EVENT (#cond_depth strategy)),
+       STRATEGY_EVENT (SET_SUBGOALER_EVENT (#subgoaler strategy)),
+       STRATEGY_EVENT (SET_SAFE_SOLVERS_EVENT (#safe_solvers strategy)),
+       STRATEGY_EVENT (SET_UNSAFE_SOLVERS_EVENT (#unsafe_solvers strategy)),
        SET_MK_REWRS (#mk_rewrs s)]
   in
-  SS{mk_rewrs= #mk_rewrs s, history=history, initial_net=empty, dprocs=[],
-     travrules=EQ_tr, limit= #limit s, excluded= #excluded s, loopers=[],
-     unsafe_solvers= #unsafe_solvers s, safe_solvers= #safe_solvers s,
-     subgoaler= #subgoaler s, cond_depth= #cond_depth s,
-     term_ord= #term_ord s, excl_loopers= #excl_loopers s}
+    SS{mk_rewrs= #mk_rewrs s, history=history, initial_net=empty,
+       dprocs=[], travrules=EQ_tr, limit= #limit s,
+       excluded= #excluded s, strategy=upd_loopers (K []) strategy}
   end
 
 (*---------------------------------------------------------------------------*)
@@ -1291,15 +1134,18 @@ fun clear_rules (SS s) =
    end;
 
  fun traversedata_for_ss (ss as (SS ssdata)) =
+   let val strategy = #strategy ssdata
+   in
       {rewriters=[rewriter_for_ss ss],
        dprocs= #dprocs ssdata,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
        limit = #limit ssdata,
-       subgoaler= #subgoaler ssdata,
-       solvers= #unsafe_solvers ssdata,
-       cond_depth= #cond_depth ssdata,
-       term_ord= #term_ord ssdata};
+       subgoaler= #subgoaler strategy,
+       solvers= #unsafe_solvers strategy,
+       cond_depth= #cond_depth strategy,
+       term_ord= #term_ord strategy}
+   end;
 
  fun SIMP_QCONV ss = TRAVERSE (traversedata_for_ss ss);
 
@@ -1390,26 +1236,17 @@ fun process_tags ss thl =
             String.isPrefix "split.case " name
           val ruleExcludes =
             List.filter (not o splitter_exclusion) excludes
-          fun strategy_name name (SS s) =
-            List.exists (fn (name',_) => name = name') (#loopers s) orelse
-            List.exists (fn {name=name',...} => name = name')
-                        (#unsafe_solvers s) orelse
-            List.exists (fn {name=name',...} => name = name')
-                        (#safe_solvers s)
+          fun strategy_name name result =
+            has_looper name result orelse has_solver name result
           fun exclude_rule (name,result) =
             result -* [name]
             handle exn as HOL_ERR _ =>
               if strategy_name name result then result else raise exn
           val withoutRules =
             List.foldl exclude_rule withSplits ruleExcludes
-          fun remove_looper (name,result) =
-            let val SS s = result
-            in
-              if List.exists (fn (name',_) => name = name') (#loopers s)
-              then del_looper name result
-              else result
-            end
-          val withoutLoopers = List.foldl remove_looper withoutRules excludes
+          val withoutLoopers =
+            List.foldl (fn (name,result) => del_looper_quiet name result)
+                       withoutRules excludes
           val withoutSolvers =
             List.foldl (fn (name,result) => remove_solver name result)
                        withoutLoopers excludes
@@ -1418,19 +1255,9 @@ fun process_tags ss thl =
             if null splitExcludes then withoutSolvers
             else
               map_strategy
-                (fn s =>
-                   let
-                     val excluded =
-                       Binaryset.addList (#excl_loopers s, splitExcludes)
-                   in
-                     {loopers= #loopers s,
-                      unsafe_solvers= #unsafe_solvers s,
-                      safe_solvers= #safe_solvers s,
-                      subgoaler= #subgoaler s,
-                      cond_depth= #cond_depth s,
-                      term_ord= #term_ord s,
-                      excl_loopers=excluded}
-                   end) withoutSolvers
+                (upd_excl_loopers
+                   (fn excl => Binaryset.addList (excl, splitExcludes)))
+                withoutSolvers
         in
           (invocation, rst)
         end
@@ -1485,7 +1312,7 @@ fun reconcile_hyps asl th =
 
 fun final_solver_tac mode ss context_thms =
   let
-    val SS s = ss
+    val s = strategy_of ss
     val solvers =
       if #safe mode then #safe_solvers s else #unsafe_solvers s
     val prover_ctxt =
@@ -1503,8 +1330,9 @@ fun final_solver_tac mode ss context_thms =
     FIRST (map solve_with solvers)
   end
 
-fun looper_tac (ss as SS s) =
+fun looper_tac ss =
   let
+    val s = strategy_of ss
     fun enabled (name,_) =
       not (Binaryset.member (#excl_loopers s,name))
     fun apply (_,looper) g =
@@ -1637,23 +1465,19 @@ fun stdcon (c : simptac_config) th =
         (caa_tac0 (not (#oldestfirst c)) c)
         th
 
+fun popper_of (cfg : simptac_config) =
+    if #oldestfirst cfg then pop_last_assum else pop_assum
+
 fun psr (cfg : simptac_config) ss =
-    let val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
-    in
-      popper (fn th =>
-                 ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th)))
-    end
+    popper_of cfg
+      (fn th => ASSUM_LIST (fn asms => stdcon cfg (SIMP_RULE ss asms th)))
 
 fun allasms cfg ss (g as (asl,_)) = ntac (length asl) (psr cfg ss) g
 
 type xsimptac_config =
      {base : simptac_config, concl_in_fixpoint : bool, imp_rebuild : bool}
 
-fun same_goal ((asl1,w1),(asl2,w2)) =
-    ListPair.allEq (fn (a1,a2) => aconv a1 a2) (asl1,asl2) andalso
-    aconv w1 w2
-
-fun same_goals (goals1,goals2) = ListPair.allEq same_goal (goals1,goals2)
+fun same_goals (goals1,goals2) = boolSyntax.goals_eq goals1 goals2
 
 (* Apply a continuation independently to annotated goals, retaining all
    validation functions. *)
@@ -1686,19 +1510,18 @@ fun continue_annotated (annotated,validation) next =
       (map #1 tagged,validation o validate)
     end
 
+(* Continue from an unannotated tactic result. *)
+fun then_annotated (goals,validation) next =
+    continue_annotated (map (fn g => (g,())) goals,validation) (fn () => next)
+
 fun rotate_assumption cfg =
-    let
-      val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
-    in
-      popper (BF_ASSUME_TAC (not (#oldestfirst cfg)))
-    end
+    popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
 fun counted_psr cfg ss extra_context g =
     let
-      val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
-      val old_concl = ref NONE
-      val new_concl = ref NONE
-      val expected = ref ([] : goal list)
+      (* [simplify] runs inside a callback, so what it learns about the
+         assumption is smuggled out through this cell. *)
+      val outcome = ref (NONE : {changed:bool, expected:goal list} option)
       fun simplify th =
         ASSUM_LIST
           (fn asms => fn popped_goal =>
@@ -1706,18 +1529,19 @@ fun counted_psr cfg ss extra_context g =
                val simplified = SIMP_RULE ss (asms @ extra_context) th
                val ordinary =
                  BF_ASSUME_TAC (not (#oldestfirst cfg)) simplified popped_goal
-               val _ = old_concl := SOME (concl th)
-               val _ = new_concl := SOME (concl simplified)
-               val _ = expected := #1 ordinary
+               val _ =
+                 outcome :=
+                   SOME {changed=not (aconv (concl th) (concl simplified)),
+                         expected= #1 ordinary}
              in
                stdcon cfg simplified popped_goal
              end)
-      val (goals,validation) = popper simplify g
-      val changed =
-        case (!old_concl,!new_concl) of
-            (SOME old,SOME new) => not (aconv old new)
-          | _ => raise ERR ("counted_psr", "missing assumption")
-      val structural = not (same_goals (goals,!expected))
+      val (goals,validation) = popper_of cfg simplify g
+      val {changed,expected} =
+        case !outcome of
+            SOME outcome => outcome
+          | NONE => raise ERR ("counted_psr", "missing assumption")
+      val structural = not (same_goals (goals,expected))
       val info = {changed=changed orelse structural,
                   structural=structural}
     in
@@ -1821,12 +1645,8 @@ fun GEN_GLOBAL_SIMP_TAC
                and after_pass state goal =
                  if concl_in_fixpoint then
                    let
-                     val result as (goals,validation) =
-                       conclusion_tac goal
-                     fun continue next =
-                       continue_annotated
-                         (map (fn g => (g,())) goals,validation)
-                         (fn () => next)
+                     val result as (goals,_) = conclusion_tac goal
+                     fun continue next = then_annotated result next
                    in
                      if not (same_goals (goals,[goal])) then
                        continue (fixpoint ~1)
@@ -1843,12 +1663,9 @@ fun GEN_GLOBAL_SIMP_TAC
 
                and final_conclusion goal =
                  let
-                   val result as (goals,validation) = conclusion_tac goal
+                   val result = conclusion_tac goal
                  in
-                   if imp_rebuild then
-                     continue_annotated
-                       (map (fn g => (g,())) goals,validation)
-                       (fn () => rebuild)
+                   if imp_rebuild then then_annotated result rebuild
                    else result
                  end
 
@@ -1989,9 +1806,9 @@ fun pp_ssfrag (SSFRAG_CON {name,convs,rewrs,ac,dprocs,congs,...}) =
    )
  end
 
-fun pp_simpset
-      (ss as SS {initial_net,loopers,unsafe_solvers,safe_solvers,...}) =
+fun pp_simpset (ss as SS {initial_net,strategy,...}) =
   let
+    val {loopers,unsafe_solvers,safe_solvers,...} = strategy
     open Portable smpp
     val empty_strset = Set.empty String.compare
     fun foldthis {thypart, ci = {name,...}} nms = opttheory thypart name::nms
@@ -2050,3 +1867,4 @@ val pp_ssfrag = Parse.mlower o pp_ssfrag
 val pp_simpset = Parse.mlower o pp_simpset
 
 end (* struct *)
+

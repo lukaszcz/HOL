@@ -11,9 +11,14 @@ sig
   (* Perform one split, preferring the conclusion to assumptions. *)
   val SPLIT_TAC : thm list -> tactic
 
-  (* Cached datatype split rules. *)
+  (* Derive the assumption-splitting form of a conclusion split rule. *)
+  val mk_asm_split : thm -> thm
+
+  (* Cached datatype split rules.  [type_split_rules] is the derived pair
+     the splitter applies. *)
   val type_split_of : hol_type -> thm
   val type_asm_split_of : hol_type -> thm
+  val type_split_rules : hol_type -> thm list
 
   (* The persistent [split] theorem set. *)
   val split_thms : unit -> thm list

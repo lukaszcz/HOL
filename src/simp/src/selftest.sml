@@ -1543,24 +1543,7 @@ end
 (* ---------------------------------------------------------------------- *)
 (* Splitter core: conclusion and assumption splits.                       *)
 
-fun mk_asm_split split =
-  let
-    val (pred, _) = dest_forall (concl split)
-    val (domain, _) = dom_rng (type_of pred)
-    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
-    val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
-    val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
-    val cleanup =
-      REDEPTH_CONV
-        (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
-  in
-    split
-      |> SPEC neg_pred
-      |> AP_TERM boolSyntax.negation
-      |> CONV_RULE cleanup
-      |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
-      |> GEN pred
-  end
+val mk_asm_split = splitLib.mk_asm_split
 
 fun has_double_neg tm =
   can (find_term (fn subtm =>
