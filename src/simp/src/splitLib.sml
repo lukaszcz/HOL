@@ -120,19 +120,23 @@ fun split_thms () = map #2 (named_split_thms ())
    negated predicate, which is the form that splits an assumption. *)
 fun mk_asm_split split =
   let
-    val (pred, _) = dest_forall (concl split)
+    val (qvars, _) = strip_forall (concl split)
+    val {pred,...} = rule_parts split
     val (domain, _) = dom_rng (type_of pred)
-    val arg = variant (free_vars (concl split)) (mk_var ("x", domain))
+    val arg =
+      variant (qvars @ free_vars (concl split)) (mk_var ("x", domain))
     val neg_pred = mk_abs (arg, mk_neg (mk_comb (pred, arg)))
+    val specs =
+      map (fn qvar => if aconv qvar pred then neg_pred else qvar) qvars
     val not_not = CONJUNCT1 boolTheory.NOT_CLAUSES
     val cleanup = REDEPTH_CONV (FIRST_CONV [BETA_CONV, REWR_CONV not_not])
   in
     split
-      |> SPEC neg_pred
+      |> SPECL specs
       |> AP_TERM boolSyntax.negation
       |> CONV_RULE cleanup
       |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
-      |> GEN pred
+      |> GENL qvars
   end
 
 (* [rules] is the derived form the splitter actually applies; it is cached

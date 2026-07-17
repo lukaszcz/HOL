@@ -361,9 +361,9 @@ fun with_option_flag _ NONE f x = f x
   | with_option_flag flag (SOME value) f x =
       Lib.with_flag (flag,value) f x
 
-(* The context is built once per theorem list, so that a conv obtained by
-   partially applying to [thms] shares it across terms. *)
-fun GEN_TRAVERSE root_only (data : traverse_data) thms =
+(* Reducer contexts contain mutable rewrite controls, so rebuild the context
+   for every application of a reusable conversion. *)
+fun GEN_TRAVERSE root_only (data : traverse_data) thms tm =
    let
      val {dprocs,rewriters,cond_depth,term_ord,...} = data
      val context' = add_context rewriters dprocs (initial_context data,thms)
@@ -372,7 +372,7 @@ fun GEN_TRAVERSE root_only (data : traverse_data) thms =
      fun with_order tm =
        with_option_flag Cond_rewr.term_ord term_ord traverse tm
    in
-     fn tm => with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
+     with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
    end;
 
 val TRAVERSE = GEN_TRAVERSE false

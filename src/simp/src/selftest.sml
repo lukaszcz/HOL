@@ -793,6 +793,10 @@ in
     ("term_ord: Once bypasses a custom rejecting order",
      once_order_conv, ``once_x:'a = once_y``, ``once_y:'a = once_x``)
 
+  val _ = convtest
+    ("TRAVERSE refreshes Once for each conversion application",
+     once_order_conv, ``once_u:'a = once_v``, ``once_v:'a = once_u``)
+
   val order_probe = (``nested_order_x:'a``, ``nested_order_y:'a``)
   fun has_dynamic_flags depth expected =
     !Cond_rewr.stack_limit = depth andalso
@@ -1556,6 +1560,19 @@ val _ = let
   val if_split = TypeBase.case_pred_imp_of ``:bool``
   val if_asm_split =
     mk_asm_split (TypeBase.case_pred_disj_of ``:bool``)
+  val split_parameter = ``split_parameter:bool``
+  val parameterised_if_asm_split =
+    TypeBase.case_pred_disj_of ``:bool``
+      |> GEN split_parameter
+      |> mk_asm_split
+  val expected_parameterised_if_asm_split = GEN split_parameter if_asm_split
+
+  val _ = tprint "splitter: predicate need not be the first quantifier"
+  val _ =
+    if aconv (concl parameterised_if_asm_split)
+             (concl expected_parameterised_if_asm_split)
+    then OK()
+    else die "mk_asm_split specialised the wrong quantified variable"
 
   val _ = convtest
     ("splitter: conditional",
