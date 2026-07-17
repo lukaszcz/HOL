@@ -2769,6 +2769,27 @@ val _ =
 
 val _ =
   test
+    ("DEEPEN saturates safe siblings before bounded search",
+     fn () =>
+       let
+         val x = Term.mk_var ("deepen_safe_x", Type.ind)
+         val a = Term.mk_var ("deepen_safe_a", Type.ind)
+         val b = Term.mk_var ("deepen_safe_b", Type.ind)
+         val left =
+           boolSyntax.mk_exists (x, boolSyntax.mk_eq (x, a))
+         val right =
+           boolSyntax.mk_exists (x, boolSyntax.mk_eq (x, b))
+         val goal = ([], boolSyntax.mk_conj (left, right))
+         val tactic =
+           NTactical.DETERM
+             (classicalLib.deepen_tac (clasetLib.the_claset ())
+               {start = 1})
+       in
+         tactic_solves tactic goal
+       end)
+
+val _ =
+  test
     ("all solve-completely drivers fail cleanly on a non-theorem",
      fn () =>
        let

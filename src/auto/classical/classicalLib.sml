@@ -152,6 +152,28 @@ fun expand_first step cs node =
     first 1
   end
 
+(* Isabelle's safe_depth_tac saturates the complete selected state before
+   depth search.  Keeping the resulting goals visible to DEPTH_SOLVE also
+   lets its D25 commitment test run between safely generated siblings. *)
+fun safe_saturate_node cs initial =
+  let
+    fun first_goal pos node =
+      if pos > length (clasetGoal.goals node) then NONE
+      else
+        case seq.cases
+          (expand_at clasetStep.safe_step cs pos node)
+        of
+            NONE => first_goal (pos + 1) node
+          | SOME (next, _) => SOME next
+
+    fun saturate node =
+      case first_goal 1 node of
+          NONE => node
+        | SOME next => saturate next
+  in
+    saturate initial
+  end
+
 fun solved node = List.null (clasetGoal.goals node)
 
 fun solve search goal =
@@ -183,12 +205,18 @@ fun first_best_tac cs =
 fun astar_tac cs = solve (astar_driver clasetStep.step cs)
 fun slow_astar_tac cs = solve (astar_driver clasetStep.slow_step cs)
 
-fun bounded_depth cs bound =
-  clasetSearch.DEPTH_SOLVE
-    (fn node =>
-      project_steps
-        (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
-          (node, 1)))
+fun bounded_depth cs bound initial =
+  let
+    val saturated = safe_saturate_node cs initial
+    val search =
+      clasetSearch.DEPTH_SOLVE
+        (fn node =>
+          project_steps
+            (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
+              (node, 1)))
+  in
+    search saturated
+  end
 
 fun deepen_tac cs {start} =
   solve (clasetSearch.DEEPEN (2, 10) (bounded_depth cs) start)
