@@ -2258,6 +2258,12 @@ fun smtlib_logic_fragment_diagnostics () =
     expect_term_fragment "native unit datatype sort unavailable" "QF_UFLIA"
       ``(():unit) = ()``
       "datatype sort is outside logic fragment QF_UFLIA";
+    expect_no_fragment "Core distinct internal list wrapper" "QF_LIA"
+      (script "QF_LIA"
+       "(assert (distinct 0 1 2))\n");
+    expect_no_fragment "nested Core distinct internal list wrapper" "QF_LIA"
+      (script "QF_LIA"
+       "(assert (not (distinct 0 1)))\n");
     expect_fragment "pure bit-vector integer-only term" "UFBV"
       (script "UFBV"
        "(declare-const outside_fragment Int)\n" ^
@@ -3135,6 +3141,26 @@ in
   (case result "" of
      SolverSpec.UNKNOWN NONE => ()
    | _ => die "FAIL: end-of-stream did not return UNKNOWN")
+end
+
+fun smtlib_distinct_translation_success () =
+let
+  val one = intSyntax.term_of_int (Arbint.fromInt 1)
+  val assertion = listSyntax.mk_all_distinct
+    (listSyntax.mk_list ([one, one], intSyntax.int_ty))
+  val (translation, strings) =
+    SmtLib.goal_to_SmtLib_with_get_proof_translation NONE
+      ([], boolSyntax.mk_neg assertion)
+  val text = String.concat strings
+in
+  assert (SmtLib.translation_logic translation = "QF_LIA",
+    "Core.distinct internal list wrapper widened inferred logic to " ^
+    SmtLib.translation_logic translation);
+  assert (contains "(distinct 1 1)" text,
+    "Core.distinct did not translate to direct SMT-LIB arguments:\n" ^ text);
+  assert (not (contains "declare-datatypes" text),
+    "Core.distinct internal list wrapper leaked a datatype declaration:\n" ^
+    text)
 end
 
 fun smtlib_datatype_type_translation_success () =
@@ -4031,6 +4057,25 @@ fun z3_proof_parser_rule_name_term_boundary () =
         "rule-name term boundary diagnostic did not identify proof parsing: " ^
         msg)
     end
+
+fun z3_proof_parser_is_int_translation_collision_success () =
+let
+  val five_halves = realSyntax.mk_div
+    (realSyntax.term_of_int (Arbint.fromInt 5),
+     realSyntax.term_of_int (Arbint.fromInt 2))
+  val is_int_term = intrealSyntax.mk_is_int five_halves
+  val (translation, _) =
+    SmtLib.goal_to_SmtLib_with_get_proof_translation NONE
+      ([], boolSyntax.mk_neg is_int_term)
+  val dicts = SmtLib.parser_dicts_for_translation translation
+  val proof = parse_z3_proof_string_with_dicts dicts "4.15.3"
+    "((set-logic QF_NIRA)\n\
+    \(proof\n\
+    \(mp (asserted (is_int (/ 5.0 2.0)))\
+    \ (rewrite (= (is_int (/ 5.0 2.0)) false)) false)))"
+in
+  ignore proof
+end
 
 fun replay_z3_proof_string contents =
   Z3_ProofReplay.replay_root_for_test
@@ -5173,6 +5218,8 @@ let
       z3_414_all_inferred_families_translation_success),
     ("z3_result_error_precedes_status",
       z3_result_error_precedes_status),
+    ("smtlib_distinct_translation_success",
+      smtlib_distinct_translation_success),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
@@ -5255,6 +5302,8 @@ let
       z3_proof_parser_version_gate_diagnostic),
     ("z3_proof_parser_rule_name_term_boundary",
       z3_proof_parser_rule_name_term_boundary),
+    ("z3_proof_parser_is_int_translation_collision_success",
+      z3_proof_parser_is_int_translation_collision_success),
     ("z3_remove_extra_hyps_only_p_eq_p_success",
       z3_remove_extra_hyps_only_p_eq_p_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",

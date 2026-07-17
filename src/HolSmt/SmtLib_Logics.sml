@@ -565,6 +565,31 @@ in
   fun term_mentions_datatype_sort tm =
     term_type_contains type_is_datatype_sort tm
 
+  (* Core.distinct is represented by HOL's ALL_DISTINCT over an internal list.
+     The list is an encoding detail, not an SMT datatype sort.  Inspect the
+     encoded elements, but do not classify the wrapper list itself. *)
+  fun assertion_mentions_datatype_sort tm =
+    let
+      fun walk tm =
+        if listSyntax.is_all_distinct tm then
+          let
+            val (elements, _) =
+              listSyntax.dest_list (listSyntax.dest_all_distinct tm)
+          in
+            List.exists walk elements
+          end
+        else
+          term_mentions_datatype_sort tm orelse
+          (let val (rator, rand) = Term.dest_comb tm
+           in walk rator orelse walk rand end
+           handle Feedback.HOL_ERR _ =>
+             (let val (_, body) = Term.dest_abs tm
+              in walk body end
+              handle Feedback.HOL_ERR _ => false))
+    in
+      walk tm
+    end
+
   fun term_mentions_string_theory tm =
     term_type_contains type_contains_string tm
     orelse term_mentions_reglan tm
@@ -693,7 +718,8 @@ in
       val has_real = some_subterm (term_type_contains type_contains_real)
       val has_word = some_subterm (term_type_contains type_contains_word)
       val has_string = some_subterm (term_type_contains type_contains_string)
-      val has_datatype = some_subterm term_mentions_datatype_sort
+      val has_datatype =
+        List.exists assertion_mentions_datatype_sort assertions
       fun qf_violation () =
         not (#quantifiers fragment) andalso List.exists has_quantifier assertions
       fun nonlinear_violation () =

@@ -174,6 +174,10 @@ local
     List.concat (List.map proof_rule_builtin proof_rule_registry)
 
   val z3_builtin_dict = Library.dict_from_list (proof_rule_builtin_entries @ [
+    (* Z3 may retain the SMT-LIB Reals_Ints predicate in proof conclusions.
+       Keep it available even when the translation-local inverse dictionary
+       recorded the asserted application as a nullary term. *)
+    ("is_int", SmtLib_Theories.K_zero_one intrealSyntax.mk_is_int),
     (* the following names are used as `(_ th-lemma ...)` indices. *)
     ("arith",           builtin_name "arith"),
     ("array",           builtin_name "array"),

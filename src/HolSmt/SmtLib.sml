@@ -121,7 +121,13 @@ local
     (boolSyntax.disjunction, apfst_K "or"),
     (Term.prim_mk_const {Thy="HolSmt", Name="xor"}, apfst_K "xor"),
     (boolSyntax.equality, apfst_K "="),
-    (* (..., "distinct"), *)
+    (* The parser represents SMT-LIB Core.distinct as ALL_DISTINCT over a
+       HOL list.  The list is only an internal n-ary encoding: emit its
+       elements as the direct SMT-LIB arguments rather than translating the
+       wrapper as a datatype value. *)
+    (listSyntax.all_distinct_tm, fn (_, ts) =>
+      SmtLib_Theories.one_arg (fn list_tm =>
+        ("distinct", Lib.fst (listSyntax.dest_list list_tm))) ts),
     (boolSyntax.conditional, apfst_K "ite"),
     (* UnicodeStrings.  HOL strings are char lists; the encoding is native
        SMT-LIB String syntax with a semantic obligation recorded below. *)
@@ -955,7 +961,29 @@ local
 
   fun infer_features terms tydict tmdict =
     let
-      val all_subterms = List.concat (List.map subterms terms)
+      fun encoding_subterms tm =
+        let
+          fun walk (tm, acc) =
+            tm ::
+            (if listSyntax.is_all_distinct tm then
+               let
+                 val (elements, _) =
+                   listSyntax.dest_list (listSyntax.dest_all_distinct tm)
+               in
+                 List.foldl (fn (element, rest) => walk (element, rest))
+                   acc elements
+               end
+             else
+               (let val (rator, rand) = Term.dest_comb tm
+                in walk (rator, walk (rand, acc)) end
+                handle Feedback.HOL_ERR _ =>
+                  (let val (_, body) = Term.dest_abs tm
+                   in walk (body, acc) end
+                   handle Feedback.HOL_ERR _ => acc)))
+        in
+          walk (tm, [])
+        end
+      val all_subterms = List.concat (List.map encoding_subterms terms)
       fun subterm_types p =
         List.exists (fn tm => p (Term.type_of tm)) all_subterms
       val quantifiers = List.exists has_quantifier terms
