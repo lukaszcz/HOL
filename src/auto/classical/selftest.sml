@@ -1803,3 +1803,245 @@ val _ =
            (fn clasetStep.HypSubst => true | _ => false)
            [([], phase1_ra)]
        end)
+
+(* TASK_10: unify-mode cascades and bounded depth selection. *)
+
+fun drain_steps sequence =
+  case seq.cases sequence of
+      NONE => []
+    | SOME (result, rest) => result :: drain_steps rest
+
+val _ =
+  test
+    ("unify rule application leaves and records a witness metavariable",
+     fn () =>
+       let
+         val witness = Term.mk_var ("unify_witness", Type.ind)
+         val predicate =
+           Term.mk_var ("unify_predicate", Type.ind --> Type.bool)
+         val target =
+           boolSyntax.mk_exists (witness, mk_comb (predicate, witness))
+         val cs =
+           clasetLib.add_intros
+             [("unify-exists", clasetSeedTheory.EXISTS_INTRO_THM)]
+             clasetLib.empty_cs
+         val input = ([], target)
+       in
+         case first_step clasetStep.unsafe_step cs input of
+             NONE => false
+           | SOME (record, node) =>
+               let
+                 val {terms, types} = clasetStep.created_of record
+                 val (_, child_w) = the_singleton (rendered_goals node)
+                 val unresolved =
+                   clasetMeta.metas_of (clasetGoal.store node) child_w
+               in
+                 (case clasetStep.kind_of record of
+                      clasetStep.RuleApplication {elim = false, ...} => true
+                    | _ => false) andalso
+                 not (List.null terms) andalso
+                 not (List.null types) andalso
+                 not (List.null unresolved)
+               end
+       end)
+
+val _ =
+  test
+    ("inst0 assumption unifies the goal with an assumption",
+     fn () =>
+       let
+         val proposition = Term.mk_var ("unify_assumption", Type.bool)
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [proposition], w = meta}],
+              store = store, level = 0}
+       in
+         case seq.cases
+           (clasetStep.inst0_step clasetLib.empty_cs (node, 1))
+         of
+             NONE => false
+           | SOME ((record, next), _) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Assumption 1 => true
+                  | _ => false) andalso
+               List.null (clasetGoal.goals next) andalso
+               Term.aconv
+                 (clasetMeta.norm (clasetGoal.store next) meta)
+                 proposition
+       end)
+
+val _ =
+  test
+    ("inst0 APPEND keeps assumption then contradiction alternatives",
+     fn () =>
+       let
+         val proposition = Term.mk_var ("append_proposition", Type.bool)
+         val negative = boolSyntax.mk_neg proposition
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [], asl = [proposition, negative], w = meta}],
+              store = store, level = 0}
+         val results =
+           drain_steps
+             (clasetStep.inst0_step clasetLib.empty_cs (node, 1))
+         val kinds = map (clasetStep.kind_of o #1) results
+       in
+         case kinds of
+             [clasetStep.Assumption 1,
+              clasetStep.Assumption 2,
+              clasetStep.Contradiction (2, 1)] => true
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("slow_step APPEND keeps unsafe alternatives after inst_step",
+     fn () =>
+       let
+         val witness = Term.mk_var ("slow_append_x", Type.ind)
+         val predicate =
+           Term.mk_var ("slow_append_p", Type.ind --> Type.bool)
+         val proposition = Term.mk_var ("slow_append_q", Type.bool)
+         val premise = mk_comb (predicate, witness)
+         val safe_rule =
+           GENL [predicate, witness]
+             (DISCH premise boolTheory.TRUTH)
+         val unsafe_rule =
+           GEN proposition (DISCH proposition boolTheory.TRUTH)
+         val cs =
+           clasetLib.add_intros [("slow-unsafe", unsafe_rule)]
+             (clasetLib.add_sintros [("slow-inst", safe_rule)]
+               clasetLib.empty_cs)
+         val node = clasetGoal.from_goal ([], boolSyntax.T)
+         val fast =
+           drain_steps (clasetStep.step cs (node, 1))
+         val slow =
+           drain_steps (clasetStep.slow_step cs (node, 1))
+         fun child_target (_, result_node) =
+           #2 (the_singleton (rendered_goals result_node))
+       in
+         length fast = 1 andalso length slow = 2 andalso
+         is_comb (child_target (hd fast)) andalso
+         is_comb (child_target (hd slow)) andalso
+         clasetMeta.is_meta (child_target (List.nth (slow, 1)))
+       end)
+
+val _ =
+  test
+    ("metavariable hyp-subst eliminates only the rigid variable side",
+     fn () =>
+       let
+         val variable = Term.mk_var ("internal_subst_x", Type.ind)
+         val predicate =
+           Term.mk_var ("internal_subst_p", Type.ind --> Type.bool)
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.ind}
+             clasetMeta.empty
+         val equality = boolSyntax.mk_eq (variable, meta)
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [], asl = [equality],
+                  w = mk_comb (predicate, variable)}],
+              store = store, level = 0}
+       in
+         case seq.cases
+           (clasetStep.safe_step clasetLib.empty_cs (node, 1))
+         of
+             NONE => false
+           | SOME ((record, next), _) =>
+               let
+                 val expected = mk_comb (predicate, meta)
+                 val child = the_singleton (rendered_goals next)
+                 val tactic =
+                   fn _ =>
+                     ([child], clasetStep.validation_of record)
+                 val _ =
+                   Tactical.VALID tactic (clasetGoal.render node 1)
+               in
+                 (case clasetStep.kind_of record of
+                      clasetStep.HypSubst => true
+                    | _ => false) andalso
+                 same_goal (child, ([], expected)) andalso
+                 Term.aconv
+                   (clasetMeta.walk (clasetGoal.store next) meta) meta
+               end
+       end)
+
+val _ =
+  test
+    ("step saturates every safe goal before its selected unsafe rung",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (phase1_pa, phase1_pa)
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [], asl = [], w = implication},
+                 {params = [], asl = [phase1_qa], w = phase1_qa}],
+              store = clasetMeta.empty, level = 0}
+       in
+         case seq.cases (clasetStep.step clasetLib.empty_cs (node, 2)) of
+             NONE => false
+           | SOME ((_, next), _) => List.null (clasetGoal.goals next)
+       end)
+
+val _ =
+  test
+    ("depth_step selects duplicate versus consuming unsafe rules",
+     fn () =>
+       let
+         val bound = Term.mk_var ("depth_bound", Type.ind)
+         val predicate =
+           Term.mk_var ("depth_predicate", Type.ind --> Type.bool)
+         val target = Term.mk_var ("depth_target", Type.bool)
+         val universal =
+           boolSyntax.mk_forall (bound, mk_comb (predicate, bound))
+         val observations =
+           ref ([] : (term list * term) list list)
+
+         fun observe tactic goal =
+           seq.map
+             (fn result as (goals, _) =>
+               (observations := goals :: !observations; result))
+             (tactic goal)
+
+         val cs =
+           clasetLib.add_unsafe_wrapper ("observe-depth", observe)
+             (clasetLib.add_elims
+               [("depth-forall", clasetSeedTheory.FORALL_ELIM_THM)]
+               clasetLib.empty_cs)
+         val node = clasetGoal.from_goal ([universal], target)
+
+         val forall_head = #1 (strip_comb universal)
+         fun is_forall_head tm =
+           same_const forall_head (#1 (strip_comb tm))
+           handle HOL_ERR _ => false
+         fun retained runs =
+           List.exists
+             (List.exists
+               (fn (asl, _) => List.exists is_forall_head asl))
+             runs
+
+         val _ =
+           seq.length
+             (clasetStep.depth_step cs (clasetLib.unsafe_part cs) 1
+               (node, 1))
+         val unsafe_runs = !observations
+         val _ = observations := []
+         val _ =
+           seq.length
+             (clasetStep.depth_step cs (clasetLib.dup_part cs) 1
+               (node, 1))
+         val dup_runs = !observations
+       in
+         not (List.null unsafe_runs) andalso
+         not (retained unsafe_runs) andalso retained dup_runs
+       end)
