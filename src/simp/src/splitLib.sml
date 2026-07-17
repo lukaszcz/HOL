@@ -66,7 +66,7 @@ fun split_thm_name th =
       | stored (_ :: rest) = stored rest
     fun local_location [] = NONE
       | local_location (DB.Local name :: _) =
-          SOME (Theory.current_theory () ^ "$" ^ name)
+          SOME (persistent_name {Thy = Theory.current_theory (), Name = name})
       | local_location (_ :: rest) = local_location rest
     val locations = DB.revlookup th
   in
@@ -216,8 +216,7 @@ type split_pack =
    enter_path : string,
    redex : term,
    binders : int,
-   path : int list,
-   path_length : int}
+   path : int list}
 
 fun candidates want_asm cmap head =
   let
@@ -242,6 +241,9 @@ fun scan want_asm cmap tm =
   let
     val root_type = type_of tm
 
+    (* [scan_path] and [binders] are carried innermost-first so that
+       descending is a cons rather than an append; both are only ever
+       consumed here, where the cost is paid once per pack. *)
     fun mk_pack scan_path enter_path binders node rule =
       let
         val n = #arity rule
@@ -253,21 +255,20 @@ fun scan want_asm cmap tm =
             val redex = list_mk_comb (head, List.take (args, n))
             val refs =
               List.filter (fn {var,...} => free_in var redex) binders
+            val path = List.rev scan_path
           in
             if not (matching rule redex) then NONE
             else
-              case List.rev refs of
+              case refs of
                   [] =>
                     if root_type = bool then
                       SOME {rule=rule, enter_path="", redex=redex,
-                            binders=0, path=scan_path,
-                            path_length=length scan_path}
+                            binders=0, path=path}
                     else NONE
                 | ({body_type,body_path,depth,...} : binder_info) :: _ =>
                     if body_type = bool then
                       SOME {rule=rule, enter_path=body_path,
-                            redex=redex, binders=depth, path=scan_path,
-                            path_length=length scan_path}
+                            redex=redex, binders=depth, path=path}
                     else NONE
           end
       end
@@ -280,7 +281,7 @@ fun scan want_asm cmap tm =
           val info = {var=var, body_type=type_of body,
                       body_path=body_path, depth=length binders + 1}
         in
-          walk (scan_path @ [0]) body_path (binders @ [info]) body
+          walk (0 :: scan_path) body_path (info :: binders) body
         end
       else
         let
@@ -297,7 +298,7 @@ fun scan want_asm cmap tm =
               val arg_path = enter_path ^ prefix_path arity i
             in
               (i + 1,
-               packs @ walk (scan_path @ [i]) arg_path binders arg)
+               packs @ walk (i :: scan_path) arg_path binders arg)
             end
         in
           #2 (foldl descend (0, here) args)
@@ -309,11 +310,13 @@ fun scan want_asm cmap tm =
 fun path_le paths = Lib.list_compare Int.compare paths <> GREATER
 
 fun pack_le (p1 : split_pack) (p2 : split_pack) =
-  #binders p1 < #binders p2 orelse
-  (#binders p1 = #binders p2 andalso
-   (#path_length p1 < #path_length p2 orelse
-    (#path_length p1 = #path_length p2 andalso
-     path_le (#path p1, #path p2))))
+  let
+    val (n1, n2) = (length (#path p1), length (#path p2))
+  in
+    #binders p1 < #binders p2 orelse
+    (#binders p1 = #binders p2 andalso
+     (n1 < n2 orelse (n1 = n2 andalso path_le (#path p1, #path p2))))
+  end
 
 fun fresh_parts th =
   let
@@ -347,12 +350,11 @@ fun instantiate rule target body =
 fun apply_pack ({rule,enter_path,redex,...} : split_pack) =
   PATH_CONV enter_path (instantiate rule redex)
 
-fun first_success [] _ =
-      raise ERR "SPLIT_CONV" "no applicable split rule"
-  | first_success (pack :: packs) tm =
-      apply_pack pack tm
-      handle HOL_ERR _ => first_success packs tm
-           | Conv.UNCHANGED => first_success packs tm
+(* [tryfind] retries on any non-Interrupt exception, so it covers both a
+   failed instantiation and a pack that turns out to rewrite nothing. *)
+fun first_success packs tm =
+  Lib.with_exn (Lib.tryfind (fn pack => apply_pack pack tm)) packs
+               (ERR "SPLIT_CONV" "no applicable split rule")
 
 fun split_conv cmap tm =
   let
@@ -365,8 +367,6 @@ fun split_conv cmap tm =
   end
 
 fun SPLIT_CONV thms = split_conv (cmap_of_rules thms)
-
-fun split_concl_tac thms = CONV_TAC (SPLIT_CONV thms)
 
 fun contains_head heads tm =
   can (find_term

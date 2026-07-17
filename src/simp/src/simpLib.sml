@@ -635,6 +635,39 @@ fun del_split name ss =
                ss names
   end
 
+fun const_key c =
+  let val {Thy,Name,...} = dest_thy_const c
+  in KernelSig.name_toString {Thy=Thy, Name=Name}
+  end
+
+(* Largest number of arguments each constant is applied to anywhere in
+   [tms].  Recording only maximal applications is enough: the arity test
+   below is [>=], so a partial application never decides it. *)
+fun applied_arities tms =
+  let
+    fun visit (tm, acc) =
+      if is_abs tm then visit (body tm, acc)
+      else
+        let
+          val (head, args) = strip_comb tm
+          val acc = List.foldl visit acc args
+          val n = length args
+        in
+          if is_const head then
+            let val key = const_key head
+            in
+              case Binarymap.peek (acc, key) of
+                  SOME m => if m >= n then acc
+                            else Binarymap.insert (acc, key, n)
+                | NONE => Binarymap.insert (acc, key, n)
+            end
+          else if is_abs head then visit (head, acc)
+          else acc
+        end
+  in
+    List.foldl visit (Binarymap.mkDict String.compare) tms
+  end
+
 fun case_types goal_terms =
   let
     fun case_info tyinfo =
@@ -642,19 +675,16 @@ fun case_types goal_terms =
             TypeBasePure.ty_of tyinfo)
       handle HOL_ERR _ => NONE
     val cases = List.mapPartial case_info (TypeBase.elts ())
+    val arities = applied_arities goal_terms
     fun occurs head =
-      let
-        (* depends only on [head]; hoisted out of the subterm test *)
-        val arity = length (#1 (strip_fun (type_of head)))
-        fun saturated subtm =
-          let val (subhead, args) = strip_comb subtm
-          in same_const head subhead andalso length args >= arity
-          end
+      let val arity = length (#1 (strip_fun (type_of head)))
       in
-        fn tm => can (find_term saturated) tm
+        case Binarymap.peek (arities, const_key head) of
+            SOME n => n >= arity
+          | NONE => false
       end
     fun add ((head, ty), result) =
-      if List.exists (occurs head) goal_terms then ty :: result else result
+      if occurs head then ty :: result else result
   in
     List.foldl add [] cases
   end
@@ -1161,9 +1191,7 @@ local open markerSyntax markerLib
 in
 fun is_AC thm = same_const(fst(strip_comb(concl thm))) AC_tm
 fun is_Cong thm = same_const(fst(strip_comb(concl thm))) Cong_tm
-fun is_Split thm =
-  same_const (fst (strip_comb (concl thm)))
-             (prim_mk_const {Thy="marker", Name="Split"})
+fun is_Split thm = same_const(fst(strip_comb(concl thm))) Split_tm
 
 fun extract_excls (excls, exfrags, rest) l =
     case l of
@@ -1358,7 +1386,7 @@ fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
   fn g =>
     let
       val rounds = ref (getlimit ss)
-      fun start recur tagged_thms =
+      fun start recur =
         let
           fun main tagged_thms =
             let
@@ -1379,7 +1407,7 @@ fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
                TRY (loop_tac THEN_LT ALLGOALS (recur main)))
             end
         in
-          main tagged_thms
+          main
         end
     in
       markerLib.process_taclist_then_recur {arg=ths} start g
@@ -1487,9 +1515,7 @@ fun map_annotated next annotated =
       val output = List.concat (map #1 results)
       val validations = map #2 results
       val lengths = map (length o #1) results
-      fun validate ths =
-        if null output then map (fn validation => validation []) validations
-        else mapshape lengths validations ths
+      val validate = mapshape lengths validations
     in
       (output,validate)
     end
@@ -1604,9 +1630,7 @@ fun GEN_GLOBAL_SIMP_TAC
                    (DISCH_TAC THEN strip_implications) g
                  else ALL_TAC g
 
-               fun pop_head_mp (a::asl,w) = MP_TAC (ASSUME a) (asl,w)
-                 | pop_head_mp ([],_) =
-                     raise ERR ("GEN_GLOBAL_SIMP_TAC", "no assumption")
+               val pop_head_mp = POP_ASSUM MP_TAC
 
                fun find_rebuild nested outer count =
                  case outer of
