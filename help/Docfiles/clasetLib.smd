@@ -1,0 +1,92 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `clasetLib`
+
+``` hol4
+structure clasetLib
+```
+
+------------------------------------------------------------------------
+
+Maintains the classical rule set used by classical proof tactics.
+
+A classical rule is classified by its use and by whether applying it is
+safe for proof search:
+
+| Attribute | Theorem-list marker | Classification |
+|---|---|---|
+| `[sintro]` | `SIntro th` | safe introduction |
+| `[intro]` | `Intro th` | unsafe introduction |
+| `[selim]` | `SElim th` | safe elimination |
+| `[elim]` | `Elim th` | unsafe elimination |
+| `[sdest]` | `SDest th` | safe destruction |
+| `[dest]` | `Dest th` | unsafe destruction |
+| none | `Del "name"` | remove a rule for one invocation |
+
+Introduction rules match their conclusion against a goal and turn their
+premises into subgoals. Elimination rules use a major premise matched
+against an assumption. Destruction rules are converted internally to
+elimination form. Here *safe* describes proof-search behaviour, not logical
+soundness: every rule is a kernel theorem.
+
+### Persistent theorem attributes
+
+The six attributes in the table are argument-free. Plain names denote
+unsafe rules; the `s`-prefixed names denote safe rules. A stored declaration
+is inherited through theory ancestry:
+
+``` hol4
+Theorem conjunction_intro[sintro]:
+  p ==> q ==> p /\ q
+Proof
+  ...
+QED
+```
+
+The usual `local` theorem modifier makes a declaration local, as in
+`[sintro,local]`. Attribute arguments are not accepted. Rule removal is
+provided by `delrule` and `temp_delrule`, not by a removal attribute.
+Stored rules are normally named by their fully qualified database names,
+such as `bool$AND_INTRO_THM`.
+
+### Per-invocation markers
+
+The seven marker constructors modify only the temporary rule set assembled
+for a classical tactic call. `SIntro`, `Intro`, `SElim`, `Elim`, `SDest` and
+`Dest` add the enclosed theorem with the corresponding classification.
+`Del` removes a named rule. The original theorem and global rule set are
+unchanged.
+
+An unmarked theorem supplied to a classical tactic is treated as an unsafe
+introduction rule. Consequently it is accepted but not applied by
+`SAFE_TAC`, `CLARIFY_TAC`, or their safe step variants. Generic simplifier
+markers such as `Cong`, `Excl` and `SF` are not classical rule markers.
+
+### Failure
+
+Malformed rules may be rejected when an attribute or per-invocation marker
+is processed. The six rule attributes fail if given arguments.
+
+### Example
+
+The seed conjunction rule can be suppressed for one tactic invocation:
+
+``` hol4
+TRY (classicalLib.SAFE_TAC
+       [clasetLib.Del "bool$AND_INTRO_THM"])
+```
+
+The deletion does not affect later tactic calls.
+
+### See also
+
+[`classicalLib.SAFE_TAC`](#classicalLib.SAFE_TAC),
+[`classicalLib.CLARIFY_TAC`](#classicalLib.CLARIFY_TAC),
+[`classicalLib.SAFE_STEP_TAC`](#classicalLib.SAFE_STEP_TAC),
+[`classicalLib.CLARIFY_STEP_TAC`](#classicalLib.CLARIFY_STEP_TAC),
+[`clasetLib.SIntro`](#clasetLib.SIntro),
+[`clasetLib.Intro`](#clasetLib.Intro),
+[`clasetLib.SElim`](#clasetLib.SElim),
+[`clasetLib.Elim`](#clasetLib.Elim),
+[`clasetLib.SDest`](#clasetLib.SDest),
+[`clasetLib.Dest`](#clasetLib.Dest),
+[`clasetLib.Del`](#clasetLib.Del)
