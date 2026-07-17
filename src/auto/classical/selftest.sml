@@ -2798,3 +2798,298 @@ val _ =
            (fn tactic => tactic_solves tactic driver_exists_goal)
            drivers
        end)
+
+(* TASK_15 group 1: eigenvariable discipline through every driver. *)
+
+val complete_drivers =
+  [("FAST_TAC", classicalLib.FAST_TAC []),
+   ("SLOW_TAC", classicalLib.SLOW_TAC []),
+   ("BEST_TAC", classicalLib.BEST_TAC []),
+   ("SLOW_BEST_TAC", classicalLib.SLOW_BEST_TAC []),
+   ("FIRST_BEST_TAC", classicalLib.FIRST_BEST_TAC []),
+   ("ASTAR_TAC", classicalLib.ASTAR_TAC []),
+   ("SLOW_ASTAR_TAC", classicalLib.SLOW_ASTAR_TAC []),
+   ("DEEPEN_TAC", classicalLib.DEEPEN_TAC [])]
+
+val eigen_x = Term.mk_var ("eigen_x", Type.ind)
+val eigen_y = Term.mk_var ("eigen_y", Type.ind)
+val eigen_z = Term.mk_var ("eigen_z", Type.ind)
+val eigen_predicate =
+  Term.mk_var
+    ("eigen_predicate", Type.ind --> Type.ind --> Type.bool)
+
+fun eigen_app left right =
+  Term.list_mk_comb (eigen_predicate, [left, right])
+
+val early_meta_non_theorem : Abbrev.goal =
+  ([], boolSyntax.mk_exists
+    (eigen_x,
+     boolSyntax.mk_forall
+       (eigen_y, boolSyntax.mk_eq (eigen_x, eigen_y))))
+
+val dual_eigen_non_theorem : Abbrev.goal =
+  ([], boolSyntax.mk_imp
+    (boolSyntax.mk_forall
+      (eigen_x,
+       boolSyntax.mk_exists
+         (eigen_y, eigen_app eigen_x eigen_y)),
+     boolSyntax.mk_exists
+       (eigen_y,
+        boolSyntax.mk_forall
+          (eigen_x, eigen_app eigen_x eigen_y))))
+
+val sibling_eigen_non_theorem : Abbrev.goal =
+  ([], boolSyntax.mk_exists
+    (eigen_z,
+     boolSyntax.mk_conj
+       (boolSyntax.mk_forall
+         (eigen_x, boolSyntax.mk_eq (eigen_z, eigen_x)),
+        boolSyntax.mk_eq (eigen_z, eigen_z))))
+
+fun every_driver_fails goal =
+  List.all (fn (_, tactic) => tactic_fails tactic goal) complete_drivers
+
+val _ =
+  test
+    ("all drivers reject capture by a later eigenvariable",
+     fn () => every_driver_fails early_meta_non_theorem)
+
+val _ =
+  test
+    ("all drivers reject the dual quantifier interchange",
+     fn () => every_driver_fails dual_eigen_non_theorem)
+
+val _ =
+  test
+    ("all drivers reject capture from a sibling-local parameter",
+     fn () => every_driver_fails sibling_eigen_non_theorem)
+
+(* TASK_15 group 2: replay and grounding at the driver boundary. *)
+
+fun theorem_equal left right =
+  Term.aconv (concl left) (concl right) andalso
+  ListPair.allEq
+    (fn (left_hyp, right_hyp) => Term.aconv left_hyp right_hyp)
+    (hyp left, hyp right)
+
+fun solved_theorem tactic goal =
+  let
+    val (residues, validation) = Tactical.VALID tactic goal
+  in
+    if List.null residues then validation []
+    else raise Fail "a complete driver left residual goals"
+  end
+
+val _ =
+  test
+    ("every complete driver success passes Tactical.VALID replay",
+     fn () =>
+       List.all
+         (fn (_, tactic) =>
+           tactic_solves tactic driver_exists_goal)
+         complete_drivers)
+
+val _ =
+  test
+    ("grounded driver theorems are deterministic across identical runs",
+     fn () =>
+       List.all
+         (fn (_, tactic) =>
+           theorem_equal
+             (solved_theorem tactic driver_exists_goal)
+             (solved_theorem tactic driver_exists_goal))
+         complete_drivers)
+
+val _ =
+  test
+    ("D24 metavariable wrapper round-trips through a complete driver",
+     fn () =>
+       let
+         val witness = Term.mk_var ("wrapper_driver_witness", Type.bool)
+         val target =
+           boolSyntax.mk_exists
+             (witness, boolSyntax.mk_conj (witness, witness))
+         val saw_marked_goal = ref false
+
+         fun observed_conjunction (goal as (_, conclusion)) =
+           (if List.exists clasetMeta.is_meta (free_vars conclusion) then
+              saw_marked_goal := true
+            else ();
+            Tactic.CONJ_TAC goal)
+
+         val cs =
+           clasetLib.add_safe_wrapper
+             ("driver-meta-conjunction",
+              safe_before observed_conjunction)
+             (clasetLib.the_claset ())
+         val tactic = NTactical.DETERM (classicalLib.fast_tac cs)
+       in
+         tactic_solves tactic ([], target) andalso !saw_marked_goal
+       end)
+
+(* TASK_15 group 3: driver selection, bounds, and D25 pruning. *)
+
+val _ =
+  test
+    ("SLOW backtracks past the instantiation rung that commits FAST",
+     fn () =>
+       let
+         val schematic = Term.mk_var ("driver_slow_m", Type.ind)
+         val constant = Term.mk_var ("driver_slow_c", Type.ind)
+         val predicate =
+           Term.mk_var ("driver_slow_p", Type.ind --> Type.bool)
+         val available = mk_comb (predicate, constant)
+         val unsafe_p = Term.mk_var ("driver_slow_u", Type.bool)
+         val reflexive = boolSyntax.mk_eq (schematic, schematic)
+         val blocked = boolSyntax.mk_imp (reflexive, boolSyntax.F)
+         val inst_rule =
+           GEN schematic (DISCH blocked boolTheory.TRUTH)
+         val unsafe_rule =
+           GEN unsafe_p (DISCH unsafe_p boolTheory.TRUTH)
+         val cs =
+           clasetLib.add_intros [("driver-unsafe", unsafe_rule)]
+             (clasetLib.add_sintros [("driver-inst", inst_rule)]
+               clasetLib.empty_cs)
+         val goal = ([available], boolSyntax.T)
+         val fast = NTactical.DETERM (classicalLib.fast_tac cs)
+         val slow = NTactical.DETERM (classicalLib.slow_tac cs)
+       in
+         tactic_fails fast goal andalso tactic_solves slow goal
+       end)
+
+val _ =
+  test
+    ("BEST driver expands the smaller child before an earlier large one",
+     fn () =>
+       let
+         val constant = Term.mk_var ("best_driver_c", Type.ind)
+         val predicate =
+           Term.mk_var ("best_driver_p", Type.ind --> Type.bool)
+         val small = mk_comb (predicate, constant)
+         val large = bool_function_chain 5 small
+         val large_rule = DISCH large boolTheory.TRUTH
+         val small_rule = DISCH small boolTheory.TRUTH
+         val visited = ref ([] : term list)
+
+         fun observe base (goal as (_, target)) =
+           (visited := target :: !visited; base goal)
+
+         val plain_cs =
+           clasetLib.add_intros
+             [("best-driver-small", small_rule),
+              ("best-driver-large", large_rule)]
+             clasetLib.empty_cs
+         val cs =
+           clasetLib.add_safe_wrapper ("best-driver-observe", observe)
+             plain_cs
+         val goal = ([large, small], boolSyntax.T)
+         val first_target =
+           case first_step clasetStep.unsafe_step plain_cs goal of
+               NONE => raise Fail "expected a large first alternative"
+             | SOME (_, node) => #2 (the_singleton (rendered_goals node))
+         val tactic = NTactical.DETERM (classicalLib.best_tac cs)
+         val solved = tactic_solves tactic goal
+         val order = List.rev (!visited)
+       in
+         Term.aconv first_target large andalso solved
+         andalso length order >= 2
+         andalso Term.aconv (List.nth (order, 1)) small
+       end)
+
+fun depth_solves cs bound node =
+  List.exists
+    (List.null o clasetGoal.goals o #2)
+    (drain_steps
+      (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
+        (node, 1)))
+
+val _ =
+  test
+    ("DEEPEN accounting leaves safe steps and inst0 free",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (phase1_pa, phase1_pa)
+         val safe_node = clasetGoal.from_goal ([], implication)
+         val (meta, store) = bool_meta [] clasetMeta.empty
+         val inst0_node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [phase1_pa], w = meta}],
+              store = store, level = 0}
+         val cs = clasetLib.the_claset ()
+       in
+         depth_solves cs 0 safe_node andalso
+         depth_solves cs 0 inst0_node
+       end)
+
+val _ =
+  test
+    ("DEEPEN charges exactly one for an unsafe witness step",
+     fn () =>
+       let
+         val witness = Term.mk_var ("bound_witness", Type.ind)
+         val constant = Term.mk_var ("bound_constant", Type.ind)
+         val predicate =
+           Term.mk_var ("bound_predicate", Type.ind --> Type.bool)
+         val fact = mk_comb (predicate, constant)
+         val target =
+           boolSyntax.mk_exists
+             (witness, mk_comb (predicate, witness))
+         val node = clasetGoal.from_goal ([fact], target)
+         val cs = clasetLib.the_claset ()
+       in
+         not (depth_solves cs 0 node) andalso depth_solves cs 1 node
+       end)
+
+val _ =
+  test
+    ("DEEPEN charges exactly one for a duplicating elimination",
+     fn () =>
+       let
+         val bound = Term.mk_var ("dup_bound", Type.ind)
+         val constant = Term.mk_var ("dup_constant", Type.ind)
+         val predicate =
+           Term.mk_var ("dup_predicate", Type.ind --> Type.bool)
+         val universal =
+           boolSyntax.mk_forall (bound, mk_comb (predicate, bound))
+         val target = mk_comb (predicate, constant)
+         val node = clasetGoal.from_goal ([universal], target)
+         val cs = clasetLib.the_claset ()
+       in
+         not (depth_solves cs 0 node) andalso depth_solves cs 1 node
+       end)
+
+val _ =
+  test
+    ("D25 negative case retains shared alternatives in the driver",
+     fn () =>
+       let
+         val (shared, store0) = bool_meta [] clasetMeta.empty
+         val true_store =
+           the_store (clasetMeta.bind (shared, boolSyntax.T) store0)
+         val false_store =
+           the_store (clasetMeta.bind (shared, boolSyntax.F) store0)
+         val root =
+           search_node
+             [{params = [], asl = [], w = shared},
+              {params = [], asl = [], w = shared}]
+             store0
+         fun child store =
+           search_node [{params = [], asl = [], w = shared}] store
+         val steps = ref 0
+         fun expand node =
+           (steps := !steps + 1;
+            case clasetGoal.goals node of
+                [_, _] =>
+                  seq.fromList [child true_store, child false_store]
+              | [_] =>
+                  if Term.aconv (#2 (clasetGoal.render node 1))
+                       boolSyntax.F
+                  then seq.result
+                    (search_solved (clasetGoal.store node))
+                  else seq.empty
+              | _ => seq.empty)
+         val results =
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
+       in
+         length results = 1 andalso !steps = 3
+       end)

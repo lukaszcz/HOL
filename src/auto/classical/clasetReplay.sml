@@ -332,7 +332,30 @@ fun gen_action name _ = GEN_NAMED_TAC name
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC
 fun move_assumption_to_back_action pos _ =
   MOVE_ASSUMPTION_TO_BACK_TAC pos
-fun fixed_action result _ _ = result
+(* Opaque wrapper results mention the marked frees visible when the wrapper
+   ran.  A complete driver replays them after earlier records have grounded
+   those frees, so ground both the children and the resulting theorem.  A
+   direct replay on an engine goal deliberately keeps its visible markers. *)
+fun fixed_action (result as (goals, validation)) store (asl, w) =
+  let
+    val input_terms = w :: asl
+    val marked_input =
+      List.exists clasetMeta.is_meta (free_varsl input_terms) orelse
+      List.exists clasetMeta.is_tymeta
+        (List.concat (map type_vars_in_term input_terms))
+
+    fun ground_goal (child_asl, child_w) =
+      (map (clasetMeta.norm store) child_asl,
+       clasetMeta.norm store child_w)
+    val (type_subst, term_subst) = clasetMeta.collapse store
+
+    fun ground_validation theorems =
+      Drule.INST_TY_TERM (term_subst, type_subst)
+        (validation theorems)
+  in
+    if marked_input then result
+    else (map ground_goal goals, ground_validation)
+  end
 
 fun open_record (StepRecord {children, ...}) =
   List.foldl
