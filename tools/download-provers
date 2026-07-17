@@ -166,6 +166,7 @@ fi
 
 mkdir -p "$dest" || fail "cannot create destination: $dest"
 [ -d "$dest" ] && [ -w "$dest" ] || fail "destination is not writable: $dest"
+dest=$(cd "$dest" && pwd -P) || fail "cannot resolve destination: $dest"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
 if command -v sha256sum >/dev/null 2>&1; then
@@ -244,14 +245,28 @@ gmp_is_missing() {
   fi
 }
 
+shell_quote() {
+  escaped=$(printf '%s\n' "$1" | sed "s/'/'\\\\''/g")
+  printf "'%s'" "$escaped"
+}
+
+write_gmp_wrapper() {
+  wrapper=$1
+  wrapper_dir=$(shell_quote "$2")
+  {
+    printf '%s\n' '#!/bin/sh'
+    # shellcheck disable=SC2016
+    printf '%s%s%s%s%s\n' 'LD_LIBRARY_PATH=' "$wrapper_dir" \
+      '${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH} exec ' "$wrapper_dir" \
+      '/z.bin "$@"'
+  } >"$wrapper"
+  chmod +x "$wrapper"
+}
+
 make_gmp_wrapper() {
   wrapper=$1
   mv "$wrapper" "${wrapper%/*}/z.bin"
-  cat >"$wrapper" <<'EOF'
-#!/bin/sh
-LD_LIBRARY_PATH="${0%/*}:$LD_LIBRARY_PATH" exec "${0%/*}/z.bin" "$@"
-EOF
-  chmod +x "$wrapper"
+  write_gmp_wrapper "$wrapper" "${wrapper%/*}"
 }
 
 install_pin() {
@@ -268,10 +283,13 @@ install_pin() {
   marker=$target/.download-provers.sha256
   relative=$(binary_relative "$pin_name")
   expected_marker="$pin_sha  $platform"
+  installed_marker=$(sed -n '2p' "$marker" 2>/dev/null || :)
 
   if ! $force && [ -f "$marker" ] &&
      [ "$(sed -n '1p' "$marker")" = "$expected_marker" ] &&
-     check_binary "$target/$relative"; then
+     [ -x "$target/$relative" ] &&
+     [ "$(hash_file "$target/$relative")  $relative" = \
+       "$installed_marker" ] && check_binary "$target/$relative"; then
     printf '%s %s is already installed; skipping\n' \
       "$pin_name" "$pin_version"
     return 0
@@ -324,7 +342,6 @@ install_pin() {
     clear_quarantine "${binary%/*}/z.bin"
   fi
   check_binary "$binary" || run_failure "$pin_name"
-  printf '%s\n' "$expected_marker" >"$image/.download-provers.sha256"
 
   pending=$dest/.$pin_name-$pin_version.tmp.$$
   rm -rf "$pending"
@@ -333,11 +350,17 @@ install_pin() {
   rm -rf "$target"
   mv "$pending" "$target" || fail "cannot install $target"
 
-  clear_quarantine "$target/$relative"
   if [ -f "${target}/${relative%/*}/z.bin" ]; then
+    write_gmp_wrapper "$target/$relative" \
+      "${target}/${relative%/*}"
     clear_quarantine "${target}/${relative%/*}/z.bin"
   fi
+  clear_quarantine "$target/$relative"
   check_binary "$target/$relative" || run_failure "$pin_name"
+  binary_sha=$(hash_file "$target/$relative") ||
+    fail "cannot checksum installed $pin_name binary"
+  printf '%s\n%s  %s\n' "$expected_marker" "$binary_sha" "$relative" \
+    >"$marker"
   printf 'Installed %s %s in %s\n' "$pin_name" "$pin_version" "$target"
 }
 
