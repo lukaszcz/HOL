@@ -28,7 +28,9 @@ fail() {
 }
 
 need_arg() {
-  [ "$#" -ge 2 ] && [ -n "$2" ] || fail "$1 requires an argument"
+  if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+    fail "$1 requires an argument"
+  fi
 }
 
 while [ "$#" -gt 0 ]; do
@@ -165,7 +167,9 @@ else
 fi
 
 mkdir -p "$dest" || fail "cannot create destination: $dest"
-[ -d "$dest" ] && [ -w "$dest" ] || fail "destination is not writable: $dest"
+if [ ! -d "$dest" ] || [ ! -w "$dest" ]; then
+  fail "destination is not writable: $dest"
+fi
 dest=$(cd "$dest" && pwd -P) || fail "cannot resolve destination: $dest"
 command -v curl >/dev/null 2>&1 || fail "curl is required"
 
