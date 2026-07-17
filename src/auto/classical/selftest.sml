@@ -913,7 +913,7 @@ val _ =
              in
                List.null params andalso aconv_list asl [goal_p]
                andalso Term.aconv w goal_q
-               andalso clasetGoal.replay_length node' = 1
+               andalso clasetGoal.replay_length node' = 0
              end
        end)
 
@@ -2044,4 +2044,151 @@ val _ =
        in
          not (List.null unsafe_runs) andalso
          not (retained unsafe_runs) andalso retained dup_runs
+       end)
+
+(* TASK_11: grounded, zero-search replay and shared vocabulary. *)
+
+fun first_node_step step cs node pos =
+  case seq.cases (step cs (node, pos)) of
+      NONE => raise Fail "expected a classical engine step"
+    | SOME ((record, next), _) => (record, next)
+
+fun valid_grounded_replay original final_node =
+  let
+    val grounded =
+      clasetReplay.ground (clasetGoal.store final_node)
+        (clasetGoal.replay final_node)
+    val (residues, _) =
+      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) original
+  in
+    List.null residues
+  end
+
+val _ =
+  test
+    ("match-mode derivation grounds and replays without search",
+     fn () =>
+       let
+         val conjunction = boolSyntax.mk_conj (phase1_pa, phase1_qa)
+         val original = ([phase1_pa, phase1_qa], conjunction)
+         val cs =
+           clasetLib.add_sintros
+             [("replay-and", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+         val (rule_record, after_rule) =
+           first_node_step clasetStep.safe_step cs
+             (clasetGoal.from_goal original) 1
+         val (_, after_left) =
+           first_node_step clasetStep.safe_step cs after_rule 1
+         val (_, solved) =
+           first_node_step clasetStep.safe_step cs after_left 1
+       in
+         (case clasetStep.kind_of rule_record of
+              clasetStep.RuleApplication
+                {original = theorem, variant = clasetStep.Plain,
+                 elim = false, ...} =>
+                Term.aconv (concl theorem)
+                  (concl boolTheory.AND_INTRO_THM)
+            | _ => false) andalso
+         clasetGoal.replay_length solved = 3 andalso
+         valid_grounded_replay original solved
+       end)
+
+val _ =
+  test
+    ("unify-mode witness is grounded before zero-search replay",
+     fn () =>
+       let
+         val witness = Term.mk_var ("replay_witness", Type.ind)
+         val constant = boolSyntax.mk_arb Type.ind
+         val predicate =
+           Term.mk_var ("replay_predicate", Type.ind --> Type.bool)
+         val fact = mk_comb (predicate, constant)
+         val target =
+           boolSyntax.mk_exists (witness, mk_comb (predicate, witness))
+         val original = ([fact], target)
+         val cs =
+           clasetLib.add_intros
+             [("replay-exists", clasetSeedTheory.EXISTS_INTRO_THM)]
+             clasetLib.empty_cs
+         val (_, after_rule) =
+           first_node_step clasetStep.unsafe_step cs
+             (clasetGoal.from_goal original) 1
+         val (_, solved) =
+           first_node_step clasetStep.inst0_step cs after_rule 1
+       in
+         clasetGoal.replay_length solved = 2 andalso
+         valid_grounded_replay original solved
+       end)
+
+val _ =
+  test
+    ("grounded scripts and substitutions are deterministic",
+     fn () =>
+       let
+         val (tymeta, store0) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val (meta, store1) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} store0
+         val validation = fn [] => boolTheory.TRUTH
+           | _ => raise Fail "bad deterministic validation"
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Assumption 1, target = 1,
+              consumed = SOME 1,
+              created = {terms = [meta], types = [tymeta]},
+              eigenvariables = [], validation = validation,
+              action = clasetReplay.assumption_action 1,
+              children = []}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) record
+         val first = clasetReplay.ground store1 script
+         val second = clasetReplay.ground store1 script
+         val first_subst =
+           clasetMeta.collapse (clasetReplay.grounded_store first)
+         val second_subst =
+           clasetMeta.collapse (clasetReplay.grounded_store second)
+       in
+         clasetReplay.grounded_to_string first =
+           clasetReplay.grounded_to_string second andalso
+         type_subst_eq (#1 first_subst) (#1 second_subst) andalso
+         term_subst_eq (#2 first_subst) (#2 second_subst)
+       end)
+
+val _ =
+  test
+    ("move-assumption-to-back validates and round-trips",
+     fn () =>
+       let
+         val original = ([phase1_pa, phase1_qa, phase1_ra], goal_r)
+         val move = clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC 1
+         val tactic =
+           Tactical.THEN (move, Tactical.THEN (move, move))
+         val (goals, _) = Tactical.VALID tactic original
+       in
+         same_goals goals [original]
+       end)
+
+val _ =
+  test
+    ("corrupt replay is a catchable outcome",
+     fn () =>
+       let
+         val validation = fn [] => boolTheory.TRUTH
+           | _ => raise Fail "bad corrupt validation"
+         val record =
+           clasetReplay.make_record
+             {kind = clasetReplay.Assumption 99, target = 1,
+              consumed = SOME 99, created = {terms = [], types = []},
+              eigenvariables = [], validation = validation,
+              action = clasetReplay.assumption_action 99,
+              children = []}
+         val script =
+           clasetReplay.append (clasetReplay.empty 1) record
+         val grounded =
+           clasetReplay.ground clasetMeta.empty script
+       in
+         case clasetReplay.replay grounded ([phase1_pa], phase1_pa) of
+             clasetReplay.ReplayFailed _ => true
+           | clasetReplay.Replayed _ => false
        end)

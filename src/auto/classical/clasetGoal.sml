@@ -8,7 +8,7 @@ type meta = clasetMeta.meta
 type tymeta = clasetMeta.tymeta
 
 type cgoal = {params : term list, asl : term list, w : term}
-type replay_script = validation list
+type replay_script = clasetReplay.script
 type binding_mark = {terms : meta list, types : tymeta list}
 type binding_marks = binding_mark list
 
@@ -93,17 +93,18 @@ fun make_node goals store replay level marks avoids =
 fun from_goal (asl, w) =
   let val cgoals = [{params = [], asl = asl, w = w}]
   in
-    make_node cgoals clasetMeta.empty [] 0 (fresh_marks cgoals)
-      (goal_frees cgoals)
+    make_node cgoals clasetMeta.empty (clasetReplay.empty 1) 0
+      (fresh_marks cgoals) (goal_frees cgoals)
   end
 
 fun create {goals, store, level} =
-  make_node goals store [] level (fresh_marks goals) (goal_frees goals)
+  make_node goals store (clasetReplay.empty (length goals)) level
+    (fresh_marks goals) (goal_frees goals)
 
 fun goals (Node {goals, ...}) = goals
 fun store (Node {store, ...}) = store
 fun replay (Node {replay, ...}) = replay
-fun replay_length node = length (replay node)
+fun replay_length node = clasetReplay.length (replay node)
 fun level (Node {level, ...}) = level
 fun binding_marks (Node {marks, ...}) = marks
 fun size (Node {size, ...}) = size
@@ -126,6 +127,10 @@ fun set_level level'
 fun set_binding_marks marks'
   (Node {goals, store, replay, level, avoids, ...}) =
   make_node goals store replay level marks' avoids
+
+fun record_step record
+  (Node {goals, store, replay, level, marks, avoids, ...}) =
+  make_node goals store (clasetReplay.append replay record) level marks avoids
 
 fun nth1 function_name values pos =
   if pos < 1 then
@@ -346,12 +351,10 @@ fun unrender node pos (new_goals, validation) =
         val children = map #1 lifted
         val store' =
           List.foldl register_param (store node) output_params
-        val node' = replace_goal node
-          {pos = pos, children = children, store = store'}
-        val Node {goals, store, replay, level, marks, avoids, ...} = node'
       in
         SOME
-          (make_node goals store (replay @ [validation]) level marks avoids)
+          (replace_goal node
+            {pos = pos, children = children, store = store'})
       end
   end
 

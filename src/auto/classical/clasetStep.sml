@@ -6,44 +6,24 @@ open Abbrev HolKernel boolSyntax
 type node = clasetGoal.node
 type goalpos = int
 
-datatype step_kind =
-    Assumption of int
-  | Contradiction of int * int
-  | ModusPonens of {implication : int, antecedent : int}
-  | RuleApplication of {elim : bool, theorem : thm}
-  | Disch
-  | Gen
-  | HypSubst
-  | Wrapper
+datatype rule_variant = datatype clasetReplay.rule_variant
+datatype step_kind = datatype clasetReplay.step_kind
 
-type created =
-  {terms : clasetMeta.meta list, types : clasetMeta.tymeta list}
-
+type created = clasetReplay.created
 val no_created : created = {terms = [], types = []}
 
-datatype step_record =
-  StepRecord of
-    {kind : step_kind,
-     target : goalpos,
-     consumed : int option,
-     created : created,
-     eigenvariables : string list,
-     validation : validation}
-
+type step_record = clasetReplay.step_record
 type step = node * goalpos -> (step_record * node) seq.seq
 
-fun kind_of (StepRecord {kind, ...}) = kind
-fun target_of (StepRecord {target, ...}) = target
-fun consumed_of (StepRecord {consumed, ...}) = consumed
-fun created_of (StepRecord {created, ...}) = created
-fun eigenvariables_of (StepRecord {eigenvariables, ...}) = eigenvariables
-fun validation_of (StepRecord {validation, ...}) = validation
-
-val classical_trace = ref 0
-val _ = Feedback.register_trace ("classical", classical_trace, 7)
+val kind_of = clasetReplay.kind_of
+val target_of = clasetReplay.target_of
+val consumed_of = clasetReplay.consumed_of
+val created_of = clasetReplay.created_of
+val eigenvariables_of = clasetReplay.eigenvariables_of
+val validation_of = clasetReplay.validation_of
 
 fun trace level message =
-  if level <= !classical_trace then
+  if level <= Feedback.current_trace "classical" then
     Feedback.HOL_MESG ("Classical reasoner: " ^ message)
   else ()
 
@@ -106,29 +86,16 @@ fun goals_equal (left, right) =
 
 fun member_aconv tm = List.exists (fn old => aconv tm old)
 
-fun new_free_names (asl, w) goals =
+fun new_free_names_by_goal (asl, w) goals =
   let
     val old_frees = free_varsl (w :: asl)
-    val new_frees =
-      free_varsl
-        (List.concat
-          (map (fn (child_asl, child_w) => child_w :: child_asl) goals))
-    val introduced =
-      List.filter (fn variable => not (member_aconv variable old_frees))
-        new_frees
+    fun names (child_asl, child_w) =
+      map (fst o dest_var)
+        (List.filter
+          (fn variable => not (member_aconv variable old_frees))
+          (free_varsl (child_w :: child_asl)))
   in
-    map (fst o dest_var) introduced
-  end
-
-fun distinct_strings values =
-  let
-    fun recurse _ [] = []
-      | recurse seen (value :: rest) =
-          if List.exists (fn old => old = value) seen then
-            recurse seen rest
-          else value :: recurse (value :: seen) rest
-  in
-    recurse [] values
+    map names goals
   end
 
 datatype direct =
@@ -136,9 +103,11 @@ datatype direct =
     {kind : step_kind,
      consumed : int option,
      created : created,
-     eigenvariables : string list,
+     eigenvariables : string list list,
      result : goal list * validation,
      children : clasetGoal.cgoal list option,
+     action : clasetReplay.replay_action,
+     closed : direct option list,
      store : clasetMeta.store}
 
 fun direct_result (Direct {result, ...}) = result
@@ -148,17 +117,21 @@ fun direct_consumed (Direct {consumed, ...}) = consumed
 fun direct_created (Direct {created, ...}) = created
 fun direct_eigens (Direct {eigenvariables, ...}) = eigenvariables
 fun direct_children (Direct {children, ...}) = children
+fun direct_action (Direct {action, ...}) = action
+fun direct_closed (Direct {closed, ...}) = closed
 
 fun tactic_direct kind consumed node pos tactic =
   let
     val rendered = clasetGoal.render node pos
     val result as (goals, _) = tactic rendered
-    val eigens = new_free_names rendered goals
+    val eigens = new_free_names_by_goal rendered goals
   in
     SOME
       (Direct
         {kind = kind, consumed = consumed, created = no_created,
          eigenvariables = eigens, result = result, children = NONE,
+         action = clasetReplay.fixed_action result,
+         closed = map (fn _ => NONE) goals,
          store = clasetGoal.store node})
   end
   handle HOL_ERR _ => NONE
@@ -192,7 +165,9 @@ fun assumption_results (node, pos) =
               {kind = Assumption asm_pos,
                consumed = SOME asm_pos, created = no_created,
                eigenvariables = [], result = ([], validation),
-               children = SOME [], store = store}
+               children = SOME [],
+               action = clasetReplay.assumption_action asm_pos,
+               closed = [], store = store}
           end
       in
         map result (List.filter closes (position_map (fn x => x) asl))
@@ -233,7 +208,11 @@ fun contradiction_results (node, pos) =
                         {kind = Contradiction (neg_pos, pos_pos),
                          consumed = SOME neg_pos, created = no_created,
                          eigenvariables = [], result = ([], validation),
-                         children = SOME [], store = store}
+                         children = SOME [],
+                         action =
+                           clasetReplay.contradiction_action
+                             (neg_pos, pos_pos),
+                         closed = [], store = store}
                     end
                 in
                   map make (List.filter matches positioned) @ negatives rest
@@ -300,9 +279,15 @@ fun mp_results (node, pos) =
                                    {implication = imp_pos,
                                     antecedent = ante_pos},
                                consumed = SOME imp_pos,
-                               created = no_created, eigenvariables = [],
+                               created = no_created,
+                               eigenvariables = [[]],
                                result = ([child], validation),
-                               children = SOME [child_cgoal], store = store}
+                               children = SOME [child_cgoal],
+                               action =
+                                 clasetReplay.mp_action
+                                   {implication = imp_pos,
+                                    antecedent = ante_pos},
+                               closed = [NONE], store = store}
                           end
                       in
                         map make (List.filter matches positioned) @
@@ -491,7 +476,43 @@ fun rule_validation normalized_rule supplied children premises target =
     validate
   end
 
-fun try_rule mode node pos (tag, (is_elim, theorem)) assumption =
+fun theorem_equal left right =
+  aconv (concl left) (concl right) andalso
+  ListPair.allEq (fn (left_tm, right_tm) => aconv left_tm right_tm)
+    (hyp left, hyp right)
+
+fun rule_origin cs duplicated theorem =
+  let
+    fun inspect ({kind, safe, prio}, (_, original)) =
+      let
+        val spec = {kind = kind, safe = safe, prio = prio}
+        val {rl = (plain, swapped), dup_rl = (duplicate, dup_swapped)} =
+          clasetRules.ext_info spec original
+        val made =
+          case kind of clasetRules.Dest => MakeElim | _ => Plain
+      in
+        if theorem_equal theorem plain andalso not duplicated then
+          SOME (original, made)
+        else if Option.getOpt
+                  (Option.map (theorem_equal theorem) swapped, false)
+                andalso not duplicated
+        then SOME (original, Swapped)
+        else if theorem_equal theorem duplicate then
+          SOME (original, Duplicate)
+        else if Option.getOpt
+                  (Option.map (theorem_equal theorem) dup_swapped, false)
+        then SOME (original, Duplicate)
+        else if theorem_equal theorem plain then SOME (original, made)
+        else NONE
+      end
+  in
+    case List.mapPartial inspect (clasetLib.rules_of cs) of
+        result :: _ => result
+      | [] => (theorem, if duplicated then Duplicate else Plain)
+  end
+
+fun try_rule mode cs duplicated node pos
+    (tag, (is_elim, theorem)) assumption =
   let
     val (asl, w) = clasetGoal.render node pos
     val fresh = freshen_rule node pos is_elim theorem
@@ -569,31 +590,44 @@ fun try_rule mode node pos (tag, (is_elim, theorem)) assumption =
     val validation =
       rule_validation normalized_rule supplied_thms children
         normalized_premises target
-    val eigenvariables =
-      distinct_strings
-        (List.concat
-          (map (fn ({params, ...} : clasetGoal.cgoal) =>
-             map (fst o dest_var) params) children))
     val old_params =
       map (fst o dest_var) (#params (clasetGoal.goal_at node pos))
-    val new_eigens =
+    fun child_eigens ({params, ...} : clasetGoal.cgoal) =
       List.filter
         (fn name => not (List.exists (fn old => old = name) old_params))
-        eigenvariables
+        (map (fst o dest_var) params)
+    val new_eigens = map child_eigens children
     val created = #metas fresh
+    val (original, variant) = rule_origin cs duplicated theorem
+
+    fun replay_instance store =
+      let
+        val (type_substitution, term_substitution) =
+          clasetMeta.collapse store
+        val replay_theorem =
+          Drule.INST_TY_TERM
+            (term_substitution, type_substitution) (#core fresh)
+      in
+        {theorem = replay_theorem, elim = is_elim,
+         consumed = consumed, eigenvariables = new_eigens}
+      end
   in
     Direct
-      {kind = RuleApplication {elim = is_elim, theorem = theorem},
+      {kind =
+         RuleApplication
+           {original = original, theorem = theorem,
+            variant = variant, elim = is_elim},
        consumed = consumed, created = created,
        eigenvariables = new_eigens,
        result = (child_goals, validation), children = SOME children,
-       store = child_store}
+       action = clasetReplay.rule_action replay_instance,
+       closed = map (fn _ => NONE) children, store = child_store}
   end
   handle Match => raise Match
        | HOL_ERR _ => raise Match
        | Empty => raise Match
 
-fun rule_results mode part weight_filter (node, pos) =
+fun rule_results mode cs duplicated part weight_filter (node, pos) =
   seq.delay
     (fn () =>
       let
@@ -604,7 +638,9 @@ fun rule_results mode part weight_filter (node, pos) =
         fun intro_application entry =
           seq.delay
             (fn () =>
-              case total (fn () => try_rule mode node pos entry NONE) () of
+              case total
+                (fn () => try_rule mode cs duplicated node pos entry NONE) ()
+              of
                   SOME result => seq.result result
                 | NONE => seq.empty)
 
@@ -614,7 +650,7 @@ fun rule_results mode part weight_filter (node, pos) =
                 (fn () =>
                   case total
                     (fn () =>
-                      try_rule mode node pos entry
+                      try_rule mode cs duplicated node pos entry
                         (SOME (assumption_pos, major))) ()
                   of
                       SOME result =>
@@ -669,7 +705,8 @@ fun builtin_results (node, pos) =
 
               val lifted = map lift_child goals
               val children = map #1 lifted
-              val new_params = List.concat (map #2 lifted)
+              val child_params = map #2 lifted
+              val new_params = List.concat child_params
               fun register (param, store) =
                 case clasetMeta.register_eigen param store of
                     SOME next => next
@@ -680,8 +717,17 @@ fun builtin_results (node, pos) =
               seq.result
                 (Direct
                   {kind = kind, consumed = NONE, created = no_created,
-                   eigenvariables = map (fst o dest_var) new_params,
+                   eigenvariables =
+                     map (map (fst o dest_var)) child_params,
                    result = result, children = SOME children,
+                   action =
+                     (case kind of
+                          Disch => clasetReplay.disch_action
+                        | Gen =>
+                            clasetReplay.gen_action
+                              (fst (dest_var (hd new_params)))
+                        | _ => clasetReplay.fixed_action result),
+                   closed = map (fn _ => NONE) children,
                    store = store})
             end
   in
@@ -762,9 +808,10 @@ fun internal_hyp_subst_results (node, pos) =
             seq.result
               (Direct
                 {kind = HypSubst, consumed = NONE,
-                 created = no_created, eigenvariables = [],
+                 created = no_created, eigenvariables = [[]],
                  result = result, children = SOME [child],
-                 store = clasetGoal.store node})
+                 action = clasetReplay.hyp_subst_action,
+                 closed = [NONE], store = clasetGoal.store node})
           end
       | SOME _ => seq.empty
   end
@@ -789,11 +836,11 @@ fun safe_cascade cs input =
   first_nonempty
     [assumption_results,
      eq_mp_results,
-     rule_results clasetUnify.Match
+     rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
      builtin_results,
      hyp_subst_results,
-     rule_results clasetUnify.Match
+     rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) all_weights]
     input
 
@@ -810,12 +857,14 @@ fun close_one_child direct =
   let
     val Direct
       {kind, consumed, created, eigenvariables,
-       result = (goals, validation), children, store} = direct
+       result = (goals, validation), children, action, closed, store} = direct
   in
     case goals of
         [left, right] =>
           (case close_plain left of
-               SOME (Direct {result = ([], close_validation), ...}) =>
+               SOME
+                 (close_direct as
+                   Direct {result = ([], close_validation), ...}) =>
                  let
                    fun combined [right_thm] =
                          validation [close_validation [], right_thm]
@@ -828,13 +877,16 @@ fun close_one_child direct =
                        {kind = kind, consumed = consumed, created = created,
                         eigenvariables = eigenvariables,
                         result = ([right], combined),
-                        children = Option.map tl children, store = store})
+                        children = Option.map tl children,
+                        action = action,
+                        closed = [SOME close_direct, List.nth (closed, 1)],
+                        store = store})
                  end
              | _ =>
                  (case close_plain right of
                       SOME
-                        (Direct
-                          {result = ([], close_validation), ...}) =>
+                        (close_direct as
+                          Direct {result = ([], close_validation), ...}) =>
                         let
                           fun combined [left_thm] =
                                 validation [left_thm, close_validation []]
@@ -852,26 +904,28 @@ fun close_one_child direct =
                                children =
                                  Option.map (fn values => [hd values])
                                    children,
+                               action = action,
+                               closed = [hd closed, SOME close_direct],
                                store = store})
                         end
                     | _ => NONE))
       | _ => NONE
   end
 
-fun bimatch2_results part input =
+fun bimatch2_results cs part input =
   seq.mapPartial close_one_child
-    (rule_results clasetUnify.Match part (weight_is 2) input)
+    (rule_results clasetUnify.Match cs false part (weight_is 2) input)
 
 fun clarify_cascade cs input =
   first_nonempty
     [assume_or_contradiction,
-     rule_results clasetUnify.Match
+     rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
      builtin_results,
      hyp_subst_results,
-     rule_results clasetUnify.Match
+     rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) (weight_is 1),
-     bimatch2_results (clasetLib.safep_part cs)]
+     bimatch2_results cs (clasetLib.safep_part cs)]
     input
 
 fun append_results left right input =
@@ -913,7 +967,9 @@ fun unifying_assumption_results (node, pos) =
                       {kind = Assumption asm_pos,
                        consumed = SOME asm_pos, created = no_created,
                        eigenvariables = [], result = ([], validation),
-                       children = SOME [], store = store})
+                       children = SOME [],
+                       action = clasetReplay.assumption_action asm_pos,
+                       closed = [], store = store})
                 end
       in
         List.mapPartial attempt (position_map (fn value => value) asl)
@@ -998,7 +1054,11 @@ fun unifying_contradiction_results (node, pos) =
                            consumed = SOME major_pos, created = created,
                            eigenvariables = [],
                            result = ([], validation),
-                           children = SOME [], store = store}
+                           children = SOME [],
+                           action =
+                             clasetReplay.contradiction_action
+                               (major_pos, positive_pos),
+                           closed = [], store = store}
                       end
                   in
                     map make stores
@@ -1012,25 +1072,28 @@ fun inst0_cascade cs input =
   append_many
     [unifying_assumption_results,
      unifying_contradiction_results,
-     rule_results clasetUnify.Unify
+     rule_results clasetUnify.Unify cs false
        (clasetLib.safe0_part cs) all_weights]
     input
 
 fun instp_cascade cs =
-  rule_results clasetUnify.Unify (clasetLib.safep_part cs) all_weights
+  rule_results clasetUnify.Unify cs false
+    (clasetLib.safep_part cs) all_weights
 
 fun inst_cascade cs input =
   append_results (inst0_cascade cs) (instp_cascade cs) input
 
 fun unsafe_cascade cs =
-  rule_results clasetUnify.Unify (clasetLib.unsafe_part cs) all_weights
+  rule_results clasetUnify.Unify cs false
+    (clasetLib.unsafe_part cs) all_weights
 
 fun dup_cascade cs =
-  rule_results clasetUnify.Unify (clasetLib.dup_part cs) all_weights
+  rule_results clasetUnify.Unify cs true
+    (clasetLib.dup_part cs) all_weights
 
 fun depth_cascade part cs input =
   append_results (instp_cascade cs)
-    (rule_results clasetUnify.Unify part all_weights) input
+    (rule_results clasetUnify.Unify cs false part all_weights) input
 
 fun take_direct goals directs =
   let
@@ -1044,19 +1107,36 @@ fun take_direct goals directs =
   end
 
 fun make_record target validation direct =
-  StepRecord
-    {kind = direct_kind direct,
-     target = target,
-     consumed = direct_consumed direct,
-     created = direct_created direct,
-     eigenvariables = direct_eigens direct,
-     validation = validation}
+  let
+    fun nested _ [] = []
+      | nested index (child :: rest) =
+          Option.map
+            (fn selected =>
+              make_record (target + index - 1)
+                (#2 (direct_result selected)) selected)
+            child :: nested (index + 1) rest
+  in
+    clasetReplay.make_record
+      {kind = direct_kind direct,
+       target = target,
+       consumed = direct_consumed direct,
+       created = direct_created direct,
+       eigenvariables = direct_eigens direct,
+       validation = validation,
+       action = direct_action direct,
+       children = nested 1 (direct_closed direct)}
+  end
 
 fun wrapper_direct rendered goals validation store =
-  Direct
-    {kind = Wrapper, consumed = NONE, created = no_created,
-     eigenvariables = new_free_names rendered goals,
-     result = (goals, validation), children = NONE, store = store}
+  let val result = (goals, validation)
+  in
+    Direct
+      {kind = Wrapper, consumed = NONE, created = no_created,
+       eigenvariables = new_free_names_by_goal rendered goals,
+       result = result, children = NONE,
+       action = clasetReplay.fixed_action result,
+       closed = map (fn _ => NONE) goals, store = store}
+  end
 
 fun wrapped_step apply_wrappers cascade cs (node, pos) =
   seq.delay
@@ -1112,9 +1192,14 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
                       case lifted of
                           NONE => lift rest
                         | SOME next =>
-                            seq.cons
-                              (make_record pos validation direct, next)
-                              (lift rest)
+                            let
+                              val record =
+                                make_record pos validation direct
+                              val recorded =
+                                clasetGoal.record_step record next
+                            in
+                              seq.cons (record, recorded) (lift rest)
+                            end
                     end)
       in
         lift wrapped

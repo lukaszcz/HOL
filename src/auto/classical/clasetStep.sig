@@ -5,19 +5,11 @@ sig
   type node = clasetGoal.node
   type goalpos = int
 
-  datatype step_kind =
-      Assumption of int
-    | Contradiction of int * int
-    | ModusPonens of {implication : int, antecedent : int}
-    | RuleApplication of {elim : bool, theorem : thm}
-    | Disch
-    | Gen
-    | HypSubst
-    | Wrapper
+  datatype rule_variant = datatype clasetReplay.rule_variant
+  datatype step_kind = datatype clasetReplay.step_kind
 
-  type created =
-    {terms : clasetMeta.meta list, types : clasetMeta.tymeta list}
-  type step_record
+  type created = clasetReplay.created
+  type step_record = clasetReplay.step_record
   type step = node * goalpos -> (step_record * node) seq.seq
 
   val kind_of : step_record -> step_kind

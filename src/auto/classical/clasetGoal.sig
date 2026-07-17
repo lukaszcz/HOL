@@ -7,7 +7,7 @@ sig
   type tymeta = clasetMeta.tymeta
 
   type cgoal = {params : term list, asl : term list, w : term}
-  type replay_script
+  type replay_script = clasetReplay.script
   type binding_mark = {terms : meta list, types : tymeta list}
   type binding_marks = binding_mark list
   type node
@@ -21,6 +21,7 @@ sig
   val store : node -> store
   val replay : node -> replay_script
   val replay_length : node -> int
+  val record_step : clasetReplay.step_record -> node -> node
   val level : node -> int
   val binding_marks : node -> binding_marks
   val set_goals : cgoal list -> node -> node
@@ -65,7 +66,8 @@ sig
   (* D24 materialization stub.  Metavariables are represented by marked free
      variables and are therefore rigid to HOL4 tactics.  This version can
      lift results only when the rendered goal is metavariable-free; the full
-     marked-free round trip and validation replay are completed later. *)
+     marked-free round trip is completed later.  Replay recording is owned by
+     [record_step], not by [unrender]. *)
   val render : node -> int -> goal
   val unrender : node -> int -> goal list * validation -> node option
 end
