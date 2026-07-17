@@ -279,6 +279,69 @@ fun DUP_ELIM_RULE th =
           end
   end
 
+(* HOL goals cons each newly discharged hypothesis.  Put the duplicate at
+   the inner end of a minor premise so that it is first in the resulting
+   assumption list, as required by blast's reverse duplication rule. *)
+fun rev_dup_prem major prem =
+  case total dest_forall prem of
+      SOME (v, body) =>
+        let
+          val v' =
+            if free_in v major then
+              variant (free_vars major @ free_vars body) v
+            else v
+          val body' =
+            if Term.aconv v v' then body else subst [v |-> v'] body
+        in
+          mk_forall (v', rev_dup_prem major body')
+        end
+    | NONE =>
+        (case total dest_imp_only prem of
+             SOME (ante, rest) =>
+               mk_imp (ante, rev_dup_prem major rest)
+           | NONE => mk_imp (major, prem))
+
+fun restore_rev_dup_prem major prem hmajor hprem =
+  case total dest_forall prem of
+      SOME (v, body) =>
+        let
+          val avoids = free_varsl (major :: concl hprem :: hyp hprem)
+          val v' = variant avoids v
+          val body' =
+            if Term.aconv v v' then body else subst [v |-> v'] body
+        in
+          GEN v'
+            (restore_rev_dup_prem major body' hmajor (SPEC v' hprem))
+        end
+    | NONE =>
+        (case total dest_imp_only prem of
+             SOME (ante, rest) =>
+               DISCH ante
+                 (restore_rev_dup_prem major rest hmajor
+                    (MP hprem (ASSUME ante)))
+           | NONE => MP hprem hmajor)
+
+fun REV_DUP_ELIM_RULE th =
+  let
+    val {thm, vars, core, prems, ...} = elim_rule_spine th
+  in
+    case prems of
+        [] => illformed_rule "REV_DUP_ELIM_RULE" Elim
+      | [_] => thm
+      | major :: rest =>
+          let
+            val lifted = map (rev_dup_prem major) rest
+            val hmajor = ASSUME major
+            val hprems = map ASSUME lifted
+            fun restore (prem, hprem) =
+              restore_rev_dup_prem major prem hmajor hprem
+            val args = ListPair.map restore (rest, hprems)
+            val body = apply_thms core (hmajor :: args)
+          in
+            finish_rule vars [] (major :: lifted) body
+          end
+  end
+
 fun ext_info ({kind, safe, ...} : rulespec) th =
   let
     val th' = canonical_rule_of kind th

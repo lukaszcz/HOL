@@ -32,6 +32,7 @@ sig
   val SWAP_INTRO_RULE : thm -> thm option
   val DUP_INTRO_RULE : thm -> thm
   val DUP_ELIM_RULE : thm -> thm
+  val REV_DUP_ELIM_RULE : thm -> thm
   val ext_info : rulespec -> thm -> info
 
   datatype safe_class = Safe0 | SafeP

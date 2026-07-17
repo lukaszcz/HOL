@@ -776,8 +776,162 @@ val _ =
     ("DUP_ELIM_RULE retains the major premise in every side premise",
      fn () => same_thm (DUP_ELIM_RULE (simple_elim ())) (hand_dup_elim ()))
 
+fun hand_rev_conj_elim () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val r = ``r : bool``
+    val major = mk_conj (p, q)
+    val hmajor = ASSUME major
+    val minor =
+      mk_imp (p, mk_imp (q, mk_imp (major, r)))
+    val hminor = ASSUME minor
+    val body =
+      MP (MP (MP hminor (CONJUNCT1 hmajor)) (CONJUNCT2 hmajor))
+        hmajor
+  in
+    GENL [p, q, r] (DISCH major (DISCH minor body))
+  end
+
+fun hand_rev_disj_elim () =
+  let
+    val p = ``p : bool``
+    val q = ``q : bool``
+    val r = ``r : bool``
+    val major = mk_disj (p, q)
+    val hmajor = ASSUME major
+    val left = mk_imp (p, mk_imp (major, r))
+    val right = mk_imp (q, mk_imp (major, r))
+    val hleft = ASSUME left
+    val hright = ASSUME right
+    val body =
+      DISJ_CASES hmajor
+        (MP (MP hleft (ASSUME p)) hmajor)
+        (MP (MP hright (ASSUME q)) hmajor)
+  in
+    GENL [r, p, q]
+      (DISCH major (DISCH left (DISCH right body)))
+  end
+
+fun hand_rev_exists_elim () =
+  let
+    val P = ``P : bool -> bool``
+    val x = ``x : bool``
+    val q = ``q : bool``
+    val px = mk_comb (P, x)
+    val major = mk_exists (x, px)
+    val hmajor = ASSUME major
+    val minor =
+      mk_forall (x, mk_imp (px, mk_imp (major, q)))
+    val hminor = ASSUME minor
+    val branch = MP (MP (SPEC x hminor) (ASSUME px)) hmajor
+    val body = CHOOSE (x, hmajor) branch
+  in
+    GEN q (DISCH major (DISCH minor body))
+  end
+
+val _ =
+  test
+    ("REV_DUP_ELIM_RULE has the exact conjunction-elim output",
+     fn () =>
+       same_thm (REV_DUP_ELIM_RULE clasetSeedTheory.CONJ_ELIM_THM)
+         (hand_rev_conj_elim ()))
+
+val _ =
+  test
+    ("REV_DUP_ELIM_RULE has the exact disjunction-elim output",
+     fn () =>
+       same_thm (REV_DUP_ELIM_RULE boolTheory.OR_ELIM_THM)
+         (hand_rev_disj_elim ()))
+
+val _ =
+  test
+    ("REV_DUP_ELIM_RULE has the exact exists-elim output",
+     fn () =>
+       let
+         val P = ``P : bool -> bool``
+         val exists_elim =
+           Drule.ISPEC P clasetSeedTheory.EXISTS_ELIM_THM
+       in
+         same_thm (REV_DUP_ELIM_RULE exists_elim)
+           (hand_rev_exists_elim ())
+       end)
+
+fun shadowed_minor_elim () =
+  let
+    val P = ``P : bool -> bool``
+    val x = ``x : bool``
+    val r = ``r : bool``
+    val major = mk_comb (P, x)
+    val minor = mk_forall (x, mk_imp (mk_comb (P, x), r))
+    val body = MP (SPEC x (ASSUME minor)) (ASSUME major)
+  in
+    GENL [P, x, r] (DISCH major (DISCH minor body))
+  end
+
+val _ =
+  test
+    ("reverse elim duplication avoids capturing the major premise",
+     fn () =>
+       let
+         val theorem = REV_DUP_ELIM_RULE (shadowed_minor_elim ())
+       in
+         case rule_premises_of clasetRules.Elim theorem of
+             [major, minor] =>
+               let
+                 val (bound, body) = dest_forall minor
+                 val (added, _) = strip_imp_only body
+               in
+                 not (free_in bound major) andalso
+                 length added = 2 andalso
+                 Term.aconv (List.last added) major
+               end
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("reverse and ordinary elim duplication order hypotheses differently",
+     fn () =>
+       let
+         val p = ``p : bool``
+         val q = ``q : bool``
+         val r = ``r : bool``
+         val major = mk_conj (p, q)
+         val rev_minor =
+           mk_imp (p, mk_imp (q, mk_imp (major, r)))
+         val dup_minor =
+           mk_imp (major, mk_imp (p, mk_imp (q, r)))
+         val rev_prems =
+           rule_premises_of clasetRules.Elim
+             (REV_DUP_ELIM_RULE clasetSeedTheory.CONJ_ELIM_THM)
+         val dup_prems =
+           rule_premises_of clasetRules.Elim
+             (DUP_ELIM_RULE clasetSeedTheory.CONJ_ELIM_THM)
+       in
+         same_terms rev_prems [major, rev_minor] andalso
+         same_terms dup_prems [major, dup_minor] andalso
+         not (same_terms rev_prems dup_prems)
+       end)
+
 fun hol_err_msg f =
   (f (); NONE) handle HOL_ERR e => SOME (Feedback.message_of e)
+
+val _ =
+  test
+    ("reverse elim duplication handles no-op and failure edges",
+     fn () =>
+       let
+         val false_elim = canonical_rule_of clasetRules.Elim
+           boolTheory.FALSITY
+         val once = REV_DUP_ELIM_RULE boolTheory.FALSITY
+       in
+         same_thm once false_elim andalso
+         same_thm (REV_DUP_ELIM_RULE once) once andalso
+         hol_err_msg
+           (fn () => (REV_DUP_ELIM_RULE boolTheory.TRUTH; ())) =
+           SOME "Ill-formed elimination rule"
+       end)
 
 val _ =
   test
