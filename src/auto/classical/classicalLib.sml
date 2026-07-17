@@ -112,6 +112,87 @@ fun clarify_tac cs =
   NTactical.NCHANGED
     (NTactical.NREPEAT (clarify_step_tac cs))
 
+fun replay_node original node =
+  let
+    val grounded =
+      clasetReplay.ground (clasetGoal.store node)
+        (clasetGoal.replay node)
+  in
+    seq.result (clasetReplay.REPLAY_TAC grounded original)
+  end
+
+fun replay_step step cs goal =
+  let val initial = clasetGoal.from_goal goal
+  in
+    seq.bind (step cs (initial, 1))
+      (fn (_, node) => replay_node goal node)
+  end
+
+fun step_tac cs = replay_step clasetStep.step cs
+fun slow_step_tac cs = replay_step clasetStep.slow_step cs
+fun inst_step_tac cs = replay_step clasetStep.inst_step cs
+
+fun project_steps steps =
+  seq.map (fn (_, node) => node) steps
+
+fun expand_at step cs pos node =
+  project_steps (step cs (node, pos))
+
+fun expand_first step cs node =
+  let
+    fun first pos =
+      if pos > length (clasetGoal.goals node) then seq.empty
+      else
+        seq.delay
+          (fn () =>
+            case seq.cases (expand_at step cs pos node) of
+                NONE => first (pos + 1)
+              | SOME (result, rest) => seq.cons result rest)
+  in
+    first 1
+  end
+
+fun solved node = List.null (clasetGoal.goals node)
+
+fun solve search goal =
+  let val initial = clasetGoal.from_goal goal
+  in
+    seq.bind (search initial)
+      (fn node =>
+        if solved node then replay_node goal node else seq.empty)
+  end
+
+fun depth_driver step cs =
+  clasetSearch.DEPTH_SOLVE (expand_at step cs 1)
+
+fun best_driver step cs =
+  clasetSearch.BEST_FIRST solved (expand_at step cs 1)
+
+fun astar_driver step cs =
+  clasetSearch.ASTAR solved (expand_at step cs 1)
+
+fun fast_tac cs = solve (depth_driver clasetStep.step cs)
+fun slow_tac cs = solve (depth_driver clasetStep.slow_step cs)
+fun best_tac cs = solve (best_driver clasetStep.step cs)
+fun slow_best_tac cs = solve (best_driver clasetStep.slow_step cs)
+
+fun first_best_tac cs =
+  solve (clasetSearch.BEST_FIRST solved
+    (expand_first clasetStep.step cs))
+
+fun astar_tac cs = solve (astar_driver clasetStep.step cs)
+fun slow_astar_tac cs = solve (astar_driver clasetStep.slow_step cs)
+
+fun bounded_depth cs bound =
+  clasetSearch.DEPTH_SOLVE
+    (fn node =>
+      project_steps
+        (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
+          (node, 1)))
+
+fun deepen_tac cs {start} =
+  solve (clasetSearch.DEEPEN (2, 10) (bounded_depth cs) start)
+
 fun has_marker_head marker theorem =
   let val (head, _) = strip_comb (concl theorem)
   in same_const marker head end
@@ -168,5 +249,18 @@ fun SAFE_TAC theorems = public safe_tac theorems
 fun CLARIFY_TAC theorems = public clarify_tac theorems
 fun SAFE_STEP_TAC theorems = public safe_step_tac theorems
 fun CLARIFY_STEP_TAC theorems = public clarify_step_tac theorems
+fun STEP_TAC theorems = public step_tac theorems
+fun SLOW_STEP_TAC theorems = public slow_step_tac theorems
+fun INST_STEP_TAC theorems = public inst_step_tac theorems
+
+fun FAST_TAC theorems = public fast_tac theorems
+fun SLOW_TAC theorems = public slow_tac theorems
+fun BEST_TAC theorems = public best_tac theorems
+fun SLOW_BEST_TAC theorems = public slow_best_tac theorems
+fun FIRST_BEST_TAC theorems = public first_best_tac theorems
+fun ASTAR_TAC theorems = public astar_tac theorems
+fun SLOW_ASTAR_TAC theorems = public slow_astar_tac theorems
+fun DEEPEN_TAC theorems =
+  public (fn cs => deepen_tac cs {start = 4}) theorems
 
 end

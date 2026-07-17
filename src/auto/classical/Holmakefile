@@ -9,7 +9,7 @@ clasetReplay.uo: clasetMeta.uo
 clasetGoal.uo: clasetMeta.uo clasetReplay.uo
 clasetStep.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo clasetGoal.uo
 clasetSearch.uo: clasetMeta.uo clasetGoal.uo searchHeap.uo
-classicalLib.uo: clasetGoal.uo clasetStep.uo
+classicalLib.uo: clasetGoal.uo clasetStep.uo clasetSearch.uo
 
 selftest.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo \
               clasetGoal.uo clasetStep.uo clasetSearch.uo classicalLib.uo \

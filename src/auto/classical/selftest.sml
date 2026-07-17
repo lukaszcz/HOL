@@ -2700,3 +2700,101 @@ val _ =
          andalso
          List.exists (String.isSubstring "search exhausted") (!notices)
        end)
+
+(* TASK_14: public and claset-explicit driver surfaces. *)
+
+fun tactic_solves tactic goal =
+  let val (residues, _) = Tactical.VALID tactic goal
+  in List.null residues end
+
+val driver_witness = Term.mk_var ("driver_witness", Type.ind)
+val driver_constant = Term.mk_var ("driver_constant", Type.ind)
+val driver_exists_goal : Abbrev.goal =
+  ([], boolSyntax.mk_exists
+    (driver_witness,
+     boolSyntax.mk_eq (driver_witness, driver_constant)))
+
+val _ =
+  test
+    ("FAST_TAC instantiates a witness and replays the solution",
+     fn () => tactic_solves (classicalLib.FAST_TAC []) driver_exists_goal)
+
+val _ =
+  test
+    ("single engine step drivers replay their resulting nodes",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (goal_p, goal_q)
+         val goal = ([], implication)
+         val expected = [([], goal_q)]
+         val (step_goals, _) =
+           Tactical.VALID (classicalLib.STEP_TAC []) goal
+         val (slow_goals, _) =
+           Tactical.VALID (classicalLib.SLOW_STEP_TAC []) goal
+         val (inst_goals, _) =
+           Tactical.VALID
+             (classicalLib.INST_STEP_TAC [])
+             ([goal_p], goal_p)
+       in
+         same_goals step_goals expected andalso
+         same_goals slow_goals expected andalso
+         List.null inst_goals
+       end)
+
+fun nested_exists 0 body = body
+  | nested_exists count body =
+      let
+        val witness =
+          Term.mk_var
+            ("deep_witness_" ^ Int.toString count, Type.ind)
+      in
+        boolSyntax.mk_exists
+          (witness, nested_exists (count - 1) body)
+      end
+
+val _ =
+  test
+    ("DEEPEN supports a raised programmatic start beyond four",
+     fn () =>
+       let
+         val goal = ([], nested_exists 5 boolSyntax.T)
+         val tactic =
+           NTactical.DETERM
+             (classicalLib.deepen_tac (clasetLib.the_claset ())
+               {start = 6})
+       in
+         tactic_solves tactic goal andalso
+         tactic_solves (classicalLib.DEEPEN_TAC []) goal
+       end)
+
+val _ =
+  test
+    ("all solve-completely drivers fail cleanly on a non-theorem",
+     fn () =>
+       let
+         val goal = ([], Term.mk_var ("driver_non_theorem", bool_ty))
+         val drivers =
+           [classicalLib.FAST_TAC [], classicalLib.SLOW_TAC [],
+            classicalLib.BEST_TAC [], classicalLib.SLOW_BEST_TAC [],
+            classicalLib.FIRST_BEST_TAC [], classicalLib.ASTAR_TAC [],
+            classicalLib.SLOW_ASTAR_TAC [], classicalLib.DEEPEN_TAC []]
+       in
+         List.all (fn tactic => tactic_fails tactic goal) drivers
+       end)
+
+val _ =
+  test
+    ("frontier drivers replay Tactical.VALID-checked solutions",
+     fn () =>
+       let
+         val drivers =
+           [classicalLib.BEST_TAC [],
+            classicalLib.SLOW_BEST_TAC [],
+            classicalLib.FIRST_BEST_TAC [],
+            classicalLib.ASTAR_TAC [],
+            classicalLib.SLOW_ASTAR_TAC []]
+       in
+         List.all
+           (fn tactic => tactic_solves tactic driver_exists_goal)
+           drivers
+       end)
