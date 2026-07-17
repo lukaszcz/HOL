@@ -1112,14 +1112,14 @@ val _ =
 
 val _ =
   test
-    ("clasetLib config uses VAR_EQ_TAC and sizes all goal terms",
+    ("clasetLib config uses VAR_EQ_TAC and Isabelle term sizes",
      fn () =>
        let
          val {hyp_subst_tac, size_of} = claset_config
          val variable_goal = ([``x : bool = p``], ``x : bool``)
        in
-         size_of variable_goal =
-           Term.term_size ``x : bool = p`` + Term.term_size ``x : bool`` andalso
+         size_of variable_goal = 4 andalso
+         size_of ([], ``(\x : bool. x) p``) = 3 andalso
          (case #1 (hyp_subst_tac variable_goal) of
              [(_, goal)] => Term.aconv goal p
            | _ => false)

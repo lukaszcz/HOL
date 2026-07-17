@@ -239,7 +239,9 @@ fun binding_respects_allow store (name, residue) =
   end
 
 fun register_eigen eigen store =
-  if not (is_var eigen) orelse is_meta eigen then NONE
+  if not (is_var eigen) orelse is_meta eigen orelse
+     Redblackmap.inDomain (#eigens store, eigen)
+  then NONE
   else
     let
       val candidate =

@@ -5,10 +5,11 @@ all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 clasetUnify.uo: clasetMeta.uo
+clasetGoal.uo: clasetMeta.uo
 
-selftest.uo: clasetMeta.uo clasetUnify.uo searchHeap.uo
+selftest.uo: clasetMeta.uo clasetUnify.uo clasetGoal.uo searchHeap.uo
 
-selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo searchHeap.uo
+selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo clasetGoal.uo searchHeap.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

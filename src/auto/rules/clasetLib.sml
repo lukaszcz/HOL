@@ -711,9 +711,16 @@ val _ = List.app register_rule_attribute
    ("elim", elim_spec), ("selim", selim_spec),
    ("dest", dest_spec), ("sdest", sdest_spec)]
 
+fun default_term_size tm =
+  case dest_term tm of
+      COMB (rator, rand) =>
+        default_term_size rator + default_term_size rand
+    | LAMB (_, body) => 1 + default_term_size body
+    | _ => 1
+
 fun default_goal_size (asl, w) =
-  List.foldl (fn (asm, size) => Term.term_size asm + size)
-    (Term.term_size w) asl
+  List.foldl (fn (asm, size) => default_term_size asm + size)
+    (default_term_size w) asl
 
 val claset_config =
   {hyp_subst_tac = BasicProvers.VAR_EQ_TAC,

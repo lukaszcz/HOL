@@ -7,6 +7,9 @@ fun test (name, check) =
 fun the_store (SOME store) = store
   | the_store NONE = raise Fail "unexpected metavariable binding failure"
 
+fun the_singleton [value] = value
+  | the_singleton _ = raise Fail "expected one value"
+
 fun int_compare (x : int, y : int) =
   if x < y then LESS else if x > y then GREATER else EQUAL
 
@@ -627,4 +630,263 @@ val _ =
                term_subst_eq left_tms right_tms
              end
          | _ => false
+       end)
+
+val goal_p = Term.mk_var ("goal_p", bool_ty)
+val goal_q = Term.mk_var ("goal_q", bool_ty)
+val goal_r = Term.mk_var ("goal_r", bool_ty)
+
+fun aconv_list left right =
+  ListPair.allEq (fn (tm1, tm2) => Term.aconv tm1 tm2) (left, right)
+
+val _ =
+  test
+    ("engine intake preserves ordered assumptions",
+     fn () =>
+       let
+         val node = clasetGoal.from_goal ([goal_p, goal_q], goal_r)
+         val {params, asl, w} =
+           the_singleton (clasetGoal.goals node)
+       in
+         List.null params andalso aconv_list asl [goal_p, goal_q]
+         andalso Term.aconv w goal_r
+         andalso clasetGoal.replay_length node = 0
+         andalso clasetGoal.level node = 0
+       end)
+
+val _ =
+  test
+    ("new assumptions are consed at the front",
+     fn () =>
+       let
+         val parent = {params = [], asl = [goal_r], w = goal_r}
+         val {asl, ...} =
+           clasetGoal.cons_assumptions [goal_p, goal_q] parent
+       in
+         aconv_list asl [goal_q, goal_p, goal_r]
+       end)
+
+val _ =
+  test
+    ("premise children strip only the outer prefix",
+     fn () =>
+       let
+         val x = Term.mk_var ("x", bool_ty)
+         val pred_p = Term.mk_var ("pred_p", bool_ty --> bool_ty)
+         val pred_q = Term.mk_var ("pred_q", bool_ty --> bool_ty)
+         val pred_r = Term.mk_var ("pred_r", bool_ty --> bool_ty)
+         fun app f arg = Term.mk_comb (f, arg)
+         val quantified =
+           boolSyntax.mk_forall
+             (x, boolSyntax.mk_imp
+               (app pred_p x,
+                boolSyntax.mk_imp (app pred_q x, app pred_r x)))
+         val nested =
+           boolSyntax.mk_imp
+             (goal_p,
+              boolSyntax.mk_forall
+                (x, boolSyntax.mk_imp (goal_q, goal_r)))
+         val parent = {params = [x], asl = [goal_r], w = goal_r}
+         val sibling_fixed = Term.variant [x] x
+         val sibling =
+           {params = [], asl = [], w = sibling_fixed}
+         val store0 = the_store
+           (clasetMeta.register_eigen x clasetMeta.empty)
+         val node0 = clasetGoal.create
+           {goals = [parent, sibling], store = store0, level = 0}
+         val (children, store1) =
+           clasetGoal.children node0
+             {pos = 1, premises = [quantified, nested],
+              consumed = NONE}
+         val first = List.nth (children, 0)
+         val second = List.nth (children, 1)
+         val fresh = List.nth (#params first, 1)
+         val (fresh_name, _) = Term.dest_var fresh
+         val node1 = clasetGoal.set_store store1 node0
+         val (again_children, store2) =
+           clasetGoal.children node1
+             {pos = 1, premises = [quantified], consumed = NONE}
+         val again = the_singleton again_children
+         val fresh_again = List.nth (#params again, 1)
+         val (m, store3) =
+           clasetMeta.new_meta {allow = #params first, ty = bool_ty} store2
+       in
+         length (#params first) = 2
+         andalso String.isPrefix "x" fresh_name
+         andalso not (Term.aconv fresh x)
+         andalso not (Term.aconv fresh sibling_fixed)
+         andalso not (clasetMeta.is_eigen store1 sibling_fixed)
+         andalso
+         aconv_list (#asl first)
+           [app pred_q fresh, app pred_p fresh, goal_r]
+         andalso Term.aconv (#w first) (app pred_r fresh)
+         andalso aconv_list (#params second) [x]
+         andalso aconv_list (#asl second) [goal_p, goal_r]
+         andalso boolSyntax.is_forall (#w second)
+         andalso not (Term.aconv fresh fresh_again)
+         andalso
+         Option.isSome (clasetMeta.bind (m, fresh) store3)
+       end)
+
+val _ =
+  test
+    ("elim alternatives delete one positional assumption from every child",
+     fn () =>
+       let
+         val parent =
+           {params = [], asl = [goal_p, goal_q, goal_p], w = goal_r}
+         val node = clasetGoal.create
+           {goals = [parent], store = clasetMeta.empty, level = 0}
+         val alternatives =
+           clasetGoal.elim_children node
+             {pos = 1, premises = [goal_q, goal_r]}
+         fun child_asls alternative = map #asl (#children alternative)
+       in
+         map #assumption alternatives = [1, 2, 3]
+         andalso aconv_list (map #major alternatives)
+           [goal_p, goal_q, goal_p]
+         andalso
+         List.all
+           (fn asl => aconv_list asl [goal_q, goal_p])
+           (child_asls (List.nth (alternatives, 0)))
+         andalso
+         List.all
+           (fn asl => aconv_list asl [goal_p, goal_p])
+           (child_asls (List.nth (alternatives, 1)))
+         andalso
+         List.all
+           (fn asl => aconv_list asl [goal_p, goal_q])
+           (child_asls (List.nth (alternatives, 2)))
+       end)
+
+val _ =
+  test
+    ("node constructors register every declared parameter",
+     fn () =>
+       let
+         val eigen = Term.mk_var ("declared_param", bool_ty)
+         val node = clasetGoal.create
+           {goals =
+              [{params = [eigen], asl = [], w = boolSyntax.T}],
+            store = clasetMeta.empty, level = 0}
+         val (m, store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             (clasetGoal.store node)
+       in
+         clasetMeta.is_eigen store eigen
+         andalso not (Option.isSome (clasetMeta.bind (m, eigen) store))
+       end)
+
+val _ =
+  test
+    ("engine size counts atoms and abstractions after substitution",
+     fn () =>
+       let
+         val x = Term.mk_var ("size_x", bool_ty)
+         val f = Term.mk_var ("size_f", bool_ty --> bool_ty)
+         val lambda = Term.mk_abs (x, Term.mk_comb (f, x))
+         val (m, store0) =
+           clasetMeta.new_meta
+             {allow = [], ty = bool_ty --> bool_ty} clasetMeta.empty
+         val identity = Term.mk_abs (x, x)
+         val store1 = the_store (clasetMeta.bind (m, identity) store0)
+         val applied = Term.mk_comb (m, boolSyntax.T)
+         val node = clasetGoal.create
+           {goals = [{params = [], asl = [], w = applied}],
+            store = store1, level = 0}
+       in
+         clasetGoal.term_size goal_p = 1
+         andalso clasetGoal.term_size (Term.mk_comb (f, x)) = 2
+         andalso clasetGoal.term_size lambda = 3
+         andalso clasetGoal.size node = 1
+       end)
+
+val _ =
+  test
+    ("node equality and ordering use canonical alpha rendering",
+     fn () =>
+       let
+         val x = Term.mk_var ("alpha_x", bool_ty)
+         val y = Term.mk_var ("alpha_y", bool_ty)
+         val pfun = Term.mk_var ("alpha_p", bool_ty --> bool_ty)
+         val qfun = Term.mk_var ("alpha_q", bool_ty --> bool_ty)
+         fun singleton param body =
+           clasetGoal.create
+             {goals =
+                [{params = [param], asl = [],
+                  w = Term.mk_comb (body, param)}],
+              store = clasetMeta.empty, level = 0}
+         val left = singleton x pfun
+         val alpha = singleton y pfun
+         val other = singleton x qfun
+         val assumed = clasetGoal.from_goal ([goal_p], goal_q)
+         val implication = clasetGoal.from_goal
+           ([], boolSyntax.mk_imp (goal_p, goal_q))
+         val small = clasetGoal.from_goal ([], boolSyntax.T)
+         val large = clasetGoal.from_goal
+           ([], boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
+         val forward = clasetGoal.compare (left, other)
+         val backward = clasetGoal.compare (other, left)
+       in
+         clasetGoal.equal (left, alpha)
+         andalso clasetGoal.compare (left, alpha) = EQUAL
+         andalso not (clasetGoal.equal (left, other))
+         andalso forward <> EQUAL andalso backward <> EQUAL
+         andalso forward <> backward
+         andalso not (clasetGoal.equal (assumed, implication))
+         andalso not (clasetGoal.equal (small, large))
+         andalso clasetGoal.compare (small, large) = LESS
+       end)
+
+val _ =
+  test
+    ("unrender records eigenvariables introduced by a tactic",
+     fn () =>
+       let
+         val x = Term.mk_var ("render_x", bool_ty)
+         val predicate =
+           Term.mk_var ("render_predicate", bool_ty --> bool_ty)
+         val quantified = boolSyntax.mk_forall
+           (x, Term.mk_comb (predicate, x))
+         val node = clasetGoal.from_goal ([], quantified)
+         val result = Tactic.GEN_TAC (clasetGoal.render node 1)
+       in
+         case clasetGoal.unrender node 1 result of
+           NONE => false
+         | SOME node' =>
+             let
+               val child = the_singleton (clasetGoal.goals node')
+               val param = the_singleton (#params child)
+             in
+               clasetMeta.is_eigen (clasetGoal.store node') param
+               andalso Term.aconv (#w child)
+                 (Term.mk_comb (predicate, param))
+             end
+       end)
+
+val _ =
+  test
+    ("metavariable-free nodes render and lift tactic children",
+     fn () =>
+       let
+         val node = clasetGoal.from_goal
+           ([], boolSyntax.mk_imp (goal_p, goal_q))
+         val rendered = clasetGoal.render node 1
+         val result = Tactic.DISCH_TAC rendered
+       in
+         List.null (#1 rendered)
+         andalso Term.aconv (#2 rendered)
+           (boolSyntax.mk_imp (goal_p, goal_q))
+         andalso
+         case clasetGoal.unrender node 1 result of
+           NONE => false
+         | SOME node' =>
+             let
+               val {params, asl, w} =
+                 the_singleton (clasetGoal.goals node')
+             in
+               List.null params andalso aconv_list asl [goal_p]
+               andalso Term.aconv w goal_q
+               andalso clasetGoal.replay_length node' = 1
+             end
        end)
