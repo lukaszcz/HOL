@@ -2192,3 +2192,100 @@ val _ =
              clasetReplay.ReplayFailed _ => true
            | clasetReplay.Replayed _ => false
        end)
+
+(* TASK_12: D24 rigid wrapper materialization and opaque replay. *)
+
+val _ =
+  test
+    ("metavariable wrapper round-trips and replays its validation",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val target = boolSyntax.mk_conj (meta, meta)
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [meta], w = target}],
+              store = store, level = 0}
+         val cs =
+           clasetLib.add_safe_wrapper
+             ("meta-conjunction", safe_before Tactic.CONJ_TAC)
+             clasetLib.empty_cs
+       in
+         case seq.cases (clasetStep.safe_step cs (node, 1)) of
+             NONE => false
+           | SOME ((record, lifted), _) =>
+               let
+                 val children = rendered_goals lifted
+                 val grounded =
+                   clasetReplay.ground (clasetGoal.store lifted)
+                     (clasetGoal.replay lifted)
+                 val (replayed, validation) =
+                   Tactical.VALID (clasetReplay.REPLAY_TAC grounded)
+                     (clasetGoal.render node 1)
+                 val theorem = validation [ASSUME meta, ASSUME meta]
+               in
+                 (case clasetStep.kind_of record of
+                      clasetStep.Wrapper => true
+                    | _ => false) andalso
+                 clasetGoal.replay_length lifted = 1 andalso
+                 same_goals children
+                   [([meta], meta), ([meta], meta)] andalso
+                 same_goals replayed children andalso
+                 Term.aconv (concl theorem) target
+               end
+       end)
+
+val _ =
+  test
+    ("wrapper cannot introduce a marked free it did not receive",
+     fn () =>
+       let
+         val (received, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val (foreign, _) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [], w = received}],
+              store = store, level = 0}
+         fun forged _ =
+           seq.result
+             ([([], foreign)],
+              fn _ => raise Fail "a rejected validation was called")
+         val cs =
+           clasetLib.add_safe_wrapper
+             ("foreign-marker", fn _ => forged)
+             clasetLib.empty_cs
+       in
+         case seq.cases (clasetStep.safe_step cs (node, 1)) of
+             NONE => true
+           | SOME _ => false
+       end)
+
+val _ =
+  test
+    ("unrender rejects an unreceived marked type variable",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val (foreign_type, _) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val foreign =
+           Term.mk_var ("wrapper_foreign_type", foreign_type)
+         val forged = boolSyntax.mk_eq (foreign, foreign)
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [], w = meta}],
+              store = store, level = 0}
+         val result =
+           ([([], forged)],
+            fn _ => raise Fail "a rejected validation was called")
+       in
+         not (Option.isSome (clasetGoal.unrender node 1 result))
+       end)

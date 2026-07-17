@@ -63,11 +63,17 @@ sig
   val equal : node * node -> bool
   val compare : node * node -> order
 
-  (* D24 materialization stub.  Metavariables are represented by marked free
-     variables and are therefore rigid to HOL4 tactics.  This version can
-     lift results only when the rendered goal is metavariable-free; the full
-     marked-free round trip is completed later.  Replay recording is owned by
-     [record_step], not by [unrender]. *)
+  (* D24 materialization.  [render] exposes engine metavariables as their
+     reserved marked frees, so HOL4 tactics necessarily treat them as rigid.
+     [unrender] verifies and retains those same markers while lifting fresh
+     frees as eigenparameters; a result containing a marker absent from the
+     rendered input is rejected.  On this marked path it records the returned
+     validation as an opaque wrapper replay action.  The marker-free Phase-1
+     path remains a plain lift; its wrapper call site owns the same record.
+
+     Thus wrappers cannot instantiate engine metavariables.  Isabelle-style
+     solver-level wrapper instantiation remains an explicit Phase-3 option,
+     rather than weakening this rigid interface. *)
   val render : node -> int -> goal
   val unrender : node -> int -> goal list * validation -> node option
 end

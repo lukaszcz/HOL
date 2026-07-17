@@ -1178,15 +1178,14 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
                         clasetGoal.set_store (direct_store direct) node
                       val lifted =
                         if exact then
-                          case clasetGoal.unrender stored pos result of
-                              SOME next => SOME next
+                          case direct_children direct of
+                              SOME children =>
+                                SOME
+                                  (clasetGoal.replace_goal stored
+                                    {pos = pos, children = children,
+                                     store = direct_store direct})
                             | NONE =>
-                                Option.map
-                                  (fn children =>
-                                    clasetGoal.replace_goal stored
-                                      {pos = pos, children = children,
-                                       store = direct_store direct})
-                                  (direct_children direct)
+                                clasetGoal.unrender stored pos result
                         else clasetGoal.unrender stored pos result
                     in
                       case lifted of
@@ -1196,7 +1195,10 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
                               val record =
                                 make_record pos validation direct
                               val recorded =
-                                clasetGoal.record_step record next
+                                if clasetGoal.replay_length next >
+                                   clasetGoal.replay_length stored
+                                then next
+                                else clasetGoal.record_step record next
                             in
                               seq.cons (record, recorded) (lift rest)
                             end

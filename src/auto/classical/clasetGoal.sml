@@ -309,25 +309,43 @@ fun render node pos =
     val {asl, w, ...} = goal_at node pos
     val store = store node
   in
+    (* Unbound engine metavariables survive normalization as their marked
+       frees.  HOL4 tactics consequently see rigid variables, not holes. *)
     (map (norm_term store) asl, norm_term store w)
   end
 
-fun contains_marked_free terms =
-  List.exists clasetMeta.is_meta (free_varsl terms)
+fun member_term tm = List.exists (fn known => aconv tm known)
+fun member_type ty = List.exists (fn known => Type.compare (ty, known) = EQUAL)
 
-fun unrender node pos (new_goals, validation) =
+fun marked_terms terms =
+  List.filter clasetMeta.is_meta (free_varsl terms)
+
+fun marked_types terms =
+  List.filter clasetMeta.is_tymeta
+    (List.concat (map type_vars_in_term terms))
+
+fun variable_name variable = fst (dest_var variable)
+
+fun unrender node pos (result as (new_goals, validation)) =
   let
     val (asl, w) = render node pos
     val {params, ...} = goal_at node pos
-    val input_frees = free_varsl (params @ (w :: asl))
-    val clean_input = not (contains_marked_free (w :: asl))
-    val clean_output =
-      List.all
-        (fn (child_asl, child_w) =>
-          not (contains_marked_free (child_w :: child_asl)))
-        new_goals
-    fun is_new variable =
-      not (List.exists (fn known => aconv variable known) input_frees)
+    val input_terms = w :: asl
+    val output_terms =
+      List.concat
+        (map (fn (child_asl, child_w) => child_w :: child_asl)
+          new_goals)
+    val input_frees = free_varsl (params @ input_terms)
+    val received_terms = marked_terms input_terms
+    val received_types = marked_types input_terms
+    val returned_terms = marked_terms output_terms
+    val returned_types = marked_types output_terms
+    val known_markers =
+      List.all (fn tm => member_term tm received_terms) returned_terms
+      andalso
+      List.all (fn ty => member_type ty received_types) returned_types
+
+    fun is_new variable = not (member_term variable input_frees)
     fun lift_child (child_asl, child_w) =
       let
         val new_params =
@@ -336,6 +354,7 @@ fun unrender node pos (new_goals, validation) =
         ({params = params @ new_params,
           asl = child_asl, w = child_w}, new_params)
       end
+
     val lifted = map lift_child new_goals
     val output_params = List.concat (map #2 lifted)
     val globally_fresh =
@@ -343,19 +362,46 @@ fun unrender node pos (new_goals, validation) =
         (fn variable =>
           not (List.exists (fn old => aconv variable old) (avoids node)))
         output_params
+
+    fun register_all [] current = SOME current
+      | register_all (param :: rest) current =
+          if clasetMeta.is_eigen current param then
+            register_all rest current
+          else
+            case clasetMeta.register_eigen param current of
+                NONE => NONE
+              | SOME next => register_all rest next
   in
-    if not clean_input orelse not clean_output orelse not globally_fresh
-    then NONE
+    if not known_markers orelse not globally_fresh then NONE
     else
-      let
-        val children = map #1 lifted
-        val store' =
-          List.foldl register_param (store node) output_params
-      in
-        SOME
-          (replace_goal node
-            {pos = pos, children = children, store = store'})
-      end
+      case register_all output_params (store node) of
+          NONE => NONE
+        | SOME store' =>
+            let
+              val next =
+                replace_goal node
+                  {pos = pos, children = map #1 lifted, store = store'}
+            in
+              if List.null received_terms andalso
+                 List.null received_types
+              then SOME next
+              else
+                let
+                  val eigenvariables =
+                    map (map variable_name o #2) lifted
+                  val record =
+                    clasetReplay.make_record
+                      {kind = clasetReplay.Wrapper, target = pos,
+                       consumed = NONE,
+                       created = {terms = [], types = []},
+                       eigenvariables = eigenvariables,
+                       validation = validation,
+                       action = clasetReplay.fixed_action result,
+                       children = map (fn _ => NONE) new_goals}
+                in
+                  SOME (record_step record next)
+                end
+            end
   end
 
 end
