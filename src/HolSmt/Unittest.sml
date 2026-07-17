@@ -3146,12 +3146,19 @@ end
 fun smtlib_distinct_translation_success () =
 let
   val one = intSyntax.term_of_int (Arbint.fromInt 1)
+  fun all_distinct elements = listSyntax.mk_all_distinct
+    (listSyntax.mk_list (elements, intSyntax.int_ty))
+  fun smtlib_text goal =
+    let val (_, strings) = SmtLib.goal_to_SmtLib_translation NONE ([], goal)
+    in String.concat strings end
   val assertion = listSyntax.mk_all_distinct
     (listSyntax.mk_list ([one, one], intSyntax.int_ty))
   val (translation, strings) =
     SmtLib.goal_to_SmtLib_with_get_proof_translation NONE
       ([], boolSyntax.mk_neg assertion)
   val text = String.concat strings
+  val empty_text = smtlib_text (all_distinct [])
+  val singleton_text = smtlib_text (all_distinct [one])
 in
   assert (SmtLib.translation_logic translation = "QF_LIA",
     "Core.distinct internal list wrapper widened inferred logic to " ^
@@ -3160,7 +3167,13 @@ in
     "Core.distinct did not translate to direct SMT-LIB arguments:\n" ^ text);
   assert (not (contains "declare-datatypes" text),
     "Core.distinct internal list wrapper leaked a datatype declaration:\n" ^
-    text)
+    text);
+  assert (contains "(assert (not true))" empty_text andalso
+      not (contains "distinct" empty_text),
+    "empty ALL_DISTINCT did not translate to true:\n" ^ empty_text);
+  assert (contains "(assert (not true))" singleton_text andalso
+      not (contains "distinct" singleton_text),
+    "singleton ALL_DISTINCT did not translate to true:\n" ^ singleton_text)
 end
 
 fun smtlib_datatype_type_translation_success () =
@@ -3815,6 +3828,8 @@ in
     "repeated CPC conclusion did not produce exactly one cache hit");
   assert (#misses stats = 1,
     "first CPC explicit conclusion did not produce exactly one miss");
+  assert (cpc_profile_call_count "CPC(cache:hypfree_hit)" = 1,
+    "CPC cache test did not record its hypothesis-free hit under a stable key");
   assert (cpc_profile_call_count "CPC(handler:ProofRule/refl)" = 1,
     "CPC cache test did not execute its seed handler exactly once");
   assert (cpc_profile_call_count "CPC(handler:ProofRule/contra)" = 0,

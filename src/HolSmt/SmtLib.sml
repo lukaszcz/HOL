@@ -124,10 +124,13 @@ local
     (* The parser represents SMT-LIB Core.distinct as ALL_DISTINCT over a
        HOL list.  The list is only an internal n-ary encoding: emit its
        elements as the direct SMT-LIB arguments rather than translating the
-       wrapper as a datatype value. *)
+       wrapper as a datatype value.  SMT-LIB requires at least two arguments;
+       the corresponding shorter HOL lists are vacuously distinct. *)
     (listSyntax.all_distinct_tm, fn (_, ts) =>
       SmtLib_Theories.one_arg (fn list_tm =>
-        ("distinct", Lib.fst (listSyntax.dest_list list_tm))) ts),
+        case Lib.fst (listSyntax.dest_list list_tm) of
+          elements as _ :: _ :: _ => ("distinct", elements)
+        | _ => ("true", [])) ts),
     (boolSyntax.conditional, apfst_K "ite"),
     (* UnicodeStrings.  HOL strings are char lists; the encoding is native
        SMT-LIB String syntax with a semantic obligation recorded below. *)

@@ -40,9 +40,7 @@ local
   }
 
   type cached_theorem = {
-    thm : Thm.thm,
-    origin : string,
-    size : int
+    thm : Thm.thm
   }
 
   type state = {
@@ -62,7 +60,7 @@ local
     cache_stats = new_cache_stats ()
   }
 
-  fun cache_thm state origin thm =
+  fun cache_thm state thm =
     if not theorem_cache_enabled then
       (profile_event "CPC(cache:insert_disabled)";
        state)
@@ -78,7 +76,7 @@ local
       scope_hyps = #scope_hyps state,
       steps = #steps state,
       thm_cache = Net.insert (Thm.concl thm,
-        {thm = thm, origin = origin, size = Term.term_size (Thm.concl thm)})
+        {thm = thm})
         (#thm_cache state),
       cache_stats = stats
     } end
@@ -155,9 +153,7 @@ local
         (#hits stats := !(#hits stats) + 1;
          profile_event "CPC(cache:hit)";
          if HOLset.isEmpty (Thm.hypset (#thm cached)) then
-           profile_event ("CPC(cache:hypfree_hit:origin=" ^ #origin cached ^
-             ";size=" ^ Int.toString (#size cached) ^ ";conclusion=" ^
-             Library.term_to_string (Thm.concl (#thm cached)) ^ ")")
+           profile_event "CPC(cache:hypfree_hit)"
          else ();
          #thm cached)
     | NONE =>
@@ -2701,9 +2697,8 @@ local
             raise ERR "replay_step" ("CPC rule " ^ #name rule ^
               " produced a conclusion different from its certificate")) ()
       val state = cache_step state id thm
-      val origin = namespace_name (#namespace rule) ^ "/" ^ #name rule
     in
-      (if Option.isSome cached then state else cache_thm state origin thm, thm)
+      (if Option.isSome cached then state else cache_thm state thm, thm)
     end
 
   fun replay_commands state commands =
@@ -2712,19 +2707,19 @@ local
     | [ASSUME (id, tm)] =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (assert_hyp state tm) id thm
-        in (cache_thm state "assume" thm, thm) end
+        in (cache_thm state thm, thm) end
     | ASSUME (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (assert_hyp state tm) id thm
-        in replay_commands (cache_thm state "assume" thm) rest end
+        in replay_commands (cache_thm state thm) rest end
     | [ASSUME_PUSH (id, tm)] =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (push_scope_hyp state tm) id thm
-        in (cache_thm state "assume-push" thm, thm) end
+        in (cache_thm state thm, thm) end
     | ASSUME_PUSH (id, tm) :: rest =>
         let val thm = Thm.ASSUME tm
             val state = cache_step (push_scope_hyp state tm) id thm
-        in replay_commands (cache_thm state "assume-push" thm) rest end
+        in replay_commands (cache_thm state thm) rest end
     | [STEP step] => replay_step state step
     | STEP step :: rest =>
         let val (state, _) = replay_step state step
