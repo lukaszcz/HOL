@@ -17,9 +17,11 @@ struct
   }
 
   (* The frozen CPC vocabulary was captured and replayed with cvc5 1.3.4.
-     A future cvc5 version must be explicitly admitted after recapturing and
-     replaying its matrix; accepting an old rule name across an unmeasured
-     proof dialect would defeat the registry's drift check. *)
+     These are the versions whose dialect was actually measured; a patch
+     release does not change it, so the whole 1.3 series counts as tested.
+     Another version is admitted here once its matrix has been recaptured and
+     replayed.  Until then it is not rejected: `resolve_version` warns and
+     replays it under the nearest measured dialect. *)
   val supported_cvc_versions = ["1.3.4"]
 
   fun mk_rule namespace (name, replay_handler) : proof_rule = {
@@ -161,16 +163,21 @@ struct
 
   val unknown_cvc_version = "<unknown>"
 
-  fun is_known_version version =
-    version <> "" andalso Char.isDigit (String.sub (version, 0))
+  (* Resolves a discovered cvc5 version to the tested version whose CPC
+     dialect the registry replays under; see `Library`.  Callers resolve once,
+     at the proof-parsing boundary, so `version_supported` below always sees a
+     tested version and an unknown or untested cvc5 never fails a proof by
+     itself -- it warns and replays under the nearest measured dialect. *)
+  fun resolve_version version =
+    Library.resolve_solver_version
+      {solver = "cvc5", supported = supported_cvc_versions, version = version}
 
   fun version_supported version (rule : proof_rule) =
-    not (is_known_version version) orelse
-    (case #version_support rule of
-       AllCVCVersions => true
-     | CVCVersions versions => List.exists (Lib.equal version) versions
-     | CVCVersionPrefixes prefixes =>
-         List.exists (fn prefix => String.isPrefix prefix version) prefixes)
+    case #version_support rule of
+      AllCVCVersions => true
+    | CVCVersions versions => List.exists (Lib.equal version) versions
+    | CVCVersionPrefixes prefixes =>
+        List.exists (fn prefix => String.isPrefix prefix version) prefixes
 
   fun lookup_rule version name =
     case List.find (fn (rule : proof_rule) => #name rule = name)

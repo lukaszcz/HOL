@@ -746,6 +746,9 @@ local
 in
   fun parse_stream_with_version (dicts : dicts) version instream : proof =
     let
+      (* Resolve once, here: everything downstream -- rule lookup, gating and
+         diagnostics -- then works with a tested version. *)
+      val version = resolve_version version
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
       val get_token = Library.get_token (Library.get_buffered_char instream)

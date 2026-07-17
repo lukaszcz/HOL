@@ -25,8 +25,35 @@ structure SolverSpec = struct
   fun wall_timeout_seconds () =
     (configured_timeout_milliseconds () + 999) div 1000 + 1
 
+  (* The wall timeout is only a backstop: each solver is additionally asked to
+     limit itself via its own command-line option.  `timeout` is GNU coreutils
+     and is absent on macOS/BSD, where a coreutils install provides `gtimeout`
+     instead.  Probe once, and run the solver unwrapped when neither is
+     available rather than failing every query with "command not found". *)
+  val wall_timeout_command : string option option ref = ref NONE
+
+  fun find_wall_timeout_command () =
+    case !wall_timeout_command of
+      SOME cached => cached
+    | NONE =>
+      let
+        val found = List.find Library.command_available ["timeout", "gtimeout"]
+        val () =
+          if Option.isSome found orelse !Library.trace < 1 then
+            ()
+          else
+            Feedback.HOL_WARNING "SolverSpec" "find_wall_timeout_command"
+              ("neither 'timeout' nor 'gtimeout' found on PATH; SMT solvers " ^
+               "will run without a wall-clock timeout")
+      in
+        wall_timeout_command := SOME found; found
+      end
+
   fun with_wall_timeout cmd =
-    "timeout " ^ Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
+    case find_wall_timeout_command () of
+      SOME command =>
+        command ^ " " ^ Int.toString (wall_timeout_seconds ()) ^ " " ^ cmd
+    | NONE => cmd
 
   (* calls 'pre' (which is supposed to translate a HOL goal into a list of
      strings that the SMT solver will understand); writes these strings into a

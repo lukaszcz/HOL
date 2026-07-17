@@ -3,12 +3,31 @@
 structure CVC = struct
 
   (* returns SAT if cvc5 reported "sat", UNSAT if cvc5 reported "unsat" *)
-  fun is_sat_stream instream =
-    case Option.map (String.tokens Char.isSpace) (TextIO.inputLine instream) of
-      NONE => SolverSpec.UNKNOWN NONE
-    | SOME ["sat"] => SolverSpec.SAT NONE
-    | SOME ["unsat"] => SolverSpec.UNSAT NONE
-    | _ => is_sat_stream instream
+  (* cvc5 diagnoses some errors without giving up -- an unsupported command is
+     reported and the verdict still follows -- so an `(error ...)` line must
+     not abort the scan the way it does for Z3.  Remember the first one and
+     use it as the reason when the stream ends with no verdict at all, rather
+     than returning a bare UNKNOWN that discards what cvc5 said. *)
+  fun is_sat_stream_with_error first_error instream =
+    case TextIO.inputLine instream of
+      NONE => SolverSpec.UNKNOWN first_error
+    | SOME line =>
+        let
+          val trimmed = Substring.string
+            (Substring.dropl Char.isSpace (Substring.full line))
+        in
+          if String.isPrefix "(error" trimmed then
+            is_sat_stream_with_error
+              (case first_error of NONE => SOME line | _ => first_error)
+              instream
+          else
+            case String.tokens Char.isSpace line of
+              ["sat"] => SolverSpec.SAT NONE
+            | ["unsat"] => SolverSpec.UNSAT NONE
+            | _ => is_sat_stream_with_error first_error instream
+        end
+
+  fun is_sat_stream instream = is_sat_stream_with_error NONE instream
 
   fun is_sat_file path =
     let
@@ -46,15 +65,34 @@ structure CVC = struct
 
   val error_msg = "CVC not configured: set the HOL4_CVC_EXECUTABLE environment variable to point to the cvc5 executable file.";
 
+  fun is_version_token token =
+    token <> "" andalso Char.isDigit (String.sub (token, 0))
+
+  (* cvc5 announces itself either as `cvc5 1.3.4 [git ...]` or, in older
+     releases, as `This is cvc5 version 1.1.2`.  Anchoring at the first token
+     recognizes only the former and reports every other build as
+     `unknown_cvc_version`, which costs the version its say in which measured
+     dialect `CPC_Proof.resolve_version` replays it under.  Look for the
+     `cvc5` marker anywhere instead, and take the version-shaped token that
+     follows it. *)
   fun parse_cvc_version fname =
     let
       val instrm = TextIO.openIn fname
       val text = TextIO.inputAll instrm before TextIO.closeIn instrm
-      val tokens = String.tokens Char.isSpace text
+      fun version_after ("version" :: rest) = version_after rest
+        | version_after (token :: _) =
+            if is_version_token token then SOME token else NONE
+        | version_after [] = NONE
+      fun scan [] = NONE
+        | scan ("cvc5" :: rest) =
+            (case version_after rest of
+               SOME version => SOME version
+             | NONE => scan rest)
+        | scan (_ :: rest) = scan rest
     in
-      case tokens of
-        "cvc5" :: version :: _ => version
-      | _ => CPC_Proof.unknown_cvc_version
+      case scan (String.tokens Char.isSpace text) of
+        SOME version => version
+      | NONE => CPC_Proof.unknown_cvc_version
     end
     handle _ => CPC_Proof.unknown_cvc_version
 
@@ -74,10 +112,21 @@ structure CVC = struct
 
   fun version_string () = CVCversion
 
+  (* Ask cvc5 to limit itself, so that `SolverSpec`'s wall timeout stays a
+     backstop rather than the only mechanism.  `--tlimit-per` bounds each
+     query and still reports `unknown`; `--tlimit` aborts without printing a
+     verdict, which is indistinguishable from a crash. *)
+  fun timeout_option () =
+    " --tlimit-per=" ^
+    Int.toString (SolverSpec.configured_timeout_milliseconds ())
+
+  fun with_timeout_option cmd_stem = timeout_option () ^ cmd_stem
+
   fun mk_CVC_fun name pre cmd_stem post goal =
     case configured_executable () of
       SOME file =>
-        SolverSpec.make_solver pre (file ^ cmd_stem) post goal
+        SolverSpec.make_solver pre (file ^ with_timeout_option cmd_stem) post
+          goal
     | NONE =>
       raise Feedback.mk_HOL_ERR "CVC" name error_msg
 
@@ -114,7 +163,8 @@ structure CVC = struct
     case configured_executable () of
       SOME file =>
         SolverSpec.make_solver_with_capture
-          (SOME (cpc_capture cmd_stem)) pre (file ^ cmd_stem) post goal
+          (SOME (cpc_capture cmd_stem)) pre
+          (file ^ with_timeout_option cmd_stem) post goal
     | NONE =>
       raise Feedback.mk_HOL_ERR "CVC" name error_msg
 

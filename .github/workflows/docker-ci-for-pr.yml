@@ -36,7 +36,6 @@ jobs:
       fail-fast: false
       matrix:
         z3-version:
-          - 2.19.1
           - 4.12.4
           - 4.13.0
     steps:

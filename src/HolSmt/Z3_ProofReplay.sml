@@ -1501,8 +1501,7 @@ local
     (* Keep SIMP_TAC for conditional rewrites.  A 2026-07-08 Poly/ML 5.9.2
        retry with PURE_REWRITE_TAC did not reproduce the old segfault in the
        unit phase, but the full selftest run did not finish promptly after
-       entering functional tests.  See:
-       .agent-files/reports/TASK_22_c6/C6_TRIAGE.md *)
+       entering functional tests. *)
     val COND_REWRITE_TAC = simpLib.SIMP_TAC
       simpLib.empty_ss [boolTheory.COND_RAND, boolTheory.COND_RATOR]
   in
@@ -2183,23 +2182,32 @@ local
       thm
     else
       let
+        (* Discharging a ground definition is an optimization, not an
+           obligation: anything left behind stays an ordinary hypothesis for
+           `remove_hyps` to deal with, exactly as it did before this shortcut
+           existed.  A definition that does not evaluate is therefore skipped
+           rather than failing the whole replay. *)
         fun prove_ground_def def =
           let
             val thm = bossLib.EVAL def
           in
             if boolSyntax.is_eq (Thm.concl thm) andalso
                Lib.snd (boolSyntax.dest_eq (Thm.concl thm)) ~~ boolSyntax.T
-            then Drule.EQT_ELIM thm
-            else raise ERR "remove_definitions" "definition is not evaluable"
+            then SOME (Drule.EQT_ELIM thm)
+            else NONE
           end
+          handle Feedback.HOL_ERR _ => NONE
         fun is_var_def def =
           boolSyntax.is_eq def andalso
           Term.is_var (Lib.fst (boolSyntax.dest_eq def))
         val (ground_defs, defs) =
           List.partition (not o is_var_def) (HOLset.listItems defs)
         val defs = HOLset.addList (Term.empty_tmset, defs)
-        val thm = HOLset.foldl
-          (fn (def, thm) => Drule.PROVE_HYP (prove_ground_def def) thm)
+        fun discharge_ground_def (def, thm) =
+          case prove_ground_def def of
+            SOME def_thm => Drule.PROVE_HYP def_thm thm
+          | NONE => thm
+        val thm = HOLset.foldl discharge_ground_def
           thm (HOLset.addList (Term.empty_tmset, ground_defs))
       in
         if HOLset.isEmpty defs then thm
@@ -2432,9 +2440,7 @@ local
   (* Workaround for a Z3 proof issue where a `hypothesis` rule introduces the
      literal tautology `p = p` and no later `lemma` rule discharges it.  Keep
      this intentionally narrow: other reflexive equalities are not known Z3
-     artifacts and should not be silently removed.  Ready-to-file upstream
-     draft:
-     .agent-files/reports/TASK_22_c6/upstream_issues/z3_undischarged_p_eq_p_hypothesis.md *)
+     artifacts and should not be silently removed. *)
   fun is_spurious_p_eq_p hyp =
     if boolSyntax.is_eq hyp then
       let

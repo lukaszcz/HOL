@@ -1458,6 +1458,12 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3(*, thm_Z3p*)]),
     (``~ 0w >=+ 0w:word32``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* A word atom must not stop the num-to-int transfer when the naturals it
+       guards never meet the word theory: `DIV` is only in the SMT-LIB
+       fragment once `x` has been transferred to an integer. *)
+    (``((w:word8) && v = v && w) /\ ((x:num) DIV 2 <= x)``,
+      [thm_CVC, thm_Z3, thm_Z3p]),
+
     (* from Magnus Myreen *)
     (``!(a:word32) b.
      (((word_msb (a - b) <=>

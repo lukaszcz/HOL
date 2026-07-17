@@ -55,9 +55,8 @@ local
      proofterm-shaped term before replay can tell that it was the conclusion.
 
      A format-level fix would make premises an explicit list, e.g. by
-     parenthesizing the premises before the conclusion.  See the ready-to-file
-     upstream draft:
-     .agent-files/reports/TASK_22_c6/upstream_issues/z3_proofterm_term_ambiguity.md *)
+     parenthesizing the premises before the conclusion.  That is an upstream
+     Z3 change; nothing here can remove the ambiguity on its own. *)
 
   val pt_ty = Type.mk_vartype "'pt"
   val th_lemma_metadata_ty = listSyntax.mk_list_type stringSyntax.string_ty
@@ -239,9 +238,10 @@ local
     ("select-store",    builtin_name "select-store"),
     ("triangle-eq",     builtin_name "triangle-eq"),
 
-    (* Z3 proof dialect shims keyed to C1:
+    (* Z3 proof dialect shims, keyed to a rule inventory measured over the
+       4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3 proof corpora:
 
-       token/function        C1 4.x corpus status              decision
+       token/function        4.x corpus status                 decision
        iff                  not observed as a proof token      keep
        implies              not observed as a proof token      keep
        ~, binary            not observed as a proof token      keep
@@ -249,10 +249,9 @@ local
        _, negative/fraction not observed as a proof token      keep
 
        These are not proof rules; they let proof-local Z3 terms parse even
-       when Z3 prints non-SMT-LIB spellings inside proofs.  The C1 inventory
-       did not show a corpus-dead extra shim to drop in the available 4.11.2,
-       4.12.4, 4.13.0, 4.14.1, and 4.15.3 proofs.  See:
-       .agent-files/reports/C1/C1_rule_inventory.md *)
+       when Z3 prints non-SMT-LIB spellings inside proofs.  The inventory did
+       not show a corpus-dead extra shim to drop in those proofs, so all of
+       them are kept. *)
     ("iff", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
     ("implies", SmtLib_Theories.K_zero_two boolSyntax.mk_imp),
     (* equivalence modulo naming *)
@@ -741,6 +740,9 @@ in
   fun parse_stream_with_version ((tydict, tmdict): SmtLib_Parser.dicts)
     (z3_version : string) (instream : TextIO.instream) : proof =
   let
+    (* Resolve once, here: everything downstream -- rule lookup, gating and
+       diagnostics -- then works with a tested anchor. *)
+    val z3_version = resolve_version z3_version
     (* union of user-declared names and Z3's inference rule names *)
     val tmdict = Library.union_dict tmdict z3_builtin_dict
     (* parse the stream *)

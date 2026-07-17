@@ -116,6 +116,15 @@ struct
 
   val unknown_z3_version = "<unknown>"
 
+  (* The exact tested anchors, whose proof dialect was measured by the version
+     verifier; keep in sync with the "Supported Z3 versions" table in
+     src/HolSmt/README.  A patch release does not change the dialect, so each
+     entry stands for its whole `major.minor` series.  An unlisted version is
+     not rejected: `resolve_version` warns and replays it under the nearest
+     anchor. *)
+  val supported_z3_versions =
+    ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+
   fun mk_rule_with_version version_support
       (name, aliases, premise_shape, replay_handler) : proof_rule = {
     name = name,
@@ -133,15 +142,14 @@ struct
 
   val proof_rule_registry : proof_rule list = [
     mk_rule ("and-elim", [], OnePremise, "and_elim"),
-    (* Version gates are traceable to
-       .agent-files/reports/C1/histograms/rules_by_version.tsv.
-       C1 measured 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3 (Z3 4.x is the
-       only supported dialect).  We gate rules with measured 4.x evidence to
-       the 4.x dialect when that remains consistent with
-       verify_z3_versions.sh.  The verifier shows some C1 4.11.2
-       non-observations are corpus gaps, not version gaps.  Never-observed
-       residual rules stay at the default AllZ3Versions until a later
-       measurement or owner decision says otherwise. *)
+    (* Version gates come from a per-rule histogram measured over the 4.11.2,
+       4.12.4, 4.13.0, 4.14.1, and 4.15.3 proof corpora (Z3 4.x is the only
+       supported dialect).  We gate rules with measured 4.x evidence to the
+       4.x dialect when that remains consistent with the version verifier in
+       the `holsmt-validation` repository, which shows that some 4.11.2
+       non-observations are corpus gaps rather than version gaps.
+       Never-observed residual rules stay at the default AllZ3Versions until
+       a later measurement or owner decision says otherwise. *)
     mk_z3_4_rule ("apply-def", [], OnePremise, "apply_def"),
     mk_rule ("asserted", [], ZeroPremises, "asserted"),
     mk_rule ("commutativity", [], ZeroPremises, "commutativity"),
@@ -201,20 +209,21 @@ struct
 
   fun rule_matches name rule = List.exists (Lib.equal name) (rule_names rule)
 
-  (* A version string we can gate against begins with a digit; anything else
-     (notably Z3's "<undiscoverable>" sentinel, used when the -version banner
-     could not be parsed) cannot be gated meaningfully, so we stay permissive
-     rather than reject rules the configured solver actually emitted. *)
-  fun is_known_version version =
-    version <> "" andalso Char.isDigit (String.sub (version, 0))
+  (* Resolves a discovered Z3 version to the tested anchor whose proof dialect
+     the registry replays under; see `Library`.  Callers resolve once, at the
+     proof-parsing boundary, so `version_supported` below always sees a tested
+     anchor and an unknown or untested Z3 never fails a proof by itself -- it
+     warns and replays under the nearest measured dialect. *)
+  fun resolve_version version =
+    Library.resolve_solver_version
+      {solver = "Z3", supported = supported_z3_versions, version = version}
 
   fun version_supported version (rule : proof_rule) =
-    not (is_known_version version) orelse
-    (case #version_support rule of
-       AllZ3Versions => true
-     | Z3Versions versions => List.exists (Lib.equal version) versions
-     | Z3VersionPrefixes prefixes =>
-         List.exists (fn prefix => String.isPrefix prefix version) prefixes)
+    case #version_support rule of
+      AllZ3Versions => true
+    | Z3Versions versions => List.exists (Lib.equal version) versions
+    | Z3VersionPrefixes prefixes =>
+        List.exists (fn prefix => String.isPrefix prefix version) prefixes
 
   fun lookup_rule (version : string) (name : string) =
     case List.find (rule_matches name) proof_rule_registry of

@@ -43,6 +43,128 @@ struct
     TextIO.closeOut outstream
   end
 
+  (* true if 'name' can be found on the current PATH *)
+  fun command_available name =
+    OS.Process.isSuccess
+      (OS.Process.system ("command -v " ^ name ^ " > /dev/null 2>&1"))
+    handle _ => false
+
+  (***************************************************************************)
+  (* solver versions                                                         *)
+  (***************************************************************************)
+
+  (* The `major.minor` series of a dotted version string, ignoring the patch
+     level.  NONE when the string is not version-shaped at all, which is how
+     the `<unknown>`/`<undiscoverable>` sentinels that stand in for a version
+     that could not be discovered are told apart from a real one. *)
+  fun version_series version =
+    case String.tokens (fn c => c = #".") version of
+      [] => NONE
+    | major :: rest =>
+      (case Int.fromString major of
+         NONE => NONE
+       | SOME major =>
+         let
+           val minor =
+             case rest of
+               minor :: _ => Option.getOpt (Int.fromString minor, 0)
+             | [] => 0
+         in
+           SOME (major, minor)
+         end)
+
+  fun version_compare (version1, version2) =
+    let
+      fun components version =
+        List.map (fn token => Option.getOpt (Int.fromString token, 0))
+          (String.tokens (fn c => c = #".") version)
+    in
+      List.collate Int.compare (components version1, components version2)
+    end
+
+  val warned_solver_versions = ref ([] : string list)
+
+  fun warn_solver_version key message =
+    if List.exists (fn warned => warned = key) (!warned_solver_versions) then
+      ()
+    else
+      (warned_solver_versions := key :: !warned_solver_versions;
+       if !trace > 0 then
+         Feedback.HOL_WARNING "Library" "resolve_solver_version" message
+       else ())
+
+  (* Resolves a configured solver version to the tested version whose proof
+     dialect the rule registries should replay under.  A patch release does
+     not change the dialect, so a version whose `major.minor` matches a tested
+     one resolves to it silently.  Anything else warns once and still
+     proceeds: an untested version replays under the nearest tested version,
+     an undiscoverable one under the latest.  An unknown or untested solver is
+     never by itself a reason to refuse replay. *)
+  fun resolve_solver_version {solver : string, supported : string list,
+                              version : string} =
+    case supported of
+      [] => version
+    | first :: _ =>
+      let
+        val series_compare = Lib.pair_compare (Int.compare, Int.compare)
+        fun later (version, best) =
+          if version_compare (version, best) = GREATER then version else best
+        val latest = List.foldl later first supported
+        fun warn message = warn_solver_version (solver ^ "/" ^ version) message
+      in
+        case version_series version of
+          NONE =>
+            (warn ("the " ^ solver ^ " version could not be determined; " ^
+                   "replaying proofs under the tested version " ^ latest);
+             latest)
+        | SOME series =>
+          let
+            (* Bracket `series` by the tested versions on either side of it.
+               Minor numbers restart with each major, so they cannot be
+               subtracted across majors; ordering is the only sound way to say
+               which tested version a given one sits nearest to.  `side`
+               selects the candidates on one side of `series`, and `prefer`
+               picks whichever of them lies closest to it. *)
+            fun nearest side prefer =
+              List.foldl
+                (fn (candidate, best) =>
+                  case version_series candidate of
+                    NONE => best
+                  | SOME candidate_series =>
+                    if side (series_compare (candidate_series, series)) then
+                      case best of
+                        NONE => SOME candidate
+                      | SOME incumbent =>
+                        if version_compare (candidate, incumbent) = prefer then
+                          SOME candidate
+                        else best
+                    else best)
+                NONE supported
+            val below = nearest (fn order => order <> GREATER) GREATER
+            val above = nearest (fn order => order <> LESS) LESS
+            val resolved =
+              case (below, above) of
+                (SOME lower, SOME upper) =>
+                  (* `series` is tested, or sits in a gap between two tested
+                     versions; prefer the newer side of a gap. *)
+                  if version_series lower = SOME series then lower
+                  else if version_series upper = SOME series then upper
+                  else upper
+              | (SOME lower, NONE) => lower   (* newer than every tested one *)
+              | (NONE, SOME upper) => upper   (* older than every tested one *)
+              | (NONE, NONE) => latest
+          in
+            if version_series resolved = SOME series then
+              resolved
+            else
+              (warn (solver ^ " version " ^ version ^ " is not among the " ^
+                     "tested versions " ^ String.concatWith ", " supported ^
+                     "; replaying proofs under the nearest of them, " ^
+                     resolved);
+               resolved)
+          end
+      end
+
   (* returns a function that returns the next character in 'instream'
      and raises 'HOL_ERR' when at the end of 'instream' *)
   fun get_buffered_char instream : unit -> char =

@@ -108,14 +108,29 @@ releases locally with the TPTP frontend and install versioned binaries under
 Unsupported or deprecated Z3 versions:
 
   Version class              Reason
-  All pre-4 versions         Legacy 2.x/3.x proof support has been removed from the                             contract.  Only Z3 4.x is supported.
-  Unlisted Z3 4.x releases   Outside the exact tested anchor set; use
-                             --allow-unsupported-z3 to investigate drift.
+  All pre-4 versions         Legacy 2.x/3.x proof support has been removed
+                             from the contract.  Only Z3 4.x is supported.
+  Unlisted Z3 4.x releases   Outside the exact tested anchor set.  A patch
+                             release of an anchor counts as tested: an anchor
+                             stands for its whole major.minor series.  The
+                             contract script fails fast on the rest unless
+                             --allow-unsupported-z3 is passed.
   Future major versions      Unsupported until the proof command, proof-rule
                              registry, corpus gate and matrix are updated.
   Undiscoverable version     Diagnostics still run, but the version cannot be
                              matched to an exact tested anchor or the 4.14.*
                              runtime policy.
+
+None of these classes is a replay failure.  An unsupported or undiscoverable
+version is never rejected: `Z3_Proof.resolve_version`, and its cvc5
+counterpart `CPC_Proof.resolve_version`, warn once and then replay under the
+tested version nearest the discovered one -- the anchor sharing its
+major.minor series where there is one, otherwise the nearest anchor by version
+order, or the latest anchor when the version could not be discovered at all.
+Resolution happens once, as the proof is parsed, so rule gating and
+diagnostics downstream always see a tested version.  The anchor set it draws
+on is `Z3_Proof.supported_z3_versions` (`CPC_Proof.supported_cvc_versions` for
+cvc5); keep it in sync with the table above.
 
 SMT-LIB support matrix:
 

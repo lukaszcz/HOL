@@ -2389,14 +2389,32 @@ in
      Type.compare (Term.type_of atom, numSyntax.num) = EQUAL) orelse
     is_num_transfer_const atom
 
-  fun goal_has_word (asms, concl) =
-  let
-    val atoms = Term.all_atomsl (concl :: asms) Term.empty_tmset
-  in
-    HOLset.foldl
-      (fn (atom, seen) => seen orelse type_contains_word (Term.type_of atom))
-      false atoms
-  end
+  fun term_is_num tm =
+    Type.compare (Term.type_of tm, numSyntax.num) = EQUAL
+
+  (* True when a natural in `tm` meets the word theory, in either of the two
+     ways the transfer cannot follow: as an argument of a word symbol, because
+     `word_extract` and friends require indices that stay literal numerals
+     (see `builtin_symbols`) whereas the transfer rewrites them into `Num`
+     applications; or as a natural computed from a word, such as `w2n w`, for
+     which there is no transferred counterpart.  Naturals and words that never
+     meet -- a goal reasoning about both independently -- are unaffected, and
+     their naturals still transfer. *)
+  fun num_meets_word tm =
+    (term_is_num tm andalso
+     List.exists (fn sub => type_contains_word (Term.type_of sub))
+       (subterms tm))
+    orelse
+    let
+      val (rator, rands) = boolSyntax.strip_comb tm
+    in
+      type_contains_word (Term.type_of rator) andalso
+      List.exists term_is_num rands
+    end
+
+  fun goal_entangles_num_and_word (asms, concl) =
+    List.exists num_meets_word
+      (List.concat (List.map subterms (concl :: asms)))
 
   fun goal_mentions_num (asms, concl) =
   let
@@ -2414,7 +2432,7 @@ in
     open Tactic Tactical
     val undisch_assums = MAP_EVERY UNDISCH_TAC (#1 g)
   in
-    if goal_mentions_num g andalso not (goal_has_word g) then
+    if goal_mentions_num g andalso not (goal_entangles_num_and_word g) then
       (undisch_assums THEN
        SPEC_NUM_FREE_VARS_TAC THEN
        CONV_TAC NUM_TO_INT_CONV THEN

@@ -3687,28 +3687,38 @@ in
   | _ => die "FAIL: CPC parser did not accept a singleton bare :premises id"
 end
 
-fun cpc_proof_parser_version_gate_diagnostic () =
+(* An untested cvc5 version is never a reason to refuse a proof: it resolves
+   to the nearest tested version and replays under that dialect.  A patch
+   release shares its series' dialect, and an undiscoverable version falls
+   back to the latest tested one. *)
+fun cpc_proof_parser_version_resolution_success () =
 let
-  val gated_rule = "refl"
-  val gated_version = "1.4.0"
+  fun expect_resolved version expected =
+    let val resolved = CPC_Proof.resolve_version version in
+      assert (resolved = expected,
+        "cvc5 version " ^ version ^ " resolved to " ^ resolved ^
+        ", expected " ^ expected)
+    end
   val dicts = SmtLib_Logics.parsedicts_of_logic "ALL"
   val instream = TextIO.openString
     "((step @p1 :rule refl :args (false)))"
 in
-  assert (not (Option.isSome
-      (CPC_Proof.lookup_rule gated_version gated_rule)),
-    "version-gated CPC proof rule unexpectedly resolved");
-  (ignore (CPC_ProofParser.parse_stream_with_version dicts gated_version
-      instream);
-   die "FAIL: version-gated CPC proof rule parsed successfully")
+  (* same major.minor series as the tested 1.3.4 *)
+  expect_resolved "1.3.0" "1.3.4";
+  (* untested versions resolve to the nearest tested one, either side *)
+  expect_resolved "1.4.0" "1.3.4";
+  expect_resolved "1.1.2" "1.3.4";
+  (* an undiscoverable version resolves to the latest tested one *)
+  expect_resolved CPC_Proof.unknown_cvc_version "1.3.4";
+  (* a rule pinned to 1.3.4 resolves once the version has been resolved *)
+  assert (Option.isSome
+      (CPC_Proof.lookup_rule (CPC_Proof.resolve_version "1.4.0") "refl"),
+    "CPC rule did not resolve under a resolved untested cvc5 version");
+  (* and parsing an untested version succeeds rather than failing *)
+  ignore (CPC_ProofParser.parse_stream_with_version dicts "1.4.0" instream)
   handle Feedback.HOL_ERR holerr =>
-    let val msg = Feedback.message_of holerr in
-      assert (String.isSubstring
-          ("rule " ^ gated_rule ^ " is not supported by cvc5 version " ^
-           gated_version) msg,
-        "CPC version-gate diagnostic did not report the precise rule/version: " ^
-        msg)
-    end
+    die ("FAIL: untested cvc5 version failed to parse: " ^
+      Feedback.message_of holerr)
 end
 
 fun cpc_proof_replay_contra_success () =
@@ -4115,30 +4125,40 @@ fun z3_proof_parser_unknown_rule_diagnostic () =
         "unknown-rule diagnostic did not include Z3 version: " ^ msg)
     end
 
-fun z3_proof_parser_version_gate_diagnostic () =
+(* An untested Z3 version is never a reason to refuse a proof: it resolves to
+   the nearest tested anchor and replays under that dialect.  A patch release
+   shares its series' dialect, and an undiscoverable version falls back to the
+   latest anchor. *)
+fun z3_proof_parser_version_resolution_success () =
 let
-  val gated_rule = "apply-def"
-  (* A hypothetical non-4.x version used purely to probe that the version gate
-     REJECTS out-of-range versions.  It is not a supported version (only Z3 4.x
-     is supported); it must merely fail the "4." prefix so `apply-def` does not
-     resolve. *)
-  val gated_version = "3.0.0"
-in
-  assert (not (Option.isSome
-      (Z3_Proof.lookup_rule gated_version gated_rule)),
-    "version-gated proof rule unexpectedly resolved");
-  (ignore (parse_z3_proof_string gated_version
-    "((proof (apply-def (asserted false) false)))");
-   die "FAIL: version-gated Z3 proof rule parsed successfully")
-  handle Feedback.HOL_ERR holerr =>
-    let val msg = Feedback.message_of holerr
-    in
-      assert (String.isSubstring
-          ("rule " ^ gated_rule ^ " not supported by Z3 version " ^
-           gated_version) msg,
-        "version-gate diagnostic did not report the precise rule/version: " ^
-        msg)
+  fun expect_resolved version expected =
+    let val resolved = Z3_Proof.resolve_version version in
+      assert (resolved = expected,
+        "Z3 version " ^ version ^ " resolved to " ^ resolved ^
+        ", expected " ^ expected)
     end
+in
+  (* patch releases share their series' anchor *)
+  expect_resolved "4.13.7" "4.13.0";
+  expect_resolved "4.11.0" "4.11.2";
+  (* untested versions resolve to the nearest anchor *)
+  expect_resolved "4.9.1" "4.11.2";
+  expect_resolved "4.16.0" "4.15.3";
+  (* a pre-4 version is untested rather than fatal *)
+  expect_resolved "3.0.0" "4.11.2";
+  (* an undiscoverable version resolves to the latest anchor *)
+  expect_resolved Z3_Proof.unknown_z3_version "4.15.3";
+  (* `apply-def` is gated to the "4." prefix; it resolves once the version
+     has been resolved, even though "3.0.0" itself would not match *)
+  assert (Option.isSome
+      (Z3_Proof.lookup_rule (Z3_Proof.resolve_version "3.0.0") "apply-def"),
+    "Z3 rule did not resolve under a resolved untested version");
+  (* and parsing an untested version succeeds rather than failing *)
+  ignore (parse_z3_proof_string "3.0.0"
+    "((proof (apply-def (asserted false) false)))")
+  handle Feedback.HOL_ERR holerr =>
+    die ("FAIL: untested Z3 version failed to parse: " ^
+      Feedback.message_of holerr)
 end
 
 fun z3_proof_parser_rule_name_term_boundary () =
@@ -5345,8 +5365,8 @@ let
       cpc_proof_parser_declarations_success),
     ("cpc_proof_parser_singleton_premise_success",
       cpc_proof_parser_singleton_premise_success),
-    ("cpc_proof_parser_version_gate_diagnostic",
-      cpc_proof_parser_version_gate_diagnostic),
+    ("cpc_proof_parser_version_resolution_success",
+      cpc_proof_parser_version_resolution_success),
     ("cpc_proof_replay_contra_success",
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
@@ -5405,8 +5425,8 @@ let
       z3_proof_parser_datatype_th_lemma_metadata_success),
     ("z3_proof_parser_unknown_rule_diagnostic",
       z3_proof_parser_unknown_rule_diagnostic),
-    ("z3_proof_parser_version_gate_diagnostic",
-      z3_proof_parser_version_gate_diagnostic),
+    ("z3_proof_parser_version_resolution_success",
+      z3_proof_parser_version_resolution_success),
     ("z3_proof_parser_rule_name_term_boundary",
       z3_proof_parser_rule_name_term_boundary),
     ("z3_proof_parser_is_int_translation_collision_success",

@@ -598,10 +598,14 @@ in
     orelse symbol_name_is_prefix "smtlib_re_" tm
     orelse symbol_name_is_prefix "re." tm
 
+  (* Unlike the string and floating-point theories, no bitvector symbol is
+     parsed into an abstract constant, so there is no bare-name rung here: the
+     SMT-LIB bitvector operators all become `wordsSyntax` constants, which this
+     exemption never sees.  A bare "bv" prefix would only ever match a user
+     symbol that happens to be named `bvar`, `bvec`, ... *)
   fun term_mentions_bitvector_theory tm =
     term_type_contains type_contains_word tm
     orelse symbol_name_is_prefix "smtlib_bv" tm
-    orelse symbol_name_is_prefix "bv" tm
 
   fun type_contains_free_sort ty =
     type_contains

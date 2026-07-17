@@ -99,6 +99,11 @@ structure Z3 = struct
       SOME version => version
     | NONE => "<undiscoverable>"
 
+  fun major_version version =
+    case String.tokens (fn c => c = #".") version of
+      major :: _ => SOME major
+    | [] => NONE
+
   val z3_414_affected_array_logics = [
     "ALIRA", "ANIA", "ANIRA",
     "AUFDTLIA", "AUFDTLIRA", "AUFDTNIRA", "AUFBVDT"
@@ -155,10 +160,16 @@ structure Z3 = struct
       " -smt2 -file:"
       (Lib.K is_sat_file)
 
-  (* Only Z3 4.x is supported; legacy 2.x (PROOF_MODE) has been removed, so
-     there is no longer a version conditional here.  A non-4.x binary is simply
-     unsupported. *)
-  fun is_v4_configured () = is_configured ()
+  (* Only Z3 4.x is supported: legacy 2.x/3.x proof support (PROOF_MODE) has
+     been removed, and those binaries reject the 4.x command line outright.
+     Callers use this to skip tests rather than fail them, so a version that
+     cannot be discovered counts as unsupported. *)
+  fun is_v4 () =
+    case configured_version () of
+      SOME version => major_version version = SOME "4"
+    | NONE => false
+
+  fun is_v4_configured () = is_configured () andalso is_v4 ()
 
   (* disable `pp.simplify_implies` so that Z3's AST pretty-printer doesn't
      mangle `asserted` proof rules, which would cause a mismatch against the
