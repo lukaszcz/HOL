@@ -23,6 +23,13 @@ sig
   val is_tymeta : hol_type -> bool
   val is_eigen : store -> term -> bool
   val ground : store -> store
+
+  (* Raw persistent bindings support search-subtree diffs.  Unlike
+     [collapse], residues are not normalized, so dependency chains remain
+     visible to dynamic pruning. *)
+  val bindings : store ->
+                 {terms : (meta * term) list,
+                  types : (tymeta * hol_type) list}
   val collapse : store ->
                  (hol_type, hol_type) subst * (term, term) subst
 end

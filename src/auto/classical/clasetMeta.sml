@@ -352,6 +352,25 @@ fun ground_terms store =
 
 fun ground store = ground_terms (ground_types store)
 
+fun bindings store =
+  let
+    fun term_binding (name, residue) =
+      case Redblackmap.peek (#metas store, name) of
+          SOME redex => SOME (redex, residue)
+        | NONE => NONE
+    fun type_binding (name, residue) =
+      case Redblackmap.peek (#tymetas store, name) of
+          SOME redex => SOME (redex, residue)
+        | NONE => NONE
+  in
+    {terms =
+       List.mapPartial term_binding
+         (Redblackmap.listItems (#tm_bindings store)),
+     types =
+       List.mapPartial type_binding
+         (Redblackmap.listItems (#ty_bindings store))}
+  end
+
 fun collapse store =
   let
     val ty_subst = type_substitution store

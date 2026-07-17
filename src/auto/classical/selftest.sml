@@ -2289,3 +2289,414 @@ val _ =
        in
          not (Option.isSome (clasetGoal.unrender node 1 result))
        end)
+
+(* TASK_13: search drivers, dynamic pruning, bounding, and tracing. *)
+
+fun search_node goals store =
+  clasetGoal.create {goals = goals, store = store, level = 0}
+
+fun search_singleton tm =
+  search_node [{params = [], asl = [], w = tm}] clasetMeta.empty
+
+fun search_solved store = search_node [] store
+
+fun search_results sequence =
+  case seq.cases sequence of
+      NONE => []
+    | SOME (value, rest) => value :: search_results rest
+
+fun search_target node = #w (hd (clasetGoal.goals node))
+
+val dfs_root_tm = Term.mk_var ("dfs_root", bool_ty)
+val dfs_left_tm = Term.mk_var ("dfs_left", bool_ty)
+val dfs_right_tm = Term.mk_var ("dfs_right", bool_ty)
+val dfs_solution1_tm = Term.mk_var ("dfs_solution1", bool_ty)
+val dfs_solution2_tm = Term.mk_var ("dfs_solution2", bool_ty)
+val dfs_solution3_tm = Term.mk_var ("dfs_solution3", bool_ty)
+
+val _ =
+  test
+    ("DEPTH_FIRST is lazy, depth-first, and suppresses duplicate solutions",
+     fn () =>
+       let
+         val forced_right = ref false
+         fun satisfied node =
+           let val target = search_target node
+           in
+             Term.aconv target dfs_solution1_tm orelse
+             Term.aconv target dfs_solution2_tm orelse
+             Term.aconv target dfs_solution3_tm
+           end
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target dfs_root_tm then
+               seq.fromList
+                 [search_singleton dfs_left_tm,
+                  search_singleton dfs_right_tm]
+             else if Term.aconv target dfs_left_tm then
+               seq.fromList
+                 [search_singleton dfs_solution1_tm,
+                  search_singleton dfs_solution1_tm]
+             else if Term.aconv target dfs_right_tm then
+               (forced_right := true;
+                seq.result (search_singleton dfs_solution2_tm))
+             else if Term.aconv target dfs_solution1_tm then
+               seq.result (search_singleton dfs_solution3_tm)
+             else seq.empty
+           end
+         val results =
+           clasetSearch.DEPTH_FIRST satisfied expand
+             (search_singleton dfs_root_tm)
+         val first = seq.hd results
+       in
+         Term.aconv (search_target first) dfs_solution1_tm andalso
+         not (!forced_right) andalso
+         aconv_list (map search_target (search_results results))
+           [dfs_solution1_tm, dfs_solution3_tm, dfs_solution2_tm]
+       end)
+
+fun bool_function_chain 0 tm = tm
+  | bool_function_chain count tm =
+      let
+        val function =
+          Term.mk_var
+            ("search_pad_" ^ Int.toString count, bool_ty --> bool_ty)
+      in
+        bool_function_chain (count - 1) (Term.mk_comb (function, tm))
+      end
+
+val best_root_tm = Term.mk_var ("best_root", bool_ty)
+val best_small_tm = Term.mk_var ("best_small", bool_ty)
+val best_large_tm = bool_function_chain 4
+  (Term.mk_var ("best_large", bool_ty))
+val best_small_solution_tm = Term.mk_var ("best_small_solution", bool_ty)
+val best_large_solution_tm = Term.mk_var ("best_large_solution", bool_ty)
+
+val _ =
+  test
+    ("BEST_FIRST orders by size and eagerly drains child sequences",
+     fn () =>
+       let
+         val generated = ref 0
+         fun satisfied node =
+           let val target = search_target node
+           in
+             Term.aconv target best_small_solution_tm orelse
+             Term.aconv target best_large_solution_tm
+           end
+         fun eager_children values =
+           case values of
+               [] => seq.empty
+             | value :: rest =>
+                 seq.delay
+                   (fn () =>
+                     (generated := !generated + 1;
+                      seq.cons value (eager_children rest)))
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target best_root_tm then
+               eager_children
+                 [search_singleton best_large_tm,
+                  search_singleton best_small_tm]
+             else if Term.aconv target best_small_tm then
+               seq.result (search_singleton best_small_solution_tm)
+             else if Term.aconv target best_large_tm then
+               seq.result (search_singleton best_large_solution_tm)
+             else seq.empty
+           end
+         val result =
+           seq.hd
+             (clasetSearch.BEST_FIRST satisfied expand
+               (search_singleton best_root_tm))
+       in
+         !generated = 2 andalso
+         Term.aconv (search_target result) best_small_solution_tm
+       end)
+
+val _ =
+  test
+    ("BEST_FIRST delete_all_min expands an equal node only once",
+     fn () =>
+       let
+         val small_expansions = ref 0
+         fun satisfied node =
+           Term.aconv (search_target node) best_small_solution_tm
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target best_root_tm then
+               seq.fromList
+                 [search_singleton best_small_tm,
+                  search_singleton best_small_tm]
+             else if Term.aconv target best_small_tm then
+               (small_expansions := !small_expansions + 1;
+                seq.result (search_singleton best_small_solution_tm))
+             else seq.empty
+           end
+         val results =
+           search_results
+             (clasetSearch.BEST_FIRST satisfied expand
+               (search_singleton best_root_tm))
+       in
+         length results = 1 andalso !small_expansions = 1
+       end)
+
+val astar_root_tm = Term.mk_var ("astar_root", bool_ty)
+val astar_parent_tm = Term.mk_var ("astar_parent", bool_ty)
+val astar_new_tm = Term.mk_var ("astar_new", bool_ty)
+val astar_old_tm = bool_function_chain 5
+  (Term.mk_var ("astar_old", bool_ty))
+val astar_new_solution_tm =
+  Term.mk_var ("astar_new_solution", bool_ty)
+val astar_old_solution_tm =
+  Term.mk_var ("astar_old_solution", bool_ty)
+
+val _ =
+  test
+    ("ASTAR uses size plus five times level and LIFO equal costs",
+     fn () =>
+       let
+         fun satisfied node =
+           let val target = search_target node
+           in
+             Term.aconv target astar_new_solution_tm orelse
+             Term.aconv target astar_old_solution_tm
+           end
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target astar_root_tm then
+               seq.fromList
+                 [search_singleton astar_parent_tm,
+                  search_singleton astar_old_tm]
+             else if Term.aconv target astar_parent_tm then
+               seq.result (search_singleton astar_new_tm)
+             else if Term.aconv target astar_new_tm then
+               seq.result (search_singleton astar_new_solution_tm)
+             else if Term.aconv target astar_old_tm then
+               seq.result (search_singleton astar_old_solution_tm)
+             else seq.empty
+           end
+         val result =
+           seq.hd
+             (clasetSearch.ASTAR satisfied expand
+               (search_singleton astar_root_tm))
+       in
+         clasetGoal.term_size astar_old_tm = 6 andalso
+         Term.aconv (search_target result) astar_new_solution_tm
+       end)
+
+val _ =
+  test
+    ("ASTAR suppresses the first equal-cost duplicate",
+     fn () =>
+       let
+         val parent_expansions = ref 0
+         fun satisfied node =
+           Term.aconv (search_target node) astar_new_solution_tm
+         fun expand node =
+           let val target = search_target node
+           in
+             if Term.aconv target astar_root_tm then
+               seq.fromList
+                 [search_singleton astar_parent_tm,
+                  search_singleton astar_parent_tm]
+             else if Term.aconv target astar_parent_tm then
+               (parent_expansions := !parent_expansions + 1;
+                seq.result (search_singleton astar_new_solution_tm))
+             else seq.empty
+           end
+         val _ =
+           search_results
+             (clasetSearch.ASTAR satisfied expand
+               (search_singleton astar_root_tm))
+       in
+         !parent_expansions = 1
+       end)
+
+val _ =
+  test
+    ("DEEPEN restarts and commits to its first successful bound",
+     fn () =>
+       let
+         val attempted = ref ([] : int list)
+         val later_forced = ref false
+         val solved_invoked = ref false
+         fun bounded bound node =
+           (attempted := !attempted @ [bound];
+            if bound < 3 then seq.empty
+            else if bound = 3 then
+              seq.fromList [node, search_singleton dfs_solution1_tm]
+            else
+              (later_forced := true; seq.result node))
+         val results =
+           search_results
+             (clasetSearch.DEEPEN (2, 7) bounded 1
+               (search_singleton dfs_root_tm))
+         val solved_results =
+           search_results
+             (clasetSearch.DEEPEN (2, 7)
+               (fn _ => fn node =>
+                 (solved_invoked := true; seq.result node))
+               1 (search_solved clasetMeta.empty))
+       in
+         !attempted = [1, 3] andalso length results = 2 andalso
+         not (!later_forced) andalso List.null solved_results andalso
+         not (!solved_invoked)
+       end)
+
+val _ =
+  test
+    ("BEST_FIRST node counter stops a runaway frontier cleanly",
+     fn () =>
+       let
+         val saved_limit = !clasetSearch.node_limit
+         fun expand node =
+           let
+             val next = clasetGoal.level node + 1
+             val target =
+               Term.mk_var
+                 ("bounded_node_" ^ Int.toString next, bool_ty)
+           in
+             seq.result (search_singleton target)
+           end
+         val _ = clasetSearch.node_limit := 2
+         val results =
+           search_results
+             (clasetSearch.BEST_FIRST (fn _ => false) expand
+               (search_singleton best_root_tm))
+         val count = clasetSearch.node_count ()
+         val _ = clasetSearch.node_limit := saved_limit
+       in
+         List.null results andalso count = 2
+       end)
+
+val _ =
+  test
+    ("D25 prunes alternatives whose bindings cannot reach a sibling",
+     fn () =>
+       let
+         val rigid = Term.mk_var ("prune_rigid", bool_ty)
+         val (meta, store0) = bool_meta [] clasetMeta.empty
+         val store1 = the_store (clasetMeta.bind (meta, boolSyntax.T) store0)
+         val root =
+           search_node
+             [{params = [], asl = [], w = meta},
+              {params = [], asl = [], w = rigid}]
+             store0
+         fun child () =
+           search_node [{params = [], asl = [], w = rigid}] store1
+         val expansions = ref 0
+         fun expand node =
+           (expansions := !expansions + 1;
+            case clasetGoal.goals node of
+                [_, _] => seq.fromList [child (), child ()]
+              | [_] => seq.result (search_solved (clasetGoal.store node))
+              | _ => seq.empty)
+         val results =
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
+       in
+         length results = 1 andalso !expansions = 2 andalso
+         clasetSearch.pruning_count () > 0
+       end)
+
+val _ =
+  test
+    ("D25 retains alternatives that bind a sibling metavariable",
+     fn () =>
+       let
+         val (tymeta, type_store) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val (outer, fresh_store) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} type_store
+         val (shared, unbound_store) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} fresh_store
+         val chained_store =
+           the_store (clasetMeta.bind (outer, shared) unbound_store)
+         val store0 =
+           the_store (clasetMeta.bind_ty (tymeta, bool_ty) chained_store)
+         val true_store =
+           the_store (clasetMeta.bind (shared, boolSyntax.T) store0)
+         val false_store =
+           the_store (clasetMeta.bind (shared, boolSyntax.F) store0)
+         val root =
+           search_node
+             [{params = [], asl = [], w = shared},
+              {params = [], asl = [], w = outer}]
+             store0
+         fun child store =
+           search_node [{params = [], asl = [], w = outer}] store
+         val expansions = ref 0
+         fun expand node =
+           (expansions := !expansions + 1;
+            case clasetGoal.goals node of
+                [_, _] =>
+                  seq.fromList [child true_store, child false_store]
+              | [_] =>
+                  if Term.aconv (#2 (clasetGoal.render node 1)) boolSyntax.F
+                  then seq.result (search_solved (clasetGoal.store node))
+                  else seq.empty
+              | _ => seq.empty)
+         val results =
+           search_results (clasetSearch.DEPTH_SOLVE expand root)
+       in
+         length results = 1 andalso !expansions = 3
+       end)
+
+val _ =
+  test
+    ("D25 does not mistake a solved later sibling for the active goal",
+     fn () =>
+       let
+         val active = Term.mk_var ("prune_active", bool_ty)
+         val later = Term.mk_var ("prune_later", bool_ty)
+         val dead = Term.mk_var ("prune_dead", bool_ty)
+         val live = Term.mk_var ("prune_live", bool_ty)
+         val root =
+           search_node
+             [{params = [], asl = [], w = active},
+              {params = [], asl = [], w = later}]
+             clasetMeta.empty
+         fun expand node =
+           case clasetGoal.goals node of
+               [_, _] =>
+                 seq.fromList
+                   [search_singleton dead, search_singleton live]
+             | [_] =>
+                 if Term.aconv (search_target node) live then
+                   seq.result (search_solved (clasetGoal.store node))
+                 else seq.empty
+             | _ => seq.empty
+       in
+         length
+           (search_results (clasetSearch.DEPTH_SOLVE expand root)) = 1
+       end)
+
+val _ =
+  test
+    ("classical trace levels report summaries and full candidates",
+     fn () =>
+       let
+         val old_trace = Feedback.current_trace "classical"
+         val notices = ref ([] : string list)
+         fun remember message = notices := message :: !notices
+         val _ = Feedback.set_trace "classical" 3
+         val _ =
+           Lib.with_flag
+             (Feedback.MESG_outstream, remember)
+             (fn () =>
+               ignore
+                 (search_results
+                   (clasetSearch.BEST_FIRST (fn _ => false)
+                     (fn _ => seq.empty)
+                     (search_singleton best_root_tm)))) ()
+         val _ = Feedback.set_trace "classical" old_trace
+       in
+         List.exists (String.isSubstring "best-first expansion") (!notices)
+         andalso
+         List.exists (String.isSubstring "candidate:") (!notices)
+         andalso
+         List.exists (String.isSubstring "search exhausted") (!notices)
+       end)

@@ -8,13 +8,16 @@ clasetUnify.uo: clasetMeta.uo
 clasetReplay.uo: clasetMeta.uo
 clasetGoal.uo: clasetMeta.uo clasetReplay.uo
 clasetStep.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo clasetGoal.uo
+clasetSearch.uo: clasetMeta.uo clasetGoal.uo searchHeap.uo
 classicalLib.uo: clasetGoal.uo clasetStep.uo
 
 selftest.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo \
-              clasetGoal.uo clasetStep.uo classicalLib.uo searchHeap.uo
+              clasetGoal.uo clasetStep.uo clasetSearch.uo classicalLib.uo \
+              searchHeap.uo
 
 selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo clasetReplay.uo \
-              clasetGoal.uo clasetStep.uo classicalLib.uo searchHeap.uo
+              clasetGoal.uo clasetStep.uo clasetSearch.uo classicalLib.uo \
+              searchHeap.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

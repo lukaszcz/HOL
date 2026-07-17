@@ -18,6 +18,7 @@ datatype node =
            replay : replay_script,
            size : int,
            level : int,
+           paths : int list list,
            marks : binding_marks,
            avoids : term list}
 
@@ -76,36 +77,46 @@ fun register_param (param, store) =
 fun register_params goals store =
   List.foldl register_param store (List.concat (map #params goals))
 
-fun make_node goals store replay level marks avoids =
-  if length goals <> length marks then
+fun make_node goals store replay level paths marks avoids =
+  if length goals <> length marks orelse length goals <> length paths then
     raise mk_HOL_ERR "clasetGoal" "make_node"
-      "binding marks do not correspond to the open goals"
+      "search bookkeeping does not correspond to the open goals"
   else
     let
       val store' = register_params goals store
       val avoids' = free_varsl (avoids @ goal_frees goals)
     in
       Node {goals = goals, store = store', replay = replay,
-            size = goals_size store' goals, level = level, marks = marks,
-            avoids = avoids'}
+            size = goals_size store' goals, level = level, paths = paths,
+            marks = marks, avoids = avoids'}
     end
+
+fun root_paths goals =
+  let
+    fun enumerate _ [] = []
+      | enumerate index (_ :: rest) =
+          [index] :: enumerate (index + 1) rest
+  in
+    enumerate 0 goals
+  end
 
 fun from_goal (asl, w) =
   let val cgoals = [{params = [], asl = asl, w = w}]
   in
     make_node cgoals clasetMeta.empty (clasetReplay.empty 1) 0
-      (fresh_marks cgoals) (goal_frees cgoals)
+      (root_paths cgoals) (fresh_marks cgoals) (goal_frees cgoals)
   end
 
 fun create {goals, store, level} =
   make_node goals store (clasetReplay.empty (length goals)) level
-    (fresh_marks goals) (goal_frees goals)
+    (root_paths goals) (fresh_marks goals) (goal_frees goals)
 
 fun goals (Node {goals, ...}) = goals
 fun store (Node {store, ...}) = store
 fun replay (Node {replay, ...}) = replay
 fun replay_length node = clasetReplay.length (replay node)
 fun level (Node {level, ...}) = level
+fun goal_paths (Node {paths, ...}) = paths
 fun binding_marks (Node {marks, ...}) = marks
 fun size (Node {size, ...}) = size
 fun avoids (Node {avoids, ...}) = avoids
@@ -114,23 +125,25 @@ val empty_binding_marks = []
 
 fun set_goals goals'
   (Node {store, replay, level, avoids, ...}) =
-  make_node goals' store replay level (fresh_marks goals') avoids
+  make_node goals' store replay level (root_paths goals')
+    (fresh_marks goals') avoids
 
 fun set_store store'
-  (Node {goals, replay, level, marks, avoids, ...}) =
-  make_node goals store' replay level marks avoids
+  (Node {goals, replay, level, paths, marks, avoids, ...}) =
+  make_node goals store' replay level paths marks avoids
 
 fun set_level level'
-  (Node {goals, store, replay, marks, avoids, ...}) =
-  make_node goals store replay level' marks avoids
+  (Node {goals, store, replay, paths, marks, avoids, ...}) =
+  make_node goals store replay level' paths marks avoids
 
 fun set_binding_marks marks'
-  (Node {goals, store, replay, level, avoids, ...}) =
-  make_node goals store replay level marks' avoids
+  (Node {goals, store, replay, level, paths, avoids, ...}) =
+  make_node goals store replay level paths marks' avoids
 
 fun record_step record
-  (Node {goals, store, replay, level, marks, avoids, ...}) =
-  make_node goals store (clasetReplay.append replay record) level marks avoids
+  (Node {goals, store, replay, level, paths, marks, avoids, ...}) =
+  make_node goals store (clasetReplay.append replay record) level paths
+    marks avoids
 
 fun nth1 function_name values pos =
   if pos < 1 then
@@ -160,16 +173,31 @@ fun splice1 function_name values pos replacements =
 fun replicate 0 _ = []
   | replicate n value = value :: replicate (n - 1) value
 
+fun child_paths parent count =
+  if count = 1 then [parent]
+  else
+    let
+      fun enumerate index =
+        if index = count then []
+        else (parent @ [index]) :: enumerate (index + 1)
+    in
+      enumerate 0
+    end
+
 fun replace_goal node {pos, children, store = store'} =
   let
     val old_goals = goals node
+    val old_paths = goal_paths node
     val old_marks = binding_marks node
+    val inherited_path = nth1 "replace_goal" old_paths pos
     val inherited_mark = nth1 "replace_goal" old_marks pos
     val goals' = splice1 "replace_goal" old_goals pos children
+    val paths' = splice1 "replace_goal" old_paths pos
+      (child_paths inherited_path (length children))
     val marks' = splice1 "replace_goal" old_marks pos
       (replicate (length children) inherited_mark)
   in
-    make_node goals' store' (replay node) (level node) marks'
+    make_node goals' store' (replay node) (level node) paths' marks'
       (avoids node)
   end
 

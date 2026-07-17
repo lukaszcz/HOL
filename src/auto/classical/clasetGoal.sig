@@ -23,6 +23,11 @@ sig
   val replay_length : node -> int
   val record_step : clasetReplay.step_record -> node -> node
   val level : node -> int
+
+  (* Paths identify goal ancestry for per-subtree search commitment.
+     A branching replacement extends its parent's path; a one-child
+     replacement preserves it. *)
+  val goal_paths : node -> int list list
   val binding_marks : node -> binding_marks
   val set_goals : cgoal list -> node -> node
   val set_store : store -> node -> node
