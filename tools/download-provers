@@ -179,10 +179,16 @@ fi
 
 hash_file() {
   if [ "$hash_command" = sha256sum ]; then
-    sha256sum "$1" | awk '{ print $1 }'
+    hash_output=$(sha256sum "$1") || return 1
   else
-    shasum -a 256 "$1" | awk '{ print $1 }'
+    hash_output=$(shasum -a 256 "$1") || return 1
   fi
+  hash=${hash_output%% *}
+  case $hash in
+    ''|*[!0-9a-fA-F]*) return 1 ;;
+  esac
+  [ "${#hash}" -eq 64 ] || return 1
+  printf '%s\n' "$hash"
 }
 
 temp=$(mktemp -d "${TMPDIR:-/tmp}/download-provers.XXXXXX") ||
