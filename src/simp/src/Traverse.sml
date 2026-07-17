@@ -256,7 +256,9 @@ fun TRAVERSE_IN_CONTEXT root_only subgoaler solvers limit rewriters dprocs
       fun ctxt_solver stack tm = let
         val old = !lim_r
         fun raw_recurse tm = trav_with_rel' equality stack context tm
-        fun recurse tm = raw_recurse tm handle HOL_ERR _ => REFL tm
+        fun recurse tm =
+          raw_recurse tm
+          handle HOL_ERR _ => (lim_r := old; REFL tm)
         val prover_ctxt =
           {stack=stack, context_thms=context_thms, recurse=recurse}
         fun first_solver [] _ =

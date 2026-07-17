@@ -887,6 +887,61 @@ in
     ("congLib equality simplification smoke test",
      congLib.CONGRUENCE_EQ_SIMP_CONV conglib_cs pureSimps.pure_ss [],
      ``(conglib_f : 'a -> 'b) conglib_x``, ``conglib_y:'b``)
+
+  val conglib_condition =
+    SPEC ``conglib_solver_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val conglib_solver_lhs =
+    ``(conglib_solver_f : 'a -> 'b) conglib_solver_x``
+  val conglib_solver_rhs = ``conglib_solver_y:'b``
+  val conglib_solver_rwt =
+    ASSUME
+      (mk_imp (concl conglib_condition,
+               mk_eq (conglib_solver_lhs,conglib_solver_rhs)))
+  val conglib_solver_cs = congLib.mk_congset []
+  val conglib_subgoaler_calls = ref 0
+  val conglib_solver_calls = ref 0
+  fun conglib_subgoaler _ tm =
+    (conglib_subgoaler_calls := !conglib_subgoaler_calls + 1; REFL tm)
+  fun conglib_solver _ tm =
+    let
+      val _ = conglib_solver_calls := !conglib_solver_calls + 1
+      val flags_ok =
+        !Cond_rewr.stack_limit = 29 andalso
+        (!Cond_rewr.term_ord) (``conglib_order_x:'a``,
+                               ``conglib_order_y:'a``) = GREATER
+    in
+      if aconv tm (concl conglib_condition) andalso flags_ok then
+        conglib_condition
+      else raise prover_error "congLib traversal controls missing"
+    end
+  fun conglib_solver_apply {solver,stack,...} tm =
+    if aconv tm conglib_solver_lhs then
+      MP conglib_solver_rwt
+         (solver stack (concl conglib_condition))
+    else NO_CONV tm
+  val conglib_solver_reducer =
+    Traverse.REDUCER
+      {name=SOME "congLib traversal controls",
+       initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=conglib_solver_apply}
+  val conglib_solver_ss =
+    pureSimps.pure_ss ++ dproc_ss conglib_solver_reducer
+    |> set_subgoaler conglib_subgoaler
+    |> add_unsafe_solver
+         {name="congLib traversal solver",solve=conglib_solver}
+    |> set_cond_depth 29
+    |> set_term_ord (fn _ => GREATER)
+  val _ = convtest
+    ("congLib forwards simpset traversal controls",
+     congLib.CONGRUENCE_EQ_SIMP_CONV
+       conglib_solver_cs conglib_solver_ss [],
+     conglib_solver_lhs,conglib_solver_rhs)
+  val _ = tprint "congLib used the configured subgoaler and solver"
+  val _ =
+    if !conglib_subgoaler_calls = 1 andalso !conglib_solver_calls = 1 then
+      OK()
+    else die "congLib dropped a configured traversal control"
 end
 
 (* ---------------------------------------------------------------------- *)
@@ -1967,6 +2022,42 @@ val _ = let
       [([fix_asm1],fix_concl1)]
       (GEN_GLOBAL_SIMP_TAC (xcfg true false) gate_ss []) gate_goal
 
+  val supplied_sentinel = REFL ``global_supplied_sentinel:'a``
+  val supplied_condition =
+    SPEC ``global_traversal_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val supplied_solver_calls = ref 0
+  fun supplied_solver {context_thms,...} tm =
+    let
+      val has_sentinel =
+        List.exists
+          (fn th => aconv (concl th) (concl supplied_sentinel))
+          context_thms
+      val _ = supplied_solver_calls := !supplied_solver_calls + 1
+    in
+      if aconv tm (concl supplied_condition) andalso has_sentinel then
+        supplied_condition
+      else
+        raise mk_HOL_ERR "selftest" "supplied_solver"
+                          "supplied theorem absent from traversal context"
+    end
+  val supplied_tm = concl supplied_condition
+  val supplied_rule =
+    DISCH supplied_tm (EQT_INTRO (ASSUME supplied_tm))
+  val supplied_ss =
+    empty_ss ++ rewrites [supplied_rule]
+    |> add_unsafe_solver
+         {name="global supplied traversal context",solve=supplied_solver}
+  val _ = supplied_solver_calls := 0
+  val _ =
+    check "global traversals see supplied theorems"
+      []
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) supplied_ss
+                           [supplied_sentinel])
+      ([supplied_tm],supplied_tm)
+  val _ =
+    if !supplied_solver_calls >= 2 then ()
+    else die "global assumption or conclusion traversal skipped its solver"
+
   val root_target = ``root_a ==> root_b``
   val root_result = ``root_c ==> root_d``
   val root_condition = ``(root_side_P:bool -> bool) (T /\ T)``
@@ -1987,6 +2078,32 @@ val _ = let
     check "imp_rebuild rewrites a discharged assumption at the root"
       [([``~imp_q``],``~imp_p``)]
       (GEN_GLOBAL_SIMP_TAC (xcfg false true) imp_ss []) imp_goal
+
+  val supplied_imp_target =
+    ``global_supplied_imp_a ==> global_supplied_imp_b``
+  fun supplied_imp_apply {solver,stack,...} tm =
+    if aconv tm supplied_imp_target then
+      (solver stack supplied_tm;
+       REWR_CONV (GSYM boolTheory.CONTRAPOS_THM) tm)
+    else NO_CONV tm
+  val supplied_imp_reducer =
+    Traverse.REDUCER
+      {name=SOME "global supplied implication rebuild",
+       initial=Fail "global supplied implication rebuild",
+       addcontext=fn (ctxt,_) => ctxt,
+       apply=supplied_imp_apply}
+  val supplied_imp_ss =
+    empty_ss ++ dproc_ss supplied_imp_reducer
+    |> add_unsafe_solver
+         {name="global supplied traversal context",solve=supplied_solver}
+  val _ =
+    check "imp_rebuild sees supplied theorems in its traversal context"
+      [([``~global_supplied_imp_b``],
+         ``~global_supplied_imp_a``)]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false true) supplied_imp_ss
+                           [supplied_sentinel])
+      ([``global_supplied_imp_a:bool``],
+       ``global_supplied_imp_b:bool``)
 in
   ()
 end

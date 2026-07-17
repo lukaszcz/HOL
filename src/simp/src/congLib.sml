@@ -278,7 +278,10 @@ fun CONGRUENCE_SIMP_QCONV relation (cs as (CS csdata)) ss =
           travrules=merge_travrules
             ([eq_congsTravrule,#travrules traversedata] @
              #travrules csdata),
-          subgoaler=NONE, solvers=[], cond_depth=NONE, term_ord=NONE}
+          subgoaler= #subgoaler traversedata,
+          solvers= #solvers traversedata,
+          cond_depth= #cond_depth traversedata,
+          term_ord= #term_ord traversedata}
   in
     TRAVERSE data
   end;

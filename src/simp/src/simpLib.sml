@@ -1537,7 +1537,9 @@ fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
               val (invocation_ss,context_thms) =
                 process_tags ss tagged_thms
               val rewr_tac =
-                CONV_TAC (SIMP_CONV invocation_ss context_thms)
+                CONV_TAC
+                  (SIMP_CONV invocation_ss
+                             (context_thms @ extra_context))
               val solve_tac =
                 final_solver_tac mode invocation_ss
                                  (context_thms @ extra_context)
@@ -1691,7 +1693,7 @@ fun rotate_assumption cfg =
       popper (BF_ASSUME_TAC (not (#oldestfirst cfg)))
     end
 
-fun counted_psr cfg ss g =
+fun counted_psr cfg ss extra_context g =
     let
       val popper = if #oldestfirst cfg then pop_last_assum else pop_assum
       val old_concl = ref NONE
@@ -1701,7 +1703,7 @@ fun counted_psr cfg ss g =
         ASSUM_LIST
           (fn asms => fn popped_goal =>
              let
-               val simplified = SIMP_RULE ss asms th
+               val simplified = SIMP_RULE ss (asms @ extra_context) th
                val ordinary =
                  BF_ASSUME_TAC (not (#oldestfirst cfg)) simplified popped_goal
                val _ = old_concl := SOME (concl th)
@@ -1722,7 +1724,7 @@ fun counted_psr cfg ss g =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass cfg ss initial_k (g as (asl,_)) =
+fun counted_pass cfg ss extra_context initial_k (g as (asl,_)) =
     let
       val initial =
         {last= ~1, structural=false, k=initial_k,
@@ -1737,7 +1739,7 @@ fun counted_pass cfg ss initial_k (g as (asl,_)) =
                     val info = {changed=false,structural=false}
                 in (map (fn g => (g,info)) goals,validation)
                 end
-              else counted_psr cfg ss goal
+              else counted_psr cfg ss extra_context goal
             fun next {changed,structural} =
               let
                 val k =
@@ -1788,7 +1790,7 @@ fun GEN_GLOBAL_SIMP_TAC
                    | a::rest =>
                        let
                          val target = mk_imp (a,nested)
-                         val context = map ASSUME rest
+                         val context = map ASSUME rest @ thl'
                        in
                          case SOME (root_rewrite context target)
                               handle HOL_ERR _ => NONE
@@ -1801,7 +1803,7 @@ fun GEN_GLOBAL_SIMP_TAC
                fun fixpoint k goal =
                  let
                    val pass as (annotated,validation) =
-                     counted_pass base ss k goal
+                     counted_pass base ss thl' k goal
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
                    fun clear_change state =
