@@ -144,6 +144,12 @@ New features
 Bugs fixed
 ----------
 
+-   `HolSmt` now gives Z3 4.14.1 full tested support.  Z3 4.14.* queries in
+    the seven affected array-bearing inferred logics are widened to `ALL` at
+    the Z3 boundary, and solver `(error ...)` output can no longer be skipped
+    and misreported as a later `sat` verdict.  The checked support matrix now
+    passes Z3 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.
+
 -   Three kernel bugs (github issues [#1838](https://github.com/HOL-Theorem-Prover/HOL/issues/1838), [#1839](https://github.com/HOL-Theorem-Prover/HOL/issues/1839), and [#1840](https://github.com/HOL-Theorem-Prover/HOL/issues/1840)) in CV-compute were fixed.
     Thanks to Ramana Kumar for finding these!
 

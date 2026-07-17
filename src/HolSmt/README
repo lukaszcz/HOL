@@ -76,17 +76,25 @@ the checked matrix rather than accepting proof-format drift.  The pinned cvc5
 evidence and commands are in
 `$HOLSMT_VALIDATION_DIR/tools/cvc5-version-matrix.md`.
 
-Supported Z3 versions:
+Supported Z3 proof dialect and tested anchors:
 
-  Version range      Proof options used by HolSmt                  Support status
-  4.11.2 - 4.15.x    proof=true pp.simplify_implies=false          v4 proof path
+  Proof dialect      Proof options used by HolSmt                  Support status
+  Z3 4.x             proof=true pp.simplify_implies=false          v4 proof path
 
 The configured executable comes from `HOL4_Z3_EXECUTABLE`.  Proof parse and
 replay diagnostics include the discovered Z3 version and command stem.
-The checked-in proof corpus and CI jobs use exact representative versions from
-the supported ranges.  The current full matrix is 4.11.2, 4.12.4,
-4.13.0, 4.14.1 and 4.15.3.  The local contract runner accepts any discovered
-Z3 version in the supported ranges.
+The checked-in proof corpus, local contract, and version verifier use the exact
+tested anchors 4.11.2, 4.12.4, 4.13.0, 4.14.1, and 4.15.3.  The passing
+five-version report is `/tmp/holsmt-z3-4.14-support-matrix/report.json`
+(2026-07-16).
+
+Z3 4.14.1 rejects `Array` under seven non-QF logic names that HolSmt can infer:
+`ALIRA`, `ANIA`, `ANIRA`, `AUFDTLIA`, `AUFDTLIRA`, `AUFDTNIRA`, and
+`AUFBVDT`.  For every discovered 4.14.* patch version, HolSmt therefore widens
+an array-bearing query in exactly those logics to the sound `ALL` superset.
+Generic SMT-LIB inference and neighboring Z3 minor versions keep their original
+logic.  Z3 4.14.1 is the exact tested anchor for this minor-series runtime
+policy.
 Use `$HOLSMT_VALIDATION_DIR/tools/verify_z3_versions.sh` to download representative Z3
 releases, run the proof-corpus gate, checked nonlinear replay smoke test and
 full `src/HolSmt/selftest.exe` checks, and record the exact versions verified
@@ -101,13 +109,13 @@ Unsupported or deprecated Z3 versions:
 
   Version class              Reason
   All pre-4 versions         Legacy 2.x/3.x proof support has been removed from the                             contract.  Only Z3 4.x is supported.
-  4.x before 4.11.2          Outside the modern proof-mode support floor.
-  4.x after 4.15.x           Outside the currently documented support range;
-                             use --allow-unsupported-z3 to investigate drift.
+  Unlisted Z3 4.x releases   Outside the exact tested anchor set; use
+                             --allow-unsupported-z3 to investigate drift.
   Future major versions      Unsupported until the proof command, proof-rule
                              registry, corpus gate and matrix are updated.
   Undiscoverable version     Diagnostics still run, but the version cannot be
-                             matched to a supported range.
+                             matched to an exact tested anchor or the 4.14.*
+                             runtime policy.
 
 SMT-LIB support matrix:
 
@@ -415,13 +423,14 @@ Local CI contract commands:
 
   # Run the local contract checks below, resolving z3 from PATH when
   # HOL4_Z3_EXECUTABLE is not already set.  The script fails fast if that
-  # executable is outside the supported Z3 ranges; pass --allow-unsupported-z3
+  # executable is outside the exact tested anchor set; pass
+  # --allow-unsupported-z3
   # to investigate proof-format drift intentionally.  The script also runs the
-  # full representative Z3 version matrix by default, using supported versioned
+  # full five-anchor Z3 version matrix by default, using versioned
   # z3-* binaries discovered under ~/.local/bin or PATH when available.
   $HOLSMT_VALIDATION_DIR/tools/run_holsmt_tests.sh
 
-  # Download representative Z3 releases for the supported range, run the
+  # Download the exact tested Z3 anchors, run the
   # proof-corpus gate, checked replay smoke test and full selftest against
   # each executable, and write .holsmt-z3-version-matrix/report.json.  The
   # command exits nonzero unless every requested version passes.  Use
@@ -516,8 +525,8 @@ Local CI contract commands:
     holsmt-nosolver:ci \
     sh -lc 'src/HolSmt/selftest.exe'
 
-  # Z3 selftest matrix, matching the exact CI Docker anchors inside the
-  # supported ranges
+  # Selected legacy Z3 Docker lanes.  The five-version verifier above is the
+  # complete support contract.
   for z3_version in 4.12.4 4.13.0; do
     docker buildx build \
       --load \
@@ -568,9 +577,9 @@ Updating the Z3 version matrix:
      manifest, regenerate the matrix, and adjust the "Supported Z3 versions"
      table above.
 
-Pull-request CI runs the PolyML expk build against the Z3 versions already
-provided by the docker-ci base image as exact anchors for the supported ranges:
-4.12.4 and 4.13.0.  The equivalent local hook is:
+Pull-request CI retains PolyML expk Docker lanes for Z3 4.12.4 and 4.13.0.
+These selected image lanes are not the full support contract; that contract is
+the five-version verifier above.  The equivalent local hook is:
 
   docker buildx build \
     --build-arg SML=poly \

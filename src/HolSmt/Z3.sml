@@ -6,11 +6,21 @@ structure Z3 = struct
 
   (* returns SAT if Z3 reported "sat", UNSAT if Z3 reported "unsat" *)
   fun is_sat_stream instream =
-    case Option.map (String.tokens Char.isSpace) (TextIO.inputLine instream) of
+    case TextIO.inputLine instream of
       NONE => SolverSpec.UNKNOWN NONE
-    | SOME ["sat"] => SolverSpec.SAT NONE
-    | SOME ["unsat"] => SolverSpec.UNSAT NONE
-    | _ => is_sat_stream instream
+    | SOME line =>
+        let
+          val trimmed = Substring.string
+            (Substring.dropl Char.isSpace (Substring.full line))
+        in
+          if String.isPrefix "(error" trimmed then
+            SolverSpec.UNKNOWN (SOME line)
+          else
+            case String.tokens Char.isSpace line of
+              ["sat"] => SolverSpec.SAT NONE
+            | ["unsat"] => SolverSpec.UNSAT NONE
+            | _ => is_sat_stream instream
+        end
 
   fun is_sat_file path =
     let
@@ -51,19 +61,6 @@ structure Z3 = struct
     | NONE =>
         raise Feedback.mk_HOL_ERR "Z3" name error_msg
 
-  (* Z3 (Linux/Unix), SMT-LIB file format, no proofs *)
-  val Z3_SMT_Oracle =
-    mk_Z3_fun "Z3_SMT_Oracle"
-      (fn goal =>
-        let
-          val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC false) goal
-          val (_, strings) = SmtLib.goal_to_SmtLib NONE goal
-        in
-          ((), strings)
-        end)
-      " -smt2 -file:"
-      (Lib.K is_sat_file)
-
   (* e.g. "Z3 version 4.5.0 - 64 bit" *)
   fun parse_Z3_version fname =
     let
@@ -101,6 +98,62 @@ structure Z3 = struct
     case configured_version () of
       SOME version => version
     | NONE => "<undiscoverable>"
+
+  val z3_414_affected_array_logics = [
+    "ALIRA", "ANIA", "ANIRA",
+    "AUFDTLIA", "AUFDTLIRA", "AUFDTNIRA", "AUFBVDT"
+  ]
+
+  fun decimal_component s =
+    s <> "" andalso List.all Char.isDigit (String.explode s)
+
+  fun is_z3_414_version version =
+    case String.tokens (fn c => c = #".") version of
+      [major, minor, patch] =>
+        major = "4" andalso minor = "14" andalso decimal_component patch
+    | _ => false
+
+  (* Z3 4.14.1 rejects Array under these seven non-QF logic names with
+     "unknown sort 'Array'".  ALL is a sound superset and the unchanged
+     queries passed direct probes on every supported Z3 anchor.  This policy
+     belongs at the Z3 boundary: the inferred logics remain valid SMT-LIB and
+     are accepted by the other supported solvers and Z3 minor versions. *)
+  fun z3_414_logic_policy version
+      ({features = SmtLib.LogicFeatures {arrays, ...}, inferred_logic,
+        reason} : {features : SmtLib.logic_features,
+                   inferred_logic : string, reason : string}) =
+    if (case version of SOME v => is_z3_414_version v | NONE => false) andalso
+       arrays andalso
+       List.exists (fn logic => logic = inferred_logic)
+         z3_414_affected_array_logics
+    then
+      SOME {logic = "ALL",
+        reason = reason ^
+          "; Z3 4.14.x array-logic compatibility widening to ALL"}
+    else
+      NONE
+
+  fun goal_to_SmtLib_translation_for_version version =
+    SmtLib.goal_to_SmtLib_translation_with_policy
+      (z3_414_logic_policy version)
+
+  fun goal_to_SmtLib_with_get_proof_translation_for_version version =
+    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy
+      (z3_414_logic_policy version)
+
+  (* Z3 (Linux/Unix), SMT-LIB file format, no proofs *)
+  val Z3_SMT_Oracle =
+    mk_Z3_fun "Z3_SMT_Oracle"
+      (fn goal =>
+        let
+          val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC false) goal
+          val (_, strings) =
+            goal_to_SmtLib_translation_for_version (configured_version ()) goal
+        in
+          ((), strings)
+        end)
+      " -smt2 -file:"
+      (Lib.K is_sat_file)
 
   (* Only Z3 4.x is supported; legacy 2.x (PROOF_MODE) has been removed, so
      there is no longer a version conditional here.  A non-4.x binary is simply
@@ -173,7 +226,8 @@ structure Z3 = struct
           val original_goal = goal
           val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
           val (translation, strings) =
-            SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
+            goal_to_SmtLib_with_get_proof_translation_for_version
+              (configured_version ()) goal
         in
           (((original_goal, goal, validation), translation), strings)
         end)

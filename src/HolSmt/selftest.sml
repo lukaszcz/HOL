@@ -1555,6 +1555,17 @@ in
     (``option_CASE (SOME x) n s = s x``, [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
     (``option_CASE NONE n s = n``, [thm_AUTO, thm_Z3p, thm_Z3p_v4]),
 
+    (* Z3 4.14.x array+datatype compatibility coverage.  The SAT siblings
+       ensure the version policy cannot accidentally collapse these queries
+       into an always-UNSAT result. *)
+    (``list_CASE [] (n:bool) c = c x xs``, [sat_Z3, sat_Z3p]),
+    (``list_CASE (x::xs) (n:bool) c = n``, [sat_Z3, sat_Z3p]),
+    (``option_CASE (SOME x) (n:bool) s = n``, [sat_Z3, sat_Z3p]),
+    (``option_CASE NONE (n:bool) s = s x``, [sat_Z3, sat_Z3p]),
+    (``option_CASE ov (n:bool) s = n ==>
+       ov = NONE \/ ?x. ov = SOME x``,
+      [thm_Z3, thm_Z3p]),
+
     (* records: field selectors *)
 
     (``(x = y) <=> (x.employed = y.employed) /\ (x.age = y.age)``,

@@ -50,6 +50,12 @@ type translation = {
   records : unit -> translation_record list
 }
 
+type logic_selection_policy = {
+  features : logic_features,
+  inferred_logic : string,
+  reason : string
+} -> {logic : string, reason : string} option
+
 local
 
   (* For successful proof reconstruction, it is important that the
@@ -1808,7 +1814,8 @@ local
      arguments to the term.  (Because SMT-LIB is first-order,
      partially applied functions are mapped to different SMT-LIB
      identifiers, depending on the number of actual arguments.) *)
-  fun goal_to_SmtLib_aux logic (ts, t) : translation * string list =
+  fun goal_to_SmtLib_aux (policy : logic_selection_policy)
+      (ts, t) : translation * string list =
   let
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
@@ -1822,9 +1829,10 @@ local
     val features = infer_features terms tydict tmdict
     val (inferred_logic, reason) = infer_logic_from_features features
     val (selected_logic, reason) =
-      case logic of
+      case policy {features = features, inferred_logic = inferred_logic,
+                   reason = reason} of
         NONE => (inferred_logic, reason)
-      | SOME l => (l, "caller override")
+      | SOME {logic, reason} => (logic, reason)
     val records = fn () =>
       build_translation_records terms selected_logic reason features tydict tmdict
     val translation = {logic = selected_logic, tydict = tydict,
@@ -1836,7 +1844,7 @@ local
       (fn ((xs, s), acc) => acc @ xs @ ["(assert " ^ s ^ ")\n"]) [] smtlibs
   in
     (* A `(set-logic ...)` is always emitted, including on the implicit
-       (`logic = NONE`) Z3/CVC path.  Older revisions emitted none for
+       (no caller override) Z3/CVC path.  Older revisions emitted none for
        `NONE`, letting the solver default to accept-anything; relying on
        that default is fragile.  Emitting unconditionally is safe because
        `infer_logic_from_features` is a sound over-approximation of the
@@ -2281,8 +2289,19 @@ in
   val parser_dicts_for_translation = parser_dicts_for_translation_aux
   val infer_logic_from_features = infer_logic_from_features
 
+  fun option_logic_policy logic
+      ({features, inferred_logic, reason} : {
+        features : logic_features, inferred_logic : string, reason : string}) =
+    case logic of
+      NONE => NONE
+    | SOME selected_logic =>
+        SOME {logic = selected_logic, reason = "caller override"}
+
+  fun goal_to_SmtLib_translation_with_policy policy =
+    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o (goal_to_SmtLib_aux policy)
+
   fun goal_to_SmtLib_translation logic =
-    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o (goal_to_SmtLib_aux logic)
+    goal_to_SmtLib_translation_with_policy (option_logic_policy logic)
 
   fun goal_to_SmtLib logic goal =
     let
@@ -2291,9 +2310,13 @@ in
       (translation_dicts translation, strings)
     end
 
-  fun goal_to_SmtLib_with_get_proof_translation logic =
+  fun goal_to_SmtLib_with_get_proof_translation_with_policy policy =
     Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
-      (goal_to_SmtLib_aux logic)
+      (goal_to_SmtLib_aux policy)
+
+  fun goal_to_SmtLib_with_get_proof_translation logic =
+    goal_to_SmtLib_with_get_proof_translation_with_policy
+      (option_logic_policy logic)
 
   fun goal_to_SmtLib_with_get_proof logic goal =
     let

@@ -226,9 +226,13 @@ may delete temporary files automatically, e.g., when HOL exits).
 ### Installing SMT solvers
 
 `HolSmtLib` has been tested with cvc5 1.3.0 and Yices 1.0.40.
-For checked Z3 proof reconstruction, HolSmt supports the legacy Z3
-2.19.1 proof path and the modern Z3 4.11.2--4.15.x proof path.
-Later Z3 versions may or may not work.  (Yices 2 is not supported.)
+For checked Z3 proof reconstruction, HolSmt supports the Z3 4.x proof
+dialect.  The exact tested anchors are Z3 4.11.2, 4.12.4, 4.13.0,
+4.14.1, and 4.15.3; legacy Z3 2.x proof support has been removed.
+For every Z3 4.14.* patch release, HolSmt widens the seven affected
+array-bearing inferred logics to `ALL`; 4.14.1 is the tested anchor for
+that compatibility policy.  Other Z3 versions may or may not work.
+(Yices 2 is not supported.)
 To use `HolSmtLib`, you need to install at least one of these SMT
 solvers on your machine.  As mentioned before, Yices supports a
 larger fragment of higher-order logic than Z3, but proof

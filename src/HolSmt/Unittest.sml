@@ -2945,6 +2945,198 @@ in
   assert (has_encoded_symbol, "translation records did not include encoded symbol")
 end
 
+fun z3_414_logic_policy_success () =
+let
+  fun features arrays = SmtLib.LogicFeatures {
+    quantifiers = true, uninterpreted = false, arrays = arrays,
+    bitvectors = false, integers = true, reals = false, strings = false,
+    datatypes = true, nonlinear = false}
+  fun selection version logic arrays =
+    Z3.z3_414_logic_policy version {
+      features = features arrays, inferred_logic = logic,
+      reason = "deterministic feature scan: test"}
+  fun expect_widened version logic =
+    case selection (SOME version) logic true of
+      SOME {logic = "ALL", reason} =>
+        assert (contains "deterministic feature scan: test" reason andalso
+                contains "Z3 4.14.x" reason,
+          "Z3 4.14 policy did not preserve and extend the logic reason")
+    | SOME {logic = selected, ...} =>
+        die ("FAIL: Z3 4.14 policy selected " ^ selected ^
+          " instead of ALL for " ^ logic)
+    | NONE => die ("FAIL: Z3 4.14 policy did not widen " ^ logic)
+  fun expect_unchanged label version logic arrays =
+    case selection version logic arrays of
+      NONE => ()
+    | SOME {logic = selected, ...} =>
+        die ("FAIL: Z3 4.14 policy changed " ^ label ^ " to " ^ selected)
+  val affected = [
+    "ALIRA", "ANIA", "ANIRA",
+    "AUFDTLIA", "AUFDTLIRA", "AUFDTNIRA", "AUFBVDT"
+  ]
+in
+  List.app
+    (fn version => List.app (expect_widened version) affected)
+    ["4.14.0", "4.14.1", "4.14.99"];
+  List.app
+    (fn logic =>
+      (expect_unchanged "Z3 4.13 neighbor" (SOME "4.13.0") logic true;
+       expect_unchanged "Z3 4.15 neighbor" (SOME "4.15.3") logic true;
+       expect_unchanged "array-free feature vector" (SOME "4.14.1")
+         logic false))
+    affected;
+  expect_unchanged "unrelated logic" (SOME "4.14.1") "QF_LIA" true;
+  List.app
+    (fn version => expect_unchanged "malformed or unknown version" version
+       "AUFDTLIA" true)
+    [NONE, SOME "", SOME "0", SOME "4.14", SOME "4.14.x",
+     SOME "4.14.1.0"]
+end
+
+fun z3_414_array_datatype_translation_success () =
+let
+  val compatibility_reason = "Z3 4.14.x array-logic compatibility widening"
+  val terms = [
+    ("list nil", ``list_CASE [] n c = n``),
+    ("list cons", ``list_CASE (x::xs) n c = c x xs``),
+    ("option some", ``option_CASE (SOME x) n s = s x``),
+    ("option none", ``option_CASE NONE n s = n``),
+    ("symbolic option", ``option_CASE ov n s = n``)
+  ]
+  fun logic_reason translation =
+    case List.find
+      (fn SmtLib.LogicSelection _ => true | _ => false)
+      (SmtLib.translation_records translation) of
+      SOME (SmtLib.LogicSelection {logic, reason, ...}) => (logic, reason)
+    | _ => die "FAIL: translation has no LogicSelection record"
+  fun check_term (name, tm) =
+    let
+      val (generic, _) = SmtLib.goal_to_SmtLib_translation NONE ([], tm)
+      val generic_logic = SmtLib.translation_logic generic
+      fun translated proof version =
+        if proof then
+          Z3.goal_to_SmtLib_with_get_proof_translation_for_version
+            (SOME version) ([], tm)
+        else
+          Z3.goal_to_SmtLib_translation_for_version
+            (SOME version) ([], tm)
+      fun check_414 version proof =
+        let
+          val (translation, strings) = translated proof version
+          val text = String.concat strings
+          val (record_logic, reason) = logic_reason translation
+        in
+          assert (SmtLib.translation_logic translation = "ALL" andalso
+                  record_logic = "ALL",
+            name ^ " did not record ALL under Z3 " ^ version);
+          assert (List.hd strings = "(set-logic ALL)\n",
+            name ^ " did not emit set-logic ALL under Z3 " ^ version);
+          assert (contains compatibility_reason reason,
+            name ^ " did not record the Z3 compatibility reason");
+          assert (contains "(declare-datatypes" text andalso
+                  contains "Array" text andalso contains "(_ is" text andalso
+                  contains "sel_" text andalso contains "(select" text,
+            name ^ " lost array/datatype case encoding under Z3 " ^ version);
+          assert ((if proof then contains "(get-proof)" text
+                   else not (contains "(get-proof)" text)),
+            name ^ " used the wrong proof command suffix")
+        end
+      fun check_neighbor version =
+        let
+          val (translation, strings) = translated false version
+        in
+          assert (SmtLib.translation_logic translation = generic_logic,
+            name ^ " changed logic on neighbor Z3 " ^ version);
+          assert (List.hd strings =
+              "(set-logic " ^ generic_logic ^ ")\n",
+            name ^ " emitted a mismatched neighbor set-logic command")
+        end
+    in
+      assert (generic_logic = "AUFDTLIA",
+        name ^ " generic inference changed from AUFDTLIA to " ^
+        generic_logic);
+      List.app (fn version => (check_414 version false;
+                               check_414 version true))
+        ["4.14.0", "4.14.99"];
+      List.app check_neighbor ["4.13.0", "4.15.3"]
+    end
+in
+  List.app check_term terms
+end
+
+fun z3_414_all_inferred_families_translation_success () =
+let
+  val representatives = [
+    ("ALIRA", ``!(x:real). (f:real -> real) x = f x``),
+    ("ANIA", ``!(x:int). (f:int -> int) (x * x) = f (x * x)``),
+    ("ANIRA", ``!(x:real). (f:real -> real) (x * x) = f (x * x)``),
+    ("AUFDTLIA", ``option_CASE (SOME (x:int)) n s = s x``),
+    ("AUFDTLIRA", ``option_CASE (SOME (x:real)) n s = s x + 0r``),
+    ("AUFDTNIRA", ``option_CASE (SOME (x:real)) n s = s x * 1r``),
+    ("AUFBVDT",
+      ``option_CASE (SOME (x:'a)) (n:word32) (s:'a -> word32) = s x``)
+  ]
+  fun check (expected, tm) =
+    let
+      val (generic, _) = SmtLib.goal_to_SmtLib_translation NONE ([], tm)
+      val (affected, affected_strings) =
+        Z3.goal_to_SmtLib_translation_for_version (SOME "4.14.1") ([], tm)
+      fun neighbor version =
+        Lib.fst (Z3.goal_to_SmtLib_translation_for_version
+          (SOME version) ([], tm))
+    in
+      assert (SmtLib.translation_logic generic = expected,
+        "representative expected " ^ expected ^ ", inferred " ^
+        SmtLib.translation_logic generic);
+      assert (SmtLib.translation_logic affected = "ALL" andalso
+              List.hd affected_strings = "(set-logic ALL)\n",
+        expected ^ " was not widened on Z3 4.14.1");
+      List.app
+        (fn version => assert
+          (SmtLib.translation_logic (neighbor version) = expected,
+           expected ^ " changed on neighbor Z3 " ^ version))
+        ["4.13.0", "4.15.3"]
+    end
+in
+  List.app check representatives
+end
+
+fun z3_result_error_precedes_status () =
+let
+  fun result contents =
+    let
+      val instream = TextIO.openString contents
+      val answer = Z3.is_sat_stream instream
+      val () = TextIO.closeIn instream
+    in
+      answer
+    end
+  fun expect_sat contents =
+    case result contents of
+      SolverSpec.SAT NONE => ()
+    | _ => die "FAIL: Z3 result parser did not return SAT"
+  fun expect_unsat contents =
+    case result contents of
+      SolverSpec.UNSAT NONE => ()
+    | _ => die "FAIL: Z3 result parser did not return UNSAT"
+  fun expect_unknown_error contents =
+    case result contents of
+      SolverSpec.UNKNOWN (SOME message) =>
+        assert (contains "unknown sort 'Array'" message,
+          "Z3 error diagnostic lost the solver message")
+    | SolverSpec.SAT _ =>
+        die "FAIL: Z3 error followed by sat was accepted as SAT"
+    | _ => die "FAIL: Z3 error did not return diagnostic UNKNOWN"
+in
+  expect_sat "sat\n";
+  expect_unsat "unsat\n";
+  expect_unsat "unsupported logic; continuing with ALL\nunsat\n";
+  expect_unknown_error "  (error \"unknown sort 'Array'\")\nsat\n";
+  (case result "" of
+     SolverSpec.UNKNOWN NONE => ()
+   | _ => die "FAIL: end-of-stream did not return UNKNOWN")
+end
+
 fun smtlib_datatype_type_translation_success () =
 let
   fun smtlib_text goal =
@@ -4973,6 +5165,14 @@ let
       smtlib_translation_logic_inference_success),
     ("smtlib_translation_records_success",
       smtlib_translation_records_success),
+    ("z3_414_logic_policy_success",
+      z3_414_logic_policy_success),
+    ("z3_414_array_datatype_translation_success",
+      z3_414_array_datatype_translation_success),
+    ("z3_414_all_inferred_families_translation_success",
+      z3_414_all_inferred_families_translation_success),
+    ("z3_result_error_precedes_status",
+      z3_result_error_precedes_status),
     ("smtlib_datatype_type_translation_success",
       smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
