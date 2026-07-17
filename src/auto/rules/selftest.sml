@@ -39,9 +39,9 @@ val seed_expected_rules =
    (seed_selim_spec, "bool$FALSITY"),
    (seed_selim_spec, "clasetSeed$EX1_ELIM_THM"),
    (seed_selim_spec, "clasetSeed$EXISTS_ELIM_THM"),
+   (seed_selim_spec, "clasetSeed$CONJ_ELIM_THM"),
    (seed_selim_spec, "clasetSeed$IFF_CELIM_THM"),
    (seed_selim_spec, "clasetSeed$IMP_CELIM_THM"),
-   (seed_selim_spec, "clasetSeed$CONJ_ELIM_THM"),
    (seed_selim_spec, "bool$OR_ELIM_THM"),
    (seed_intro_spec, "clasetSeed$EXISTS_INTRO_THM"),
    (seed_intro_spec, "bool$EQ_EXT"),
@@ -392,6 +392,21 @@ val _ =
        in
          HOLset.member (#patvars form, z) andalso
          Term.aconv (#concl form) Pz
+       end)
+
+val _ =
+  test
+    ("elimination canonicalization preserves a conjunctive major premise",
+     fn () =>
+       let
+         val spec =
+           {kind = clasetRules.Elim, safe = true, prio = NONE}
+         val theorem = clasetSeedTheory.CONJ_ELIM_THM
+         val processed = #1 (#rl (ext_info spec theorem))
+       in
+         Term.aconv
+           (rule_index clasetRules.Elim processed) ``p /\ q`` andalso
+         subgoals_of (true, processed) = 1
        end)
 
 val _ =
@@ -804,6 +819,23 @@ fun has_thm th = List.exists (fn (_, (_, th')) => same_thm th th')
 
 val _ =
   test
+    ("rules_of preserves a conjunctive elimination major premise",
+     fn () =>
+       let
+         val cs =
+           add_selims
+             [("conjunction-elim", clasetSeedTheory.CONJ_ELIM_THM)]
+             empty_cs
+       in
+         case rules_of cs of
+             [({kind = clasetRules.Elim, ...}, (_, theorem))] =>
+               Term.aconv
+                 (rule_index clasetRules.Elim theorem) ``p /\ q``
+           | _ => false
+       end)
+
+val _ =
+  test
     ("clasetLib routes safe zero- and positive-subgoal rules",
      fn () =>
        let
@@ -1096,11 +1128,11 @@ val _ =
            (add_unsafe_wrapper ("one", unsafe_second) unsafe_cs)
        in
          same_terms
-           (labels (app_safe_wrappers safe_cs (labelled r)) label_goal) [p]
+           (labels (app_safe_wrappers safe_cs (labelled r)) label_goal) [q]
          andalso
          same_terms
            (labels (app_unsafe_wrappers unsafe_cs (labelled r)) label_goal)
-           [p, q, r]
+           [q, p, r]
          andalso
          same_terms
            (labels (app_safe_wrappers safe_cs' (labelled r)) label_goal) [q]
@@ -1188,7 +1220,7 @@ val _ =
            List.exists
              (fn (spec', (_, th')) =>
                 same_spec spec spec' andalso
-                same_thm (canonical_rule th) th')
+                same_thm (canonical_rule_of (#kind spec) th) th')
              (rules_of (the_claset ()))
        in
          List.app add_attribute state_attribute_cases;
@@ -1286,7 +1318,8 @@ fun typebase_hook_tyinfo () =
 fun has_typebase_rule spec th =
   List.exists
     (fn (spec', (_, th')) =>
-       same_spec spec spec' andalso same_thm (canonical_rule th) th')
+       same_spec spec spec' andalso
+       same_thm (canonical_rule_of (#kind spec) th) th')
     (rules_of (the_claset ()))
 
 val typebase_selim_spec =
@@ -1372,7 +1405,9 @@ val _ =
            List.exists
              (fn (spec', (name', th')) =>
                 name = name' andalso same_spec spec spec' andalso
-                same_thm (canonical_rule tyinfo_multispec_rule) th')
+                same_thm
+                  (canonical_rule_of (#kind spec) tyinfo_multispec_rule)
+                  th')
              rules
        in
          present tyinfo_multispec_intro "claset-tyinfo-multispec-intro"
@@ -1415,7 +1450,8 @@ val _ =
 fun has_marker_rule spec th cs =
   List.exists
     (fn (spec', (_, th')) =>
-       same_spec spec spec' andalso same_thm (canonical_rule th) th')
+       same_spec spec spec' andalso
+       same_thm (canonical_rule_of (#kind spec) th) th')
     (rules_of cs)
 
 val marker_sintro_spec =
@@ -1547,7 +1583,8 @@ val _ =
        let
          val plain = boolTheory.TRUTH
          val cong = markerLib.Cong (ASSUME p)
-         val input = [cong, plain]
+         val excl = markerLib.Excl "simp-only"
+         val input = [cong, excl, plain]
          val (cs, rest) = process_claset_tags input empty_cs
        in
          List.null (rules_of cs) andalso

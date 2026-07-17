@@ -1252,11 +1252,8 @@ val _ =
     ("an unmarked extra theorem is unsafe, not a SAFE_TAC rule",
      fn () =>
        let
-         val left = boolSyntax.mk_conj (goal_p, goal_q)
-         val right = boolSyntax.mk_conj (goal_q, goal_p)
-         val assumption = boolSyntax.mk_eq (left, right)
-         val theorem = SYM (ASSUME assumption)
-         val goal = ([assumption], boolSyntax.mk_eq (right, left))
+         val theorem = DISCH goal_q (ASSUME goal_q)
+         val goal = ([], goal_q)
        in
          tactic_fails (classicalLib.SAFE_TAC [theorem]) goal
        end)
@@ -1270,18 +1267,539 @@ val _ =
            map (fn (_, (name, _)) => name)
              (clasetLib.rules_of (clasetLib.the_claset ()))
          val initial_names = global_rule_names ()
-         val success_goal =
-           ([], boolSyntax.mk_imp (goal_p, goal_q))
+         val a = Term.mk_var ("leak_a", Type.ind)
+         val p = Term.mk_var ("leak_p", Type.ind --> Type.bool)
+         val q = Term.mk_var ("leak_q", Type.ind --> Type.bool)
+         val pa = mk_comb (p, a)
+         val qa = mk_comb (q, a)
+         val disjunction = boolSyntax.mk_disj (pa, qa)
+         val local_rule = DISCH pa (DISJ1 (ASSUME pa) qa)
+         val marker = clasetLib.SIntro local_rule
+         val success_goal = ([pa], disjunction)
          val _ =
-           Tactical.VALID
-             (classicalLib.SAFE_TAC
-               [clasetLib.SIntro boolTheory.AND_INTRO_THM])
-             success_goal
+           Tactical.VALID (classicalLib.SAFE_TAC [marker]) success_goal
          val _ =
-           tactic_fails
-             (classicalLib.SAFE_TAC
-               [clasetLib.SIntro boolTheory.AND_INTRO_THM])
-             ([], goal_p)
+           tactic_fails (classicalLib.SAFE_TAC [marker]) ([], goal_p)
        in
          initial_names = global_rule_names ()
+       end)
+
+(* TASK_07 group 1: golden safe-cascade ordering. *)
+
+fun step_gives cs goal expected_kind expected_goals =
+  case first_step clasetStep.safe_step cs goal of
+      NONE => false
+    | SOME (record, node) =>
+        expected_kind (clasetStep.kind_of record) andalso
+        same_goals (rendered_goals node) expected_goals andalso
+        valid_step goal (record, node)
+
+val phase1_a = Term.mk_var ("phase1_a", Type.ind)
+val phase1_p = Term.mk_var ("phase1_p", Type.ind --> Type.bool)
+val phase1_q = Term.mk_var ("phase1_q", Type.ind --> Type.bool)
+val phase1_r = Term.mk_var ("phase1_r", Type.ind --> Type.bool)
+val phase1_pa = mk_comb (phase1_p, phase1_a)
+val phase1_qa = mk_comb (phase1_q, phase1_a)
+val phase1_ra = mk_comb (phase1_r, phase1_a)
+val phase1_x = Term.mk_var ("phase1_x", Type.ind)
+val phase1_c = boolSyntax.mk_arb Type.ind
+val phase1_eq = boolSyntax.mk_eq (phase1_x, phase1_c)
+
+val cascade_cs =
+  clasetLib.add_sintros
+    [("cascade-truth", boolTheory.TRUTH),
+     ("cascade-and", boolTheory.AND_INTRO_THM)]
+    clasetLib.empty_cs
+
+val _ =
+  test
+    ("safe cascade slot 1 closes by assumption with exact residue",
+     fn () =>
+       step_gives cascade_cs ([phase1_pa], phase1_pa)
+         (fn clasetStep.Assumption 1 => true | _ => false) [])
+
+val _ =
+  test
+    ("safe cascade slot 2 performs modus ponens before later slots",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (phase1_pa, phase1_qa)
+         val goal = ([phase1_pa, implication], phase1_ra)
+         val expected = [([phase1_qa, phase1_pa], phase1_ra)]
+       in
+         step_gives cascade_cs goal
+           (fn clasetStep.ModusPonens
+                 {implication = 2, antecedent = 1} => true
+             | _ => false)
+           expected
+       end)
+
+val _ =
+  test
+    ("safe cascade slot 3 applies a safe zero-premise rule",
+     fn () =>
+       step_gives cascade_cs ([], boolSyntax.T)
+         (fn clasetStep.RuleApplication {elim = false, ...} => true
+           | _ => false)
+         [])
+
+val _ =
+  test
+    ("DISCH occupies the built-in position before hyp substitution",
+     fn () =>
+       let
+         val goal =
+           ([phase1_eq], boolSyntax.mk_imp (phase1_pa, phase1_qa))
+         val expected = [([phase1_pa, phase1_eq], phase1_qa)]
+       in
+         step_gives cascade_cs goal
+           (fn clasetStep.Disch => true | _ => false) expected
+       end)
+
+val _ =
+  test
+    ("GEN occupies the built-in position before hyp substitution",
+     fn () =>
+       let
+         val quantified =
+           boolSyntax.mk_forall
+             (phase1_x, Term.mk_comb (phase1_p, phase1_x))
+         val goal = ([phase1_eq], quantified)
+       in
+         case first_step clasetStep.safe_step cascade_cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case (clasetStep.kind_of record, rendered_goals node) of
+                    (clasetStep.Gen, [(asms, body)]) =>
+                      let val fresh = rand body
+                      in
+                        same_goals [(asms, body)]
+                          [([phase1_eq], mk_comb (phase1_p, fresh))]
+                        andalso
+                        not (Term.aconv fresh phase1_x)
+                        andalso valid_step goal (record, node)
+                      end
+                  | _ => false)
+       end)
+
+val _ =
+  test
+    ("safe cascade slot 4 saturates hypothesis substitution",
+     fn () =>
+       let val goal = ([phase1_eq], mk_comb (phase1_p, phase1_x))
+       in
+         step_gives cascade_cs goal
+           (fn clasetStep.HypSubst => true | _ => false)
+           [([], mk_comb (phase1_p, phase1_c))]
+       end)
+
+val _ =
+  test
+    ("safe cascade slot 5 applies a positive-premise safe rule",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+         val expected = [([], phase1_pa), ([], phase1_qa)]
+       in
+         step_gives cascade_cs goal
+           (fn clasetStep.RuleApplication {elim = false, ...} => true
+             | _ => false)
+           expected
+       end)
+
+(* TASK_07 group 2: CLARIFY_TAC restrictions and bimatch2. *)
+
+fun three_premise_intro () =
+  let
+    val p = Term.mk_var ("three_p", Type.bool)
+    val q = Term.mk_var ("three_q", Type.bool)
+    val r = Term.mk_var ("three_r", Type.bool)
+    val body = CONJ (ASSUME p) (CONJ (ASSUME q) (ASSUME r))
+  in
+    GENL [p, q, r] (DISCH p (DISCH q (DISCH r body)))
+  end
+
+val _ =
+  test
+    ("CLARIFY accepts weight 1 and asserts its exact residue",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (phase1_qa, phase1_pa)
+         val cs =
+           clasetLib.add_sintros [("clarify-one", ASSUME implication)]
+             clasetLib.empty_cs
+         val goal = ([implication], phase1_pa)
+       in
+         case first_step clasetStep.clarify_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               same_goals (rendered_goals node)
+                 [([implication], phase1_qa)] andalso
+               valid_step goal (record, node)
+       end)
+
+val _ =
+  test
+    ("CLARIFY rejects rules of weight 3",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_sintros
+             [("clarify-three", three_premise_intro ())]
+             clasetLib.empty_cs
+         val target =
+           boolSyntax.mk_conj
+             (phase1_pa, boolSyntax.mk_conj (phase1_qa, phase1_ra))
+       in
+         not (Option.isSome
+           (first_step clasetStep.clarify_step cs ([], target)))
+       end)
+
+val _ =
+  test
+    ("CLARIFY bimatch2 closes the left branch exactly",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_sintros
+             [("clarify-and", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+         val goal =
+           ([phase1_pa], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+       in
+         case first_step clasetStep.clarify_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               same_goals (rendered_goals node)
+                 [([phase1_pa], phase1_qa)] andalso
+               valid_step goal (record, node)
+       end)
+
+val _ =
+  test
+    ("CLARIFY bimatch2 closes the right branch exactly",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_sintros
+             [("clarify-and", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+         val goal =
+           ([phase1_qa], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+       in
+         case first_step clasetStep.clarify_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               same_goals (rendered_goals node)
+                 [([phase1_qa], phase1_pa)] andalso
+               valid_step goal (record, node)
+       end)
+
+val _ =
+  test
+    ("CLARIFY bimatch2 accepts a matching-contradiction branch",
+     fn () =>
+       let
+         val negated = boolSyntax.mk_neg phase1_pa
+         val disjunction = boolSyntax.mk_disj (phase1_pa, phase1_qa)
+         val cs =
+           clasetLib.add_selims
+             [("clarify-or", boolTheory.OR_ELIM_THM)]
+             clasetLib.empty_cs
+         val goal = ([negated, disjunction], phase1_ra)
+         val expected = [([phase1_qa, negated], phase1_ra)]
+       in
+         case first_step clasetStep.clarify_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               same_goals (rendered_goals node) expected andalso
+               valid_step goal (record, node)
+       end)
+
+val _ =
+  test
+    ("CLARIFY leaves an unclosable conjunction conclusion untouched",
+     fn () =>
+       let
+         val target = boolSyntax.mk_conj (phase1_pa, phase1_qa)
+         val goal = ([], target)
+         val (residues, _) =
+           Tactical.VALID
+             (Tactical.TRY
+               (classicalLib.CLARIFY_TAC
+                 [clasetLib.SIntro boolTheory.AND_INTRO_THM]))
+             goal
+       in
+         same_goals residues [goal]
+       end)
+
+(* TASK_07 group 3: SAFE_TAC against the seed claset. *)
+
+val _ =
+  test
+    ("seed SAFE_TAC splits conjunctions with exact residues",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) goal
+       in
+         same_goals residues [([], phase1_pa), ([], phase1_qa)]
+       end)
+
+val _ =
+  test
+    ("seed SAFE_TAC eliminates a conjunctive assumption exactly",
+     fn () =>
+       let
+         val conjunction = boolSyntax.mk_conj (phase1_pa, phase1_qa)
+         val goal = ([], boolSyntax.mk_imp (conjunction, phase1_ra))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) goal
+       in
+         same_goals residues [([phase1_qa, phase1_pa], phase1_ra)]
+       end)
+
+val _ =
+  test
+    ("seed SAFE_TAC handles universal introduction and implication",
+     fn () =>
+       let
+         val body =
+           boolSyntax.mk_imp
+             (mk_comb (phase1_p, phase1_x),
+              mk_comb (phase1_p, phase1_x))
+         val goal = ([], boolSyntax.mk_forall (phase1_x, body))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) goal
+       in
+         List.null residues
+       end)
+
+val _ =
+  test
+    ("seed SAFE_TAC applies safe disjunction introduction exactly",
+     fn () =>
+       let
+         val target = boolSyntax.mk_disj (phase1_pa, phase1_qa)
+         val goal = ([], target)
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) goal
+       in
+         same_goals residues
+           [([boolSyntax.mk_neg phase1_qa], phase1_pa)]
+       end)
+
+val _ =
+  test
+    ("seed SAFE_TAC never applies unsafe universal elimination",
+     fn () =>
+       let
+         val universal =
+           boolSyntax.mk_forall
+             (phase1_x, mk_comb (phase1_p, phase1_x))
+         val goal = ([universal], phase1_pa)
+         val (residues, _) =
+           Tactical.VALID
+             (Tactical.TRY (classicalLib.SAFE_TAC [])) goal
+       in
+         same_goals residues [goal]
+       end)
+
+val _ =
+  test
+    ("seed SAFE_TAC never instantiates EXISTS_INTRO_THM",
+     fn () =>
+       let
+         val existential =
+           boolSyntax.mk_exists
+             (phase1_x, mk_comb (phase1_p, phase1_x))
+         val goal = ([phase1_pa], existential)
+         val (residues, _) =
+           Tactical.VALID
+             (Tactical.TRY (classicalLib.SAFE_TAC [])) goal
+       in
+         same_goals residues [goal]
+       end)
+
+(* TASK_07 group 4: failure, markers, wrappers, and state isolation. *)
+
+val _ =
+  test
+    ("D27 exposes raw no-change behavior through TRY",
+     fn () =>
+       let
+         val goal = ([], phase1_pa)
+         val (safe_goals, _) =
+           Tactical.VALID
+             (Tactical.TRY (classicalLib.SAFE_TAC [])) goal
+         val (clarify_goals, _) =
+           Tactical.VALID
+             (Tactical.TRY (classicalLib.CLARIFY_TAC [])) goal
+       in
+         tactic_fails (classicalLib.SAFE_TAC []) goal andalso
+         tactic_fails (classicalLib.CLARIFY_TAC []) goal andalso
+         same_goals safe_goals [goal] andalso
+         same_goals clarify_goals [goal]
+       end)
+
+fun marker_consumed marker =
+  let val (_, leftovers) =
+    clasetLib.process_claset_tags [marker] clasetLib.empty_cs
+  in List.null leftovers end
+
+val _ =
+  test
+    ("classical marker vocabulary is consumed and generic tags pass",
+     fn () =>
+       let
+         val consumed =
+           [clasetLib.SIntro boolTheory.AND_INTRO_THM,
+            clasetLib.Intro boolTheory.EQ_EXT,
+            clasetLib.SElim boolTheory.OR_ELIM_THM,
+            clasetLib.Elim clasetSeedTheory.FORALL_ELIM_THM,
+            clasetLib.SDest boolTheory.OR_ELIM_THM,
+            clasetLib.Dest clasetSeedTheory.FORALL_ELIM_THM,
+            clasetLib.Del "not-present"]
+         val passthrough =
+           [markerLib.Cong boolTheory.TRUTH,
+            markerLib.Excl "simp-rule"]
+         val (_, leftovers) =
+           clasetLib.process_claset_tags passthrough clasetLib.empty_cs
+       in
+         List.all marker_consumed consumed andalso
+         ListPair.allEq
+           (fn (left, right) => Term.aconv (concl left) (concl right))
+           (leftovers, passthrough)
+       end)
+
+val _ =
+  test
+    ("generic Excl passes through without deleting a seed rule",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+         val (residues, _) =
+           Tactical.VALID
+             (classicalLib.SAFE_TAC
+               [markerLib.Excl "bool$AND_INTRO_THM"])
+             goal
+       in
+         same_goals residues [([], phase1_pa), ([], phase1_qa)]
+       end)
+
+val _ =
+  test
+    ("Del is consumed and removes a seed rule for one invocation",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.mk_conj (phase1_pa, phase1_qa))
+         val (residues, _) =
+           Tactical.VALID
+             (Tactical.TRY
+               (classicalLib.SAFE_TAC
+                 [clasetLib.Del "bool$AND_INTRO_THM"]))
+             goal
+         val (after, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) goal
+       in
+         same_goals residues [goal] andalso
+         same_goals after [([], phase1_pa), ([], phase1_qa)]
+       end)
+
+fun safe_before tactic base =
+  NTactical.NORELSE (NTactical.LIFT tactic, base)
+
+val _ =
+  test
+    ("safe wrappers compose newest innermost with ORELSE commitment",
+     fn () =>
+       let
+         val left = boolSyntax.mk_imp (phase1_pa, phase1_pa)
+         val right = boolSyntax.mk_imp (phase1_qa, phase1_qa)
+         val target = boolSyntax.mk_conj (left, right)
+         val left_thm = DISCH phase1_pa (ASSUME phase1_pa)
+         val right_thm = DISCH phase1_qa (ASSUME phase1_qa)
+         val target_thm = CONJ left_thm right_thm
+         val cs =
+           clasetLib.add_safe_wrapper
+             ("new", safe_before (Tactic.ACCEPT_TAC target_thm))
+             (clasetLib.add_safe_wrapper
+               ("old", safe_before Tactic.CONJ_TAC)
+               clasetLib.empty_cs)
+         val goal = ([], target)
+       in
+         case first_step clasetStep.safe_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Wrapper =>
+                      same_goals (rendered_goals node)
+                        [([], left), ([], right)] andalso
+                      valid_step goal (record, node)
+                  | _ => false)
+       end)
+
+(* TASK_07 group 5: the materialized hypothesis-substitution slot. *)
+
+val phase1_y = Term.mk_var ("phase1_y", Type.ind)
+val phase1_f = Term.mk_var ("phase1_f", Type.ind --> Type.ind)
+
+val _ =
+  test
+    ("hyp-subst saturates a chain in one safe step",
+     fn () =>
+       let
+         val first = boolSyntax.mk_eq (phase1_x, phase1_c)
+         val second = boolSyntax.mk_eq (phase1_y, phase1_x)
+         val goal =
+           ([first, second], mk_comb (phase1_p, phase1_y))
+       in
+         step_gives clasetLib.empty_cs goal
+           (fn clasetStep.HypSubst => true | _ => false)
+           [([], mk_comb (phase1_p, phase1_c))]
+       end)
+
+val _ =
+  test
+    ("hyp-subst refuses both orientations of an occurs-check cycle",
+     fn () =>
+       let
+         val fx = mk_comb (phase1_f, phase1_x)
+         val left = boolSyntax.mk_eq (phase1_x, fx)
+         val right = boolSyntax.mk_eq (fx, phase1_x)
+         fun refuses equality =
+           not (Option.isSome
+             (first_step clasetStep.safe_step clasetLib.empty_cs
+               ([equality], phase1_pa)))
+       in
+         refuses left andalso refuses right
+       end)
+
+val _ =
+  test
+    ("hyp-subst deletes reflexive equalities",
+     fn () =>
+       let
+         val reflexive = boolSyntax.mk_eq (phase1_x, phase1_x)
+         val goal = ([reflexive], mk_comb (phase1_p, phase1_x))
+       in
+         step_gives clasetLib.empty_cs goal
+           (fn clasetStep.HypSubst => true | _ => false)
+           [([], mk_comb (phase1_p, phase1_x))]
+       end)
+
+val _ =
+  test
+    ("hyp-subst keeps HOL4 positive and negative bool-atom extras",
+     fn () =>
+       let
+         val atom_p = Term.mk_var ("hyp_atom_p", Type.bool)
+         val atom_q = Term.mk_var ("hyp_atom_q", Type.bool)
+         val goal =
+           ([atom_p, boolSyntax.mk_neg atom_q], phase1_ra)
+       in
+         step_gives clasetLib.empty_cs goal
+           (fn clasetStep.HypSubst => true | _ => false)
+           [([], phase1_ra)]
        end)

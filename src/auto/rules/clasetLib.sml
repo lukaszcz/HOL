@@ -44,7 +44,7 @@ fun rule_brl kind th = (is_elim kind, th)
 fun indexed_brl is_elim tag th =
   let
     val kind = if is_elim then Elim else Intro
-    val form = canonical_form th
+    val form = canonical_form_of kind th
     val pat = rule_index_of kind form
   in
     ({pat = pat, patvars = #patvars form}, (tag, (is_elim, th)))
@@ -210,11 +210,18 @@ fun merge_cs
         dup_netpair = dup_netpair'}
   end
 
-(* Replace the entry sharing [entry]'s key, else append it. *)
-fun update_alist (entry as (key, _)) [] = [entry]
-  | update_alist (entry as (key, _)) ((old as (old_key, _)) :: rest) =
-      if key = old_key then entry :: rest
-      else old :: update_alist entry rest
+(* Replace an existing entry in place; put a new entry at the front. *)
+fun update_alist (entry as (key, _)) entries =
+  let
+    fun replace [] = NONE
+      | replace ((old as (old_key, _)) :: rest) =
+          if key = old_key then SOME (entry :: rest)
+          else Option.map (fn rest' => old :: rest') (replace rest)
+  in
+    case replace entries of
+        SOME entries' => entries'
+      | NONE => entry :: entries
+  end
 
 fun delete_wrapper name wrappers =
   List.filter (fn (name', _) => name <> name') wrappers
@@ -737,6 +744,7 @@ val SElim_t = mk_marker_const "SElim"
 val Elim_t = mk_marker_const "Elim"
 val SDest_t = mk_marker_const "SDest"
 val Dest_t = mk_marker_const "Dest"
+val Del_t = mk_marker_const "Del"
 
 val SIntro = markerLib.genCong clasetMarkerTheory.SIntro_def
 val Intro = markerLib.genCong clasetMarkerTheory.Intro_def
@@ -753,8 +761,8 @@ val destElim = markerLib.genUnCong Elim_t clasetMarkerTheory.Elim_def
 val destSDest = markerLib.genUnCong SDest_t clasetMarkerTheory.SDest_def
 val destDest = markerLib.genUnCong Dest_t clasetMarkerTheory.Dest_def
 
-val Del = markerLib.Excl
-val destDel = markerLib.destExcl
+val Del = markerLib.genmktagged clasetMarkerTheory.Del_def
+val destDel = markerLib.gendest_tagged Del_t
 
 val marker_prefix = "__claset_marker_"
 

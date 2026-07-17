@@ -330,11 +330,12 @@ fun type_variables th =
     (HOLset.fromList Type.compare
       (List.concat (map type_vars_in_term (concl th :: hyp th))))
 
-fun freshen_rule node pos theorem =
+fun freshen_rule node pos is_elim theorem =
   let
     val store0 = clasetGoal.store node
     val params = #params (clasetGoal.goal_at node pos)
-    val form = clasetRules.canonical_form theorem
+    val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
+    val form = clasetRules.canonical_form_of kind theorem
     val canonical = #thm form
 
     fun add_type (ty, (substitution, metas, store)) =
@@ -470,7 +471,7 @@ fun rule_validation normalized_rule supplied children premises target =
 fun try_rule node pos (tag, (is_elim, theorem)) assumption =
   let
     val (asl, w) = clasetGoal.render node pos
-    val fresh = freshen_rule node pos theorem
+    val fresh = freshen_rule node pos is_elim theorem
     val config =
       {mode = clasetUnify.Match, rule_metas = #metas fresh}
     val store1 =
@@ -531,7 +532,9 @@ fun try_rule node pos (tag, (is_elim, theorem)) assumption =
       case (is_elim, assumption) of
           (true, SOME (_, major)) =>
             [assumption_thm major
-              (hd (clasetRules.rule_premises normalized_rule))]
+              (hd
+                (clasetRules.rule_premises_of clasetRules.Elim
+                  normalized_rule))]
         | _ => []
     val target = normalize_term child_store w
     val validation =

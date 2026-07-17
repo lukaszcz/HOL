@@ -77,9 +77,31 @@ fun canonical_rule th =
       GENL vars' (curry_conj_premises body)
     end
 
-fun canonical_form th =
+(* Elimination rules keep their first premise as the major premise.  The
+   generic canonicalizer still curries conjunctions in introduction-rule
+   premises and in the side premises below the major premise. *)
+fun canonical_elim_rule th =
   let
-    val th' = canonical_rule th
+    val (vars, _) = strip_forall (concl th)
+    val vars' = fresh_forall_vars th vars
+    val body = Drule.SPECL vars' th
+  in
+    case total dest_imp_only (concl body) of
+        NONE => canonical_rule th
+      | SOME (major, _) =>
+          let
+            val tail = MP body (ASSUME major)
+            val tail' = curry_conj_premises tail
+          in
+            GENL vars' (DISCH major tail')
+          end
+  end
+
+fun canonical_rule_of Intro = canonical_rule
+  | canonical_rule_of (Elim | Dest) = canonical_elim_rule
+
+fun form_of th' =
+  let
     val (vars, body) = strip_forall (concl th')
     val (prems, cncl) = strip_imp_only body
   in
@@ -87,7 +109,11 @@ fun canonical_form th =
      prems = prems, concl = cncl}
   end
 
+fun canonical_form th = form_of (canonical_rule th)
+fun canonical_form_of kind th = form_of (canonical_rule_of kind th)
+
 fun rule_premises th = #prems (canonical_form th)
+fun rule_premises_of kind th = #prems (canonical_form_of kind th)
 fun rule_conclusion th = #concl (canonical_form th)
 
 fun kind_name Intro = "introduction"
@@ -104,13 +130,13 @@ fun rule_index_of Intro (form : canonical) = #concl form
           prem :: _ => prem
         | [] => illformed_rule "rule_index" kind)
 
-fun rule_index kind th = rule_index_of kind (canonical_form th)
+fun rule_index kind th = rule_index_of kind (canonical_form_of kind th)
 
 (* The derived rules below operate on this outer spine only.  In
    particular, a premise such as !x. P x ==> q is always one premise. *)
-fun rule_spine th =
+fun rule_spine_with canonicalize th =
   let
-    val th' = canonical_rule th
+    val th' = canonicalize th
     val (vars, _) = strip_forall (concl th')
     val vars' = fresh_forall_vars th' vars
     val core = Drule.SPECL vars' th'
@@ -118,6 +144,9 @@ fun rule_spine th =
   in
     {thm = th', vars = vars', core = core, prems = prems, concl = cncl}
   end
+
+val rule_spine = rule_spine_with canonical_rule
+val elim_rule_spine = rule_spine_with canonical_elim_rule
 
 fun apply_assumed th prems = Drule.LIST_MP (map ASSUME prems) th
 
@@ -135,7 +164,7 @@ fun false_of not_tm tm_th = MP (NOT_ELIM not_tm) tm_th
 
 fun MAKE_ELIM_RULE th =
   let
-    val {vars, core, prems, concl, ...} = rule_spine th
+    val {vars, core, prems, concl, ...} = elim_rule_spine th
     val r = fresh_bool core
     val br = mk_imp (concl, r)
     val bth = apply_assumed core prems
@@ -146,7 +175,7 @@ fun MAKE_ELIM_RULE th =
 
 fun CLASSICAL_RULE th =
   let
-    val {thm, vars, core, prems, concl, ...} = rule_spine th
+    val {thm, vars, core, prems, concl, ...} = elim_rule_spine th
   in
     case prems of
         [] => illformed_rule "CLASSICAL_RULE" Elim
@@ -234,7 +263,7 @@ fun DUP_INTRO_RULE th =
 
 fun DUP_ELIM_RULE th =
   let
-    val {thm, vars, core, prems, ...} = rule_spine th
+    val {thm, vars, core, prems, ...} = elim_rule_spine th
   in
     case prems of
         [] => illformed_rule "DUP_ELIM_RULE" Elim
@@ -252,10 +281,10 @@ fun DUP_ELIM_RULE th =
 
 fun ext_info ({kind, safe, ...} : rulespec) th =
   let
-    val th' = canonical_rule th
+    val th' = canonical_rule_of kind th
     fun elim_rule () =
       let
-        val _ = (case rule_premises th' of
+        val _ = (case rule_premises_of kind th' of
                     [] => illformed_rule "ext_info" kind
                   | _ => ())
         val elim = if kind = Dest then MAKE_ELIM_RULE th' else th'
@@ -299,8 +328,12 @@ fun ext_info ({kind, safe, ...} : rulespec) th =
 datatype safe_class = Safe0 | SafeP
 
 fun subgoals_of (is_elim, th) =
-  let val n = length (rule_premises th)
-  in if is_elim then n - 1 else n end
+  let
+    val kind = if is_elim then Elim else Intro
+    val n = length (rule_premises_of kind th)
+  in
+    if is_elim then n - 1 else n
+  end
 
 fun safe_class_of ({kind, safe, ...} : rulespec) ({rl, ...} : info) =
   if not safe then NONE
@@ -373,7 +406,7 @@ val empty_decls =
 
 fun make_decl {name, spec, weight, info, orig} =
   {name = name, spec = spec, tag = {weight = weight, index = 0},
-   info = info, orig = canonical_rule orig}
+   info = info, orig = canonical_rule_of (#kind spec) orig}
 
 fun get_decls (Decls {byconcl, ...}) th =
   case Termtab.lookup byconcl (canonical_key th) of

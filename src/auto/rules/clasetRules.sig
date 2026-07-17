@@ -17,10 +17,13 @@ sig
     {thm : thm, patvars : term HOLset.set, prems : term list, concl : term}
 
   val canonical_rule : thm -> thm
+  val canonical_rule_of : rulekind -> thm -> thm
   val canonical_form : thm -> canonical
+  val canonical_form_of : rulekind -> thm -> canonical
   val rule_index : rulekind -> thm -> term
   val rule_index_of : rulekind -> canonical -> term
   val rule_premises : thm -> term list
+  val rule_premises_of : rulekind -> thm -> term list
   val rule_conclusion : thm -> term
   val is_elim : rulekind -> bool
 

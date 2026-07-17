@@ -10,6 +10,7 @@ val SElim_def = new_definition("SElim_def", ``SElim (x:bool) = x``);
 val Elim_def = new_definition("Elim_def", ``Elim (x:bool) = x``);
 val SDest_def = new_definition("SDest_def", ``SDest (x:bool) = x``);
 val Dest_def = new_definition("Dest_def", ``Dest (x:bool) = x``);
+val Del_def = new_definition("Del_def", ``Del (x:'a) = T``);
 
 val _ = OpenTheoryMap.OpenTheory_const_name
   {const = {Thy = "clasetMarker", Name = "SIntro"},
