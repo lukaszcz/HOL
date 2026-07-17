@@ -6,10 +6,13 @@ all: $(DEFAULT_TARGETS) selftest.exe
 
 clasetUnify.uo: clasetMeta.uo
 clasetGoal.uo: clasetMeta.uo
+clasetStep.uo: clasetMeta.uo clasetUnify.uo clasetGoal.uo
 
-selftest.uo: clasetMeta.uo clasetUnify.uo clasetGoal.uo searchHeap.uo
+selftest.uo: clasetMeta.uo clasetUnify.uo clasetGoal.uo clasetStep.uo \
+              searchHeap.uo
 
-selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo clasetGoal.uo searchHeap.uo
+selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo clasetGoal.uo \
+              clasetStep.uo searchHeap.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

@@ -864,6 +864,32 @@ val _ =
              end
        end)
 
+fun first_step step cs goal =
+  case seq.cases (step cs (clasetGoal.from_goal goal, 1)) of
+      NONE => NONE
+    | SOME (result, _) => SOME result
+
+fun rendered_goals node =
+  let
+    fun recurse pos [] = []
+      | recurse pos (_ :: rest) =
+          clasetGoal.render node pos :: recurse (pos + 1) rest
+  in
+    recurse 1 (clasetGoal.goals node)
+  end
+
+fun valid_step goal (record, node) =
+  let
+    val materialized =
+      clasetGoal.render (clasetGoal.from_goal goal) 1
+    val tactic =
+      fn _ => (rendered_goals node, clasetStep.validation_of record)
+    val _ = Tactical.VALID tactic materialized
+  in
+    true
+  end
+  handle HOL_ERR _ => false
+
 val _ =
   test
     ("metavariable-free nodes render and lift tactic children",
@@ -889,4 +915,264 @@ val _ =
                andalso Term.aconv w goal_q
                andalso clasetGoal.replay_length node' = 1
              end
+       end)
+
+val _ =
+  test
+    ("safe-step cascade reaches each ordered slot with valid evidence",
+     fn () =>
+       let
+         open clasetStep
+         val implication = boolSyntax.mk_imp (goal_p, goal_q)
+         val mp_goal = ([goal_p, implication], goal_r)
+         val safe0_cs =
+           clasetLib.add_sintros [("truth", boolTheory.TRUTH)]
+             clasetLib.empty_cs
+         val safep_cs =
+           clasetLib.add_sintros
+             [("and", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         val subst_x = Term.mk_var ("subst_x", bool_ty)
+         val subst_goal =
+           ([boolSyntax.mk_eq (subst_x, goal_p)], subst_x)
+         val cases =
+           [(first_step safe_step clasetLib.empty_cs
+               ([goal_p], goal_p),
+             fn Assumption _ => true | _ => false),
+            (first_step safe_step clasetLib.empty_cs mp_goal,
+             fn ModusPonens _ => true | _ => false),
+            (first_step safe_step safe0_cs ([], boolSyntax.T),
+             fn RuleApplication _ => true | _ => false),
+            (first_step safe_step clasetLib.empty_cs ([], implication),
+             fn Disch => true | _ => false),
+            (first_step safe_step clasetLib.empty_cs subst_goal,
+             fn HypSubst => true | _ => false),
+            (first_step safe_step safep_cs
+               ([], boolSyntax.mk_conj (goal_p, goal_q)),
+             fn RuleApplication _ => true | _ => false)]
+         fun good (NONE, _) = false
+           | good (SOME (record, node), expected) =
+               expected (kind_of record) andalso
+               valid_step
+                 (case kind_of record of
+                      Assumption _ => ([goal_p], goal_p)
+                    | ModusPonens _ => mp_goal
+                    | Disch => ([], implication)
+                    | HypSubst => subst_goal
+                    | RuleApplication _ =>
+                        if List.null (clasetGoal.goals node) then
+                          ([], boolSyntax.T)
+                        else
+                          ([], boolSyntax.mk_conj (goal_p, goal_q))
+                    | _ => ([], goal_r))
+                 (record, node)
+       in
+         List.all good cases
+       end)
+
+val _ =
+  test
+    ("assumption closing uses shared beta-eta equality",
+     fn () =>
+       let
+         val x = Term.mk_var ("close_x", bool_ty)
+         val f = Term.mk_var ("close_f", bool_ty --> bool_ty)
+         val h = Term.mk_var ("close_h", bool_ty --> bool_ty)
+         val eta = Term.mk_abs (x, Term.mk_comb (f, x))
+         val abstraction =
+           Term.mk_abs (h, boolSyntax.mk_eq (h, f))
+         val assumption = Term.mk_comb (abstraction, eta)
+         val input = ([assumption], boolSyntax.mk_eq (f, f))
+       in
+         case first_step clasetStep.safe_step clasetLib.empty_cs input of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Assumption 1 =>
+                      valid_step input (record, node)
+                  | _ => false)
+       end)
+
+val _ =
+  test
+    ("clarify bimatch2 accepts one closing child and rejects branching",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_sintros
+             [("and", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         val closing_child = boolSyntax.mk_conj (goal_p, goal_q)
+         val target = boolSyntax.mk_conj (closing_child, goal_r)
+         val accepted = ([closing_child], target)
+         val rejected = ([], target)
+       in
+         case first_step clasetStep.clarify_step cs accepted of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.RuleApplication _ =>
+                      length (clasetGoal.goals node) = 1 andalso
+                      valid_step accepted (record, node) andalso
+                      not (Option.isSome
+                        (first_step clasetStep.clarify_step cs rejected))
+                  | _ => false)
+       end)
+
+val _ =
+  test
+    ("match mode skips unfixed safe-rule premise variables",
+     fn () =>
+       let
+         val x = Term.mk_var ("unfixed_x", bool_ty)
+         val predicate =
+           Term.mk_var ("unfixed_predicate", bool_ty --> bool_ty)
+         val premise = Term.mk_comb (predicate, x)
+         val rule = GEN x (DISCH premise boolTheory.TRUTH)
+         val cs =
+           clasetLib.add_sintros [("unfixed", rule)] clasetLib.empty_cs
+         val old_trace = Feedback.current_trace "classical"
+         val notices = ref ([] : string list)
+         fun record_notice message =
+           notices := message :: !notices
+         val _ = Feedback.set_trace "classical" 1
+         val result =
+           Lib.with_flag
+             (Feedback.MESG_outstream, record_notice)
+             (fn () =>
+               first_step clasetStep.safe_step cs ([], boolSyntax.T)) ()
+         val _ = Feedback.set_trace "classical" old_trace
+       in
+         not (Option.isSome result) andalso
+         List.exists
+           (String.isSubstring "unfixed premise variables") (!notices)
+       end)
+
+val _ =
+  test
+    ("safe wrappers surround the complete cascade",
+     fn () =>
+       let
+         fun truth_before tac =
+           NTactical.NORELSE
+             (NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH), tac)
+         val cs =
+           clasetLib.add_safe_wrapper ("truth", truth_before)
+             clasetLib.empty_cs
+         val goal = ([], boolSyntax.T)
+       in
+         case first_step clasetStep.safe_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Wrapper => valid_step goal (record, node)
+                  | _ => false)
+       end)
+
+val _ =
+  test
+    ("safe eq-mp slot closes a matching contradiction",
+     fn () =>
+       let
+         val proposition = boolSyntax.mk_conj (goal_p, goal_q)
+         val goal =
+           ([boolSyntax.mk_neg proposition, proposition], goal_r)
+       in
+         case first_step clasetStep.safe_step clasetLib.empty_cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Contradiction (1, 2) =>
+                      clasetStep.consumed_of record = SOME 1 andalso
+                      valid_step goal (record, node)
+                  | _ => false)
+       end)
+
+val _ =
+  test
+    ("rule premise stripping keeps explicit negation opaque",
+     fn () =>
+       let
+         val negative = boolSyntax.mk_neg goal_p
+         val rule = DISCH negative (ASSUME negative)
+         val cs =
+           clasetLib.add_sintros [("negative", rule)]
+             clasetLib.empty_cs
+         val goal = ([], negative)
+       in
+         case first_step clasetStep.safe_step cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               let
+                 val child = the_singleton (clasetGoal.goals node)
+               in
+                 List.null (#asl child) andalso
+                 Term.aconv (#w child) negative andalso
+                 valid_step goal (record, node)
+               end
+       end)
+
+val _ =
+  test
+    ("elim lookup dedups tags but keeps positional alternatives",
+     fn () =>
+       let
+         val disjunction = boolSyntax.mk_disj (goal_p, goal_q)
+         val goal = ([disjunction, disjunction], goal_r)
+         val cs =
+           clasetLib.add_selims [("or", boolTheory.OR_ELIM_THM)]
+             clasetLib.empty_cs
+         val sequence =
+           clasetStep.safe_step cs (clasetGoal.from_goal goal, 1)
+         fun drain results remaining =
+           case seq.cases remaining of
+               NONE => List.rev results
+             | SOME (result, rest) => drain (result :: results) rest
+         val results = drain [] sequence
+         val consumed = map (clasetStep.consumed_of o #1) results
+       in
+         consumed = [SOME 1, SOME 2] andalso
+         List.all (valid_step goal) results
+       end)
+
+val _ =
+  test
+    ("rule validations normalize local theorem hypotheses",
+     fn () =>
+       let
+         val x = Term.mk_var ("hyp_close_x", bool_ty)
+         val f = Term.mk_var ("hyp_close_f", bool_ty --> bool_ty)
+         val h = Term.mk_var ("hyp_close_h", bool_ty --> bool_ty)
+         val eta = Term.mk_abs (x, Term.mk_comb (f, x))
+         val abstraction =
+           Term.mk_abs (h, boolSyntax.mk_eq (h, f))
+         val assumption = Term.mk_comb (abstraction, eta)
+         val rule = Drule.ADD_ASSUM assumption boolTheory.TRUTH
+         val cs =
+           clasetLib.add_sintros [("local", rule)] clasetLib.empty_cs
+         val goal = ([assumption], boolSyntax.T)
+       in
+         case first_step clasetStep.safe_step cs goal of
+             NONE => false
+           | SOME result => valid_step goal result
+       end)
+
+val _ =
+  test
+    ("GEN step records its eigenvariable and valid evidence",
+     fn () =>
+       let
+         val x = Term.mk_var ("step_gen_x", bool_ty)
+         val predicate =
+           Term.mk_var ("step_gen_predicate", bool_ty --> bool_ty)
+         val goal =
+           ([], boolSyntax.mk_forall
+             (x, Term.mk_comb (predicate, x)))
+       in
+         case first_step clasetStep.safe_step clasetLib.empty_cs goal of
+             NONE => false
+           | SOME (record, node) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Gen =>
+                      length (clasetStep.eigenvariables_of record) = 1
+                      andalso valid_step goal (record, node)
+                  | _ => false)
        end)

@@ -233,7 +233,7 @@ fun children_from initial_avoids
           List.foldl freshen_bound
             (avoids, [], #params parent', current_store) bounds
         val body' = Term.subst subst body
-        val (antecedents, conclusion) = strip_imp body'
+        val (antecedents, conclusion) = strip_imp_only body'
         val base =
           {params = params', asl = #asl parent', w = conclusion}
         val child = cons_assumptions antecedents base
