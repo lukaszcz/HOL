@@ -1176,3 +1176,112 @@ val _ =
                       andalso valid_step goal (record, node)
                   | _ => false)
        end)
+
+fun same_goal ((asl1, w1), (asl2, w2)) =
+  boolSyntax.goal_eq (asl1, w1) (asl2, w2)
+
+fun same_goals left right = ListPair.allEq same_goal (left, right)
+
+fun tactic_fails tactic goal =
+  (ignore (tactic goal); false)
+  handle HOL_ERR _ => true
+
+val _ =
+  test
+    ("SAFE_TAC saturates implication and conjunction in premise order",
+     fn () =>
+       let
+         val goal =
+           ([], boolSyntax.mk_imp
+             (goal_p, boolSyntax.mk_conj (goal_q, goal_r)))
+         val (residues, _) =
+           Tactical.VALID
+             (classicalLib.SAFE_TAC
+               [clasetLib.SIntro boolTheory.AND_INTRO_THM]) goal
+         val expected = [([], goal_q), ([], goal_r)]
+       in
+         same_goals residues expected
+       end)
+
+val _ =
+  test
+    ("CLARIFY_TAC leaves a genuinely branching conjunction intact",
+     fn () =>
+       let
+         val conjunction = boolSyntax.mk_conj (goal_q, goal_r)
+         val goal = ([], boolSyntax.mk_imp (goal_p, conjunction))
+         val (residues, _) =
+           Tactical.VALID
+             (classicalLib.CLARIFY_TAC
+               [clasetLib.SIntro boolTheory.AND_INTRO_THM]) goal
+       in
+         same_goals residues [([], conjunction)]
+       end)
+
+val _ =
+  test
+    ("public step tactics perform one valid step",
+     fn () =>
+       let
+         val implication = boolSyntax.mk_imp (goal_p, goal_q)
+         val goal = ([], implication)
+         val expected = [([goal_p], goal_q)]
+         val (safe_goals, _) =
+           Tactical.VALID (classicalLib.SAFE_STEP_TAC []) goal
+         val (clarify_goals, _) =
+           Tactical.VALID (classicalLib.CLARIFY_STEP_TAC []) goal
+       in
+         same_goals safe_goals expected andalso
+         same_goals clarify_goals expected
+       end)
+
+val _ =
+  test
+    ("safe and clarify tactics fail exactly when nothing changes",
+     fn () =>
+       let val goal = ([], goal_p)
+       in
+         tactic_fails (classicalLib.SAFE_TAC []) goal andalso
+         tactic_fails (classicalLib.CLARIFY_TAC []) goal andalso
+         tactic_fails (classicalLib.SAFE_STEP_TAC []) goal andalso
+         tactic_fails (classicalLib.CLARIFY_STEP_TAC []) goal
+       end)
+
+val _ =
+  test
+    ("an unmarked extra theorem is unsafe, not a SAFE_TAC rule",
+     fn () =>
+       let
+         val left = boolSyntax.mk_conj (goal_p, goal_q)
+         val right = boolSyntax.mk_conj (goal_q, goal_p)
+         val assumption = boolSyntax.mk_eq (left, right)
+         val theorem = SYM (ASSUME assumption)
+         val goal = ([assumption], boolSyntax.mk_eq (right, left))
+       in
+         tactic_fails (classicalLib.SAFE_TAC [theorem]) goal
+       end)
+
+val _ =
+  test
+    ("per-invocation claset changes never leak",
+     fn () =>
+       let
+         fun global_rule_names () =
+           map (fn (_, (name, _)) => name)
+             (clasetLib.rules_of (clasetLib.the_claset ()))
+         val initial_names = global_rule_names ()
+         val success_goal =
+           ([], boolSyntax.mk_imp (goal_p, goal_q))
+         val _ =
+           Tactical.VALID
+             (classicalLib.SAFE_TAC
+               [clasetLib.SIntro boolTheory.AND_INTRO_THM])
+             success_goal
+         val _ =
+           tactic_fails
+             (classicalLib.SAFE_TAC
+               [clasetLib.SIntro boolTheory.AND_INTRO_THM])
+             ([], goal_p)
+       in
+         initial_names = global_rule_names ()
+       end)
