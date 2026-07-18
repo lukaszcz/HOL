@@ -4,9 +4,10 @@ INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/auto/classical
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.uo: blastTerm.uo
+blastRule.uo: blastTerm.ui
+selftest.uo: blastTerm.uo blastRule.uo
 
-selftest.exe: selftest.uo blastTerm.uo
+selftest.exe: selftest.uo blastTerm.uo blastRule.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

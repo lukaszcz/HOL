@@ -1,4 +1,5 @@
-open testutils blastTerm
+open HolKernel boolSyntax testutils blastTerm
+open clasetSeedTheory
 
 infix 9 $
 
@@ -220,4 +221,289 @@ val _ =
        in
          failed andalso local_ok andalso unassigned branch andalso
          trailSize state = 0
+       end)
+
+fun head_args term =
+  case strip_comb term of
+      (Const (name, args), actual) => (name, args, actual)
+    | _ => raise Fail "head_args"
+
+fun is_head name term =
+  case head_args term of (head, _, _) => head = name
+
+fun group_lengths ({premises, ...} : blastRule.tableau_rule) =
+  map length premises
+
+fun has_skolem (Skolem _) = true
+  | has_skolem (Const (_, args)) = List.exists has_skolem args
+  | has_skolem (Abs (_, body)) = has_skolem body
+  | has_skolem (left $ right) =
+      has_skolem left orelse has_skolem right
+  | has_skolem _ = false
+
+fun stored_elim ({origin, ...} : blastRule.tableau_rule) =
+  case origin of
+      blastRule.Stored {is_elim, ...} => is_elim
+    | _ => false
+
+val _ =
+  test
+    ("goal translation has faithful per-constant type arguments",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'a"
+         val p = mk_var ("p", bool)
+         val f = mk_var ("f", alpha --> bool)
+         val (_, bool_args, _) =
+           head_args (blastRule.fromGoalTerm (mk_eq (p, p)))
+         val (_, fun_args, _) =
+           head_args (blastRule.fromGoalTerm (mk_eq (f, f)))
+         val fun_type =
+           list_comb
+             (Const (const_name {Thy = "min", Name = "fun"}, []),
+              [Free "'a",
+               Const (const_name {Thy = "min", Name = "bool"}, [])])
+       in
+         case (bool_args, fun_args) of
+             ([Const ("min$bool", [])], [encoded]) =>
+               aconv (encoded, fun_type)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("rule type variables are shared mutable typargs",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val converted =
+           blastRule.convertIntro cache [] boolTheory.EQ_REFL
+         val converted_again =
+           blastRule.convertIntro cache [] boolTheory.EQ_REFL
+         val (_, equality_args, equality_terms) =
+           head_args (rand (#pattern converted))
+         val (_, other_args, _) =
+           head_args (rand (#pattern converted_again))
+       in
+         case (equality_args, other_args, equality_terms) of
+             ([Var variable], [Var other], [Var left, Var right]) =>
+               !variable = NONE andalso !other = NONE andalso
+               variable <> other andalso left = right
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("goal intake uses conclusion then assumptions in head-first order",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val r = mk_var ("r", bool)
+       in
+         case blastRule.initialBranch ([p, q], r) of
+             [(Const ("*Goal*", []) $ Skolem (rname, []), true),
+              (Skolem (pname, []), true),
+              (Skolem (qname, []), true)] =>
+               pname <> qname andalso pname <> rname andalso
+               qname <> rname
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("intro conversion goldens cover conjunction disjunction and exists",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val conjunction =
+           blastRule.convertIntro cache [] boolTheory.AND_INTRO_THM
+         val disjunction =
+           blastRule.convertIntro cache [] DISJ_CINTRO_THM
+         val exists =
+           blastRule.convertIntro cache [] EXISTS_INTRO_THM
+       in
+         not (stored_elim conjunction) andalso
+         group_lengths conjunction = [1, 1] andalso
+         group_lengths disjunction = [2] andalso
+         group_lengths exists = [1] andalso
+         is_head "bool$/\\" (rand (#pattern conjunction)) andalso
+         is_head "bool$\\/" (rand (#pattern disjunction)) andalso
+         is_head "bool$?" (rand (#pattern exists))
+       end)
+
+val _ =
+  test
+    ("elim conversion goldens cover conjunction disjunction exists and iff",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val conjunction = blastRule.convertElim cache [] CONJ_ELIM_THM
+         val disjunction =
+           blastRule.convertElim cache [] boolTheory.OR_ELIM_THM
+         val exists = blastRule.convertElim cache [] EXISTS_ELIM_THM
+         val iff = blastRule.convertElim cache [] IFF_CELIM_THM
+       in
+         case (conjunction, disjunction, exists, iff) of
+             (SOME conjunction', SOME disjunction', SOME exists',
+              SOME iff') =>
+               stored_elim conjunction' andalso
+               group_lengths conjunction' = [2] andalso
+               group_lengths disjunction' = [1, 1] andalso
+               group_lengths exists' = [1] andalso
+               group_lengths iff' = [2, 2] andalso
+               is_head "bool$/\\" (#pattern conjunction') andalso
+               is_head "bool$\\/" (#pattern disjunction') andalso
+               is_head "bool$?" (#pattern exists') andalso
+               is_head "min$=" (#pattern iff') andalso
+               (case #premises exists' of
+                    [[formula]] => has_skolem formula
+                  | _ => false)
+           | _ => false
+       end)
+
+fun pseudo_origin expected ({origin, ...} : blastRule.tableau_rule) =
+  case (expected, origin) of
+      ("imp", blastRule.ImpIntro) => true
+    | ("all", blastRule.AllIntro) => true
+    | _ => false
+
+val _ =
+  test
+    ("goal-directed implication and universal pseudo-rules have exact shapes",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val claset = clasetLib.empty_cs
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("x", alpha)
+         val pred = mk_var ("P", alpha --> bool)
+         val imp_formula =
+           mkGoal (blastRule.fromGoalTerm (mk_imp (p, q)))
+         val all_formula =
+           mkGoal
+             (blastRule.fromGoalTerm
+                (mk_forall (x, mk_comb (pred, x))))
+         val imp_rules = blastRule.safeRules cache claset [] imp_formula
+         val all_rules = blastRule.safeRules cache claset [] all_formula
+       in
+         case (imp_rules, all_rules) of
+             ([imp_rule], [all_rule]) =>
+               pseudo_origin "imp" imp_rule andalso
+               pseudo_origin "all" all_rule andalso
+               (case #premises imp_rule of
+                    [[Const ("*Goal*", []) $ Skolem (qname, []),
+                      Skolem (pname, [])]] => pname <> qname
+                  | _ => false) andalso
+               (case #premises all_rule of
+                    [[Const ("*Goal*", []) $ (_ $ Skolem (_, []))]] => true
+                  | _ => false)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("weak elimination warning is verbatim and the rule is skipped",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val r = mk_var ("r", bool)
+         val weak =
+           GENL [p, q, r]
+             (DISCH p (DISCH q (DISCH r (ASSUME r))))
+         val output = ref ([] : string list)
+         fun collect text = output := text :: !output
+         val converted =
+           Lib.with_flag (Feedback.WARNING_outstream, collect)
+             (fn () =>
+                blastRule.convertElim (blastRule.newCache ()) [] weak) ()
+         val warning = String.concat (rev (!output))
+         val message =
+           "Ignoring weak elimination rule\n" ^ Parse.thm_to_string weak
+         val expected =
+           (!Feedback.WARNING_to_string) "blastRule" "convertElim"
+             message
+       in
+         not (Option.isSome converted) andalso warning = expected
+       end)
+
+val _ =
+  test
+    ("too-flexible assertions never query elimination nets",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val variable = Var (ref NONE)
+         val negated = Const ("bool$~", []) $ variable
+         val claset = clasetLib.the_claset ()
+       in
+         null (blastRule.safeRules cache claset [] variable) andalso
+         null (blastRule.unsafeRules cache claset [] variable) andalso
+         null (blastRule.safeRules cache claset [] negated) andalso
+         blastRule.conversionCount cache = 0
+       end)
+
+val _ =
+  test
+    ("weight-zero stored rules precede goal-directed pseudo-rules",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val reflexive = GEN p (DISCH p (ASSUME p))
+         val claset =
+           clasetLib.add_sintros [("imp_reflexive", reflexive)]
+             clasetLib.empty_cs
+         val formula =
+           mkGoal (blastRule.fromGoalTerm (mk_imp (p, p)))
+         val rules =
+           blastRule.safeRules (blastRule.newCache ()) claset [] formula
+       in
+         case rules of
+             {origin = blastRule.Stored _, ...} ::
+             {origin = blastRule.ImpIntro, ...} :: _ => true
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("rule acquisition is per-node lazy and cached per formula",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val formula =
+           mkGoal
+             (blastRule.fromGoalTerm
+                (mk_conj (mk_var ("p", bool), mk_var ("q", bool))))
+         val initial_count = blastRule.conversionCount cache
+         val first =
+           blastRule.safeRules cache (clasetLib.the_claset ()) [] formula
+         val after_first = blastRule.conversionCount cache
+         val second =
+           blastRule.safeRules cache (clasetLib.the_claset ()) [] formula
+       in
+         initial_count = 0 andalso not (null first) andalso
+         after_first > initial_count andalso
+         blastRule.conversionCount cache = after_first andalso
+         length first = length second
+       end)
+
+val _ =
+  test
+    ("duplicating elim replay uses REV_DUP_ELIM_RULE only",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val elim = blastRule.convertElim cache [] CONJ_ELIM_THM
+         val intro =
+           blastRule.convertIntro cache [] boolTheory.AND_INTRO_THM
+       in
+         case elim of
+             SOME converted =>
+               Option.isSome (blastRule.replayTheorem converted true) andalso
+               Option.isSome (blastRule.replayTheorem intro false) andalso
+               Option.isSome (blastRule.replayTheorem intro true)
+           | NONE => false
        end)
