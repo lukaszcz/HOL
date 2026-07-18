@@ -57,6 +57,10 @@ type proof =
    branches_closed : int,
    choices_pruned : int}
 
+type debug_result =
+  {fullTrace : branch list list,
+   result : proof option}
+
 val depth_limit = ref 20
 
 exception PROOF_FAILED
@@ -360,12 +364,50 @@ fun foldPremVars prems vars =
        add_terms_vars (premise, accumulated))
     vars prems
 
-fun searchTerms claset depth formulas cont =
+fun termString term =
+  case term of
+      Const (name, []) => name
+    | Const (name, args) =>
+        name ^ "{" ^ String.concatWith "," (map termString args) ^ "}"
+    | Skolem (name, variables) =>
+        name ^ "[" ^ Int.toString (length variables) ^ "]"
+    | Free name => name
+    | Var variable =>
+        (case !variable of
+             SOME value => termString value
+           | NONE => "?")
+    | Bound index => "B" ^ Int.toString index
+    | Abs (name, body) => "(\\" ^ name ^ ". " ^ termString body ^ ")"
+    | left $ right =>
+        "(" ^ termString left ^ " " ^ termString right ^ ")"
+
+fun pairString (formula, md) =
+  termString formula ^ (if md then "+" else "-")
+
+fun levelString (safe, unsafe) =
+  "S[" ^ String.concatWith ", " (map pairString safe) ^ "] U[" ^
+  String.concatWith ", " (map pairString unsafe) ^ "]"
+
+fun branchString ({pairs, lits, vars, lim} : branch) =
+  "{lim=" ^ Int.toString lim ^ ", vars=" ^
+  Int.toString (length vars) ^ ", lits=[" ^
+  String.concatWith ", " (map termString lits) ^ "], levels=[" ^
+  String.concatWith "; " (map levelString pairs) ^ "]}"
+
+fun traceState depth branches =
+  if Feedback.current_trace "blast" >= 3 then
+    Feedback.HOL_MESG
+      ("Blast trace at depth " ^ Int.toString depth ^ ":\n" ^
+       String.concatWith "\n" (map branchString branches))
+  else ()
+
+fun runTerms debug claset depth formulas cont =
   let
     val state = newState ()
     val closed = ref 0
     val created = ref 1
     val pruned = ref 0
+    val fullTrace = ref ([] : branch list list)
 
     fun proofOf (tacs, trace) =
       {script = rev tacs,
@@ -376,6 +418,10 @@ fun searchTerms claset depth formulas cont =
        choices_pruned = !pruned}
 
     fun prv (tacs, trace, choices, brs) =
+      let
+        val _ = if debug then fullTrace := brs :: !fullTrace else ()
+        val _ = traceState depth brs
+      in
       case brs of
           [] =>
             ((cont (proofOf (tacs, trace)))
@@ -638,13 +684,19 @@ fun searchTerms claset depth formulas cont =
                        vars = vars, lim = lim} :: brs))
             end
         | _ :: _ => backtrack choices
+      end
 
     val initial = initBranch (formulas, depth)
+    val result =
+      SOME
+        (prv ([], [], [Choice (trailSize state, 1, PROVE)], [initial]))
+      handle PROVE => NONE
   in
-    SOME
-      (prv ([], [], [Choice (trailSize state, 1, PROVE)], [initial]))
-    handle PROVE => NONE
+    {fullTrace = rev (!fullTrace), result = result}
   end
+
+fun searchTerms claset depth formulas cont =
+  #result (runTerms false claset depth formulas cont)
 
 fun searchGoal claset depth goal cont =
   searchTerms claset depth
@@ -652,6 +704,10 @@ fun searchGoal claset depth goal cont =
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
+
+fun debugGoal claset depth goal =
+  runTerms true claset depth
+    (map first (blastRule.initialBranch goal)) (fn proof => proof)
 
 (* There is deliberately no timeout.  A future extension may poll a counter
    at prv entry, but the faithful engine is bounded only by deepening. *)

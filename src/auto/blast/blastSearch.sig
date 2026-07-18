@@ -36,6 +36,10 @@ sig
      branches_closed : int,
      choices_pruned : int}
 
+  type debug_result =
+    {fullTrace : branch list list,
+     result : proof option}
+
   val depth_limit : int ref
 
   (* Raising this exception in the continuation re-enters the newest
@@ -50,6 +54,7 @@ sig
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
   val tryGoal : claset -> int -> goal -> proof option
+  val debugGoal : claset -> int -> goal -> debug_result
 
   (* Bounds 0, 1, ... through !depth_limit, as DEEPEN (1, limit). *)
   val deepenGoal : claset -> goal -> (proof -> 'a) -> 'a option

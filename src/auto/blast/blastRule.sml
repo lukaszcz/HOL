@@ -282,8 +282,10 @@ fun convertIntro cache vars theorem =
   end
 
 fun weak_warning theorem =
-  HOL_WARNING "blastRule" "convertElim"
-    ("Ignoring weak elimination rule\n" ^ Parse.thm_to_string theorem)
+  if Feedback.current_trace "blast" >= 1 then
+    HOL_WARNING "blastRule" "convertElim"
+      ("Ignoring weak elimination rule\n" ^ Parse.thm_to_string theorem)
+  else ()
 
 fun bad_conclusion_message theorem =
   "Ignoring ill-formed elimination rule:\n" ^

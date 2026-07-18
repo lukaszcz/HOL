@@ -92,11 +92,14 @@ fun perform_with cs goal ({script, ...} : proof) =
     result
   end
 
+fun reconstructWith cs goal proof =
+  total (perform_with cs goal) proof
+
 fun reconstruct goal proof =
-  total (perform_with clasetLib.empty_cs goal) proof
+  reconstructWith clasetLib.empty_cs goal proof
 
 fun accept cs goal proof =
-  case total (perform_with cs goal) proof of
+  case reconstructWith cs goal proof of
       SOME result => (proof, result)
     | NONE => raise blastSearch.PROOF_FAILED
 

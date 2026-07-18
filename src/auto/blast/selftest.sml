@@ -415,11 +415,14 @@ val _ =
            GENL [p, q, r]
              (DISCH p (DISCH q (DISCH r (ASSUME r))))
          val output = ref ([] : string list)
+         val old_trace = Feedback.current_trace "blast"
          fun collect text = output := text :: !output
+         val _ = Feedback.set_trace "blast" 1
          val converted =
            Lib.with_flag (Feedback.WARNING_outstream, collect)
              (fn () =>
                 blastRule.convertElim (blastRule.newCache ()) [] weak) ()
+         val _ = Feedback.set_trace "blast" old_trace
          val warning = String.concat (rev (!output))
          val message =
            "Ignoring weak elimination rule\n" ^ Parse.thm_to_string weak
@@ -991,4 +994,149 @@ val _ =
          Option.isSome (blastSearch.tryGoal cs 1 goal) andalso
          not (Option.isSome
            (blastReconstruct.searchGoal cs 1 goal))
+       end)
+
+fun blast_solves tactic goal =
+  case total (Tactical.VALID tactic) goal of
+      SOME ([], validation) => (ignore (validation []); true)
+    | _ => false
+
+fun blast_fails tactic goal =
+  not (Option.isSome (total (Tactical.VALID tactic) goal))
+
+val _ =
+  test
+    ("public BLAST tactics solve golden goals under Tactical.VALID",
+     fn () =>
+       let
+         val p = mk_var ("public_p", bool)
+         val x = mk_var ("public_x", bool)
+         val y = mk_var ("public_y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val nested =
+           ([], mk_exists (x, mk_exists (y, body)))
+       in
+         blast_solves (tableauLib.BLAST_TAC [])
+           ([], mk_imp (p, p)) andalso
+         blast_fails (tableauLib.BLAST_DEPTH_TAC 1 []) nested andalso
+         blast_solves (tableauLib.BLAST_DEPTH_TAC 2 []) nested
+       end)
+
+val _ =
+  test
+    ("plain extra lemmas are unsafe intros and markers are processed",
+     fn () =>
+       let
+         val x = mk_var ("extra_x", bool)
+         val y = mk_var ("extra_y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val conclusion = mk_exists (x, mk_exists (y, body))
+         val goal = ([], conclusion)
+         val theorem =
+           Tactical.TAC_PROOF
+             (goal, tableauLib.BLAST_DEPTH_TAC 2 [])
+         val generic =
+           [markerLib.Cong boolTheory.TRUTH,
+            markerLib.Excl "not-a-blast-rule",
+            markerLib.ExclSF "not-a-blast-fragment"]
+       in
+         blast_fails (tableauLib.BLAST_DEPTH_TAC 1 []) goal andalso
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 1 [theorem]) goal andalso
+         blast_solves
+           (tableauLib.BLAST_DEPTH_TAC 0
+             [clasetLib.SIntro theorem]) goal andalso
+         blast_solves (tableauLib.BLAST_TAC generic)
+           ([], mk_imp (conclusion, conclusion))
+       end)
+
+val _ =
+  test
+    ("tryIt records full search and skips reconstruction",
+     fn () =>
+       let
+         val p = mk_var ("debug_p", bool)
+         val q = mk_var ("debug_q", bool)
+         val r = mk_var ("debug_r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([p], mk_disj (p, q))
+         val rules =
+           [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM", bad]
+         val debug = tableauLib.tryIt 1 rules goal
+       in
+         not (null (#fullTrace debug)) andalso
+         Option.isSome (#result debug) andalso
+         blast_fails (tableauLib.BLAST_DEPTH_TAC 1 rules) goal
+       end)
+
+fun blast_trace_messages level tactic goal =
+  let
+    val old_trace = Feedback.current_trace "blast"
+    val messages = ref ([] : string list)
+    val _ = Feedback.set_trace "blast" level
+    val result =
+      Lib.with_flag (Feedback.MESG_outstream,
+        fn message => messages := message :: !messages)
+        (fn () => blast_solves tactic goal) ()
+    val _ = Feedback.set_trace "blast" old_trace
+  in
+    (result, !messages)
+  end
+
+val _ =
+  test
+    ("blast trace levels report reconstruction failure stats and states",
+     fn () =>
+       let
+         val p = mk_var ("trace_p", bool)
+         val q = mk_var ("trace_q", bool)
+         val r = mk_var ("trace_r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([p, q], mk_disj (p, q))
+         val rules =
+           [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM",
+            boolTheory.OR_INTRO_THM2, bad]
+         val (level1_ok, level1) =
+           blast_trace_messages 1
+             (tableauLib.BLAST_DEPTH_TAC 1 rules) goal
+         val (level2_ok, level2) =
+           blast_trace_messages 2
+             (tableauLib.BLAST_DEPTH_TAC 1 rules) goal
+         val (level3_ok, level3) =
+           blast_trace_messages 3
+             (tableauLib.BLAST_DEPTH_TAC 1 rules) goal
+         fun contains text =
+           List.exists (String.isSubstring text)
+       in
+         level1_ok andalso level2_ok andalso level3_ok andalso
+         contains "PROOF FAILED" level1 andalso
+         contains "Blast stats:" level2 andalso
+         contains "Blast trace at depth" level3
+       end)
+
+val _ =
+  test
+    ("public blast calls do not leak claset theory or depth state",
+     fn () =>
+       let
+         fun rule_names () =
+           map (fn (_, (name, _)) => name)
+             (clasetLib.rules_of (clasetLib.the_claset ()))
+         val p = mk_var ("state_p", bool)
+         val q = mk_var ("state_q", bool)
+         val before_rules = rule_names ()
+         val before_theory = Theory.current_theory ()
+         val before_depth = !tableauLib.depth_limit
+         val success =
+           blast_solves (tableauLib.BLAST_TAC [])
+             ([], mk_imp (p, p))
+         val failure =
+           blast_fails (tableauLib.BLAST_DEPTH_TAC 0 [])
+             ([], mk_disj (p, q))
+       in
+         success andalso failure andalso
+         before_rules = rule_names () andalso
+         before_theory = Theory.current_theory () andalso
+         before_depth = !tableauLib.depth_limit andalso
+         before_depth = 20
        end)
