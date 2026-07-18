@@ -5,9 +5,10 @@ all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 blastRule.uo: blastTerm.ui
-selftest.uo: blastTerm.uo blastRule.uo
+blastSearch.uo: blastTerm.uo blastRule.uo
+selftest.uo: blastTerm.uo blastRule.uo blastSearch.uo
 
-selftest.exe: selftest.uo blastTerm.uo blastRule.uo
+selftest.exe: selftest.uo blastTerm.uo blastRule.uo blastSearch.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

@@ -507,3 +507,226 @@ val _ =
                Option.isSome (blastRule.replayTheorem intro true)
            | NONE => false
        end)
+
+val _ =
+  test
+    ("blast search closes propositional golden tautologies",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val cs = clasetLib.the_claset ()
+         val reflexive = ([], mk_imp (p, p))
+         val projection =
+           ([], mk_imp (mk_conj (p, q), p))
+       in
+         Option.isSome (blastSearch.tryGoal cs 0 reflexive) andalso
+         Option.isSome (blastSearch.tryGoal cs 0 projection)
+       end)
+
+val _ =
+  test
+    ("search records the complete six-step vocabulary",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val x = mk_var ("x", bool)
+         val y = mk_var ("y", bool)
+         val pred = mk_var ("P", bool --> bool)
+         val px = mk_comb (pred, x)
+         val py = mk_comb (pred, y)
+         val cs = clasetLib.the_claset ()
+         val safe = blastSearch.tryGoal cs 0 ([], mk_imp (p, p))
+         val subst =
+           blastSearch.tryGoal cs 0 ([mk_eq (x, y), px], py)
+         val contr =
+           blastSearch.tryGoal cs 0 ([p, mk_neg p], q)
+         val exists =
+           blastSearch.tryGoal cs 1
+             ([], mk_exists (x, mk_eq (x, x)))
+         fun scripts (SOME proof) = #script proof
+           | scripts NONE = []
+         val all =
+           scripts safe @ scripts subst @
+           scripts contr @ scripts exists
+         fun has predicate = List.exists predicate all
+       in
+         has (fn blastSearch.HypSubst => true | _ => false) andalso
+         has (fn blastSearch.CloseAssume => true | _ => false) andalso
+         has
+           (fn blastSearch.CloseContradiction => true | _ => false)
+           andalso
+         has (fn blastSearch.SafeRule _ => true | _ => false) andalso
+         has (fn blastSearch.DeferGoal => true | _ => false) andalso
+         has (fn blastSearch.UnsafeRule _ => true | _ => false)
+       end)
+
+val _ =
+  test
+    ("unsafe depth is charged exactly once",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val goal = ([], mk_exists (x, mk_eq (x, x)))
+         val cs = clasetLib.the_claset ()
+       in
+         !blastSearch.depth_limit = 20 andalso
+         not (Option.isSome (blastSearch.tryGoal cs 0 goal)) andalso
+         (case blastSearch.tryGoal cs 1 goal of
+              SOME proof => #depth proof = 1
+            | NONE => false) andalso
+         (case Lib.with_flag (blastSearch.depth_limit, 1)
+                 (fn () =>
+                    blastSearch.deepenGoal cs goal (fn proof => proof)) () of
+              SOME proof => #depth proof = 1
+            | NONE => false)
+       end)
+
+val _ =
+  test
+    ("gamma retention is requeued at the back of its level",
+     fn () =>
+       let
+         val h = Free "H"
+         val first = (Free "A", false)
+         val second = (Free "B", true)
+       in
+         blastSearch.requeueGamma (h, true) [first, second] true =
+           [first, second, (h, true)] andalso
+         blastSearch.requeueGamma (h, true) [first, second] false =
+           [first, second]
+       end)
+
+val _ =
+  test
+    ("gamma requeue lets the next deferred formula run first",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val b = mk_var ("b", bool)
+         val p = mk_var ("P", bool --> bool)
+         val q = mk_var ("Q", bool --> bool)
+         val allp = mk_forall (x, mk_comb (p, x))
+         val allq = mk_forall (x, mk_comb (q, x))
+         val qb = mk_comb (q, b)
+         val cs =
+           clasetLib.add_elims
+             [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
+       in
+         not (Option.isSome
+           (blastSearch.tryGoal cs 1 ([allp, allq], qb))) andalso
+         Option.isSome
+           (blastSearch.tryGoal cs 2 ([allp, allq], qb))
+       end)
+
+val _ =
+  test
+    ("recursive premises share a level and nonrecursive ones do not",
+     fn () =>
+       let
+         val pattern = Const ("R", []) $ Var (ref NONE)
+       in
+         blastSearch.recursivePremise pattern
+           [Const ("R", []) $ Free "a"] andalso
+         not (blastSearch.recursivePremise pattern
+           [Const ("S", []) $ Free "a"])
+       end)
+
+val _ =
+  test
+    ("prune fires without a next-branch clash and stops on a clash",
+     fn () =>
+       let
+         val changed = ref NONE
+         val unrelated = ref NONE
+         val choices = [(8, 3), (5, 3), (2, 2)]
+         val trail = [changed, ref NONE, ref NONE, ref NONE,
+                      ref NONE, ref NONE, ref NONE, ref NONE]
+         val pruned =
+           blastSearch.prunePlan
+             {branches = 3, next_vars = [unrelated],
+              trail_mark = 10, trail = trail,
+              choices = choices}
+         val retained =
+           blastSearch.prunePlan
+             {branches = 3, next_vars = [changed],
+              trail_mark = 10, trail = trail,
+              choices = choices}
+         val indirect = ref (SOME (Var changed))
+         val retained_indirect =
+           blastSearch.prunePlan
+             {branches = 3, next_vars = [indirect],
+              trail_mark = 10, trail = trail,
+              choices = choices}
+       in
+         pruned = [(2, 2)] andalso retained = choices andalso
+         retained_indirect = choices
+       end)
+
+val _ =
+  test
+    ("mayUndo and kill-all obey the crafted branch boundary",
+     fn () =>
+       let
+         val old = [ref NONE]
+         val newer = old @ [ref NONE]
+         fun undo other updated vars =
+           blastSearch.mayUndo
+             {other_rules = other, updated = updated,
+              old_vars = old, new_vars = vars}
+       in
+         blastSearch.instantiationPenalty 1 = 1 andalso
+         blastSearch.instantiationPenalty 3 = 1 andalso
+         blastSearch.instantiationPenalty 4 = 2 andalso
+         blastSearch.instantiationPenalty 16 = 3 andalso
+         undo true false newer andalso
+         undo false true newer andalso
+         undo false false old andalso
+         not (undo false false newer) andalso
+         blastSearch.killsAllAlternatives ~1 [[Free "child"]] andalso
+         not (blastSearch.killsAllAlternatives ~1 []) andalso
+         not (blastSearch.killsAllAlternatives 0 [[Free "child"]])
+       end)
+
+val _ =
+  test
+    ("mayUndo retries an unsafe alternative after PROOF_FAILED",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val attempts = ref 0
+         val cs =
+           clasetLib.add_intros
+             [("left", boolTheory.OR_INTRO_THM1),
+              ("right", boolTheory.OR_INTRO_THM2)]
+             clasetLib.empty_cs
+         fun accept proof =
+           (attempts := !attempts + 1;
+            if !attempts = 1 then raise blastSearch.PROOF_FAILED
+            else proof)
+         val result =
+           blastSearch.searchGoal cs 1
+             ([p, q], mk_disj (p, q)) accept
+       in
+         !attempts = 2 andalso Option.isSome result
+       end)
+
+val _ =
+  test
+    ("PROOF_FAILED re-enters the final literal choice point",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val attempts = ref 0
+         fun accept proof =
+           (attempts := !attempts + 1;
+            if !attempts = 1 then raise blastSearch.PROOF_FAILED
+            else proof)
+         val result =
+           blastSearch.searchGoal (clasetLib.the_claset ()) 0
+             ([p, p], p) accept
+       in
+         !attempts = 2 andalso Option.isSome result
+       end)

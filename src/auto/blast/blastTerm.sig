@@ -25,6 +25,8 @@ sig
 
   val newState : unit -> state
   val trailSize : state -> int
+  (* Newest assignment first; used by blast's pruning test. *)
+  val trailVars : state -> var list
   val clearTo : state -> int -> unit
 
   val is_Var : term -> bool

@@ -32,6 +32,8 @@ struct
 
   fun trailSize (State {ntrail, ...}) = !ntrail
 
+  fun trailVars (State {trail, ...}) = !trail
+
   fun is_Var (Var _) = true
     | is_Var _ = false
 
