@@ -675,6 +675,33 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
         entries tagged
       end)
 
+fun exact_rule_results cs {theorem, elim} (node, pos) =
+  let
+    val tag : clasetLib.tag = {weight = 0, index = 0}
+    val entry = (tag, (elim, theorem))
+
+    fun attempt assumption =
+      seq.delay
+        (fn () =>
+          case total
+            (fn () =>
+              try_rule clasetUnify.Unify cs false node pos entry
+                assumption) ()
+          of
+              SOME direct => seq.result direct
+            | NONE => seq.empty)
+
+    fun eliminations _ [] = seq.empty
+      | eliminations assumption_pos (major :: rest) =
+          seq.append (attempt (SOME (assumption_pos, major)))
+            (seq.delay
+              (fn () => eliminations (assumption_pos + 1) rest))
+  in
+    if elim then
+      eliminations 1 (#asl (clasetGoal.goal_at node pos))
+    else attempt NONE
+  end
+
 fun all_weights _ = true
 fun weight_is expected ({weight, ...} : clasetLib.tag) = weight = expected
 
@@ -873,6 +900,100 @@ fun materialized_hyp_subst_results (node, pos) =
 fun hyp_subst_results (input as (node, pos)) =
   if has_metavariables node pos then internal_hyp_subst_results input
   else materialized_hyp_subst_results input
+
+fun plain_tactic_results kind action tactic (node, pos) =
+  seq.delay
+    (fn () =>
+      let
+        val rendered = clasetGoal.render node pos
+        val {params, ...} = clasetGoal.goal_at node pos
+      in
+        case total tactic rendered of
+            NONE => seq.empty
+          | SOME (result as (goals, _)) =>
+              let
+                fun child (asl, w) =
+                  {params = params, asl = asl, w = w}
+              in
+                seq.result
+                  (Direct
+                    {kind = kind, consumed = NONE,
+                     created = no_created,
+                     eigenvariables = map (fn _ => []) goals,
+                     result = result, children = SOME (map child goals),
+                     action = action,
+                     closed = map (fn _ => NONE) goals,
+                     store = clasetGoal.store node})
+              end
+      end)
+
+(* T1 affectedness is computed on the branch syntax, before beta/eta
+   normalization.  Instantiate engine bindings structurally, but preserve
+   those redexes so this transition agrees with blastSearch.equalSubst. *)
+fun instantiate_without_reduction store tm =
+  let
+    fun recurse current =
+      let val walked = clasetMeta.walk store current
+      in
+        if is_comb walked then
+          let val (operator, operand) = dest_comb walked
+          in mk_comb (recurse operator, recurse operand) end
+        else if is_abs walked then
+          let val (bound, body) = dest_abs walked
+          in mk_abs (bound, recurse body) end
+        else walked
+      end
+  in
+    recurse tm
+  end
+
+fun blast_hyp_subst_results (node, pos) =
+  seq.delay
+    (fn () =>
+      let
+        val store = clasetGoal.store node
+        val {params, asl, w} = clasetGoal.goal_at node pos
+        val instantiate = instantiate_without_reduction store
+        val goal = (map instantiate asl, instantiate w)
+      in
+        case total clasetReplay.BLAST_HYP_SUBST_TAC goal of
+            NONE => seq.empty
+          | SOME (result as (goals, _)) =>
+              let
+                fun child (child_asl, child_w) =
+                  {params = params, asl = child_asl, w = child_w}
+              in
+                seq.result
+                  (Direct
+                    {kind = HypSubst, consumed = NONE,
+                     created = no_created,
+                     eigenvariables = map (fn _ => []) goals,
+                     result = result, children = SOME (map child goals),
+                     action = clasetReplay.blast_hyp_subst_action,
+                     closed = map (fn _ => NONE) goals,
+                     store = store})
+              end
+      end)
+
+val ccontr_results =
+  plain_tactic_results CContr
+    clasetReplay.goal_negation_action
+    clasetReplay.GOAL_NEGATION_TAC
+
+fun move_back_results position =
+  plain_tactic_results (MoveAssumptionToBack position)
+    (clasetReplay.move_assumption_to_back_action position)
+    (clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC position)
+
+fun disch_results (input as (node, pos)) =
+  if is_imp_only (#w (clasetGoal.goal_at node pos)) then
+    builtin_results input
+  else seq.empty
+
+fun gen_results (input as (node, pos)) =
+  if is_forall (#w (clasetGoal.goal_at node pos)) then
+    builtin_results input
+  else seq.empty
 
 fun safe_cascade cs input =
   first_nonempty
@@ -1170,6 +1291,40 @@ fun make_record target validation direct =
        action = direct_action direct,
        children = nested 1 (direct_closed direct)}
   end
+
+fun direct_step results (node, pos) =
+  seq.map
+    (fn direct =>
+      let
+        val (_, validation) = direct_result direct
+        val stored = clasetGoal.set_store (direct_store direct) node
+        val children =
+          case direct_children direct of
+              SOME values => values
+            | NONE =>
+                raise mk_HOL_ERR "clasetStep" "direct_step"
+                  "an exact engine transition has no internal children"
+        val next =
+          clasetGoal.replace_goal stored
+            {pos = pos, children = children,
+             store = direct_store direct}
+        val record = make_record pos validation direct
+      in
+        (record, clasetGoal.record_step record next)
+      end)
+    (results (node, pos))
+
+val blast_assumption_step = direct_step unifying_assumption_results
+val blast_contradiction_step =
+  direct_step unifying_contradiction_results
+fun blast_rule_step cs specification =
+  direct_step (exact_rule_results cs specification)
+val blast_disch_step = direct_step disch_results
+val blast_gen_step = direct_step gen_results
+val blast_ccontr_step = direct_step ccontr_results
+val blast_hyp_subst_step = direct_step blast_hyp_subst_results
+fun blast_move_back_step position =
+  direct_step (move_back_results position)
 
 fun wrapper_direct rendered goals validation store =
   let val result = (goals, validation)

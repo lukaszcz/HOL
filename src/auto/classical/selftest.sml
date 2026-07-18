@@ -3259,3 +3259,54 @@ val _ =
        in
          length results = 1 andalso !steps = 3
        end)
+
+val _ =
+  test
+    ("blast hyp-subst skips unsuitable equations and stably reorders",
+     fn () =>
+       let
+         val x = Term.mk_var ("x", Type.bool)
+         val y = Term.mk_var ("y", Type.bool)
+         val a = Term.mk_var ("a", Type.bool)
+         val f = Term.mk_var ("f", Type.bool --> Type.bool)
+         val p = Term.mk_var ("P", Type.bool --> Type.bool)
+         val q = Term.mk_var ("Q", Type.bool --> Type.bool)
+         fun app operator operand = Term.mk_comb (operator, operand)
+         val unsuitable = boolSyntax.mk_eq (app f x, x)
+         val selected = boolSyntax.mk_eq (x, y)
+         val unchanged = app p a
+         val px = app p x
+         val qx = app q x
+         val py = app p y
+         val qy = app q y
+         val original =
+           ([unsuitable, selected, unchanged, px, qx], py)
+         val node = clasetGoal.from_goal original
+         val (_, substituted) =
+           case seq.cases
+             (clasetStep.blast_hyp_subst_step (node, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "blast hyp-subst did not apply"
+         val expected =
+           [boolSyntax.mk_eq (app f y, y), py, qy, unchanged]
+         val order_ok =
+           case clasetGoal.goals substituted of
+               [{asl, ...}] =>
+                 ListPair.allEq
+                   (fn (left, right) => Term.aconv left right)
+                   (asl, expected)
+             | _ => false
+         val (_, closed) =
+           case seq.cases
+             (clasetStep.blast_assumption_step (substituted, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "substituted goal did not close"
+         val grounded =
+           clasetReplay.ground (clasetGoal.store closed)
+             (clasetGoal.replay closed)
+         val (residuals, validation) =
+           Tactical.VALID (clasetReplay.REPLAY_TAC grounded) original
+       in
+         order_ok andalso null residuals andalso
+         (ignore (validation []); true)
+       end)

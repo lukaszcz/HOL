@@ -314,6 +314,67 @@ val HYP_SUBST_TAC =
     Tactical.THEN (hyp_subst_tac, Tactical.REPEAT hyp_subst_tac)
   end
 
+(* Blast records one equality substitution at a time.  Unlike the classical
+   hyp-subst slot, affected assumptions are stably moved to the front. *)
+fun BLAST_HYP_SUBST_TAC (asl, w) =
+  let
+    fun orientation equality =
+      let
+        val equality_conversion = normalize_conv equality
+        val normalized = rhs (concl equality_conversion)
+        val normalized_thm =
+          EQ_MP equality_conversion (ASSUME equality)
+      in
+        case total dest_eq normalized of
+            NONE => NONE
+          | SOME (left, right) =>
+              let
+                fun suitable variable other =
+                  is_var variable andalso
+                  not (clasetMeta.is_meta variable) andalso
+                  not (free_in variable other)
+              in
+                if suitable left right then
+                  SOME (left, right, normalized_thm)
+                else if suitable right left then
+                  SOME (right, left, SYM normalized_thm)
+                else NONE
+              end
+      end
+
+    fun find _ [] =
+          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+            "no suitable equality assumption"
+      | find pos (equality :: rest) =
+          (case orientation equality of
+               SOME oriented => (pos, oriented)
+             | NONE => find (pos + 1) rest)
+
+    val (position, (old, replacement, equality_thm)) = find 1 asl
+    val remaining = delete_nth "BLAST_HYP_SUBST_TAC" asl position
+    val substitution = [{redex = old, residue = replacement}]
+    fun substituted tm = Term.subst substitution tm
+    fun affected tm = not (aconv (substituted tm) tm)
+    val (changed, unchanged) = List.partition affected remaining
+    val reordered = map substituted (changed @ unchanged)
+    val target = substituted w
+    val (children, validation0) =
+      Tactic.SUBST_ALL_TAC equality_thm (remaining, w)
+    val _ =
+      case children of
+          [_] => ()
+        | _ =>
+            raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+              "substitution did not produce one child"
+
+    fun validation [child_thm] = validation0 [child_thm]
+      | validation _ =
+          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+            "validation received the wrong number of theorems"
+  in
+    ([(reordered, target)], validation)
+  end
+
 fun GEN_NAMED_TAC name (asl, w) =
   let
     val (bound, _) = dest_forall w
@@ -427,6 +488,7 @@ fun contradiction_action positions store =
 fun mp_action positions store = MP_TAC store positions
 fun rule_action make store = RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
+val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC
 val disch_action = fn _ => Tactic.DISCH_TAC
 fun gen_action name _ = GEN_NAMED_TAC name
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC

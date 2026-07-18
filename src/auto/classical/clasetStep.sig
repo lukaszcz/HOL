@@ -29,6 +29,19 @@ sig
   val step : clasetLib.claset -> step
   val slow_step : clasetLib.claset -> step
 
+  (* Exact, wrapper-free engine transitions used by blast reconstruction.
+     Rule application uses the supplied canonical source rather than doing
+     another claset lookup. *)
+  val blast_assumption_step : step
+  val blast_contradiction_step : step
+  val blast_rule_step :
+    clasetLib.claset -> {theorem : thm, elim : bool} -> step
+  val blast_disch_step : step
+  val blast_gen_step : step
+  val blast_ccontr_step : step
+  val blast_hyp_subst_step : step
+  val blast_move_back_step : int -> step
+
   (* [depth_step cs part m] selects the duplicating or non-duplicating
      unsafe net through [part].  Safe and inst0 inferences cost nothing;
      an instp/part inference costs one unit. *)

@@ -379,7 +379,12 @@ fun searchTerms claset depth formulas cont =
       case brs of
           [] =>
             ((cont (proofOf (tacs, trace)))
-             handle PROOF_FAILED => backtrack choices)
+             handle PROOF_FAILED =>
+               (if Feedback.current_trace "blast" >= 1 then
+                  Feedback.HOL_MESG
+                    ("PROOF FAILED for depth " ^ Int.toString depth)
+                else ();
+                backtrack choices))
         | brs0 as
             ({pairs = (((formula, md) :: safe, unsafe) :: pairs),
               lits, vars, lim} : branch) :: brs =>

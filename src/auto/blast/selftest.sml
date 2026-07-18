@@ -779,3 +779,216 @@ val _ =
        in
          !attempts = 2 andalso Option.isSome result
        end)
+
+fun reconstructed cs depth goal =
+  case blastReconstruct.searchGoal cs depth goal of
+      SOME (_, ([], validation)) =>
+        SOME (validation [])
+    | _ => NONE
+
+fun has_step predicate ({script, ...} : blastSearch.proof) =
+  List.exists predicate script
+
+val _ =
+  test
+    ("reconstruction goldens cover T2 and T3 under Tactical.VALID",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val assume_goal = ([p], p)
+         val contradiction_goal = ([p, mk_neg p], q)
+       in
+         Option.isSome
+           (reconstructed clasetLib.empty_cs 0 assume_goal) andalso
+         Option.isSome
+           (reconstructed clasetLib.empty_cs 0 contradiction_goal)
+       end)
+
+val _ =
+  test
+    ("stored and pseudo safe rules reconstruct with prefix stripping",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val x = mk_var ("x", bool)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         val stored = ([mk_conj (p, q)], p)
+         val pseudo =
+           ([], mk_forall (x, mk_imp (x, x)))
+       in
+         Option.isSome (reconstructed cs 0 stored) andalso
+         Option.isSome
+           (reconstructed clasetLib.empty_cs 0 pseudo)
+       end)
+
+val _ =
+  test
+    ("T5 and T6 reconstruct a witness fixed by a later T2 close",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val p = mk_var ("P", bool --> bool)
+         val a = mk_var ("a", bool)
+         val pa = mk_comb (p, a)
+         val goal = ([pa], mk_exists (x, mk_comb (p, x)))
+         val cs =
+           clasetLib.add_intros
+             [("existsI", EXISTS_INTRO_THM)] clasetLib.empty_cs
+       in
+         case blastReconstruct.searchGoal cs 1 goal of
+             SOME (proof, ([], validation)) =>
+               has_step
+                 (fn blastSearch.DeferGoal => true | _ => false)
+                 proof andalso
+               has_step
+                 (fn blastSearch.UnsafeRule _ => true | _ => false)
+                 proof andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("gamma duplication moves the repeated major behind old assumptions",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val a = mk_var ("a", bool)
+         val p = mk_var ("P", bool --> bool)
+         val q = mk_var ("Q", bool --> bool)
+         val allp = mk_forall (x, mk_comb (p, x))
+         val allq = mk_forall (x, mk_comb (q, x))
+         val goal = ([allp, allq], mk_comb (q, a))
+         val cs =
+           clasetLib.add_elims
+             [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
+       in
+         case blastReconstruct.searchGoal cs 2 goal of
+             SOME (proof, ([], validation)) =>
+               has_step
+                 (fn blastSearch.UnsafeRule {duplicate = true, ...} =>
+                       true
+                   | _ => false) proof andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("blast hyp-subst reorders affected assumptions before replay",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val y = mk_var ("y", bool)
+         val a = mk_var ("a", bool)
+         val p = mk_var ("P", bool --> bool)
+         val q = mk_var ("Q", bool --> bool)
+         val unchanged =
+           mk_conj (mk_comb (p, a), mk_comb (q, a))
+         val affected =
+           mk_conj (mk_comb (p, x), mk_comb (q, y))
+         val goal =
+           ([mk_eq (x, y), unchanged, affected], mk_comb (p, y))
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+       in
+         case blastReconstruct.searchGoal cs 0 goal of
+             SOME (proof, ([], validation)) =>
+               has_step
+                 (fn blastSearch.HypSubst => true | _ => false)
+                 proof andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("hyp-subst affectedness preserves beta-redex branch order",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val y = mk_var ("y", bool)
+         val a = mk_var ("a", bool)
+         val c = mk_var ("c", bool)
+         val u = mk_var ("u", bool)
+         val z = mk_var ("z", bool)
+         val p = mk_var ("P", bool --> bool --> bool)
+         fun pu left right =
+           mk_comb (mk_comb (p, left), right)
+         val constant_all = mk_forall (u, pu c u)
+         val beta_assumption =
+           mk_comb (mk_abs (z, constant_all), x)
+         val affected_all = mk_forall (u, pu x u)
+         val goal =
+           ([mk_eq (x, y), beta_assumption, affected_all], pu c a)
+         val cs =
+           clasetLib.add_elims
+             [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
+       in
+         Option.isSome (blastSearch.tryGoal cs 2 goal) andalso
+         Option.isSome (reconstructed cs 2 goal)
+       end)
+
+val _ =
+  test
+    ("real reconstruction failure backtracks to a valid tableau rule",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val r = mk_var ("r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([p, q], mk_disj (p, q))
+         val cs =
+           clasetLib.add_intros
+             [("good-right", boolTheory.OR_INTRO_THM2),
+              ("bad-left", bad)] clasetLib.empty_cs
+         val attempts = ref 0
+         val messages = ref ([] : string list)
+         val old_trace = Feedback.current_trace "blast"
+         fun accept proof =
+           (attempts := !attempts + 1;
+            case blastReconstruct.reconstruct goal proof of
+                SOME result => (proof, result)
+              | NONE => raise blastSearch.PROOF_FAILED)
+         val _ = Feedback.set_trace "blast" 1
+         val result =
+           Lib.with_flag (Feedback.MESG_outstream,
+             fn message => messages := message :: !messages)
+             (fn () => blastSearch.searchGoal cs 1 goal accept) ()
+         val _ = Feedback.set_trace "blast" old_trace
+         val traced =
+           List.exists
+             (String.isSubstring "PROOF FAILED for depth 1")
+             (!messages)
+       in
+         !attempts = 2 andalso traced andalso
+         case result of
+             SOME (_, ([], validation)) =>
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("a tableau with only an unreconstructible rule fails cleanly",
+     fn () =>
+       let
+         val p = mk_var ("p", bool)
+         val q = mk_var ("q", bool)
+         val r = mk_var ("r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([p], mk_disj (p, q))
+         val cs =
+           clasetLib.add_intros
+             [("bad-left", bad)] clasetLib.empty_cs
+       in
+         Option.isSome (blastSearch.tryGoal cs 1 goal) andalso
+         not (Option.isSome
+           (blastReconstruct.searchGoal cs 1 goal))
+       end)
