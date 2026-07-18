@@ -1136,7 +1136,9 @@ val _ =
          val debug = tableauLib.tryIt 1 rules goal
        in
          not (null (#fullTrace debug)) andalso
-         Option.isSome (#result debug) andalso
+         (case #result debug of
+              SOME proof => not (null (#script proof))
+            | NONE => false) andalso
          blast_fails (tableauLib.BLAST_DEPTH_TAC 1 rules) goal
        end)
 
