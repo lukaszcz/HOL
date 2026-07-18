@@ -2,13 +2,20 @@ structure blastSearch :> blastSearch =
 struct
 
 (* Faithful search port from Isabelle src/Provers/blast.ML.
-   Branch levels and initBranch map lines 93--99 and 1179--1184.
-   Backtracking/prune map lines 829--874; equality maps 700--790.
-   The five prv clauses below map lines 938--940, 941--1064,
-   1065--1072, 1073--1174, and 1175--1176, respectively.
-   Safe cascade ordering maps lines 1032--1063.  Safe expansion maps
-   953--1006; unsafe expansion, gamma requeue, mayUndo, and kill-all map
-   1077--1162.  The penalty maps lines 897--899.  deepenGoal maps the
+   Branches and initialization map lines 93--99 and 1179--1184.
+   Equality maps lines 692--790; closers map lines 797--815.
+   Child md flags map lines 817--826.  Backtracking and pruning map
+   lines 829--874; addLit maps lines 876--894; the penalty and recursive
+   check map lines 897--915.
+
+   The five prv clauses map lines 938--940, 941--1064, 1065--1072,
+   1073--1174, and 1175--1176.  Within clause 2, safe expansion maps
+   lines 953--1006, closing maps lines 1008--1031, and the committed
+   equality/close/safe/defer cascade maps lines 1032--1063.  Clause 3's
+   level merge maps lines 1065--1072.  Clause 4's children, gamma
+   requeue, recursive-level sharing, penalty, mayUndo, and kill-all map
+   lines 1082--1160; its literal fallback maps lines 1167--1173.
+   Replay-failure re-entry maps lines 1254--1277.  deepenGoal maps the
    DEEPEN call at lines 1284--1292.
 *)
 
@@ -89,9 +96,9 @@ fun joinMd _ [] = []
       (formula, hasSkolem formula orelse md) :: joinMd md formulas
 
 fun initBranch (formulas, lim) =
-  {pairs = [(formulas, [])],
+  {pairs = [(map (fn formula => (formula, true)) formulas, [])],
    lits = [],
-   vars = add_terms_vars (map first formulas, []),
+   vars = add_terms_vars (formulas, []),
    lim = lim}
 
 fun sameVars ([], []) = true
@@ -635,7 +642,8 @@ fun searchTerms claset depth formulas cont =
   end
 
 fun searchGoal claset depth goal cont =
-  searchTerms claset depth (blastRule.initialBranch goal) cont
+  searchTerms claset depth
+    (map first (blastRule.initialBranch goal)) cont
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
@@ -644,8 +652,9 @@ fun tryGoal claset depth goal =
    at prv entry, but the faithful engine is bounded only by deepening. *)
 fun deepenGoal claset goal cont =
   let
+    val limit = !depth_limit
     fun deepen depth =
-      if depth > !depth_limit then NONE
+      if depth > limit then NONE
       else
         case searchGoal claset depth goal cont of
             NONE => deepen (depth + 1)

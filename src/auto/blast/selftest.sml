@@ -510,6 +510,23 @@ val _ =
 
 val _ =
   test
+    ("initial blast formulae all receive the duplication flag",
+     fn () =>
+       let
+         val p = Free "p"
+         val q = Free "q"
+         val branch = blastSearch.initBranch ([p, q], 3)
+       in
+         #lim branch = 3 andalso
+         case #pairs branch of
+             [(safe, [])] =>
+               map (fn (formula, _) => formula) safe = [p, q] andalso
+               List.all (fn (_, md) => md) safe
+           | _ => false
+       end)
+
+val _ =
+  test
     ("blast search closes propositional golden tautologies",
      fn () =>
        let
@@ -519,9 +536,12 @@ val _ =
          val reflexive = ([], mk_imp (p, p))
          val projection =
            ([], mk_imp (mk_conj (p, q), p))
+         val commutation =
+           ([], mk_imp (mk_disj (p, q), mk_disj (q, p)))
        in
          Option.isSome (blastSearch.tryGoal cs 0 reflexive) andalso
-         Option.isSome (blastSearch.tryGoal cs 0 projection)
+         Option.isSome (blastSearch.tryGoal cs 0 projection) andalso
+         Option.isSome (blastSearch.tryGoal cs 0 commutation)
        end)
 
 val _ =
@@ -564,22 +584,28 @@ val _ =
 
 val _ =
   test
-    ("unsafe depth is charged exactly once",
+    ("unsafe depth and the deepening cap have exact accounting",
      fn () =>
        let
          val x = mk_var ("x", bool)
-         val goal = ([], mk_exists (x, mk_eq (x, x)))
+         val y = mk_var ("y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val goal = ([], mk_exists (x, mk_exists (y, body)))
          val cs = clasetLib.the_claset ()
+         fun deepen limit =
+           Lib.with_flag (blastSearch.depth_limit, limit)
+             (fn () =>
+                blastSearch.deepenGoal cs goal (fn proof => proof)) ()
        in
          !blastSearch.depth_limit = 20 andalso
          not (Option.isSome (blastSearch.tryGoal cs 0 goal)) andalso
-         (case blastSearch.tryGoal cs 1 goal of
-              SOME proof => #depth proof = 1
+         not (Option.isSome (blastSearch.tryGoal cs 1 goal)) andalso
+         (case blastSearch.tryGoal cs 2 goal of
+              SOME proof => #depth proof = 2
             | NONE => false) andalso
-         (case Lib.with_flag (blastSearch.depth_limit, 1)
-                 (fn () =>
-                    blastSearch.deepenGoal cs goal (fn proof => proof)) () of
-              SOME proof => #depth proof = 1
+         not (Option.isSome (deepen 1)) andalso
+         (case deepen 2 of
+              SOME proof => #depth proof = 2
             | NONE => false)
        end)
 
@@ -613,11 +639,16 @@ val _ =
          val cs =
            clasetLib.add_elims
              [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
+         fun isUnsafe (blastSearch.UnsafeRule _) = true
+           | isUnsafe _ = false
        in
          not (Option.isSome
            (blastSearch.tryGoal cs 1 ([allp, allq], qb))) andalso
-         Option.isSome
-           (blastSearch.tryGoal cs 2 ([allp, allq], qb))
+         (case blastSearch.tryGoal cs 2 ([allp, allq], qb) of
+              SOME proof =>
+                #depth proof = 2 andalso
+                length (List.filter isUnsafe (#script proof)) = 2
+            | NONE => false)
        end)
 
 val _ =
@@ -639,29 +670,23 @@ val _ =
      fn () =>
        let
          val changed = ref NONE
+         val barrier = ref NONE
          val unrelated = ref NONE
          val choices = [(8, 3), (5, 3), (2, 2)]
-         val trail = [changed, ref NONE, ref NONE, ref NONE,
+         val trail = [changed, ref NONE, barrier, ref NONE,
                       ref NONE, ref NONE, ref NONE, ref NONE]
-         val pruned =
+         fun plan branches next_vars =
            blastSearch.prunePlan
-             {branches = 3, next_vars = [unrelated],
-              trail_mark = 10, trail = trail,
-              choices = choices}
-         val retained =
-           blastSearch.prunePlan
-             {branches = 3, next_vars = [changed],
+             {branches = branches, next_vars = next_vars,
               trail_mark = 10, trail = trail,
               choices = choices}
          val indirect = ref (SOME (Var changed))
-         val retained_indirect =
-           blastSearch.prunePlan
-             {branches = 3, next_vars = [indirect],
-              trail_mark = 10, trail = trail,
-              choices = choices}
        in
-         pruned = [(2, 2)] andalso retained = choices andalso
-         retained_indirect = choices
+         plan 3 [unrelated] = [(2, 2)] andalso
+         plan 3 [changed] = choices andalso
+         plan 3 [indirect] = choices andalso
+         plan 3 [barrier] = [(5, 3), (2, 2)] andalso
+         plan 1 [unrelated] = choices
        end)
 
 val _ =
@@ -711,6 +736,30 @@ val _ =
              ([p, q], mk_disj (p, q)) accept
        in
          !attempts = 2 andalso Option.isSome result
+       end)
+
+val _ =
+  test
+    ("a sole pure gamma inference is not retried after PROOF_FAILED",
+     fn () =>
+       let
+         val x = mk_var ("x", bool)
+         val b = mk_var ("b", bool)
+         val pred = mk_var ("P", bool --> bool)
+         val pb = mk_comb (pred, b)
+         val attempts = ref 0
+         val cs =
+           clasetLib.add_intros
+             [("exists", EXISTS_INTRO_THM)]
+             clasetLib.empty_cs
+         fun reject _ =
+           (attempts := !attempts + 1;
+            raise blastSearch.PROOF_FAILED)
+         val result =
+           blastSearch.searchGoal cs 1
+             ([pb], mk_exists (x, mk_comb (pred, x))) reject
+       in
+         !attempts = 1 andalso not (Option.isSome result)
        end)
 
 val _ =

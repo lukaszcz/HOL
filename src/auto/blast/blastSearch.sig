@@ -42,10 +42,11 @@ sig
      surviving choice point in prv. *)
   exception PROOF_FAILED
 
-  val initBranch : (pterm * bool) list * int -> branch
+  (* Initial formulae all receive md = true, as in blast.ML:1180-1184. *)
+  val initBranch : pterm list * int -> branch
 
   val searchTerms :
-    claset -> int -> (pterm * bool) list -> (proof -> 'a) -> 'a option
+    claset -> int -> pterm list -> (proof -> 'a) -> 'a option
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
   val tryGoal : claset -> int -> goal -> proof option
