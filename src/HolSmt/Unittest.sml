@@ -3320,6 +3320,202 @@ in
     "higher-order abstraction lacked a declaration for H")
 end
 
+(* D10 enforcement: the future P3.4 regime trigger must leave every one of
+   these first-order translations byte-identical.  In particular, the final
+   case is the abstraction witness that must continue to take the FO route. *)
+fun smtlib_fo_emission_golden_success () =
+let
+  fun prelude logic = [
+    "(set-logic " ^ logic ^ ")\n",
+    "(set-info :source |Automatically generated from HOL4 by " ^
+      "SmtLib.goal_to_SmtLib.\n",
+    "Copyright (c) 2011 Tjark Weber. All rights reserved.|)\n",
+    "(set-info :smt-lib-version 2.7)\n"
+  ]
+  fun first_byte_difference expected actual =
+    let
+      val expected_size = String.size expected
+      val actual_size = String.size actual
+      val common_size = Int.min (expected_size, actual_size)
+      fun find n =
+        if n = common_size then
+          if expected_size = actual_size then NONE else SOME n
+        else if String.sub (expected, n) = String.sub (actual, n) then
+          find (n + 1)
+        else
+          SOME n
+    in
+      find 0
+    end
+  fun line_number text position =
+    let
+      val stop = Int.min (position, String.size text)
+      fun count (n, lines) =
+        if n = stop then lines
+        else count (n + 1,
+          if String.sub (text, n) = #"\n" then lines + 1 else lines)
+    in
+      count (0, 1)
+    end
+  fun line_at text position =
+    if position >= String.size text then
+      "<end of benchmark>"
+    else
+      let
+        fun start n =
+          if n = 0 orelse String.sub (text, n - 1) = #"\n" then n
+          else start (n - 1)
+        fun finish n =
+          if n = String.size text then n
+          else if String.sub (text, n) = #"\n" then n + 1
+          else finish (n + 1)
+        val first = start position
+      in
+        "\"" ^ String.toString
+          (String.substring (text, first, finish position - first)) ^ "\""
+      end
+  fun first_list_difference expected actual =
+    let
+      fun find (_, _, [], []) = NONE
+        | find (n, position, expected :: expected_rest,
+            actual :: actual_rest) =
+          if expected = actual then
+            find (n + 1, position + String.size expected,
+              expected_rest, actual_rest)
+          else
+            SOME (n, position, SOME expected, SOME actual)
+        | find (n, position, expected :: _, []) =
+            SOME (n, position, SOME expected, NONE)
+        | find (n, position, [], actual :: _) =
+            SOME (n, position, NONE, SOME actual)
+      fun render NONE = "<end of string list>"
+        | render (SOME text) = "\"" ^ String.toString text ^ "\""
+    in
+      case find (1, 0, expected, actual) of
+        NONE => NONE
+      | SOME (element, position, expected, actual) =>
+          SOME (element, position, render expected, render actual)
+    end
+  fun assert_golden goal_name variant expected actual =
+    if expected = actual then
+      ()
+    else
+      let
+        val expected_text = String.concat expected
+        val actual_text = String.concat actual
+        fun prefix line =
+          "FAIL: FO emission golden '" ^ goal_name ^ "' (" ^ variant ^
+          ") first diverging line " ^ Int.toString line
+      in
+        case first_byte_difference expected_text actual_text of
+          SOME position =>
+            die (prefix (line_number expected_text position) ^
+              "\nexpected: " ^ line_at expected_text position ^
+              "\nactual:   " ^ line_at actual_text position)
+        | NONE =>
+            case first_list_difference expected actual of
+              SOME (element, position, expected, actual) =>
+                die (prefix (line_number expected_text position) ^
+                  " (string-list boundary differs at element " ^
+                  Int.toString element ^ ")\nexpected element: " ^ expected ^
+                  "\nactual element:   " ^ actual)
+            | NONE =>
+                raise Fail "unequal golden lists unexpectedly compare equal"
+      end
+  fun check {name, goal, body} =
+    let
+      val expected = body @ ["(exit)\n"]
+      val expected_with_proof =
+        body @ ["(get-proof)\n", "(exit)\n"]
+      val (_, actual) = SmtLib.goal_to_SmtLib_translation NONE goal
+      val (_, actual_with_proof) =
+        SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
+    in
+      assert_golden name "goal_to_SmtLib" expected actual;
+      assert_golden name "goal_to_SmtLib_with_get_proof"
+        expected_with_proof actual_with_proof
+    end
+  val array = ``a:int -> int``
+  val other_array = ``b:int -> int``
+  val index = ``i:int``
+  val value = ``x:int``
+  val updated =
+    Term.mk_comb (combinSyntax.mk_update (index, value), array)
+  val array_goal : term list * term =
+    ([], boolSyntax.mk_conj
+      (boolSyntax.mk_eq (Term.mk_comb (array, index), value),
+       boolSyntax.mk_eq (updated, other_array)))
+  val cases = [
+    {name = "qf-integer-linear",
+     goal = ([], ``(x:int) + 7 <= y - ~3``),
+     body = prelude "QF_LIA" @ [
+       "(declare-fun v0 () Int)\n",
+       "(declare-fun v1 () Int)\n",
+       "(assert (not (<= (+ v0 7) (- v1 (- 3)))))\n",
+       "(check-sat)\n"]},
+    {name = "quantified-integer-linear",
+     goal = ([], ``!x:int. ?y:int. x + 2 <= y``),
+     body = prelude "LIA" @ [
+       "(assert (not (forall ((b0 Int)) (exists ((b1 Int)) " ^
+         "(<= (+ b0 2) b1)))))\n",
+       "(check-sat)\n"]},
+    {name = "qf-real-linear",
+     goal = ([], ``(x:real) + 7r <= y + 2r``),
+     body = prelude "QF_LRA" @ [
+       "(declare-fun v0 () Real)\n",
+       "(declare-fun v1 () Real)\n",
+       "(assert (not (<= (+ v0 7.0) (+ v1 2.0))))\n",
+       "(check-sat)\n"]},
+    {name = "quantified-real-linear",
+     goal = ([], ``!x:real. ?y:real. x + 2r <= y``),
+     body = prelude "LRA" @ [
+       "(assert (not (forall ((b0 Real)) (exists ((b1 Real)) " ^
+         "(<= (+ b0 2.0) b1)))))\n",
+       "(check-sat)\n"]},
+    {name = "bit-vectors",
+     goal = ([], ``((x:word8) && 3w) = (y || 1w)``),
+     body = prelude "QF_BV" @ [
+       "(declare-fun v0 () (_ BitVec 8))\n",
+       "(declare-fun v1 () (_ BitVec 8))\n",
+       "(assert (not (= (bvand v0 (_ bv3 8)) " ^
+         "(bvor v1 (_ bv1 8)))))\n",
+       "(check-sat)\n"]},
+    {name = "arrays-select-store-equality",
+     goal = array_goal,
+     body = prelude "QF_AUFLIA" @ [
+       "(declare-fun v0 () (Array Int Int))\n",
+       "(declare-fun v1 () Int)\n",
+       "(declare-fun v2 () Int)\n",
+       "(declare-fun v3 () (Array Int Int))\n",
+       "(assert (not (and (= (select v0 v1) v2) " ^
+         "(= (store v0 v1 v2) v3))))\n",
+       "(check-sat)\n"]},
+    {name = "function-variable-arrays",
+     goal = ([], ``(f:'a -> 'b) x = g y``),
+     body = prelude "QF_AX" @ [
+       "(declare-sort t0 0)\n",
+       "(declare-sort t1 0)\n",
+       "(declare-fun v0 () (Array t0 t1))\n",
+       "(declare-fun v1 () t0)\n",
+       "(declare-sort t2 0)\n",
+       "(declare-fun v2 () (Array t2 t1))\n",
+       "(declare-fun v3 () t2)\n",
+       "(assert (not (= (select v0 v1) (select v2 v3))))\n",
+       "(check-sat)\n"]},
+    {name = "fo-abstraction-witness",
+     goal = ([], ``(H:('a -> 'b) -> bool) f``),
+     body = prelude "QF_AX" @ [
+       "(declare-sort t0 0)\n",
+       "(declare-sort t1 0)\n",
+       "(declare-fun v0 () (Array (Array t0 t1) Bool))\n",
+       "(declare-fun v1 () (Array t0 t1))\n",
+       "(assert (not (select v0 v1)))\n",
+       "(check-sat)\n"]}
+  ]
+in
+  List.app check cases
+end
+
 fun smtlib_translation_shape_matrix_success () =
 let
   fun smtlib_text goal =
@@ -5575,6 +5771,8 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
+    ("smtlib_fo_emission_golden_success",
+      smtlib_fo_emission_golden_success),
     ("smtlib_translation_shape_matrix_success",
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",
