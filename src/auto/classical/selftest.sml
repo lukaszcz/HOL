@@ -3310,3 +3310,33 @@ val _ =
          order_ok andalso null residuals andalso
          (ignore (validation []); true)
        end)
+
+val _ =
+  test
+    ("blast hyp-subst does not beta-normalize equality orientation",
+     fn () =>
+       let
+         val x = Term.mk_var ("beta_x", Type.bool)
+         val y = Term.mk_var ("beta_y", Type.bool)
+         val a = Term.mk_var ("beta_a", Type.bool)
+         val z = Term.mk_var ("beta_z", Type.bool)
+         val p = Term.mk_var ("beta_P", Type.bool --> Type.bool)
+         val q = Term.mk_var ("beta_Q", Type.bool --> Type.bool)
+         fun app operator operand = Term.mk_comb (operator, operand)
+         val redex = app (Term.mk_abs (z, x)) a
+         val equality = boolSyntax.mk_eq (redex, y)
+         val px = app p x
+         val qy = app q y
+         val goal = ([equality, px, qy], qy)
+         val (children, validation) =
+           clasetReplay.BLAST_HYP_SUBST_TAC goal
+         val expected = ([app q redex, px], app q redex)
+         val child_ok =
+           case children of
+               [child] => same_goal (child, expected)
+             | _ => false
+         val theorem = ASSUME (app q redex)
+         val replayed = validation [theorem]
+       in
+         child_ok andalso Term.aconv (concl replayed) qy
+       end)

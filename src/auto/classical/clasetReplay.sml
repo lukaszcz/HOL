@@ -318,14 +318,28 @@ val HYP_SUBST_TAC =
    hyp-subst slot, affected assumptions are stably moved to the front. *)
 fun BLAST_HYP_SUBST_TAC (asl, w) =
   let
+    (* Search eta-contracts an equality side only while exposing its
+       rigid atom.  In particular it does not beta-normalize the side:
+       doing that here can reverse x/y orientation and desynchronize the
+       recorded branch. *)
+    fun eta_atom_conv tm =
+      case total Drule.ETA_CONV tm of
+          NONE => REFL tm
+        | SOME theorem =>
+            TRANS theorem
+              (eta_atom_conv (rhs (concl theorem)))
+
     fun orientation equality =
       let
-        val equality_conversion = normalize_conv equality
-        val normalized = rhs (concl equality_conversion)
-        val normalized_thm =
+        val equality_conversion =
+          Conv.THENC
+            (Conv.LAND_CONV eta_atom_conv,
+             Conv.RAND_CONV eta_atom_conv) equality
+        val contracted = rhs (concl equality_conversion)
+        val contracted_thm =
           EQ_MP equality_conversion (ASSUME equality)
       in
-        case total dest_eq normalized of
+        case total dest_eq contracted of
             NONE => NONE
           | SOME (left, right) =>
               let
@@ -335,9 +349,9 @@ fun BLAST_HYP_SUBST_TAC (asl, w) =
                   not (free_in variable other)
               in
                 if suitable left right then
-                  SOME (left, right, normalized_thm)
+                  SOME (left, right, contracted_thm)
                 else if suitable right left then
-                  SOME (right, left, SYM normalized_thm)
+                  SOME (right, left, SYM contracted_thm)
                 else NONE
               end
       end
