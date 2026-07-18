@@ -35,7 +35,8 @@ type store =
    metas : (string, meta) Redblackmap.dict,
    tm_bindings : (string, term) Redblackmap.dict,
    tymetas : (string, tymeta) Redblackmap.dict,
-   ty_bindings : (string, hol_type) Redblackmap.dict}
+   ty_bindings :
+     (string, tymeta * hol_type) Redblackmap.dict}
 
 val empty =
   {allows = Redblackmap.mkDict string_compare,
@@ -103,7 +104,7 @@ fun norm_ty store ty =
       case tymeta_name current of
         SOME name =>
           (case Redblackmap.peek (#ty_bindings store, name) of
-             SOME residue => recurse residue
+             SOME (_, residue) => recurse residue
            | NONE => current)
       | NONE =>
           if is_vartype current then current
@@ -136,23 +137,18 @@ fun owned_tymeta store ty =
   | SOME name => Redblackmap.inDomain (#tymetas store, name)
 
 fun type_substitution store =
-  let
-    fun binding (name, residue) =
-      case Redblackmap.peek (#tymetas store, name) of
-        SOME redex => SOME {redex = redex, residue = norm_ty store residue}
-      | NONE => NONE
-  in
-    List.mapPartial binding
-      (Redblackmap.listItems (#ty_bindings store))
-  end
+  map
+    (fn (_, (redex, residue)) =>
+      {redex = redex, residue = norm_ty store residue})
+    (Redblackmap.listItems (#ty_bindings store))
 
 fun inst_types store = Term.inst (type_substitution store)
 
-fun walk store tm =
+fun walk_with store instantiate tm =
   let
     fun recurse current =
       let
-        val current' = inst_types store current
+        val current' = instantiate current
       in
         case meta_name current' of
           SOME name =>
@@ -167,13 +163,16 @@ fun walk store tm =
     recurse tm
   end
 
+fun walk store tm = walk_with store (inst_types store) tm
+
 fun norm store tm =
   let
     fun eta_reduce abs = Term.eta_conv abs handle HOL_ERR _ => abs
+    val walk_current = walk_with store (inst_types store)
 
     fun recurse current =
       let
-        val current' = walk store current
+        val current' = walk_current current
       in
         if is_meta current' then current'
         else
@@ -324,7 +323,8 @@ fun bind_ty (tymeta, ty) store =
                tm_bindings = #tm_bindings store,
                tymetas = #tymetas store,
                ty_bindings =
-                 Redblackmap.insert (#ty_bindings store, name, residue)}
+                 Redblackmap.insert
+                   (#ty_bindings store, name, (tymeta, residue))}
         end
 
 fun ground_types store =
@@ -358,16 +358,13 @@ fun bindings store =
       case Redblackmap.peek (#metas store, name) of
           SOME redex => SOME (redex, residue)
         | NONE => NONE
-    fun type_binding (name, residue) =
-      case Redblackmap.peek (#tymetas store, name) of
-          SOME redex => SOME (redex, residue)
-        | NONE => NONE
+    fun type_binding (_, binding) = binding
   in
     {terms =
        List.mapPartial term_binding
          (Redblackmap.listItems (#tm_bindings store)),
      types =
-       List.mapPartial type_binding
+       map type_binding
          (Redblackmap.listItems (#ty_bindings store))}
   end
 
