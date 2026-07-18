@@ -138,11 +138,13 @@ fun through limit =
     count 0
   end
 
-fun BLAST_DEPTH_TAC depth theorems =
-  run_depths (invocation_claset theorems) [depth]
+(* Read global configuration when the tactic runs, like classicalLib's
+   public tactics, rather than when its tactic value is constructed. *)
+fun BLAST_DEPTH_TAC depth theorems goal =
+  run_depths (invocation_claset theorems) [depth] goal
 
-fun BLAST_TAC theorems =
-  run_depths (invocation_claset theorems) (through (!depth_limit))
+fun BLAST_TAC theorems goal =
+  run_depths (invocation_claset theorems) (through (!depth_limit)) goal
 
 fun tryIt depth theorems goal =
   blastSearch.debugGoal (invocation_claset theorems) depth goal

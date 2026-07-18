@@ -1051,6 +1051,34 @@ val _ =
 
 val _ =
   test
+    ("public blast tactics read configuration when they run",
+     fn () =>
+       let
+         val x = mk_var ("late_x", bool)
+         val y = mk_var ("late_y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val goal = ([], mk_exists (x, mk_exists (y, body)))
+         val theorem =
+           Tactical.TAC_PROOF
+             (goal, tableauLib.BLAST_DEPTH_TAC 2 [])
+         val delayed_deepen = tableauLib.BLAST_TAC []
+         val delayed_fixed = tableauLib.BLAST_DEPTH_TAC 0 []
+         val scoped =
+           clasetLib.add_sintros
+             [("late-blast-rule", theorem)]
+             (clasetLib.the_claset ())
+         val depth_is_late =
+           Lib.with_flag (tableauLib.depth_limit, 1)
+             (fn () => blast_fails delayed_deepen goal) ()
+         val claset_is_late =
+           clasetLib.with_claset scoped
+             (fn () => blast_solves delayed_fixed goal) ()
+       in
+         depth_is_late andalso claset_is_late
+       end)
+
+val _ =
+  test
     ("plain extra lemmas are unsafe intros and markers are processed",
      fn () =>
        let
