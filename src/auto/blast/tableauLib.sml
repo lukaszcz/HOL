@@ -113,7 +113,7 @@ fun failed_stats totals search_time reconstruction_time =
        Time.toString reconstruction_time ^ "s")
   else ()
 
-fun run_depths cs depths goal =
+fun run_depths cs initial_depth next_depth goal =
   let
     val started = Time.now ()
     val reconstruction_time = ref Time.zeroTime
@@ -131,19 +131,19 @@ fun run_depths cs depths goal =
           | NONE => raise blastSearch.PROOF_FAILED
       end
 
-    fun search [] = NONE
-      | search (depth :: rest) =
+    fun search NONE = NONE
+      | search (SOME depth) =
           let
             val report =
               blastSearch.searchGoalWithStats cs depth goal accept
             val _ = add_statistics totals (#statistics report)
           in
             case #result report of
-                NONE => search rest
+                NONE => search (next_depth depth)
               | result => result
           end
 
-    val result = search depths
+    val result = search initial_depth
     val total_time = Time.- (Time.now (), started)
     val search_time = Time.- (total_time, !reconstruction_time)
     val _ =
@@ -160,21 +160,23 @@ fun run_depths cs depths goal =
             "blast search found no reconstructible proof"
   end
 
-fun through limit =
-  let
-    fun count depth =
-      if depth > limit then [] else depth :: count (depth + 1)
-  in
-    count 0
-  end
+fun next_through limit depth =
+  if depth >= limit then NONE else SOME (depth + 1)
 
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
 fun BLAST_DEPTH_TAC depth theorems goal =
-  run_depths (invocation_claset theorems) [depth] goal
+  run_depths (invocation_claset theorems) (SOME depth)
+    (fn _ => NONE) goal
 
 fun BLAST_TAC theorems goal =
-  run_depths (invocation_claset theorems) (through (!depth_limit)) goal
+  let
+    val limit = !depth_limit
+    val initial = if limit < 0 then NONE else SOME 0
+  in
+    run_depths (invocation_claset theorems) initial
+      (next_through limit) goal
+  end
 
 fun tryIt depth theorems goal =
   blastSearch.debugGoal (invocation_claset theorems) depth goal

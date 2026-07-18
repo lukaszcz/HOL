@@ -1079,6 +1079,22 @@ val _ =
 
 val _ =
   test
+    ("public deepening explores bounds lazily",
+     fn () =>
+       case Int.maxInt of
+           NONE => true
+         | SOME maximum =>
+             let
+               val p = mk_var ("lazy_depth_p", bool)
+             in
+               Lib.with_flag (tableauLib.depth_limit, maximum)
+                 (fn () =>
+                    blast_solves (tableauLib.BLAST_TAC [])
+                      ([], mk_imp (p, p))) ()
+             end)
+
+val _ =
+  test
     ("plain extra lemmas are unsafe intros and markers are processed",
      fn () =>
        let
