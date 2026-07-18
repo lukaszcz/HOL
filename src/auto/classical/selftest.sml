@@ -2157,6 +2157,24 @@ val _ =
 
 val _ =
   test
+    ("assumption replay recovers only through its recorded action",
+     fn () =>
+       let
+         val goal = ([phase1_qa, phase1_pa], phase1_pa)
+         val strict =
+           clasetReplay.ASSUMPTION_TAC clasetMeta.empty 1
+         val recovered =
+           clasetReplay.assumption_action 1 clasetMeta.empty
+         val strict_fails =
+           (ignore (Tactical.VALID strict goal); false)
+           handle HOL_ERR _ => true
+         val (residues, _) = Tactical.VALID recovered goal
+       in
+         strict_fails andalso List.null residues
+       end)
+
+val _ =
+  test
     ("move-assumption-to-back validates and round-trips",
      fn () =>
        let
@@ -2572,6 +2590,133 @@ val _ =
        in
          List.null results andalso count = 2
        end)
+
+val _ =
+  test
+    ("swapped implication and universal builtins are valid safe steps",
+     fn () =>
+       let
+         val x = Term.mk_var ("swapped_builtin_x", Type.ind)
+         val predicate =
+           Term.mk_var
+             ("swapped_builtin_predicate", Type.ind --> Type.bool)
+         val universal =
+           boolSyntax.mk_forall (x, Term.mk_comb (predicate, x))
+         val inputs =
+           [([boolSyntax.mk_neg
+                (boolSyntax.mk_imp (goal_p, goal_q))], goal_r),
+            ([boolSyntax.mk_neg universal], goal_r)]
+         val _ =
+           List.app
+             (fn input =>
+               ignore
+                 (Tactical.VALID
+                   (classicalLib.SAFE_STEP_TAC []) input))
+             inputs
+         val beta_p = Term.mk_var ("swapped_beta_p", Type.bool)
+         val abstraction =
+           Term.mk_abs
+             (beta_p, boolSyntax.mk_imp (beta_p, goal_q))
+         val beta_implication = Term.mk_comb (abstraction, goal_p)
+         val beta_goal =
+           ([], boolSyntax.mk_imp
+             (boolSyntax.mk_neg beta_implication,
+              boolSyntax.mk_imp (goal_q, goal_p)))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.FAST_TAC []) beta_goal
+       in
+         List.null residues
+       end
+       handle error as HOL_ERR _ =>
+         (Feedback.HOL_MESG (Feedback.exn_to_string error); false))
+
+(* -------------------------------------------------------------------------
+ * TASK_16: Pelletier fast-parity corpus (BEGIN reusable corpus).
+ *
+ * These are direct HOL4 translations of Pelletier 1--17 and the
+ * easy-quantifier problems for which Paulson's blast report Table 1 records
+ * successful Isabelle Fast_tac runs: 24, 26, and 28.  Pelletier 18--23, 25,
+ * 27, and 29--33 are retained for the complete TASK_23 blast corpus; Table 1
+ * does not report Fast_tac results for them.  Problem 34 is explicitly
+ * retained there as expected-unsolved by Fast_tac (Table 1 says "failed").
+ * ------------------------------------------------------------------------- *)
+
+val pelletier_fast_corpus : (int * term) list =
+  [(1, “(P ==> Q) <=> (~Q ==> ~P)”),
+   (2, “~~P <=> P”),
+   (3, “~(P ==> Q) ==> (Q ==> P)”),
+   (4, “(~P ==> Q) <=> (~Q ==> P)”),
+   (5, “((P \/ Q) ==> (P \/ R)) ==> (P \/ (Q ==> R))”),
+   (6, “P \/ ~P”),
+   (7, “P \/ ~~~P”),
+   (8, “((P ==> Q) ==> P) ==> P”),
+   (9, “((P \/ Q) /\ (~P \/ Q) /\ (P \/ ~Q)) ==>
+         ~(~P \/ ~Q)”),
+   (10, “(Q ==> R) /\ (R ==> P /\ Q) /\ (P ==> Q \/ R) ==>
+          (P <=> Q)”),
+   (11, “P <=> P”),
+   (12, “((P <=> Q) <=> R) <=> (P <=> (Q <=> R))”),
+   (13, “(P \/ (Q /\ R)) <=> ((P \/ Q) /\ (P \/ R))”),
+   (14, “(P <=> Q) <=> ((Q \/ ~P) /\ (~Q \/ P))”),
+   (15, “(P ==> Q) <=> (~P \/ Q)”),
+   (16, “(P ==> Q) \/ (Q ==> P)”),
+   (17, “((P /\ (Q ==> R)) ==> ss) <=>
+          ((~P \/ Q \/ ss) /\ (~P \/ ~R \/ ss))”),
+   (24, “~(?x:'a. ss x /\ Q x) /\
+          (!x. P x ==> Q x \/ R x) /\
+          (~(?x. P x) ==> ?x. Q x) /\
+          (!x. Q x \/ R x ==> ss x) ==>
+          ?x. P x /\ R x”),
+   (26, “((?x:'a. p x) <=> (?x. q x)) /\
+          (!x y. p x /\ q y ==> (r x <=> s y)) ==>
+          ((!x. p x ==> r x) <=> (!x. q x ==> s x))”),
+   (28, “(!x:'a. P x ==> (!y. Q y)) /\
+          ((!x. Q x \/ R x) ==> ?x. Q x /\ ss x) /\
+          ((?x. ss x) ==> !x. L x ==> M x) ==>
+          (!x. P x /\ L x ==> M x)”)]
+
+(* TASK_16: Pelletier fast-parity corpus (END reusable corpus). *)
+
+val pelletier_fast_budget = Time.fromSeconds 30
+val pelletier_fast_solved = ref 0
+
+fun run_pelletier_fast (number, proposition) =
+  let
+    val name = "FAST_TAC Pelletier " ^ Int.toString number
+    val _ = tprint name
+    val start = Time.now ()
+    val timed_out = ref false
+    val result =
+      SOME
+        (Timeout.apply pelletier_fast_budget
+          (fn () =>
+            Tactical.VALID
+              (classicalLib.FAST_TAC []) ([], proposition)) ())
+      handle Timeout.TIMEOUT _ => (timed_out := true; NONE)
+           | HOL_ERR _ => NONE
+    val elapsed = Time.- (Time.now (), start)
+    val solved =
+      case result of
+          SOME (residues, _) => List.null residues
+        | NONE => false
+    val within_budget = Time.< (elapsed, pelletier_fast_budget)
+  in
+    if solved andalso within_budget then
+      (pelletier_fast_solved := !pelletier_fast_solved + 1; OK ())
+    else if !timed_out orelse not within_budget then
+      die (name ^ " exceeded its 30 second budget")
+    else
+      die (name ^ " did not solve the goal")
+  end
+
+val _ = List.app run_pelletier_fast pelletier_fast_corpus
+
+val _ =
+  test
+    ("FAST_TAC Pelletier solved-goal count",
+     fn () =>
+       !pelletier_fast_solved = length pelletier_fast_corpus andalso
+       !pelletier_fast_solved = 20)
 
 val _ =
   test

@@ -225,13 +225,20 @@ fun negation_headed tm =
        SOME (_, rhs) => Term.aconv rhs F
      | NONE => false)
 
+fun is_negation_intro prems concl =
+  case total dest_neg concl of
+      NONE => false
+    | SOME body =>
+        List.exists (fn prem => aconv prem (mk_imp (body, F))) prems
+
 fun SWAP_INTRO_RULE th =
   let
     val {vars, core, prems, concl, ...} = rule_spine th
     val not_concl = mk_neg concl
   in
-    if negation_headed concl orelse
-       is_instance concl (patvars vars) not_concl
+    if not (is_negation_intro prems concl) andalso
+       (negation_headed concl orelse
+        is_instance concl (patvars vars) not_concl)
     then NONE
     else
       let

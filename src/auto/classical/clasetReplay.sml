@@ -16,6 +16,7 @@ datatype step_kind =
   | Gen
   | HypSubst
   | CContr
+  | SwappedBuiltin of int
   | MoveAssumptionToBack of int
   | Wrapper
 
@@ -206,16 +207,31 @@ fun theorem_hypothesis asl hypothesis =
         raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
           "a theorem hypothesis is absent from the goal"
 
-fun RULE_TAC {theorem, elim, consumed, eigenvariables} (asl, w) =
+fun RULE_TAC
+    {theorem, elim, consumed, parameters, eigenvariables} (asl, w) =
   let
     val rule0 = normalize_rule_thm theorem
     val target_equality = normalize_conv w
     val normalized_target = rhs (concl target_equality)
+    val (_, initial_conclusion) = strip_imp_only (concl rule0)
+    val (term_substitution, type_substitution) =
+      Term.match_term initial_conclusion normalized_target
+    fun allowed_parameter {redex, residue} =
+      is_var redex andalso is_var residue andalso
+      List.exists (fn name => name = fst (dest_var redex)) parameters
+    val _ =
+      if List.all allowed_parameter term_substitution then ()
+      else
+        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+          "conclusion alignment would instantiate a rigid variable"
+    val aligned_rule =
+      Drule.INST_TY_TERM
+        (term_substitution, type_substitution) rule0
     val rule =
       List.foldl
         (fn (hypothesis, current) =>
           Drule.PROVE_HYP (theorem_hypothesis asl hypothesis) current)
-        rule0 (hyp rule0)
+        aligned_rule (hyp aligned_rule)
     val (premises0, conclusion) = strip_imp_only (concl rule)
     val _ =
       if aconv conclusion normalized_target then ()
@@ -308,6 +324,75 @@ fun GEN_NAMED_TAC name (asl, w) =
 
 val GOAL_NEGATION_TAC = Tactic.CCONTR_TAC
 
+fun SWAPPED_BUILTIN_TAC _ pos (asl, w) =
+  let
+    val negative = nth1 "SWAPPED_BUILTIN_TAC" asl pos
+    val positive = dest_neg negative
+    val child_asl =
+      mk_neg w :: delete_nth "SWAPPED_BUILTIN_TAC" asl pos
+    val child = (child_asl, positive)
+
+    fun validation [positive_thm] =
+          let
+            val negative_thm = ASSUME negative
+            val false_thm = MP (NOT_ELIM negative_thm) positive_thm
+          in
+            CCONTR w false_thm
+          end
+      | validation _ =
+          raise mk_HOL_ERR "clasetReplay" "SWAPPED_BUILTIN_TAC"
+            "validation received the wrong number of theorems"
+  in
+    ([child], validation)
+  end
+
+fun NORMALIZED_SWAPPED_BUILTIN_TAC _ pos (asl, w) =
+  let
+    fun normalize tm = rhs (concl (normalize_conv tm))
+
+    fun prove_normalized asm target =
+      let
+        val equality = normalize_conv asm
+        val theorem = EQ_MP equality (ASSUME asm)
+      in
+        if aconv (concl theorem) target then
+          EQ_MP (ALPHA (concl theorem) target) theorem
+        else
+          raise mk_HOL_ERR "clasetReplay"
+            "NORMALIZED_SWAPPED_BUILTIN_TAC"
+            "replay normalization differs from search normalization"
+      end
+
+    val negative0 = nth1 "SWAPPED_BUILTIN_TAC" asl pos
+    val negative = normalize negative0
+    val positive = dest_neg negative
+    val target = normalize w
+    val remaining0 = delete_nth "SWAPPED_BUILTIN_TAC" asl pos
+    val remaining = map normalize remaining0
+    val child = (mk_neg target :: remaining, positive)
+
+    fun validation [positive_thm] =
+          let
+            val restored =
+              ListPair.foldlEq
+                (fn (original, normalized, theorem) =>
+                  Drule.PROVE_HYP
+                    (prove_normalized original normalized) theorem)
+                positive_thm (remaining0, remaining)
+            val negative_thm = prove_normalized negative0 negative
+            val false_thm = MP (NOT_ELIM negative_thm) restored
+            val result = CCONTR target false_thm
+            val target_equality = normalize_conv w
+          in
+            EQ_MP (SYM target_equality) result
+          end
+      | validation _ =
+          raise mk_HOL_ERR "clasetReplay" "SWAPPED_BUILTIN_TAC"
+            "validation received the wrong number of theorems"
+  in
+    ([child], validation)
+  end
+
 fun MOVE_ASSUMPTION_TO_BACK_TAC pos (asl, w) =
   let
     val selected = nth1 "MOVE_ASSUMPTION_TO_BACK_TAC" asl pos
@@ -321,7 +406,22 @@ fun MOVE_ASSUMPTION_TO_BACK_TAC pos (asl, w) =
     ([(rest @ [selected], w)], validation)
   end
 
-fun assumption_action pos store = ASSUMPTION_TAC store pos
+(* Rule replay can introduce alpha-renamed eigenvariables in a different
+   positional order from search.  Keep the recorded position when possible,
+   but recover by the semantic closing condition if that position drifted. *)
+fun assumption_action pos store (goal as (asl, w)) =
+  let
+    val selected = nth1 "ASSUMPTION_TAC" asl pos
+    fun closes asm = can (fn () => assumption_thm store asm w) ()
+    fun find _ [] =
+          raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+            "no assumption closes the replay goal"
+      | find current (asm :: rest) =
+          if closes asm then current else find (current + 1) rest
+    val actual = if closes selected then pos else find 1 asl
+  in
+    ASSUMPTION_TAC store actual goal
+  end
 fun contradiction_action positions store =
   CONTRADICTION_TAC store positions
 fun mp_action positions store = MP_TAC store positions
@@ -330,6 +430,8 @@ val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val disch_action = fn _ => Tactic.DISCH_TAC
 fun gen_action name _ = GEN_NAMED_TAC name
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC
+fun swapped_builtin_action pos store =
+  NORMALIZED_SWAPPED_BUILTIN_TAC store pos
 fun move_assumption_to_back_action pos _ =
   MOVE_ASSUMPTION_TO_BACK_TAC pos
 (* Opaque wrapper results mention the marked frees visible when the wrapper
@@ -464,6 +566,8 @@ fun kind_name (Assumption pos) = "assumption " ^ Int.toString pos
   | kind_name Gen = "GEN"
   | kind_name HypSubst = "hyp-subst"
   | kind_name CContr = "CCONTR"
+  | kind_name (SwappedBuiltin pos) =
+      "swapped-builtin " ^ Int.toString pos
   | kind_name (MoveAssumptionToBack pos) =
       "move-back " ^ Int.toString pos
   | kind_name Wrapper = "wrapper"

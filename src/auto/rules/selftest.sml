@@ -745,6 +745,25 @@ val _ =
 
 val _ =
   test
+    ("swap retains the classical form of negation introduction",
+     fn () =>
+       case SWAP_INTRO_RULE boolTheory.IMP_F of
+           NONE => false
+         | SOME theorem =>
+             case strip_forall (concl theorem) of
+                 ([t, r], body) =>
+                   (case strip_imp_only body of
+                        ([double_neg_t, lifted], result) =>
+                          aconv double_neg_t (mk_neg (mk_neg t)) andalso
+                          aconv lifted
+                            (mk_imp
+                              (mk_neg r, mk_imp (t, boolSyntax.F))) andalso
+                          aconv result r
+                      | _ => false)
+               | _ => false)
+
+val _ =
+  test
     ("swap declines variable-headed conclusions",
      fn () =>
        let val var_intro = GEN p (DISCH p (ASSUME p))

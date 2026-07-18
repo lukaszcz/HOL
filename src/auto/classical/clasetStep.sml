@@ -609,7 +609,8 @@ fun try_rule mode cs duplicated node pos
             (term_substitution, type_substitution) (#core fresh)
       in
         {theorem = replay_theorem, elim = is_elim,
-         consumed = consumed, eigenvariables = new_eigens}
+         consumed = consumed, parameters = old_params,
+         eigenvariables = new_eigens}
       end
   in
     Direct
@@ -736,6 +737,47 @@ fun builtin_results (node, pos) =
     else seq.empty
   end
 
+fun swapped_builtin_results (node, pos) =
+  list_seq
+    (fn () =>
+      let
+        val (asl, _) = clasetGoal.render node pos
+        val store = clasetGoal.store node
+
+        fun attempt (asm_pos, assumption) =
+          let
+            val positive = total dest_neg assumption
+            val supported =
+              case positive of
+                  SOME tm =>
+                    can dest_imp_only tm orelse can dest_forall tm
+                | NONE => false
+          in
+            if supported then
+              case tactic_direct (SwappedBuiltin asm_pos)
+                (SOME asm_pos) node pos
+                (clasetReplay.SWAPPED_BUILTIN_TAC store asm_pos)
+              of
+                  NONE => NONE
+                | SOME
+                    (Direct
+                      {kind, consumed, created, eigenvariables, result,
+                       children, closed, store, ...}) =>
+                    SOME
+                      (Direct
+                        {kind = kind, consumed = consumed,
+                         created = created,
+                         eigenvariables = eigenvariables,
+                         result = result, children = children,
+                         action =
+                           clasetReplay.swapped_builtin_action asm_pos,
+                         closed = closed, store = store})
+            else NONE
+          end
+      in
+        List.mapPartial attempt (position_map (fn value => value) asl)
+      end)
+
 fun has_metavariables node pos =
   let
     val (asl, w) = clasetGoal.render node pos
@@ -839,6 +881,7 @@ fun safe_cascade cs input =
      rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
      builtin_results,
+     swapped_builtin_results,
      hyp_subst_results,
      rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) all_weights]
@@ -922,6 +965,7 @@ fun clarify_cascade cs input =
      rule_results clasetUnify.Match cs false
        (clasetLib.safe0_part cs) all_weights,
      builtin_results,
+     swapped_builtin_results,
      hyp_subst_results,
      rule_results clasetUnify.Match cs false
        (clasetLib.safep_part cs) (weight_is 1),

@@ -15,6 +15,7 @@ sig
     | Gen
     | HypSubst
     | CContr
+    | SwappedBuiltin of int
     | MoveAssumptionToBack of int
     | Wrapper
 
@@ -72,10 +73,11 @@ sig
                {implication : int, antecedent : int} -> tactic
   val RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
-     eigenvariables : string list list} -> tactic
+     parameters : string list, eigenvariables : string list list} -> tactic
   val HYP_SUBST_TAC : tactic
   val GEN_NAMED_TAC : string -> tactic
   val GOAL_NEGATION_TAC : tactic
+  val SWAPPED_BUILTIN_TAC : clasetMeta.store -> int -> tactic
   val MOVE_ASSUMPTION_TO_BACK_TAC : int -> tactic
 
   val assumption_action : int -> replay_action
@@ -84,11 +86,13 @@ sig
   val rule_action :
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,
+       parameters : string list,
        eigenvariables : string list list}) -> replay_action
   val hyp_subst_action : replay_action
   val disch_action : replay_action
   val gen_action : string -> replay_action
   val goal_negation_action : replay_action
+  val swapped_builtin_action : int -> replay_action
   val move_assumption_to_back_action : int -> replay_action
   val fixed_action : goal list * validation -> replay_action
 end
