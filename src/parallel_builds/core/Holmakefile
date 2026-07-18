@@ -2,7 +2,7 @@ CLINE_OPTIONS = -r
 
 # directories to build under src/
 SRCRELNAMES = \
-  algebra auto/rules auto/classical bag Boolify/src \
+  algebra auto/rules auto/classical auto/blast bag Boolify/src \
   coalgebras \
   datatype/inftree \
   emit \
