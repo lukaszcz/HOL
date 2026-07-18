@@ -1171,6 +1171,24 @@ val _ =
 
 val _ =
   test
+    ("failed level-two stats include complete branch counters",
+     fn () =>
+       let
+         val p = mk_var ("failed_stats_p", bool)
+         val (solved, messages) =
+           blast_trace_messages 2
+             (tableauLib.BLAST_DEPTH_TAC 0 []) ([], p)
+         fun contains text =
+           List.exists (String.isSubstring text) messages
+       in
+         not solved andalso contains "Blast stats: no proof" andalso
+         contains "branches created 1" andalso
+         contains "branches closed 0" andalso
+         contains "search " andalso contains "reconstruction "
+       end)
+
+val _ =
+  test
     ("public blast calls do not leak claset theory or depth state",
      fn () =>
        let

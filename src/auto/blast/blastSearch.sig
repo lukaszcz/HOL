@@ -36,6 +36,11 @@ sig
      branches_closed : int,
      choices_pruned : int}
 
+  type statistics =
+    {branches_created : int,
+     branches_closed : int,
+     choices_pruned : int}
+
   type debug_result =
     {fullTrace : branch list list,
      result : proof option}
@@ -53,6 +58,11 @@ sig
     claset -> int -> pterm list -> (proof -> 'a) -> 'a option
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
+  (* Statistics cover the complete fixed-depth run, including branches
+     explored before failed reconstruction or final search failure. *)
+  val searchGoalWithStats :
+    claset -> int -> goal -> (proof -> 'a) ->
+    {result : 'a option, statistics : statistics}
   val tryGoal : claset -> int -> goal -> proof option
   val debugGoal : claset -> int -> goal -> debug_result
 

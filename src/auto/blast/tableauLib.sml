@@ -67,26 +67,48 @@ fun invocation_claset theorems =
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)
 
-fun stats proof search_time reconstruction_time =
+type totals =
+  {branches_created : int ref,
+   branches_closed : int ref,
+   choices_pruned : int ref}
+
+fun new_totals () : totals =
+  {branches_created = ref 0,
+   branches_closed = ref 0,
+   choices_pruned = ref 0}
+
+fun add_statistics (totals : totals)
+      (statistics : blastSearch.statistics) =
+  (#branches_created totals :=
+     !(#branches_created totals) + #branches_created statistics;
+   #branches_closed totals :=
+     !(#branches_closed totals) + #branches_closed statistics;
+   #choices_pruned totals :=
+     !(#choices_pruned totals) + #choices_pruned statistics)
+
+fun statistics_text (totals : totals) =
+  "branches created " ^
+  Int.toString (!(#branches_created totals)) ^
+  "; branches closed " ^
+  Int.toString (!(#branches_closed totals)) ^
+  "; choices pruned " ^
+  Int.toString (!(#choices_pruned totals))
+
+fun stats proof totals search_time reconstruction_time =
   if Feedback.current_trace "blast" >= 2 then
     Feedback.HOL_MESG
       ("Blast stats: depth " ^ Int.toString (#depth proof) ^
-       "; branches created " ^
-       Int.toString (#branches_created proof) ^
-       "; branches closed " ^
-       Int.toString (#branches_closed proof) ^
-       "; choices pruned " ^
-       Int.toString (#choices_pruned proof) ^
+       "; " ^ statistics_text totals ^
        "; search " ^ Time.toString search_time ^ "s" ^
        "; reconstruction " ^
        Time.toString reconstruction_time ^ "s")
   else ()
 
-fun failed_stats search_time reconstruction_time =
+fun failed_stats totals search_time reconstruction_time =
   if Feedback.current_trace "blast" >= 2 then
     Feedback.HOL_MESG
-      ("Blast stats: no proof; search " ^
-       Time.toString search_time ^ "s" ^
+      ("Blast stats: no proof; " ^ statistics_text totals ^
+       "; search " ^ Time.toString search_time ^ "s" ^
        "; reconstruction " ^
        Time.toString reconstruction_time ^ "s")
   else ()
@@ -95,6 +117,7 @@ fun run_depths cs depths goal =
   let
     val started = Time.now ()
     val reconstruction_time = ref Time.zeroTime
+    val totals = new_totals ()
 
     fun accept proof =
       let
@@ -110,9 +133,15 @@ fun run_depths cs depths goal =
 
     fun search [] = NONE
       | search (depth :: rest) =
-          (case blastSearch.searchGoal cs depth goal accept of
-               NONE => search rest
-             | result => result)
+          let
+            val report =
+              blastSearch.searchGoalWithStats cs depth goal accept
+            val _ = add_statistics totals (#statistics report)
+          in
+            case #result report of
+                NONE => search rest
+              | result => result
+          end
 
     val result = search depths
     val total_time = Time.- (Time.now (), started)
@@ -120,8 +149,9 @@ fun run_depths cs depths goal =
     val _ =
       case result of
           SOME (proof, _) =>
-            stats proof search_time (!reconstruction_time)
-        | NONE => failed_stats search_time (!reconstruction_time)
+            stats proof totals search_time (!reconstruction_time)
+        | NONE =>
+            failed_stats totals search_time (!reconstruction_time)
   in
     case result of
         SOME (_, tactic_result) => tactic_result

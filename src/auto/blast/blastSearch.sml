@@ -57,6 +57,11 @@ type proof =
    branches_closed : int,
    choices_pruned : int}
 
+type statistics =
+  {branches_created : int,
+   branches_closed : int,
+   choices_pruned : int}
+
 type debug_result =
   {fullTrace : branch list list,
    result : proof option}
@@ -691,23 +696,41 @@ fun runTerms debug claset depth formulas cont =
       SOME
         (prv ([], [], [Choice (trailSize state, 1, PROVE)], [initial]))
       handle PROVE => NONE
+    val statistics =
+      {branches_created = !created,
+       branches_closed = !closed,
+       choices_pruned = !pruned}
   in
-    {fullTrace = rev (!fullTrace), result = result}
+    {fullTrace = rev (!fullTrace), result = result,
+     statistics = statistics}
   end
 
 fun searchTerms claset depth formulas cont =
   #result (runTerms false claset depth formulas cont)
 
+fun searchGoalWithStats claset depth goal cont =
+  let
+    val report =
+      runTerms false claset depth
+        (map first (blastRule.initialBranch goal)) cont
+  in
+    {result = #result report, statistics = #statistics report}
+  end
+
 fun searchGoal claset depth goal cont =
-  searchTerms claset depth
-    (map first (blastRule.initialBranch goal)) cont
+  #result (searchGoalWithStats claset depth goal cont)
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
 
 fun debugGoal claset depth goal =
-  runTerms true claset depth
-    (map first (blastRule.initialBranch goal)) (fn proof => proof)
+  let
+    val report =
+      runTerms true claset depth
+        (map first (blastRule.initialBranch goal)) (fn proof => proof)
+  in
+    {fullTrace = #fullTrace report, result = #result report}
+  end
 
 (* There is deliberately no timeout.  A future extension may poll a counter
    at prv entry, but the faithful engine is bounded only by deepening. *)
