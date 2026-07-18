@@ -482,7 +482,10 @@ local
     ]
 
   fun is_nonlinear_arith_const tm =
-    same_const intSyntax.mult_tm tm orelse same_const realSyntax.mult_tm tm
+    same_const intSyntax.mult_tm tm orelse
+    same_const realSyntax.mult_tm tm orelse
+    same_const int_ediv_tm tm orelse
+    same_const int_emod_tm tm
 
   fun is_string_const tm =
     List.exists (fn c => same_const c tm) [
@@ -2557,6 +2560,9 @@ in
     NUM_TO_INT_TAC THEN
     CLEANUP_ASSUMPTIONS_TAC
   end
+
+  (* Kept public for Unittest's outbound-scope audit. *)
+  val builtin_encoding_for_test = builtin_encoding
 end  (* local *)
 
 end

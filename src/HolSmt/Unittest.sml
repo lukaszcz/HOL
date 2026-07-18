@@ -2914,6 +2914,8 @@ in
   ];
   expect_logic "QF_LIA" ``(x:int) <= x + 1``;
   expect_logic "QF_NIA" ``(x:int) * y = y * x``;
+  expect_logic "QF_NIA" ``ediv (x:int) y = x``;
+  expect_logic "QF_NIA" ``emod (x:int) y = x``;
   expect_logic "QF_BV" ``(x:word32) && y = y && x``;
   expect_logic "QF_UFLIA" ``smtlib_uf_logic_foo (x:int) = x``;
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
@@ -3674,6 +3676,234 @@ in
       assert (Term.type_of tm = Type.bool,
         "CPC declaration parser did not make declared symbols available")
   | _ => die "FAIL: CPC declaration parser did not preserve the assumption"
+end
+
+fun cpc_proof_parser_totalized_arithmetic_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const a Int) (declare-const b Int) \
+    \(declare-const x Real) (declare-const y Real) \
+    \(assume @p1 (div_total a b a b)) \
+    \(assume @p2 (mod_total a b)) \
+    \(assume @p3 (/_total x y a)) \
+    \(assume @p4 (@int_div_by_zero a)) \
+    \(assume @p5 (@mod_by_zero a)) \
+    \(assume @p6 (@div_by_zero x)) \
+    \(assume @p8 @int_div_by_zero) \
+    \(assume @p9 @mod_by_zero) \
+    \(assume @p10 @div_by_zero) \
+    \(define @t1 () (@purify (div_total a b))) \
+    \(assume @p7 @t1))"
+  val commands = CPC_Proof.proof_commands proof
+  val smt_ediv_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  val a = ``a:int``
+  val b = ``b:int``
+  val x = ``x:real``
+  val y = ``y:real``
+  val ra = intrealSyntax.mk_real_of_int a
+  val nullary_ediv = Term.mk_var ("@int_div_by_zero", intSyntax.int_ty)
+  val nullary_emod = Term.mk_var ("@mod_by_zero", intSyntax.int_ty)
+  val nullary_rdiv = Term.mk_var ("@div_by_zero", realSyntax.real_ty)
+  fun app (constant, terms) = Term.list_mk_comb (constant, terms)
+  fun assumption_terms [] = []
+    | assumption_terms (CPC_Proof.ASSUME (_, tm) :: rest) =
+        tm :: assumption_terms rest
+    | assumption_terms (_ :: rest) = assumption_terms rest
+  val terms = assumption_terms commands
+in
+  assert (List.exists (fn tm => tm ~~ app (smt_ediv_total,
+      [app (smt_ediv_total, [app (smt_ediv_total, [a, b]), a]), b])) terms,
+    "div_total did not fold left-associatively");
+  assert (List.exists (fn tm => tm ~~ app (smt_emod_total, [a, b])) terms,
+    "mod_total did not map to smt_emod_total");
+  assert (List.exists (fn tm => tm ~~
+      realSyntax.mk_div (realSyntax.mk_div (x, y), ra) ) terms,
+    "/_total did not fold or coerce Int arguments");
+  assert (List.exists (fn tm => tm ~~ SmtLib_Theories.mk_int_ediv
+      (a, intSyntax.zero_tm)) terms,
+    "@int_div_by_zero did not preserve underspecified ediv");
+  assert (List.exists (fn tm => tm ~~ SmtLib_Theories.mk_int_emod
+      (a, intSyntax.zero_tm)) terms,
+    "@mod_by_zero did not preserve underspecified emod");
+  assert (List.exists (fn tm => tm ~~ app (smt_rdiv,
+      [x, realSyntax.zero_tm])) terms,
+    "@div_by_zero did not preserve underspecified smt_rdiv");
+  assert (List.exists (fn tm => tm ~~ nullary_ediv) terms,
+    "nullary @int_div_by_zero did not parse as an Int value");
+  assert (List.exists (fn tm => tm ~~ nullary_emod) terms,
+    "nullary @mod_by_zero did not parse as an Int value");
+  assert (List.exists (fn tm => tm ~~ nullary_rdiv) terms,
+    "nullary @div_by_zero did not parse as a Real value");
+  assert (List.exists (fn tm => tm ~~ app (smt_ediv_total, [a, b])) terms,
+    "@purify did not expose its totalized payload")
+end
+
+fun cpc_proof_parser_totalized_arithmetic_diagnostic () =
+  (ignore (parse_cpc_proof_string
+    "((declare-const a Int) (assume @p1 (**_total a a)))");
+   die "FAIL: unsupported totalized arithmetic symbol parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "**_total" msg,
+        "unsupported totalized arithmetic diagnostic omitted the symbol: " ^ msg)
+    end
+
+fun cpc_totalized_outbound_exclusions_success () =
+let
+  fun no_builtin term =
+    case SmtLib.builtin_encoding_for_test term of
+      NONE => true
+    | SOME (name, _) =>
+        die ("FAIL: outbound translation unexpectedly exposes " ^ name)
+in
+  assert (no_builtin intSyntax.exp_tm,
+    "integer power unexpectedly has an outbound SMT mapping");
+  assert (no_builtin realSyntax.exp_tm,
+    "real power unexpectedly has an outbound SMT mapping")
+end
+
+fun cpc_totalized_replay_success () =
+let
+  val a = ``a:int``
+  val b = ``b:int``
+  val x = ``x:real``
+  val y = ``y:real``
+  val int_ediv = SmtLib_Theories.mk_int_ediv (a, b)
+  val int_emod = SmtLib_Theories.mk_int_emod (a, b)
+  val smt_ediv_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod_total = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+  fun app (constant, terms) = Term.list_mk_comb (constant, terms)
+  fun list terms = listSyntax.mk_list (terms, intSyntax.int_ty)
+  fun check_rare (name, args) =
+    let val thm = CPC_ProofReplay.replay_rare_rewrite_for_test name args
+      handle e => die (name ^ " replay failed: " ^ exnMessage e)
+    in
+      assert (Term.type_of (Thm.concl thm) = Type.bool,
+        name ^ " did not replay to a proposition")
+    end
+  fun check_reduction (name, term) =
+    let val thm = CPC_ProofReplay.replay_arith_reduction_for_test [term]
+      handle e => die (name ^ " reduction failed: " ^ exnMessage e)
+    in
+      assert (Term.type_of (Thm.concl thm) = Type.bool,
+        "arithmetic reduction did not replay to a proposition")
+    end
+  val rare =
+    [("arith-div-total-zero-real", [x]),
+     ("arith-div-total-zero-int", [a]),
+     ("arith-int-div-total", [a, b]),
+     ("arith-int-div-total-one", [a]),
+     ("arith-int-div-total-zero", [a]),
+     ("arith-int-div-total-neg", [a, b]),
+     ("arith-int-mod-total", [a, b]),
+     ("arith-int-mod-total-one", [a]),
+     ("arith-int-mod-total-zero", [a]),
+     ("arith-int-mod-total-neg", [a, b]),
+     ("arith-mod-over-mod-1", [b, a]),
+     ("arith-mod-over-mod", [b, list [], a, list []]),
+     ("arith-mod-over-mod-mult", [b, list [], a, list []]),
+     ("arith-divisible-elim", [b, a])]
+  val reductions =
+    [("ediv", int_ediv), ("emod", int_emod),
+     ("smt_rdiv", app (smt_rdiv, [x, y])),
+     ("div_total", app (smt_ediv_total, [a, b])),
+     ("mod_total", app (smt_emod_total, [a, b])),
+     ("real_div_total", realSyntax.mk_div (x, y))]
+  val seven = ``(7:int)``
+  val two = ``(2:int)``
+  val neg_seven = intSyntax.mk_negated seven
+  val neg_two = intSyntax.mk_negated two
+  val eval_cases =
+    [(app (smt_ediv_total, [seven, two]), ``(3:int)``),
+     (app (smt_ediv_total, [neg_seven, two]),
+       intSyntax.mk_negated ``(4:int)``),
+     (app (smt_ediv_total, [neg_seven, neg_two]), ``(4:int)``),
+     (app (smt_emod_total, [seven, two]), ``(1:int)``),
+     (app (smt_emod_total, [neg_seven, two]), ``(1:int)``),
+     (app (smt_emod_total, [neg_seven, neg_two]), ``(1:int)``)]
+  fun check_eval (term, expected) =
+    assert (Thm.concl (bossLib.EVAL term) ~~
+      boolSyntax.mk_eq (term, expected),
+      "totalized integer arithmetic did not evaluate to its CPC value")
+  val abs_a = intSyntax.mk_absval a
+  val abs_b = intSyntax.mk_absval b
+  val abs_two = intSyntax.mk_absval ``2i``
+  val abs_eq = CPC_ProofReplay.replay_arith_abs_eq_for_test [a, b]
+  val abs_gt = CPC_ProofReplay.replay_arith_abs_int_gt_for_test [a, b]
+  val abs_gt_target = boolSyntax.mk_eq
+    (intSyntax.mk_greater (abs_a, abs_b),
+     boolSyntax.mk_cond
+       (intSyntax.mk_geq (a, intSyntax.zero_tm),
+        boolSyntax.mk_cond
+          (intSyntax.mk_geq (b, intSyntax.zero_tm),
+           intSyntax.mk_greater (a, b),
+           intSyntax.mk_greater (a, intSyntax.mk_negated b)),
+        boolSyntax.mk_cond
+          (intSyntax.mk_geq (b, intSyntax.zero_tm),
+           intSyntax.mk_greater (intSyntax.mk_negated a, b),
+           intSyntax.mk_greater
+             (intSyntax.mk_negated a, intSyntax.mk_negated b))))
+  val abs_product_target = boolSyntax.mk_eq
+    (intSyntax.mk_absval (intSyntax.mk_mult (a, ``2i``)),
+     intSyntax.mk_absval (intSyntax.mk_mult (b, ``2i``)))
+  val abs_product =
+    CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+      [Thm.ASSUME (boolSyntax.mk_eq (abs_a, abs_b)), Thm.REFL abs_two]
+      abs_product_target
+  val abs_product_gt_target = intSyntax.mk_greater
+    (intSyntax.mk_absval (intSyntax.mk_mult (a, ``2i``)),
+     intSyntax.mk_absval (intSyntax.mk_mult (b, ``2i``)))
+  val abs_product_gt =
+    CPC_ProofReplay.replay_arith_mult_abs_comparison_for_test
+      [Thm.ASSUME (intSyntax.mk_greater (abs_a, abs_b)),
+       Thm.CONJ (Thm.REFL abs_two)
+         (Drule.EQT_ELIM (bossLib.EVAL ``(2:int) <> 0``))]
+      abs_product_gt_target
+  val c = ``c:bool``
+  val t = ``t:bool``
+  val e = ``e:bool``
+  val ite = boolSyntax.mk_cond (c, t, e)
+  fun disj [term] = term
+    | disj (term :: terms) = boolSyntax.mk_disj (term, disj terms)
+    | disj [] = boolSyntax.F
+  fun neg term = boolSyntax.mk_neg term
+  val cnf_ite_cases =
+    [("cnf_ite_pos1", disj [neg ite, neg c, t]),
+     ("cnf_ite_pos2", disj [neg ite, c, e]),
+     ("cnf_ite_pos3", disj [neg ite, t, e]),
+     ("cnf_ite_neg1", disj [ite, neg c, neg t]),
+     ("cnf_ite_neg2", disj [ite, c, neg e]),
+     ("cnf_ite_neg3", disj [ite, neg t, neg e])]
+  fun check_cnf_ite (name, expected) =
+    let val theorem = CPC_ProofReplay.replay_cnf_for_test name [ite]
+    in assert (Thm.concl theorem ~~ expected,
+      name ^ " replay produced the wrong conclusion") end
+in
+  List.app check_rare rare;
+  List.app check_reduction reductions;
+  List.app check_eval eval_cases;
+  List.app check_cnf_ite cnf_ite_cases;
+  assert (Thm.concl abs_eq ~~ boolSyntax.mk_eq
+      (boolSyntax.mk_eq (abs_a, abs_b),
+       boolSyntax.mk_disj (boolSyntax.mk_eq (a, b),
+         boolSyntax.mk_eq (a, intSyntax.mk_negated b))),
+    "arith-abs-eq replay produced the wrong conclusion");
+  assert (Thm.concl abs_gt ~~ abs_gt_target,
+    "arith-abs-int-gt replay produced the wrong conclusion");
+  assert (Thm.concl abs_product ~~ abs_product_target,
+    "arith_mult_abs_comparison equality replay produced the wrong conclusion");
+  assert (Thm.concl abs_product_gt ~~ abs_product_gt_target,
+    "arith_mult_abs_comparison strict replay produced the wrong conclusion")
 end
 
 fun cpc_proof_parser_singleton_premise_success () =
@@ -5363,6 +5593,13 @@ let
       cpc_proof_parser_define_and_optional_conclusion_success),
     ("cpc_proof_parser_declarations_success",
       cpc_proof_parser_declarations_success),
+    ("cpc_proof_parser_totalized_arithmetic_success",
+      cpc_proof_parser_totalized_arithmetic_success),
+    ("cpc_proof_parser_totalized_arithmetic_diagnostic",
+      cpc_proof_parser_totalized_arithmetic_diagnostic),
+    ("cpc_totalized_outbound_exclusions_success",
+      cpc_totalized_outbound_exclusions_success),
+    ("cpc_totalized_replay_success", cpc_totalized_replay_success),
     ("cpc_proof_parser_singleton_premise_success",
       cpc_proof_parser_singleton_premise_success),
     ("cpc_proof_parser_version_resolution_success",

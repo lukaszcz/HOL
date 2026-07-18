@@ -3,7 +3,7 @@
 (* Various theorems for HolSmtLib *)
 Theory HolSmt
 Ancestors[qualified]
-  bool realax real intreal combin words
+  bool realax real intreal integer combin words
 
   val op >> = Tactical.>>
 
@@ -119,6 +119,288 @@ Theorem smt_rinv_inv:
        else 1r / (if x = 0r then 0r else 1r / x)) = x
 Proof
   simp [smt_rinv_def, realTheory.REAL_INV_INV]
+QED
+
+(* cvc5's CPC proof format totalizes integer Euclidean division and modulus.
+   Unlike HOL's ediv/emod, these operators have specified zero-divisor
+   branches, so model them explicitly in the shared HolSmt theory. *)
+Definition smt_ediv_total_def:
+  smt_ediv_total a b = if b = 0 then 0 else ediv a b
+End
+
+Definition smt_emod_total_def:
+  smt_emod_total a b = if b = 0 then a else emod a b
+End
+
+Theorem smt_ediv_total_compute[compute]:
+  smt_ediv_total a b =
+    if b = 0 then 0 else if 0 < b then a / b else -(a / -b)
+Proof
+  simp [smt_ediv_total_def, integerTheory.EDIV_DEF]
+QED
+
+Theorem smt_emod_total_compute[compute]:
+  smt_emod_total a b = if b = 0 then a else a % ABS b
+Proof
+  simp [smt_emod_total_def, integerTheory.EMOD_DEF]
+QED
+
+Theorem smt_ediv_total_eq_ediv:
+  !a b. b <> 0 ==> (smt_ediv_total a b = ediv a b)
+Proof
+  simp [smt_ediv_total_def]
+QED
+
+Theorem smt_emod_total_eq_emod:
+  !a b. b <> 0 ==> (smt_emod_total a b = emod a b)
+Proof
+  simp [smt_emod_total_def]
+QED
+
+Theorem smt_ediv_total_one:
+  !a. smt_ediv_total a 1 = a
+Proof
+  simp [smt_ediv_total_def, integerTheory.EDIV_DEF]
+QED
+
+Theorem smt_ediv_total_zero:
+  !a. smt_ediv_total a 0 = 0
+Proof
+  simp [smt_ediv_total_def]
+QED
+
+Theorem smt_emod_total_one:
+  !a. smt_emod_total a 1 = 0
+Proof
+  simp [smt_emod_total_def, integerTheory.EMOD_DEF,
+        integerTheory.INT_MOD_1]
+QED
+
+Theorem smt_emod_total_zero:
+  !a. smt_emod_total a 0 = a
+Proof
+  simp [smt_emod_total_def]
+QED
+
+Theorem smt_ediv_total_neg:
+  !a b. b < 0 ==> (smt_ediv_total a b = -smt_ediv_total a (-b))
+Proof
+  rpt gen_tac >> strip_tac >>
+  `b <> 0` by intLib.ARITH_TAC >>
+  `0 < -b` by intLib.ARITH_TAC >>
+  `~(0 < b)` by intLib.ARITH_TAC >>
+  `-b <> 0` by intLib.ARITH_TAC >>
+  ASM_SIMP_TAC bossLib.arith_ss [smt_ediv_total_def,
+    integerTheory.EDIV_DEF]
+QED
+
+Theorem smt_emod_total_neg:
+  !a b. b < 0 ==> (smt_emod_total a b = smt_emod_total a (-b))
+Proof
+  rpt gen_tac >> strip_tac >>
+  `b <> 0` by intLib.ARITH_TAC >>
+  `0 < -b` by intLib.ARITH_TAC >>
+  `~(0 < b)` by intLib.ARITH_TAC >>
+  `-b <> 0` by intLib.ARITH_TAC >>
+  ASM_SIMP_TAC bossLib.arith_ss [smt_emod_total_def,
+    integerTheory.EMOD_DEF, integerTheory.INT_ABS_NEG]
+QED
+
+Theorem smt_emod_ediv_neg:
+  !a b. b < 0 ==> (emod a b = a - b * ediv a b)
+Proof
+  rpt gen_tac >> strip_tac >>
+  SUBGOAL_THEN ``(-b:int) <> 0`` ASSUME_TAC THEN1 intLib.ARITH_TAC >>
+  SUBGOAL_THEN ``(0:int) < -b`` ASSUME_TAC THEN1 intLib.ARITH_TAC >>
+  SUBGOAL_THEN ``~((0:int) < b)`` ASSUME_TAC THEN1 intLib.ARITH_TAC >>
+  MP_TAC (Q.SPEC `a:int`
+    (MATCH_MP (Q.SPEC `-b:int` integerTheory.INT_DIVISION)
+      (ASSUME ``(-b:int) <> 0``))) >>
+  STRIP_TAC >>
+  ASM_SIMP_TAC bossLib.arith_ss [integerTheory.EDIV_DEF,
+    integerTheory.EMOD_DEF, integerTheory.INT_ABS] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_emod_ediv_pos:
+  !a b. 0 < b ==> (emod a b = a - b * ediv a b)
+Proof
+  rpt gen_tac >> strip_tac >>
+  SUBGOAL_THEN ``(b:int) <> 0`` ASSUME_TAC THEN1 intLib.ARITH_TAC >>
+  SUBGOAL_THEN ``~((b:int) < 0)`` ASSUME_TAC THEN1 intLib.ARITH_TAC >>
+  MP_TAC (Q.SPEC `a:int`
+    (MATCH_MP (Q.SPEC `b:int` integerTheory.INT_DIVISION)
+      (ASSUME ``(b:int) <> 0``))) >>
+  STRIP_TAC >>
+  ASM_SIMP_TAC bossLib.arith_ss [integerTheory.EDIV_DEF,
+    integerTheory.EMOD_DEF, integerTheory.INT_ABS] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smt_ediv_bounds_pos_aux:
+  !q r v:int. 0 < v /\ 0 <= r /\ r < v ==>
+    v * q <= q * v + r /\ q * v + r < v * (q + 1)
+Proof
+  rpt gen_tac >> strip_tac >> CONJ_TAC
+  >- (CONV_TAC (LAND_CONV (REWR_CONV
+        (Q.SPECL [`q:int`, `v:int`] integerTheory.INT_MUL_COMM))) >>
+      ASM_SIMP_TAC bossLib.arith_ss [integerTheory.INT_LE_ADDR])
+  >- (CONV_TAC (RAND_CONV (REWR_CONV integerTheory.INT_LDISTRIB)) >>
+      CONV_TAC (RAND_CONV (LAND_CONV (REWR_CONV
+        (Q.SPECL [`q:int`, `v:int`] integerTheory.INT_MUL_COMM)))) >>
+      ASM_SIMP_TAC bossLib.arith_ss [integerTheory.INT_LT_LADD,
+        integerTheory.INT_MUL_RID])
+QED
+
+Theorem smt_ediv_bounds_neg_aux:
+  !q r v:int. v < 0 /\ 0 <= r /\ r < -v ==>
+    v * -q <= q * -v + r /\ q * -v + r < v * (-q - 1)
+Proof
+  rpt gen_tac >> strip_tac >> CONJ_TAC
+  >- (REWRITE_TAC [integerTheory.INT_MUL_RNEG] >>
+      CONV_TAC (LAND_CONV (RAND_CONV (REWR_CONV
+        (Q.SPECL [`q:int`, `v:int`] integerTheory.INT_MUL_COMM)))) >>
+      ASM_SIMP_TAC bossLib.arith_ss [integerTheory.INT_LE_ADDR])
+  >- (REWRITE_TAC [integerTheory.INT_SUB_LDISTRIB,
+        integerTheory.INT_MUL_RNEG, integerTheory.INT_MUL_RID] >>
+      CONV_TAC (LAND_CONV (LAND_CONV (RAND_CONV (REWR_CONV
+        (Q.SPECL [`v:int`, `q:int`] integerTheory.INT_MUL_COMM))))) >>
+      ASM_SIMP_TAC bossLib.arith_ss [integerTheory.int_sub,
+        integerTheory.INT_LT_LADD])
+QED
+
+Theorem smt_ediv_bounds_pos_bridge:
+  !q r u v:int. 0 < v /\ 0 <= r /\ r < v /\
+    (u = q * v + r) ==>
+    v * q <= u /\ u < v * (q + 1)
+Proof
+  rpt gen_tac >> strip_tac >>
+  METIS_TAC [smt_ediv_bounds_pos_aux]
+QED
+
+Theorem smt_ediv_bounds_neg_bridge:
+  !q r u v:int. v < 0 /\ 0 <= r /\ r < -v /\
+    (u = q * -v + r) ==>
+    v * -q <= u /\ u < v * (-q - 1)
+Proof
+  rpt gen_tac >> strip_tac >>
+  METIS_TAC [smt_ediv_bounds_neg_aux]
+QED
+
+Theorem smt_ediv_total_bounds:
+  !u v.
+    (0 < v ==> v * smt_ediv_total u v <= u /\
+               u < v * (smt_ediv_total u v + 1)) /\
+    (v < 0 ==> v * smt_ediv_total u v <= u /\
+               u < v * (smt_ediv_total u v - 1))
+Proof
+  rpt gen_tac >> CONJ_TAC
+  >- (strip_tac >>
+      `v <> 0` by intLib.ARITH_TAC >>
+      MP_TAC (Q.SPEC `u:int`
+        (MATCH_MP (Q.SPEC `v:int` integerTheory.INT_DIVISION)
+          (ASSUME ``(v:int) <> 0``))) >>
+      STRIP_TAC >>
+      `~((v:int) < 0)` by intLib.ARITH_TAC >>
+      Q.PAT_X_ASSUM `if (v:int) < 0 then _ else _`
+        (fn h => MP_TAC h >>
+          ASM_SIMP_TAC bossLib.arith_ss [] >>
+          STRIP_TAC >>
+          ASM_SIMP_TAC bossLib.arith_ss [smt_ediv_total_def,
+            integerTheory.EDIV_DEF] >>
+          MATCH_MP_TAC (Q.SPECL
+            [`u / v:int`, `u % v:int`, `u:int`, `v:int`]
+            smt_ediv_bounds_pos_bridge) >>
+          CONJ_TAC
+          >- ACCEPT_TAC (ASSUME ``(0:int) < v``)
+          >- (CONJ_TAC
+              >- ACCEPT_TAC (ASSUME ``(0:int) <= u % v``)
+              >- (CONJ_TAC
+                  >- ACCEPT_TAC (ASSUME ``(u % v:int) < v``)
+                  >- ACCEPT_TAC
+                    (ASSUME ``(u:int) = u / v * v + u % v``)))))
+  >- (strip_tac >>
+      `(-v:int) <> 0` by intLib.ARITH_TAC >>
+      `0 < (-v:int)` by intLib.ARITH_TAC >>
+      `~((-v:int) < 0)` by intLib.ARITH_TAC >>
+      `~((0:int) < v)` by intLib.ARITH_TAC >>
+      `(v:int) <> 0` by intLib.ARITH_TAC >>
+      MP_TAC (Q.SPEC `u:int`
+        (MATCH_MP (Q.SPEC `-v:int` integerTheory.INT_DIVISION)
+          (ASSUME ``(-v:int) <> 0``))) >>
+      STRIP_TAC >>
+      Q.PAT_X_ASSUM `if (-v:int) < 0 then _ else _`
+        (fn h => MP_TAC h >>
+          ASM_SIMP_TAC bossLib.arith_ss [] >>
+          STRIP_TAC >>
+          ASM_SIMP_TAC bossLib.arith_ss [smt_ediv_total_def,
+            integerTheory.EDIV_DEF] >>
+          MATCH_MP_TAC (Q.SPECL
+            [`u / -v:int`, `u % -v:int`, `u:int`, `v:int`]
+            smt_ediv_bounds_neg_bridge) >>
+          CONJ_TAC
+          >- ACCEPT_TAC (ASSUME ``(v:int) < 0``)
+          >- (CONJ_TAC
+              >- ACCEPT_TAC (ASSUME ``(0:int) <= u % -v``)
+              >- (CONJ_TAC
+                  >- ACCEPT_TAC (ASSUME ``(u % -v:int) < -v``)
+                  >- ACCEPT_TAC
+                    (ASSUME ``(u:int) = u / -v * -v + u % -v``)))))
+QED
+
+Theorem smt_emod_total_ediv:
+  !a b. smt_emod_total a b = a - b * smt_ediv_total a b
+Proof
+  gen_tac >> gen_tac >> Cases_on `b = 0` THENL
+  [ simp [smt_ediv_total_def, smt_emod_total_def],
+    ASM_REWRITE_TAC [smt_ediv_total_def, smt_emod_total_def] >>
+    Cases_on `b < 0` THENL
+    [ ACCEPT_TAC (Q.SPEC `a:int`
+        (MATCH_MP smt_emod_ediv_neg
+          (ASSUME ``(b:int) < 0``))),
+      `0 < b` by intLib.ARITH_TAC >>
+      ACCEPT_TAC (Q.SPEC `a:int`
+        (MATCH_MP smt_emod_ediv_pos
+          (ASSUME ``(0:int) < b``))) ] ]
+QED
+
+Theorem smt_emod_total_ediv_negone:
+  !a b. smt_emod_total a b =
+    a + -1 * (b * smt_ediv_total a b)
+Proof
+  simp [smt_emod_total_ediv, integerTheory.int_sub,
+        GSYM integerTheory.INT_NEG_LMUL]
+QED
+
+Theorem smt_int_abs_gt:
+  !x y : int.
+    (ABS x > ABS y) =
+    if x >= 0 then
+      if y >= 0 then x > y else x > -y
+    else if y >= 0 then -x > y else -x > -y
+Proof
+  rw [integerTheory.INT_ABS, integerTheory.INT_GT,
+      integerTheory.INT_GE, integerTheory.int_le]
+QED
+
+Theorem smt_int_abs_mul_gt:
+  !a b t u : int.
+    (ABS a > ABS b) /\ (ABS t = ABS u) /\ t <> 0 ==>
+    (ABS (a * t) > ABS (b * u))
+Proof
+  rpt strip_tac >>
+  `0 < ABS t` by simp [] >>
+  `0 < ABS a - ABS b` by
+    fs [integerTheory.INT_SUB_LT, integerTheory.INT_GT] >>
+  `0 < (ABS a - ABS b) * ABS t` by
+    (match_mp_tac (REWRITE_RULE [integerTheory.INT_0]
+       integerTheory.INT_LT_MUL) >> fs []) >>
+  fs [GSYM integerTheory.INT_ABS_MUL, integerTheory.INT_GT,
+      integerTheory.int_sub, integerTheory.INT_RDISTRIB,
+      GSYM integerTheory.INT_NEG_LMUL] >>
+  Q.PAT_X_ASSUM `ABS t = ABS u`
+    (fn th => REWRITE_TAC [GSYM th]) >>
+  intLib.ARITH_TAC
 QED
 
   (* exclusive or *)

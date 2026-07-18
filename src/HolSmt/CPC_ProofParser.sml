@@ -116,6 +116,74 @@ local
              intSyntax.mk_Num exponent)
       | _ => raise ERR "cpc_intreal_parsefn" "malformed CPC arithmetic term"
 
+  (* cvc5's CPC signature contains totalized arithmetic operators that are
+     not SMT-LIB symbols.  Integer totals have specified zero branches;
+     integer by-zero skolems remain HOL's underspecified ediv/emod at zero.
+     Real by-zero uses smt_rdiv, since HOL real division is specified there. *)
+  val smt_ediv_total_tm = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_ediv_total"}
+  val smt_emod_total_tm = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_emod_total"}
+  val smt_rdiv_tm = Term.prim_mk_const
+    {Thy = "HolSmt", Name = "smt_rdiv"}
+
+  fun cpc_arith_total_error message =
+    raise ERR "cpc_arith_total_parsefn" message
+
+  fun cpc_left_assoc name constructor args =
+    case args of
+      first :: rest =>
+        if List.null rest then
+          cpc_arith_total_error (name ^ " expects at least two arguments")
+        else List.foldl (fn (right, left) => constructor (left, right))
+          first rest
+    | [] => cpc_arith_total_error (name ^ " expects arguments")
+
+  fun cpc_real_arg arg =
+    if Type.compare (Term.type_of arg, intSyntax.int_ty) = EQUAL then
+      intrealSyntax.mk_real_of_int arg
+    else arg
+
+  fun cpc_arith_total_parsefn token indices args =
+    if not (List.null indices) then
+      cpc_arith_total_error (token ^ " does not accept indices")
+    else
+      case token of
+        "div_total" => cpc_left_assoc token
+          (fn (left, right) => Term.list_mk_comb
+            (smt_ediv_total_tm, [left, right])) args
+      | "mod_total" =>
+          (case args of
+             [left, right] => Term.list_mk_comb
+               (smt_emod_total_tm, [left, right])
+           | _ => cpc_arith_total_error "mod_total expects two arguments")
+      | "/_total" => cpc_left_assoc token
+          (fn (left, right) => realSyntax.mk_div (left, right))
+          (List.map cpc_real_arg args)
+      | "@int_div_by_zero" =>
+          (case args of
+             [arg] => SmtLib_Theories.mk_int_ediv
+               (arg, intSyntax.zero_tm)
+           | [] => Term.mk_var (token, intSyntax.int_ty)
+           | _ => cpc_arith_total_error
+               "@int_div_by_zero expects one argument")
+      | "@mod_by_zero" =>
+          (case args of
+             [arg] => SmtLib_Theories.mk_int_emod
+               (arg, intSyntax.zero_tm)
+           | [] => Term.mk_var (token, intSyntax.int_ty)
+           | _ => cpc_arith_total_error
+               "@mod_by_zero expects one argument")
+      | "@div_by_zero" =>
+          (case args of
+             [arg] => Term.list_mk_comb
+               (smt_rdiv_tm, [arg, realSyntax.zero_tm])
+           | [] => Term.mk_var (token, realSyntax.real_ty)
+           | _ => cpc_arith_total_error
+               "@div_by_zero expects one argument")
+      | _ => cpc_arith_total_error
+        ("unsupported totalized arithmetic symbol " ^ token)
+
   fun with_cpc_literals (tydict, tmdict) =
     let
       (* The source translation dictionary is deliberately as narrow as its
@@ -158,13 +226,20 @@ local
       Library.extend_dict (("to_int", cpc_intreal_parsefn),
       Library.extend_dict (("to_real", cpc_intreal_parsefn),
       Library.extend_dict (("int.pow2", cpc_intreal_parsefn),
+      Library.extend_dict (("div_total", cpc_arith_total_parsefn),
+      Library.extend_dict (("mod_total", cpc_arith_total_parsefn),
+      Library.extend_dict (("/_total", cpc_arith_total_parsefn),
+      Library.extend_dict (("@int_div_by_zero", cpc_arith_total_parsefn),
+      Library.extend_dict (("@mod_by_zero", cpc_arith_total_parsefn),
+      Library.extend_dict (("@div_by_zero", cpc_arith_total_parsefn),
+      Library.extend_dict (("**_total", cpc_arith_total_parsefn),
       Library.extend_dict (("extract", cpc_bv_parsefn),
       Library.extend_dict (("zero_extend", cpc_bv_parsefn),
       Library.extend_dict (("@bit", cpc_bv_parsefn),
       Library.extend_dict (("@from_bools", cpc_bv_parsefn),
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
-          Library.extend_dict (("_", cpc_literal_parsefn), tmdict))))))))))))
+          Library.extend_dict (("_", cpc_literal_parsefn), tmdict)))))))))))))))))))
     end
 
   (* @list is CPC's compact representation for a list of binders or
@@ -659,6 +734,37 @@ local
                   else list_terms (parse_term dicts_ref
                     (Library.undo_look_ahead [token] get_token) :: acc)
                 end
+              fun cpc_list_term terms =
+                case terms of
+                  first :: _ => listSyntax.mk_list
+                    (terms, Term.type_of first)
+                | [] => listSyntax.mk_list
+                    ([], Type.mk_vartype "'cpc_list")
+              fun structured_terms acc =
+                let val token = get_token () in
+                  if token = ")" then List.rev acc
+                  else if token = "(" then
+                    let val head = get_token () in
+                      if head = "@list" then
+                        structured_terms
+                          (cpc_list_term (list_terms []) :: acc)
+                      else
+                        let
+                          val tm = parse_term dicts_ref
+                            (Library.undo_look_ahead ["(", head]
+                              get_token)
+                        in structured_terms (tm :: acc) end
+                    end
+                  else
+                    (case lookup_cpc_list token of
+                       SOME listed_terms => structured_terms
+                         (cpc_list_term listed_terms :: acc)
+                     | NONE =>
+                         let
+                           val tm = parse_term dicts_ref
+                             (Library.undo_look_ahead [token] get_token)
+                         in structured_terms (tm :: acc) end)
+                end
             in
               if rule_name = "resolution" then
                 attrs premises (resolution_args ())
@@ -678,6 +784,9 @@ local
                 attrs premises (cnf_and_pos_args ())
               else if rule_name = "cnf_or_neg" then
                 attrs premises (cnf_or_neg_args ())
+              else if rule_name = "arith-mod-over-mod" orelse
+                      rule_name = "arith-mod-over-mod-mult" then
+                attrs premises (structured_terms [])
               else attrs premises (terms [])
             end
         | attribute => raise ERR "parse_step"

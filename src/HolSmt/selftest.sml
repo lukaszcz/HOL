@@ -458,7 +458,25 @@ in
     (``~1 * (x:int) = ~x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p]),
     (``(x:int) * 42 = 42 * x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (* cvc5 Alethe proof replay unsupported: ediv operations for int *)
+    (* Direct checked-proof coverage for totalized division and modulus. *)
+    (``(x:int) >= 0 ==> x / 2 <= x``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``(x:int) % 2 < 2``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``(y:int) <> 0 ==>
+       ediv 0 y = 0``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``(y:int) <> 0 ==>
+       emod 0 y = 0``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``(y:real) <> 0 ==> ((x:real) / y) * y = x``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``ediv (~7) (~2) = (4:int)``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+    (``emod (~7) (~2) = (1:int)``,
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
+
+    (* cvc5 Alethe replay coverage for ground Euclidean division. *)
     (``(~42:int) / ~42 = 1``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p_v4]),
     (``(~1:int) / ~42 = 0``,
@@ -1462,7 +1480,7 @@ in
        guards never meet the word theory: `DIV` is only in the SMT-LIB
        fragment once `x` has been transferred to an integer. *)
     (``((w:word8) && v = v && w) /\ ((x:num) DIV 2 <= x)``,
-      [thm_CVC, thm_Z3, thm_Z3p]),
+      [thm_CVC, thm_CVCp, thm_Z3, thm_Z3p]),
 
     (* from Magnus Myreen *)
     (``!(a:word32) b.
