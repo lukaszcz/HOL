@@ -810,6 +810,33 @@ val _ =
 
 val _ =
   test
+    ("blast generation avoids hidden historical parameters",
+     fn () =>
+       let
+         val z = mk_var ("hidden_z", bool)
+         val pred = mk_var ("hidden_pred", bool --> bool)
+         val quantified = mk_forall (z, mk_comb (pred, z))
+         val node =
+           clasetGoal.create
+             {goals = [{params = [z], asl = [], w = quantified}],
+              store = clasetMeta.empty, level = 0}
+       in
+         case seq.cases (clasetStep.blast_gen_step (node, 1)) of
+             SOME ((record, next), _) =>
+               (case (clasetStep.kind_of record,
+                      clasetGoal.goals next) of
+                    (clasetStep.Gen,
+                     [{params = [old, fresh], asl = [], w}]) =>
+                      Term.aconv old z andalso
+                      not (Term.aconv fresh z) andalso
+                      Term.aconv w (mk_comb (pred, fresh)) andalso
+                      clasetMeta.is_eigen (clasetGoal.store next) fresh
+                  | _ => false)
+           | NONE => false
+       end)
+
+val _ =
+  test
     ("stored and pseudo safe rules reconstruct with prefix stripping",
      fn () =>
        let

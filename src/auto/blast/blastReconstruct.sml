@@ -13,7 +13,18 @@ fun first_result sequence =
         raise mk_HOL_ERR "blastReconstruct" "first_result"
           "the recorded step does not apply"
 
-fun apply step node = #2 (first_result (step (node, 1)))
+fun map_partial transform sequence =
+  seq.delay
+    (fn () =>
+      case seq.cases sequence of
+          NONE => seq.empty
+        | SOME (value, rest) =>
+            (case transform value of
+                 SOME result =>
+                   seq.cons result (map_partial transform rest)
+               | NONE => map_partial transform rest))
+
+fun apply step node = seq.map #2 (step (node, 1))
 
 fun move_children count node =
   let
@@ -40,16 +51,22 @@ fun apply_rule cs duplicate rule node =
               clasetRules.REV_DUP_ELIM_RULE theorem
             else theorem
           val old_count = length (clasetGoal.goals node)
-          val next =
+          val transitions =
             apply
               (clasetStep.blast_rule_step cs
                 {theorem = replay_theorem, elim = is_elim}) node
-          val child_count =
-            length (clasetGoal.goals next) - old_count + 1
+
+          fun finish next =
+            let
+              val child_count =
+                length (clasetGoal.goals next) - old_count + 1
+            in
+              if duplicate andalso is_elim then
+                move_children child_count next
+              else next
+            end
         in
-          if duplicate andalso is_elim then
-            move_children child_count next
-          else next
+          map_partial (total finish) transitions
         end
 
 fun execute cs step node =
@@ -67,29 +84,54 @@ fun execute cs step node =
     | blastSearch.UnsafeRule {rule, duplicate, ...} =>
         apply_rule cs duplicate rule node
 
-(* The exact claset is used only to retain rule provenance in replay
-   diagnostics.  Rule application itself always uses the recorded theorem. *)
+(* The tableau records rule provenance, but an elimination theorem can
+   resolve against several assumptions.  Explore those typed engine
+   transitions lazily; only a completely grounded, kernel-valid replay is
+   accepted.  Exhausting them still rejects this tableau through the search
+   continuation's PROOF_FAILED hook. *)
 fun perform_with cs goal ({script, ...} : proof) =
   let
-    val final = List.foldl (fn (step, node) => execute cs step node)
-      (clasetGoal.from_goal goal) script
-    val _ =
-      if null (clasetGoal.goals final) then ()
-      else
-        raise mk_HOL_ERR "blastReconstruct" "reconstruct"
-          "the recorded script leaves open engine goals"
-    val grounded =
-      clasetReplay.ground (clasetGoal.store final)
-        (clasetGoal.replay final)
-    val result as (residuals, _) =
-      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
-    val _ =
-      if null residuals then ()
-      else
-        raise mk_HOL_ERR "blastReconstruct" "reconstruct"
-          "kernel replay leaves open goals"
+    fun finish final =
+      let
+        val _ =
+          if null (clasetGoal.goals final) then ()
+          else
+            raise mk_HOL_ERR "blastReconstruct" "finish"
+              "the recorded script leaves open engine goals"
+        val grounded =
+          clasetReplay.ground (clasetGoal.store final)
+            (clasetGoal.replay final)
+        val result as (residuals, _) =
+          Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+        val _ =
+          if null residuals then ()
+          else
+            raise mk_HOL_ERR "blastReconstruct" "finish"
+              "kernel replay leaves open goals"
+      in
+        result
+      end
+
+    fun replay [] node = total finish node
+      | replay (step :: rest) node =
+          let
+            fun alternatives sequence =
+              case seq.cases sequence of
+                  NONE => NONE
+                | SOME (next, nodes) =>
+                    (case replay rest next of
+                         NONE => alternatives nodes
+                       | result => result)
+          in
+            alternatives (execute cs step node)
+          end
+          handle HOL_ERR _ => NONE
   in
-    result
+    case replay script (clasetGoal.from_goal goal) of
+        SOME result => result
+      | NONE =>
+          raise mk_HOL_ERR "blastReconstruct" "perform_with"
+            "the recorded tableau has no kernel-valid replay"
   end
 
 fun reconstructWith cs goal proof =

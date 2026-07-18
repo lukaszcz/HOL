@@ -709,7 +709,7 @@ fun builtin_results (node, pos) =
   let
     val rendered as (_, w) = clasetGoal.render node pos
 
-    fun make kind tactic =
+    fun make initial_store kind action tactic =
       case total tactic rendered of
           NONE => seq.empty
         | SOME (result as (goals, _)) =>
@@ -736,11 +736,14 @@ fun builtin_results (node, pos) =
               val child_params = map #2 lifted
               val new_params = List.concat child_params
               fun register (param, store) =
-                case clasetMeta.register_eigen param store of
-                    SOME next => next
-                  | NONE => store
-              val store =
-                List.foldl register (clasetGoal.store node) new_params
+                if clasetMeta.is_eigen store param then store
+                else
+                  case clasetMeta.register_eigen param store of
+                      SOME next => next
+                    | NONE =>
+                        raise mk_HOL_ERR "clasetStep" "builtin_results"
+                          "a generated parameter is not fresh"
+              val store = List.foldl register initial_store new_params
             in
               seq.result
                 (Direct
@@ -748,19 +751,23 @@ fun builtin_results (node, pos) =
                    eigenvariables =
                      map (map (fst o dest_var)) child_params,
                    result = result, children = SOME children,
-                   action =
-                     (case kind of
-                          Disch => clasetReplay.disch_action
-                        | Gen =>
-                            clasetReplay.gen_action
-                              (fst (dest_var (hd new_params)))
-                        | _ => clasetReplay.fixed_action result),
+                   action = action,
                    closed = map (fn _ => NONE) children,
                    store = store})
             end
   in
-    if is_imp_only w then make Disch Tactic.DISCH_TAC
-    else if is_forall w then make Gen Tactic.GEN_TAC
+    if is_imp_only w then
+      make (clasetGoal.store node) Disch clasetReplay.disch_action
+        Tactic.DISCH_TAC
+    else if is_forall w then
+      let
+        val (bound, _) = dest_forall w
+        val (fresh, store) = clasetGoal.fresh_eigen node bound
+        val name = fst (dest_var fresh)
+      in
+        make store Gen (clasetReplay.gen_action name)
+          (clasetReplay.GEN_NAMED_TAC name)
+      end
     else seq.empty
   end
 

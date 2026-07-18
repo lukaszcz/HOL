@@ -77,6 +77,18 @@ fun register_param (param, store) =
 fun register_params goals store =
   List.foldl register_param store (List.concat (map #params goals))
 
+fun register_fresh bound avoids store =
+  let val fresh = variant avoids bound
+  in
+    if clasetMeta.is_meta fresh then
+      raise mk_HOL_ERR "clasetGoal" "register_fresh"
+        "a binder uses the reserved metavariable prefix"
+    else
+      case clasetMeta.register_eigen fresh store of
+          SOME store' => (fresh, store')
+        | NONE => register_fresh bound (fresh :: avoids) store
+  end
+
 fun make_node goals store replay level paths marks avoids =
   if length goals <> length marks orelse length goals <> length paths then
     raise mk_HOL_ERR "clasetGoal" "make_node"
@@ -120,6 +132,9 @@ fun goal_paths (Node {paths, ...}) = paths
 fun binding_marks (Node {marks, ...}) = marks
 fun size (Node {size, ...}) = size
 fun avoids (Node {avoids, ...}) = avoids
+
+fun fresh_eigen node bound =
+  register_fresh bound (avoids node) (store node)
 
 val empty_binding_marks = []
 
@@ -236,18 +251,6 @@ fun children_from initial_avoids
     val normalized = map (norm_term store) premises
     val initial_avoids =
       free_varsl (initial_avoids @ cgoal_terms parent @ normalized)
-
-    fun register_fresh bound avoids current_store =
-      let val fresh = variant avoids bound
-      in
-        if clasetMeta.is_meta fresh then
-          raise mk_HOL_ERR "clasetGoal" "children"
-            "a rule binder uses the reserved metavariable prefix"
-        else
-          case clasetMeta.register_eigen fresh current_store of
-            SOME store' => (fresh, store')
-          | NONE => register_fresh bound (fresh :: avoids) current_store
-      end
 
     fun freshen_bound (bound, (avoids, subst, params, current_store)) =
       let

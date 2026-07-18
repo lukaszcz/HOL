@@ -35,6 +35,10 @@ sig
   val set_binding_marks : binding_marks -> node -> node
   val empty_binding_marks : binding_marks
 
+  (* Select and register an eigenvariable fresh for the node's complete
+     history, including parameters belonging to already closed siblings. *)
+  val fresh_eigen : node -> term -> term * store
+
   val goal_at : node -> int -> cgoal
   val replace_goal : node ->
                      {pos : int, children : cgoal list, store : store} ->
