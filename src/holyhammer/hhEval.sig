@@ -41,7 +41,6 @@ sig
 
   val theories_from_srcfile_lines : string list -> string list
   val theories_from_srcfiles : string -> string list
-  val theory_dat_theories : string -> string list
   val coverage_check :
     {srcfiles : string list, dat_theories : string list} -> string list
   val stdlib_coverage : unit -> corpus_coverage

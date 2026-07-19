@@ -86,21 +86,6 @@ fun fof_dir dir (config : hhProver.prover_config) =
   pathl [dir, #name config ^ "_files"]
 
 (* ---------------------------------------------------------------------------
-   Evaluation log
-   ------------------------------------------------------------------------- *)
-
-val hh_eval_dir = pathl [hhdir,"eval"];
-val eval_flag = ref false
-val eval_thy = ref "scratch"
-fun log_eval s =
-  if !eval_flag then
-    let val file = hh_eval_dir ^ "/" ^ (!eval_thy) in
-      mkDir_err hh_eval_dir;
-      append_endline file s
-    end
-  else print_endline s
-
-(* ---------------------------------------------------------------------------
    Run functions in parallel and terminate as soon as one returned a
    positive result in the private race result.
    ------------------------------------------------------------------------- *)
@@ -135,8 +120,6 @@ fun parallel_call t fl =
    Launch an ATP
    ------------------------------------------------------------------------- *)
 
-val atp_ref = ref ""
-
 fun run_atp fofdir (config : hhProver.prover_config) t =
   let
     (* Keep the prover's output next to the problem, as the deleted shell
@@ -150,9 +133,8 @@ fun run_atp fofdir (config : hhProver.prover_config) t =
     if isSome r
     then
       (
-      atp_ref := #name config;
-      log_eval ("  proof found by " ^ #name config ^ ":");
-      log_eval ("    " ^ mk_metis_call (valOf r));
+      print_endline ("  proof found by " ^ #name config ^ ":");
+      print_endline ("    " ^ mk_metis_call (valOf r));
       race_lemmas := r
       )
     else ();
@@ -186,7 +168,7 @@ fun hh_pb_configs dir configs premises goal =
   in
     case olemmas of
       NONE =>
-        (log_eval "  ATPs could not find a proof";
+        (print_endline "  ATPs could not find a proof";
         raise ERR "hh_pb" "ATPs could not find a proof")
     | SOME lemmas =>
       let
@@ -195,7 +177,7 @@ fun hh_pb_configs dir configs premises goal =
         val _ = lemmas_glob := SOME lemmas
         val (stac,tac) = hidef (hh_reconstruct lemmas) goal
       in
-        log_eval ("  minimized proof:  \n    " ^ stac);
+        print_endline ("  minimized proof:  \n    " ^ stac);
         tac
       end
   end
@@ -238,21 +220,5 @@ fun hh_goal goal =
 fun hh_fork goal = Thread.fork (fn () => ignore (hh_goal goal), attrib)
 fun hh goal = let val tac = hh_goal goal in hidef tac goal end
 fun holyhammer tm = hidef TAC_PROOF (([],tm), hh_goal ([],tm));
-
-(* -------------------------------------------------------------------------
-   Function called by the tactictoe evaluation framework
-   ------------------------------------------------------------------------- *)
-
-(*
-fun hh_eval expdir (thy,n) (thmdata,tacdata) nnol goal =
-  let val b = !hide_flag in
-    hide_flag := false;
-    mkDir_err hh_eval_dir;
-    log_eval ("Goal: " ^ string_of_goal goal);
-    ignore (main_hh thmdata goal);
-    eval_flag := false; hide_flag := b;
-    eval_thy := "scratch"
-  end
-*)
 
 end (* struct *)

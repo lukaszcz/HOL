@@ -11,11 +11,6 @@ sig
     | SzsUnknown of string
     | RunFailure of string
 
-  type slice =
-    {prover : string, format : string, type_enc : string,
-     lam_trans : string, nfacts : int, filter : string,
-     extra_opts : string list, slice_size : int}
-
   type run_request =
     {timeout : int, problem : string, extra : string list,
      debug_dir : string option}
@@ -31,11 +26,9 @@ sig
      version_args : string list,
      parse_version : string -> string option,
      tested_versions : string list,
-     formats : string list,
      mk_command : string -> run_request -> string * string list,
      parse_output : string list -> szs * string list option,
      default_nfacts : int,
-     slices : unit -> slice list,
      legacy : bool}
 
   val all : unit -> prover_config list
@@ -46,7 +39,7 @@ sig
   val szs_of_line : string -> szs option
   val axioms_from_tstp : string list -> string list
 
-  (* Process execution and probing are implemented by TASK_04. *)
+  (* Executable discovery, version probing and a timed run of one problem. *)
   val find_exec : prover_config -> string option
   val probe : prover_config ->
     {path : string, version : string option, tested : bool} option

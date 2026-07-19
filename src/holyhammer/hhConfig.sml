@@ -20,7 +20,7 @@ fun executable path =
   handle OS.SysErr _ => false
 
 fun ensure_dir path =
-  if is_dir path then ()
+  if path = "" orelse is_dir path then ()
   else
     let
       val parent = OS.Path.dir path
@@ -415,26 +415,12 @@ fun find_exec_with_env prover env_var names =
       installed (join (join (join (home_dir ()) ".hol4") "hammer")
                  "provers")
   in
-    case configured () of
-        SOME path => SOME path
-      | NONE =>
-        (case environment () of
-             SOME path => SOME path
-           | NONE =>
-             (case path_exec names of
-                  SOME path => SOME path
-                | NONE =>
-                  (case system_install () of
-                       SOME path => SOME path
-                     | NONE =>
-                       (case state_install () of
-                            SOME path => SOME path
-                          | NONE => user_install ()))))
+    first_some (fn source => source ())
+      [configured, environment, fn () => path_exec names,
+       system_install, state_install, user_install]
   end
 
 fun find_exec prover names =
   find_exec_with_env prover (prover_env prover) names
-
-val find_executable = find_exec
 
 end

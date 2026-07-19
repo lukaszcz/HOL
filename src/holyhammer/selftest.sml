@@ -12,18 +12,8 @@ fun write_file path contents =
 
 fun is_dir path = OS.FileSys.isDir path handle OS.SysErr _ => false
 
-fun mkdir path =
-  if is_dir path then () else OS.FileSys.mkDir path
-
-fun mkdirs path =
-  if is_dir path then ()
-  else
-    let
-      val parent = OS.Path.dir path
-      val _ = if parent = "" orelse parent = path then () else mkdirs parent
-    in
-      mkdir path
-    end
+val mkdir = hhConfig.ensure_dir
+val mkdirs = hhConfig.ensure_dir
 
 fun remove_tree path =
   if is_dir path then
@@ -425,10 +415,9 @@ fun test_holyHammer_validation () =
 fun fake_config name exec_name args parser : hhProver.prover_config =
   {name = name, exec_names = [exec_name], env_var = "",
    version_args = ["--version"], parse_version = fn _ => SOME "test",
-   tested_versions = ["test"], formats = ["fof"],
+   tested_versions = ["test"],
    mk_command = fn executable => fn _ => (executable, args),
-   parse_output = parser, default_nfacts = 0, slices = fn () => [],
-   legacy = false}
+   parse_output = parser, default_nfacts = 0, legacy = false}
 
 fun test_runner () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
@@ -459,10 +448,9 @@ fun test_runner () =
     val missing : hhProver.prover_config =
       {name = "runner-missing", exec_names = ["missing-hh-prover"],
        env_var = "", version_args = [], parse_version = fn _ => NONE,
-       tested_versions = [], formats = ["fof"],
+       tested_versions = [],
        mk_command = fn executable => fn _ => (executable, []),
-       parse_output = #parse_output e, default_nfacts = 0,
-       slices = fn () => [], legacy = false}
+       parse_output = #parse_output e, default_nfacts = 0, legacy = false}
     val missing_result = hhProver.run missing timeout_request
     val _ = expect "missing prover names downloader"
       (case #szs missing_result of

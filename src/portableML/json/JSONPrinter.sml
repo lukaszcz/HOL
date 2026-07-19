@@ -50,11 +50,9 @@ fun floatString f =
     else
       raise Fail "cannot print a non-finite JSON number"
 
-fun join _ [] = ""
-  | join _ [s] = s
-  | join separator (s::ss) = s ^ separator ^ join separator ss
+val join = String.concatWith
 
-fun indent n = String.implode (List.tabulate (2 * n, fn _ => #" "))
+fun indent n = CharVector.tabulate (2 * n, fn _ => #" ")
 
 fun valueString pretty = let
   fun value level (JSON.OBJECT fields) =

@@ -44,62 +44,11 @@ type completed = (string * string) list
 
 fun join left right = OS.Path.concat (left, right)
 
-fun is_dir path = OS.FileSys.isDir path handle OS.SysErr _ => false
+val is_dir = hhConfig.is_dir
+val ensure_dir = hhConfig.ensure_dir
+val trim = hhConfig.trim
 
-fun ensure_dir path =
-  if path = "" orelse is_dir path then ()
-  else
-    let
-      val parent = OS.Path.dir path
-      val _ = if parent = path then () else ensure_dir parent
-    in
-      OS.FileSys.mkDir path
-      handle OS.SysErr _ =>
-        if is_dir path then () else raise Fail ("cannot create " ^ path)
-    end
-
-fun trim_left text =
-  let
-    fun loop index =
-      if index < String.size text andalso
-         Char.isSpace (String.sub (text, index)) then loop (index + 1)
-      else index
-  in
-    String.extract (text, loop 0, NONE)
-  end
-
-fun trim_right text =
-  let
-    fun loop index =
-      if index > 0 andalso Char.isSpace (String.sub (text, index - 1)) then
-        loop (index - 1)
-      else index
-  in
-    String.substring (text, 0, loop (String.size text))
-  end
-
-fun trim text = trim_right (trim_left text)
-
-fun ends_with suffix text =
-  let val start = String.size text - String.size suffix in
-    start >= 0 andalso String.extract (text, start, NONE) = suffix
-  end
-
-fun insert item [] = [item]
-  | insert item (head :: tail) =
-      if String.compare (item, head) = LESS then item :: head :: tail
-      else head :: insert item tail
-
-fun sort [] = []
-  | sort (head :: tail) = insert head (sort tail)
-
-fun unique [] = []
-  | unique [item] = [item]
-  | unique (first :: second :: rest) =
-      if first = second then unique (second :: rest)
-      else first :: unique (second :: rest)
-
-fun sorted_unique items = unique (sort items)
+val sorted_unique = mk_string_set
 
 fun string_of_regime Bushy = "bushy"
   | string_of_regime Chainy = "chainy"
@@ -166,42 +115,20 @@ fun theory_of_srcfile line =
     val file = OS.Path.file path
     val name = String.substring (file, 0, String.size file - 6)
   in
-    if String.isSubstring "/src/" path andalso ends_with "Theory" file andalso
-       name <> "" then SOME name else NONE
+    if String.isSubstring "/src/" path andalso
+       String.isSuffix "Theory" file andalso name <> ""
+    then SOME name else NONE
   end
   handle Subscript => NONE
 
 fun theories_from_srcfile_lines lines =
   sorted_unique (List.mapPartial theory_of_srcfile lines)
 
-fun read_lines path =
-  let
-    val input = TextIO.openIn path
-    fun loop lines =
-      case TextIO.inputLine input of
-          NONE => List.rev lines
-        | SOME line => loop (line :: lines)
-    val result = loop []
-    val _ = TextIO.closeIn input
-  in
-    result
-  end
+val read_lines = bare_readl
 
 fun theories_from_srcfiles path = theories_from_srcfile_lines (read_lines path)
 
-fun directory_names path =
-  let
-    val stream = OS.FileSys.openDir path
-    fun loop names =
-      case OS.FileSys.readDir stream of
-          NONE => List.rev names
-        | SOME name => loop (name :: names)
-    val result = loop []
-    val _ = OS.FileSys.closeDir stream
-  in
-    result
-  end
-  handle OS.SysErr _ => []
+val directory_names = hhConfig.directory_names
 
 fun dat_paths_under root =
   let
@@ -209,7 +136,7 @@ fun dat_paths_under root =
       List.concat (map (fn name =>
         let val path = join directory name in
           if is_dir path then walk path
-          else if ends_with "Theory.dat" name then [path]
+          else if String.isSuffix "Theory.dat" name then [path]
           else []
         end) (directory_names directory))
   in
@@ -222,11 +149,8 @@ fun dat_theories_under root =
       String.substring (name, 0, String.size name - 10)
     end) (dat_paths_under root))
 
-val theory_dat_theories = dat_theories_under
-
 fun coverage_check {srcfiles, dat_theories} =
-  List.filter (fn theory => not (List.exists (fn name => name = theory)
-                                  srcfiles)) dat_theories
+  List.filter (fn theory => not (mem theory srcfiles)) dat_theories
 
 fun holdir () =
   case OS.Process.getEnv "HOLDIR" of
@@ -403,15 +327,7 @@ fun sha256 path =
   end
   handle OS.SysErr _ => NONE
 
-fun distinct_names names =
-  let
-    fun loop seen [] = List.rev seen
-      | loop seen (name :: rest) =
-          if List.exists (fn old => old = name) seen then loop seen rest
-          else loop (name :: seen) rest
-  in
-    loop [] names
-  end
+val distinct_names = mk_sameorder_set String.compare
 
 fun prover_identity name =
   case hhProver.lookup name of
@@ -507,23 +423,13 @@ type metrics =
    proved_pct : real option, reconstructed_pct : real option,
    p50 : real option, p90 : real option, maximum : real option}
 
-fun read_journal_partial path =
-  let
-    fun parse line =
-      if trim line = "" then NONE
-      else (SOME (parse_journal_line line)
-            handle Interrupt => raise Interrupt | _ => NONE)
-  in
-    List.mapPartial parse (read_lines path)
-  end
-  handle OS.SysErr _ => [] | IO.Io _ => []
-
 fun journal_files expdir =
   let
     val directory = join expdir "journal"
-    fun is_journal name = ends_with ".jsonl" name
+    fun is_journal name = String.isSuffix ".jsonl" name
   in
-    sort (List.filter is_journal (directory_names directory))
+    dict_sort String.compare
+      (List.filter is_journal (directory_names directory))
   end
 
 fun cell_key entry = (#goal_id entry, #cond entry)
@@ -556,29 +462,19 @@ fun proven_cell entry = #szs entry = "Theorem"
 fun reconstructed_cell entry = #recon_ok entry = SOME true
 fun attempted_cell entry = #szs entry <> "BrokenDeps"
 
-fun real_insert item [] = [item]
-  | real_insert item (head :: tail) =
-      if Real.compare (item, head) = LESS then item :: head :: tail
-      else head :: real_insert item tail
-
-fun real_sort [] = []
-  | real_sort (head :: tail) = real_insert head (real_sort tail)
-
-fun nth (item :: _) 0 = item
-  | nth (_ :: items) index = nth items (index - 1)
-  | nth [] _ = raise Fail "hhEval report: bad quantile index"
-
 fun quantiles values =
-  case real_sort values of
+  case dict_sort Real.compare values of
       [] => (NONE, NONE, NONE)
     | ordered =>
         let
-          val count = length ordered
+          val sorted = Vector.fromList ordered
+          val count = Vector.length sorted
           val p50_index = (count + 1) div 2 - 1
           val p90_index = (9 * count + 9) div 10 - 1
         in
-          (SOME (nth ordered p50_index), SOME (nth ordered p90_index),
-           SOME (List.last ordered))
+          (SOME (Vector.sub (sorted, p50_index)),
+           SOME (Vector.sub (sorted, p90_index)),
+           SOME (Vector.sub (sorted, count - 1)))
         end
 
 fun percentage numerator denominator =
@@ -793,7 +689,7 @@ fun report expdir =
   let
     val paths = map (join (join expdir "journal")) (journal_files expdir)
     val entries = List.filter regular_cell
-      (latest_cells (List.concat (map read_journal_partial paths)))
+      (latest_cells (List.concat (map read_journal paths)))
     val _ = ensure_dir expdir
     val _ = write_report_markdown expdir entries
   in
@@ -833,33 +729,41 @@ fun szs_name hhProver.SzsTheorem = "Theorem"
 fun run_failure_error (hhProver.RunFailure message) = SOME message
   | run_failure_error _ = NONE
 
-fun base_entry expdir thy name condition nfacts szs t_prover axioms version =
+(* The tail of a journal entry, i.e. everything only known once the prover
+   has run.  Keeping it a separate record means the entry is built in one
+   place: adding a journal field touches base_entry and nothing else. *)
+type outcome =
+  {recon_ok : bool option, recon_method : string option,
+   t_recon : real option, stac : string option, error : string option}
+
+val no_outcome : outcome =
+  {recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+   error = NONE}
+
+fun failed message : outcome =
+  {recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+   error = SOME message}
+
+fun base_entry expdir thy name condition nfacts szs t_prover axioms version
+    (outcome : outcome) =
   {run = run_name expdir, thy = thy, thm = name, goal_id = goal_id thy name,
    cond = #cond_id condition, regime = #regime condition,
    selector = #selector condition, prover = #prover condition,
    prover_version = version, nfacts = nfacts, timeout = #timeout condition,
    szs = szs, t_prover = t_prover, axioms_used = axioms,
-   recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
-   error = NONE} : journal_entry
+   recon_ok = #recon_ok outcome, recon_method = #recon_method outcome,
+   t_recon = #t_recon outcome, stac = #stac outcome,
+   error = #error outcome} : journal_entry
 
 fun journal_theory_error expdir thy message =
   let
     val condition : condition =
       {cond_id = "__load__", regime = Bushy, selector = Deps,
        prover = "", timeout = 0, reconstruct = false}
-    val entry = base_entry expdir thy "__load__" condition 0 "LoadFailure"
-      0.0 NONE NONE
-    val entry =
-      {run = #run entry, thy = #thy entry, thm = #thm entry,
-       goal_id = #goal_id entry, cond = #cond entry, regime = #regime entry,
-       selector = #selector entry, prover = #prover entry,
-       prover_version = #prover_version entry, nfacts = #nfacts entry,
-       timeout = #timeout entry, szs = #szs entry, t_prover = #t_prover entry,
-       axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
-       recon_method = #recon_method entry, t_recon = #t_recon entry,
-       stac = #stac entry, error = SOME message}
   in
-    append_journal (journal_path expdir thy) entry
+    append_journal (journal_path expdir thy)
+      (base_entry expdir thy "__load__" condition 0 "LoadFailure" 0.0 NONE
+         NONE (failed message))
   end
 
 fun pool_ids (thyl, thmidl) =
@@ -944,23 +848,10 @@ fun run_cell expdir thy (name, thm) pool condition =
   in
     case hhProver.lookup (#prover condition) of
         NONE =>
-          let
-            val entry = base_entry expdir thy name condition nfacts
-              "RunFailure" 0.0 NONE NONE
-            val entry =
-              {run = #run entry, thy = #thy entry, thm = #thm entry,
-               goal_id = #goal_id entry, cond = #cond entry,
-               regime = #regime entry, selector = #selector entry,
-               prover = #prover entry, prover_version = #prover_version entry,
-               nfacts = #nfacts entry, timeout = #timeout entry,
-               szs = #szs entry, t_prover = #t_prover entry,
-               axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
-               recon_method = #recon_method entry, t_recon = #t_recon entry,
-               stac = #stac entry,
-               error = SOME ("unknown HolyHammer prover: " ^ #prover condition)}
-          in
-            append_journal (journal_path expdir thy) entry
-          end
+          append_journal (journal_path expdir thy)
+            (base_entry expdir thy name condition nfacts "RunFailure" 0.0
+               NONE NONE
+               (failed ("unknown HolyHammer prover: " ^ #prover condition)))
       | SOME prover =>
           let
             val result = hhProver.run prover
@@ -969,71 +860,38 @@ fun run_cell expdir thy (name, thm) pool condition =
                debug_dir = SOME (join expdir "out")}
             val (recon_ok, recon_method, t_recon, stac_or_error) =
               reconstruct condition result goal
-            val entry = base_entry expdir thy name condition nfacts
-              (szs_name (#szs result)) (#time result) (#used_axioms result)
-              (#version result)
             val (stac, recon_error) =
               case recon_ok of
                   SOME false => (NONE, stac_or_error)
                 | _ => (stac_or_error, NONE)
-            val entry =
-              {run = #run entry, thy = #thy entry, thm = #thm entry,
-               goal_id = #goal_id entry, cond = #cond entry,
-               regime = #regime entry, selector = #selector entry,
-               prover = #prover entry, prover_version = #prover_version entry,
-               nfacts = #nfacts entry, timeout = #timeout entry,
-               szs = #szs entry, t_prover = #t_prover entry,
-               axioms_used = #axioms_used entry, recon_ok = recon_ok,
-               recon_method = recon_method, t_recon = t_recon, stac = stac,
+            val outcome : outcome =
+              {recon_ok = recon_ok, recon_method = recon_method,
+               t_recon = t_recon, stac = stac,
                error = case recon_error of
                            SOME message => SOME message
                          | NONE => run_failure_error (#szs result)}
           in
-            append_journal (journal_path expdir thy) entry
+            append_journal (journal_path expdir thy)
+              (base_entry expdir thy name condition nfacts
+                 (szs_name (#szs result)) (#time result)
+                 (#used_axioms result) (#version result) outcome)
           end
   end
   handle Interrupt => raise Interrupt
        | error =>
-           let
-             val entry = base_entry expdir thy name condition 0 "Error" 0.0
-               NONE NONE
-             val entry =
-               {run = #run entry, thy = #thy entry, thm = #thm entry,
-                goal_id = #goal_id entry, cond = #cond entry,
-                regime = #regime entry, selector = #selector entry,
-                prover = #prover entry, prover_version = #prover_version entry,
-                nfacts = #nfacts entry, timeout = #timeout entry,
-                szs = #szs entry, t_prover = #t_prover entry,
-                axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
-                recon_method = #recon_method entry, t_recon = #t_recon entry,
-                stac = #stac entry, error = SOME (General.exnMessage error)}
-           in
-             append_journal (journal_path expdir thy) entry
-           end
+           append_journal (journal_path expdir thy)
+             (base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
+                (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name condition =
-  let
-    val entry = base_entry expdir thy name condition 0 "BrokenDeps" 0.0
-      NONE NONE
-  in
-    append_journal (journal_path expdir thy) entry
-  end
+  append_journal (journal_path expdir thy)
+    (base_entry expdir thy name condition 0 "BrokenDeps" 0.0 NONE NONE
+       no_outcome)
 
 fun evaluation_error_cell expdir thy name condition message =
-  let
-    val entry = base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
-    val entry =
-      {run = #run entry, thy = #thy entry, thm = #thm entry,
-       goal_id = #goal_id entry, cond = #cond entry, regime = #regime entry,
-       selector = #selector entry, prover = #prover entry,
-       prover_version = #prover_version entry, nfacts = #nfacts entry,
-       timeout = #timeout entry, szs = #szs entry, t_prover = #t_prover entry,
-       axioms_used = #axioms_used entry, recon_ok = #recon_ok entry,
-       recon_method = #recon_method entry, t_recon = #t_recon entry,
-       stac = #stac entry, error = SOME message}
-  in
-    append_journal (journal_path expdir thy) entry
-  end
+  append_journal (journal_path expdir thy)
+    (base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
+       (failed message))
 
 fun eval_loaded_theory expdir thy =
   let
@@ -1090,14 +948,14 @@ fun source_script_directory thy =
         val path = trim line
         val file = OS.Path.file path
       in
-        if ends_with "Theory" file then
+        if String.isSuffix "Theory" file then
           SOME (String.substring (file, 0, String.size file - 6),
                 OS.Path.dir path)
         else NONE
       end
     fun dat_entry path =
       let val file = OS.Path.file path in
-        if ends_with "Theory.dat" file then
+        if String.isSuffix "Theory.dat" file then
           SOME (String.substring (file, 0, String.size file - 10),
                 OS.Path.dir (OS.Path.dir (OS.Path.dir path)))
         else NONE
@@ -1177,9 +1035,6 @@ fun theory_cells thy conditions sample =
   end
   handle Interrupt => raise Interrupt | _ => NONE
 
-fun file_exists path =
-  OS.FileSys.access (path, [OS.FileSys.A_READ]) handle OS.SysErr _ => false
-
 fun run_eval {expname, ncore, thyl, conditions} =
   if ncore < 1 then raise Fail "run_eval requires at least one worker"
   else
@@ -1199,7 +1054,7 @@ fun run_eval {expname, ncore, thyl, conditions} =
          handle Interrupt => raise Interrupt
               | _ => {thy = thy, theorem_count = 0, dep_stamp = ""})
       val _ =
-        if file_exists (join expdir "run.json") then ()
+        if exists_file (join expdir "run.json") then ()
         else write_run_header expdir
           (new_run_header {expname = expname, corpus = map corpus_entry thyl,
             added_from_dat = included_from_dat,
@@ -1215,13 +1070,11 @@ fun run_eval {expname, ncore, thyl, conditions} =
       val pending_states = List.filter pending states
       fun work_size (_, NONE) = 0
         | work_size (_, SOME cells) = length cells
-      fun insert_work item [] = [item]
-        | insert_work item (head :: tail) =
-            if work_size item >= work_size head then item :: head :: tail
-            else head :: insert_work item tail
-      fun schedule [] = []
-        | schedule (head :: tail) = insert_work head (schedule tail)
-      val queued_names = map #1 (schedule pending_states)
+      (* Largest theories first, so the long poles start on a free core
+         before the short ones fill it up. *)
+      val queued_names =
+        map (#1 o #2) (dict_sort (fn ((a, _), (b, _)) => Int.compare (b, a))
+          (map (fn state => (work_size state, state)) pending_states))
       val queued = map (fn thy =>
         (thy, write_evalscript expdir thy conditions sample)) queued_names
       val _ = smlExecScripts.buildheap_dir := join expdir "out"
@@ -1275,7 +1128,7 @@ fun run_smoke {expdir, timeout} =
         ["e", "vampire", "zipperposition"]
       val journals = map (journal_path expdir) theories
       val _ =
-        if List.exists file_exists journals then
+        if List.exists exists_file journals then
           raise Fail ("smoke output directory already has a journal: " ^
             expdir)
         else ()

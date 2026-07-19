@@ -19,11 +19,6 @@ datatype szs =
   | SzsUnknown of string
   | RunFailure of string
 
-type slice =
-  {prover : string, format : string, type_enc : string,
-   lam_trans : string, nfacts : int, filter : string,
-   extra_opts : string list, slice_size : int}
-
 type run_request =
   {timeout : int, problem : string, extra : string list,
    debug_dir : string option}
@@ -39,34 +34,13 @@ type prover_config =
    version_args : string list,
    parse_version : string -> string option,
    tested_versions : string list,
-   formats : string list,
    mk_command : string -> run_request -> string * string list,
    parse_output : string list -> szs * string list option,
    default_nfacts : int,
-   slices : unit -> slice list,
    legacy : bool}
 
-fun trim_left s =
-  let
-    fun loop i =
-      if i < String.size s andalso Char.isSpace (String.sub (s, i)) then
-        loop (i + 1)
-      else i
-  in
-    String.extract (s, loop 0, NONE)
-  end
-
-fun trim_right s =
-  let
-    fun loop i =
-      if i > 0 andalso Char.isSpace (String.sub (s, i - 1)) then
-        loop (i - 1)
-      else i
-  in
-    String.substring (s, 0, loop (String.size s))
-  end
-
-fun trim s = trim_right (trim_left s)
+val trim = hhConfig.trim
+val trim_left = hhConfig.trim_left
 
 fun first_word s =
   case String.tokens Char.isSpace s of
@@ -214,30 +188,19 @@ fun axiom_name line =
       | [] => NONE
   end
 
-fun distinct names =
-  let
-    fun loop seen [] = List.rev seen
-      | loop seen (name :: rest) =
-          if List.exists (fn seen_name => seen_name = name) seen then
-            loop seen rest
-          else loop (name :: seen) rest
-  in
-    loop [] names
-  end
+val distinct = mk_sameorder_set String.compare
 
 fun axioms_from_tstp lines =
   let
     val proof_lines = List.filter (not o is_comment) lines
     val from_files = distinct (List.concat (map file_names proof_lines))
-    val from_axioms =
-      distinct (List.mapPartial axiom_name proof_lines)
   in
-    if null from_files then from_axioms else from_files
+    if null from_files
+    then distinct (List.mapPartial axiom_name proof_lines)
+    else from_files
   end
 
-fun first_some f [] = NONE
-  | first_some f (x :: xs) =
-      case f x of NONE => first_some f xs | found => found
+val first_some = hhConfig.first_some
 
 fun parse_tstp lines =
   let
@@ -337,11 +300,6 @@ fun z3_version output =
       SOME version => SOME version
     | NONE => version_between "Z3tptp [" "]" output
 
-fun one_slice name nfacts extra_opts () =
-  [{prover = name, format = "fof", type_enc = "", lam_trans = "",
-    nfacts = nfacts, filter = "knn", extra_opts = extra_opts,
-    slice_size = 1}]
-
 fun e_command executable {timeout, problem, extra, ...} =
   (executable,
    ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
@@ -385,46 +343,43 @@ val e_config : prover_config =
   {name = "e", exec_names = ["eprover-ho", "eprover"],
    env_var = "HOL4_EPROVER_EXECUTABLE", version_args = ["--version"],
    parse_version = e_version, tested_versions = ["3.2.5"],
-   formats = ["fof"], mk_command = e_command, parse_output = parse_tstp,
-   default_nfacts = 128, slices = one_slice "e" 128 [], legacy = false}
+   mk_command = e_command, parse_output = parse_tstp,
+   default_nfacts = 128, legacy = false}
 
 val vampire_config : prover_config =
   {name = "vampire", exec_names = ["vampire"],
    env_var = "HOL4_VAMPIRE_EXECUTABLE", version_args = ["--version"],
    parse_version = vampire_version, tested_versions = ["5.0.1"],
-   formats = ["fof"], mk_command = vampire_command, parse_output = parse_tstp,
-   default_nfacts = 96, slices = one_slice "vampire" 96 [], legacy = false}
+   mk_command = vampire_command, parse_output = parse_tstp,
+   default_nfacts = 96, legacy = false}
 
 val zipperposition_config : prover_config =
   {name = "zipperposition", exec_names = ["zipperposition"],
    env_var = "HOL4_ZIPPERPOSITION_EXECUTABLE", version_args = ["--version"],
    parse_version = zipperposition_version, tested_versions = ["2.1"],
-   formats = ["fof"], mk_command = zipperposition_command,
-   parse_output = parse_tstp, default_nfacts = 128,
-   slices = one_slice "zipperposition" 128 [], legacy = false}
+   mk_command = zipperposition_command, parse_output = parse_tstp,
+   default_nfacts = 128, legacy = false}
 
 val z3_config : prover_config =
   {name = "z3", exec_names = ["z3_tptp", "z3"],
    env_var = "HOL4_Z3_EXECUTABLE",
    version_args = ["--version"], parse_version = z3_version,
-   tested_versions = ["4.11.2"], formats = ["fof"], mk_command = z3_command,
-   parse_output = parse_z3, default_nfacts = 32,
-   slices = one_slice "z3" 32 [], legacy = true}
+   tested_versions = ["4.11.2"], mk_command = z3_command,
+   parse_output = parse_z3, default_nfacts = 32, legacy = true}
 
-val e_legacy_config : prover_config =
-  {name = "e-legacy", exec_names = ["eprover-ho", "eprover"],
-   env_var = "HOL4_EPROVER_EXECUTABLE", version_args = ["--version"],
-   parse_version = e_version, tested_versions = ["3.2.5"],
-   formats = ["fof"], mk_command = e_legacy_command, parse_output = parse_tstp,
-   default_nfacts = 128, slices = one_slice "e-legacy" 128 [], legacy = true}
+(* A legacy entry differs from its modern twin only in the name and the
+   command line, so derive it rather than restating the shared fields. *)
+fun legacy_variant (base : prover_config) name mk_command : prover_config =
+  {name = name, exec_names = #exec_names base, env_var = #env_var base,
+   version_args = #version_args base, parse_version = #parse_version base,
+   tested_versions = #tested_versions base, mk_command = mk_command,
+   parse_output = #parse_output base,
+   default_nfacts = #default_nfacts base, legacy = true}
 
-val vampire_legacy_config : prover_config =
-  {name = "vampire-legacy", exec_names = ["vampire"],
-   env_var = "HOL4_VAMPIRE_EXECUTABLE", version_args = ["--version"],
-   parse_version = vampire_version, tested_versions = ["5.0.1"],
-   formats = ["fof"], mk_command = vampire_legacy_command,
-   parse_output = parse_tstp, default_nfacts = 96,
-   slices = one_slice "vampire-legacy" 96 [], legacy = true}
+val e_legacy_config = legacy_variant e_config "e-legacy" e_legacy_command
+
+val vampire_legacy_config =
+  legacy_variant vampire_config "vampire-legacy" vampire_legacy_command
 
 val registry = ref
   [e_config, vampire_config, zipperposition_config, z3_config,
@@ -608,22 +563,6 @@ fun probe (config : prover_config) =
           end
   end
 
-fun is_dir path = OS.FileSys.isDir path handle OS.SysErr _ => false
-
-fun ensure_dir path =
-  if is_dir path then ()
-  else
-    let
-      val parent = OS.Path.dir path
-      val _ =
-        if parent = "" orelse parent = path then () else ensure_dir parent
-    in
-      OS.FileSys.mkDir path
-      handle OS.SysErr _ =>
-        if is_dir path then ()
-        else raise Fail ("cannot create debug directory " ^ path)
-    end
-
 (* Uniquifying with OS.FileSys.tmpName would leak the empty file that
    tmpName creates -- one per prover run, so a full sweep exhausts the
    inodes of $TMPDIR.  Number the files within the debug directory. *)
@@ -646,7 +585,7 @@ fun next_output directory name =
 
 fun save_output directory name contents =
   let
-    val _ = ensure_dir directory
+    val _ = hhConfig.ensure_dir directory
     val path = next_output directory name
     val stream = TextIO.openOut path
     val _ = TextIO.output (stream, contents)
