@@ -1314,51 +1314,311 @@ val _ = test_runner ()
 val _ = test_installed_provers ()
 val _ = test_holyHammer_e ()
 
-fun test_hhSchedule () =
-  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
-      SOME _ => ()
-    | NONE =>
+val schedule_fixture_dir = "test-data"
+val schedule_printer = join schedule_fixture_dir "runner-print-e.sh"
+val schedule_sleeper =
+  join schedule_fixture_dir "runner-forking-sleeper.sh"
+
+fun fixture_slice name extra size : hhProver.slice =
+  {prover = name, format = "fof", type_enc = "", lam_trans = "",
+   nfacts = 0, filter = "none", extra_opts = extra, slice_size = size}
+
+fun printer_config name slices note parser : hhProver.prover_config =
+  {name = name, exec_names = [schedule_printer], env_var = "",
+   version_args = ["--version"], parse_version = fn _ => SOME "test",
+   tested_versions = ["test"],
+   mk_command = fn executable => fn request =>
+     (note request; (executable, #extra request)),
+   parse_output = parser, default_nfacts = 0,
+   slices = fn () => slices, legacy = false}
+
+fun sleeper_config name parser : hhProver.prover_config =
+  let val slice = fixture_slice name [] 1 in
+    {name = name, exec_names = [schedule_sleeper], env_var = "",
+     version_args = ["--version"], parse_version = fn _ => SOME "test",
+     tested_versions = ["test"],
+     mk_command = fn executable => fn _ => (executable, []),
+     parse_output = parser, default_nfacts = 0,
+     slices = fn () => [slice], legacy = false}
+  end
+
+fun fixture_options provers slices cores timeout max_proofs cache cache_dir
+    debug_dir : hhConfig.hh_options =
+  {timeout = timeout, max_proofs = max_proofs, provers = provers,
+   slices = slices, cores = cores, filter = "none", max_facts = NONE,
+   minimize = true, preplay_timeout = 1.0, minimize_timeout = 1.0,
+   cache = cache, cache_dir = cache_dir, cache_max_entries = 100,
+   debug_dir = debug_dir}
+
+fun slice_event_tag (slice : hhProver.slice) =
+  #prover slice ^ ":" ^ String.concatWith "," (#extra_opts slice)
+
+fun stop_event_name hhSchedule.MaxProofs = "max-proofs"
+  | stop_event_name hhSchedule.Timeout = "timeout"
+  | stop_event_name hhSchedule.Exhausted = "exhausted"
+  | stop_event_name hhSchedule.Interrupted = "interrupted"
+
+fun observe_schedule_event (hhSchedule.SliceStarted slice) =
+      "started|" ^ slice_event_tag slice
+  | observe_schedule_event (hhSchedule.SliceDone (slice, _, _)) =
+      "done|" ^ slice_event_tag slice
+  | observe_schedule_event (hhSchedule.ProofFound (slice, _)) =
+      "found|" ^ slice_event_tag slice
+  | observe_schedule_event (hhSchedule.Verified suggestion) =
+      "verified|" ^ slice_event_tag (#slice suggestion)
+  | observe_schedule_event (hhSchedule.ScheduleDone reason) =
+      "schedule-done|" ^ stop_event_name reason
+
+fun run_schedule_on goal options =
   let
-    val name = "hh-schedule-fixture"
-    val slice : hhProver.slice =
-      {prover = name, format = "fof", type_enc = "", lam_trans = "",
-       nfacts = 0, filter = "none", extra_opts = [], slice_size = 1}
-    val fixture : hhProver.prover_config =
-      {name = name, exec_names = ["test-data/runner-print-e.sh"],
-       env_var = "", version_args = ["--version"],
-       parse_version = fn _ => SOME "test", tested_versions = ["test"],
-       mk_command = fn executable => fn _ => (executable, []),
-       parse_output = fn _ => (hhProver.SzsTheorem, SOME []),
-       default_nfacts = 0, slices = fn () => [slice], legacy = false}
-    val options : hhConfig.hh_options =
-      {timeout = 3, max_proofs = 1, provers = [name], slices = 1,
-       cores = 1, filter = "none", max_facts = NONE, minimize = true,
-       preplay_timeout = 1.0, minimize_timeout = 1.0, cache = false,
-       cache_dir = "", cache_max_entries = 100, debug_dir = NONE}
     val events = ref ([] : string list)
-    fun event_name (hhSchedule.SliceStarted _) = "started"
-      | event_name (hhSchedule.SliceDone _) = "done"
-      | event_name (hhSchedule.ProofFound _) = "found"
-      | event_name (hhSchedule.Verified _) = "verified"
-      | event_name (hhSchedule.ScheduleDone _) = "schedule-done"
-    val _ = hhProver.register fixture
     val result = hhSchedule.run
-      {options = options, goal = ([], boolSyntax.T), premises = [],
-       progress = SOME (fn event => events := event_name event :: !events)}
-    val _ = expect "scheduler fixture verifies and stops at max_proofs"
-      (#stopped result = hhSchedule.MaxProofs andalso
-       length (#suggestions result) = 1 andalso
-       length (#slices_run result) = 1 andalso #t_total result < 5.0)
-    val _ = expect_equal "scheduler event sequence"
-      ["started", "done", "found", "verified", "schedule-done"]
-      (List.rev (!events))
-    val _ = expect "scheduler exports the distinct zero-fact prefix"
+      {options = options, goal = goal, premises = [],
+       progress = SOME (fn event =>
+         events := observe_schedule_event event :: !events)}
+  in
+    (result, List.rev (!events))
+  end
+
+fun run_schedule options = run_schedule_on ([], boolSyntax.T) options
+
+fun event_position wanted events =
+  let
+    fun seek _ [] = NONE
+      | seek index (event :: rest) =
+          if event = wanted then SOME index else seek (index + 1) rest
+  in
+    seek 0 events
+  end
+
+fun event_before left right events =
+  case (event_position left events, event_position right events) of
+      (SOME left_index, SOME right_index) => left_index < right_index
+    | _ => false
+
+fun event_suffix prefix event =
+  String.extract (event, String.size prefix, NONE)
+
+fun schedule_events_sane events =
+  let
+    fun with_prefix prefix = List.filter (String.isPrefix prefix) events
+    fun follows earlier prefix event =
+      event_before (earlier ^ event_suffix prefix event) event events
+    val done = with_prefix "done|"
+    val found = with_prefix "found|"
+    val verified = with_prefix "verified|"
+    val finished = with_prefix "schedule-done|"
+  in
+    not (null events) andalso length finished = 1 andalso
+    hd (List.rev events) = hd finished andalso
+    List.all (follows "started|" "done|") done andalso
+    List.all (follows "done|" "found|") found andalso
+    List.all (follows "found|" "verified|") verified
+  end
+
+fun output_files directory name =
+  map (join directory)
+    (List.filter (String.isPrefix (name ^ "-"))
+      (hhConfig.directory_names directory))
+
+fun fixture_child_gone directory name =
+  case output_files directory name of
+      [path] =>
+        let
+          val pid = pid_from_output (String.concat (read_lines path))
+        in
+          wait_until (Time.+ (Time.now (), Time.fromSeconds 5))
+            (fn () => process_is_gone pid)
+        end
+    | _ => false
+
+fun test_schedule_max_proofs parser =
+  let
+    val name = "hh-schedule-max-proofs"
+    val slices =
+      [fixture_slice name ["0", "schedule-truth.out"] 1,
+       fixture_slice name ["0", "schedule-t-def.out"] 1]
+    val config = printer_config name slices (fn _ => ()) parser
+    val _ = hhProver.register config
+    val options1 = fixture_options [name] 2 2 5 1 false "" NONE
+    val options2 = fixture_options [name] 2 2 5 2 false "" NONE
+    val (result1, _) = run_schedule options1
+    val (result2, events2) = run_schedule options2
+    val lemma_sets = map (#lemmas : hhSchedule.suggestion -> string list)
+      (#suggestions result2)
+    val _ = expect "scheduler max_proofs one stops after one verification"
+      (#stopped result1 = hhSchedule.MaxProofs andalso
+       length (#suggestions result1) = 1)
+    val _ = expect "scheduler max_proofs two verifies two suggestions"
+      (#stopped result2 = hhSchedule.MaxProofs andalso
+       length (#suggestions result2) = 2 andalso
+       List.exists (fn lemmas => lemmas = ["boolTheory.TRUTH"])
+         lemma_sets andalso
+       List.exists (fn lemmas => lemmas = ["boolTheory.T_DEF"])
+         lemma_sets)
+    val _ = expect "scheduler event ordering is sane"
+      (schedule_events_sane events2)
+    val _ = expect "scheduler exports the zero-fact prefix"
       (OS.FileSys.access
         (join (join (join (hhConfig.state_dir ()) "problems") "0")
           "atp_in", [OS.FileSys.A_READ]))
   in
     ()
   end
+
+fun test_schedule_reconstruction_failure parser =
+  let
+    val name = "hh-schedule-reconstruction-failure"
+    val bad_recording = "schedule-unreconstructable.out"
+    val slices =
+      [fixture_slice name ["0", bad_recording] 1,
+       fixture_slice name ["0", "schedule-add1.out"] 1]
+    val config = printer_config name slices (fn _ => ()) parser
+    val (bad_status, bad_axioms) =
+      parser (read_lines (join schedule_fixture_dir bad_recording))
+    val (good_status, good_axioms) =
+      parser
+        (read_lines (join schedule_fixture_dir "schedule-add1.out"))
+    val _ = hhProver.register config
+    val options = fixture_options [name] 2 1 5 1 false "" NONE
+    val goal = ([], Thm.concl (DB.fetch "arithmetic" "ADD1"))
+    val (result, events) = run_schedule_on goal options
+    val found = List.filter (String.isPrefix "found|") events
+    val verified = List.filter (String.isPrefix "verified|") events
+    val _ = expect "unreconstructable scheduler recording parses as theorem"
+      (bad_status = hhProver.SzsTheorem andalso
+       bad_axioms = SOME ["fixtureTheory.unreconstructable"])
+    val _ = expect "replayable scheduler recording parses as theorem"
+      (good_status = hhProver.SzsTheorem andalso
+       good_axioms = SOME ["arithmeticTheory.ADD1"])
+    val _ = expect "both reconstruction results are discovered"
+      (length found = 2)
+    val _ = expect "only the replayable reconstruction verifies"
+      (length verified = 1)
+    val _ = expect "failed reconstruction does not stop the schedule"
+      (#stopped result = hhSchedule.MaxProofs andalso
+       case #suggestions result of
+           [suggestion] =>
+             #lemmas suggestion = ["arithmeticTheory.ADD1"]
+         | _ => false)
+  in
+    ()
+  end
+
+fun test_schedule_early_stop parser =
+  let
+    val slow1 = "hh-schedule-slow-one"
+    val fast = "hh-schedule-fast"
+    val slow2 = "hh-schedule-slow-two"
+    val fast_slices =
+      [fixture_slice fast ["2", "schedule-truth.out"] 1]
+    val debug = OS.FileSys.tmpName ()
+    val _ = remove_tree debug
+    val _ = hhProver.register (sleeper_config slow1 parser)
+    val _ = hhProver.register
+      (printer_config fast fast_slices (fn _ => ()) parser)
+    val _ = hhProver.register (sleeper_config slow2 parser)
+    val options = fixture_options [slow1, fast, slow2] 3 3 12 1 false ""
+      (SOME debug)
+    val (result, _) = run_schedule options
+    val children_gone =
+      fixture_child_gone debug slow1 andalso fixture_child_gone debug slow2
+    val _ = expect "scheduler early stop follows a verified proof"
+      (#stopped result = hhSchedule.MaxProofs andalso
+       length (#suggestions result) = 1)
+    val _ = expect "scheduler early stop returns below the slice budget"
+      (#t_total result < 8.0)
+    val _ = expect "scheduler early stop kills laggard process groups"
+      children_gone
+    val _ = remove_tree debug
+  in
+    ()
+  end
+
+fun test_schedule_budget_truncation parser =
+  let
+    val name = "hh-schedule-budget"
+    val first = fixture_slice name ["2", "e-gave-up.out"] 1
+    val second = fixture_slice name ["0", "e-gave-up.out"] 4
+    val budgets = ref ([] : int list)
+    fun note (request : hhProver.run_request) =
+      budgets := !budgets @ [#timeout request]
+    val config = printer_config name [first, second] note parser
+    val _ = hhProver.register config
+    val options = fixture_options [name] 2 1 4 1 false "" NONE
+    val (result, _) = run_schedule options
+    val wanted = Real.ceil (hhSlice.slice_budget 2 options second)
+    val _ = expect "late scheduler slice receives a truncated budget"
+      (#stopped result = hhSchedule.Exhausted andalso
+       case !budgets of
+           [first_budget, second_budget] =>
+             first_budget = 2 andalso second_budget < wanted
+         | _ => false)
+  in
+    ()
+  end
+
+fun test_schedule_cache parser =
+  let
+    val name = "hh-schedule-cache"
+    val slice = fixture_slice name ["0", "schedule-truth.out"] 1
+    val config = printer_config name [slice] (fn _ => ()) parser
+    val root = OS.FileSys.tmpName ()
+    val cache = join root "cache"
+    val _ = remove_tree root
+    val _ = mkdir root
+    val _ = hhProver.register config
+    val options = fixture_options [name] 1 1 5 1 true cache NONE
+    val _ = hhProver.reset_spawn_count ()
+    val (first, _) = run_schedule options
+    val first_spawns = hhProver.spawn_count ()
+    val _ = hhProver.reset_spawn_count ()
+    val (second, _) = run_schedule options
+    val second_spawns = hhProver.spawn_count ()
+    val _ = expect "scheduler cache hit spawns no processes"
+      (#stopped first = hhSchedule.MaxProofs andalso first_spawns > 0 andalso
+       #stopped second = hhSchedule.MaxProofs andalso
+       length (#suggestions second) = 1 andalso second_spawns = 0)
+    val _ = remove_tree root
+  in
+    ()
+  end
+
+fun test_schedule_timeout parser =
+  let
+    val name = "hh-schedule-timeout"
+    val debug = OS.FileSys.tmpName ()
+    val _ = remove_tree debug
+    val _ = hhProver.register (sleeper_config name parser)
+    val options = fixture_options [name] 1 1 1 1 false "" (SOME debug)
+    val (result, events) = run_schedule options
+    val child_gone = fixture_child_gone debug name
+    val _ = expect "scheduler timeout stop reason is reachable"
+      (#stopped result = hhSchedule.Timeout andalso
+       null (#suggestions result) andalso #t_total result < 7.0 andalso
+       child_gone andalso schedule_events_sane events)
+    val _ = remove_tree debug
+  in
+    ()
+  end
+
+fun test_hhSchedule () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+        let
+          val parser = #parse_output (prover "e")
+          val started = Time.now ()
+          val _ = test_schedule_max_proofs parser
+          val _ = test_schedule_reconstruction_failure parser
+          val _ = test_schedule_early_stop parser
+          val _ = test_schedule_budget_truncation parser
+          val _ = test_schedule_cache parser
+          val _ = test_schedule_timeout parser
+        in
+          expect "scheduler hermetic suite stays within its wall-time bound"
+            (Time.toReal (Time.- (Time.now (), started)) < 60.0)
+        end
 
 val _ = test_hhSchedule ()
 

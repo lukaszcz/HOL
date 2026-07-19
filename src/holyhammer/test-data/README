@@ -13,7 +13,11 @@ from a small higher-order counterexample.  Version recordings are the
 corresponding raw `--version` output.
 
 `runner-print-e.sh` and `runner-forking-sleeper.sh` are hermetic process
-runner fixtures.  The former prints the recorded E theorem output; the
+runner and scheduler fixtures.  The former prints the recorded E theorem
+output by default and accepts an optional delay and recording filename.  The
 latter starts a long-lived child, prints its pid, and remains alive so the
 process-group cancellation selftest can verify that both generations die.
-The shell is used only as fixture material, never by the production runner.
+The `schedule-*.out` files are minimal E-style theorem outputs naming
+replayable HOL axioms and one deliberately unavailable fixture axiom.  The
+shell is used only as fixture material, never by the production runner or
+scheduler.

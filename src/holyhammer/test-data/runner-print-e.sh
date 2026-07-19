@@ -5,4 +5,11 @@ if [ "$1" = "--version" ]; then
   exit 0
 fi
 
-exec /bin/cat "${0%/*}/e-theorem-chatter.out"
+delay=${1:-0}
+recording=${2:-e-theorem-chatter.out}
+
+if [ "$delay" != 0 ]; then
+  /bin/sleep "$delay"
+fi
+
+exec /bin/cat "${0%/*}/$recording"
