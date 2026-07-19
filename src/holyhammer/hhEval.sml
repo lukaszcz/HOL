@@ -334,8 +334,17 @@ fun append_journal path entry =
 
 fun read_journal path =
   if OS.FileSys.access (path, [OS.FileSys.A_READ]) then
-    List.map parse_journal_line
-      (List.filter (fn line => trim line <> "") (read_lines path))
+    let
+      fun parse_lines [] = []
+        | parse_lines [line] =
+            (([parse_journal_line line])
+             handle Interrupt => raise Interrupt | _ => [])
+        | parse_lines (line :: lines) =
+            parse_journal_line line :: parse_lines lines
+    in
+      parse_lines
+        (List.filter (fn line => trim line <> "") (read_lines path))
+    end
   else []
   handle OS.SysErr _ => []
 
@@ -514,10 +523,23 @@ fun journal_files expdir =
 
 fun cell_key entry = (#goal_id entry, #cond entry)
 
+fun cell_key_compare ((goal1, cond1), (goal2, cond2)) =
+  case String.compare (goal1, goal2) of
+      EQUAL => String.compare (cond1, cond2)
+    | order => order
+
 fun latest_cells entries =
-  List.foldl (fn (entry, cells) =>
-    entry :: List.filter (fn old => cell_key old <> cell_key entry) cells)
-    [] entries
+  let
+    fun add_latest (entry, (seen, cells)) =
+      let val key = cell_key entry in
+        if Binaryset.member (seen, key) then (seen, cells)
+        else (Binaryset.add (seen, key), entry :: cells)
+      end
+    val (_, cells) = List.foldr add_latest
+      (Binaryset.empty cell_key_compare, []) entries
+  in
+    List.rev cells
+  end
 
 fun regular_cell entry =
   #cond entry <> "__load__" andalso #thm entry <> "__load__"

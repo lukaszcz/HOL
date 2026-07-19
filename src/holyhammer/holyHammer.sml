@@ -77,7 +77,7 @@ fun pathl sl = case sl of
   | a :: m => OS.Path.concat (a, pathl m)
 
 val hhdir = pathl [HOLDIR,"src","holyhammer"]
-val workdir = pathl [hhdir,"provers"]
+val workdir = hhConfig.state_dir ()
 fun fof_dir dir (config : hhProver.prover_config) =
   pathl [dir, #name config ^ "_files"]
 

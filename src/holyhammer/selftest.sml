@@ -68,6 +68,7 @@ fun test_child root =
     val system_provers = join (join (join holdir "src") "holyhammer")
                               "provers"
     val user_provers = join hammer "provers"
+    val state_provers = join (hhConfig.state_dir ()) "provers"
     fun install root version =
       let
         val dir = join (join root ("installprover-" ^ version)) platform
@@ -79,6 +80,14 @@ fun test_child root =
     val system_old = install system_provers "1.0"
     val system_new = install system_provers "2.0"
     val user_new = install user_provers "9.0"
+    val state_exec =
+      let
+        val dir = join (join state_provers "stateprover-3.0") platform
+        val _ = mkdirs dir
+        val file = join dir "state-exec"
+      in
+        make_executable file; file
+      end
     val _ = make_executable config_exec
     val _ = make_executable env_exec
     val _ = mkdirs path_dir
@@ -130,6 +139,9 @@ fun test_child root =
       (is_some env_exec (hhConfig.find_exec "e" ["path-exec"]))
     val _ = expect "PATH executable discovery"
       (is_some path_exec (hhConfig.find_exec "pathprover" ["path-exec"]))
+    val _ = expect "state-directory installation discovery"
+      (is_some state_exec
+       (hhConfig.find_exec "stateprover" ["state-exec"]))
     val _ = expect "newest system installation is preferred"
       (is_some system_new
        (hhConfig.find_exec "installprover" ["install-exec"]))
@@ -168,6 +180,7 @@ fun run_parent () =
       "/usr/bin/env HOL4_HAMMER_PRIORITY=environment" ^
       " HOL4_HAMMER_MANGLED_KEY=environment" ^
       " HOL4_EPROVER_EXECUTABLE=" ^ env_exec ^
+      " HOL4_HAMMER_DIR=" ^ join root "state" ^
       " HHCONFIG_TEST_ROOT=" ^ root ^
       " HOLDIR=" ^ holdir ^
       " PATH=" ^ path ^
@@ -569,6 +582,12 @@ fun test_hhEval root =
     val complete = [("list.nil", "deps-e"), ("list.cons", "knn-e")]
     val _ = expect "resume complete journal"
       (hhEval.journal_complete journal complete)
+    val corrupt = TextIO.openAppend journal
+    val _ = TextIO.output (corrupt, "{interrupted-write")
+    val _ = TextIO.closeOut corrupt
+    val _ = expect "resume ignores a truncated final journal record"
+      (hhEval.journal_complete journal complete andalso
+       length (hhEval.read_journal journal) = 2)
     val partial = hhEval.journal_path expdir "partial"
     val _ = hhEval.append_journal partial null_entry
     val _ = expect "resume partial journal"
@@ -640,9 +659,9 @@ fun test_hhEval root =
     val _ = mkdirs report_journal
     val _ = copy_fixture "list.jsonl"
     val _ = copy_fixture "arithmetic.jsonl"
-    val corrupt = TextIO.openAppend (join report_journal "list.jsonl")
-    val _ = TextIO.output (corrupt, "{in-progress")
-    val _ = TextIO.closeOut corrupt
+    val report_corrupt = TextIO.openAppend (join report_journal "list.jsonl")
+    val _ = TextIO.output (report_corrupt, "{in-progress")
+    val _ = TextIO.closeOut report_corrupt
     val _ = hhEval.report reportdir
     val summary = JSONParser.parseFile (join reportdir "summary.json")
     fun array_field name value =

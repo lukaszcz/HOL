@@ -406,6 +406,7 @@ fun find_exec_with_env prover env_var names =
           NONE => NONE
         | SOME dir => installed (join (join (join dir "src") "holyhammer")
                                    "provers")
+    fun state_install () = installed (join (state_dir ()) "provers")
     fun user_install () =
       installed (join (join (join (home_dir ()) ".hol4") "hammer")
                  "provers")
@@ -421,7 +422,10 @@ fun find_exec_with_env prover env_var names =
                 | NONE =>
                   (case system_install () of
                        SOME path => SOME path
-                     | NONE => user_install ())))
+                     | NONE =>
+                       (case state_install () of
+                            SOME path => SOME path
+                          | NONE => user_install ()))))
   end
 
 fun find_exec prover names =
