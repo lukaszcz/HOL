@@ -6,6 +6,24 @@
 structure hhConfig :> hhConfig =
 struct
 
+type hh_options =
+  {timeout : int,
+   max_proofs : int,
+   provers : string list,
+   slices : int,
+   cores : int,
+   filter : string,
+   max_facts : int option,
+   minimize : bool,
+   preplay_timeout : real,
+   minimize_timeout : real,
+   cache : bool,
+   cache_dir : string,
+   cache_max_entries : int,
+   debug_dir : string option}
+
+val ERR = Feedback.mk_HOL_ERR "hhConfig"
+
 fun join a b = OS.Path.concat (a, b)
 
 fun is_dir path = OS.FileSys.isDir path handle OS.SysErr _ => false
@@ -162,7 +180,30 @@ fun default_eval_dir () =
       SOME directory => join (join (join directory "src") "holyhammer") "eval"
     | NONE => join (state_dir ()) "eval"
 
-val defaults = [("eval.dir", default_eval_dir)]
+val option_defaults =
+  [("timeout", fn () => "30"),
+   ("max_proofs", fn () => "4"),
+   ("provers", fn () => "e vampire zipperposition"),
+   ("slices", fn () => "0"),
+   ("cores", fn () => "0"),
+   ("filter", fn () => "knn"),
+   ("max_facts", fn () => ""),
+   ("minimize", fn () => "true"),
+   ("preplay_timeout", fn () => "1.0"),
+   ("minimize_timeout", fn () => "1.0"),
+   ("cache", fn () => "false"),
+   ("cache_dir", fn () => join (state_dir ()) "cache"),
+   ("cache_max_entries", fn () => "100000"),
+   ("debug_dir", fn () => "")]
+
+val defaults = ("eval.dir", default_eval_dir) :: option_defaults
+
+val runtime = ref ([] : (string * string) list)
+
+fun option_default key () =
+  case lookup key option_defaults of
+      SOME value => value ()
+    | NONE => raise Fail ("missing HolyHammer option default: " ^ key)
 
 fun default key =
   case List.find (fn (key', _) => key = key') defaults of
@@ -175,15 +216,18 @@ fun env_name key =
     if c = #"." then #"_" else Char.toUpper c) key
 
 fun value_with_source key =
-  case lookup key (config_entries ()) of
-      SOME value => SOME (value, "config")
+  case lookup key (!runtime) of
+      SOME value => SOME (value, "set")
     | NONE =>
-      (case OS.Process.getEnv (env_name key) of
-           SOME value => SOME (value, "environment")
+      (case lookup key (config_entries ()) of
+           SOME value => SOME (value, "config")
          | NONE =>
-           (case default key of
-                SOME value => SOME (value, "default")
-              | NONE => NONE))
+           (case OS.Process.getEnv (env_name key) of
+                SOME value => SOME (value, "environment")
+              | NONE =>
+                (case default key of
+                     SOME value => SOME (value, "default")
+                   | NONE => NONE)))
 
 val queried = ref ([] : string list)
 
@@ -241,6 +285,258 @@ fun dump () =
         | SOME (value, source) => SOME (key, source ^ ": " ^ value)
   in
     List.mapPartial render keys
+  end
+
+type option_spec =
+  {name : string,
+   default : unit -> string,
+   expected : string,
+   doc : string,
+   valid : string -> bool}
+
+fun int_value value =
+  case Int.scan StringCvt.DEC Substring.getc
+        (Substring.full (trim value)) of
+      SOME (number, rest) =>
+        if Substring.size rest = 0 then SOME number else NONE
+    | NONE => NONE
+
+fun real_value value =
+  case Real.scan Substring.getc (Substring.full (trim value)) of
+      SOME (number, rest) =>
+        if Substring.size rest = 0 then SOME number else NONE
+    | NONE => NONE
+
+fun bool_value value =
+  case String.map Char.toLower (trim value) of
+      "true" => SOME true
+    | "yes" => SOME true
+    | "on" => SOME true
+    | "1" => SOME true
+    | "false" => SOME false
+    | "no" => SOME false
+    | "off" => SOME false
+    | "0" => SOME false
+    | _ => NONE
+
+fun positive_int value =
+  case int_value value of SOME number => number > 0 | NONE => false
+
+fun nonnegative_int value =
+  case int_value value of SOME number => number >= 0 | NONE => false
+
+fun positive_real value =
+  case real_value value of
+      SOME number => Real.isFinite number andalso number > 0.0
+    | NONE => false
+
+fun optional_positive_int value =
+  trim value = "" orelse positive_int value
+
+fun one_of choices value =
+  List.exists (fn choice => trim value = choice) choices
+
+val builtin_prover =
+  fn name =>
+    List.exists (fn item => name = item)
+      ["e", "vampire", "zipperposition", "z3", "e-legacy",
+       "vampire-legacy"]
+
+val prover_validator = ref builtin_prover
+
+fun register_prover_validator validator = prover_validator := validator
+
+fun prover_names value = String.tokens Char.isSpace (trim value)
+
+fun valid_provers value =
+  let val names = prover_names value
+  in not (null names) andalso List.all (!prover_validator) names end
+
+val option_specs : option_spec list =
+  [{name = "timeout", default = option_default "timeout",
+    expected = "a positive integer",
+    doc = "overall wall-clock budget in seconds", valid = positive_int},
+   {name = "max_proofs", default = option_default "max_proofs",
+    expected = "a positive integer",
+    doc = "maximum number of reconstructed proofs", valid = positive_int},
+   {name = "provers", default = option_default "provers",
+    expected = "a nonempty space-separated list of registered prover names",
+    doc = "provers eligible for scheduling", valid = valid_provers},
+   {name = "slices", default = option_default "slices",
+    expected = "a non-negative integer",
+    doc = "schedule length (0 means 24 times cores)",
+    valid = nonnegative_int},
+   {name = "cores", default = option_default "cores",
+    expected = "a non-negative integer",
+    doc = "worker count (0 means detected processor count)",
+    valid = nonnegative_int},
+   {name = "filter", default = option_default "filter",
+    expected = "knn or none", doc = "premise filter",
+    valid = one_of ["knn", "none"]},
+   {name = "max_facts", default = option_default "max_facts",
+    expected = "empty or a positive integer",
+    doc = "fact cap (empty means the per-slice default)",
+    valid = optional_positive_int},
+   {name = "minimize", default = option_default "minimize",
+    expected = "a Boolean (true/false, yes/no, on/off, or 1/0)",
+    doc = "minimize reconstructed proofs", valid = Option.isSome o bool_value},
+   {name = "preplay_timeout", default = option_default "preplay_timeout",
+    expected = "a positive real number",
+    doc = "proof reconstruction timeout in seconds", valid = positive_real},
+   {name = "minimize_timeout", default = option_default "minimize_timeout",
+    expected = "a positive real number",
+    doc = "proof minimization timeout in seconds", valid = positive_real},
+   {name = "cache", default = option_default "cache",
+    expected = "a Boolean (true/false, yes/no, on/off, or 1/0)",
+    doc = "enable the result cache", valid = Option.isSome o bool_value},
+   {name = "cache_dir", default = option_default "cache_dir",
+    expected = "a nonempty path", doc = "result cache directory",
+    valid = fn value => trim value <> ""},
+   {name = "cache_max_entries", default = option_default "cache_max_entries",
+    expected = "a positive integer", doc = "maximum cached result count",
+    valid = positive_int},
+   {name = "debug_dir", default = option_default "debug_dir",
+    expected = "a path or empty", doc = "directory for retained prover output",
+    valid = fn _ => true}]
+
+fun option_spec key =
+  List.find (fn ({name, ...} : option_spec) => name = key) option_specs
+
+fun valid_keys () =
+  String.concatWith ", "
+    (map (fn ({name, expected, ...} : option_spec) =>
+       name ^ " (" ^ expected ^ ")") option_specs)
+
+fun unknown_option caller key =
+  raise ERR caller
+    ("unknown HolyHammer option '" ^ key ^ "'; valid keys: " ^ valid_keys ())
+
+fun checked_spec caller key =
+  case option_spec key of
+      SOME spec => spec
+    | NONE => unknown_option caller key
+
+fun invalid_value caller key value expected =
+  raise ERR caller
+    ("invalid value '" ^ value ^ "' for HolyHammer option '" ^ key ^
+     "'; expected " ^ expected ^ "; valid keys: " ^ valid_keys ())
+
+fun check_value caller
+      ({name, expected, valid, ...} : option_spec) value =
+  if valid value then () else invalid_value caller name value expected
+
+fun remove_key key entries =
+  List.filter (fn (key', _) => key <> key') entries
+
+fun hh_set (key, value) =
+  let
+    val spec = checked_spec "hh_set" key
+    val _ = check_value "hh_set" spec value
+  in
+    runtime := (key, value) :: remove_key key (!runtime)
+  end
+
+fun hh_unset key =
+  let val _ = checked_spec "hh_unset" key
+  in runtime := remove_key key (!runtime) end
+
+fun effective_option caller ({name, default, ...} : option_spec) =
+  case value_with_source name of
+      SOME result => result
+    | NONE =>
+        let val value = default ()
+        in (value, "default") end
+
+fun hh_get key =
+  let
+    val spec = checked_spec "hh_get" key
+    val (value, _) = effective_option "hh_get" spec
+  in
+    value
+  end
+
+fun parameter_source "environment" = "env"
+  | parameter_source source = source
+
+fun hh_params () =
+  map (fn (spec as {name, ...} : option_spec) =>
+    let val (value, source) = effective_option "hh_params" spec
+    in (name, value, parameter_source source) end) option_specs
+
+fun print_params () =
+  let
+    fun print_one ((key, value, source), {doc, ...} : option_spec) =
+      print (key ^ " = " ^ value ^ " (" ^ source ^ ") -- " ^ doc ^ "\n")
+  in
+    List.app print_one (ListPair.zip (hh_params (), option_specs))
+  end
+
+val reconstruction_timeouts = ref (fn (_ : real, _ : real) => ())
+
+fun register_reconstruction_timeouts setter =
+  reconstruction_timeouts := setter
+
+fun required caller key parse =
+  let
+    val spec = checked_spec caller key
+    val (value, _) = effective_option caller spec
+    val _ = check_value caller spec value
+  in
+    case parse value of
+        SOME result => result
+      | NONE =>
+          invalid_value caller key value (#expected spec)
+  end
+
+fun optional_string value =
+  if trim value = "" then NONE else SOME value
+
+fun detected_cores () =
+  Int.max
+    (case Thread.numPhysicalProcessors () of
+         SOME number => number
+       | NONE => Thread.numProcessors (), 1)
+
+fun snapshot () =
+  let
+    val timeout = required "snapshot" "timeout" int_value
+    val max_proofs = required "snapshot" "max_proofs" int_value
+    val provers = required "snapshot" "provers" (SOME o prover_names)
+    val configured_slices = required "snapshot" "slices" int_value
+    val configured_cores = required "snapshot" "cores" int_value
+    val cores = if configured_cores = 0 then detected_cores ()
+                else configured_cores
+    val slices = if configured_slices = 0 then 24 * cores
+                 else configured_slices
+    val filter = required "snapshot" "filter" (SOME o trim)
+    val max_facts =
+      required "snapshot" "max_facts"
+        (fn value =>
+          if trim value = "" then SOME NONE
+          else Option.map SOME (int_value value))
+    val minimize = required "snapshot" "minimize" bool_value
+    val preplay_timeout =
+      required "snapshot" "preplay_timeout" real_value
+    val minimize_timeout =
+      required "snapshot" "minimize_timeout" real_value
+    val cache = required "snapshot" "cache" bool_value
+    val cache_dir = required "snapshot" "cache_dir" SOME
+    val cache_max_entries =
+      required "snapshot" "cache_max_entries" int_value
+    val debug_dir =
+      required "snapshot" "debug_dir" (SOME o optional_string)
+    val result : hh_options =
+      {timeout = timeout, max_proofs = max_proofs, provers = provers,
+       slices = slices, cores = cores, filter = filter,
+       max_facts = max_facts, minimize = minimize,
+       preplay_timeout = preplay_timeout,
+       minimize_timeout = minimize_timeout, cache = cache,
+       cache_dir = cache_dir, cache_max_entries = cache_max_entries,
+       debug_dir = debug_dir}
+    val _ = (!reconstruction_timeouts)
+      (preplay_timeout, minimize_timeout)
+  in
+    result
   end
 
 fun uname key =

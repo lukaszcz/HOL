@@ -22,6 +22,11 @@ val reconstruct_flag = ref true
 val minimization_timeout = ref 1.0
 val reconstruction_timeout = ref 1.0
 
+val _ = hhConfig.register_reconstruction_timeouts
+  (fn (preplay, minimize) =>
+    (reconstruction_timeout := preplay;
+     minimization_timeout := minimize))
+
 (*----------------------------------------------------------------------------
    Minimization and pretty-printing
  -----------------------------------------------------------------------------*)

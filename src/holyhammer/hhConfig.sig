@@ -1,5 +1,21 @@
 signature hhConfig =
 sig
+  type hh_options =
+    {timeout : int,
+     max_proofs : int,
+     provers : string list,
+     slices : int,
+     cores : int,
+     filter : string,
+     max_facts : int option,
+     minimize : bool,
+     preplay_timeout : real,
+     minimize_timeout : real,
+     cache : bool,
+     cache_dir : string,
+     cache_max_entries : int,
+     debug_dir : string option}
+
   (* Small filesystem and string helpers, shared with hhProver and hhEval. *)
   val is_dir : string -> bool
   val ensure_dir : string -> unit
@@ -15,6 +31,18 @@ sig
   val get_bool : string -> bool option
   val get_path : string -> string option
   val dump : unit -> (string * string) list
+
+  val hh_set : string * string -> unit
+  val hh_unset : string -> unit
+  val hh_get : string -> string
+  val hh_params : unit -> (string * string * string) list
+  val print_params : unit -> unit
+  val snapshot : unit -> hh_options
+
+  (* Initialisation hooks break dependency cycles with these later modules. *)
+  val register_prover_validator : (string -> bool) -> unit
+  val register_reconstruction_timeouts :
+    (real * real -> unit) -> unit
 
   val platform : unit -> string
   val find_exec_with_env : string -> string -> string list -> string option

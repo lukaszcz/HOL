@@ -44,6 +44,19 @@ fun expect message truth =
 
 fun is_some expected actual = actual = SOME expected
 
+fun has_parameter key value source =
+  List.exists (fn (key', value', source') =>
+    key = key' andalso value = value' andalso source = source')
+    (hhConfig.hh_params ())
+
+fun option_error fragments thunk =
+  ((thunk (); false)
+   handle Feedback.HOL_ERR error =>
+     let val message = Feedback.message_of error
+     in List.all (fn fragment => String.isSubstring fragment message) fragments
+     end
+        | _ => false)
+
 fun test_child root =
   let
     val home = join root "home"
@@ -88,14 +101,17 @@ fun test_child root =
     val _ = make_executable env_exec
     val _ = mkdirs path_dir
     val _ = make_executable path_exec
-    val _ = write_file config
+    val config_contents =
       ("# user configuration\n\
        \priority = user # comments are ignored\n\
        \integer = 42\n\
        \enabled = YeS\n\
        \path.value = ~/.fixture\n\
        \plain = key = value\n\
+       \timeout = 21\n\
+       \cores = 3\n\
        \prover.e.executable = " ^ config_exec ^ "\n")
+    val _ = write_file config config_contents
     val _ = expect "state directory" (OS.FileSys.isDir (hhConfig.state_dir ()))
     val _ = expect "comment and assignment parsing"
       (is_some "key = value" (hhConfig.get "plain"))
@@ -120,6 +136,70 @@ fun test_child root =
       (hhConfig.get_bool "enabled" = SOME true)
     val _ = expect "path configuration"
       (is_some (join home ".fixture") (hhConfig.get_path "path.value"))
+    val _ = expect "option config overrides option environment"
+      (hhConfig.hh_get "timeout" = "21" andalso
+       is_some "21" (hhConfig.get "timeout"))
+    val _ = hhConfig.hh_set ("timeout", "23")
+    val _ = expect "runtime option overrides config"
+      (hhConfig.hh_get "timeout" = "23" andalso
+       is_some "23" (hhConfig.get "timeout"))
+    val _ = expect "unknown option is a descriptive HOL_ERR"
+      (option_error ["unknown", "valid keys", "timeout"]
+        (fn () => hhConfig.hh_set ("not_an_option", "1")))
+    val _ = expect "unparsable option is a descriptive HOL_ERR"
+      (option_error ["timeout", "positive integer", "valid keys"]
+        (fn () => hhConfig.hh_set ("timeout", "not-an-integer")))
+    val _ = expect "failed validation preserves the runtime value"
+      (hhConfig.hh_get "timeout" = "23")
+    val _ = expect "provers are registry-validated at set time"
+      (option_error ["provers", "registered prover names"]
+        (fn () => hhConfig.hh_set
+          ("provers", "not-a-holyhammer-prover")))
+    val _ = expect "unknown unset option is a HOL_ERR"
+      (option_error ["unknown", "valid keys"]
+        (fn () => hhConfig.hh_unset "not_an_option"))
+    val _ = hhConfig.hh_set ("preplay_timeout", "2.5")
+    val _ = hhConfig.hh_set ("minimize_timeout", "3.5")
+    val _ = hhConfig.hh_set ("max_facts", "17")
+    val _ = hhConfig.hh_set ("minimize", "off")
+    val _ = hhConfig.hh_set ("cache", "yes")
+    val _ = hhConfig.hh_set ("debug_dir", join root "debug")
+    val options : hhConfig.hh_options = hhConfig.snapshot ()
+    val _ = expect "snapshot parses values and computes slices"
+      (#timeout options = 23 andalso #max_proofs options = 4 andalso
+       #provers options = ["e", "vampire", "zipperposition"] andalso
+       #cores options = 3 andalso #slices options = 72 andalso
+       #filter options = "none" andalso #max_facts options = SOME 17 andalso
+       not (#minimize options) andalso #cache options andalso
+       #cache_dir options = join (hhConfig.state_dir ()) "cache" andalso
+       #cache_max_entries options = 100000 andalso
+       #debug_dir options = SOME (join root "debug"))
+    val _ = expect "snapshot assigns reconstruction timeouts"
+      (Real.abs (!hhReconstruct.reconstruction_timeout - 2.5) < 0.000001
+       andalso
+       Real.abs (!hhReconstruct.minimization_timeout - 3.5) < 0.000001)
+    val _ = expect "hh_params reports all four provenance layers"
+      (has_parameter "timeout" "23" "set" andalso
+       has_parameter "cores" "3" "config" andalso
+       has_parameter "filter" "none" "env" andalso
+       has_parameter "max_proofs" "4" "default")
+    val _ = hhConfig.print_params ()
+    val _ = holyHammer.set_timeout 19
+    val _ = expect "set_timeout updates the runtime option"
+      (hhConfig.hh_get "timeout" = "19")
+    val _ = hhConfig.hh_unset "timeout"
+    val _ = expect "hh_unset restores config precedence"
+      (hhConfig.hh_get "timeout" = "21")
+    val _ = write_file config
+      ("provers = not-a-holyhammer-prover\n" ^ config_contents)
+    val _ = expect "provers are registry-validated at snapshot time"
+      (option_error ["provers", "registered prover names"]
+        (fn () => ignore (hhConfig.snapshot ())))
+    val _ = write_file config config_contents
+    val _ = hhConfig.hh_set ("provers", "e vampire")
+    val _ = expect "registered prover lists round-trip"
+      (#provers (hhConfig.snapshot ()) = ["e", "vampire"])
+    val _ = hhConfig.hh_unset "provers"
     val _ = expect "configuration executable discovery"
       (is_some config_exec (hhConfig.find_exec "e" ["path-exec"]))
     val _ = write_file config
@@ -131,6 +211,9 @@ fun test_child root =
        \eval.dir = config-eval\n")
     val _ = expect "configuration overrides the built-in default"
       (is_some "config-eval" (hhConfig.get "eval.dir"))
+    val _ = expect "environment is effective after config removal"
+      (hhConfig.hh_get "timeout" = "22" andalso
+       has_parameter "timeout" "22" "env")
     val _ = expect "prover environment executable discovery"
       (is_some env_exec (hhConfig.find_exec "e" ["path-exec"]))
     val _ = expect "PATH executable discovery"
@@ -180,6 +263,8 @@ fun run_parent () =
     val command =
       "/usr/bin/env HOL4_HAMMER_PRIORITY=environment" ^
       " HOL4_HAMMER_MANGLED_KEY=environment" ^
+      " HOL4_HAMMER_TIMEOUT=22" ^
+      " HOL4_HAMMER_FILTER=none" ^
       " HOL4_EPROVER_EXECUTABLE=" ^ env_exec ^
       " HOL4_HAMMER_DIR=" ^ join root "state" ^
       " HHCONFIG_TEST_ROOT=" ^ root ^
@@ -205,8 +290,20 @@ fun run_parent () =
   end
 
 fun test_environment_default value =
-  expect "environment overrides the built-in default"
-    (is_some value (hhConfig.get "eval.dir"))
+  let
+    val options : hhConfig.hh_options = hhConfig.snapshot ()
+    val _ = expect "environment overrides the built-in default"
+      (is_some value (hhConfig.get "eval.dir"))
+    val _ = expect "effective timeout default is 30"
+      (#timeout options = 30 andalso hhConfig.hh_get "timeout" = "30" andalso
+       has_parameter "timeout" "30" "default")
+    val _ = expect "default cores and slices are computed"
+      (#cores options > 0 andalso #slices options = 24 * #cores options)
+    val _ = expect "empty option defaults map to NONE"
+      (#max_facts options = NONE andalso #debug_dir options = NONE)
+  in
+    ()
+  end
 
 val _ =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of

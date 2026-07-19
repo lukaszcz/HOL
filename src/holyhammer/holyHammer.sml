@@ -20,7 +20,8 @@ val ERR = mk_HOL_ERR "holyHammer"
    ------------------------------------------------------------------------- *)
 
 val timeout_glob = ref 10
-fun set_timeout n = timeout_glob := n
+fun set_timeout n =
+  (hhConfig.hh_set ("timeout", Int.toString n); timeout_glob := n)
 val premise_selection_flag = ref true
 
 (* -------------------------------------------------------------------------

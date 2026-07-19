@@ -391,6 +391,8 @@ fun lookup name =
   List.find (fn ({name = other, ...} : prover_config) => name = other)
     (!registry)
 
+val _ = hhConfig.register_prover_validator (Option.isSome o lookup)
+
 fun register (config : prover_config) =
   let val name = #name config in
     case lookup name of
