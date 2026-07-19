@@ -958,6 +958,33 @@ fun same_real_option NONE NONE = true
   | same_real_option (SOME left) (SOME right) = same_real left right
   | same_real_option _ _ = false
 
+fun same_engine (hhEval.Prover left) (hhEval.Prover right) = left = right
+  | same_engine
+      (hhEval.Sched {provers = left_provers, slices = left_slices,
+                     cores = left_cores, max_proofs = left_max_proofs})
+      (hhEval.Sched {provers = right_provers, slices = right_slices,
+                     cores = right_cores, max_proofs = right_max_proofs}) =
+      left_provers = right_provers andalso left_slices = right_slices andalso
+      left_cores = right_cores andalso left_max_proofs = right_max_proofs
+  | same_engine _ _ = false
+
+fun same_slice (expected : hhProver.slice) (actual : hhProver.slice) =
+  #prover expected = #prover actual andalso
+  #format expected = #format actual andalso
+  #type_enc expected = #type_enc actual andalso
+  #lam_trans expected = #lam_trans actual andalso
+  #nfacts expected = #nfacts actual andalso
+  #filter expected = #filter actual andalso
+  #extra_opts expected = #extra_opts actual andalso
+  #slice_size expected = #slice_size actual
+
+fun same_journal_slice (expected : hhEval.journal_slice)
+    (actual : hhEval.journal_slice) =
+  same_slice (#slice expected) (#slice actual) andalso
+  #szs expected = #szs actual andalso
+  same_real (#time expected) (#time actual) andalso
+  #cached expected = #cached actual
+
 fun same_journal_entry (expected : hhEval.journal_entry)
     (actual : hhEval.journal_entry) =
   #run expected = #run actual andalso #thy expected = #thy actual andalso
@@ -968,6 +995,7 @@ fun same_journal_entry (expected : hhEval.journal_entry)
     hhEval.string_of_regime (#regime actual) andalso
   hhEval.string_of_selector (#selector expected) =
     hhEval.string_of_selector (#selector actual) andalso
+  same_engine (#engine expected) (#engine actual) andalso
   #prover expected = #prover actual andalso
   #prover_version expected = #prover_version actual andalso
   #nfacts expected = #nfacts actual andalso
@@ -978,7 +1006,11 @@ fun same_journal_entry (expected : hhEval.journal_entry)
   #recon_ok expected = #recon_ok actual andalso
   #recon_method expected = #recon_method actual andalso
   same_real_option (#t_recon expected) (#t_recon actual) andalso
-  #stac expected = #stac actual andalso #error expected = #error actual
+  #stac expected = #stac actual andalso #error expected = #error actual andalso
+  #stop expected = #stop actual andalso
+  same_real_option (#t_total expected) (#t_total actual) andalso
+  ListPair.allEq (fn (left, right) => same_journal_slice left right)
+    (#slices expected, #slices actual)
 
 fun test_hhEval root =
   let
@@ -1010,18 +1042,21 @@ fun test_hhEval root =
     val null_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
        cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
-       prover = "e", prover_version = NONE, nfacts = 0, timeout = 5,
+       engine = hhEval.Prover "e", prover = "e", prover_version = NONE,
+       nfacts = 0, timeout = 5,
        szs = "BrokenDeps", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
-       error = NONE}
+       error = NONE, stop = NONE, t_total = NONE, slices = []}
     val full_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "cons", goal_id = "list.cons",
        cond = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
-       prover = "e", prover_version = SOME "3.2.5", nfacts = 128,
+       engine = hhEval.Prover "e", prover = "e",
+       prover_version = SOME "3.2.5", nfacts = 128,
        timeout = 10, szs = "Theorem", t_prover = 1.25,
        axioms_used = SOME ["list.nil", "arithmetic.add"], recon_ok = SOME true,
        recon_method = SOME "metis", t_recon = SOME 0.5,
-       stac = SOME "metis_tac [list_nil]", error = SOME "fixture"}
+       stac = SOME "metis_tac [list_nil]", error = SOME "fixture",
+       stop = NONE, t_total = NONE, slices = []}
     val _ = expect "journal null-field round trip"
       (same_journal_entry null_entry
        (hhEval.parse_journal_line (hhEval.encode_journal_line null_entry)))
@@ -1053,10 +1088,12 @@ fun test_hhEval root =
     val retry_entry : hhEval.journal_entry =
       {run = "fixture", thy = "list", thm = "nil", goal_id = "list.nil",
        cond = "deps-e", regime = hhEval.Bushy, selector = hhEval.Deps,
-       prover = "e", prover_version = NONE, nfacts = 0, timeout = 5,
+       engine = hhEval.Prover "e", prover = "e", prover_version = NONE,
+       nfacts = 0, timeout = 5,
        szs = "Error", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
-       error = SOME "transient harness failure"}
+       error = SOME "transient harness failure", stop = NONE,
+       t_total = NONE, slices = []}
     val _ = hhEval.append_journal retry retry_entry
     val _ = expect "resume retries harness errors"
       (not (hhEval.cell_completed (hhEval.read_completed retry)
@@ -1066,11 +1103,13 @@ fun test_hhEval root =
       {run = #run retry_entry, thy = #thy retry_entry,
        thm = #thm retry_entry, goal_id = #goal_id retry_entry,
        cond = #cond retry_entry, regime = #regime retry_entry,
-       selector = #selector retry_entry, prover = #prover retry_entry,
+       selector = #selector retry_entry, engine = #engine retry_entry,
+       prover = #prover retry_entry,
        prover_version = NONE, nfacts = 0, timeout = 5,
        szs = "RunFailure", t_prover = 0.0, axioms_used = NONE,
        recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
-       error = SOME "prover binary was missing"}
+       error = SOME "prover binary was missing", stop = NONE,
+       t_total = NONE, slices = []}
     val _ = expect "resume retries cells whose prover never ran"
       (not (hhEval.cell_completed (hhEval.read_completed run_failure)
         ("list.nil", "deps-e")))
@@ -1087,15 +1126,88 @@ fun test_hhEval root =
        length (hhEval.read_journal torn) = 2)
     val condition : hhEval.condition =
       {cond_id = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
-       prover = "e", timeout = 10, reconstruct = true}
+       engine = hhEval.Prover "e", timeout = 10, reconstruct = true}
     val parsed_condition =
       hhEval.parse_condition (hhEval.encode_condition condition)
     val _ = expect "condition serialization"
       (#cond_id parsed_condition = #cond_id condition andalso
        hhEval.string_of_regime (#regime parsed_condition) = "chainy" andalso
        hhEval.string_of_selector (#selector parsed_condition) = "knn128" andalso
-       #prover parsed_condition = "e" andalso
+       same_engine (#engine parsed_condition) (hhEval.Prover "e") andalso
        #timeout parsed_condition = 10 andalso #reconstruct parsed_condition)
+    val sched_condition : hhEval.condition =
+      {cond_id = "sched", regime = hhEval.Chainy,
+       selector = hhEval.Knn 256,
+       engine = hhEval.Sched
+         {provers = ["e", "vampire"], slices = 6, cores = 2,
+          max_proofs = 3},
+       timeout = 30, reconstruct = true}
+    val parsed_sched_condition =
+      hhEval.parse_condition (hhEval.encode_condition sched_condition)
+    val _ = expect "Sched condition serialization"
+      (#cond_id parsed_sched_condition = "sched" andalso
+       same_engine (#engine parsed_sched_condition)
+         (#engine sched_condition) andalso
+       #timeout parsed_sched_condition = 30 andalso
+       #reconstruct parsed_sched_condition)
+    val invalid_sched : hhEval.condition =
+      {cond_id = "invalid-sched", regime = hhEval.Bushy,
+       selector = hhEval.Deps,
+       engine = hhEval.Sched
+         {provers = ["e"], slices = 1, cores = 1, max_proofs = 1},
+       timeout = 5, reconstruct = false}
+    val _ = expect "Sched condition requires reconstruction"
+      ((hhEval.validate_condition invalid_sched; false)
+       handle Fail message =>
+         String.isSubstring "Sched" message andalso
+         String.isSubstring "reconstruct must be true" message)
+    val schedule_slice : hhEval.journal_slice =
+      {slice =
+         {prover = "e", format = "fof", type_enc = "",
+          lam_trans = "", nfacts = 256, filter = "mepo",
+          extra_opts = ["--auto"], slice_size = 15},
+       szs = "Theorem", time = 1.75, cached = true}
+    val sched_entry : hhEval.journal_entry =
+      {run = "fixture", thy = "list", thm = "scheduled",
+       goal_id = "list.scheduled", cond = "sched",
+       regime = hhEval.Chainy, selector = hhEval.Knn 256,
+       engine = #engine sched_condition, prover = "e",
+       prover_version = SOME "3.2.5", nfacts = 256, timeout = 30,
+       szs = "Theorem", t_prover = 1.75,
+       axioms_used = SOME ["list.one"], recon_ok = SOME true,
+       recon_method = SOME "metis", t_recon = SOME 0.25,
+       stac = SOME "metis_tac [list_one]", error = NONE,
+       stop = SOME "MaxProofs", t_total = SOME 2.0,
+       slices = [schedule_slice]}
+    val sched_line = hhEval.encode_journal_line sched_entry
+    val _ = expect "Sched journal round trip"
+      (same_journal_entry sched_entry (hhEval.parse_journal_line sched_line))
+    val sched_json = JSONParser.parseFile
+      (let
+         val path = join expdir "sched-line.json"
+         val _ = write_file path sched_line
+       in
+         path
+       end)
+    val _ = expect "Sched journal emits engine and slice fields"
+      (JSONUtil.asString (JSONUtil.lookupField sched_json "engine") =
+         "sched" andalso
+       JSONUtil.asString (JSONUtil.lookupField
+         (hd (JSONUtil.arrayMap (fn item => item)
+           (JSONUtil.lookupField sched_json "slices"))) "szs") = "Theorem")
+    val v1_fixture = join "test-data/hheval-report/journal" "list.jsonl"
+    val v1_line = hd (read_lines v1_fixture)
+    val v1_entry = hhEval.parse_journal_line v1_line
+    val _ = expect "checked-in v1 journal remains readable"
+      (#goal_id v1_entry = "list.one" andalso
+       same_engine (#engine v1_entry) (hhEval.Prover "e") andalso
+       #szs v1_entry = "Theorem" andalso null (#slices v1_entry))
+    val mixed = hhEval.journal_path expdir "mixed"
+    val _ = write_file mixed (v1_line ^ "\n")
+    val _ = hhEval.append_journal mixed sched_entry
+    val _ = expect "resume accepts mixed v1/v2 journals"
+      (hhEval.journal_complete mixed
+         [("list.one", "deps-e"), ("list.scheduled", "sched")])
     val header : hhEval.run_header =
       {expname = "fixture", date = "today", host = "host", hol_commit = "abc",
        provers = [{name = "e", path = SOME "/e", version = SOME "3.2.5",
@@ -1106,7 +1218,8 @@ fun test_hhEval root =
     val header_json = JSONParser.parseFile (join expdir "run.json")
     val _ = expect "run header writer"
       (JSONUtil.asString (JSONUtil.lookupField header_json "expname") =
-       "fixture")
+       "fixture" andalso
+       JSONUtil.asInt (JSONUtil.lookupField header_json "schema") = 2)
     val _ = expect "sample one selects every goal"
       (hhEval.sample_goal 1 "list.nil")
     val _ = expect "sample selection is deterministic"
@@ -1696,7 +1809,7 @@ fun test_hhEval_integration () =
               | NONE => raise Fail "integration test has no evaluation dir"
           val condition : hhEval.condition =
             {cond_id = "bushy-deps-e", regime = hhEval.Bushy,
-             selector = hhEval.Deps, prover = "e", timeout = 1,
+             selector = hhEval.Deps, engine = hhEval.Prover "e", timeout = 1,
              reconstruct = false}
           val _ = hhEval.run_eval
             {expname = "smoke", ncore = 1, thyl = ["pair", "option"],

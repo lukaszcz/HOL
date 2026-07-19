@@ -2,19 +2,28 @@ signature hhEval =
 sig
   datatype regime = Bushy | Chainy
   datatype selector = Deps | Knn of int
+  datatype engine =
+      Prover of string
+    | Sched of {provers : string list, slices : int,
+                cores : int, max_proofs : int}
 
   type condition =
     {cond_id : string, regime : regime, selector : selector,
-     prover : string, timeout : int, reconstruct : bool}
+     engine : engine, timeout : int, reconstruct : bool}
+
+  type journal_slice =
+    {slice : hhProver.slice, szs : string, time : real, cached : bool}
 
   type journal_entry =
     {run : string, thy : string, thm : string, goal_id : string,
      cond : string, regime : regime, selector : selector,
-     prover : string, prover_version : string option, nfacts : int,
+     engine : engine, prover : string, prover_version : string option,
+     nfacts : int,
      timeout : int, szs : string, t_prover : real,
      axioms_used : string list option, recon_ok : bool option,
      recon_method : string option, t_recon : real option,
-     stac : string option, error : string option}
+     stac : string option, error : string option, stop : string option,
+     t_total : real option, slices : journal_slice list}
 
   type corpus_coverage =
     {srcfiles : string list, dat_theories : string list,
@@ -36,6 +45,7 @@ sig
 
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
+  val validate_condition : condition -> unit
   val encode_condition : condition -> string
   val parse_condition : string -> condition
 

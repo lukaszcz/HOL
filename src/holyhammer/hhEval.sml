@@ -10,19 +10,28 @@ open HolKernel boolLib aiLib
 
 datatype regime = Bushy | Chainy
 datatype selector = Deps | Knn of int
+datatype engine =
+    Prover of string
+  | Sched of {provers : string list, slices : int,
+              cores : int, max_proofs : int}
 
 type condition =
   {cond_id : string, regime : regime, selector : selector,
-   prover : string, timeout : int, reconstruct : bool}
+   engine : engine, timeout : int, reconstruct : bool}
+
+type journal_slice =
+  {slice : hhProver.slice, szs : string, time : real, cached : bool}
 
 type journal_entry =
   {run : string, thy : string, thm : string, goal_id : string,
    cond : string, regime : regime, selector : selector,
-   prover : string, prover_version : string option, nfacts : int,
+   engine : engine, prover : string, prover_version : string option,
+   nfacts : int,
    timeout : int, szs : string, t_prover : real,
    axioms_used : string list option, recon_ok : bool option,
    recon_method : string option, t_recon : real option,
-   stac : string option, error : string option}
+   stac : string option, error : string option, stop : string option,
+   t_total : real option, slices : journal_slice list}
 
 type corpus_coverage =
   {srcfiles : string list, dat_theories : string list,
@@ -68,14 +77,35 @@ fun selector_of_string "deps" = Deps
            | NONE => raise Fail ("bad evaluation selector: " ^ text))
       else raise Fail ("unknown evaluation selector: " ^ text)
 
-fun json_condition {cond_id, regime, selector, prover, timeout, reconstruct} =
-  JSON.OBJECT
-    [("cond_id", JSON.STRING cond_id),
-     ("regime", JSON.STRING (string_of_regime regime)),
-     ("selector", JSON.STRING (string_of_selector selector)),
-     ("prover", JSON.STRING prover),
-     ("timeout", JSON.INT (IntInf.fromInt timeout)),
-     ("reconstruct", JSON.BOOL reconstruct)]
+fun validate_condition (condition : condition) =
+  case (#engine condition, #reconstruct condition) of
+      (Sched _, false) => raise Fail
+        "invalid hhEval Sched condition: reconstruct must be true"
+    | _ => ()
+
+fun json_condition condition =
+  let
+    val _ = validate_condition condition
+    val common =
+      [("cond_id", JSON.STRING (#cond_id condition)),
+       ("regime", JSON.STRING (string_of_regime (#regime condition))),
+       ("selector", JSON.STRING (string_of_selector (#selector condition)))]
+    val engine_fields =
+      case #engine condition of
+          Prover prover =>
+            [("engine", JSON.STRING "prover"),
+             ("prover", JSON.STRING prover)]
+        | Sched {provers, slices, cores, max_proofs} =>
+            [("engine", JSON.STRING "sched"),
+             ("provers", JSON.ARRAY (map JSON.STRING provers)),
+             ("slices", JSON.INT (IntInf.fromInt slices)),
+             ("cores", JSON.INT (IntInf.fromInt cores)),
+             ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
+  in
+    JSON.OBJECT (common @ engine_fields @
+      [("timeout", JSON.INT (IntInf.fromInt (#timeout condition))),
+       ("reconstruct", JSON.BOOL (#reconstruct condition))])
+  end
 
 fun parse_json text =
   let
@@ -88,6 +118,12 @@ fun parse_json text =
 
 fun field name value = JSONUtil.lookupField value name
 
+fun optional_field name (JSON.OBJECT fields) =
+      (case List.find (fn (label, _) => label = name) fields of
+           SOME (_, value) => SOME value
+         | NONE => NONE)
+  | optional_field _ _ = NONE
+
 fun string_field name value = JSONUtil.asString (field name value)
 fun int_field name value = JSONUtil.asInt (field name value)
 fun real_field name value = JSONUtil.asNumber (field name value)
@@ -96,13 +132,34 @@ fun bool_field name value = JSONUtil.asBool (field name value)
 fun option_field decoder name value =
   case field name value of JSON.NULL => NONE | item => SOME (decoder item)
 
+fun string_list value = JSONUtil.arrayMap JSONUtil.asString value
+
+fun parse_engine value =
+  case optional_field "engine" value of
+      NONE => Prover (string_field "prover" value)
+    | SOME engine_value =>
+        (case JSONUtil.asString engine_value of
+             "prover" => Prover (string_field "prover" value)
+           | "sched" => Sched
+               {provers = string_list (field "provers" value),
+                slices = int_field "slices" value,
+                cores = int_field "cores" value,
+                max_proofs = int_field "max_proofs" value}
+           | name => raise Fail ("unknown evaluation engine: " ^ name))
+
 fun parse_condition_value value : condition =
-  {cond_id = string_field "cond_id" value,
-   regime = regime_of_string (string_field "regime" value),
-   selector = selector_of_string (string_field "selector" value),
-   prover = string_field "prover" value,
-   timeout = int_field "timeout" value,
-   reconstruct = bool_field "reconstruct" value}
+  let
+    val condition =
+      {cond_id = string_field "cond_id" value,
+       regime = regime_of_string (string_field "regime" value),
+       selector = selector_of_string (string_field "selector" value),
+       engine = parse_engine value,
+       timeout = int_field "timeout" value,
+       reconstruct = bool_field "reconstruct" value}
+    val _ = validate_condition condition
+  in
+    condition
+  end
 
 fun encode_condition condition =
   JSONPrinter.valueToString (json_condition condition)
@@ -202,45 +259,140 @@ fun json_bool_option NONE = JSON.NULL
 fun json_string_list_option NONE = JSON.NULL
   | json_string_list_option (SOME items) = JSON.ARRAY (map JSON.STRING items)
 
-fun journal_json
-    {run, thy, thm, goal_id, cond, regime, selector, prover,
-     prover_version, nfacts, timeout, szs, t_prover, axioms_used,
-     recon_ok, recon_method, t_recon, stac, error} =
+fun json_slice
+    {prover, format, type_enc, lam_trans, nfacts, filter, extra_opts,
+     slice_size} =
   JSON.OBJECT
-    [("run", JSON.STRING run), ("thy", JSON.STRING thy),
-     ("thm", JSON.STRING thm), ("goal_id", JSON.STRING goal_id),
-     ("cond", JSON.STRING cond),
-     ("regime", JSON.STRING (string_of_regime regime)),
-     ("selector", JSON.STRING (string_of_selector selector)),
-     ("prover", JSON.STRING prover),
-     ("prover_version", json_string_option prover_version),
+    [("prover", JSON.STRING prover), ("format", JSON.STRING format),
+     ("type_enc", JSON.STRING type_enc),
+     ("lam_trans", JSON.STRING lam_trans),
      ("nfacts", JSON.INT (IntInf.fromInt nfacts)),
-     ("timeout", JSON.INT (IntInf.fromInt timeout)),
-     ("szs", JSON.STRING szs), ("t_prover", JSON.FLOAT t_prover),
-     ("axioms_used", json_string_list_option axioms_used),
-     ("recon_ok", json_bool_option recon_ok),
-     ("recon_method", json_string_option recon_method),
-     ("t_recon", json_real_option t_recon),
-     ("stac", json_string_option stac), ("error", json_string_option error)]
+     ("filter", JSON.STRING filter),
+     ("extra_opts", JSON.ARRAY (map JSON.STRING extra_opts)),
+     ("slice_size", JSON.INT (IntInf.fromInt slice_size))]
 
-fun string_list value = JSONUtil.arrayMap JSONUtil.asString value
+fun json_journal_slice {slice, szs, time, cached} =
+  JSON.OBJECT
+    [("slice", json_slice slice), ("szs", JSON.STRING szs),
+     ("time", JSON.FLOAT time), ("cached", JSON.BOOL cached)]
+
+fun json_engine_params {provers, slices, cores, max_proofs} =
+  JSON.OBJECT
+    [("provers", JSON.ARRAY (map JSON.STRING provers)),
+     ("slices", JSON.INT (IntInf.fromInt slices)),
+     ("cores", JSON.INT (IntInf.fromInt cores)),
+     ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
+
+fun journal_json
+    {run, thy, thm, goal_id, cond, regime, selector, engine, prover,
+     prover_version, nfacts, timeout, szs, t_prover, axioms_used,
+     recon_ok, recon_method, t_recon, stac, error, stop, t_total, slices} =
+  let
+    val common =
+      [("run", JSON.STRING run), ("thy", JSON.STRING thy),
+       ("thm", JSON.STRING thm), ("goal_id", JSON.STRING goal_id),
+       ("cond", JSON.STRING cond),
+       ("regime", JSON.STRING (string_of_regime regime)),
+       ("selector", JSON.STRING (string_of_selector selector))]
+    val winning =
+      [("prover", JSON.STRING prover),
+       ("prover_version", json_string_option prover_version),
+       ("nfacts", JSON.INT (IntInf.fromInt nfacts)),
+       ("timeout", JSON.INT (IntInf.fromInt timeout)),
+       ("szs", JSON.STRING szs), ("t_prover", JSON.FLOAT t_prover),
+       ("axioms_used", json_string_list_option axioms_used),
+       ("recon_ok", json_bool_option recon_ok),
+       ("recon_method", json_string_option recon_method),
+       ("t_recon", json_real_option t_recon),
+       ("stac", json_string_option stac),
+       ("error", json_string_option error)]
+    val engine_fields =
+      case engine of
+          Prover name =>
+            if name = prover then [("engine", JSON.STRING "prover")]
+            else raise Fail
+              "invalid hhEval Prover journal entry: engine/prover mismatch"
+        | Sched parameters =>
+            (case (stop, t_total) of
+                 (SOME reason, SOME total) =>
+                   [("engine", JSON.STRING "sched"),
+                    ("engine_params", json_engine_params parameters)] @
+                   winning @
+                   [("stop", JSON.STRING reason),
+                    ("t_total", JSON.FLOAT total),
+                    ("slices", JSON.ARRAY (map json_journal_slice slices))]
+               | _ => raise Fail
+                   "invalid hhEval Sched journal entry: stop and t_total are required")
+  in
+    case engine of
+        Prover _ => JSON.OBJECT (common @ engine_fields @ winning)
+      | Sched _ => JSON.OBJECT (common @ engine_fields)
+  end
+
+fun parse_slice value : hhProver.slice =
+  {prover = string_field "prover" value,
+   format = string_field "format" value,
+   type_enc = string_field "type_enc" value,
+   lam_trans = string_field "lam_trans" value,
+   nfacts = int_field "nfacts" value,
+   filter = string_field "filter" value,
+   extra_opts = string_list (field "extra_opts" value),
+   slice_size = int_field "slice_size" value}
+
+fun parse_journal_slice value : journal_slice =
+  {slice = parse_slice (field "slice" value),
+   szs = string_field "szs" value,
+   time = real_field "time" value,
+   cached = bool_field "cached" value}
+
+fun parse_journal_engine value prover =
+  case optional_field "engine" value of
+      NONE => Prover prover
+    | SOME engine_value =>
+        (case JSONUtil.asString engine_value of
+             "prover" => Prover prover
+           | "sched" =>
+               let val parameters = field "engine_params" value in
+                 Sched
+                   {provers = string_list (field "provers" parameters),
+                    slices = int_field "slices" parameters,
+                    cores = int_field "cores" parameters,
+                    max_proofs = int_field "max_proofs" parameters}
+               end
+           | name => raise Fail ("unknown journal engine: " ^ name))
+
+fun nullable_optional decoder name value =
+  case optional_field name value of
+      NONE => NONE
+    | SOME JSON.NULL => NONE
+    | SOME item => SOME (decoder item)
+
+fun array_or_empty decoder name value =
+  case optional_field name value of
+      NONE => []
+    | SOME items => JSONUtil.arrayMap decoder items
 
 fun parse_journal_value value : journal_entry =
-  {run = string_field "run" value, thy = string_field "thy" value,
-   thm = string_field "thm" value, goal_id = string_field "goal_id" value,
-   cond = string_field "cond" value,
-   regime = regime_of_string (string_field "regime" value),
-   selector = selector_of_string (string_field "selector" value),
-   prover = string_field "prover" value,
-   prover_version = option_field JSONUtil.asString "prover_version" value,
-   nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
-   szs = string_field "szs" value, t_prover = real_field "t_prover" value,
-   axioms_used = option_field string_list "axioms_used" value,
-   recon_ok = option_field JSONUtil.asBool "recon_ok" value,
-   recon_method = option_field JSONUtil.asString "recon_method" value,
-   t_recon = option_field JSONUtil.asNumber "t_recon" value,
-   stac = option_field JSONUtil.asString "stac" value,
-   error = option_field JSONUtil.asString "error" value}
+  let val prover = string_field "prover" value in
+    {run = string_field "run" value, thy = string_field "thy" value,
+     thm = string_field "thm" value, goal_id = string_field "goal_id" value,
+     cond = string_field "cond" value,
+     regime = regime_of_string (string_field "regime" value),
+     selector = selector_of_string (string_field "selector" value),
+     engine = parse_journal_engine value prover, prover = prover,
+     prover_version = option_field JSONUtil.asString "prover_version" value,
+     nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
+     szs = string_field "szs" value, t_prover = real_field "t_prover" value,
+     axioms_used = option_field string_list "axioms_used" value,
+     recon_ok = option_field JSONUtil.asBool "recon_ok" value,
+     recon_method = option_field JSONUtil.asString "recon_method" value,
+     t_recon = option_field JSONUtil.asNumber "t_recon" value,
+     stac = option_field JSONUtil.asString "stac" value,
+     error = option_field JSONUtil.asString "error" value,
+     stop = nullable_optional JSONUtil.asString "stop" value,
+     t_total = nullable_optional JSONUtil.asNumber "t_total" value,
+     slices = array_or_empty parse_journal_slice "slices" value}
+  end
 
 fun encode_journal_line entry = JSONPrinter.valueToString (journal_json entry)
 fun parse_journal_line text = parse_journal_value (parse_json text)
@@ -339,8 +491,12 @@ fun prover_identity name =
                {name = name, path = SOME path, version = version,
                 sha256 = sha256 path})
 
-fun current_prover_identities conditions =
-  map prover_identity (distinct_names (map #prover conditions))
+fun engine_provers (Prover name) = [name]
+  | engine_provers (Sched {provers, ...}) = provers
+
+fun current_prover_identities (conditions : condition list) =
+  map prover_identity
+    (distinct_names (List.concat (map (engine_provers o #engine) conditions)))
 
 fun host_name () =
   case List.find (fn (name, _) => name = "nodename")
@@ -381,7 +537,8 @@ fun header_json
     {expname, date, host, hol_commit, provers, corpus, added_from_dat,
      conditions, sample} =
   JSON.OBJECT
-    [("expname", JSON.STRING expname), ("date", JSON.STRING date),
+    [("schema", JSON.INT 2),
+     ("expname", JSON.STRING expname), ("date", JSON.STRING date),
      ("host", JSON.STRING host), ("hol_commit", JSON.STRING hol_commit),
      ("provers", JSON.ARRAY (map json_prover provers)),
      ("corpus", JSON.ARRAY (map json_corpus_entry corpus)),
@@ -453,7 +610,8 @@ fun latest_cells entries =
   end
 
 fun regular_cell entry =
-  #cond entry <> "__load__" andalso #thm entry <> "__load__"
+  #cond entry <> "__load__" andalso #thm entry <> "__load__" andalso
+  (case #engine entry of Prover _ => true | Sched _ => false)
 
 fun goal_ids entries predicate =
   sorted_unique (map #goal_id (List.filter predicate entries))
@@ -705,7 +863,10 @@ val worker_sample = ref 1
 
 fun set_worker_settings {conditions, sample} =
   if sample < 1 then raise Fail "eval.sample must be a positive integer"
-  else (worker_conditions := conditions; worker_sample := sample)
+  else
+    (app validate_condition conditions;
+     worker_conditions := conditions;
+     worker_sample := sample)
 
 fun run_name expdir = OS.Path.file expdir
 
@@ -748,18 +909,26 @@ fun base_entry expdir thy name condition nfacts szs t_prover axioms version
     (outcome : outcome) =
   {run = run_name expdir, thy = thy, thm = name, goal_id = goal_id thy name,
    cond = #cond_id condition, regime = #regime condition,
-   selector = #selector condition, prover = #prover condition,
+   selector = #selector condition, engine = #engine condition,
+   prover = (case #engine condition of Prover name => name | Sched _ => ""),
    prover_version = version, nfacts = nfacts, timeout = #timeout condition,
    szs = szs, t_prover = t_prover, axioms_used = axioms,
    recon_ok = #recon_ok outcome, recon_method = #recon_method outcome,
    t_recon = #t_recon outcome, stac = #stac outcome,
-   error = #error outcome} : journal_entry
+   error = #error outcome,
+   stop = (case #engine condition of
+                Prover _ => NONE
+              | Sched _ => SOME "Unavailable"),
+   t_total = (case #engine condition of
+                  Prover _ => NONE
+                | Sched _ => SOME 0.0),
+   slices = []} : journal_entry
 
 fun journal_theory_error expdir thy message =
   let
     val condition : condition =
       {cond_id = "__load__", regime = Bushy, selector = Deps,
-       prover = "", timeout = 0, reconstruct = false}
+       engine = Prover "", timeout = 0, reconstruct = false}
   in
     append_journal (journal_path expdir thy)
       (base_entry expdir thy "__load__" condition 0 "LoadFailure" 0.0 NONE
@@ -846,36 +1015,43 @@ fun run_cell expdir thy (name, thm) pool condition =
     val _ = hhExportFof.fof_export_pb directory
       (list_mk_imp goal, named_premises)
   in
-    case hhProver.lookup (#prover condition) of
-        NONE =>
+    case #engine condition of
+        Sched _ =>
           append_journal (journal_path expdir thy)
             (base_entry expdir thy name condition nfacts "RunFailure" 0.0
                NONE NONE
-               (failed ("unknown HolyHammer prover: " ^ #prover condition)))
-      | SOME prover =>
-          let
-            val result = hhProver.run prover
-              {timeout = #timeout condition,
-               problem = join directory "atp_in", extra = [],
-               debug_dir = SOME (join expdir "out")}
-            val (recon_ok, recon_method, t_recon, stac_or_error) =
-              reconstruct condition result goal
-            val (stac, recon_error) =
-              case recon_ok of
-                  SOME false => (NONE, stac_or_error)
-                | _ => (stac_or_error, NONE)
-            val outcome : outcome =
-              {recon_ok = recon_ok, recon_method = recon_method,
-               t_recon = t_recon, stac = stac,
-               error = case recon_error of
-                           SOME message => SOME message
-                         | NONE => run_failure_error (#szs result)}
-          in
-            append_journal (journal_path expdir thy)
-              (base_entry expdir thy name condition nfacts
-                 (szs_name (#szs result)) (#time result)
-                 (#used_axioms result) (#version result) outcome)
-          end
+               (failed "hhEval Sched execution is not available yet"))
+      | Prover prover_name =>
+          (case hhProver.lookup prover_name of
+               NONE =>
+                 append_journal (journal_path expdir thy)
+                   (base_entry expdir thy name condition nfacts
+                      "RunFailure" 0.0 NONE NONE
+                      (failed ("unknown HolyHammer prover: " ^ prover_name)))
+             | SOME prover =>
+                 let
+                   val result = hhProver.run prover
+                     {timeout = #timeout condition,
+                      problem = join directory "atp_in", extra = [],
+                      debug_dir = SOME (join expdir "out")}
+                   val (recon_ok, recon_method, t_recon, stac_or_error) =
+                     reconstruct condition result goal
+                   val (stac, recon_error) =
+                     case recon_ok of
+                         SOME false => (NONE, stac_or_error)
+                       | _ => (stac_or_error, NONE)
+                   val outcome : outcome =
+                     {recon_ok = recon_ok, recon_method = recon_method,
+                      t_recon = t_recon, stac = stac,
+                      error = case recon_error of
+                                  SOME message => SOME message
+                                | NONE => run_failure_error (#szs result)}
+                 in
+                   append_journal (journal_path expdir thy)
+                     (base_entry expdir thy name condition nfacts
+                        (szs_name (#szs result)) (#time result)
+                        (#used_axioms result) (#version result) outcome)
+                 end)
   end
   handle Interrupt => raise Interrupt
        | error =>
@@ -1039,6 +1215,7 @@ fun run_eval {expname, ncore, thyl, conditions} =
   if ncore < 1 then raise Fail "run_eval requires at least one worker"
   else
     let
+      val _ = app validate_condition conditions
       val sample = configured_sample ()
       val expdir = experiment_dir expname
       val _ = ensure_dir expdir
@@ -1115,7 +1292,7 @@ val smoke_goals =
 
 fun smoke_condition timeout prover : condition =
   {cond_id = "smoke-" ^ prover, regime = Bushy, selector = Deps,
-   prover = prover, timeout = timeout, reconstruct = true}
+   engine = Prover prover, timeout = timeout, reconstruct = true}
 
 fun smoke_goal_id (thy, name, _) = goal_id thy name
 
