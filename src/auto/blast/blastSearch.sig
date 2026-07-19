@@ -37,11 +37,22 @@ sig
      choices_pruned : int}
 
   type statistics =
-    {branches_created : int,
+    {configured_depth : int,
+     maximum_resource_cost : int,
+     inferences_performed : int,
+     branches_created : int,
      branches_closed : int,
      choices_pruned : int,
      rule_cache_hits : int,
      rule_conversions : int}
+
+  datatype completion = Completed | Interrupted
+
+  type 'a measured_result =
+    {completion : completion,
+     fullTrace : branch list list,
+     result : 'a option,
+     statistics : statistics}
 
   type debug_result =
     {fullTrace : branch list list,
@@ -60,11 +71,51 @@ sig
     claset -> int -> pterm list -> (proof -> 'a) -> 'a option
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
-  (* Statistics cover the complete fixed-depth run, including branches
-     explored before failed reconstruction or final search failure. *)
+  (* This and the measured/debug entry points enable internal
+     instrumentation.  The legacy searchTerms, searchGoal, tryGoal and
+     deepenGoal entry points do not poll a stop predicate or maintain the
+     inference/resource counters below.
+
+     Statistics cover the complete fixed-depth run, including work before
+     failed reconstruction or final search failure.  configured_depth is
+     the supplied bound.  maximum_resource_cost is the largest admitted
+     lim charge: configured_depth - lim after a safe or unsafe rule
+     application.  It is not ML recursion depth, a formula count, or an
+     inference count.  md controls gamma requeueing, but is not itself a
+     depth charge.  A closing rule can be admitted with a negative successor
+     lim, so the maximum can exceed a nonnegative configured_depth.
+
+     inferences_performed counts committed search transitions: successful
+     equality substitutions, literal closures, and safe or unsafe rule
+     applications admitted by search control.  Candidate unification failures,
+     candidates that unify but are killed by the bound, branch creation,
+     queue manipulation and reconstruction are not inferences under this
+     counter.  branches_created separately counts tableau branches.
+
+     These are internal search-engine metrics.  For comparison with
+     Isabelle's published Table 1, only configured_depth and the
+     branches_created value from one completed, fixed-depth run correspond
+     to its depth and ntried columns.  maximum_resource_cost and
+     inferences_performed are not published Isabelle/Blast statistics, and
+     values accumulated across iterative-deepening runs are not Table-1
+     values. *)
   val searchGoalWithStats :
     claset -> int -> goal -> (proof -> 'a) ->
     {result : 'a option, statistics : statistics}
+
+  (* Cooperative fixed-depth search.  stop is polled once at every prv
+     entry.  A true result ends the run with completion = Interrupted and
+     returns counters accumulated up to that poll.  A completed exhaustion
+     has completion = Completed and result = NONE.  If debug is false,
+     fullTrace is empty.  Exceptions raised by stop propagate unchanged;
+     they are never interpreted as search-control exceptions. *)
+  val searchGoalMeasured :
+    {debug : bool, stop : unit -> bool} ->
+    claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
+  val searchTermsMeasured :
+    {debug : bool, stop : unit -> bool} ->
+    claset -> int -> pterm list ->
+    (proof -> 'a) -> 'a measured_result
   val tryGoal : claset -> int -> goal -> proof option
   val debugGoal : claset -> int -> goal -> debug_result
 

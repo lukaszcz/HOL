@@ -58,11 +58,22 @@ type proof =
    choices_pruned : int}
 
 type statistics =
-  {branches_created : int,
+  {configured_depth : int,
+   maximum_resource_cost : int,
+   inferences_performed : int,
+   branches_created : int,
    branches_closed : int,
    choices_pruned : int,
    rule_cache_hits : int,
    rule_conversions : int}
+
+datatype completion = Completed | Interrupted
+
+type 'a measured_result =
+  {completion : completion,
+   fullTrace : branch list list,
+   result : 'a option,
+   statistics : statistics}
 
 type debug_result =
   {fullTrace : branch list list,
@@ -408,14 +419,76 @@ fun traceState depth branches =
        String.concatWith "\n" (map branchString branches))
   else ()
 
-fun runTerms debug claset depth formulas cont =
+datatype instrumentation =
+    Off
+  | On of {debug : bool, stop : unit -> bool}
+
+fun runTerms instrumentation claset depth formulas cont =
   let
+    exception INTERRUPTED
+    exception STOP_EXCEPTION of exn
     val state = newState ()
     val rule_cache = blastRule.newCache ()
     val closed = ref 0
     val created = ref 1
     val pruned = ref 0
-    val fullTrace = ref ([] : branch list list)
+    (* Select the hot-path operations once.  In particular, an ordinary
+       search allocates neither of the new counter refs and performs no
+       instrumentation-mode test at each transition. *)
+    val (instrumentEntry, noteInference, noteRuleInference,
+         instrumentationResult) =
+      case instrumentation of
+          Off =>
+            (traceState depth, fn () => (), fn _ => (),
+             fn () => (0, 0, []))
+        | On {debug = false, stop} =>
+            let
+              val inferences = ref 0
+              val maximum_resource_cost = ref 0
+              fun entry brs =
+                let
+                  val requested =
+                    stop () handle exn => raise STOP_EXCEPTION exn
+                in
+                  if requested then raise INTERRUPTED
+                  else traceState depth brs
+                end
+              fun inference () = inferences := !inferences + 1
+              fun ruleInference lim =
+                (inferences := !inferences + 1;
+                 maximum_resource_cost :=
+                   Int.max (!maximum_resource_cost, depth - lim))
+              fun result () =
+                (!inferences, !maximum_resource_cost, [])
+            in
+              (entry, inference, ruleInference, result)
+            end
+        | On {debug = true, stop} =>
+            let
+              val inferences = ref 0
+              val maximum_resource_cost = ref 0
+              val fullTrace = ref ([] : branch list list)
+              fun entry brs =
+                let
+                  val requested =
+                    stop () handle exn => raise STOP_EXCEPTION exn
+                in
+                  if requested then raise INTERRUPTED
+                  else
+                    (fullTrace := brs :: !fullTrace;
+                     traceState depth brs)
+                end
+              fun inference () = inferences := !inferences + 1
+              fun ruleInference lim =
+                (inferences := !inferences + 1;
+                 maximum_resource_cost :=
+                   Int.max (!maximum_resource_cost, depth - lim))
+              fun result () =
+                (!inferences, !maximum_resource_cost,
+                 rev (!fullTrace))
+            in
+              (entry, inference, ruleInference, result)
+            end
 
     fun proofOf (tacs, trace) =
       {script = rev tacs,
@@ -427,8 +500,7 @@ fun runTerms debug claset depth formulas cont =
 
     fun prv (tacs, trace, choices, brs) =
       let
-        val _ = if debug then fullTrace := brs :: !fullTrace else ()
-        val _ = traceState depth brs
+        val _ = instrumentEntry brs
       in
       case brs of
           [] =>
@@ -496,6 +568,7 @@ fun runTerms debug claset depth formulas cont =
                           fun descend () =
                             if null prems then
                               (closed := !closed + 1;
+                               noteRuleInference lim';
                                prv
                                  (tacs', brs0 :: trace,
                                   prune state pruned
@@ -507,6 +580,7 @@ fun runTerms debug claset depth formulas cont =
                             else
                               (created :=
                                  !created + length prems - 1;
+                               noteRuleInference lim';
                                prv
                                  (tacs', brs0 :: trace, choices',
                                   newBranches (vars', lim') prems))
@@ -532,6 +606,7 @@ fun runTerms debug claset depth formulas cont =
                                   choices)
                            in
                              closed := !closed + 1;
+                             noteInference ();
                              (prv
                                 (step :: tacs, brs0 :: trace,
                                  choices', brs)
@@ -550,13 +625,18 @@ fun runTerms debug claset depth formulas cont =
               fun cascade () =
                 if lim < 0 then backtrack choices
                 else
-                  (prv
-                     (HypSubst :: tacs, brs0 :: trace, choices,
-                      equalSubst
-                        (formula,
-                         {pairs = (safe, unsafe) :: pairs,
-                          lits = lits, vars = vars, lim = lim}) ::
-                      brs)
+                  (let
+                     val substituted =
+                       equalSubst
+                         (formula,
+                          {pairs = (safe, unsafe) :: pairs,
+                           lits = lits, vars = vars, lim = lim})
+                     val _ = noteInference ()
+                   in
+                     prv
+                       (HypSubst :: tacs, brs0 :: trace, choices,
+                        substituted :: brs)
+                   end
                    handle DEST_EQ =>
                      (closeF lits
                       handle CLOSEF =>
@@ -665,6 +745,7 @@ fun runTerms debug claset depth formulas cont =
                                else
                                  created :=
                                    !created + length prems - 1;
+                               noteRuleInference lim';
                                prv
                                  (step :: tacs, brs0 :: trace,
                                   Choice (mark, branches, PRV) ::
@@ -695,35 +776,53 @@ fun runTerms debug claset depth formulas cont =
       end
 
     val initial = initBranch (formulas, depth)
-    val result =
-      SOME
-        (prv ([], [], [Choice (trailSize state, 1, PROVE)], [initial]))
-      handle PROVE => NONE
+    val (completion, result) =
+      ((Completed,
+        SOME
+          (prv
+             ([], [], [Choice (trailSize state, 1, PROVE)], [initial])))
+       handle PROVE => (Completed, NONE)
+            | INTERRUPTED => (Interrupted, NONE))
+      handle STOP_EXCEPTION exn => raise exn
+    val (inferences, maximum_resource_cost, fullTrace) =
+      instrumentationResult ()
     val statistics =
-      {branches_created = !created,
+      {configured_depth = depth,
+       maximum_resource_cost = maximum_resource_cost,
+       inferences_performed = inferences,
+       branches_created = !created,
        branches_closed = !closed,
        choices_pruned = !pruned,
        rule_cache_hits = blastRule.hitCount rule_cache,
        rule_conversions = blastRule.conversionCount rule_cache}
   in
-    {fullTrace = rev (!fullTrace), result = result,
+    {completion = completion, fullTrace = fullTrace, result = result,
      statistics = statistics}
   end
 
 fun searchTerms claset depth formulas cont =
-  #result (runTerms false claset depth formulas cont)
+  #result (runTerms Off claset depth formulas cont)
+
+fun searchTermsMeasured options claset depth formulas cont =
+  runTerms (On options) claset depth formulas cont
+
+fun goalTerms goal = map first (blastRule.initialBranch goal)
+
+fun searchGoalMeasured options claset depth goal cont =
+  searchTermsMeasured options claset depth
+    (goalTerms goal) cont
 
 fun searchGoalWithStats claset depth goal cont =
   let
     val report =
-      runTerms false claset depth
-        (map first (blastRule.initialBranch goal)) cont
+      runTerms (On {debug = false, stop = fn () => false})
+        claset depth (goalTerms goal) cont
   in
     {result = #result report, statistics = #statistics report}
   end
 
 fun searchGoal claset depth goal cont =
-  #result (searchGoalWithStats claset depth goal cont)
+  searchTerms claset depth (goalTerms goal) cont
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)
@@ -731,14 +830,17 @@ fun tryGoal claset depth goal =
 fun debugGoal claset depth goal =
   let
     val report =
-      runTerms true claset depth
-        (map first (blastRule.initialBranch goal)) (fn proof => proof)
+      searchGoalMeasured {debug = true, stop = fn () => false}
+        claset depth goal (fn proof => proof)
   in
     {fullTrace = #fullTrace report, result = #result report}
   end
 
-(* There is deliberately no timeout.  A future extension may poll a counter
-   at prv entry, but the faithful engine is bounded only by deepening. *)
+(* This legacy iterative-deepening API has no cooperative timeout: each
+   fixed-depth run is uninstrumented and is bounded only by its resource
+   limit, while the sequence of runs is capped by depth_limit.  Callers that
+   need cooperative interruption use the measured fixed-depth APIs, whose
+   stop predicate is polled at every prv entry. *)
 fun deepenGoal claset goal cont =
   let
     val limit = !depth_limit

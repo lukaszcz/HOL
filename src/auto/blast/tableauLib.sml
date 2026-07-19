@@ -24,57 +24,101 @@ fun invocation_claset theorems =
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)
 
-type totals =
-  {branches_created : int ref,
-   branches_closed : int ref,
-   choices_pruned : int ref}
+(* Iterative deepening performs independent fixed-depth searches.  Preserve
+   the last run for honest per-run reporting and name sums explicitly as
+   cumulative.  In particular, cumulative branch and inference counts are
+   not comparable with Isabelle's Table-1 ntried column. *)
+type run_statistics =
+  {fixed_depth_runs : int ref,
+   final_fixed_depth : blastSearch.statistics option ref,
+   cumulative_inferences_performed : int ref,
+   cumulative_branches_created : int ref,
+   cumulative_branches_closed : int ref,
+   cumulative_choices_pruned : int ref}
 
-fun new_totals () : totals =
-  {branches_created = ref 0,
-   branches_closed = ref 0,
-   choices_pruned = ref 0}
+fun new_run_statistics () : run_statistics =
+  {fixed_depth_runs = ref 0,
+   final_fixed_depth = ref NONE,
+   cumulative_inferences_performed = ref 0,
+   cumulative_branches_created = ref 0,
+   cumulative_branches_closed = ref 0,
+   cumulative_choices_pruned = ref 0}
 
-fun add_statistics (totals : totals)
+fun add_statistics (summary : run_statistics)
       (statistics : blastSearch.statistics) =
-  (#branches_created totals :=
-     !(#branches_created totals) + #branches_created statistics;
-   #branches_closed totals :=
-     !(#branches_closed totals) + #branches_closed statistics;
-   #choices_pruned totals :=
-     !(#choices_pruned totals) + #choices_pruned statistics)
+  (#fixed_depth_runs summary := !(#fixed_depth_runs summary) + 1;
+   #final_fixed_depth summary := SOME statistics;
+   #cumulative_inferences_performed summary :=
+     !(#cumulative_inferences_performed summary) +
+     #inferences_performed statistics;
+   #cumulative_branches_created summary :=
+     !(#cumulative_branches_created summary) +
+     #branches_created statistics;
+   #cumulative_branches_closed summary :=
+     !(#cumulative_branches_closed summary) +
+     #branches_closed statistics;
+   #cumulative_choices_pruned summary :=
+     !(#cumulative_choices_pruned summary) +
+     #choices_pruned statistics)
 
-fun statistics_text (totals : totals) =
-  "branches created " ^
-  Int.toString (!(#branches_created totals)) ^
-  "; branches closed " ^
-  Int.toString (!(#branches_closed totals)) ^
-  "; choices pruned " ^
-  Int.toString (!(#choices_pruned totals))
+fun statistics_text (summary : run_statistics) =
+  let
+    val final_text =
+      case !(#final_fixed_depth summary) of
+          NONE => "final fixed-depth run none"
+        | SOME statistics =>
+            "final fixed-depth configured depth " ^
+            Int.toString (#configured_depth statistics) ^
+            "; final fixed-depth maximum resource cost " ^
+            Int.toString (#maximum_resource_cost statistics) ^
+            "; final fixed-depth inferences performed " ^
+            Int.toString (#inferences_performed statistics) ^
+            "; final fixed-depth branches created " ^
+            Int.toString (#branches_created statistics) ^
+            "; final fixed-depth branches closed " ^
+            Int.toString (#branches_closed statistics) ^
+            "; final fixed-depth choices pruned " ^
+            Int.toString (#choices_pruned statistics)
+  in
+    "fixed-depth runs " ^
+    Int.toString (!(#fixed_depth_runs summary)) ^ "; " ^ final_text ^
+    "; cumulative inferences performed " ^
+    Int.toString (!(#cumulative_inferences_performed summary)) ^
+    "; cumulative branches created " ^
+    Int.toString (!(#cumulative_branches_created summary)) ^
+    "; cumulative branches closed " ^
+    Int.toString (!(#cumulative_branches_closed summary)) ^
+    "; cumulative choices pruned " ^
+    Int.toString (!(#cumulative_choices_pruned summary))
+  end
 
-fun stats proof totals search_time reconstruction_time =
-  if Feedback.current_trace "blast" >= 2 then
-    Feedback.HOL_MESG
-      ("Blast stats: depth " ^ Int.toString (#depth proof) ^
-       "; " ^ statistics_text totals ^
-       "; search " ^ Time.toString search_time ^ "s" ^
-       "; reconstruction " ^
-       Time.toString reconstruction_time ^ "s")
-  else ()
+fun stats proof summary search_time reconstruction_time =
+  Feedback.HOL_MESG
+    ("Blast stats: depth " ^ Int.toString (#depth proof) ^
+     "; " ^ statistics_text summary ^
+     "; search " ^ Time.toString search_time ^ "s" ^
+     "; reconstruction " ^
+     Time.toString reconstruction_time ^ "s")
 
-fun failed_stats totals search_time reconstruction_time =
-  if Feedback.current_trace "blast" >= 2 then
-    Feedback.HOL_MESG
-      ("Blast stats: no proof; " ^ statistics_text totals ^
-       "; search " ^ Time.toString search_time ^ "s" ^
-       "; reconstruction " ^
-       Time.toString reconstruction_time ^ "s")
-  else ()
+fun failed_stats summary search_time reconstruction_time =
+  Feedback.HOL_MESG
+    ("Blast stats: no proof; " ^ statistics_text summary ^
+     "; search " ^ Time.toString search_time ^ "s" ^
+     "; reconstruction " ^
+     Time.toString reconstruction_time ^ "s")
 
 fun run_depths cs initial_depth next_depth goal =
   let
     val started = Time.now ()
     val reconstruction_time = ref Time.zeroTime
-    val totals = new_totals ()
+    (* Ordinary public tactics retain the uninstrumented search path.  The
+       documented level-2 statistics trace explicitly opts into counters.
+       Keep the summary absent in the quiet path so it allocates and updates
+       none of the expanded per-run/cumulative statistic refs. *)
+    val summary =
+      if Feedback.current_trace "blast" >= 2 then
+        SOME (new_run_statistics ())
+      else NONE
 
     fun accept proof =
       let
@@ -91,24 +135,39 @@ fun run_depths cs initial_depth next_depth goal =
     fun search NONE = NONE
       | search (SOME depth) =
           let
-            val report =
-              blastSearch.searchGoalWithStats cs depth goal accept
-            val _ = add_statistics totals (#statistics report)
+            val result =
+              case summary of
+                  NONE => blastSearch.searchGoal cs depth goal accept
+                | SOME statistics =>
+                    let
+                      val report =
+                        blastSearch.searchGoalWithStats
+                          cs depth goal accept
+                      val _ =
+                        add_statistics statistics (#statistics report)
+                    in
+                      #result report
+                    end
           in
-            case #result report of
+            case result of
                 NONE => search (next_depth depth)
-              | result => result
+              | SOME _ => result
           end
 
     val result = search initial_depth
     val total_time = Time.- (Time.now (), started)
     val search_time = Time.- (total_time, !reconstruction_time)
     val _ =
-      case result of
-          SOME (proof, _) =>
-            stats proof totals search_time (!reconstruction_time)
-        | NONE =>
-            failed_stats totals search_time (!reconstruction_time)
+      case summary of
+          NONE => ()
+        | SOME statistics =>
+            (case result of
+                 SOME (proof, _) =>
+                   stats proof statistics search_time
+                     (!reconstruction_time)
+               | NONE =>
+                   failed_stats statistics search_time
+                     (!reconstruction_time))
   in
     case result of
         SOME (_, tactic_result) => tactic_result

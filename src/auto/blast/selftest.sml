@@ -808,6 +808,418 @@ val _ =
 
 val _ =
   test
+    ("successful hyp-subst has exact inference statistics",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'instrument_subst"
+         val x = mk_var ("instrument_subst_x", alpha)
+         val y = mk_var ("instrument_subst_y", alpha)
+         val p = mk_var ("instrument_subst_p", alpha --> bool)
+         val px = mk_comb (p, x)
+         val py = mk_comb (p, y)
+         val report =
+           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+             ([mk_eq (x, y), px], py) (fn proof => proof)
+         val statistics = #statistics report
+       in
+         (case #result report of
+              SOME proof =>
+                List.exists
+                  (fn blastSearch.HypSubst => true | _ => false)
+                  (#script proof)
+            | NONE => false) andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #inferences_performed statistics = 2 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 1 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("admitted pseudo-safe rule has exact inference statistics",
+     fn () =>
+       let
+         val p = mk_var ("instrument_safe_p", bool)
+         val report =
+           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+             ([], mk_imp (p, p)) (fn proof => proof)
+         val statistics = #statistics report
+       in
+         (case #result report of
+              SOME proof =>
+                List.exists
+                  (fn blastSearch.SafeRule _ => true | _ => false)
+                  (#script proof)
+            | NONE => false) andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #inferences_performed statistics = 2 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 1 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("safe fanout counts one inference and one extra branch",
+     fn () =>
+       let
+         val p = mk_var ("instrument_fanout_p", bool)
+         val q = mk_var ("instrument_fanout_q", bool)
+         val polls = ref 0
+         val cs =
+           clasetLib.add_sintros
+             [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         fun stop () =
+           (polls := !polls + 1; !polls = 2)
+         val report =
+           blastSearch.searchGoalMeasured {debug = true, stop = stop}
+             cs 0 ([], mk_conj (p, q)) (fn proof => proof)
+         val statistics = #statistics report
+       in
+         #completion report = blastSearch.Interrupted andalso
+         not (Option.isSome (#result report)) andalso
+         length (#fullTrace report) = 1 andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #inferences_performed statistics = 1 andalso
+         #branches_created statistics = 2 andalso
+         #branches_closed statistics = 0 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("safe nonclosing bound rejection is not counted",
+     fn () =>
+       let
+         val q = mk_var ("instrument_safe_bound_q", bool)
+         val branch = ref NONE
+         val nonclosing = DISCH q boolTheory.TRUTH
+         val cs =
+           clasetLib.add_sintros [("nonclosing", nonclosing)]
+             clasetLib.empty_cs
+         val report =
+           blastSearch.searchTermsMeasured
+             {debug = false, stop = fn () => false} cs 0
+             [mkGoal (Var branch)] (fn proof => proof)
+         val statistics = #statistics report
+       in
+         #completion report = blastSearch.Completed andalso
+         not (Option.isSome (#result report)) andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #inferences_performed statistics = 0 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 0 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("depth-0 unsafe nonclosing rule rejection is not counted",
+     fn () =>
+       let
+         val x = mk_var ("instrument_unsafe_bound_x", bool)
+         val p = mk_var ("instrument_unsafe_bound_p", bool --> bool)
+         val cs =
+           clasetLib.add_intros
+             [("exists", EXISTS_INTRO_THM)] clasetLib.empty_cs
+         val report =
+           blastSearch.searchGoalWithStats cs 0
+             ([], mk_exists (x, mk_comb (p, x)))
+             (fn proof => proof)
+         val statistics = #statistics report
+       in
+         not (Option.isSome (#result report)) andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #inferences_performed statistics = 0 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 0 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("closing safe rule may exceed the configured resource bound",
+     fn () =>
+       let
+         val branch = ref NONE
+         val cs =
+           clasetLib.add_sintros [("truth", boolTheory.TRUTH)]
+             clasetLib.empty_cs
+         val report =
+           blastSearch.searchTermsMeasured
+             {debug = false, stop = fn () => false} cs 0
+             [mkGoal (Var branch)] (fn proof => proof)
+         val statistics = #statistics report
+       in
+         #completion report = blastSearch.Completed andalso
+         Option.isSome (#result report) andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 1 andalso
+         #inferences_performed statistics = 1 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 1 andalso
+         #choices_pruned statistics = 0
+       end)
+
+fun zero_measured_work depth (statistics : blastSearch.statistics) =
+  #configured_depth statistics = depth andalso
+  #maximum_resource_cost statistics = 0 andalso
+  #inferences_performed statistics = 0 andalso
+  #branches_created statistics = 1 andalso
+  #branches_closed statistics = 0 andalso
+  #choices_pruned statistics = 0 andalso
+  #rule_cache_hits statistics = 0 andalso
+  #rule_conversions statistics = 0
+
+val _ =
+  test
+    ("initial cooperative stop is exact for goal and term APIs",
+     fn () =>
+       let
+         val p = mk_var ("instrument_initial_stop_p", bool)
+         val goal = ([], p)
+         val formulas = map #1 (blastRule.initialBranch goal)
+
+         fun goal_run debug =
+           let
+             val polls = ref 0
+             val reconstructions = ref 0
+             fun stop () = (polls := !polls + 1; true)
+             val report =
+               blastSearch.searchGoalMeasured {debug = debug, stop = stop}
+                 clasetLib.empty_cs 3 goal
+                 (fn proof =>
+                    (reconstructions := !reconstructions + 1; proof))
+           in
+             !polls = 1 andalso !reconstructions = 0 andalso
+             #completion report = blastSearch.Interrupted andalso
+             not (Option.isSome (#result report)) andalso
+             #fullTrace report = [] andalso
+             zero_measured_work 3 (#statistics report)
+           end
+
+         fun terms_run debug =
+           let
+             val polls = ref 0
+             val reconstructions = ref 0
+             fun stop () = (polls := !polls + 1; true)
+             val report =
+               blastSearch.searchTermsMeasured {debug = debug, stop = stop}
+                 clasetLib.empty_cs 3 formulas
+                 (fn proof =>
+                    (reconstructions := !reconstructions + 1; proof))
+           in
+             !polls = 1 andalso !reconstructions = 0 andalso
+             #completion report = blastSearch.Interrupted andalso
+             not (Option.isSome (#result report)) andalso
+             #fullTrace report = [] andalso
+             zero_measured_work 3 (#statistics report)
+           end
+       in
+         goal_run false andalso goal_run true andalso
+         terms_run false andalso terms_run true
+       end)
+
+val _ =
+  test
+    ("stop at final empty branch wins after an exact closing inference",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.T)
+         val cs =
+           clasetLib.add_sintros [("truth", boolTheory.TRUTH)]
+             clasetLib.empty_cs
+
+         fun check debug
+               (report : blastSearch.proof blastSearch.measured_result)
+               expected polls reconstructions =
+           let
+             val statistics = #statistics report
+             val expected_trace = if debug then [[expected]] else []
+           in
+             !polls = 2 andalso !reconstructions = 0 andalso
+             #completion report = blastSearch.Interrupted andalso
+             not (Option.isSome (#result report)) andalso
+             #fullTrace report = expected_trace andalso
+             #configured_depth statistics = 0 andalso
+             #maximum_resource_cost statistics = 0 andalso
+             #inferences_performed statistics = 1 andalso
+             #branches_created statistics = 1 andalso
+             #branches_closed statistics = 1 andalso
+             #choices_pruned statistics = 0 andalso
+             #rule_cache_hits statistics = 0 andalso
+             #rule_conversions statistics = 1
+           end
+
+         fun goal_run debug =
+           let
+             val polls = ref 0
+             val reconstructions = ref 0
+             val formulas = map #1 (blastRule.initialBranch goal)
+             val expected = blastSearch.initBranch (formulas, 0)
+             fun stop () = (polls := !polls + 1; !polls = 2)
+             val report =
+               blastSearch.searchGoalMeasured {debug = debug, stop = stop}
+                 cs 0 goal
+                 (fn proof =>
+                    (reconstructions := !reconstructions + 1; proof))
+           in
+             check debug report expected polls reconstructions
+           end
+
+         fun terms_run debug =
+           let
+             val polls = ref 0
+             val reconstructions = ref 0
+             val formulas = map #1 (blastRule.initialBranch goal)
+             val expected = blastSearch.initBranch (formulas, 0)
+             fun stop () = (polls := !polls + 1; !polls = 2)
+             val report =
+               blastSearch.searchTermsMeasured {debug = debug, stop = stop}
+                 cs 0 formulas
+                 (fn proof =>
+                    (reconstructions := !reconstructions + 1; proof))
+           in
+             check debug report expected polls reconstructions
+           end
+       in
+         goal_run false andalso goal_run true andalso
+         terms_run false andalso terms_run true
+       end)
+
+val _ =
+  test
+    ("cooperative interruption is distinct from completed exhaustion",
+     fn () =>
+       let
+         val p = mk_var ("instrument_interrupt_p", bool)
+         val q = mk_var ("instrument_interrupt_q", bool)
+         val polls = ref 0
+         val cs =
+           clasetLib.add_sintros
+             [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         fun stop () =
+           (polls := !polls + 1; !polls = 2)
+         val interrupted =
+           blastSearch.searchGoalMeasured {debug = true, stop = stop}
+             cs 0 ([], mk_conj (p, q)) (fn proof => proof)
+         val completed =
+           blastSearch.searchGoalMeasured
+             {debug = true, stop = fn () => false}
+             cs 0 ([], mk_conj (p, q)) (fn proof => proof)
+         val partial = #statistics interrupted
+         val final = #statistics completed
+       in
+         #completion interrupted = blastSearch.Interrupted andalso
+         !polls = 2 andalso
+         #completion completed = blastSearch.Completed andalso
+         not (Option.isSome (#result interrupted)) andalso
+         not (Option.isSome (#result completed)) andalso
+         #inferences_performed partial = 1 andalso
+         #branches_created partial = 2 andalso
+         #branches_closed partial = 0 andalso
+         #inferences_performed final = 1 andalso
+         #branches_created final = 2 andalso
+         #branches_closed final = 0 andalso
+         length (#fullTrace interrupted) = 1 andalso
+         length (#fullTrace completed) > 1
+       end)
+
+val _ =
+  test
+    ("cooperative stop exceptions preserve their exact constructors",
+     fn () =>
+       let
+         val p = mk_var ("instrument_stop_exception_p", bool)
+         exception StopSentinel of int ref
+         val sentinel = ref 17
+         fun raises stop expected =
+           (ignore
+              (blastSearch.searchGoalMeasured
+                 {debug = false, stop = stop}
+                 clasetLib.empty_cs 0 ([], p) (fn proof => proof));
+            false)
+           handle StopSentinel actual =>
+                    expected = 1 andalso actual = sentinel
+                | blastSearch.PROOF_FAILED => expected = 2
+                | _ => false
+       in
+         raises (fn () => raise StopSentinel sentinel) 1 andalso
+         raises (fn () => raise blastSearch.PROOF_FAILED) 2
+       end)
+
+val _ =
+  test
+    ("interruption after PROOF_FAILED keeps exact partial counters",
+     fn () =>
+       let
+         val p = mk_var ("instrument_partial_backtrack_p", bool)
+         val polls = ref 0
+         val attempts = ref 0
+         fun stop () =
+           (polls := !polls + 1; !attempts = 1)
+         fun reject proof =
+           (attempts := !attempts + 1;
+            if !attempts = 1 then raise blastSearch.PROOF_FAILED
+            else proof)
+         val report =
+           blastSearch.searchGoalMeasured {debug = false, stop = stop}
+             clasetLib.empty_cs 0 ([p, p], p) reject
+         val statistics = #statistics report
+         val exact =
+           !polls = 3 andalso !attempts = 1 andalso
+           #inferences_performed statistics = 2 andalso
+           #branches_closed statistics = 2
+       in
+         exact andalso
+         #completion report = blastSearch.Interrupted andalso
+         not (Option.isSome (#result report)) andalso
+         #fullTrace report = [] andalso
+         #configured_depth statistics = 0 andalso
+         #maximum_resource_cost statistics = 0 andalso
+         #branches_created statistics = 1 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
+    ("successful backtracking search has exact complete instrumentation",
+     fn () =>
+       let
+         val p = mk_var ("instrument_backtrack_p", bool)
+         val q = mk_var ("instrument_backtrack_q", bool)
+         val attempts = ref 0
+         val cs =
+           clasetLib.add_intros
+             [("left", boolTheory.OR_INTRO_THM1),
+              ("right", boolTheory.OR_INTRO_THM2)]
+             clasetLib.empty_cs
+         fun accept proof =
+           (attempts := !attempts + 1;
+            if !attempts = 1 then raise blastSearch.PROOF_FAILED
+            else proof)
+         val report =
+           blastSearch.searchGoalWithStats cs 1
+             ([p, q], mk_disj (p, q)) accept
+         val statistics = #statistics report
+       in
+         !attempts = 2 andalso Option.isSome (#result report) andalso
+         #configured_depth statistics = 1 andalso
+         #maximum_resource_cost statistics = 1 andalso
+         #inferences_performed statistics = 4 andalso
+         #branches_created statistics = 1 andalso
+         #branches_closed statistics = 2 andalso
+         #choices_pruned statistics = 0
+       end)
+
+val _ =
+  test
     ("duplicating elim replay uses REV_DUP_ELIM_RULE only",
      fn () =>
        let
@@ -1527,7 +1939,7 @@ val _ =
 
 val _ =
   test
-    ("failed level-two stats include complete branch counters",
+    ("fixed-depth trace separates final and cumulative counters",
      fn () =>
        let
          val p = mk_var ("failed_stats_p", bool)
@@ -1538,9 +1950,43 @@ val _ =
            List.exists (String.isSubstring text) messages
        in
          not solved andalso contains "Blast stats: no proof" andalso
-         contains "branches created 1" andalso
-         contains "branches closed 0" andalso
+         contains "fixed-depth runs 1" andalso
+         contains "final fixed-depth configured depth 0" andalso
+         contains "final fixed-depth maximum resource cost 0" andalso
+         contains "final fixed-depth inferences performed 0" andalso
+         contains "final fixed-depth branches created 1" andalso
+         contains "final fixed-depth branches closed 0" andalso
+         contains "cumulative inferences performed 0" andalso
+         contains "cumulative branches created 1" andalso
+         contains "cumulative branches closed 0" andalso
          contains "search " andalso contains "reconstruction "
+       end)
+
+val _ =
+  test
+    ("iterative trace labels final depth and cumulative aggregation",
+     fn () =>
+       let
+         val p = mk_var ("iterative_stats_p", bool)
+         val (solved, messages) =
+           Lib.with_flag (tableauLib.depth_limit, 1)
+             (fn () =>
+                blast_trace_messages 2 (tableauLib.BLAST_TAC [])
+                  ([], p)) ()
+         fun contains text =
+           List.exists (String.isSubstring text) messages
+       in
+         not solved andalso contains "Blast stats: no proof" andalso
+         contains "fixed-depth runs 2" andalso
+         contains "final fixed-depth configured depth 1" andalso
+         contains "final fixed-depth maximum resource cost 0" andalso
+         contains "final fixed-depth inferences performed 0" andalso
+         contains "final fixed-depth branches created 1" andalso
+         contains "final fixed-depth branches closed 0" andalso
+         contains "cumulative inferences performed 0" andalso
+         contains "cumulative branches created 2" andalso
+         contains "cumulative branches closed 0" andalso
+         contains "cumulative choices pruned 0"
        end)
 
 val _ =
