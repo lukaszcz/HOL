@@ -39,7 +39,9 @@ sig
   type statistics =
     {branches_created : int,
      branches_closed : int,
-     choices_pruned : int}
+     choices_pruned : int,
+     rule_cache_hits : int,
+     rule_conversions : int}
 
   type debug_result =
     {fullTrace : branch list list,

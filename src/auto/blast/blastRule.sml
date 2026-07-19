@@ -30,11 +30,14 @@ type entry =
 
 datatype cache = Cache of
   {entries : entry list ref,
-   conversions : int ref}
+   conversions : int ref,
+   hits : int ref}
 
-fun newCache () = Cache {entries = ref [], conversions = ref 0}
+fun newCache () =
+  Cache {entries = ref [], conversions = ref 0, hits = ref 0}
 
 fun conversionCount (Cache {conversions, ...}) = !conversions
+fun hitCount (Cache {hits, ...}) = !hits
 
 (* Skolem identity is name identity in blastTerm.  A session-global supply
    therefore prevents separate node caches from accidentally sharing one. *)
@@ -333,7 +336,7 @@ fun same_vars ([], []) = true
       left = right andalso same_vars (lefts, rights)
   | same_vars _ = false
 
-fun cached (Cache {entries, ...}) safe vars formula =
+fun cached (Cache {entries, hits, ...}) safe vars formula =
   case List.find
          (fn entry =>
             #safe entry = safe andalso
@@ -341,12 +344,109 @@ fun cached (Cache {entries, ...}) safe vars formula =
             aconv (#formula entry, formula))
          (!entries) of
       NONE => NONE
-    | SOME entry => SOME (#rules entry)
+    | SOME entry =>
+        (hits := !hits + 1;
+         SOME (#rules entry))
 
 fun remember (Cache {entries, ...}) safe vars formula rules =
   entries :=
     {formula = formula, safe = safe, vars = vars, rules = rules} ::
     !entries
+
+(* Rule variables are assigned destructively and off-trail by unify.  Keep
+   pristine templates in a search cache, and give every acquisition fresh
+   rule variables and fresh rule-local Skolems.  Variables and Skolems from
+   the branch formula remain shared with the branch. *)
+fun copyRules cache vars formula fresh_skolems rules =
+  let
+    val variable_copies = ref ([] : (var * var) list)
+    val skolem_copies = ref ([] : (string * string) list)
+
+    fun insert_string value values =
+      if List.exists (fn other => other = value) values then values
+      else value :: values
+
+    fun add_skolems (Const (_, args)) names =
+          List.foldl (fn (term, result) => add_skolems term result)
+            names args
+      | add_skolems (Skolem (name, arguments)) names =
+          List.foldl
+            (fn (variable, result) =>
+               case !variable of
+                   NONE => result
+                 | SOME term => add_skolems term result)
+            (insert_string name names) arguments
+      | add_skolems (Var variable) names =
+          (case !variable of
+               NONE => names
+             | SOME term => add_skolems term names)
+      | add_skolems (Abs (_, body)) names = add_skolems body names
+      | add_skolems (left $ right) names =
+          add_skolems left (add_skolems right names)
+      | add_skolems _ names = names
+
+    val external_skolems =
+      List.foldl
+        (fn (variable, names) =>
+           case !variable of
+               NONE => names
+             | SOME term => add_skolems term names)
+        (add_skolems formula []) vars
+
+    fun copy_variable variable =
+      if mem_var (variable, vars) then variable
+      else
+        case List.find
+               (fn (source, _) => source = variable) (!variable_copies) of
+            SOME (_, copy) => copy
+          | NONE =>
+              let
+                val copy = ref NONE
+                val _ =
+                  variable_copies :=
+                    (variable, copy) :: !variable_copies
+                val _ =
+                  case !variable of
+                      NONE => ()
+                    | SOME term => copy := SOME (copy_term term)
+              in
+                copy
+              end
+
+    and copy_skolem name =
+      if not fresh_skolems orelse
+         List.exists (fn external => external = name) external_skolems
+      then name
+      else
+        case List.find
+               (fn (source, _) => source = name) (!skolem_copies) of
+            SOME (_, copy) => copy
+          | NONE =>
+              let
+                val copy = freshName cache "S"
+              in
+                skolem_copies := (name, copy) :: !skolem_copies;
+                copy
+              end
+
+    and copy_term term =
+      case term of
+          Const (name, args) => Const (name, map copy_term args)
+        | Skolem (name, arguments) =>
+            Skolem (copy_skolem name, map copy_variable arguments)
+        | Free name => Free name
+        | Var variable => Var (copy_variable variable)
+        | Bound index => Bound index
+        | Abs (name, body) => Abs (name, copy_term body)
+        | left $ right => copy_term left $ copy_term right
+
+    fun copy_rule ({origin, pattern, premises} : tableau_rule) =
+      {origin = origin,
+       pattern = copy_term pattern,
+       premises = map (map copy_term) premises}
+  in
+    map copy_rule rules
+  end
 
 fun query_skeleton formula =
   let
@@ -482,7 +582,7 @@ fun candidates claset safe formula =
 
 fun acquire cache claset safe vars formula =
   case cached cache safe vars formula of
-      SOME rules => rules
+      SOME rules => copyRules cache vars formula true rules
     | NONE =>
         let
           val tagged = candidates claset safe formula
@@ -498,7 +598,9 @@ fun acquire cache claset safe vars formula =
             if safe then
               early_rules @ pseudoRules cache vars formula @ late_rules
             else early_rules @ late_rules
-          val _ = remember cache safe vars formula rules
+          val _ =
+            remember cache safe vars formula
+              (copyRules cache vars formula false rules)
         in
           rules
         end

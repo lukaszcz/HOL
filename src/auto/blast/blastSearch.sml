@@ -60,7 +60,9 @@ type proof =
 type statistics =
   {branches_created : int,
    branches_closed : int,
-   choices_pruned : int}
+   choices_pruned : int,
+   rule_cache_hits : int,
+   rule_conversions : int}
 
 type debug_result =
   {fullTrace : branch list list,
@@ -409,6 +411,7 @@ fun traceState depth branches =
 fun runTerms debug claset depth formulas cont =
   let
     val state = newState ()
+    val rule_cache = blastRule.newCache ()
     val closed = ref 0
     val created = ref 1
     val pruned = ref 0
@@ -445,9 +448,8 @@ fun runTerms debug claset depth formulas cont =
               val branches = length brs0
               val next_vars = remainingVars brs
               val formula = norm formula
-              val cache = blastRule.newCache ()
               val rules =
-                blastRule.safeRules cache claset vars formula
+                blastRule.safeRules rule_cache claset vars formula
               val rule_count = length rules
 
               fun newBranches (vars', lim') prems =
@@ -564,7 +566,7 @@ fun runTerms debug claset depth formulas cont =
               cascade ()
               handle NEWBRANCHES =>
                 (case blastRule.unsafeRules
-                        cache claset vars formula of
+                        rule_cache claset vars formula of
                      [] =>
                        prv
                          (tacs, brs0 :: trace, choices,
@@ -595,9 +597,8 @@ fun runTerms debug claset depth formulas cont =
               exception PRV
               val formula = norm formula
               val mark = trailSize state
-              val cache = blastRule.newCache ()
               val rules =
-                blastRule.unsafeRules cache claset vars formula
+                blastRule.unsafeRules rule_cache claset vars formula
               val rule_count = length rules
               val branches = length brs0
 
@@ -701,7 +702,9 @@ fun runTerms debug claset depth formulas cont =
     val statistics =
       {branches_created = !created,
        branches_closed = !closed,
-       choices_pruned = !pruned}
+       choices_pruned = !pruned,
+       rule_cache_hits = blastRule.hitCount rule_cache,
+       rule_conversions = blastRule.conversionCount rule_cache}
   in
     {fullTrace = rev (!fullTrace), result = result,
      statistics = statistics}

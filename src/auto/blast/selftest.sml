@@ -482,27 +482,187 @@ val _ =
            | _ => false
        end)
 
+fun rule_vars ({pattern, premises, ...} : blastRule.tableau_rule) =
+  add_terms_vars (List.concat premises, add_term_vars (pattern, []))
+
 val _ =
   test
-    ("rule acquisition is per-node lazy and cached per formula",
+    ("cached rule templates survive destructive unification",
      fn () =>
        let
          val cache = blastRule.newCache ()
+         val claset = clasetLib.the_claset ()
          val formula =
            mkGoal
              (blastRule.fromGoalTerm
                 (mk_conj (mk_var ("p", bool), mk_var ("q", bool))))
          val initial_count = blastRule.conversionCount cache
          val first =
-           blastRule.safeRules cache (clasetLib.the_claset ()) [] formula
+           blastRule.safeRules cache claset [] formula
          val after_first = blastRule.conversionCount cache
-         val second =
-           blastRule.safeRules cache (clasetLib.the_claset ()) [] formula
+         val (first_rule, first_vars) =
+           case first of
+               rule :: _ => (rule, rule_vars rule)
+             | [] => raise Fail "no conjunction rule"
+         val instantiated =
+           unify (newState ())
+             (first_vars, #pattern first_rule, formula)
+         val contaminated =
+           List.exists (fn variable => not (unassigned variable))
+             first_vars
+         val second = blastRule.safeRules cache claset [] formula
+         val after_second = blastRule.conversionCount cache
+         val second_vars =
+           case second of
+               rule :: _ => rule_vars rule
+             | [] => []
        in
          initial_count = 0 andalso not (null first) andalso
          after_first > initial_count andalso
-         blastRule.conversionCount cache = after_first andalso
-         length first = length second
+         after_second = after_first andalso
+         blastRule.hitCount cache = 1 andalso
+         length first = length second andalso
+         instantiated andalso contaminated andalso
+         not (null first_vars) andalso
+         List.all unassigned second_vars andalso
+         List.all
+           (fn variable => not (mem_var (variable, second_vars)))
+           first_vars
+       end)
+
+fun skolem_dependencies term =
+  case term of
+      Const (_, args) => List.concat (map skolem_dependencies args)
+    | Skolem (_, arguments) =>
+        arguments @
+        List.concat
+          (map
+             (fn variable =>
+                case !variable of
+                    NONE => []
+                  | SOME value => skolem_dependencies value)
+             arguments)
+    | Var variable =>
+        (case !variable of
+             NONE => []
+           | SOME value => skolem_dependencies value)
+    | Abs (_, body) => skolem_dependencies body
+    | left $ right =>
+        skolem_dependencies left @ skolem_dependencies right
+    | _ => []
+
+fun rule_skolem_dependencies
+      ({pattern, premises, ...} : blastRule.tableau_rule) =
+  List.concat
+    (map skolem_dependencies (pattern :: List.concat premises))
+
+val _ =
+  test
+    ("cached rules freshen locals but preserve branch dependencies",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val branch = ref NONE
+         val alpha = Type.mk_vartype "'cache_a"
+         val x = mk_var ("cache_x", alpha)
+         val y = mk_var ("cache_y", alpha)
+         val pred = mk_var ("cache_P", alpha --> bool)
+         val universal = mk_forall (y, mk_comb (pred, y))
+         val specializing =
+           GENL [pred, x]
+             (DISCH universal (SPEC x (ASSUME universal)))
+         val formula =
+           mkGoal (blastRule.fromGoalTerm (mk_comb (pred, x)))
+         val claset =
+           clasetLib.add_sintros [("cache_specializing", specializing)]
+             clasetLib.empty_cs
+         val first =
+           case blastRule.safeRules cache claset [branch] formula of
+               [rule] => rule
+             | _ => raise Fail "expected one specializing rule"
+         val second =
+           case blastRule.safeRules cache claset [branch] formula of
+               [rule] => rule
+             | _ => raise Fail "expected cached specializing rule"
+         val first_locals =
+           List.filter (fn variable => variable <> branch)
+             (rule_vars first)
+         val second_locals =
+           List.filter (fn variable => variable <> branch)
+             (rule_vars second)
+         val first_dependencies = rule_skolem_dependencies first
+         val second_dependencies = rule_skolem_dependencies second
+       in
+         not (null first_locals) andalso
+         length first_locals = length second_locals andalso
+         List.all
+           (fn variable => not (mem_var (variable, second_locals)))
+           first_locals andalso
+         first_dependencies = [branch] andalso
+         second_dependencies = [branch]
+       end)
+
+val _ =
+  test
+    ("separate rule caches neither reuse conversions nor templates",
+     fn () =>
+       let
+         val first_cache = blastRule.newCache ()
+         val second_cache = blastRule.newCache ()
+         val formula =
+           mkGoal
+             (blastRule.fromGoalTerm
+                (mk_conj (mk_var ("p", bool), mk_var ("q", bool))))
+         val claset = clasetLib.the_claset ()
+         val first_rule =
+           case blastRule.safeRules first_cache claset [] formula of
+               rule :: _ => rule
+             | [] => raise Fail "no first-session conjunction rule"
+         val first_vars = rule_vars first_rule
+         val instantiated =
+           unify (newState ())
+             (first_vars, #pattern first_rule, formula)
+         val second_rule =
+           case blastRule.safeRules second_cache claset [] formula of
+               rule :: _ => rule
+             | [] => raise Fail "no second-session conjunction rule"
+         val second_vars = rule_vars second_rule
+       in
+         instantiated andalso
+         blastRule.conversionCount first_cache > 0 andalso
+         blastRule.conversionCount second_cache > 0 andalso
+         blastRule.hitCount first_cache = 0 andalso
+         blastRule.hitCount second_cache = 0 andalso
+         List.exists
+           (fn variable => not (unassigned variable)) first_vars andalso
+         List.all unassigned second_vars andalso
+         List.all
+           (fn variable => not (mem_var (variable, second_vars)))
+           first_vars
+       end)
+
+val _ =
+  test
+    ("each search run starts cold and then reuses its rule cache",
+     fn () =>
+       let
+         val p = mk_var ("cache_search_p", bool)
+         val q = mk_var ("cache_search_q", bool)
+         val goal = ([p, p], q)
+         val claset = clasetLib.the_claset ()
+         fun run () =
+           #statistics
+             (blastSearch.searchGoalWithStats claset 0 goal
+                (fn proof => proof))
+         val first = run ()
+         val second = run ()
+       in
+         #rule_cache_hits first > 0 andalso
+         #rule_cache_hits second > 0 andalso
+         #rule_conversions first > 0 andalso
+         #rule_conversions second > 0 andalso
+         #rule_cache_hits first = #rule_cache_hits second andalso
+         #rule_conversions first = #rule_conversions second
        end)
 
 val _ =

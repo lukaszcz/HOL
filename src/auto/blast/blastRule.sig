@@ -16,11 +16,12 @@ sig
      pattern : pterm,
      premises : pterm list list}
 
-  (* A cache belongs to one tableau node.  Rule clauses contain mutable
-     variables, so converted clauses must not be shared between nodes. *)
+  (* A cache belongs to one tableau search.  Cached rule templates are
+     instantiated freshly on retrieval because their variables are mutable. *)
   type cache
   val newCache : unit -> cache
   val conversionCount : cache -> int
+  val hitCount : cache -> int
 
   (* HOL4 goals have no schematic term variables.  Thus the four TRANS
      failures in Isabelle's fromSubgoal are vacuous here: free term
