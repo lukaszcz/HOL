@@ -581,7 +581,7 @@ fun try_rule mode cs duplicated node pos
     val supplied_thms =
       case (is_elim, assumption) of
           (true, SOME (_, major)) =>
-            [assumption_thm major
+            [assumption_thm (normalize_term final_store major)
               (hd
                 (clasetRules.rule_premises_of clasetRules.Elim
                   normalized_rule))]
@@ -955,31 +955,37 @@ fun instantiate_without_reduction store tm =
   end
 
 fun blast_hyp_subst_results (node, pos) =
-  seq.delay
+  list_seq
     (fn () =>
       let
         val store = clasetGoal.store node
         val {params, asl, w} = clasetGoal.goal_at node pos
         val instantiate = instantiate_without_reduction store
         val goal = (map instantiate asl, instantiate w)
+
+        fun attempt position =
+          case total
+                 (clasetReplay.BLAST_HYP_SUBST_TAC_AT position) goal of
+              NONE => NONE
+            | SOME (result as (goals, _)) =>
+                let
+                  fun child (child_asl, child_w) =
+                    {params = params, asl = child_asl, w = child_w}
+                in
+                  SOME
+                    (Direct
+                      {kind = HypSubst, consumed = NONE,
+                       created = no_created,
+                       eigenvariables = map (fn _ => []) goals,
+                       result = result, children = SOME (map child goals),
+                       action =
+                         clasetReplay.blast_hyp_subst_action_at position,
+                       closed = map (fn _ => NONE) goals,
+                       store = store})
+                end
+        val positions = List.tabulate (length asl, fn index => index + 1)
       in
-        case total clasetReplay.BLAST_HYP_SUBST_TAC goal of
-            NONE => seq.empty
-          | SOME (result as (goals, _)) =>
-              let
-                fun child (child_asl, child_w) =
-                  {params = params, asl = child_asl, w = child_w}
-              in
-                seq.result
-                  (Direct
-                    {kind = HypSubst, consumed = NONE,
-                     created = no_created,
-                     eigenvariables = map (fn _ => []) goals,
-                     result = result, children = SOME (map child goals),
-                     action = clasetReplay.blast_hyp_subst_action,
-                     closed = map (fn _ => NONE) goals,
-                     store = store})
-              end
+        List.mapPartial attempt positions
       end)
 
 val ccontr_results =
@@ -992,15 +998,63 @@ fun move_back_results position =
     (clasetReplay.move_assumption_to_back_action position)
     (clasetReplay.MOVE_ASSUMPTION_TO_BACK_TAC position)
 
+fun rendered_conclusion node pos = #2 (clasetGoal.render node pos)
+
+fun eta_forall_bound tm =
+  case strip_comb tm of
+      (head, [predicate]) =>
+        (case total Type.dom_rng (type_of predicate) of
+             SOME (domain, range) =>
+               let
+                 val bound = genvar domain
+                 val forall_head = #1 (strip_comb (mk_forall (bound, T)))
+               in
+                 if range = bool andalso same_const head forall_head then
+                   SOME bound
+                 else NONE
+               end
+           | NONE => NONE)
+    | _ => NONE
+
+fun forall_bound tm =
+  case total dest_forall tm of
+      SOME (bound, _) => SOME bound
+    | NONE => eta_forall_bound tm
+
 fun disch_results (input as (node, pos)) =
-  if is_imp_only (#w (clasetGoal.goal_at node pos)) then
+  if is_imp_only (rendered_conclusion node pos) then
     builtin_results input
   else seq.empty
 
 fun gen_results (input as (node, pos)) =
-  if is_forall (#w (clasetGoal.goal_at node pos)) then
-    builtin_results input
-  else seq.empty
+  case forall_bound (rendered_conclusion node pos) of
+      SOME bound =>
+        let
+          val (fresh, store) = clasetGoal.fresh_eigen node bound
+          val name = fst (dest_var fresh)
+          val rendered = clasetGoal.render node pos
+        in
+          case total (clasetReplay.GEN_NAMED_TAC name) rendered of
+              NONE => seq.empty
+            | SOME (result as (goals, validation)) =>
+                let
+                  val {params, ...} = clasetGoal.goal_at node pos
+                  fun child (asl, w) =
+                    {params = params @ [fresh], asl = asl, w = w}
+                  val children = map child goals
+                  val action = clasetReplay.gen_action name
+                in
+                  seq.result
+                    (Direct
+                      {kind = Gen, consumed = NONE, created = no_created,
+                       eigenvariables = map (fn _ => [name]) goals,
+                       result = result, children = SOME children,
+                       action = action,
+                       closed = map (fn _ => NONE) children,
+                       store = store})
+                end
+        end
+    | NONE => seq.empty
 
 fun safe_cascade cs input =
   first_nonempty

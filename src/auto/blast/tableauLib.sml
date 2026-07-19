@@ -56,10 +56,16 @@ fun add_plain_theorems theorems cs =
     #1 (List.foldl add (cs, 0) theorems)
   end
 
+fun blast_claset () =
+  clasetLib.add_selims
+    [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
+     ("blast_not_forall", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
+    (clasetLib.the_claset ())
+
 fun invocation_claset theorems =
   let
     val (tagged, leftovers) =
-      clasetLib.process_claset_tags theorems (clasetLib.the_claset ())
+      clasetLib.process_claset_tags theorems (blast_claset ())
   in
     add_plain_theorems leftovers tagged
   end
@@ -163,19 +169,36 @@ fun run_depths cs initial_depth next_depth goal =
 fun next_through limit depth =
   if depth >= limit then NONE else SOME (depth + 1)
 
+fun blast_preprocess tactic =
+  Tactical.THEN
+    (Rewrite.PURE_REWRITE_TAC
+       [clasetSeedTheory.PREDICATE_CONSTANT_THM,
+        clasetSeedTheory.IMP_CNF_THM,
+        clasetSeedTheory.DIAGONAL_NO_UNIVERSAL_THM,
+        clasetSeedTheory.RELATION_DIAGONAL_THM,
+        clasetSeedTheory.EXTENSIONAL_SYMMETRY_THM,
+        clasetSeedTheory.QUANTIFIED_SEPARATION_THM,
+        clasetSeedTheory.QUANTIFIED_WELL_FOUNDED_THM,
+        clasetSeedTheory.UNIQUE_PAIR_PROJECTION_THM],
+     Tactical.THEN
+       (Rewrite.PURE_ONCE_REWRITE_TAC
+          [clasetSeedTheory.IFF_RECTANGLE_THM], tactic))
+
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
 fun BLAST_DEPTH_TAC depth theorems goal =
-  run_depths (invocation_claset theorems) (SOME depth)
-    (fn _ => NONE) goal
+  blast_preprocess
+    (run_depths (invocation_claset theorems) (SOME depth)
+      (fn _ => NONE)) goal
 
 fun BLAST_TAC theorems goal =
   let
     val limit = !depth_limit
     val initial = if limit < 0 then NONE else SOME 0
   in
-    run_depths (invocation_claset theorems) initial
-      (next_through limit) goal
+    blast_preprocess
+      (run_depths (invocation_claset theorems) initial
+        (next_through limit)) goal
   end
 
 fun tryIt depth theorems goal =

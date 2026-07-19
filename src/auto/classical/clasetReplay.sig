@@ -76,6 +76,7 @@ sig
      parameters : string list, eigenvariables : string list list} -> tactic
   val HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC : tactic
+  val BLAST_HYP_SUBST_TAC_AT : int -> tactic
   val GEN_NAMED_TAC : string -> tactic
   val GOAL_NEGATION_TAC : tactic
   val SWAPPED_BUILTIN_TAC : clasetMeta.store -> int -> tactic
@@ -91,6 +92,7 @@ sig
        eigenvariables : string list list}) -> replay_action
   val hyp_subst_action : replay_action
   val blast_hyp_subst_action : replay_action
+  val blast_hyp_subst_action_at : int -> replay_action
   val disch_action : replay_action
   val gen_action : string -> replay_action
   val goal_negation_action : replay_action

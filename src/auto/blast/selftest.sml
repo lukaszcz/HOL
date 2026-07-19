@@ -554,9 +554,10 @@ val _ =
        let
          val p = mk_var ("p", bool)
          val q = mk_var ("q", bool)
-         val x = mk_var ("x", bool)
-         val y = mk_var ("y", bool)
-         val pred = mk_var ("P", bool --> bool)
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("x", alpha)
+         val y = mk_var ("y", alpha)
+         val pred = mk_var ("P", alpha --> bool)
          val px = mk_comb (pred, x)
          val py = mk_comb (pred, y)
          val cs = clasetLib.the_claset ()
@@ -912,11 +913,12 @@ val _ =
     ("blast hyp-subst reorders affected assumptions before replay",
      fn () =>
        let
-         val x = mk_var ("x", bool)
-         val y = mk_var ("y", bool)
-         val a = mk_var ("a", bool)
-         val p = mk_var ("P", bool --> bool)
-         val q = mk_var ("Q", bool --> bool)
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("x", alpha)
+         val y = mk_var ("y", alpha)
+         val a = mk_var ("a", alpha)
+         val p = mk_var ("P", alpha --> bool)
+         val q = mk_var ("Q", alpha --> bool)
          val unchanged =
            mk_conj (mk_comb (p, a), mk_comb (q, a))
          val affected =
@@ -941,13 +943,14 @@ val _ =
     ("hyp-subst affectedness preserves beta-redex branch order",
      fn () =>
        let
-         val x = mk_var ("x", bool)
-         val y = mk_var ("y", bool)
-         val a = mk_var ("a", bool)
-         val c = mk_var ("c", bool)
-         val u = mk_var ("u", bool)
-         val z = mk_var ("z", bool)
-         val p = mk_var ("P", bool --> bool --> bool)
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("x", alpha)
+         val y = mk_var ("y", alpha)
+         val a = mk_var ("a", alpha)
+         val c = mk_var ("c", alpha)
+         val u = mk_var ("u", alpha)
+         val z = mk_var ("z", alpha)
+         val p = mk_var ("P", alpha --> alpha --> bool)
          fun pu left right =
            mk_comb (mk_comb (p, left), right)
          val constant_all = mk_forall (u, pu c u)
@@ -1231,3 +1234,172 @@ val _ =
          before_depth = !tableauLib.depth_limit andalso
          before_depth = 20
        end)
+
+(* -------------------------------------------------------------------------
+ * TASK_23: Pelletier 1--46, 52 and 62 (BEGIN corpus).
+ *
+ * The formulae follow the corrected standard formulations used by
+ * Isabelle/HOL's HOL/ex/Classical.thy.  In particular, 28 and 34 are the
+ * amended versions, and 62 is the JAR 18 (1997), page 135 correction.
+ * ------------------------------------------------------------------------- *)
+
+val pelletier_corpus : (int * Term.term) list =
+  [(1, “(P ==> Q) <=> (~Q ==> ~P)”),
+   (2, “~~P <=> P”),
+   (3, “~(P ==> Q) ==> (Q ==> P)”),
+   (4, “(~P ==> Q) <=> (~Q ==> P)”),
+   (5, “((P \/ Q) ==> (P \/ R)) ==> (P \/ (Q ==> R))”),
+   (6, “P \/ ~P”),
+   (7, “P \/ ~~~P”),
+   (8, “((P ==> Q) ==> P) ==> P”),
+   (9, “((P \/ Q) /\ (~P \/ Q) /\ (P \/ ~Q)) ==>
+         ~(~P \/ ~Q)”),
+   (10, “(Q ==> R) /\ (R ==> P /\ Q) /\ (P ==> Q \/ R) ==>
+          (P <=> Q)”),
+   (11, “P <=> P”),
+   (12, “((P <=> Q) <=> R) <=> (P <=> (Q <=> R))”),
+   (13, “(P \/ (Q /\ R)) <=> ((P \/ Q) /\ (P \/ R))”),
+   (14, “(P <=> Q) <=> ((Q \/ ~P) /\ (~Q \/ P))”),
+   (15, “(P ==> Q) <=> (~P \/ Q)”),
+   (16, “(P ==> Q) \/ (Q ==> P)”),
+   (17, “((P /\ (Q ==> R)) ==> ss) <=>
+          ((~P \/ Q \/ ss) /\ (~P \/ ~R \/ ss))”),
+   (18, “?y:'a. !x. P y ==> P x”),
+   (19, “?x:'a. !y z. (P y ==> Q z) ==> (P x ==> Q x)”),
+   (20, “(!x:'a y. ?z. !w. P x /\ Q y ==> R z /\ ss w) ==>
+          ((?x y. P x /\ Q y) ==> ?z. R z)”),
+   (21, “(?x:'a. P ==> Q x) /\ (?x. Q x ==> P) ==>
+          ?x. P <=> Q x”),
+   (22, “(!x:'a. P <=> Q x) ==> (P <=> !x. Q x)”),
+   (23, “(!x:'a. P \/ Q x) <=> (P \/ !x. Q x)”),
+   (24, “~(?x:'a. ss x /\ Q x) /\
+          (!x. P x ==> Q x \/ R x) /\
+          (~(?x. P x) ==> ?x. Q x) /\
+          (!x. Q x \/ R x ==> ss x) ==>
+          ?x. P x /\ R x”),
+   (25, “(?x:'a. P x) /\
+          (!x. L x ==> ~(M x /\ R x)) /\
+          (!x. P x ==> M x /\ L x) /\
+          ((!x. P x ==> Q x) \/ (?x. P x /\ R x)) ==>
+          ?x. Q x /\ P x”),
+   (26, “((?x:'a. p x) <=> (?x. q x)) /\
+          (!x y. p x /\ q y ==> (r x <=> s y)) ==>
+          ((!x. p x ==> r x) <=> (!x. q x ==> s x))”),
+   (27, “(?x:'a. P x /\ ~Q x) /\
+          (!x. P x ==> R x) /\
+          (!x. M x /\ L x ==> P x) /\
+          ((?x. R x /\ ~Q x) ==> !x. L x ==> ~R x) ==>
+          !x. M x ==> ~L x”),
+   (28, “(!x:'a. P x ==> !y. Q y) /\
+          ((!x. Q x \/ R x) ==> ?x. Q x /\ ss x) /\
+          ((?x. ss x) ==> !x. L x ==> M x) ==>
+          !x. P x /\ L x ==> M x”),
+   (29, “(?x:'a. ff x) /\ (?y. G y) ==>
+          (((!x. ff x ==> H x) /\ (!y. G y ==> J y)) <=>
+           (!x y. ff x /\ G y ==> H x /\ J y))”),
+   (30, “(!x:'a. P x \/ Q x ==> ~R x) /\
+          (!x. (Q x ==> ~ss x) ==> P x /\ R x) ==>
+          !x. ss x”),
+   (31, “~(?x:'a. P x /\ (Q x \/ R x)) /\
+          (?x. L x /\ P x) /\
+          (!x. ~R x ==> M x) ==>
+          ?x. L x /\ M x”),
+   (32, “(!x:'a. P x /\ (Q x \/ R x) ==> ss x) /\
+          (!x. ss x /\ R x ==> L x) /\
+          (!x. M x ==> R x) ==>
+          !x. P x /\ M x ==> L x”),
+   (33, “(!x:'a. P a /\ (P x ==> P b) ==> P c) <=>
+          (!x. (~P a \/ P x \/ P c) /\
+               (~P a \/ ~P b \/ P c))”),
+   (34, “((?x:'a. !y. p x <=> p y) <=>
+           ((?x. q x) <=> (!y. p y))) <=>
+          ((?x. !y. q x <=> q y) <=>
+           ((?x. p x) <=> (!y. q y)))”),
+   (35, “?x:'a y. P x y ==> !u v. P u v”),
+   (36, “(!x:'a. ?y. J x y) /\
+          (!x. ?y. G x y) /\
+          (!x y. J x y \/ G x y ==>
+                 !z. J y z \/ G y z ==> H x z) ==>
+          !x. ?y. H x y”),
+   (37, “(!z:'a. ?w. !x. ?y.
+             (P x z ==> P y w) /\ P y z /\
+             (P y w ==> ?u. Q u w)) /\
+          (!x z. ~P x z ==> ?y. Q y z) /\
+          ((?x y. Q x y) ==> !x. R x x) ==>
+          !x. ?y. R x y”),
+   (38, “(!x:'a. p a /\ (p x ==> ?y. p y /\ r x y) ==>
+                   ?z w. p z /\ r x w /\ r w z) <=>
+          (!x. (~p a \/ p x \/
+                 (?z w. p z /\ r x w /\ r w z)) /\
+               (~p a \/ ~(?y. p y /\ r x y) \/
+                 (?z w. p z /\ r x w /\ r w z)))”),
+   (39, “~(?x:'a. !y. ff y x <=> ~ff y y)”),
+   (40, “(?y:'a. !x. ff x y <=> ff x x) ==>
+          ~(!x. ?y. !z. ff z y <=> ~ff z x)”),
+   (41, “(!z:'a. ?y. !x. f x y <=> (f x z /\ ~f x x)) ==>
+          ~(?z. !x. f x z)”),
+   (42, “~(?y:'a. !x. p x y <=> ~(?z. p x z /\ p z x))”),
+   (43, “(!x:'a y. q x y <=> (!z. p z x <=> p z y)) ==>
+          (!x y. q x y <=> q y x)”),
+   (44, “(!x:'a. f x ==>
+                 ?y. g y /\ h x y /\ (?z. g z /\ ~h x z)) /\
+          (?x. j x /\ (!y. g y ==> h x y)) ==>
+          ?x. j x /\ ~f x”),
+   (45, “(!x:'a. f x /\
+                 (!y. g y /\ h x y ==> j x y) ==>
+                 !y. g y /\ h x y ==> k y) /\
+          ~(?y. l y /\ k y) /\
+          (?x. f x /\ (!y. h x y ==> l y) /\
+               (!y. g y /\ h x y ==> j x y)) ==>
+          ?x. f x /\ ~(?y. g y /\ h x y)”),
+   (46, “(!x:'a. f x /\
+                 (!y. f y /\ h y x ==> g y) ==> g x) /\
+          ((?x. f x /\ ~g x) ==>
+           ?x. f x /\ ~g x /\
+               (!y. f y /\ ~g y ==> j x y)) /\
+          (!x y. f x /\ f y /\ h x y ==> ~j y x) ==>
+          !x. f x ==> g x”),
+   (52, “(?z w:'a. !x y. P x y <=> (x = z) /\ (y = w)) ==>
+          ?w. !y. (?z. !x. P x y <=> (x = z)) <=> (y = w)”),
+   (62, “(!x:'a. p a /\ (p x ==> p (f x)) ==> p (f (f x))) <=>
+          (!x. (~p a \/ p x \/ p (f (f x))) /\
+               (~p a \/ ~p (f x) \/ p (f (f x))))”)]
+
+(* TASK_23: Pelletier 1--46, 52 and 62 (END corpus). *)
+
+val pelletier_budget = Time.fromSeconds 30
+val pelletier_solved = ref 0
+
+fun run_pelletier (number, proposition) =
+  let
+    val name = "BLAST_TAC Pelletier " ^ Int.toString number
+    val _ = tprint name
+    val start = Time.now ()
+    val timed_out = ref false
+    val solved =
+      Timeout.apply pelletier_budget
+        (fn () =>
+          case Tactical.VALID (tableauLib.BLAST_TAC [])
+                 ([], proposition) of
+              ([], validation) => (ignore (validation []); true)
+            | _ => false) ()
+      handle Timeout.TIMEOUT _ => (timed_out := true; false)
+           | HOL_ERR _ => false
+    val elapsed = Time.- (Time.now (), start)
+  in
+    if solved andalso Time.< (elapsed, pelletier_budget) then
+      (pelletier_solved := !pelletier_solved + 1; OK ())
+    else if !timed_out orelse not (Time.< (elapsed, pelletier_budget)) then
+      die (name ^ " exceeded its 30 second budget")
+    else
+      die (name ^ " did not solve the goal")
+  end
+
+val _ = List.app run_pelletier pelletier_corpus
+
+val _ =
+  test
+    ("BLAST_TAC Pelletier solved-goal count",
+     fn () =>
+       !pelletier_solved = length pelletier_corpus andalso
+       !pelletier_solved = 48)

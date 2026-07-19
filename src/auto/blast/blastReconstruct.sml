@@ -40,10 +40,17 @@ fun move_children count node =
     move 1 node
   end
 
+(* Typed child construction strips implication/forall prefixes after rule
+   metavariables are instantiated.  The untyped tableau can therefore
+   record a pseudo-step that replay has already performed. *)
+fun apply_pseudo step node =
+  seq.append (apply step node) (seq.result node)
+
 fun apply_rule cs duplicate rule node =
   case #origin rule of
-      blastRule.ImpIntro => apply clasetStep.blast_disch_step node
-    | blastRule.AllIntro => apply clasetStep.blast_gen_step node
+      blastRule.ImpIntro =>
+        apply_pseudo clasetStep.blast_disch_step node
+    | blastRule.AllIntro => apply_pseudo clasetStep.blast_gen_step node
     | blastRule.Stored {is_elim, theorem} =>
         let
           val replay_theorem =

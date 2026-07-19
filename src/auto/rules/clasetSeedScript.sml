@@ -45,6 +45,88 @@ Proof
   BasicProvers.PROVE_TAC [boolTheory.EXCLUDED_MIDDLE]
 QED
 
+Theorem NOT_IMP_CELIM_THM:
+  !p q r. ~(p ==> q) ==> (p ==> ~q ==> r) ==> r
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem NOT_FORALL_CELIM_THM:
+  !P r. ~(!x. P x) ==> (!x. ~P x ==> r) ==> r
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem PREDICATE_CONSTANT_THM:
+  !P. (?x. !y. P x <=> P y) <=> ((?x. P x) <=> (!x. P x))
+Proof
+  BasicProvers.PROVE_TAC [boolTheory.EXCLUDED_MIDDLE]
+QED
+
+Theorem IFF_RECTANGLE_THM:
+  !a b c d.
+    (((a <=> b) <=> (c <=> b)) <=>
+     ((c <=> d) <=> (a <=> d)))
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem IMP_CNF_THM:
+  !a b c d.
+    ((a /\ (b ==> c) ==> d) <=>
+     ((~a \/ b \/ d) /\ (~a \/ ~c \/ d)))
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem DIAGONAL_NO_UNIVERSAL_THM:
+  (!z. ?y. !x. f x y <=> (f x z /\ ~f x x)) ==>
+  ~(?z. !x. f x z)
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem RELATION_DIAGONAL_THM:
+  ~(?y. !x. p x y <=> ~(?z. p x z /\ p z x))
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem EXTENSIONAL_SYMMETRY_THM:
+  (!x y. q x y <=> (!z. p z x <=> p z y)) ==>
+  (!x y. q x y <=> q y x)
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem QUANTIFIED_SEPARATION_THM:
+  (!x. f x /\ (!y. g y /\ h x y ==> j x y) ==>
+       !y. g y /\ h x y ==> k y) /\
+  ~(?y. l y /\ k y) /\
+  (?x. f x /\ (!y. h x y ==> l y) /\
+       (!y. g y /\ h x y ==> j x y)) ==>
+  ?x. f x /\ ~(?y. g y /\ h x y)
+Proof
+  metis_tac []
+QED
+
+Theorem QUANTIFIED_WELL_FOUNDED_THM:
+  (!x. f x /\ (!y. f y /\ h y x ==> g y) ==> g x) /\
+  ((?x. f x /\ ~g x) ==>
+   ?x. f x /\ ~g x /\ (!y. f y /\ ~g y ==> j x y)) /\
+  (!x y. f x /\ f y /\ h x y ==> ~j y x) ==>
+  !x. f x ==> g x
+Proof
+  metis_tac []
+QED
+
+Theorem UNIQUE_PAIR_PROJECTION_THM:
+  (?z w. !x y. P x y <=> (x = z) /\ (y = w)) ==>
+  ?w. !y. (?z. !x. P x y <=> (x = z)) <=> (y = w)
+Proof
+  metis_tac []
+QED
+
 Theorem EXISTS_ELIM_THM[selim]:
   !P q. (?x. P x) ==> (!x. P x ==> q) ==> q
 Proof

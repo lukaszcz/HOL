@@ -316,56 +316,49 @@ val HYP_SUBST_TAC =
 
 (* Blast records one equality substitution at a time.  Unlike the classical
    hyp-subst slot, affected assumptions are stably moved to the front. *)
-fun BLAST_HYP_SUBST_TAC (asl, w) =
+fun eta_atom_conv tm =
+  case total Drule.ETA_CONV tm of
+      NONE => REFL tm
+    | SOME theorem =>
+        TRANS theorem (eta_atom_conv (rhs (concl theorem)))
+
+fun blast_hyp_orientation equality =
   let
-    (* Search eta-contracts an equality side only while exposing its
-       rigid atom.  In particular it does not beta-normalize the side:
-       doing that here can reverse x/y orientation and desynchronize the
-       recorded branch. *)
-    fun eta_atom_conv tm =
-      case total Drule.ETA_CONV tm of
-          NONE => REFL tm
-        | SOME theorem =>
-            TRANS theorem
-              (eta_atom_conv (rhs (concl theorem)))
+    val equality_conversion =
+      Conv.THENC
+        (Conv.LAND_CONV eta_atom_conv,
+         Conv.RAND_CONV eta_atom_conv) equality
+    val contracted = rhs (concl equality_conversion)
+    val contracted_thm = EQ_MP equality_conversion (ASSUME equality)
+  in
+    case total dest_eq contracted of
+        NONE => NONE
+      | SOME (left, right) =>
+          let
+            fun suitable variable other =
+              is_var variable andalso
+              not (clasetMeta.is_meta variable) andalso
+              not (free_in variable other)
+          in
+            if suitable left right then
+              SOME (left, right, contracted_thm)
+            else if suitable right left then
+              SOME (right, left, SYM contracted_thm)
+            else NONE
+          end
+  end
 
-    fun orientation equality =
-      let
-        val equality_conversion =
-          Conv.THENC
-            (Conv.LAND_CONV eta_atom_conv,
-             Conv.RAND_CONV eta_atom_conv) equality
-        val contracted = rhs (concl equality_conversion)
-        val contracted_thm =
-          EQ_MP equality_conversion (ASSUME equality)
-      in
-        case total dest_eq contracted of
-            NONE => NONE
-          | SOME (left, right) =>
-              let
-                fun suitable variable other =
-                  is_var variable andalso
-                  not (clasetMeta.is_meta variable) andalso
-                  not (free_in variable other)
-              in
-                if suitable left right then
-                  SOME (left, right, contracted_thm)
-                else if suitable right left then
-                  SOME (right, left, SYM contracted_thm)
-                else NONE
-              end
-      end
-
-    fun find _ [] =
-          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
-            "no suitable equality assumption"
-      | find pos (equality :: rest) =
-          (case orientation equality of
-               SOME oriented => (pos, oriented)
-             | NONE => find (pos + 1) rest)
-
-    val (position, (old, replacement, equality_thm)) = find 1 asl
-    val remaining = delete_nth "BLAST_HYP_SUBST_TAC" asl position
+fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
+  let
+    val equality = nth1 "BLAST_HYP_SUBST_TAC_AT" asl position
+    val (old, replacement, equality_thm) =
+      case blast_hyp_orientation equality of
+          SOME oriented => oriented
+        | NONE =>
+            raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
+              "selected assumption is not a suitable equality"
+    val remaining =
+      delete_nth "BLAST_HYP_SUBST_TAC_AT" asl position
     val substitution = [{redex = old, residue = replacement}]
     fun substituted tm = Term.subst substitution tm
     fun affected tm = not (aconv (substituted tm) tm)
@@ -378,24 +371,69 @@ fun BLAST_HYP_SUBST_TAC (asl, w) =
       case children of
           [_] => ()
         | _ =>
-            raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+            raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
               "substitution did not produce one child"
 
     fun validation [child_thm] = validation0 [child_thm]
       | validation _ =
-          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
             "validation received the wrong number of theorems"
   in
     ([(reordered, target)], validation)
   end
 
-fun GEN_NAMED_TAC name (asl, w) =
+fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) =
   let
-    val (bound, _) = dest_forall w
-    val variable = mk_var (name, type_of bound)
+    fun first _ [] =
+          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
+            "no suitable equality assumption"
+      | first position (_ :: rest) =
+          (BLAST_HYP_SUBST_TAC_AT position goal
+           handle HOL_ERR _ => first (position + 1) rest)
   in
-    Tactic.X_GEN_TAC variable (asl, w)
+    first 1 asl
   end
+
+fun eta_forall_predicate tm =
+  case strip_comb tm of
+      (head, [predicate]) =>
+        (case total Type.dom_rng (type_of predicate) of
+             SOME (domain, range) =>
+               let
+                 val bound = genvar domain
+                 val forall_head = #1 (strip_comb (mk_forall (bound, T)))
+               in
+                 if range = bool andalso same_const head forall_head then
+                   SOME (bound, predicate)
+                 else NONE
+               end
+           | NONE => NONE)
+    | _ => NONE
+
+fun GEN_NAMED_TAC name (asl, w) =
+  case total dest_forall w of
+      SOME (bound, _) =>
+        Tactic.X_GEN_TAC (mk_var (name, type_of bound)) (asl, w)
+    | NONE =>
+        (case eta_forall_predicate w of
+             NONE =>
+               raise mk_HOL_ERR "clasetReplay" "GEN_NAMED_TAC"
+                 "goal is not universally quantified"
+           | SOME (bound, predicate) =>
+               let
+                 val variable = mk_var (name, type_of bound)
+                 val child = (asl, mk_comb (predicate, variable))
+
+                 fun validation [child_thm] =
+                       Conv.CONV_RULE
+                         (Conv.RAND_CONV Drule.ETA_CONV)
+                         (GEN variable child_thm)
+                   | validation _ =
+                       raise mk_HOL_ERR "clasetReplay" "GEN_NAMED_TAC"
+                         "validation received the wrong number of theorems"
+               in
+                 ([child], validation)
+               end)
 
 val GOAL_NEGATION_TAC = Tactic.CCONTR_TAC
 
@@ -503,6 +541,8 @@ fun mp_action positions store = MP_TAC store positions
 fun rule_action make store = RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC
+fun blast_hyp_subst_action_at position _ =
+  BLAST_HYP_SUBST_TAC_AT position
 val disch_action = fn _ => Tactic.DISCH_TAC
 fun gen_action name _ = GEN_NAMED_TAC name
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC
