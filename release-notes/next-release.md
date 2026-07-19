@@ -166,6 +166,13 @@ New tools
     hammer configuration or the `HOL4_<PROVER>_EXECUTABLE` environment
     variables.
 
+-   HOLyHammer now runs exclusively through its parallel slice scheduler and
+    returns on the first reconstruction-verified suggestion.  Its default
+    overall timeout is now 30 seconds.  Runtime options are set with
+    `hhConfig.hh_set`; `hhConfig.hh_params` reports all effective values and
+    their provenance.  `holyHammer.set_timeout` remains as a deprecated alias
+    for `hhConfig.hh_set ("timeout", ...)`.
+
 New examples
 ------------
 
@@ -183,11 +190,19 @@ Incompatibilities
 -   The `holyHammer.prover` datatype has been removed.  Provers are now
     identified by registry strings such as `"e"`, `"vampire"`,
     `"zipperposition"`, and `"z3"`.  Accordingly, `holyHammer.hh_pb` now
-    takes a `string list`, and `holyHammer.all_atps` is a public
-    `string list ref`.  The file-based `hhReconstruct.get_lemmas` API and
+    takes a `string list`.  The file-based `hhReconstruct.get_lemmas` API and
     its status/output-file protocol have also been removed.  The types of
-    `hh`, `holyhammer`, `hh_fork`, `main_hh`, and `main_hh_lemmas` are
-    unchanged.
+    `hh`, `holyhammer`, `hh_fork`, `hh_goal`, `hh_pb`, `main_hh`, and
+    `main_hh_lemmas` are unchanged.
+
+-   The old HolyHammer execution controls `timeout_glob`, `all_atps`, and
+    `premise_selection_flag` have been removed.  Use the `timeout`, `provers`,
+    and `filter` options through `hhConfig.hh_set`; in particular,
+    `premise_selection_flag := false` becomes
+    `hhConfig.hh_set ("filter", "none")`.  The race-result reference
+    `lemmas_glob` has been removed in favor of `main_hh_lemmas`.  The
+    Phase 0-only `e-legacy` and `vampire-legacy` prover registry entries have
+    also been removed; `z3` remains registered but has no scheduler slices.
 
 -   The return types of `parse_term.mk_prec_matrix`, `type_grammar.parse_map`, `type_grammar.privileged_abbrevs`
     have been changed to return maps of type HOLdict instead of Binarymap.

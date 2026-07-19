@@ -339,8 +339,7 @@ fun one_of choices value =
 val builtin_prover =
   fn name =>
     List.exists (fn item => name = item)
-      ["e", "vampire", "zipperposition", "z3", "e-legacy",
-       "vampire-legacy"]
+      ["e", "vampire", "zipperposition", "z3"]
 
 val prover_validator = ref builtin_prover
 

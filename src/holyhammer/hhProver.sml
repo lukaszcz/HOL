@@ -348,17 +348,6 @@ fun z3_command executable {timeout, problem, extra, ...} =
       "PULL_NESTED_QUANTIFIERS=true", "-T:" ^ Int.toString timeout] @
      extra @ [problem])
 
-fun e_legacy_command executable {timeout, problem, extra, ...} =
-  (executable,
-   ["-s", "--cpu-limit=" ^ Int.toString timeout, "--auto-schedule",
-    "--tstp-in", "-R", "--print-statistics", "-p", "--tstp-format"] @
-   extra @ [problem])
-
-fun vampire_legacy_command executable {timeout, problem, extra, ...} =
-  (executable,
-   ["--time_limit", Int.toString timeout, "--proof", "tptp",
-    "--output_axiom_names", "on"] @ extra @ [problem])
-
 val e_config : prover_config =
   {name = "e", exec_names = ["eprover-ho", "eprover"],
    env_var = "HOL4_EPROVER_EXECUTABLE", version_args = ["--version"],
@@ -398,24 +387,8 @@ val z3_config : prover_config =
    parse_output = parse_z3, default_nfacts = 32, slices = fn () => [],
    legacy = true}
 
-(* A legacy entry differs from its modern twin only in the name and the
-   command line, so derive it rather than restating the shared fields. *)
-fun legacy_variant (base : prover_config) name mk_command : prover_config =
-  {name = name, exec_names = #exec_names base, env_var = #env_var base,
-   version_args = #version_args base, parse_version = #parse_version base,
-   tested_versions = #tested_versions base, mk_command = mk_command,
-   parse_output = #parse_output base,
-   default_nfacts = #default_nfacts base, slices = fn () => [],
-   legacy = true}
-
-val e_legacy_config = legacy_variant e_config "e-legacy" e_legacy_command
-
-val vampire_legacy_config =
-  legacy_variant vampire_config "vampire-legacy" vampire_legacy_command
-
 val registry = ref
-  [e_config, vampire_config, zipperposition_config, z3_config,
-   e_legacy_config, vampire_legacy_config]
+  [e_config, vampire_config, zipperposition_config, z3_config]
 
 fun all () = !registry
 
@@ -432,14 +405,8 @@ fun register (config : prover_config) =
       | NONE => registry := !registry @ [config]
   end
 
-fun discovery_name name =
-  case name of
-      "e-legacy" => "e"
-    | "vampire-legacy" => "vampire"
-    | other => other
-
 fun find_exec ({name, exec_names, env_var, ...} : prover_config) =
-  hhConfig.find_exec_with_env (discovery_name name) env_var exec_names
+  hhConfig.find_exec_with_env name env_var exec_names
 
 fun is_found config = Option.isSome (find_exec config)
 

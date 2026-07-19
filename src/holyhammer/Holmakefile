@@ -12,7 +12,8 @@ hhSchedule.uo: hhSchedule.sml hhSchedule.ui hhConfig.uo hhProver.uo \
 
 hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo
 
-holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo
+holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
+               hhSlice.uo hhSchedule.uo
 
 selftest.uo: selftest.sml hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo \
              hhSchedule.uo hhEval.uo holyHammer.uo

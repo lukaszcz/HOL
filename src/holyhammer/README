@@ -2,7 +2,8 @@ HOLyHammer
 ==========
 
 HOLyHammer selects premises for a goal, translates the goal and premises to
-TPTP, races external provers, and reconstructs a proof with Metis.
+TPTP, schedules time slices across external provers, and reconstructs a proof
+with Metis.  It returns as soon as the first reconstructed proof is verified.
 
 Usage
 -----
@@ -14,15 +15,33 @@ At least one external prover must be installed.
     hh ([], ``1 + 1 = 2``);
     holyhammer ``1 + 1 = 2``;
 
-`set_timeout` is deprecated; use `hhConfig.hh_set ("timeout", "60")`.
+The overall default timeout is 30 seconds.  `set_timeout` is deprecated; use
+the option interface instead:
 
-The default prover registry names are `e`, `vampire`, and
-`zipperposition`.  To choose a portfolio explicitly, set for example:
+    hhConfig.hh_set ("timeout", "60");
+    hhConfig.hh_set ("provers", "e vampire");
+    hhConfig.hh_params ();
+    hhConfig.print_params ();
 
-    all_atps := ["e", "vampire"];
+`hh_set` validates values immediately.  `hh_params` returns every effective
+option as `(name, value, provenance)`, while `print_params` prints the same
+information with short descriptions.  Runtime settings take precedence over
+the user or system configuration and environment; use `hh_unset` to remove a
+runtime override.
 
-The legacy registry entries `z3`, `e-legacy`, and `vampire-legacy` remain
-available when explicitly requested.
+The options are `timeout`, `max_proofs`, `provers`, `slices`, `cores`,
+`filter`, `max_facts`, `minimize`, `preplay_timeout`, `minimize_timeout`,
+`cache`, `cache_dir`, `cache_max_entries`, and `debug_dir`.  Set `filter` to
+`none` to use all available premises in dependency order.  The old public
+references `timeout_glob`, `premise_selection_flag`, and `all_atps` have been
+removed; their replacements are the `timeout`, `filter`, and `provers`
+options.  `lemmas_glob` has also been removed: integrations should consume
+`main_hh_lemmas` directly.
+
+The scheduled prover names are `e`, `vampire`, and `zipperposition`.  The
+`z3` registry entry remains callable through `hhProver`, but has no scheduler
+slices.  The temporary Phase 0 `e-legacy` and `vampire-legacy` registry
+entries have been removed.
 
 Installing provers
 ------------------
@@ -39,8 +58,8 @@ Zipperposition through export, proof search, and reconstruction:
     ./smoke.exe
 
 Alternatively, put a supported binary on `PATH`.  HOLyHammer looks for
-`eprover-ho` or `eprover`, `vampire`, `zipperposition`, and, for the legacy
-Z3 entry, `z3_tptp` or `z3`.
+`eprover-ho` or `eprover`, `vampire`, `zipperposition`, and, for the
+schedule-less Z3 entry, `z3_tptp` or `z3`.
 
 The tested versions are:
 

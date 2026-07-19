@@ -372,18 +372,12 @@ fun test_hhProver () =
     val vampire = prover "vampire"
     val zipperposition = prover "zipperposition"
     val z3 = prover "z3"
-    val e_legacy = prover "e-legacy"
-    val vampire_legacy = prover "vampire-legacy"
     val names = map #name (hhProver.all ())
     val _ = expect "all built-in provers"
-      (names = ["e", "vampire", "zipperposition", "z3", "e-legacy",
-                "vampire-legacy"])
+      (names = ["e", "vampire", "zipperposition", "z3"])
     val _ = expect "default provers are found and non-legacy"
       (List.all (fn name => not (#legacy (prover name)))
        (hhProver.default_provers ()))
-    val _ = expect "legacy entries reuse modern executable discovery"
-      (hhProver.find_exec e_legacy = hhProver.find_exec e andalso
-       hhProver.find_exec vampire_legacy = hhProver.find_exec vampire)
     val _ = expect "duplicate prover names are rejected"
       ((hhProver.register e; false) handle Fail _ => true)
     val _ = test_recording "e-theorem-chatter.out" (#parse_output e)
@@ -398,8 +392,6 @@ fun test_hhProver () =
       hhProver.SzsCounterSat NONE
     val _ = test_recording "vampire-timeout.out" (#parse_output vampire)
       hhProver.SzsTimeout NONE
-    val _ = test_recording "vampire-legacy-timeout.out"
-      (#parse_output vampire_legacy) hhProver.SzsTimeout NONE
     val _ = test_recording "z3-tptp-theorem.out" (#parse_output z3)
       hhProver.SzsTheorem (SOME ["keep_name"])
     val _ = test_recording "zipperposition-theorem.out"
@@ -444,15 +436,6 @@ fun test_hhProver () =
       ("z3_tptp", ["-c", "-smt.pull_nested_quantifiers:true", "-t:7",
         "--extra", "-file:problem.p"])
       (#mk_command z3 "z3_tptp" sample_request)
-    val _ = expect_equal "E legacy command"
-      ("e", ["-s", "--cpu-limit=7", "--auto-schedule", "--tstp-in",
-        "-R", "--print-statistics", "-p", "--tstp-format", "--extra",
-        "problem.p"])
-      (#mk_command e_legacy "e" sample_request)
-    val _ = expect_equal "Vampire legacy command"
-      ("vampire", ["--time_limit", "7", "--proof", "tptp",
-        "--output_axiom_names", "on", "--extra", "problem.p"])
-      (#mk_command vampire_legacy "vampire" sample_request)
   in
     ()
   end
@@ -497,9 +480,9 @@ fun test_hhSlice () =
       [expected "zipperposition" 128 [],
        expected "zipperposition" 512 [],
        expected "zipperposition" 32 []] zipperposition_slices
-    val _ = expect "legacy one-shot provers have no slices"
+    val _ = expect "Z3 stays callable without scheduler slices"
       (List.all (null o (fn config => #slices config ()))
-       (map prover ["z3", "e-legacy", "vampire-legacy"]))
+       (map prover ["z3"]))
     val _ = expect_equal "rotation truncates to requested slice count"
       ["vampire", "e", "zipperposition", "vampire", "e"]
       (hhSlice.schedule_of_provers
@@ -715,36 +698,16 @@ fun test_hhCache () =
 fun contains needle haystack =
   String.isSubstring needle haystack
 
-fun main_hh_error names =
-  let
-    val saved = !holyHammer.all_atps
-    fun restore result = (holyHammer.all_atps := saved; result)
-    fun call () =
-      ignore (holyHammer.main_hh "" mlThmData.empty_thmdata
-        ([], boolSyntax.T))
-  in
-    holyHammer.all_atps := names;
-    ((call (); restore NONE)
-     handle Feedback.HOL_ERR error =>
-       restore (SOME (Feedback.message_of error))
-          | exn => (holyHammer.all_atps := saved; raise exn))
-  end
+fun hh_error call =
+  ((call (); NONE)
+   handle Feedback.HOL_ERR error => SOME (Feedback.message_of error))
 
 fun test_holyHammer_validation () =
   let
     val unknown = "not-a-holyhammer-prover"
-    val _ = holyHammer.lemmas_glob := SOME ["stale-result"]
-    val message = main_hh_error [unknown]
-    val _ = expect "failed calls clear saved HolyHammer lemmas"
-      (not (Option.isSome (!holyHammer.lemmas_glob)))
-    val _ = expect "all_atps rejects unknown registry names"
-      (case message of
-           SOME text =>
-             contains unknown text andalso
-             contains
-               ("known provers: e, vampire, zipperposition, z3, " ^
-                "e-legacy, vampire-legacy") text
-         | NONE => false)
+    val _ = expect "prover option rejects unknown registry names"
+      (option_error [unknown, "registered prover names"]
+        (fn () => hhConfig.hh_set ("provers", unknown)))
   in
     case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
         NONE => ()
@@ -752,7 +715,9 @@ fun test_holyHammer_validation () =
           let
             val output = OS.FileSys.tmpName ()
             val message = smlRedirect.hide_in_file output
-              (fn () => main_hh_error ["zipperposition"]) ()
+              (fn () => hh_error (fn () =>
+                ignore (holyHammer.hh_pb "" ["zipperposition"] []
+                  ([], boolSyntax.T)))) ()
             val printed = String.concat (read_lines output)
             val _ = OS.FileSys.remove output
           in
@@ -1279,30 +1244,25 @@ fun test_holyHammer_e () =
               (tprint "holyHammer end-to-end e (skipped: absent)"; OK ())
           | SOME _ =>
               let
-                val saved = !holyHammer.all_atps
                 val root = OS.FileSys.tmpName ()
                 val _ = remove_tree root
                 val _ = mkdir root
                 val add1 = DB.fetch "arithmetic" "ADD1"
                 val success =
-                  ((holyHammer.all_atps := ["e"];
-                    holyHammer.set_timeout 10;
-                    ignore (holyHammer.hh ([], boolSyntax.T));
+                  ((holyHammer.set_timeout 10;
                     ignore (holyHammer.hh_pb root ["e"]
                       ["arithmeticTheory.ADD1"] (Thm.dest_thm add1));
-                    case !holyHammer.lemmas_glob of
-                        SOME (_ :: _) => true
-                      | _ => false)
+                    true)
                    handle Interrupt =>
-                     (holyHammer.all_atps := saved; raise Interrupt)
+                     raise Interrupt
                         | Feedback.HOL_ERR error =>
                      (print (Feedback.message_of error ^ "\n"); false)
                         | exn =>
                      (print (General.exnMessage exn ^ "\n"); false))
-                val _ = holyHammer.all_atps := saved
+                val _ = hhConfig.hh_unset "timeout"
                 val _ = remove_tree root
               in
-                expect "holyHammer end-to-end e with used axioms" success
+                expect "holyHammer hh_pb end-to-end e" success
               end
 
 val _ = test_szs_status_words ()
@@ -1646,6 +1606,82 @@ fun test_hhSchedule () =
         end
 
 val _ = test_hhSchedule ()
+
+fun with_hh_options settings action =
+  let
+    fun clear () = List.app (hhConfig.hh_unset o #1) settings
+    val _ = List.app hhConfig.hh_set settings
+  in
+    (action () before clear ())
+    handle exn => (clear (); raise exn)
+  end
+
+fun test_main_hh_lemmas_hook parser =
+  let
+    val name = "hh-main-lemmas-hook"
+    val launches = ref 0
+    val slices =
+      [fixture_slice name ["0", "schedule-truth.out"] 1,
+       fixture_slice name ["5", "schedule-t-def.out"] 1,
+       fixture_slice name ["0", "schedule-add1.out"] 1]
+    fun note _ = launches := !launches + 1
+    val _ = hhProver.register (printer_config name slices note parser)
+    val settings =
+      [("provers", name), ("slices", "3"), ("cores", "1"),
+       ("timeout", "5"), ("filter", "none"), ("debug_dir", "")]
+    val lemmas = with_hh_options settings (fn () =>
+      holyHammer.main_hh_lemmas "/ignored" mlThmData.empty_thmdata
+        ([], boolSyntax.T))
+    val _ = expect "main_hh_lemmas returns scheduler suggestion lemmas"
+      (lemmas = SOME ["boolTheory.TRUTH"])
+    val _ = expect "interactive HolyHammer stops after one verified proof"
+      (!launches < length slices)
+  in
+    ()
+  end
+
+fun test_holyHammer_unverified_failure parser =
+  let
+    val name = "hh-main-unverified"
+    val slice = fixture_slice name
+      ["0", "schedule-unreconstructable.out"] 1
+    val debug = OS.FileSys.tmpName ()
+    val _ = remove_tree debug
+    val _ = hhProver.register
+      (printer_config name [slice] (fn _ => ()) parser)
+    val settings =
+      [("provers", name), ("slices", "1"), ("cores", "1"),
+       ("timeout", "5"), ("filter", "none"), ("debug_dir", debug)]
+    val goal = ([], Thm.concl (DB.fetch "arithmetic" "ADD1"))
+    val message = with_hh_options settings (fn () =>
+      hh_error (fn () => ignore
+        (holyHammer.main_hh "/ignored" mlThmData.empty_thmdata
+          goal)))
+    val problem = join
+      (join (join (hhConfig.state_dir ()) "problems") "0") "atp_in"
+    val _ = expect "unverified ATP proofs are reported with diagnostics"
+      (case message of
+           SOME text =>
+             contains name text andalso
+             contains "fixtureTheory.unreconstructable" text andalso
+             contains problem text andalso contains debug text andalso
+             contains "output:" text
+         | NONE => false)
+    val _ = remove_tree debug
+  in
+    ()
+  end
+
+fun test_holyHammer_scheduler_api () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+        let val parser = #parse_output (prover "e") in
+          test_main_hh_lemmas_hook parser;
+          test_holyHammer_unverified_failure parser
+        end
+
+val _ = test_holyHammer_scheduler_api ()
 
 fun test_hhEval_integration () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
