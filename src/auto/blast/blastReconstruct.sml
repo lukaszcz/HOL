@@ -13,17 +13,6 @@ fun first_result sequence =
         raise mk_HOL_ERR "blastReconstruct" "first_result"
           "the recorded step does not apply"
 
-fun map_partial transform sequence =
-  seq.delay
-    (fn () =>
-      case seq.cases sequence of
-          NONE => seq.empty
-        | SOME (value, rest) =>
-            (case transform value of
-                 SOME result =>
-                   seq.cons result (map_partial transform rest)
-               | NONE => map_partial transform rest))
-
 fun apply step node = seq.map #2 (step (node, 1))
 
 fun move_children count node =
@@ -73,7 +62,7 @@ fun apply_rule cs duplicate rule node =
               else next
             end
         in
-          map_partial (total finish) transitions
+          seq.mapPartial (total finish) transitions
         end
 
 fun execute cs step node =

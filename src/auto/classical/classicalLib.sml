@@ -221,54 +221,9 @@ fun bounded_depth cs bound initial =
 fun deepen_tac cs {start} =
   solve (clasetSearch.DEEPEN (2, 10) (bounded_depth cs) start)
 
-fun has_marker_head marker theorem =
-  let val (head, _) = strip_comb (concl theorem)
-  in same_const marker head end
-  handle HOL_ERR _ => false
-
-fun is_bounded theorem =
-  Option.isSome (total BoundedRewrites.DEST_BOUNDED theorem)
-
-fun is_passthrough_marker theorem =
-  has_marker_head markerSyntax.AC_tm theorem orelse
-  has_marker_head markerSyntax.Cong_tm theorem orelse
-  has_marker_head markerSyntax.Split_tm theorem orelse
-  Option.isSome (markerLib.destExcl theorem) orelse
-  Option.isSome (markerLib.destExclSF theorem) orelse
-  Option.isSome (markerLib.destFRAG theorem) orelse
-  is_bounded theorem
-
-fun rule_name_exists name cs =
-  List.exists (fn (_, (old_name, _)) => name = old_name)
-    (clasetLib.rules_of cs)
-
-fun next_extra_name cs index =
-  let val name = "__classical_extra_" ^ Int.toString index
-  in
-    if rule_name_exists name cs then next_extra_name cs (index + 1)
-    else (name, index + 1)
-  end
-
-fun add_plain_theorems theorems cs =
-  let
-    fun add (theorem, (current, index)) =
-      if is_passthrough_marker theorem then (current, index)
-      else
-        let val (name, next) = next_extra_name current index
-        in
-          (clasetLib.add_intros [(name, theorem)] current, next)
-        end
-  in
-    #1 (List.foldl add (cs, 0) theorems)
-  end
-
 fun invocation_claset theorems =
-  let
-    val (tagged, leftovers) =
-      clasetLib.process_claset_tags theorems (clasetLib.the_claset ())
-  in
-    add_plain_theorems leftovers tagged
-  end
+  clasetLib.invocation_claset {prefix = "__classical_extra_"}
+    (clasetLib.the_claset ()) theorems
 
 fun public tactic theorems goal =
   NTactical.DETERM (tactic (invocation_claset theorems)) goal

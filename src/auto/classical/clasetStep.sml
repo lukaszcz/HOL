@@ -84,15 +84,13 @@ fun goal_equal ((asl1, w1), (asl2, w2)) =
 fun goals_equal (left, right) =
   ListPair.allEq goal_equal (left, right)
 
-fun member_aconv tm = List.exists (fn old => aconv tm old)
-
 fun new_free_names_by_goal (asl, w) goals =
   let
     val old_frees = free_varsl (w :: asl)
     fun names (child_asl, child_w) =
       map (fst o dest_var)
         (List.filter
-          (fn variable => not (member_aconv variable old_frees))
+          (fn variable => not (tmem variable old_frees))
           (free_varsl (child_w :: child_asl)))
   in
     map names goals
@@ -1473,20 +1471,19 @@ fun safe_step cs =
 fun clarify_step cs =
   wrapped_step clasetLib.app_safe_wrappers clarify_cascade cs
 
-fun inst0_step cs =
-  wrapped_step (fn _ => fn tactic => tactic) inst0_cascade cs
+(* Unsafe steps carry no wrappers: the claset's safe wrappers apply only
+   to safe and clarify cascades. *)
+fun no_wrappers _ tactic = tactic
 
-fun instp_step cs =
-  wrapped_step (fn _ => fn tactic => tactic) instp_cascade cs
+fun inst0_step cs = wrapped_step no_wrappers inst0_cascade cs
 
-fun inst_step cs =
-  wrapped_step (fn _ => fn tactic => tactic) inst_cascade cs
+fun instp_step cs = wrapped_step no_wrappers instp_cascade cs
 
-fun unsafe_step cs =
-  wrapped_step (fn _ => fn tactic => tactic) unsafe_cascade cs
+fun inst_step cs = wrapped_step no_wrappers inst_cascade cs
 
-fun dup_step cs =
-  wrapped_step (fn _ => fn tactic => tactic) dup_cascade cs
+fun unsafe_step cs = wrapped_step no_wrappers unsafe_cascade cs
+
+fun dup_step cs = wrapped_step no_wrappers dup_cascade cs
 
 fun first_result sequence =
   case seq.cases sequence of

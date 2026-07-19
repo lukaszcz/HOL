@@ -72,6 +72,12 @@ sig
 
   val process_claset_tags : thm list -> claset -> claset * thm list
 
+  (* Assemble the claset for one tactic invocation: consume the classical
+     marker vocabulary, then add the plain leftovers as unsafe intros under
+     generated names formed from prefix.  Engines differ only in that prefix
+     and in the base claset they start from. *)
+  val invocation_claset : {prefix : string} -> claset -> thm list -> claset
+
   (* A contribution must be pure and deterministic.  Its result for a given
      tyinfo may be evaluated more than once; invocation count and timing are
      not API guarantees. *)

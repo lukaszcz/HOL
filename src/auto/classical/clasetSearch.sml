@@ -43,9 +43,12 @@ val last_pruning_count = ref 0
 fun node_count () = !last_node_count
 fun pruning_count () = !last_pruning_count
 
+(* The message is a thunk: at the default trace level neither the goal
+   rendering nor the string concatenation is evaluated, and expansion
+   tracing runs once per node over the whole search. *)
 fun trace level message =
   if level <= Feedback.current_trace "classical" then
-    Feedback.HOL_MESG ("Classical reasoner: " ^ message)
+    Feedback.HOL_MESG ("Classical reasoner: " ^ message ())
   else ()
 
 fun show_node node =
@@ -53,10 +56,11 @@ fun show_node node =
 
 fun expansion_trace driver count node =
   (trace 2
-     (driver ^ " expansion " ^ Int.toString count ^
-      ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^
-      ", size=" ^ Int.toString (clasetGoal.size node));
-   trace 3 (driver ^ " candidate: " ^ show_node node))
+     (fn () =>
+       driver ^ " expansion " ^ Int.toString count ^
+       ", goals=" ^ Int.toString (length (clasetGoal.goals node)) ^
+       ", size=" ^ Int.toString (clasetGoal.size node));
+   trace 3 (fn () => driver ^ " candidate: " ^ show_node node))
 
 fun member_node node = List.exists (fn old => clasetGoal.equal (node, old))
 
@@ -290,9 +294,10 @@ fun DEPTH_SOLVE expand initial =
                               if discarded = 0 then ()
                               else
                                 trace 2
-                                  ("dynamic pruning discarded " ^
-                                   Int.toString discarded ^
-                                   " choice points")
+                                  (fn () =>
+                                    "dynamic pruning discarded " ^
+                                    Int.toString discarded ^
+                                    " choice points")
                           in
                             kept
                           end
@@ -341,8 +346,9 @@ fun allow_expansion driver count node =
   if limit_reached count then
     (last_node_count := count;
      trace 1
-       (driver ^ " stopped at node limit " ^
-        Int.toString (!node_limit));
+       (fn () =>
+         driver ^ " stopped at node limit " ^
+         Int.toString (!node_limit));
      false)
   else
     (last_node_count := count + 1;
@@ -366,7 +372,7 @@ fun BEST_FIRST satisfied expand initial =
     and next (heap, count) =
       if searchHeap.is_empty heap then
         (last_node_count := count;
-         trace 1 "best-first search exhausted";
+         trace 1 (fn () => "best-first search exhausted");
          seq.empty)
       else
         let
@@ -421,7 +427,7 @@ fun ASTAR satisfied expand initial =
 
     and next ([], count) =
           (last_node_count := count;
-           trace 1 "A* search exhausted";
+           trace 1 (fn () => "A* search exhausted");
            seq.empty)
       | next ((_, current) :: rest, count) =
           if not (allow_expansion "A*" count current) then seq.empty
@@ -452,11 +458,14 @@ fun DEEPEN (increment, limit) bounded start initial =
           if List.null (clasetGoal.goals initial) then seq.empty
           else if bound > limit then
             (trace 1
-               ("deepening exhausted at bound " ^ Int.toString limit);
+               (fn () =>
+                 "deepening exhausted at bound " ^ Int.toString limit);
              seq.empty)
           else
             let
-              val _ = trace 2 ("trying depth bound " ^ Int.toString bound)
+              val _ =
+                trace 2
+                  (fn () => "trying depth bound " ^ Int.toString bound)
             in
               case seq.cases (bounded bound initial) of
                   NONE => deepen (bound + increment)

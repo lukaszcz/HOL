@@ -448,6 +448,7 @@ fun runTerms debug claset depth formulas cont =
               val cache = blastRule.newCache ()
               val rules =
                 blastRule.safeRules cache claset vars formula
+              val rule_count = length rules
 
               fun newBranches (vars', lim') prems =
                 map
@@ -480,7 +481,7 @@ fun runTerms debug claset depth formulas cont =
                           val updated = mark < trailSize state
                           val lim' =
                             if updated then
-                              lim - instantiationPenalty (length rules)
+                              lim - instantiationPenalty rule_count
                             else lim
                           val vars0 = vars_in_vars vars
                           val vars' = foldPremVars prems vars0
@@ -597,6 +598,8 @@ fun runTerms debug claset depth formulas cont =
               val cache = blastRule.newCache ()
               val rules =
                 blastRule.unsafeRules cache claset vars formula
+              val rule_count = length rules
+              val branches = length brs0
 
               fun newPremise
                     (vars', pattern, duplicate, lim') premise =
@@ -638,7 +641,7 @@ fun runTerms debug claset depth formulas cont =
                           val duplicate = md
                           val lim' =
                             if updated then
-                              lim - instantiationPenalty (length rules)
+                              lim - instantiationPenalty rule_count
                             else lim - 1
                           val undo =
                             mayUndo
@@ -663,8 +666,7 @@ fun runTerms debug claset depth formulas cont =
                                    !created + length prems - 1;
                                prv
                                  (step :: tacs, brs0 :: trace,
-                                  Choice
-                                    (mark, length brs0, PRV) ::
+                                  Choice (mark, branches, PRV) ::
                                     choices,
                                   newBranches
                                     (new_vars, pattern, duplicate,

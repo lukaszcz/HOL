@@ -1,5 +1,5 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-INCLUDES = $(HOLDIR)/src/auto/rules
+INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/metis
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all

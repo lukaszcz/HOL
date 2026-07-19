@@ -11,51 +11,6 @@ type try_result =
 
 val depth_limit = blastSearch.depth_limit
 
-fun has_marker_head marker theorem =
-  let val (head, _) = strip_comb (concl theorem)
-  in same_const marker head end
-  handle HOL_ERR _ => false
-
-fun is_bounded theorem =
-  Option.isSome (total BoundedRewrites.DEST_BOUNDED theorem)
-
-(* Generic simplifier markers are not classical-rule declarations. *)
-fun is_passthrough_marker theorem =
-  has_marker_head markerSyntax.AC_tm theorem orelse
-  has_marker_head markerSyntax.Cong_tm theorem orelse
-  has_marker_head markerSyntax.Split_tm theorem orelse
-  Option.isSome (markerLib.destExcl theorem) orelse
-  Option.isSome (markerLib.destExclSF theorem) orelse
-  Option.isSome (markerLib.destFRAG theorem) orelse
-  is_bounded theorem
-
-fun rule_name_exists name cs =
-  List.exists (fn (_, (old_name, _)) => name = old_name)
-    (clasetLib.rules_of cs)
-
-fun next_extra_name cs index =
-  let val name = "__blast_extra_" ^ Int.toString index
-  in
-    if rule_name_exists name cs then next_extra_name cs (index + 1)
-    else (name, index + 1)
-  end
-
-(* process_claset_tags consumes the classical marker vocabulary.  Plain
-   leftovers become unsafe intros; Cong, Excl, SF, and related generic
-   markers deliberately pass through without becoming tableau rules. *)
-fun add_plain_theorems theorems cs =
-  let
-    fun add (theorem, (current, index)) =
-      if is_passthrough_marker theorem then (current, index)
-      else
-        let val (name, next) = next_extra_name current index
-        in
-          (clasetLib.add_intros [(name, theorem)] current, next)
-        end
-  in
-    #1 (List.foldl add (cs, 0) theorems)
-  end
-
 fun blast_claset () =
   clasetLib.add_selims
     [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
@@ -63,12 +18,8 @@ fun blast_claset () =
     (clasetLib.the_claset ())
 
 fun invocation_claset theorems =
-  let
-    val (tagged, leftovers) =
-      clasetLib.process_claset_tags theorems (blast_claset ())
-  in
-    add_plain_theorems leftovers tagged
-  end
+  clasetLib.invocation_claset {prefix = "__blast_extra_"}
+    (blast_claset ()) theorems
 
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)

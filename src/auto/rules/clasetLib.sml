@@ -805,4 +805,54 @@ fun process_claset_tags thms cs =
     process (cs, []) thms
   end
 
+fun has_marker_head marker theorem =
+  let val (head, _) = strip_comb (concl theorem)
+  in same_const marker head end
+  handle HOL_ERR _ => false
+
+fun is_bounded theorem =
+  Option.isSome (total BoundedRewrites.DEST_BOUNDED theorem)
+
+(* Generic simplifier markers are not classical-rule declarations. *)
+fun is_passthrough_marker theorem =
+  has_marker_head markerSyntax.AC_tm theorem orelse
+  has_marker_head markerSyntax.Cong_tm theorem orelse
+  has_marker_head markerSyntax.Split_tm theorem orelse
+  Option.isSome (markerLib.destExcl theorem) orelse
+  Option.isSome (markerLib.destExclSF theorem) orelse
+  Option.isSome (markerLib.destFRAG theorem) orelse
+  is_bounded theorem
+
+fun rule_name_exists name cs =
+  List.exists (fn (_, (old_name, _)) => name = old_name) (rules_of cs)
+
+fun next_extra_name prefix cs index =
+  let val name = prefix ^ Int.toString index
+  in
+    if rule_name_exists name cs then next_extra_name prefix cs (index + 1)
+    else (name, index + 1)
+  end
+
+(* process_claset_tags consumes the classical marker vocabulary.  Plain
+   leftovers become unsafe intros; Cong, Excl, SF, and related generic
+   markers deliberately pass through without becoming rules. *)
+fun add_plain_theorems prefix theorems cs =
+  let
+    fun add (theorem, (current, index)) =
+      if is_passthrough_marker theorem then (current, index)
+      else
+        let val (name, next) = next_extra_name prefix current index
+        in
+          (add_intros [(name, theorem)] current, next)
+        end
+  in
+    #1 (List.foldl add (cs, 0) theorems)
+  end
+
+fun invocation_claset {prefix} base theorems =
+  let val (tagged, leftovers) = process_claset_tags theorems base
+  in
+    add_plain_theorems prefix leftovers tagged
+  end
+
 end

@@ -77,14 +77,7 @@ fun unify_types store config pair =
   end
 
 fun distinct_terms terms =
-  let
-    fun recurse _ [] = true
-      | recurse previous (term :: rest) =
-          not (List.exists (fn old => aconv old term) previous) andalso
-          recurse (term :: previous) rest
-  in
-    recurse [] terms
-  end
+  length (Lib.op_mk_set aconv terms) = length terms
 
 datatype pattern = NoPattern | Pattern of term
 
