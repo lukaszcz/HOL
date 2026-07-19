@@ -46,9 +46,14 @@ jobs:
       - name: Rebuild HolyHammer against the pinned HOL
         shell: sh
         run: |
+          # hhEval uses JSONPrinter, which this branch adds; the image's
+          # sigobj predates it, so refresh the json library first.
+          cp -a src/portableML/json/. /ML/HOL/src/portableML/json/
           cp -a src/AI/proof_search/. /ML/HOL/src/AI/proof_search/
           cp -a src/AI/machine_learning/. /ML/HOL/src/AI/machine_learning/
           cp -a src/holyhammer/. /ML/HOL/src/holyhammer/
+          /ML/HOL/bin/Holmake -C /ML/HOL/src/portableML/json cleanAll
+          /ML/HOL/bin/Holmake -C /ML/HOL/src/portableML/json
           /ML/HOL/bin/Holmake -C /ML/HOL/src/AI/proof_search cleanAll
           /ML/HOL/bin/Holmake -C /ML/HOL/src/AI/proof_search
           /ML/HOL/bin/Holmake -C /ML/HOL/src/AI/machine_learning cleanAll

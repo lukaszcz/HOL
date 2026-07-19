@@ -370,7 +370,11 @@ fun install_exec root prover names =
     val plat = platform ()
     fun in_version (_, name) = path_exec_in (join (join root name) plat) names
   in
-    first_some in_version versions
+    case first_some in_version versions of
+        SOME path => SOME path
+      (* Legacy flat layout: the binary sits directly in provers/, as the
+         pre-download-provers instructions told users to install it. *)
+      | NONE => path_exec_in root names
   end
 
 and path_exec_in dir names =

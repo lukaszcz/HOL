@@ -77,7 +77,11 @@ fun pathl sl = case sl of
   | a :: m => OS.Path.concat (a, pathl m)
 
 val hhdir = pathl [HOLDIR,"src","holyhammer"]
-val workdir = hhConfig.state_dir ()
+(* Deliberately a function: state_dir needs HOME and creates directories,
+   so binding it at structure-initialisation time would make merely
+   loading holyHammer fail wherever HOME is unset or the home is
+   read-only. *)
+fun workdir () = hhConfig.state_dir ()
 fun fof_dir dir (config : hhProver.prover_config) =
   pathl [dir, #name config ^ "_files"]
 
@@ -135,9 +139,11 @@ val atp_ref = ref ""
 
 fun run_atp fofdir (config : hhProver.prover_config) t =
   let
+    (* Keep the prover's output next to the problem, as the deleted shell
+       wrappers did, so a failed hh call can still be diagnosed. *)
     val request : hhProver.run_request =
       {timeout = t, problem = pathl [fofdir, "atp_in"], extra = [],
-       debug_dir = NONE}
+       debug_dir = SOME fofdir}
     val result = hhProver.run config request
     val r = #used_axioms result
   in
@@ -184,8 +190,10 @@ fun hh_pb_configs dir configs premises goal =
         raise ERR "hh_pb" "ATPs could not find a proof")
     | SOME lemmas =>
       let
-        val (stac,tac) = hidef (hh_reconstruct lemmas) goal
+        (* Publish the premises before reconstructing: a reconstruction
+           failure must not discard the proof the ATP did find. *)
         val _ = lemmas_glob := SOME lemmas
+        val (stac,tac) = hidef (hh_reconstruct lemmas) goal
       in
         log_eval ("  minimized proof:  \n    " ^ stac);
         tac
@@ -224,7 +232,7 @@ fun hh_goal goal =
   then raise ERR "hh_goal" "a term is not of type bool"
   else
     let val thmdata = hidef create_thmdata () in
-      main_hh workdir thmdata goal
+      main_hh (workdir ()) thmdata goal
     end
 
 fun hh_fork goal = Thread.fork (fn () => ignore (hh_goal goal), attrib)

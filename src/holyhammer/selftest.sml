@@ -88,6 +88,12 @@ fun test_child root =
       in
         make_executable file; file
       end
+    (* Pre-download-provers installations put the binary straight into
+       provers/, with no version or platform directory. *)
+    val flat_exec =
+      let val file = join system_provers "flat-exec" in
+        mkdirs system_provers; make_executable file; file
+      end
     val _ = make_executable config_exec
     val _ = make_executable env_exec
     val _ = mkdirs path_dir
@@ -149,6 +155,11 @@ fun test_child root =
       (hhConfig.find_exec "installprover" ["install-exec"] <> SOME user_new)
     val _ = expect "older installation is not selected"
       (hhConfig.find_exec "installprover" ["install-exec"] <> SOME system_old)
+    val _ = expect "legacy flat installation discovery"
+      (is_some flat_exec (hhConfig.find_exec "flatprover" ["flat-exec"]))
+    val _ = expect "versioned installation precedes the legacy layout"
+      (is_some system_new
+       (hhConfig.find_exec "installprover" ["install-exec"]))
     val _ = expect "dump reports provenance"
       (List.exists (fn (key, value) =>
          key = "priority" andalso String.isPrefix "config: " value)
@@ -607,6 +618,30 @@ fun test_hhEval root =
     val _ = expect "resume retries harness errors"
       (not (hhEval.cell_completed (hhEval.read_completed retry)
         ("list.nil", "deps-e")))
+    val run_failure = hhEval.journal_path expdir "runfailure"
+    val _ = hhEval.append_journal run_failure
+      {run = #run retry_entry, thy = #thy retry_entry,
+       thm = #thm retry_entry, goal_id = #goal_id retry_entry,
+       cond = #cond retry_entry, regime = #regime retry_entry,
+       selector = #selector retry_entry, prover = #prover retry_entry,
+       prover_version = NONE, nfacts = 0, timeout = 5,
+       szs = "RunFailure", t_prover = 0.0, axioms_used = NONE,
+       recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
+       error = SOME "prover binary was missing"}
+    val _ = expect "resume retries cells whose prover never ran"
+      (not (hhEval.cell_completed (hhEval.read_completed run_failure)
+        ("list.nil", "deps-e")))
+    (* A resume appends past the torn record an interrupted worker left,
+       so the malformed line ends up in the middle of the journal. *)
+    val torn = hhEval.journal_path expdir "torn"
+    val _ = hhEval.append_journal torn null_entry
+    val torn_out = TextIO.openAppend torn
+    val _ = TextIO.output (torn_out, "{interrupted-write\n")
+    val _ = TextIO.closeOut torn_out
+    val _ = hhEval.append_journal torn full_entry
+    val _ = expect "resume ignores a truncated journal record mid-file"
+      (hhEval.journal_complete torn complete andalso
+       length (hhEval.read_journal torn) = 2)
     val condition : hhEval.condition =
       {cond_id = "knn-e", regime = hhEval.Chainy, selector = hhEval.Knn 128,
        prover = "e", timeout = 10, reconstruct = true}

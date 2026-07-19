@@ -335,21 +335,26 @@ fun append_journal path entry =
 fun read_journal path =
   if OS.FileSys.access (path, [OS.FileSys.A_READ]) then
     let
-      fun parse_lines [] = []
-        | parse_lines [line] =
-            (([parse_journal_line line])
-             handle Interrupt => raise Interrupt | _ => [])
-        | parse_lines (line :: lines) =
-            parse_journal_line line :: parse_lines lines
+      (* A torn line can appear anywhere, not just at the end: a resume
+         appends past the truncated tail left by an interrupted worker.
+         Skip whatever fails to parse rather than losing the journal. *)
+      fun parse line =
+        (SOME (parse_journal_line line)
+         handle Interrupt => raise Interrupt | _ => NONE)
     in
-      parse_lines
+      List.mapPartial parse
         (List.filter (fn line => trim line <> "") (read_lines path))
     end
   else []
-  handle OS.SysErr _ => []
+  handle OS.SysErr _ => [] | IO.Io _ => []
+
+(* Environment-level failures (no prover binary, prover would not start)
+   say nothing about the cell, so they must not mark it done: otherwise a
+   sweep started before the provers were installed can never be resumed. *)
+fun retryable_szs szs = szs = "Error" orelse szs = "RunFailure"
 
 fun add_completed entry pairs =
-  if #szs entry = "Error" then pairs
+  if retryable_szs (#szs entry) then pairs
   else
     let val pair = (#goal_id entry, #cond entry) in
       if List.exists (fn item => item = pair) pairs then pairs

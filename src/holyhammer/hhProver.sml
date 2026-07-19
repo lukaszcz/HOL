@@ -507,18 +507,26 @@ fun read_process path args limit =
           end
         val _ = Thread.fork (read_stdout, [])
         val started = Time.now ()
+        (* kill () signals only the direct child; a portfolio prover's
+           grandchildren can hold the stdout pipe open, so the reader may
+           never see EOF.  Bound the post-kill wait rather than hanging
+           the caller forever -- close_input below unblocks the reader. *)
+        val grace = 5.0
         fun wait killed =
           if !finished then killed
           else if not killed andalso elapsed started >= limit then
             (kill (); wait true)
+          else if killed andalso elapsed started >= limit + grace then killed
           else
             (OS.Process.sleep (Time.fromMilliseconds 20); wait killed)
-        fun await_reader () =
-          if !finished then ()
-          else (OS.Process.sleep (Time.fromMilliseconds 20); await_reader ())
+        fun await_reader deadline =
+          if !finished orelse elapsed started >= deadline then ()
+          else
+            (OS.Process.sleep (Time.fromMilliseconds 20);
+             await_reader deadline)
         val killed = wait false
         val status = reap ()
-        val _ = await_reader ()
+        val _ = await_reader (elapsed started + grace)
         val result =
           {output = String.concat (List.rev (!chunks)), killed = killed,
            status = status, time = elapsed started}
@@ -616,11 +624,30 @@ fun ensure_dir path =
         else raise Fail ("cannot create debug directory " ^ path)
     end
 
+(* Uniquifying with OS.FileSys.tmpName would leak the empty file that
+   tmpName creates -- one per prover run, so a full sweep exhausts the
+   inodes of $TMPDIR.  Number the files within the debug directory. *)
+val output_mutex = Mutex.mutex ()
+val output_counter = ref 0
+
+fun next_output directory name =
+  let
+    fun candidate n =
+      OS.Path.concat (directory, name ^ "-" ^ Int.toString n ^ ".out")
+    fun exists path = OS.FileSys.access (path, []) handle OS.SysErr _ => false
+    fun fresh n = if exists (candidate n) then fresh (n + 1) else n
+    val _ = Mutex.lock output_mutex
+    val n = fresh (!output_counter + 1)
+    val _ = output_counter := n
+    val _ = Mutex.unlock output_mutex
+  in
+    candidate n
+  end
+
 fun save_output directory name contents =
   let
     val _ = ensure_dir directory
-    val path = OS.Path.concat
-      (directory, name ^ "-" ^ OS.Path.file (OS.FileSys.tmpName ()) ^ ".out")
+    val path = next_output directory name
     val stream = TextIO.openOut path
     val _ = TextIO.output (stream, contents)
     val _ = TextIO.closeOut stream
@@ -653,14 +680,17 @@ fun run (config : prover_config) request =
                     (Real.fromInt (#timeout request + 2))
                 val (parsed, used_axioms) = #parse_output config
                   (String.fields (fn c => c = #"\n") output)
+                (* A status the prover already reported is authoritative
+                   even if the wall-clock guard then killed it: only fall
+                   back to Timeout when nothing conclusive was parsed. *)
                 val szs =
-                  if killed then SzsTimeout
-                  else
-                    case parsed of
-                        RunFailure _ =>
-                          if OS.Process.isSuccess status then parsed
-                          else RunFailure "prover exited unsuccessfully"
-                      | value => value
+                  case parsed of
+                      RunFailure message =>
+                        if killed then SzsTimeout
+                        else if OS.Process.isSuccess status then
+                          RunFailure message
+                        else RunFailure "prover exited unsuccessfully"
+                    | value => value
               in
                 {szs = szs, used_axioms = used_axioms, output = output,
                  killed = killed, time = time}
