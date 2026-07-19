@@ -480,8 +480,8 @@ fun text_instream fd =
   end
 
 type process_result =
-  {output : string, killed : bool, status : Posix.Process.exit_status,
-   time : real}
+  {output : string, exec_failed : bool, killed : bool,
+   status : Posix.Process.exit_status, time : real}
 
 type process_running =
   {kill : unit -> unit,
@@ -498,6 +498,11 @@ fun start_process path args limit : process_running =
     val child_group = {pid = NONE, pgid = NONE}
     val exec_failure : Word8.word = 0w127
     val {infd = read_fd, outfd = write_fd} = Posix.IO.pipe ()
+    val {infd = error_read_fd, outfd = error_write_fd} = Posix.IO.pipe ()
+    val _ = Posix.IO.setfd
+      (error_write_fd, Posix.IO.FD.flags [Posix.IO.FD.cloexec])
+    val error_byte = Word8Vector.fromList [0w1]
+    val error_slice = Word8VectorSlice.full error_byte
     val stdout_dup = {old = write_fd, new = Posix.FileSys.stdout}
     val stderr_dup = {old = write_fd, new = Posix.FileSys.stderr}
     (* Keep this branch to syscalls over values forced above.  In
@@ -509,8 +514,12 @@ fun start_process path args limit : process_running =
         Posix.IO.dup2 stderr_dup;
         Posix.IO.close read_fd;
         Posix.IO.close write_fd;
+        Posix.IO.close error_read_fd;
         Posix.Process.exece execute)
-       handle _ => Posix.Process.exit exec_failure)
+       handle _ =>
+         ((ignore (Posix.IO.writeVec (error_write_fd, error_slice))
+           handle _ => ());
+          Posix.Process.exit exec_failure))
   in
     case Posix.Process.fork () of
         NONE => child ()
@@ -523,6 +532,12 @@ fun start_process path args limit : process_running =
           (Posix.ProcEnv.setpgid {pid = SOME pid, pgid = SOME pid}
            handle OS.SysErr _ => ())
         val _ = Posix.IO.close write_fd
+        val _ = Posix.IO.close error_write_fd
+        val exec_failed =
+          ((Word8Vector.length (Posix.IO.readVec (error_read_fd, 1)) > 0)
+           before Posix.IO.close error_read_fd)
+          handle exn =>
+            ((Posix.IO.close error_read_fd handle _ => ()); raise exn)
         val input = text_instream read_fd
         val chunks = ref ([] : string list)
         val state_mutex = Mutex.mutex ()
@@ -579,8 +594,9 @@ fun start_process path args limit : process_running =
             val status = reap ()
             val result =
               {output = String.concat (List.rev (!chunks)),
-               killed = state (fn () => !was_killed), status = status,
-               time = elapsed started}
+               exec_failed = exec_failed,
+               killed = state (fn () => !was_killed),
+               status = status, time = elapsed started}
             val _ = state (fn () => process_done := true)
           in
             result
@@ -730,7 +746,8 @@ fun run_async (config : prover_config) request =
               val saved = ref (NONE : run_result option)
               fun collect () =
                 let
-                  val {output, killed, status, time} = #wait process ()
+                  val {output, exec_failed, killed, status, time} =
+                    #wait process ()
                   val (parsed, used_axioms) = #parse_output config
                     (String.fields (fn c => c = #"\n") output)
                   (* A status the prover already reported is authoritative
@@ -739,7 +756,10 @@ fun run_async (config : prover_config) request =
                   val szs =
                     case parsed of
                         RunFailure message =>
-                          if killed then SzsTimeout
+                          if exec_failed orelse
+                             status = Posix.Process.W_EXITSTATUS 0w127 then
+                            RunFailure "could not execute prover"
+                          else if killed then SzsTimeout
                           else if status = Posix.Process.W_EXITED then
                             RunFailure message
                           else RunFailure "prover exited unsuccessfully"

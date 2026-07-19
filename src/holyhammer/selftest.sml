@@ -576,6 +576,142 @@ fun test_hhSlice () =
     ()
   end
 
+fun cache_options directory maximum enabled : hhConfig.hh_options =
+  {timeout = 30, max_proofs = 4, provers = ["e"], slices = 1,
+   cores = 1, filter = "knn", max_facts = NONE, minimize = true,
+   preplay_timeout = 1.0, minimize_timeout = 1.0, cache = enabled,
+   cache_dir = directory, cache_max_entries = maximum, debug_dir = NONE}
+
+fun test_hhCache () =
+  let
+    val root = OS.FileSys.tmpName ()
+    val _ = remove_tree root
+    val _ = mkdir root
+    val moved = join root "moved"
+    val cache = join root "cache"
+    val lru_cache = join root "lru"
+    val _ = mkdir moved
+    val problem1 = join root "problem.p"
+    val problem2 = join moved "renamed.p"
+    val problem3 = join root "changed.p"
+    val contents = "fof(cache_fixture, conjecture, $true).\n"
+    val _ = write_file problem1 contents
+    val _ = write_file problem2 contents
+    val _ = write_file problem3 (contents ^ "% changed\n")
+    val first : hhCache.key_parts =
+      {prover = "e", version = SOME "3.2.5",
+       argv = ["--cpu-limit=10", problem1], problem = problem1}
+    val relocated : hhCache.key_parts =
+      {prover = "e", version = SOME "3.2.5",
+       argv = ["--cpu-limit=10", problem2], problem = problem2}
+    val longer : hhCache.key_parts =
+      {prover = "e", version = SOME "3.2.5",
+       argv = ["--cpu-limit=20", problem1], problem = problem1}
+    val upgraded : hhCache.key_parts =
+      {prover = "e", version = SOME "3.3",
+       argv = ["--cpu-limit=10", problem1], problem = problem1}
+    val changed : hhCache.key_parts =
+      {prover = "e", version = SOME "3.2.5",
+       argv = ["--cpu-limit=10", problem3], problem = problem3}
+    val first_key = hhCache.key_of first
+    val _ = expect "cache key is a SHA-1 digest"
+      (String.size first_key = 40 andalso
+       List.all Char.isHexDigit (String.explode first_key))
+    val _ = expect "cache key ignores the problem path"
+      (first_key = hhCache.key_of relocated)
+    val _ = expect "cache key includes timeout and options"
+      (first_key <> hhCache.key_of longer)
+    val _ = expect "cache key includes the probed prover version"
+      (first_key <> hhCache.key_of upgraded)
+    val _ = expect "cache key includes problem contents"
+      (first_key <> hhCache.key_of changed)
+    val boundary1 : hhCache.key_parts =
+      {prover = "ab", version = NONE, argv = ["c", problem1],
+       problem = problem1}
+    val boundary2 : hhCache.key_parts =
+      {prover = "a", version = NONE, argv = ["bc", problem1],
+       problem = problem1}
+    val _ = expect "cache key fields have unambiguous boundaries"
+      (hhCache.key_of boundary1 <> hhCache.key_of boundary2)
+    val options = cache_options cache 100 true
+    val stored : hhProver.run_result =
+      {szs = hhProver.SzsTheorem, used_axioms = SOME ["a", "b"],
+       time = 1.25, version = SOME "3.2.5", output_file = "ignored.out"}
+    val _ = hhCache.store options first stored
+    val round_trip = hhCache.lookup options relocated
+    val _ = expect "cache store and relocated lookup round-trip"
+      (case round_trip of
+           SOME result =>
+             #szs result = hhProver.SzsTheorem andalso
+             #used_axioms result = SOME ["a", "b"] andalso
+             Real.abs (#time result - 1.25) < 0.000001 andalso
+             #version result = SOME "3.2.5" andalso
+             #output_file result = ""
+         | NONE => false)
+    val _ = expect "a longer timeout is a cache miss"
+      (not (Option.isSome (hhCache.lookup options longer)))
+    val timeout_result : hhProver.run_result =
+      {szs = hhProver.SzsTimeout, used_axioms = NONE, time = 10.0,
+       version = SOME "3.2.5", output_file = "timeout.out"}
+    val _ = hhCache.store options longer timeout_result
+    val _ = expect "timeout results are cached"
+      (case hhCache.lookup options longer of
+           SOME result => #szs result = hhProver.SzsTimeout
+         | NONE => false)
+    val corrupt : hhCache.key_parts =
+      {prover = "e", version = NONE, argv = ["--corrupt", problem1],
+       problem = problem1}
+    val corrupt_path = join cache (hhCache.key_of corrupt)
+    val _ = write_file corrupt_path "this is not JSON"
+    val _ = expect "corrupt cache entries are misses"
+      (not (Option.isSome (hhCache.lookup options corrupt)))
+    val _ = expect "corrupt cache entries are deleted"
+      (not (OS.FileSys.access (corrupt_path, [])))
+      handle OS.SysErr _ => OK ()
+    val disabled : hhCache.key_parts =
+      {prover = "e", version = NONE, argv = ["--disabled", problem1],
+       problem = problem1}
+    val _ = hhCache.store (cache_options cache 100 false) disabled stored
+    val _ = expect "disabled cache does not store entries"
+      (not (OS.FileSys.access (join cache (hhCache.key_of disabled), [])))
+      handle OS.SysErr _ => OK ()
+    fun lru_parts number : hhCache.key_parts =
+      {prover = "e", version = SOME "3.2.5",
+       argv = ["--slice=" ^ Int.toString number, problem1],
+       problem = problem1}
+    val lru_parts_list = List.tabulate (6, lru_parts)
+    val lru_options = cache_options lru_cache 5 true
+    val _ = List.app (fn parts => hhCache.store lru_options parts stored)
+      lru_parts_list
+    fun path_of parts = join lru_cache (hhCache.key_of parts)
+    fun set_times ([], _) = ()
+      | set_times (parts :: rest, seconds) =
+          (OS.FileSys.setTime
+             (path_of parts, SOME (Time.fromSeconds
+               (LargeInt.fromInt seconds)));
+           set_times (rest, seconds + 10))
+    val _ = set_times (lru_parts_list, 10)
+    val oldest = hd lru_parts_list
+    val before_touch = OS.FileSys.modTime (path_of oldest)
+    val _ = ignore (hhCache.lookup lru_options oldest)
+    val after_touch = OS.FileSys.modTime (path_of oldest)
+    val _ = expect "cache lookup refreshes the LRU mtime"
+      (Time.compare (after_touch, before_touch) = GREATER)
+    val _ = hhCache.prune lru_options
+    fun exists parts = OS.FileSys.access (path_of parts, [])
+      handle OS.SysErr _ => false
+    val _ = expect "cache prune removes oldest entries after a touch"
+      (exists (List.nth (lru_parts_list, 0)) andalso
+       not (exists (List.nth (lru_parts_list, 1))) andalso
+       not (exists (List.nth (lru_parts_list, 2))) andalso
+       List.all exists (List.drop (lru_parts_list, 3)))
+    val _ = expect "cache prune enforces the ninety-percent bound"
+      (length (hhConfig.directory_names lru_cache) = 4)
+    val _ = remove_tree root
+  in
+    ()
+  end
+
 fun contains needle haystack =
   String.isSubstring needle haystack
 
@@ -1172,6 +1308,7 @@ fun test_holyHammer_e () =
 val _ = test_szs_status_words ()
 val _ = test_hhProver ()
 val _ = test_hhSlice ()
+val _ = test_hhCache ()
 val _ = test_holyHammer_validation ()
 val _ = test_runner ()
 val _ = test_installed_provers ()
@@ -1235,4 +1372,5 @@ val _ = expect "hhEval smoke covers every pinned prover four times"
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
+  hhCache
 in end
