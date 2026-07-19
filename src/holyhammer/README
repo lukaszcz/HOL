@@ -29,6 +29,13 @@ The recommended installation command is:
 
     tools/download-provers
 
+The fixed twelve-goal end-to-end smoke suite exercises E, Vampire, and
+Zipperposition through export, proof search, and reconstruction:
+
+    cd src/holyhammer
+    ../../bin/Holmake smoke.exe
+    ./smoke.exe
+
 Alternatively, put a supported binary on `PATH`.  HOLyHammer looks for
 `eprover-ho` or `eprover`, `vampire`, `zipperposition`, and, for the legacy
 Z3 entry, `z3_tptp` or `z3`.

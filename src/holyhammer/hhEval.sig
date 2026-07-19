@@ -79,4 +79,7 @@ sig
   val run_eval :
     {expname : string, ncore : int, thyl : string list,
      conditions : condition list} -> unit
+
+  val smoke_goals : (string * string * string) list
+  val run_smoke : {expdir : string, timeout : int} -> journal_entry list
 end

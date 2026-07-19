@@ -827,5 +827,14 @@ fun test_hhEval_integration () =
 
 val _ = test_hhEval_integration ()
 
+val _ = expect "hhEval smoke has twelve fixed goals"
+  (length hhEval.smoke_goals = 12)
+
+val _ = expect "hhEval smoke covers every pinned prover four times"
+  (List.all (fn prover =>
+     length (List.filter (fn (_, _, item) => item = prover)
+       hhEval.smoke_goals) = 4)
+   ["e", "vampire", "zipperposition"])
+
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver in end

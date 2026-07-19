@@ -1215,4 +1215,80 @@ fun run_eval {expname, ncore, thyl, conditions} =
       ()
     end
 
+(* -------------------------------------------------------------------------
+   Fixed end-to-end smoke suite
+   ------------------------------------------------------------------------- *)
+
+val smoke_goals =
+  [("pair", "FST_SWAP", "e"),
+   ("pair", "SND_SWAP", "vampire"),
+   ("pair", "PAIR_FST_SND_EQ", "zipperposition"),
+   ("option", "NOT_SOME_NONE", "e"),
+   ("option", "OPTION_MAP_id", "vampire"),
+   ("option", "OPTION_MAP_EQ_NONE_both_ways", "zipperposition"),
+   ("arithmetic", "ADD_COMM", "e"),
+   ("arithmetic", "SUC_ONE_ADD", "vampire"),
+   ("arithmetic", "MULT_COMM", "zipperposition"),
+   ("pair", "CLOSED_PAIR_EQ", "e"),
+   ("arithmetic", "SUC_NOT_ZERO", "vampire"),
+   ("arithmetic", "SUC_ADD_SYM", "zipperposition")]
+
+fun smoke_condition timeout prover : condition =
+  {cond_id = "smoke-" ^ prover, regime = Bushy, selector = Deps,
+   prover = prover, timeout = timeout, reconstruct = true}
+
+fun smoke_goal_id (thy, name, _) = goal_id thy name
+
+fun run_smoke {expdir, timeout} =
+  if timeout < 1 then raise Fail "smoke timeout must be positive"
+  else
+    let
+      val theories = sorted_unique (map #1 smoke_goals)
+      val conditions = map (smoke_condition timeout)
+        ["e", "vampire", "zipperposition"]
+      val journals = map (journal_path expdir) theories
+      val _ =
+        if List.exists file_exists journals then
+          raise Fail ("smoke output directory already has a journal: " ^
+            expdir)
+        else ()
+      val _ = ensure_dir (join expdir "journal")
+      val _ = ensure_dir (join expdir "out")
+      val _ = ensure_dir (join expdir "pb")
+      val _ = app load_theory theories
+      val corpus = map loaded_corpus_entry theories
+      val _ = write_run_header expdir
+        (new_run_header {expname = OS.Path.file expdir, corpus = corpus,
+          added_from_dat = [], conditions = conditions, sample = 1})
+      fun run_one (thy, name, prover) =
+        let
+          val thm = DB.fetch thy name
+          val (dependencies_ok, dependencies) =
+            mlThmData.intactdep_of_thm thm
+          val condition = smoke_condition timeout prover
+        in
+          if dependencies_ok then
+            run_cell expdir thy (name, thm) dependencies condition
+          else broken_deps_cell expdir thy name condition
+        end
+      val _ = app run_one smoke_goals
+      val entries = List.concat (map read_journal journals)
+      fun expected entry = List.exists (fn item =>
+        smoke_goal_id item = #goal_id entry) smoke_goals
+      val results = List.filter expected entries
+      fun succeeded entry =
+        #szs entry = "Theorem" andalso #recon_ok entry = SOME true andalso
+        #error entry = NONE
+      val failed = List.filter (not o succeeded) results
+      val _ =
+        if length results = length smoke_goals andalso null failed then ()
+        else raise Fail
+          ("HolyHammer smoke failed: " ^ Int.toString (length failed) ^
+           " failed and " ^
+           Int.toString (length smoke_goals - length results) ^
+           " missing; output: " ^ expdir)
+    in
+      results
+    end
+
 end
