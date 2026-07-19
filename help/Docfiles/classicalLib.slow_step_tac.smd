@@ -1,0 +1,38 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `slow_step_tac`
+
+``` hol4
+classicalLib.slow_step_tac : clasetLib.claset -> NTactical.ntactic
+```
+
+------------------------------------------------------------------------
+
+Constructs the claset-explicit form of `SLOW_STEP_TAC`.
+
+`slow_step_tac cs` safely saturates the state. If no safe step applies, it
+appends unsafe-rule alternatives after the instantiating alternatives on
+the first goal. Safe and unsafe wrappers participate. Results are replayed
+and may contain residual goals.
+
+Unlike `SLOW_STEP_TAC`, this interface uses a prepared rule set, preserves
+its alternative result sequence, and does not process theorem-list markers.
+
+### Failure
+
+Produces no result if no safe, instantiating or unsafe transition applies.
+Replay failure is reported as an error.
+
+### Example
+
+``` hol4
+val slow_step =
+  classicalLib.slow_step_tac (clasetLib.the_claset ());
+```
+
+### See also
+
+[`classicalLib.SLOW_STEP_TAC`](#classicalLib.SLOW_STEP_TAC),
+[`classicalLib.step_tac`](#classicalLib.step_tac),
+[`classicalLib.inst_step_tac`](#classicalLib.inst_step_tac),
+[`classicalLib.slow_tac`](#classicalLib.slow_tac),
+[`clasetLib`](#clasetLib)
