@@ -27,6 +27,10 @@ type run_result =
   {szs : szs, used_axioms : string list option, time : real,
    version : string option, output_file : string}
 
+type running =
+  {kill : unit -> unit,
+   wait : unit -> run_result}
+
 type prover_config =
   {name : string,
    exec_names : string list,
@@ -417,41 +421,103 @@ fun default_provers () =
 
 fun elapsed started = Time.toReal (Time.- (Time.now (), started))
 
-fun read_process path args limit =
+fun with_mutex mutex f =
   let
-    val process = Unix.execute (path, args)
-    val reaped = ref (NONE : OS.Process.status option)
-    val input_ref = ref (NONE : TextIO.instream option)
-    val output_ref = ref (NONE : TextIO.outstream option)
-    fun kill () =
-      Unix.kill (process, Posix.Signal.kill) handle OS.SysErr _ => ()
-    fun reap () =
-      case !reaped of
-          SOME status => status
-        | NONE =>
-            let val status = Unix.reap process in
-              reaped := SOME status; status
-            end
-    fun close_input () =
-      case !input_ref of
-          NONE => ()
-        | SOME input =>
-            (TextIO.closeIn input; input_ref := NONE)
-            handle IO.Io _ => input_ref := NONE
-    fun close_output () =
-      case !output_ref of
-          NONE => ()
-        | SOME output =>
-            (TextIO.closeOut output; output_ref := NONE)
-            handle IO.Io _ => output_ref := NONE
-    fun run () =
+    val _ = Mutex.lock mutex
+  in
+    (f () before Mutex.unlock mutex)
+    handle exn => (Mutex.unlock mutex; raise exn)
+  end
+
+val spawn_mutex = Mutex.mutex ()
+val spawn_counter = ref 0
+
+fun spawn_count () =
+  with_mutex spawn_mutex (fn () => !spawn_counter)
+
+fun reset_spawn_count () =
+  with_mutex spawn_mutex (fn () => spawn_counter := 0)
+
+fun note_spawn () =
+  with_mutex spawn_mutex (fn () => spawn_counter := !spawn_counter + 1)
+
+fun text_instream fd =
+  let
+    open Posix.IO
+    val (flags, _) = getfl fd
+    val reader = mkTextReader
+      {fd = fd, name = "", initBlkMode = not (O.allSet (O.nonblock, flags))}
+  in
+    TextIO.mkInstream (TextIO.StreamIO.mkInstream (reader, ""))
+  end
+
+type process_result =
+  {output : string, killed : bool, status : Posix.Process.exit_status,
+   time : real}
+
+type process_running =
+  {kill : unit -> unit,
+   wait : unit -> process_result}
+
+fun is_esrch error = OS.errorName error = "ESRCH"
+
+fun start_process path args limit : process_running =
+  let
+    val started = Time.now ()
+    val environment = Posix.ProcEnv.environ ()
+    val arguments = path :: args
+    val execute = (path, arguments, environment)
+    val child_group = {pid = NONE, pgid = NONE}
+    val exec_failure : Word8.word = 0w127
+    val {infd = read_fd, outfd = write_fd} = Posix.IO.pipe ()
+    val stdout_dup = {old = write_fd, new = Posix.FileSys.stdout}
+    val stderr_dup = {old = write_fd, new = Posix.FileSys.stderr}
+    (* Keep this branch to syscalls over values forced above.  In
+       particular, it must not allocate or acquire a runtime lock between
+       fork and exec: this is the safe fork pattern in threaded Poly/ML. *)
+    fun child () =
+      ((Posix.ProcEnv.setpgid child_group;
+        Posix.IO.dup2 stdout_dup;
+        Posix.IO.dup2 stderr_dup;
+        Posix.IO.close read_fd;
+        Posix.IO.close write_fd;
+        Posix.Process.exece execute)
+       handle _ => Posix.Process.exit exec_failure)
+  in
+    case Posix.Process.fork () of
+        NONE => child ()
+      | SOME pid =>
       let
-        val (input, output) = Unix.streamsOf process
-        val _ = input_ref := SOME input
-        val _ = output_ref := SOME output
-        val _ = close_output ()
-        val chunks = ref []
-        val finished = ref false
+        val _ = note_spawn ()
+        (* The child also calls setpgid.  Doing it here closes the race in
+           which a caller kills immediately after run_async returns. *)
+        val _ =
+          (Posix.ProcEnv.setpgid {pid = SOME pid, pgid = SOME pid}
+           handle OS.SysErr _ => ())
+        val _ = Posix.IO.close write_fd
+        val input = text_instream read_fd
+        val chunks = ref ([] : string list)
+        val state_mutex = Mutex.mutex ()
+        val wait_mutex = Mutex.mutex ()
+        val reader_done = ref false
+        val process_done = ref false
+        val was_killed = ref false
+        val waited = ref (NONE : process_result option)
+        fun state f = with_mutex state_mutex f
+        fun signal_group () =
+          state (fn () =>
+            if !process_done orelse !was_killed then ()
+            else
+              let
+                val signalled =
+                  ((Posix.Process.kill
+                      (Posix.Process.K_GROUP pid, Posix.Signal.kill);
+                    true)
+                   handle exn as OS.SysErr (_, SOME error) =>
+                     if is_esrch error then false else raise exn)
+              in
+                if signalled then was_killed := true else ()
+              end)
         fun read_stdout () =
           let
             fun loop () =
@@ -460,55 +526,70 @@ fun read_process path args limit =
                 | chunk => (chunks := chunk :: !chunks; loop ())
           in
             (loop () handle _ => ();
-             finished := true)
+             (TextIO.closeIn input handle _ => ());
+             state (fn () => reader_done := true))
           end
         val _ = Thread.fork (read_stdout, [])
-        val started = Time.now ()
-        (* kill () signals only the direct child; a portfolio prover's
-           grandchildren can hold the stdout pipe open, so the reader may
-           never see EOF.  Bound the post-kill wait rather than hanging
-           the caller forever -- close_input below unblocks the reader. *)
-        val grace = 5.0
-        fun wait killed =
-          if !finished then killed
-          else if not killed andalso elapsed started >= limit then
-            (kill (); wait true)
-          else if killed andalso elapsed started >= limit + grace then killed
-          else
-            (OS.Process.sleep (Time.fromMilliseconds 20); wait killed)
-        fun await_reader deadline =
-          if !finished orelse elapsed started >= deadline then ()
+        fun watchdog () =
+          if state (fn () => !process_done orelse !was_killed) then ()
+          else if elapsed started >= limit then signal_group ()
           else
             (OS.Process.sleep (Time.fromMilliseconds 20);
-             await_reader deadline)
-        val killed = wait false
-        val status = reap ()
-        val _ = await_reader (elapsed started + grace)
-        val result =
-          {output = String.concat (List.rev (!chunks)), killed = killed,
-           status = status, time = elapsed started}
-        val _ = close_input ()
+             watchdog ())
+        val _ = Thread.fork (watchdog, [])
+        fun await_reader () =
+          if state (fn () => !reader_done) then ()
+          else
+            (if elapsed started >= limit then signal_group () else ();
+             OS.Process.sleep (Time.fromMilliseconds 20);
+             await_reader ())
+        fun reap () = #2 (Posix.Process.waitpid
+          (Posix.Process.W_CHILD pid, []))
+        fun finish () =
+          let
+            val _ = await_reader ()
+            val status = reap ()
+            val result =
+              {output = String.concat (List.rev (!chunks)),
+               killed = state (fn () => !was_killed), status = status,
+               time = elapsed started}
+            val _ = state (fn () => process_done := true)
+          in
+            result
+          end
+        fun cleanup exn =
+          let
+            val attributes = Thread.getAttributes ()
+            val synchronous =
+              [Thread.InterruptState Thread.InterruptSynch,
+               Thread.EnableBroadcastInterrupt true]
+            val _ = Thread.setAttributes synchronous
+            val _ = (signal_group () handle _ => ())
+            val _ = (await_reader () handle _ => ())
+            val _ = (ignore (reap ()) handle _ => ())
+            val _ = state (fn () => process_done := true)
+            val _ = Thread.setAttributes attributes
+          in
+            raise exn
+          end
+        fun wait () =
+          with_mutex wait_mutex (fn () =>
+            case !waited of
+                SOME result => result
+              | NONE =>
+                  let
+                    val result = finish () handle exn => cleanup exn
+                    val _ = waited := SOME result
+                  in
+                    result
+                  end)
       in
-        result
+        {kill = signal_group, wait = wait}
       end
-    fun cleanup exn =
-      let
-        val attributes = Thread.getAttributes ()
-        val synchronous =
-          [Thread.InterruptState Thread.InterruptSynch,
-           Thread.EnableBroadcastInterrupt true]
-        val _ = Thread.setAttributes synchronous
-        val _ = kill ()
-        val _ = (ignore (reap ()) handle _ => ())
-        val _ = (close_input () handle _ => ())
-        val _ = (close_output () handle _ => ())
-        val _ = Thread.setAttributes attributes
-      in
-        raise exn
-      end
-  in
-    run () handle exn => cleanup exn
   end
+
+fun read_process path args limit =
+  #wait (start_process path args limit) ()
 
 val probes : (string *
   {path : string, version : string option, tested : bool} option) list ref =
@@ -600,58 +681,75 @@ fun missing_prover name =
   "HolyHammer prover '" ^ name ^
   "' was not found; install it with tools/download-provers"
 
-fun run (config : prover_config) request =
+fun completed result : running =
+  {kill = fn () => (), wait = fn () => result}
+
+fun run_async (config : prover_config) request =
   let
     val started = Time.now ()
-    val version =
-      case probe config of
-          NONE => NONE
-        | SOME {version, ...} => version
-    val result =
-      case find_exec config of
-          NONE =>
-            {szs = RunFailure (missing_prover (#name config)),
-             used_axioms = NONE, output = "", killed = false,
-             time = elapsed started}
-        | SOME executable =>
-            ((let
-                val (path, args) = #mk_command config executable request
-                val {output, killed, status, time} =
-                  read_process path args
-                    (Real.fromInt (#timeout request + 2))
-                val (parsed, used_axioms) = #parse_output config
-                  (String.fields (fn c => c = #"\n") output)
-                (* A status the prover already reported is authoritative
-                   even if the wall-clock guard then killed it: only fall
-                   back to Timeout when nothing conclusive was parsed. *)
-                val szs =
-                  case parsed of
-                      RunFailure message =>
-                        if killed then SzsTimeout
-                        else if OS.Process.isSuccess status then
-                          RunFailure message
-                        else RunFailure "prover exited unsuccessfully"
-                    | value => value
-              in
-                {szs = szs, used_axioms = used_axioms, output = output,
-                 killed = killed, time = time}
-              end)
-             handle OS.SysErr _ =>
-               {szs = RunFailure "could not execute prover",
-                used_axioms = NONE, output = "", killed = false,
-                time = elapsed started}
-                  | IO.Io _ =>
-               {szs = RunFailure "could not execute prover",
-                used_axioms = NONE, output = "", killed = false,
-                time = elapsed started})
-    val output_file =
-      case #debug_dir request of
-          NONE => ""
-        | SOME directory =>
-            save_output directory (#name config) (#output result)
+    fun failure version message =
+      {szs = RunFailure message, used_axioms = NONE,
+       time = elapsed started, version = version, output_file = ""}
   in
-    {szs = #szs result, used_axioms = #used_axioms result,
-     time = #time result, version = version, output_file = output_file}
+    case probe config of
+        NONE => completed (failure NONE (missing_prover (#name config)))
+      | SOME {path = executable, version, ...} =>
+          ((let
+              val (path, args) = #mk_command config executable request
+              val process = start_process path args
+                (Real.fromInt (#timeout request + 2))
+              val result_mutex = Mutex.mutex ()
+              val saved = ref (NONE : run_result option)
+              fun collect () =
+                let
+                  val {output, killed, status, time} = #wait process ()
+                  val (parsed, used_axioms) = #parse_output config
+                    (String.fields (fn c => c = #"\n") output)
+                  (* A status the prover already reported is authoritative
+                     even if the wall-clock guard then killed it: only fall
+                     back to Timeout when nothing conclusive was parsed. *)
+                  val szs =
+                    case parsed of
+                        RunFailure message =>
+                          if killed then SzsTimeout
+                          else if status = Posix.Process.W_EXITED then
+                            RunFailure message
+                          else RunFailure "prover exited unsuccessfully"
+                      | value => value
+                  val output_file =
+                    case #debug_dir request of
+                        NONE => ""
+                      | SOME directory =>
+                          save_output directory (#name config) output
+                in
+                  {szs = szs, used_axioms = used_axioms, time = time,
+                   version = version, output_file = output_file}
+                end
+              fun wait () =
+                with_mutex result_mutex (fn () =>
+                  case !saved of
+                      SOME result => result
+                    | NONE =>
+                        let
+                          val result =
+                            (collect ()
+                             handle OS.SysErr _ =>
+                               failure version "could not execute prover"
+                                  | IO.Io _ =>
+                               failure version "could not execute prover")
+                          val _ = saved := SOME result
+                        in
+                          result
+                        end)
+            in
+              {kill = #kill process, wait = wait}
+           end)
+           handle OS.SysErr _ =>
+             completed (failure version "could not execute prover")
+                | IO.Io _ =>
+             completed (failure version "could not execute prover"))
   end
+
+fun run config request = #wait (run_async config request) ()
 
 end

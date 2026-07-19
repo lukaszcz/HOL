@@ -516,13 +516,87 @@ fun fake_config name exec_name args parser : hhProver.prover_config =
    mk_command = fn executable => fn _ => (executable, args),
    parse_output = parser, default_nfacts = 0, legacy = false}
 
+fun wait_until deadline predicate =
+  if predicate () then true
+  else if Time.> (Time.now (), deadline) then false
+  else
+    (OS.Process.sleep (Time.fromMilliseconds 20);
+     wait_until deadline predicate)
+
+fun pid_from_output output =
+  case String.tokens Char.isSpace output of
+      word :: _ =>
+        (case Int.fromString word of
+             SOME number =>
+               Posix.Process.wordToPid (SysWord.fromInt number)
+           | NONE => raise Fail "fixture printed a non-numeric pid")
+    | [] => raise Fail "fixture did not print its child pid"
+
+fun process_is_gone pid =
+  let
+    val signal_zero = Posix.Signal.fromWord 0w0
+  in
+    ((Posix.Process.kill (Posix.Process.K_PROC pid, signal_zero); false)
+     handle OS.SysErr (_, SOME error) => OS.errorName error = "ESRCH")
+  end
+
+fun test_runner_load parser =
+  let
+    val workers = 24
+    val config = fake_config "runner-load" "/bin/echo"
+      ["% SZS status Theorem"] parser
+    val request : hhProver.run_request =
+      {timeout = 2, problem = "unused", extra = [], debug_dir = NONE}
+    val _ = ignore (hhProver.probe config)
+    val _ = hhProver.reset_spawn_count ()
+    val result_mutex = Mutex.mutex ()
+    val finished = ref 0
+    val passed = ref 0
+    fun note success =
+      let
+        val _ = Mutex.lock result_mutex
+        val _ = finished := !finished + 1
+        val _ = if success then passed := !passed + 1 else ()
+      in
+        Mutex.unlock result_mutex
+      end
+    fun worker () =
+      let
+        val running = hhProver.run_async config request
+        val result = #wait running ()
+      in
+        note (#szs result = hhProver.SzsTheorem)
+      end
+      handle _ => note false
+    val _ = List.tabulate (workers, fn _ => Thread.fork (worker, []))
+    fun all_finished () =
+      let
+        val _ = Mutex.lock result_mutex
+        val done = !finished = workers
+        val _ = Mutex.unlock result_mutex
+      in
+        done
+      end
+    val completed = wait_until
+      (Time.+ (Time.now (), Time.fromSeconds 15)) all_finished
+    val _ = Mutex.lock result_mutex
+    val successes = !passed
+    val _ = Mutex.unlock result_mutex
+    val _ = expect "runner concurrent load completes"
+      (completed andalso successes = workers)
+    val _ = expect "runner spawn counter counts concurrent forks"
+      (hhProver.spawn_count () = workers)
+  in
+    ()
+  end
+
 fun test_runner () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
       SOME _ => ()
     | NONE =>
   let
     val e = prover "e"
-    val good = fake_config "runner-good" "echo"
+    val good = fake_config "runner-good" "/bin/echo"
       ["% SZS status Theorem"] (#parse_output e)
     val debug_dir = OS.FileSys.tmpName ()
     val _ = remove_tree debug_dir
@@ -534,7 +608,7 @@ fun test_runner () =
     val _ = expect "runner saves debug output"
       (OS.FileSys.access (#output_file good_result, [OS.FileSys.A_READ]))
     val _ = remove_tree debug_dir
-    val timeout = fake_config "runner-timeout" "sleep" ["30"]
+    val timeout = fake_config "runner-timeout" "/bin/sleep" ["30"]
       (#parse_output e)
     val timeout_request : hhProver.run_request =
       {timeout = 0, problem = "unused", extra = [], debug_dir = NONE}
@@ -542,6 +616,66 @@ fun test_runner () =
     val _ = expect "runner watchdog timeout"
       (#szs timeout_result = hhProver.SzsTimeout orelse
        #szs timeout_result = hhProver.SzsResourceOut)
+    val killed = fake_config "runner-killed" "/bin/sleep" ["30"]
+      (#parse_output e)
+    val kill_request : hhProver.run_request =
+      {timeout = 30, problem = "unused", extra = [], debug_dir = NONE}
+    val running_sleep = hhProver.run_async killed kill_request
+    val _ = #kill running_sleep ()
+    val _ = #kill running_sleep ()
+    val killed_result = #wait running_sleep ()
+    val killed_result_again = #wait running_sleep ()
+    val _ = expect "runner kill returns before child exit"
+      (#szs killed_result = hhProver.SzsTimeout andalso
+       #szs killed_result_again = hhProver.SzsTimeout andalso
+       Real.== (#time killed_result, #time killed_result_again) andalso
+       #time killed_result < 5.0)
+    val fixture_dir = "test-data"
+    val printer_path = join fixture_dir "runner-print-e.sh"
+    val printer = fake_config "runner-printer" printer_path []
+      (#parse_output e)
+    val printer_dir = OS.FileSys.tmpName ()
+    val _ = remove_tree printer_dir
+    val printer_request : hhProver.run_request =
+      {timeout = 2, problem = "unused", extra = [],
+       debug_dir = SOME printer_dir}
+    val printer_result = hhProver.run printer printer_request
+    val printed = String.concat (read_lines (#output_file printer_result))
+    val recorded = String.concat
+      (read_lines (join fixture_dir "e-theorem-chatter.out"))
+    val _ = expect "runner captures stdout intact"
+      (#szs printer_result = hhProver.SzsTheorem andalso
+       printed = recorded)
+    val _ = remove_tree printer_dir
+    val forking_path = join fixture_dir "runner-forking-sleeper.sh"
+    val forking = fake_config "runner-forking" forking_path []
+      (#parse_output e)
+    val forking_dir = OS.FileSys.tmpName ()
+    val _ = remove_tree forking_dir
+    val forking_request : hhProver.run_request =
+      {timeout = 30, problem = "unused", extra = [],
+       debug_dir = SOME forking_dir}
+    val running_fork = hhProver.run_async forking forking_request
+    val _ = OS.Process.sleep (Time.fromMilliseconds 200)
+    val _ = #kill running_fork ()
+    val forking_result = #wait running_fork ()
+    val grandchild = pid_from_output
+      (String.concat (read_lines (#output_file forking_result)))
+    val grandchild_gone = wait_until
+      (Time.+ (Time.now (), Time.fromSeconds 5))
+      (fn () => process_is_gone grandchild)
+    val _ = expect "runner group kill reaps grandchild" grandchild_gone
+    val _ = remove_tree forking_dir
+    val exec_failure : hhProver.prover_config =
+      {name = "runner-exec-failure", exec_names = ["/bin/true"],
+       env_var = "", version_args = [], parse_version = fn _ => SOME "test",
+       tested_versions = ["test"],
+       mk_command = fn _ => fn _ =>
+         ("/definitely/missing/holyhammer-prover", []),
+       parse_output = #parse_output e, default_nfacts = 0, legacy = false}
+    val exec_result = hhProver.run exec_failure timeout_request
+    val _ = expect "runner exec failure returns RunFailure"
+      (case #szs exec_result of hhProver.RunFailure _ => true | _ => false)
     val missing : hhProver.prover_config =
       {name = "runner-missing", exec_names = ["missing-hh-prover"],
        env_var = "", version_args = [], parse_version = fn _ => NONE,
@@ -554,6 +688,7 @@ fun test_runner () =
            hhProver.RunFailure message =>
              contains "tools/download-provers" message
          | _ => false)
+    val _ = test_runner_load (#parse_output e)
   in
     ()
   end

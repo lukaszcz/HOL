@@ -11,3 +11,9 @@ of the `thm.` prefix.  The E theorem recording also retains its
 Zipperposition timeout spelling).  The Zipperposition `GaveUp` recording is
 from a small higher-order counterexample.  Version recordings are the
 corresponding raw `--version` output.
+
+`runner-print-e.sh` and `runner-forking-sleeper.sh` are hermetic process
+runner fixtures.  The former prints the recorded E theorem output; the
+latter starts a long-lived child, prints its pid, and remains alive so the
+process-group cancellation selftest can verify that both generations die.
+The shell is used only as fixture material, never by the production runner.

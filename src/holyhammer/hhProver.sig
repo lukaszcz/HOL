@@ -19,6 +19,10 @@ sig
     {szs : szs, used_axioms : string list option, time : real,
      version : string option, output_file : string}
 
+  type running =
+    {kill : unit -> unit,
+     wait : unit -> run_result}
+
   type prover_config =
     {name : string,
      exec_names : string list,
@@ -43,5 +47,9 @@ sig
   val find_exec : prover_config -> string option
   val probe : prover_config ->
     {path : string, version : string option, tested : bool} option
+  (* Test hook: counts every successful fork, including version probes. *)
+  val spawn_count : unit -> int
+  val reset_spawn_count : unit -> unit
+  val run_async : prover_config -> run_request -> running
   val run : prover_config -> run_request -> run_result
 end
