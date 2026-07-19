@@ -39,6 +39,7 @@ struct
     | TermMatch of term_ast located * match_case_ast located list
     | TermForall of sorted_var_ast located list * term_ast located
     | TermExists of sorted_var_ast located list * term_ast located
+    | TermLambda of sorted_var_ast located list * term_ast located
     | TermAnnotated of term_ast located * sexp_ast located list
   and match_pattern_ast =
       MatchPatternAtom of string located
@@ -176,6 +177,13 @@ struct
     | QueryGetInfo of string
     | QueryGetOption of string
 
+  type surface_flags = {
+    arrow_sort_used: bool,
+    lambda_used: bool,
+    apply_operator_used: bool,
+    partial_application_used: bool
+  }
+
   type command_state_snapshot = {
     logic: string,
     tydict: Type.hol_type dict,
@@ -183,7 +191,8 @@ struct
     assertions: Term.term list,
     named_assertions: (string * Term.term) list,
     local_definitions: Term.term list,
-    queries: query_command list
+    queries: query_command list,
+    surface_flags: surface_flags
   }
 
   type checked_script = command_state_snapshot
@@ -219,7 +228,7 @@ local
 
   fun located loc node = Located {loc = loc, node = node}
 
-  datatype token_kind = AtomToken | StringToken
+  datatype token_kind = AtomToken | QuotedSymbolToken | StringToken
 
   datatype located_token = Token of {
     text: string,
@@ -290,7 +299,7 @@ local
       case advance () of
         NONE => syntax_error "get_token" (mk_point_span (pos ()))
           "unterminated quoted symbol"
-      | SOME #"|" => token AtomToken start chars
+      | SOME #"|" => token QuotedSymbolToken start chars
       | SOME c => quoted_symbol start (c :: chars)
 
     fun string_lit start chars =
@@ -463,8 +472,9 @@ local
       let
         val head_tok = need_token "parse_term" "term head"
         val head_text = token_text head_tok
+        val reserved_head = token_kind head_tok = AtomToken
       in
-        if head_text = "_" then
+        if reserved_head andalso head_text = "_" then
           let
             val name = parse_atom_name "parse_term"
               (need_token "parse_term" "indexed term name")
@@ -474,7 +484,7 @@ local
           in
             located loc (TermIndexed (name, indices))
           end
-        else if head_text = "let" then
+        else if reserved_head andalso head_text = "let" then
           let
             val bindings_open = need_token "parse_term" "'('"
             val _ = expect_token "parse_term" "(" bindings_open
@@ -498,7 +508,7 @@ local
           in
             located loc (TermLet (bindings, body))
           end
-        else if head_text = "match" then
+        else if reserved_head andalso head_text = "match" then
           let
             fun parse_pattern_from_first tok =
               if token_text tok = "(" then
@@ -552,20 +562,30 @@ local
           in
             located loc (TermMatch (scrutinee, branches))
           end
-        else if head_text = "forall" orelse head_text = "exists" then
+        else if reserved_head andalso
+                (head_text = "forall" orelse head_text = "exists" orelse
+                 head_text = "lambda") then
           let
             val vars = parse_sorted_var_list ()
-            val body = parse_term_from_first (need_token "parse_term" "quantifier body")
+            val _ =
+              if head_text = "lambda" andalso List.null vars then
+                syntax_error "parse_term" (token_loc head_tok)
+                  "lambda requires at least one sorted variable"
+              else ()
+            val body = parse_term_from_first
+              (need_token "parse_term" "binder body")
             val close_tok = need_token "parse_term" "')'"
             val _ = expect_token "parse_term" ")" close_tok
             val loc = combine_span (token_loc open_tok) (token_loc close_tok)
           in
             if head_text = "forall" then
               located loc (TermForall (vars, body))
-            else
+            else if head_text = "exists" then
               located loc (TermExists (vars, body))
+            else
+              located loc (TermLambda (vars, body))
           end
-        else if head_text = "!" then
+        else if reserved_head andalso head_text = "!" then
           let
             val term = parse_term_from_first (need_token "parse_term" "annotated term")
             val (attrs, close_tok) =
@@ -2221,6 +2241,13 @@ local
     WARNING cmd ("parsed command is not meaningful in proof reconstruction " ^
       "mode: " ^ msg)
 
+  fun empty_surface_flags () : surface_flags = {
+    arrow_sort_used = false,
+    lambda_used = false,
+    apply_operator_used = false,
+    partial_application_used = false
+  }
+
   fun finalize_state cmd state : command_state_snapshot =
   let
     val command_state as {logic, queries, ...} = dest_state cmd state
@@ -2232,7 +2259,8 @@ local
      assertions = active_assertions command_state,
      named_assertions = active_named_assertions command_state,
      local_definitions = active_local_definitions command_state,
-     queries = List.rev queries}
+     queries = List.rev queries,
+     surface_flags = empty_surface_flags ()}
   end
 
   (* returns the logic's name, its 'tydict', its 'tmdict' extended with
@@ -2557,8 +2585,20 @@ local
   type typecheck_state = {
     logic: string,
     frames: typecheck_frame list,
-    queries: query_command list
+    queries: query_command list,
+    surface_flags: surface_flags ref
   }
+
+  type typecheck_context = {
+    description: string,
+    surface_flags: surface_flags ref
+  }
+
+  datatype surface_event =
+      ArrowSortUsed
+    | LambdaUsed
+    | ApplyOperatorUsed
+    | PartialApplicationUsed
 
   datatype checked_term =
     CheckedTerm of {term: Term.term, sort: Type.hol_type}
@@ -2587,10 +2627,47 @@ local
   fun sort_list_to_string tys =
     "[" ^ String.concatWith ", " (List.map type_to_string tys) ^ "]"
 
-  fun command_context command =
-    "command '" ^ command ^ "'"
+  fun command_context surface_flags command : typecheck_context = {
+    description = "command '" ^ command ^ "'",
+    surface_flags = surface_flags
+  }
 
-  fun type_error fn_name context loc expected actual detail =
+  fun note_surface_event
+      ({surface_flags, ...}: typecheck_context) event =
+    let
+      val {arrow_sort_used, lambda_used, apply_operator_used,
+        partial_application_used} = !surface_flags
+    in
+      surface_flags :=
+        (case event of
+           ArrowSortUsed => {
+             arrow_sort_used = true,
+             lambda_used = lambda_used,
+             apply_operator_used = apply_operator_used,
+             partial_application_used = partial_application_used
+           }
+         | LambdaUsed => {
+             arrow_sort_used = arrow_sort_used,
+             lambda_used = true,
+             apply_operator_used = apply_operator_used,
+             partial_application_used = partial_application_used
+           }
+         | ApplyOperatorUsed => {
+             arrow_sort_used = arrow_sort_used,
+             lambda_used = lambda_used,
+             apply_operator_used = true,
+             partial_application_used = partial_application_used
+           }
+         | PartialApplicationUsed => {
+             arrow_sort_used = arrow_sort_used,
+             lambda_used = lambda_used,
+             apply_operator_used = apply_operator_used,
+             partial_application_used = true
+           })
+    end
+
+  fun type_error fn_name ({description, ...}: typecheck_context) loc expected
+      actual detail =
     let
       val expected_s =
         case expected of NONE => "" | SOME ty => ", expected sort " ^
@@ -2601,7 +2678,7 @@ local
     in
       raise ERR fn_name
         ("invalid SMT-LIB input at " ^ source_span_to_string loc ^
-         " in " ^ context ^ expected_s ^ actual_s ^ ": " ^ detail)
+         " in " ^ description ^ expected_s ^ actual_s ^ ": " ^ detail)
     end
 
   fun expect_checked_sort fn_name context loc expected checked =
@@ -2647,9 +2724,11 @@ local
     end
 
   fun update_current_typecheck_frame f
-      ({logic, frames, queries}: typecheck_state) =
+      ({logic, frames, queries, surface_flags}: typecheck_state) =
     case frames of
-      frame :: rest => {logic = logic, frames = f frame :: rest, queries = queries}
+      frame :: rest =>
+        {logic = logic, frames = f frame :: rest, queries = queries,
+         surface_flags = surface_flags}
     | [] => raise ERR "update_current_typecheck_frame" "empty assertion stack"
 
   fun update_current_typecheck_dicts (tydict, tmdict, sigdict) state =
@@ -2688,8 +2767,10 @@ local
         local_definitions = assertion :: typecheck_frame_local_definitions frame
       }) state
 
-  fun add_typechecked_query query ({logic, frames, queries}: typecheck_state) =
-    {logic = logic, frames = frames, queries = query :: queries}
+  fun add_typechecked_query query
+      ({logic, frames, queries, surface_flags}: typecheck_state) =
+    {logic = logic, frames = frames, queries = query :: queries,
+     surface_flags = surface_flags}
 
   fun active_typechecked_assertions ({frames, ...}: typecheck_state) =
     List.concat
@@ -2729,7 +2810,8 @@ local
   fun new_typecheck_state logic tydict tmdict =
     {logic = logic,
      frames = [mk_typecheck_frame tydict tmdict (empty_sigdict ())],
-     queries = []}
+     queries = [],
+     surface_flags = ref (empty_surface_flags ())}
 
   fun dest_typecheck_state cmd (SOME (x as {logic, ...})) =
         if is_reset_logic logic then
@@ -2741,7 +2823,7 @@ local
 
   fun finalize_typecheck_state cmd state : command_state_snapshot =
   let
-    val command_state as {logic, queries, ...} =
+    val command_state as {logic, queries, surface_flags, ...} =
       (case state of
          SOME x => x
        | NONE =>
@@ -2755,46 +2837,54 @@ local
      assertions = active_typechecked_assertions command_state,
      named_assertions = active_typechecked_named_assertions command_state,
      local_definitions = active_typechecked_local_definitions command_state,
-     queries = List.rev queries}
+     queries = List.rev queries,
+     surface_flags = !surface_flags}
   end
 
   fun push_typecheck_frames 0 state = state
-    | push_typecheck_frames n ({logic, frames, queries}: typecheck_state) =
+    | push_typecheck_frames n
+        ({logic, frames, queries, surface_flags}: typecheck_state) =
         let
           val top = current_typecheck_frame
-            {logic = logic, frames = frames, queries = queries}
+            {logic = logic, frames = frames, queries = queries,
+             surface_flags = surface_flags}
           val frame = mk_typecheck_frame
             (typecheck_frame_tydict top)
             (typecheck_frame_tmdict top)
             (typecheck_frame_sigdict top)
         in
           push_typecheck_frames (n - 1)
-            {logic = logic, frames = frame :: frames, queries = queries}
+            {logic = logic, frames = frame :: frames, queries = queries,
+             surface_flags = surface_flags}
         end
 
   fun pop_typecheck_frames 0 state = state
-    | pop_typecheck_frames n ({logic, frames, queries}: typecheck_state) =
+    | pop_typecheck_frames n
+        ({logic, frames, queries, surface_flags}: typecheck_state) =
         (case frames of
            _ :: rest =>
              if List.null rest then
                raise ERR "pop" "pop scope underflow: cannot pop the base assertion scope"
              else
                pop_typecheck_frames (n - 1)
-                 {logic = logic, frames = rest, queries = queries}
+                 {logic = logic, frames = rest, queries = queries,
+                  surface_flags = surface_flags}
          | [] => raise ERR "pop" "empty assertion stack")
 
   fun reset_typecheck_assertions
-      ({logic, frames, queries}: typecheck_state) =
+      ({logic, frames, queries, surface_flags}: typecheck_state) =
     let
       val frame = current_typecheck_frame
-        {logic = logic, frames = frames, queries = queries}
+        {logic = logic, frames = frames, queries = queries,
+         surface_flags = surface_flags}
     in
       {logic = logic,
        frames = [mk_typecheck_frame
          (typecheck_frame_tydict frame)
          (typecheck_frame_tmdict frame)
          (typecheck_frame_sigdict frame)],
-       queries = queries}
+       queries = queries,
+       surface_flags = surface_flags}
     end
 
   fun add_signature name sig_entry sigdict =
@@ -3490,6 +3580,13 @@ local
       | TermExists (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
             term_ast vars body boolSyntax.list_mk_exists
+      | TermLambda (vars, body) =>
+          let
+            val _ = note_surface_event context LambdaUsed
+          in
+            typecheck_lambda_with_options elaborate_datatypes context env
+              vars body
+          end
       | TermAnnotated (term, _) =>
           check term
     end
@@ -3517,6 +3614,38 @@ local
         Type.bool body_checked
     in
       checked_term_of (mk_binder (List.map Lib.snd vars, body))
+    end
+
+  and typecheck_lambda_with_options elaborate_datatypes context
+      (tydict, tmdict, sigdict) vars body =
+    let
+      fun reject_duplicates _ [] = ()
+        | reject_duplicates seen (sorted_var :: rest) =
+            (case node_of sorted_var of
+               SortedVar (name, _) =>
+                 let val name_text = located_string_node name
+                 in
+                   if List.exists (fn prior => prior = name_text) seen then
+                     type_error "typecheck_lambda" context (loc_of name)
+                       NONE NONE
+                       ("duplicate lambda binder '" ^ name_text ^ "'")
+                   else reject_duplicates (name_text :: seen) rest
+                 end)
+      val _ = reject_duplicates [] vars
+      val vars = List.map (typecheck_sorted_var context tydict) vars
+      val vars = List.map (fn vT => (Lib.fst vT, Term.mk_var vT)) vars
+      val (tmdict, sigdict) =
+        List.foldl
+          (fn ((name, var), (tmdict, sigdict)) =>
+            add_value_term_signature name var [] (Term.type_of var)
+              (tmdict, sigdict))
+          (tmdict, sigdict) vars
+      val body_checked =
+        typecheck_term_with_options elaborate_datatypes context
+          (tydict, tmdict, sigdict) body
+    in
+      checked_term_of
+        (Term.list_mk_abs (List.map Lib.snd vars, checked_term body_checked))
     end
 
   fun typecheck_define_sort context tydict name params body =
@@ -3979,6 +4108,7 @@ local
             end
         | TermForall (_, body) => term_mentions_name body
         | TermExists (_, body) => term_mentions_name body
+        | TermLambda (_, body) => term_mentions_name body
         | TermAnnotated (term, _) => term_mentions_name term
       val _ =
         if term_mentions_name body then
@@ -4101,7 +4231,12 @@ local
   fun typecheck_command ({dict_logic, elaborate_datatypes}: typecheck_options)
       command state =
     let
-      val context = command_context
+      fun context command =
+        let
+          val {surface_flags, ...} = dest_typecheck_state command state
+        in
+          command_context surface_flags command
+        end
       fun finish state = SOME state
       fun parsedicts_for logic =
         SmtLib_Logics.parsedicts_of_logic

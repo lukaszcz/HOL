@@ -2015,6 +2015,111 @@ in
     (typecheck too_many)
 end
 
+fun typechecked_single_assertion script =
+  case #assertions (SmtLib_Parser.typecheck_script_string script) of
+    [assertion] => assertion
+  | _ => die "expected exactly one typechecked assertion"
+
+fun smtlib_lambda_abstraction_alpha_success () =
+let
+  val state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(assert (= (lambda ((x Int)) (+ x 1)) " ^
+     "(lambda ((renamed Int)) (+ renamed 1))))\n")
+  val assertion = hd (#assertions state)
+  val (left, right) = boolSyntax.dest_eq assertion
+  val flags = #surface_flags state
+in
+  assert (Lib.can Term.dest_abs left andalso Lib.can Term.dest_abs right,
+    "lambda did not typecheck to a genuine HOL abstraction");
+  assert (Term.aconv left right,
+    "alpha-renamed SMT-LIB lambdas were not alpha-equivalent");
+  assert (#lambda_used flags,
+    "lambda surface event was not recorded in command state");
+  assert (not (#arrow_sort_used flags) andalso
+      not (#apply_operator_used flags) andalso
+      not (#partial_application_used flags),
+    "lambda typechecking set an unrelated surface flag")
+end
+
+fun smtlib_lambda_nesting_equivalence_success () =
+let
+  val assertion = typechecked_single_assertion
+    ("(set-logic ALL)\n" ^
+     "(assert (= (lambda ((x Int) (y Int)) (+ x y)) " ^
+     "(lambda ((a Int)) (lambda ((b Int)) (+ a b)))))\n")
+  val (flat, nested) = boolSyntax.dest_eq assertion
+  fun abstraction_count tm =
+    case Lib.total Term.dest_abs tm of
+      SOME (_, body) => 1 + abstraction_count body
+    | NONE => 0
+in
+  assert (abstraction_count flat = 2 andalso abstraction_count nested = 2,
+    "multi-variable lambda did not build nested HOL abstractions");
+  assert (Term.aconv flat nested,
+    "multi-variable lambda was not equivalent to nested lambdas")
+end
+
+fun smtlib_lambda_under_quantifier_success () =
+let
+  val assertion = typechecked_single_assertion
+    ("(set-logic ALL)\n" ^
+     "(assert (forall ((n Int)) " ^
+     "(= (lambda ((x Int)) (+ x n)) " ^
+     "(lambda ((y Int)) (+ y n)))))\n")
+  val (_, body) = boolSyntax.dest_forall assertion
+  val (left, right) = boolSyntax.dest_eq body
+in
+  assert (Lib.can Term.dest_abs left andalso Term.aconv left right,
+    "lambda under a quantifier was not preserved alpha-invariantly");
+  assert (List.null (Term.free_vars assertion),
+    "lambda under a quantifier leaked a bound variable")
+end
+
+fun smtlib_lambda_body_sort_diagnostic () =
+  let
+    val _ = SmtLib_Parser.typecheck_script_string
+      ("(set-logic ALL)\n" ^
+       "(assert (= (lambda ((x Int)) (+ x true)) " ^
+       "(lambda ((y Int)) y)))\n")
+  in
+    die "ill-sorted lambda body typechecked successfully"
+  end
+  handle HOL_ERR holerr =>
+    let val msg = message_of holerr
+    in
+      assert (contains "in command 'assert'" msg andalso
+          contains "could not resolve symbol '+'" msg andalso
+          contains "actual sorts [:int, :bool]" msg,
+        "lambda body sort diagnostic was imprecise: " ^ msg)
+    end
+
+fun smtlib_lambda_surface_syntax_hygiene () =
+let
+  fun typecheck text () =
+    ignore (SmtLib_Parser.typecheck_script_string text)
+  val quoted_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic QF_LIA)\n" ^
+     "(declare-fun |lambda| (Int) Int)\n" ^
+     "(assert (= (|lambda| 1) 1))\n")
+in
+  assert (List.length (#assertions quoted_state) = 1,
+    "quoted lambda symbol did not remain an ordinary identifier");
+  assert (not (#lambda_used (#surface_flags quoted_state)),
+    "quoted lambda symbol set the lambda surface flag");
+  expect_hol_error_contains "empty lambda binder list"
+    "lambda requires at least one sorted variable"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(assert (= (lambda () true) true))\n"));
+  expect_hol_error_contains "duplicate lambda binder"
+    "duplicate lambda binder 'x'"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(assert (= (lambda ((x Int) (x Int)) x) " ^
+       "(lambda ((x Int)) x)))\n"))
+end
+
 fun smtlib_command_malformed_diagnostics () =
   let
     fun typecheck text () = ignore (SmtLib_Parser.typecheck_script_string text)
@@ -5721,6 +5826,16 @@ let
       smtlib_declare_sort_parametric_success),
     ("smtlib_declare_sort_parametric_arity_diagnostics",
       smtlib_declare_sort_parametric_arity_diagnostics),
+    ("smtlib_lambda_abstraction_alpha_success",
+      smtlib_lambda_abstraction_alpha_success),
+    ("smtlib_lambda_nesting_equivalence_success",
+      smtlib_lambda_nesting_equivalence_success),
+    ("smtlib_lambda_under_quantifier_success",
+      smtlib_lambda_under_quantifier_success),
+    ("smtlib_lambda_body_sort_diagnostic",
+      smtlib_lambda_body_sort_diagnostic),
+    ("smtlib_lambda_surface_syntax_hygiene",
+      smtlib_lambda_surface_syntax_hygiene),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",
