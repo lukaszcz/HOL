@@ -284,6 +284,147 @@ val _ =
 
 val _ =
   test
+    ("goal translation separates typed names and reuses exact metadata",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'metadata_a"
+         val bool_x = mk_var ("metadata_x", bool)
+         val alpha_x = mk_var ("metadata_x", alpha)
+         val proposition =
+           mk_conj
+             (mk_eq (bool_x, bool_x), mk_eq (alpha_x, alpha_x))
+       in
+         case blastRule.fromGoalTerm proposition of
+             (Const ("bool$/\\", []) $
+                ((Const ("min$=", [Const ("min$bool", [])]) $
+                    Skolem (bool_left, [])) $
+                   Skolem (bool_right, []))) $
+               ((Const ("min$=", [Free "'metadata_a"]) $
+                   Skolem (alpha_left, [])) $
+                  Skolem (alpha_right, [])) =>
+               bool_left = bool_right andalso
+               alpha_left = alpha_right andalso
+               bool_left <> alpha_left
+           | _ => false
+       end)
+
+fun polymorphic_pair term =
+  case term of
+      (Const ("bool$/\\", []) $
+         ((Const ("min$=", [Var left_type]) $ Var left_first) $
+            Var left_second)) $
+        ((Const ("min$=", [Var right_type]) $ Var right_first) $
+           Var right_second) =>
+          SOME
+            (left_type, left_first, left_second,
+             right_type, right_first, right_second)
+    | _ => NONE
+
+fun polymorphic_equality term =
+  case term of
+      (Const ("min$=", [Var equality_type]) $ Var first) $ Var second =>
+        SOME (equality_type, first, second)
+    | _ => NONE
+
+val _ =
+  test
+    ("rule translation shares repeated types and typed term variables",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'metadata_rule_a"
+         val beta = Type.mk_vartype "'metadata_rule_b"
+         val alpha_x = mk_var ("metadata_rule_x", alpha)
+         val beta_x = mk_var ("metadata_rule_x", beta)
+         val proposition =
+           mk_conj
+             (mk_eq (alpha_x, alpha_x), mk_eq (beta_x, beta_x))
+         val theorem =
+           GENL [alpha_x, beta_x]
+             (DISCH proposition (ASSUME proposition))
+         val converted =
+           blastRule.convertIntro (blastRule.newCache ()) [] theorem
+         val pattern = polymorphic_pair (rand (#pattern converted))
+         val premise =
+           case #premises converted of
+               [[left], [right]] =>
+                 (case (polymorphic_equality (rand left),
+                        polymorphic_equality (rand right)) of
+                      (SOME (alpha_type, alpha_first, alpha_second),
+                       SOME (beta_type, beta_first, beta_second)) =>
+                        SOME
+                          (alpha_type, alpha_first, alpha_second,
+                           beta_type, beta_first, beta_second)
+                    | _ => NONE)
+             | _ => NONE
+       in
+         case (pattern, premise) of
+             (SOME (alpha_type, alpha_first, alpha_second,
+                    beta_type, beta_first, beta_second),
+              SOME (alpha_type', alpha_first', alpha_second',
+                    beta_type', beta_first', beta_second')) =>
+               alpha_type = alpha_type' andalso
+               beta_type = beta_type' andalso
+               alpha_type <> beta_type andalso
+               alpha_first = alpha_second andalso
+               beta_first = beta_second andalso
+               alpha_first = alpha_first' andalso
+               alpha_second = alpha_second' andalso
+               beta_first = beta_first' andalso
+               beta_second = beta_second' andalso
+               alpha_first <> beta_first
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("bound lookup preserves alpha-equivalence and de Bruijn scope",
+     fn () =>
+       let
+         fun quantified (left_name, right_name) =
+           let
+             val left = mk_var (left_name, bool)
+             val right = mk_var (right_name, bool)
+           in
+             mk_forall
+               (left, mk_forall (right, mk_eq (right, left)))
+           end
+         val first =
+           blastRule.fromGoalTerm (quantified ("left", "right"))
+         val renamed =
+           blastRule.fromGoalTerm (quantified ("x", "y"))
+       in
+         aconv (first, renamed) andalso
+         case first of
+             Const ("bool$!", _) $
+               Abs (_, Const ("bool$!", _) $
+                 Abs (_, (Const ("min$=", _) $ Bound 0) $ Bound 1)) =>
+               true
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("separate translations allocate fresh names but reuse local names",
+     fn () =>
+       let
+         val x = mk_var ("metadata_fresh_x", bool)
+         fun names () =
+           case blastRule.fromGoalTerm (mk_eq (x, x)) of
+               (Const ("min$=", _) $ Skolem (left, [])) $
+                 Skolem (right, []) => SOME (left, right)
+             | _ => NONE
+       in
+         case (names (), names ()) of
+             (SOME (first_left, first_right),
+              SOME (second_left, second_right)) =>
+               first_left = first_right andalso
+               second_left = second_right andalso
+               first_left <> second_left
+           | _ => false
+       end)
+
+val _ =
+  test
     ("rule type variables are shared mutable typargs",
      fn () =>
        let

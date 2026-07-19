@@ -50,8 +50,11 @@ fun freshName _ prefix =
 val blast_trace = ref 0
 val _ = Feedback.register_trace ("blast", blast_trace, 7)
 
+(* [const_name] is the identity stored in blast terms and decoded by
+   [query_skeleton], so it is also the stable cache key. *)
 val generic_cache :
-  (string * (hol_type * hol_type list)) list ref = ref []
+  (string, hol_type * hol_type list) Redblackmap.dict ref =
+  ref (Redblackmap.mkDict String.compare)
 
 fun split_name encoded =
   let
@@ -68,33 +71,30 @@ fun generic_info {Thy, Name} =
   let
     val encoded = const_name {Thy = Thy, Name = Name}
   in
-    case List.find (fn (key, _) => key = encoded) (!generic_cache) of
-        SOME (_, info) => info
+    case Redblackmap.peek (!generic_cache, encoded) of
+        SOME info => info
       | NONE =>
           let
             val generic = type_of (prim_mk_const {Thy = Thy, Name = Name})
             val info = (generic, Type.type_vars generic)
           in
-            generic_cache := (encoded, info) :: !generic_cache;
+            generic_cache :=
+              Redblackmap.insert (!generic_cache, encoded, info);
             info
           end
   end
 
-fun lookup_type ty [] = NONE
-  | lookup_type ty ((key, value) :: rest) =
-      if key = ty then SOME value else lookup_type ty rest
-
-fun encode_type rigid alist ty =
+fun encode_type rigid type_map ty =
   if Type.is_vartype ty then
     if rigid then Free (Type.dest_vartype ty)
     else
-      (case lookup_type ty (!alist) of
+      (case Redblackmap.peek (!type_map, ty) of
            SOME value => value
          | NONE =>
              let
                val value = Var (ref NONE)
              in
-               alist := (ty, value) :: !alist;
+               type_map := Redblackmap.insert (!type_map, ty, value);
                value
              end)
   else
@@ -102,44 +102,45 @@ fun encode_type rigid alist ty =
       val {Thy, Tyop, Args} = Type.dest_thy_type ty
       val head = Const (const_name {Thy = Thy, Name = Tyop}, [])
     in
-      list_comb (head, map (encode_type rigid alist) Args)
+      list_comb (head, map (encode_type rigid type_map) Args)
     end
 
-fun const_tyargs rigid type_alist hol_const =
+fun const_tyargs rigid type_map hol_const =
   let
     val {Thy, Name, Ty} = dest_thy_const hol_const
     val (generic, generic_vars) = generic_info {Thy = Thy, Name = Name}
     val subst = Type.match_type generic Ty
   in
-    map (encode_type rigid type_alist o Type.type_subst subst)
+    map (encode_type rigid type_map o Type.type_subst subst)
       generic_vars
   end
 
 fun member_term tm = List.exists (fn other => Term.aconv tm other)
 
-fun lookup_term tm [] = NONE
-  | lookup_term tm ((key, value) :: rest) =
-      if Term.aconv tm key then SOME value else lookup_term tm rest
-
 fun translator {rigid_types, goal_frees, rule_vars} =
   let
-    val term_alist = ref []
-    val type_alist = ref []
+    (* Type.compare is structural equality on HOL types.  Term.compare is a
+       total ordering that respects alpha-equivalence, matching the former
+       [=] and [Term.aconv] association-list lookups respectively. *)
+    val term_map : (hol_term, pterm) Redblackmap.dict ref =
+      ref (Redblackmap.mkDict Term.compare)
+    val type_map : (hol_type, pterm) Redblackmap.dict ref =
+      ref (Redblackmap.mkDict Type.compare)
 
     fun fresh_variable tm make =
-      case lookup_term tm (!term_alist) of
+      case Redblackmap.peek (!term_map, tm) of
           SOME value => value
         | NONE =>
             let
               val value = make ()
             in
-              term_alist := (tm, value) :: !term_alist;
+              term_map := Redblackmap.insert (!term_map, tm, value);
               value
             end
 
-    fun variable bounds tm =
-      case lookup_term tm bounds of
-          SOME level => Bound level
+    fun variable depth bounds tm =
+      case Redblackmap.peek (bounds, tm) of
+          SOME binder_depth => Bound (depth - binder_depth)
         | NONE =>
             if member_term tm rule_vars then
               fresh_variable tm (fn () => Var (ref NONE))
@@ -149,23 +150,25 @@ fun translator {rigid_types, goal_frees, rule_vars} =
             else
               let val (name, _) = dest_var tm in Free name end
 
-    fun under_binder bounds =
-      map (fn (tm, level) => (tm, level + 1)) bounds
-
-    fun from bounds tm =
+    fun from depth bounds tm =
       if is_const tm then
         let
           val {Thy, Name, ...} = dest_thy_const tm
-          val args = const_tyargs rigid_types type_alist tm
+          val args = const_tyargs rigid_types type_map tm
         in
           Const (const_name {Thy = Thy, Name = Name}, args)
         end
-      else if is_var tm then variable bounds tm
+      else if is_var tm then variable depth bounds tm
       else if is_abs tm then
         let
           val (binder, body) = dest_abs tm
           val (name, _) = dest_var binder
-          val body' = from ((binder, 0) :: under_binder bounds) body
+          val body_depth = depth + 1
+          (* Persistent maps restore an outer binding when recursion returns.
+             Storing absolute depth avoids rebuilding every outer binding. *)
+          val body_bounds =
+            Redblackmap.insert (bounds, binder, body_depth)
+          val body' = from body_depth body_bounds body
         in
           case body' of
               f $ Bound 0 =>
@@ -176,9 +179,10 @@ fun translator {rigid_types, goal_frees, rule_vars} =
         end
       else
         let val (rator, rand) = dest_comb tm
-        in from bounds rator $ from bounds rand end
+        in from depth bounds rator $ from depth bounds rand end
   in
-    fn hol_term => from [] hol_term
+    fn hol_term =>
+      from 0 (Redblackmap.mkDict Term.compare) hol_term
   end
 
 fun fromGoalTerm tm =
