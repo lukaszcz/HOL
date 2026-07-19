@@ -38,19 +38,25 @@ fun curry_conj_premises th =
           end
         else DISCH prem (curry_conj_premises (undisch th))
 
+fun has_canonical_premises tm =
+  case total dest_imp_only tm of
+      NONE => true
+    | SOME (prem, rest) =>
+        not (is_conj prem) andalso has_canonical_premises rest
+
 (* [curry_conj_premises] only rewrites a theorem whose implication spine has
    a top-level conjunction premise, so a theorem without one is already
    canonical.  ext_info re-derives from an already canonical theorem many
    times; short-circuiting keeps those calls from redoing the kernel work. *)
 fun is_canonical th =
-  let
-    fun spine tm =
-      case total dest_imp_only tm of
-          NONE => true
-        | SOME (prem, rest) => not (is_conj prem) andalso spine rest
-  in
-    spine (snd (strip_forall (concl th)))
-  end
+  has_canonical_premises (snd (strip_forall (concl th)))
+
+(* The major premise of an elimination rule is deliberately left intact.
+   Only conjunctions in its remaining implication spine need kernel work. *)
+fun is_canonical_elim th =
+  case total dest_imp_only (snd (strip_forall (concl th))) of
+      NONE => true
+    | SOME (_, rest) => has_canonical_premises rest
 
 (* A quantified variable may also occur free in a theorem hypothesis (the
    quantifier then shadows that free variable in the conclusion).  Such a
@@ -81,21 +87,23 @@ fun canonical_rule th =
    generic canonicalizer still curries conjunctions in introduction-rule
    premises and in the side premises below the major premise. *)
 fun canonical_elim_rule th =
-  let
-    val (vars, _) = strip_forall (concl th)
-    val vars' = fresh_forall_vars th vars
-    val body = Drule.SPECL vars' th
-  in
-    case total dest_imp_only (concl body) of
-        NONE => canonical_rule th
-      | SOME (major, _) =>
-          let
-            val tail = MP body (ASSUME major)
-            val tail' = curry_conj_premises tail
-          in
-            GENL vars' (DISCH major tail')
-          end
-  end
+  if is_canonical_elim th then th
+  else
+    let
+      val (vars, _) = strip_forall (concl th)
+      val vars' = fresh_forall_vars th vars
+      val body = Drule.SPECL vars' th
+    in
+      case total dest_imp_only (concl body) of
+          NONE => canonical_rule th
+        | SOME (major, _) =>
+            let
+              val tail = MP body (ASSUME major)
+              val tail' = curry_conj_premises tail
+            in
+              GENL vars' (DISCH major tail')
+            end
+    end
 
 fun canonical_rule_of Intro = canonical_rule
   | canonical_rule_of (Elim | Dest) = canonical_elim_rule

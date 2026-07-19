@@ -364,6 +364,15 @@ fun shadowed_canonical_rule () =
     Drule.ADD_ASSUM x quantified
   end
 
+fun shadowed_canonical_elim () =
+  let
+    val x = ``x : bool``
+    val major = ``p /\ q``
+    val quantified = GEN x (DISCH major (DISCH r (ASSUME r)))
+  in
+    Drule.ADD_ASSUM x quantified
+  end
+
 val _ =
   test
     ("rule preprocessing freshens outer binders away from hypotheses",
@@ -377,6 +386,29 @@ val _ =
          List.exists (Term.aconv ``x : bool``) (hyp th') andalso
          can (ext_info spec) th andalso
          can (ext_info spec) (shadowed_canonical_rule ())
+       end)
+
+val _ =
+  test
+    ("repeated canonicalization avoids intro and elim kernel rebuilding",
+     fn () =>
+       let
+         fun unchanged canonicalize th =
+           let
+             val once = canonicalize th
+             val twice = canonicalize once
+             fun binder_names theorem =
+               map (fst o dest_var) (fst (strip_forall (concl theorem)))
+           in
+             binder_names once = binder_names th andalso
+             binder_names twice = binder_names once andalso
+             Term.aconv (concl twice) (concl th) andalso
+             same_terms (hyp twice) (hyp th)
+           end
+       in
+         unchanged canonical_rule (shadowed_canonical_rule ()) andalso
+         unchanged (canonical_rule_of clasetRules.Elim)
+           (shadowed_canonical_elim ())
        end)
 
 val _ =
@@ -407,6 +439,22 @@ val _ =
          Term.aconv
            (rule_index clasetRules.Elim processed) ``p /\ q`` andalso
          subgoals_of (true, processed) = 1
+       end)
+
+val _ =
+  test
+    ("elimination canonicalization still curries conjunctive side premises",
+     fn () =>
+       let
+         val major = ``p /\ q``
+         val side = ``q /\ r``
+         val theorem =
+           DISCH major
+             (DISCH side (CONJUNCT1 (ASSUME major)))
+       in
+         Term.aconv
+           (concl (canonical_rule_of clasetRules.Elim theorem))
+           ``p /\ q ==> q ==> r ==> p``
        end)
 
 val _ =
