@@ -16,7 +16,7 @@ sig
 
   type result =
     {suggestions : suggestion list,
-     slices_run : (hhProver.slice * hhProver.szs * real) list,
+     slices_run : (hhProver.slice * hhProver.szs * real * bool) list,
      stopped : stop_reason, t_total : real}
 
   val run :

@@ -1250,6 +1250,7 @@ fun test_hhEval root =
     val _ = mkdirs report_journal
     val _ = copy_fixture "list.jsonl"
     val _ = copy_fixture "arithmetic.jsonl"
+    val _ = copy_fixture "sched.jsonl"
     val report_corrupt = TextIO.openAppend (join report_journal "list.jsonl")
     val _ = TextIO.output (report_corrupt, "{in-progress")
     val _ = TextIO.closeOut report_corrupt
@@ -1268,6 +1269,7 @@ fun test_hhEval root =
     val conditions = array_field "conditions" summary
     val e_condition = named "cond" "deps-e" conditions
     val vampire_condition = named "cond" "deps-vampire" conditions
+    val sched_condition = named "cond" "sched-main" conditions
     val portfolios = array_field "portfolios" summary
     val portfolio = named "key" "bushy/5s" portfolios
     val prover_rows = array_field "provers" portfolio
@@ -1303,6 +1305,17 @@ fun test_hhEval root =
        metric "attempted" vampire_condition = 4 andalso
        metric "proved" vampire_condition = 3 andalso
        metric "reconstructed" vampire_condition = 2)
+    val _ = expect "report schedule counts and total-time quantiles"
+      (metric "goals" sched_condition = 4 andalso
+       metric "attempted" sched_condition = 4 andalso
+       metric "proved" sched_condition = 3 andalso
+       metric "reconstructed" sched_condition = 2 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField sched_condition "metrics") "t_prover_p50"))
+         0.8 andalso
+       same_real (JSONUtil.asNumber (JSONUtil.lookupField
+         (JSONUtil.lookupField sched_condition "metrics") "t_prover_p90"))
+         1.2)
     val _ = expect "report portfolio union and unique solves"
       (metric "goals" portfolio = 6 andalso
        metric "attempted" portfolio = 5 andalso
@@ -1320,6 +1333,24 @@ fun test_hhEval root =
       (String.isSubstring "## Theories" report_text andalso
        String.isSubstring "| arithmetic | deps-e" report_text andalso
        String.isSubstring "| list | deps-vampire" report_text)
+    val distributions = array_field "schedule_distributions" summary
+    val sched_distribution = named "cond" "sched-main" distributions
+    val stop_rows = array_field "stop_reasons" sched_distribution
+    val max_proofs = named "value" "MaxProofs" stop_rows
+    val comparisons = array_field "schedule_vs_union" summary
+    val comparison = named "condition" "sched-main" comparisons
+    val _ = expect "report schedule distributions"
+      (JSONUtil.asInt (JSONUtil.lookupField max_proofs "count") = 2 andalso
+       length (array_field "slices_run" sched_distribution) = 2 andalso
+       String.isSubstring "2:1, 3:3" report_text andalso
+       String.isSubstring "MaxProofs:2" report_text)
+    val _ = expect "report schedule versus union comparison"
+      (JSONUtil.asInt (JSONUtil.lookupField comparison "proved_delta") = ~1
+       andalso JSONUtil.asInt
+         (JSONUtil.lookupField comparison "reconstructed_delta") = 0 andalso
+       String.isSubstring "## Schedule vs portfolio union" report_text andalso
+       String.isSubstring "| sched-main | bushy/5s | 3 | 4 | -1 | 2 | 2 | 0 |"
+         report_text)
   in
     ()
   end
@@ -1619,7 +1650,7 @@ fun test_schedule_early_stop parser =
           Real.toString (#t_total result) ^ ", events=" ^
           String.concatWith ";" events ^ ", results=" ^
           String.concatWith ";"
-            (map (fn (slice, status, elapsed) =>
+            (map (fn (slice, status, elapsed, _) =>
               slice_event_tag slice ^ ":" ^ szs_event_name status ^ ":" ^
               Real.toString elapsed) (#slices_run result)) ^ "\n")
     val _ = expect "scheduler early stop follows a verified proof"
@@ -1673,10 +1704,15 @@ fun test_schedule_cache parser =
     val _ = hhProver.reset_spawn_count ()
     val (second, _) = run_schedule options
     val second_spawns = hhProver.spawn_count ()
+    val first_cached = map #4 (#slices_run first)
+    val second_cached = map #4 (#slices_run second)
     val _ = expect "scheduler cache hit spawns no processes"
       (#stopped first = hhSchedule.MaxProofs andalso first_spawns > 0 andalso
+       List.all not first_cached andalso
        #stopped second = hhSchedule.MaxProofs andalso
-       length (#suggestions second) = 1 andalso second_spawns = 0)
+       length (#suggestions second) = 1 andalso
+       List.all (fn cached => cached) second_cached andalso
+       second_spawns = 0)
     val _ = remove_tree root
   in
     ()
@@ -1843,8 +1879,10 @@ fun test_hhEval_integration () =
 
 val _ = test_hhEval_integration ()
 
-val _ = expect "hhEval smoke has twelve fixed goals"
-  (length hhEval.smoke_goals = 12)
+val _ = expect "hhEval smoke has twelve prover goals and one schedule goal"
+  (length hhEval.smoke_goals = 13 andalso
+   length (List.filter (fn (_, _, engine) => engine = "sched")
+     hhEval.smoke_goals) = 1)
 
 val _ = expect "hhEval smoke covers every pinned prover four times"
   (List.all (fn prover =>

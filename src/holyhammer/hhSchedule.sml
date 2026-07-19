@@ -22,7 +22,7 @@ withtype suggestion =
 
 type result =
   {suggestions : suggestion list,
-   slices_run : (hhProver.slice * hhProver.szs * real) list,
+   slices_run : (hhProver.slice * hhProver.szs * real * bool) list,
    stopped : stop_reason, t_total : real}
 
 type success = hhProver.slice * string list * real
@@ -153,7 +153,7 @@ fun run {options, goal, premises, progress} =
     val work = ref schedule
     val recon = ref ([] : success list)
     val slices_run = ref
-      ([] : (hhProver.slice * hhProver.szs * real) list)
+      ([] : (hhProver.slice * hhProver.szs * real * bool) list)
     val suggestions = ref ([] : suggestion list)
     val verified_keys = ref ([] : string list)
     val verified = ref 0
@@ -234,14 +234,15 @@ fun run {options, goal, premises, progress} =
                   problem = #problem request} : hhCache.key_parts)
             end
 
-    fun note_result slice result =
+    fun note_result slice cached result =
       let
         val axioms =
           case (#szs result, #used_axioms result) of
               (hhProver.SzsTheorem, SOME values) => SOME values
             | _ => NONE
         val _ = with_mutex state_mutex (fn () =>
-          slices_run := (slice, #szs result, #time result) :: !slices_run)
+          slices_run :=
+            (slice, #szs result, #time result, cached) :: !slices_run)
         val _ = emit (SliceDone (slice, #szs result, #time result))
       in
         case axioms of
@@ -293,7 +294,7 @@ fun run {options, goal, premises, progress} =
                         end
                 end
       in
-        note_result slice result
+        note_result slice (Option.isSome cached) result
       end
 
     fun worker_loop () =

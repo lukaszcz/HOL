@@ -1,6 +1,11 @@
 (* ========================================================================= *)
 (* FILE          : hhEval.sml                                                *)
 (* DESCRIPTION   : HolyHammer evaluation corpus and durable journal          *)
+(*
+   Schedule cells own [cores] prover processes apiece.  Callers of run_eval
+   therefore size ncore to machine_cores div cores_per_cell; the predictable
+   peak load is ncore * cores_per_cell, as in the Phase 0 prover-cell driver.
+*)
 (* ========================================================================= *)
 
 structure hhEval :> hhEval =
@@ -81,6 +86,16 @@ fun validate_condition (condition : condition) =
   case (#engine condition, #reconstruct condition) of
       (Sched _, false) => raise Fail
         "invalid hhEval Sched condition: reconstruct must be true"
+    | (Sched {provers, slices, cores, max_proofs}, _) =>
+        if null provers then raise Fail
+          "invalid hhEval Sched condition: provers must not be empty"
+        else if slices < 1 then raise Fail
+          "invalid hhEval Sched condition: slices must be positive"
+        else if cores < 1 then raise Fail
+          "invalid hhEval Sched condition: cores must be positive"
+        else if max_proofs < 1 then raise Fail
+          "invalid hhEval Sched condition: max_proofs must be positive"
+        else ()
     | _ => ()
 
 fun json_condition condition =
@@ -610,8 +625,12 @@ fun latest_cells entries =
   end
 
 fun regular_cell entry =
-  #cond entry <> "__load__" andalso #thm entry <> "__load__" andalso
-  (case #engine entry of Prover _ => true | Sched _ => false)
+  #cond entry <> "__load__" andalso #thm entry <> "__load__"
+
+fun prover_cell entry =
+  case #engine entry of Prover _ => true | Sched _ => false
+
+fun sched_cell entry = not (prover_cell entry)
 
 fun goal_ids entries predicate =
   sorted_unique (map #goal_id (List.filter predicate entries))
@@ -645,7 +664,12 @@ fun make_metrics entries : metrics =
     val attempted = length (goal_ids entries attempted_cell)
     val proved = length (goal_ids entries proven_cell)
     val reconstructed = length (goal_ids entries reconstructed_cell)
-    val times = map #t_prover (List.filter proven_cell entries)
+    fun cell_time entry =
+      case #engine entry of
+          Prover _ => #t_prover entry
+        | Sched _ =>
+            (case #t_total entry of SOME total => total | NONE => #t_prover entry)
+    val times = map cell_time (List.filter proven_cell entries)
     val (p50, p90, maximum) = quantiles times
   in
     {goals = goals, attempted = attempted, proved = proved,
@@ -675,14 +699,22 @@ fun entries_for_condition name entries =
 fun condition_json name entries =
   let
     val first = hd entries
+    val schedule_fields =
+      case #engine first of
+          Prover _ => []
+        | Sched {provers, slices, cores, max_proofs} =>
+            [("engine", JSON.STRING "sched"),
+             ("provers", JSON.ARRAY (map JSON.STRING provers)),
+             ("requested_slices", json_int slices),
+             ("cores", json_int cores), ("max_proofs", json_int max_proofs)]
   in
     JSON.OBJECT
-      [("cond", JSON.STRING name), ("regime",
+      ([("cond", JSON.STRING name), ("regime",
         JSON.STRING (string_of_regime (#regime first))),
        ("selector", JSON.STRING (string_of_selector (#selector first))),
        ("prover", JSON.STRING (#prover first)),
        ("timeout", json_int (#timeout first)),
-       ("metrics", json_metrics (make_metrics entries))]
+       ("metrics", json_metrics (make_metrics entries))] @ schedule_fields)
   end
 
 fun portfolio_key entry =
@@ -741,6 +773,46 @@ fun theory_json theory entries =
           (entries_for_condition name in_theory)) conditions))]
   end
 
+fun count_int value values =
+  length (List.filter (fn other => other = value) values)
+
+fun count_string value values =
+  length (List.filter (fn other => other = value) values)
+
+fun schedule_distribution_json name entries =
+  let
+    val slice_counts = map (length o #slices) entries
+    val stops = sorted_unique (List.mapPartial #stop entries)
+    val slice_values =
+      Portable.sort (fn left => fn right => left <= right)
+        (mk_sameorder_set Int.compare slice_counts)
+  in
+    JSON.OBJECT
+      [("cond", JSON.STRING name),
+       ("slices_run", JSON.ARRAY (map (fn value => JSON.OBJECT
+          [("value", json_int value),
+           ("count", json_int (count_int value slice_counts))]) slice_values)),
+       ("stop_reasons", JSON.ARRAY (map (fn value => JSON.OBJECT
+          [("value", JSON.STRING value),
+           ("count", json_int (count_string value
+             (List.mapPartial #stop entries)))]) stops))]
+  end
+
+fun comparison_json name key schedule_entries union_entries =
+  let
+    val schedule_metrics = make_metrics schedule_entries
+    val union_metrics = make_metrics union_entries
+  in
+    JSON.OBJECT
+      [("condition", JSON.STRING name), ("portfolio", JSON.STRING key),
+       ("schedule", json_metrics schedule_metrics),
+       ("union", json_metrics union_metrics),
+       ("proved_delta", json_int
+          (#proved schedule_metrics - #proved union_metrics)),
+       ("reconstructed_delta", json_int
+          (#reconstructed schedule_metrics - #reconstructed union_metrics))]
+  end
+
 fun option_text NONE = "-"
   | option_text (SOME number) = Real.fmt (StringCvt.FIX (SOME 2)) number
 
@@ -755,8 +827,12 @@ fun metrics_markdown metrics =
   " | " ^ option_text (#maximum metrics)
 
 fun condition_markdown name entries =
-  let val first = hd entries in
-    "| " ^ name ^ " | " ^ #prover first ^ " | " ^
+  let
+    val first = hd entries
+    val engine =
+      case #engine first of Prover _ => #prover first | Sched _ => "schedule"
+  in
+    "| " ^ name ^ " | " ^ engine ^ " | " ^
     metrics_markdown (make_metrics entries) ^ " |\n"
   end
 
@@ -767,15 +843,66 @@ fun theory_markdown theory name entries =
   "| " ^ theory ^ " | " ^ name ^ " | " ^
   metrics_markdown (make_metrics entries) ^ " |\n"
 
+fun int_distribution values =
+  let
+    val distinct = Portable.sort (fn left => fn right => left <= right)
+      (mk_sameorder_set Int.compare values)
+  in
+    if null distinct then "-"
+    else String.concatWith ", " (map (fn value =>
+      Int.toString value ^ ":" ^ Int.toString (count_int value values)) distinct)
+  end
+
+fun string_distribution values =
+  let val distinct = sorted_unique values in
+    if null distinct then "-"
+    else String.concatWith ", " (map (fn value =>
+      value ^ ":" ^ Int.toString (count_string value values)) distinct)
+  end
+
+fun schedule_distribution_markdown name entries =
+  "| " ^ name ^ " | " ^ int_distribution (map (length o #slices) entries) ^
+  " | " ^ string_distribution (List.mapPartial #stop entries) ^ " |\n"
+
+fun comparison_markdown name key schedule_entries union_entries =
+  let
+    val schedule = make_metrics schedule_entries
+    val union = make_metrics union_entries
+    fun signed number =
+      if number < 0 then "-" ^ Int.toString (~number)
+      else Int.toString number
+  in
+    "| " ^ name ^ " | " ^ key ^ " | " ^
+    Int.toString (#proved schedule) ^ " | " ^ Int.toString (#proved union) ^
+    " | " ^ signed (#proved schedule - #proved union) ^ " | " ^
+    Int.toString (#reconstructed schedule) ^ " | " ^
+    Int.toString (#reconstructed union) ^ " | " ^
+    signed (#reconstructed schedule - #reconstructed union) ^ " |\n"
+  end
+
 fun write_report_markdown expdir entries =
   let
     val conditions = sorted_unique (map #cond entries)
-    val portfolios = sorted_unique (map portfolio_key entries)
+    val prover_entries = List.filter prover_cell entries
+    val schedule_entries = List.filter sched_cell entries
+    val schedule_conditions = sorted_unique (map #cond schedule_entries)
+    val portfolios = sorted_unique (map portfolio_key prover_entries)
     val theories = sorted_unique (map #thy entries)
+    fun comparison name =
+      let
+        val cells = entries_for_condition name schedule_entries
+        val key = portfolio_key (hd cells)
+        val union = entries_for_key key prover_entries
+      in
+        if null union then NONE else SOME (name, key, cells, union)
+      end
+    val comparisons = List.mapPartial comparison schedule_conditions
     val output = TextIO.openOut (join expdir "report.md")
     val _ = TextIO.output (output, "# hhEval report\n\n")
     val _ = TextIO.output (output,
-      "Partial journals are reported as observed cells only.\n\n")
+      "Partial journals are reported as observed cells only. For schedule " ^
+      "runs, size `ncore` to `machine_cores div cores_per_cell`; peak prover " ^
+      "load is `ncore × cores_per_cell`.\n\n")
     val _ = TextIO.output (output,
       "## Conditions\n\n| condition | prover | G | A | P | P% | R | R% | " ^
       "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
@@ -787,13 +914,13 @@ fun write_report_markdown expdir entries =
       "p50 | p90 | max |\n|---|---:|---:|---:|---:|---:|---:|---:|" ^
       "---:|---:|\n")
     val _ = app (fn key => TextIO.output (output,
-      portfolio_markdown key (entries_for_key key entries))) portfolios
+      portfolio_markdown key (entries_for_key key prover_entries))) portfolios
     val _ = TextIO.output (output,
       "\n## Unique solves\n\n| portfolio | prover | proved | " ^
       "reconstructed |\n|---|---|---:|---:|\n")
     fun unique_rows key =
       let
-        val cells = entries_for_key key entries
+        val cells = entries_for_key key prover_entries
         fun row prover = TextIO.output (output,
           "| " ^ key ^ " | " ^ prover ^ " | " ^
           Int.toString (unique_count prover proof_ids cells) ^ " | " ^
@@ -803,6 +930,26 @@ fun write_report_markdown expdir entries =
         app row (sorted_unique (map #prover cells))
       end
     val _ = app unique_rows portfolios
+    val _ =
+      if null schedule_conditions then ()
+      else
+        (TextIO.output (output,
+           "\n## Schedule distributions\n\n| condition | slices run " ^
+           "(value:count) | stop reasons (value:count) |\n" ^
+           "|---|---|---|\n");
+         app (fn name => TextIO.output (output,
+           schedule_distribution_markdown name
+             (entries_for_condition name schedule_entries)))
+           schedule_conditions)
+    val _ =
+      if null comparisons then ()
+      else
+        (TextIO.output (output,
+           "\n## Schedule vs portfolio union\n\n| schedule | portfolio | " ^
+           "S P | U P | ΔP | S R | U R | ΔR |\n" ^
+           "|---|---|---:|---:|---:|---:|---:|---:|\n");
+         app (fn (name, key, schedule, union) => TextIO.output (output,
+           comparison_markdown name key schedule union)) comparisons)
     val _ = TextIO.output (output,
       "\n## Theories\n\n| theory | condition | G | A | P | P% | R | R% | " ^
       "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
@@ -824,16 +971,38 @@ fun write_report_markdown expdir entries =
 fun write_summary expdir entries =
   let
     val conditions = sorted_unique (map #cond entries)
-    val portfolios = sorted_unique (map portfolio_key entries)
+    val prover_entries = List.filter prover_cell entries
+    val schedule_entries = List.filter sched_cell entries
+    val schedule_conditions = sorted_unique (map #cond schedule_entries)
+    val portfolios = sorted_unique (map portfolio_key prover_entries)
     val theories = sorted_unique (map #thy entries)
-    val summary = JSON.OBJECT
+    fun comparison name =
+      let
+        val cells = entries_for_condition name schedule_entries
+        val key = portfolio_key (hd cells)
+        val union = entries_for_key key prover_entries
+      in
+        if null union then NONE
+        else SOME (comparison_json name key cells union)
+      end
+    val base =
       [("schema", JSON.STRING "hhEval-summary-v1"),
        ("conditions", JSON.ARRAY (map (fn name => condition_json name
          (entries_for_condition name entries)) conditions)),
        ("portfolios", JSON.ARRAY (map (fn key => portfolio_json key
-         (entries_for_key key entries)) portfolios)),
+         (entries_for_key key prover_entries)) portfolios)),
        ("theories", JSON.ARRAY (map (fn theory => theory_json theory entries)
          theories))]
+    val schedule_fields =
+      if null schedule_conditions then []
+      else
+        [("schedule_distributions", JSON.ARRAY (map (fn name =>
+            schedule_distribution_json name
+              (entries_for_condition name schedule_entries))
+            schedule_conditions)),
+         ("schedule_vs_union", JSON.ARRAY
+            (List.mapPartial comparison schedule_conditions))]
+    val summary = JSON.OBJECT (base @ schedule_fields)
     val output = TextIO.openOut (join expdir "summary.json")
     val _ = JSONPrinter.printFmt (output, summary)
     val _ = TextIO.output (output, "\n")
@@ -973,7 +1142,7 @@ fun select_knn pool count goal =
       (mlFeature.fea_of_goal true goal)
   end
 
-fun selected_premises condition pool thm goal =
+fun selected_premises_at condition pool thm goal knn_count =
   case #selector condition of
       Deps =>
         let val dependencies = #2 (mlThmData.intactdep_of_thm thm) in
@@ -982,7 +1151,11 @@ fun selected_premises condition pool thm goal =
             | Chainy => List.filter (fn name =>
                 List.exists (fn allowed => allowed = name) pool) dependencies
         end
-    | Knn count => select_knn pool count goal
+    | Knn count => select_knn pool
+        (case knn_count of NONE => count | SOME maximum => maximum) goal
+
+fun selected_premises condition pool thm goal =
+  selected_premises_at condition pool thm goal NONE
 
 fun reconstruct condition result goal =
   if not (#reconstruct condition) orelse
@@ -1003,7 +1176,104 @@ fun reconstruct condition result goal =
                     (SOME false, SOME "metis", NONE,
                      SOME (General.exnMessage error)))
 
-fun run_cell expdir thy (name, thm) pool condition =
+fun schedule_stop_name hhSchedule.MaxProofs = "MaxProofs"
+  | schedule_stop_name hhSchedule.Timeout = "Timeout"
+  | schedule_stop_name hhSchedule.Exhausted = "Exhausted"
+  | schedule_stop_name hhSchedule.Interrupted = "Interrupted"
+
+fun schedule_options condition
+    {provers, slices, cores, max_proofs} : hhConfig.hh_options =
+  let val snapshot = hhConfig.snapshot () in
+    {timeout = #timeout condition, max_proofs = max_proofs,
+     provers = provers, slices = slices, cores = cores,
+     filter = #filter snapshot, max_facts = #max_facts snapshot,
+     minimize = #minimize snapshot,
+     preplay_timeout = #preplay_timeout snapshot,
+     minimize_timeout = #minimize_timeout snapshot,
+     cache = true, cache_dir = #cache_dir snapshot,
+     cache_max_entries = #cache_max_entries snapshot, debug_dir = NONE}
+  end
+
+fun max_schedule_facts schedule =
+  foldl Int.max 0 (map (#nfacts o #2) schedule)
+
+fun version_of_prover name =
+  case hhProver.lookup name of
+      NONE => NONE
+    | SOME config =>
+        (case hhProver.probe config of
+             NONE => NONE
+           | SOME {version, ...} => version)
+
+fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
+  let
+    val goal = dest_thm thm
+    val options = schedule_options condition parameters
+    val schedule = hhSlice.mk_schedule options
+    val maximum = max_schedule_facts schedule
+    (* Schedule slices share one longest-first ranking and consume prefixes.
+       In particular, chainy kNN uses its chainy pool at the schedule's
+       maximum fact count, matching the v1 premise regime. *)
+    val premises = selected_premises_at condition pool thm goal (SOME maximum)
+    val proofs = ref
+      ([] : (hhProver.slice * string list) list)
+    fun progress (hhSchedule.ProofFound proof) = proofs := !proofs @ [proof]
+      | progress _ = ()
+    val result = hhSchedule.run
+      {options = options, goal = goal, premises = premises,
+       progress = SOME progress}
+    val slices = map (fn (slice, status, elapsed, cached) =>
+      {slice = slice, szs = szs_name status, time = elapsed,
+       cached = cached} : journal_slice) (#slices_run result)
+    fun slice_result wanted =
+      List.find (fn (slice, _, _, _) =>
+        #prover slice = #prover wanted andalso
+        #nfacts slice = #nfacts wanted andalso
+        #extra_opts slice = #extra_opts wanted) (#slices_run result)
+    fun finish prover nfacts szs t_prover axioms recon_ok recon_method
+        t_recon stac error =
+      {run = run_name expdir, thy = thy, thm = name,
+       goal_id = goal_id thy name, cond = #cond_id condition,
+       regime = #regime condition, selector = #selector condition,
+       engine = #engine condition, prover = prover,
+       prover_version = version_of_prover prover, nfacts = nfacts,
+       timeout = #timeout condition, szs = szs, t_prover = t_prover,
+       axioms_used = axioms, recon_ok = recon_ok,
+       recon_method = recon_method, t_recon = t_recon, stac = stac,
+       error = error, stop = SOME (schedule_stop_name (#stopped result)),
+       t_total = SOME (#t_total result), slices = slices} : journal_entry
+  in
+    case #suggestions result of
+        suggestion :: _ =>
+          finish (#prover suggestion) (#nfacts (#slice suggestion)) "Theorem"
+            (#t_prover suggestion) (SOME (#lemmas suggestion)) (SOME true)
+            (SOME "metis") (SOME (#t_recon suggestion))
+            (SOME (#stac suggestion)) NONE
+      | [] =>
+          (case !proofs of
+               (slice, lemmas) :: _ =>
+                 let
+                   val elapsed =
+                     case slice_result slice of
+                         SOME (_, _, time, _) => time
+                       | NONE => 0.0
+                 in
+                   finish (#prover slice) (#nfacts slice) "Theorem" elapsed
+                     (SOME lemmas) (SOME false) (SOME "metis") NONE NONE
+                     (SOME "ATP proof found but reconstruction failed")
+                 end
+             | [] =>
+                 (case #slices_run result of
+                      (slice, status, elapsed, _) :: _ =>
+                        finish (#prover slice) (#nfacts slice)
+                          (szs_name status) elapsed NONE NONE NONE NONE NONE
+                          (run_failure_error status)
+                    | [] => finish "" maximum "RunFailure" 0.0 NONE NONE
+                        NONE NONE NONE
+                        (SOME "schedule contained no runnable slices")))
+  end
+
+fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
   let
     val goal = dest_thm thm
     val premises = selected_premises condition pool thm goal
@@ -1015,48 +1285,49 @@ fun run_cell expdir thy (name, thm) pool condition =
     val _ = hhExportFof.fof_export_pb directory
       (list_mk_imp goal, named_premises)
   in
-    case #engine condition of
-        Sched _ =>
-          append_journal (journal_path expdir thy)
-            (base_entry expdir thy name condition nfacts "RunFailure" 0.0
-               NONE NONE
-               (failed "hhEval Sched execution is not available yet"))
-      | Prover prover_name =>
-          (case hhProver.lookup prover_name of
-               NONE =>
-                 append_journal (journal_path expdir thy)
-                   (base_entry expdir thy name condition nfacts
-                      "RunFailure" 0.0 NONE NONE
-                      (failed ("unknown HolyHammer prover: " ^ prover_name)))
-             | SOME prover =>
-                 let
-                   val result = hhProver.run prover
-                     {timeout = #timeout condition,
-                      problem = join directory "atp_in", extra = [],
-                      debug_dir = SOME (join expdir "out")}
-                   val (recon_ok, recon_method, t_recon, stac_or_error) =
-                     reconstruct condition result goal
-                   val (stac, recon_error) =
-                     case recon_ok of
-                         SOME false => (NONE, stac_or_error)
-                       | _ => (stac_or_error, NONE)
-                   val outcome : outcome =
-                     {recon_ok = recon_ok, recon_method = recon_method,
-                      t_recon = t_recon, stac = stac,
-                      error = case recon_error of
-                                  SOME message => SOME message
-                                | NONE => run_failure_error (#szs result)}
-                 in
-                   append_journal (journal_path expdir thy)
-                     (base_entry expdir thy name condition nfacts
-                        (szs_name (#szs result)) (#time result)
-                        (#used_axioms result) (#version result) outcome)
-                 end)
+    case hhProver.lookup prover_name of
+        NONE => base_entry expdir thy name condition nfacts "RunFailure" 0.0
+          NONE NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
+      | SOME prover =>
+          let
+            val result = hhProver.run prover
+              {timeout = #timeout condition,
+               problem = join directory "atp_in", extra = [],
+               debug_dir = SOME (join expdir "out")}
+            val (recon_ok, recon_method, t_recon, stac_or_error) =
+              reconstruct condition result goal
+            val (stac, recon_error) =
+              case recon_ok of
+                  SOME false => (NONE, stac_or_error)
+                | _ => (stac_or_error, NONE)
+            val outcome : outcome =
+              {recon_ok = recon_ok, recon_method = recon_method,
+               t_recon = t_recon, stac = stac,
+               error = case recon_error of
+                           SOME message => SOME message
+                         | NONE => run_failure_error (#szs result)}
+          in
+            base_entry expdir thy name condition nfacts
+              (szs_name (#szs result)) (#time result)
+              (#used_axioms result) (#version result) outcome
+          end
+  end
+
+fun run_cell expdir thy theorem pool condition =
+  let
+    val entry =
+      case #engine condition of
+          Sched parameters =>
+            schedule_cell_entry expdir thy theorem pool condition parameters
+        | Prover prover_name =>
+            prover_cell_entry expdir thy theorem pool condition prover_name
+  in
+    append_journal (journal_path expdir thy) entry
   end
   handle Interrupt => raise Interrupt
        | error =>
            append_journal (journal_path expdir thy)
-             (base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
+             (base_entry expdir thy (#1 theorem) condition 0 "Error" 0.0 NONE NONE
                 (failed (General.exnMessage error)))
 
 fun broken_deps_cell expdir thy name condition =
@@ -1288,11 +1559,18 @@ val smoke_goals =
    ("arithmetic", "MULT_COMM", "zipperposition"),
    ("pair", "CLOSED_PAIR_EQ", "e"),
    ("arithmetic", "SUC_NOT_ZERO", "vampire"),
-   ("arithmetic", "SUC_ADD_SYM", "zipperposition")]
+   ("arithmetic", "SUC_ADD_SYM", "zipperposition"),
+   ("arithmetic", "ADD1", "sched")]
 
-fun smoke_condition timeout prover : condition =
-  {cond_id = "smoke-" ^ prover, regime = Bushy, selector = Deps,
-   engine = Prover prover, timeout = timeout, reconstruct = true}
+fun smoke_condition timeout "sched" : condition =
+      {cond_id = "smoke-sched", regime = Bushy, selector = Deps,
+       engine = Sched
+         {provers = ["e", "vampire", "zipperposition"], slices = 3,
+          cores = 3, max_proofs = 1},
+       timeout = timeout, reconstruct = true}
+  | smoke_condition timeout prover =
+      {cond_id = "smoke-" ^ prover, regime = Bushy, selector = Deps,
+       engine = Prover prover, timeout = timeout, reconstruct = true}
 
 fun smoke_goal_id (thy, name, _) = goal_id thy name
 
@@ -1302,7 +1580,7 @@ fun run_smoke {expdir, timeout} =
     let
       val theories = sorted_unique (map #1 smoke_goals)
       val conditions = map (smoke_condition timeout)
-        ["e", "vampire", "zipperposition"]
+        ["e", "vampire", "zipperposition", "sched"]
       val journals = map (journal_path expdir) theories
       val _ =
         if List.exists exists_file journals then
@@ -1329,13 +1607,45 @@ fun run_smoke {expdir, timeout} =
           else broken_deps_cell expdir thy name condition
         end
       val _ = app run_one smoke_goals
+      val (sched_thy, sched_name, _) =
+        case List.find (fn (_, _, engine) => engine = "sched") smoke_goals of
+            SOME item => item
+          | NONE => raise Fail "smoke suite has no schedule cell"
+      val sched_thm = DB.fetch sched_thy sched_name
+      val (_, sched_dependencies) = mlThmData.intactdep_of_thm sched_thm
+      val sched_condition = smoke_condition timeout "sched"
+      val sched_parameters =
+        case #engine sched_condition of
+            Sched parameters => parameters
+          | Prover _ => raise Fail "smoke schedule condition is a prover cell"
+      val _ = hhProver.reset_spawn_count ()
+      val repeated = schedule_cell_entry expdir sched_thy
+        (sched_name, sched_thm) sched_dependencies sched_condition
+        sched_parameters
+      val repeat_spawns = hhProver.spawn_count ()
+      val _ =
+        if not (null (#slices repeated)) andalso
+           List.all #cached (#slices repeated) andalso repeat_spawns = 0 andalso
+           #szs repeated = "Theorem" andalso
+           #recon_ok repeated = SOME true andalso
+           #stop repeated = SOME "MaxProofs"
+        then ()
+        else raise Fail
+          ("HolyHammer schedule cache repeat failed: " ^
+           Int.toString repeat_spawns ^ " spawned processes and " ^
+           Int.toString (length (List.filter (not o #cached)
+             (#slices repeated))) ^ " uncached slices")
       val entries = List.concat (map read_journal journals)
       fun expected entry = List.exists (fn item =>
         smoke_goal_id item = #goal_id entry) smoke_goals
       val results = List.filter expected entries
       fun succeeded entry =
         #szs entry = "Theorem" andalso #recon_ok entry = SOME true andalso
-        #error entry = NONE
+        #error entry = NONE andalso
+        (case #engine entry of
+             Prover _ => true
+           | Sched _ => #stop entry = SOME "MaxProofs" andalso
+               not (null (#slices entry)))
       val failed = List.filter (not o succeeded) results
       val _ =
         if length results = length smoke_goals andalso null failed then ()

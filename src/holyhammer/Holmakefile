@@ -10,7 +10,8 @@ hhCache.uo: hhCache.sml hhCache.ui hhConfig.uo hhProver.uo
 hhSchedule.uo: hhSchedule.sml hhSchedule.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhCache.uo
 
-hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo
+hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
+           hhSchedule.uo
 
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhSchedule.uo
