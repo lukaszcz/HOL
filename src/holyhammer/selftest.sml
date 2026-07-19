@@ -459,7 +459,7 @@ fun schedule_summary
 
 fun test_hhSlice () =
   let
-    val vampire_options = ["--mode", "portfolio", "--schedule", "casc"]
+    val vampire_options = []
     fun expected prover nfacts extra =
       (prover, "fof", "", "", nfacts, "knn", extra, 1)
     val e_slices = map slice_summary (#slices (prover "e") ())

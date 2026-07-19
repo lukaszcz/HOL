@@ -318,8 +318,6 @@ fun mk_slice prover nfacts extra_opts : slice =
 fun slices prover entries () =
   map (fn (nfacts, extra_opts) => mk_slice prover nfacts extra_opts) entries
 
-val vampire_options = ["--mode", "portfolio", "--schedule", "casc"]
-
 fun e_command executable {timeout, problem, extra, ...} =
   (executable,
    ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
@@ -366,8 +364,7 @@ val vampire_config : prover_config =
    mk_command = vampire_command, parse_output = parse_tstp,
    default_nfacts = 96,
    slices = slices "vampire"
-     [(96, vampire_options), (512, vampire_options),
-      (32, vampire_options), (1024, vampire_options)],
+     [(96, []), (512, []), (32, []), (1024, [])],
    legacy = false}
 
 val zipperposition_config : prover_config =
