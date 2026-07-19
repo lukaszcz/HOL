@@ -29,7 +29,7 @@ fun tptp_of_const arity c =
 fun tptp_of_constvar arity tm =
   if is_const tm then tptp_of_const arity tm
   else if is_var tm then tptp_of_var arity tm
-  else raise raise ERR "tptp_of_constvar" ""
+  else raise ERR "tptp_of_constvar" ""
 
 fun tptp_of_vartype ty = "A" ^ (escape (dest_vartype ty))
 
