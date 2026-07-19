@@ -88,6 +88,14 @@ Phased subtree layout:
   algebra corpora) are selftest assertions: solved-goal counts + time
   budgets.  Exhaustive corpora sit behind a higher `HOLSELFTESTLEVEL`;
   never prune goals to make a gate pass.
+- Benchmark goals are closed by search, never recognition: no tactic,
+  preprocessor, rewrite set or seed may name a problem, its statement,
+  or a lemma that only discharges one.  Seeds carry general rule
+  schemas with claset attributes and nothing else.
+- Preprocessing normalizes forms, not instances; a justification that
+  needs a problem's name is recognition.
+- Unsolved problems are asserted expected failures citing the planned
+  remedy — checked to fail, so passing turns the suite red.
 - Test specified behavior (solved goals, residues, warnings), not
   internals — nets and `claset` internals may change.
 - Bug fixes get a failing-first regression test.

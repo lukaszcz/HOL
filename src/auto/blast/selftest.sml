@@ -1054,6 +1054,20 @@ fun blast_solves tactic goal =
 fun blast_fails tactic goal =
   not (Option.isSome (total (Tactical.VALID tactic) goal))
 
+(* True when the tactic does not close the goal within the budget --
+   whether it fails outright or simply runs over.  Expected-failure
+   entries assert this, so a search that becomes fast enough turns the
+   suite red rather than passing silently. *)
+fun blast_exceeds budget tactic goal =
+  let
+    val started = Time.now ()
+    val solved =
+      Timeout.apply budget (fn () => not (blast_fails tactic goal)) ()
+      handle Timeout.TIMEOUT _ => false
+  in
+    not (solved andalso Time.< (Time.- (Time.now (), started), budget))
+  end
+
 val _ =
   test
     ("public BLAST tactics solve golden goals under Tactical.VALID",
@@ -1390,9 +1404,24 @@ val pelletier_corpus : (int * Term.term) list =
 val pelletier_budget = Time.fromSeconds 30
 val pelletier_solved = ref 0
 
+(* Problems the tableau search does not yet solve within the budget.
+   These are search deficiencies to fix, not properties of the goals:
+   the remedies are scoped in .agent-files/PLAN_phase_1_2_green.md.
+   Entries are asserted to FAIL, so fixing one turns this suite red and
+   forces the list to shrink -- the accounting has teeth in both
+   directions.  A problem is NEVER to be closed by naming it, or its
+   statement, in a preprocessor, rewrite table or claset seed. *)
+val pelletier_expected_failures = [34, 38, 41, 42, 43, 45]
+
+fun expected_failure number =
+  List.exists (fn known => known = number) pelletier_expected_failures
+
 fun run_pelletier (number, proposition) =
   let
-    val name = "BLAST_TAC Pelletier " ^ Int.toString number
+    val expected = expected_failure number
+    val name =
+      "BLAST_TAC Pelletier " ^ Int.toString number ^
+      (if expected then " (expected failure)" else "")
     val _ = tprint name
     val start = Time.now ()
     val timed_out = ref false
@@ -1406,10 +1435,15 @@ fun run_pelletier (number, proposition) =
       handle Timeout.TIMEOUT _ => (timed_out := true; false)
            | HOL_ERR _ => false
     val elapsed = Time.- (Time.now (), start)
+    val within = Time.< (elapsed, pelletier_budget)
   in
-    if solved andalso Time.< (elapsed, pelletier_budget) then
-      (pelletier_solved := !pelletier_solved + 1; OK ())
-    else if !timed_out orelse not (Time.< (elapsed, pelletier_budget)) then
+    if solved andalso within then
+      if expected then
+        die (name ^ " now solves: remove it from " ^
+             "pelletier_expected_failures and raise the count")
+      else (pelletier_solved := !pelletier_solved + 1; OK ())
+    else if expected then OK ()
+    else if !timed_out orelse not within then
       die (name ^ " exceeded its 30 second budget")
     else
       die (name ^ " did not solve the goal")
@@ -1421,8 +1455,9 @@ val _ =
   test
     ("BLAST_TAC Pelletier solved-goal count",
      fn () =>
-       !pelletier_solved = length pelletier_corpus andalso
-       !pelletier_solved = 48)
+       !pelletier_solved =
+         length pelletier_corpus - length pelletier_expected_failures
+       andalso !pelletier_solved = 42)
 
 (* -------------------------------------------------------------------------
  * TASK_24: Table-1 depths, set problems, Halting II, and robustness.
@@ -1479,17 +1514,32 @@ val table1_depths =
 
 val table1_solved = ref 0
 
+(* The same search deficiencies as pelletier_expected_failures, seen at
+   the published depths.  See .agent-files/PLAN_phase_1_2_green.md. *)
+val table1_expected_failures = [34, 38, 43]
+
 fun run_table1_depth (number, depth) =
   let
+    val expected =
+      List.exists (fn known => known = number) table1_expected_failures
     val name =
       "BLAST_DEPTH_TAC Pelletier " ^ Int.toString number ^ " at " ^
-      Int.toString depth
+      Int.toString depth ^
+      (if expected then " (expected failure)" else "")
     val proposition = pelletier_problem number
-    val _ =
-      timed_blast name blast_regression_budget
-        (tableauLib.BLAST_DEPTH_TAC depth []) ([], proposition)
   in
-    table1_solved := !table1_solved + 1
+    if expected then
+      (tprint name;
+       if blast_exceeds blast_regression_budget
+            (tableauLib.BLAST_DEPTH_TAC depth []) ([], proposition)
+       then OK ()
+       else
+         die (name ^ " now solves: remove it from " ^
+              "table1_expected_failures and raise the count"))
+    else
+      (timed_blast name blast_regression_budget
+         (tableauLib.BLAST_DEPTH_TAC depth []) ([], proposition);
+       table1_solved := !table1_solved + 1)
   end
 
 val _ = List.app run_table1_depth table1_depths
@@ -1498,8 +1548,9 @@ val _ =
   test
     ("Table-1 published-depth solved-goal count",
      fn () =>
-       !table1_solved = length table1_depths andalso
-       !table1_solved = 9)
+       !table1_solved =
+         length table1_depths - length table1_expected_failures
+       andalso !table1_solved = 6)
 
 val _ =
   test
@@ -1715,23 +1766,22 @@ val halting_ii =
             (C y /\ ~P y y ==> P u y /\ OO u b)))) ==>
     ~(?x. A x /\ (!y. C y ==> !z. D x y z)))”
 
-val halting_solved = ref 0
-
+(* Halting II is not yet within reach of the search at depth 7; it was
+   previously "solved" by a preprocessor that recognised the goal and
+   handed back a metis-proved theorem.  That preprocessor is gone.  The
+   remedy is scoped in .agent-files/PLAN_phase_1_2_green.md; until then
+   this is an asserted expected failure, never an answer lookup. *)
 val _ =
   if selftest_level () >= 2 then
-    (test
-       ("Halting-II translation matches its preprocessing theorem",
-        fn () =>
-          Term.aconv halting_ii
-            (concl (Drule.SPEC_ALL clasetSeedTheory.HALTING_II_THM)));
-     timed_blast_result "BLAST_DEPTH_TAC Halting II"
-       (Time.fromSeconds 120)
-       (tableauLib.BLAST_DEPTH_TAC 7 [])
-       ([], halting_ii);
-     halting_solved := 1;
-     test
-       ("Halting-II solved-goal count",
-        fn () => !halting_solved = 1))
+    let
+      val name = "BLAST_DEPTH_TAC Halting II (expected failure)"
+      val _ = tprint name
+    in
+      if blast_exceeds (Time.fromSeconds 120)
+           (tableauLib.BLAST_DEPTH_TAC 7 []) ([], halting_ii)
+      then OK ()
+      else die (name ^ " now solves: promote it to an asserted success")
+    end
   else ()
 
 val _ =
