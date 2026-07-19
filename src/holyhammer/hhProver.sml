@@ -19,6 +19,11 @@ datatype szs =
   | SzsUnknown of string
   | RunFailure of string
 
+type slice =
+  {prover : string, format : string, type_enc : string,
+   lam_trans : string, nfacts : int, filter : string,
+   extra_opts : string list, slice_size : int}
+
 type run_request =
   {timeout : int, problem : string, extra : string list,
    debug_dir : string option}
@@ -41,6 +46,7 @@ type prover_config =
    mk_command : string -> run_request -> string * string list,
    parse_output : string list -> szs * string list option,
    default_nfacts : int,
+   slices : unit -> slice list,
    legacy : bool}
 
 val trim = hhConfig.trim
@@ -304,6 +310,16 @@ fun z3_version output =
       SOME version => SOME version
     | NONE => version_between "Z3tptp [" "]" output
 
+fun mk_slice prover nfacts extra_opts : slice =
+  {prover = prover, format = "fof", type_enc = "", lam_trans = "",
+   nfacts = nfacts, filter = "knn", extra_opts = extra_opts,
+   slice_size = 1}
+
+fun slices prover entries () =
+  map (fn (nfacts, extra_opts) => mk_slice prover nfacts extra_opts) entries
+
+val vampire_options = ["--mode", "portfolio", "--schedule", "casc"]
+
 fun e_command executable {timeout, problem, extra, ...} =
   (executable,
    ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
@@ -348,28 +364,39 @@ val e_config : prover_config =
    env_var = "HOL4_EPROVER_EXECUTABLE", version_args = ["--version"],
    parse_version = e_version, tested_versions = ["3.2.5"],
    mk_command = e_command, parse_output = parse_tstp,
-   default_nfacts = 128, legacy = false}
+   default_nfacts = 128,
+   slices = slices "e"
+     [(128, ["--auto-schedule"]), (512, ["--auto-schedule"]),
+      (32, ["--auto"]), (1024, ["--auto-schedule"])],
+   legacy = false}
 
 val vampire_config : prover_config =
   {name = "vampire", exec_names = ["vampire"],
    env_var = "HOL4_VAMPIRE_EXECUTABLE", version_args = ["--version"],
    parse_version = vampire_version, tested_versions = ["5.0.1"],
    mk_command = vampire_command, parse_output = parse_tstp,
-   default_nfacts = 96, legacy = false}
+   default_nfacts = 96,
+   slices = slices "vampire"
+     [(96, vampire_options), (512, vampire_options),
+      (32, vampire_options), (1024, vampire_options)],
+   legacy = false}
 
 val zipperposition_config : prover_config =
   {name = "zipperposition", exec_names = ["zipperposition"],
    env_var = "HOL4_ZIPPERPOSITION_EXECUTABLE", version_args = ["--version"],
    parse_version = zipperposition_version, tested_versions = ["2.1"],
    mk_command = zipperposition_command, parse_output = parse_tstp,
-   default_nfacts = 128, legacy = false}
+   default_nfacts = 128,
+   slices = slices "zipperposition" [(128, []), (512, []), (32, [])],
+   legacy = false}
 
 val z3_config : prover_config =
   {name = "z3", exec_names = ["z3_tptp", "z3"],
    env_var = "HOL4_Z3_EXECUTABLE",
    version_args = ["--version"], parse_version = z3_version,
    tested_versions = ["4.11.2"], mk_command = z3_command,
-   parse_output = parse_z3, default_nfacts = 32, legacy = true}
+   parse_output = parse_z3, default_nfacts = 32, slices = fn () => [],
+   legacy = true}
 
 (* A legacy entry differs from its modern twin only in the name and the
    command line, so derive it rather than restating the shared fields. *)
@@ -378,7 +405,8 @@ fun legacy_variant (base : prover_config) name mk_command : prover_config =
    version_args = #version_args base, parse_version = #parse_version base,
    tested_versions = #tested_versions base, mk_command = mk_command,
    parse_output = #parse_output base,
-   default_nfacts = #default_nfacts base, legacy = true}
+   default_nfacts = #default_nfacts base, slices = fn () => [],
+   legacy = true}
 
 val e_legacy_config = legacy_variant e_config "e-legacy" e_legacy_command
 

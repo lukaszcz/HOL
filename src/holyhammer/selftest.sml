@@ -457,6 +457,125 @@ fun test_hhProver () =
     ()
   end
 
+fun slice_options provers slices cores timeout filter max_facts
+    : hhConfig.hh_options =
+  {timeout = timeout, max_proofs = 4, provers = provers, slices = slices,
+   cores = cores, filter = filter, max_facts = max_facts, minimize = true,
+   preplay_timeout = 1.0, minimize_timeout = 1.0, cache = false,
+   cache_dir = "", cache_max_entries = 100000, debug_dir = NONE}
+
+fun slice_summary (slice : hhProver.slice) =
+  (#prover slice, #format slice, #type_enc slice, #lam_trans slice,
+   #nfacts slice, #filter slice, #extra_opts slice, #slice_size slice)
+
+fun schedule_summary
+    (schedule : (hhProver.prover_config * hhProver.slice) list) =
+  map (fn ((config : hhProver.prover_config),
+           (slice : hhProver.slice)) =>
+    (#name config, #nfacts slice, #filter slice, #extra_opts slice)) schedule
+
+fun test_hhSlice () =
+  let
+    val vampire_options = ["--mode", "portfolio", "--schedule", "casc"]
+    fun expected prover nfacts extra =
+      (prover, "fof", "", "", nfacts, "knn", extra, 1)
+    val e_slices = map slice_summary (#slices (prover "e") ())
+    val vampire_slices = map slice_summary (#slices (prover "vampire") ())
+    val zipperposition_slices =
+      map slice_summary (#slices (prover "zipperposition") ())
+    val _ = expect_equal "E slice table"
+      [expected "e" 128 ["--auto-schedule"],
+       expected "e" 512 ["--auto-schedule"],
+       expected "e" 32 ["--auto"],
+       expected "e" 1024 ["--auto-schedule"]] e_slices
+    val _ = expect_equal "Vampire slice table"
+      [expected "vampire" 96 vampire_options,
+       expected "vampire" 512 vampire_options,
+       expected "vampire" 32 vampire_options,
+       expected "vampire" 1024 vampire_options] vampire_slices
+    val _ = expect_equal "Zipperposition slice table"
+      [expected "zipperposition" 128 [],
+       expected "zipperposition" 512 [],
+       expected "zipperposition" 32 []] zipperposition_slices
+    val _ = expect "legacy one-shot provers have no slices"
+      (List.all (null o (fn config => #slices config ()))
+       (map prover ["z3", "e-legacy", "vampire-legacy"]))
+    val _ = expect_equal "rotation truncates to requested slice count"
+      ["vampire", "e", "zipperposition", "vampire", "e"]
+      (hhSlice.schedule_of_provers
+        ["e", "vampire", "zipperposition"] 5)
+    val _ = expect_equal "rotation filters and extends in requested order"
+      ["e", "zipperposition", "e", "zipperposition", "e",
+       "zipperposition", "e"]
+      (hhSlice.schedule_of_provers ["zipperposition", "e"] 7)
+    val defaults = slice_options ["e", "vampire", "zipperposition"]
+      (24 * 32) 32 30 "knn" NONE
+    val default_schedule = hhSlice.mk_schedule defaults
+    val expected_default =
+      [("vampire", 96, "knn", vampire_options),
+       ("e", 128, "knn", ["--auto-schedule"]),
+       ("zipperposition", 128, "knn", []),
+       ("vampire", 512, "knn", vampire_options),
+       ("e", 512, "knn", ["--auto-schedule"]),
+       ("vampire", 32, "knn", vampire_options),
+       ("zipperposition", 512, "knn", []),
+       ("vampire", 1024, "knn", vampire_options),
+       ("e", 32, "knn", ["--auto"]),
+       ("e", 1024, "knn", ["--auto-schedule"]),
+       ("zipperposition", 32, "knn", [])]
+    val _ = expect_equal "default options produce all eleven slices"
+      expected_default (schedule_summary default_schedule)
+    val small = hhSlice.mk_schedule
+      (slice_options ["e", "vampire", "zipperposition"] 5 2 30 "knn"
+        NONE)
+    val _ = expect_equal "small schedule follows the golden rotation"
+      (List.take (expected_default, 5)) (schedule_summary small)
+    val subset = hhSlice.mk_schedule
+      (slice_options ["zipperposition", "e"] 7 4 30 "knn" NONE)
+    val _ = expect_equal "prover subset consumes each table head-first"
+      [("e", 128, "knn", ["--auto-schedule"]),
+       ("zipperposition", 128, "knn", []),
+       ("e", 512, "knn", ["--auto-schedule"]),
+       ("zipperposition", 512, "knn", []),
+       ("e", 32, "knn", ["--auto"]),
+       ("zipperposition", 32, "knn", []),
+       ("e", 1024, "knn", ["--auto-schedule"])]
+      (schedule_summary subset)
+    val overridden = hhSlice.mk_schedule
+      (slice_options ["e"] 20 2 30 "none" (SOME 40))
+    val _ = expect_equal "fact and filter overrides precede deduplication"
+      [("e", 40, "none", ["--auto-schedule"]),
+       ("e", 32, "none", ["--auto"])]
+      (schedule_summary overridden)
+    val exhausted = hhSlice.mk_schedule
+      (slice_options ["e", "vampire", "zipperposition"] 100 8 30 "knn"
+        NONE)
+    val _ = expect "rotation exhaustion stops at eleven unique slices"
+      (length exhausted = 11)
+    val _ = expect "Z3 remains outside the slice scheduler"
+      (null (hhSlice.mk_schedule
+        (slice_options ["z3"] 100 8 30 "knn" NONE)))
+    val first_slice = #2 (hd default_schedule)
+    val large_slice : hhProver.slice =
+      {prover = #prover first_slice, format = #format first_slice,
+       type_enc = #type_enc first_slice, lam_trans = #lam_trans first_slice,
+       nfacts = #nfacts first_slice, filter = #filter first_slice,
+       extra_opts = #extra_opts first_slice, slice_size = 3}
+    fun close expected actual = Real.abs (expected - actual) < 0.000001
+    val _ = expect "budget uses full timeout when slices fit on cores"
+      (close 30.0 (hhSlice.slice_budget (length default_schedule) defaults
+        first_slice))
+    val budget_options = slice_options ["e"] 999 32 30 "knn" NONE
+    val _ = expect "budget arithmetic uses ceiling batches"
+      (close 15.0 (hhSlice.slice_budget 33 budget_options first_slice) andalso
+       close 15.0 (hhSlice.slice_budget 64 budget_options first_slice) andalso
+       close 10.0 (hhSlice.slice_budget 65 budget_options first_slice) andalso
+       close 30.0 (hhSlice.slice_budget 65 budget_options large_slice) andalso
+       close 0.0 (hhSlice.slice_budget 0 budget_options first_slice))
+  in
+    ()
+  end
+
 fun contains needle haystack =
   String.isSubstring needle haystack
 
@@ -514,7 +633,8 @@ fun fake_config name exec_name args parser : hhProver.prover_config =
    version_args = ["--version"], parse_version = fn _ => SOME "test",
    tested_versions = ["test"],
    mk_command = fn executable => fn _ => (executable, args),
-   parse_output = parser, default_nfacts = 0, legacy = false}
+   parse_output = parser, default_nfacts = 0, slices = fn () => [],
+   legacy = false}
 
 fun wait_until deadline predicate =
   if predicate () then true
@@ -672,7 +792,8 @@ fun test_runner () =
        tested_versions = ["test"],
        mk_command = fn _ => fn _ =>
          ("/definitely/missing/holyhammer-prover", []),
-       parse_output = #parse_output e, default_nfacts = 0, legacy = false}
+       parse_output = #parse_output e, default_nfacts = 0,
+       slices = fn () => [], legacy = false}
     val exec_result = hhProver.run exec_failure timeout_request
     val _ = expect "runner exec failure returns RunFailure"
       (case #szs exec_result of hhProver.RunFailure _ => true | _ => false)
@@ -681,7 +802,8 @@ fun test_runner () =
        env_var = "", version_args = [], parse_version = fn _ => NONE,
        tested_versions = [],
        mk_command = fn executable => fn _ => (executable, []),
-       parse_output = #parse_output e, default_nfacts = 0, legacy = false}
+       parse_output = #parse_output e, default_nfacts = 0,
+       slices = fn () => [], legacy = false}
     val missing_result = hhProver.run missing timeout_request
     val _ = expect "missing prover names downloader"
       (case #szs missing_result of
@@ -1049,6 +1171,7 @@ fun test_holyHammer_e () =
 
 val _ = test_szs_status_words ()
 val _ = test_hhProver ()
+val _ = test_hhSlice ()
 val _ = test_holyHammer_validation ()
 val _ = test_runner ()
 val _ = test_installed_provers ()
@@ -1111,4 +1234,5 @@ val _ = expect "hhEval smoke covers every pinned prover four times"
    ["e", "vampire", "zipperposition"])
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
-  hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver in end
+  hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
+in end
