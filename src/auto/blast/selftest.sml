@@ -1,5 +1,17 @@
 open HolKernel boolSyntax testutils blastTerm
-open clasetSeedTheory
+open clasetSeedTheory pred_setTheory
+
+fun prove (proposition, tactic) =
+  Tactical.TAC_PROOF (([], proposition), tactic)
+  handle error =>
+    (print ("failed local rule: " ^ Parse.term_to_string proposition ^ "\n");
+     raise error)
+
+val REWRITE_TAC = Rewrite.REWRITE_TAC
+val PROVE_TAC = BasicProvers.PROVE_TAC
+
+infix THEN
+val op THEN = Tactical.THEN
 
 infix 9 $
 
@@ -972,11 +984,16 @@ val _ =
     ("real reconstruction failure backtracks to a valid tableau rule",
      fn () =>
        let
-         val p = mk_var ("p", bool)
-         val q = mk_var ("q", bool)
-         val r = mk_var ("r", bool)
+         val alpha = Type.mk_vartype "'a"
+         val x = mk_var ("backtrack_x", alpha)
+         val y = mk_var ("backtrack_y", alpha)
+         val pred = mk_var ("backtrack_P", alpha --> bool)
+         val p = mk_comb (pred, x)
+         val py = mk_comb (pred, y)
+         val q = mk_var ("backtrack_q", bool)
+         val r = mk_var ("backtrack_r", bool)
          val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
-         val goal = ([p, q], mk_disj (p, q))
+         val goal = ([mk_eq (x, y), p, q], mk_disj (py, q))
          val cs =
            clasetLib.add_intros
              [("good-right", boolTheory.OR_INTRO_THM2),
@@ -1002,7 +1019,10 @@ val _ =
        in
          !attempts = 2 andalso traced andalso
          case result of
-             SOME (_, ([], validation)) =>
+             SOME (proof, ([], validation)) =>
+               has_step
+                 (fn blastSearch.HypSubst => true | _ => false)
+                 proof andalso
                (ignore (validation []); true)
            | _ => false
        end)
@@ -1403,3 +1423,377 @@ val _ =
      fn () =>
        !pelletier_solved = length pelletier_corpus andalso
        !pelletier_solved = 48)
+
+(* -------------------------------------------------------------------------
+ * TASK_24: Table-1 depths, set problems, Halting II, and robustness.
+ * ------------------------------------------------------------------------- *)
+
+val blast_regression_budget = Time.fromSeconds 30
+
+fun timed_blast name budget tactic goal =
+  let
+    val _ = tprint name
+    val started = Time.now ()
+    val timed_out = ref false
+    val solved =
+      Timeout.apply budget
+        (fn () => blast_solves tactic goal) ()
+      handle Timeout.TIMEOUT _ => (timed_out := true; false)
+           | HOL_ERR _ => false
+    val elapsed = Time.- (Time.now (), started)
+  in
+    if solved andalso Time.< (elapsed, budget) then OK ()
+    else if !timed_out orelse not (Time.< (elapsed, budget)) then
+      die (name ^ " exceeded its time budget")
+    else
+      die (name ^ " did not solve the goal")
+  end
+
+fun timed_blast_result name budget tactic goal =
+  let
+    val _ = tprint name
+    val started = Time.now ()
+    val solved =
+      Timeout.apply budget
+        (fn () =>
+          case total tactic goal of
+              SOME ([], _) => true
+            | _ => false) ()
+      handle Timeout.TIMEOUT _ => false
+  in
+    if solved andalso Time.< (Time.- (Time.now (), started), budget) then
+      OK ()
+    else
+      die (name ^ " did not return a proof within its time budget")
+  end
+
+fun pelletier_problem number =
+  case List.find (fn (candidate, _) => candidate = number)
+         pelletier_corpus of
+      SOME (_, proposition) => proposition
+    | NONE => raise Fail "missing Pelletier problem"
+
+val table1_depths =
+  [(24, 4), (26, 3), (28, 3), (34, 7), (38, 4), (43, 5),
+   (46, 7), (52, 7), (62, 1)]
+
+val table1_solved = ref 0
+
+fun run_table1_depth (number, depth) =
+  let
+    val name =
+      "BLAST_DEPTH_TAC Pelletier " ^ Int.toString number ^ " at " ^
+      Int.toString depth
+    val proposition = pelletier_problem number
+    val _ =
+      timed_blast name blast_regression_budget
+        (tableauLib.BLAST_DEPTH_TAC depth []) ([], proposition)
+  in
+    table1_solved := !table1_solved + 1
+  end
+
+val _ = List.app run_table1_depth table1_depths
+
+val _ =
+  test
+    ("Table-1 published-depth solved-goal count",
+     fn () =>
+       !table1_solved = length table1_depths andalso
+       !table1_solved = 9)
+
+val _ =
+  test
+    ("Table-1 depth accounting rejects shallower bounds",
+     fn () =>
+       blast_fails (tableauLib.BLAST_DEPTH_TAC 2 [])
+         ([], pelletier_problem 26) andalso
+       blast_fails (tableauLib.BLAST_DEPTH_TAC 2 [])
+         ([], pelletier_problem 28))
+
+(* These are the classical set rules used only by this selftest.  In
+   particular there is deliberately no rule for ~(x IN UNIV): the blast
+   paper reports that it greatly enlarges the Singleton search space.  A
+   Phase-8 seed change must preserve these regressions when adding one. *)
+
+val SET_EQUAL_I =
+  prove
+    (“!A B:'a set. A SUBSET B ==> B SUBSET A ==> (A = B)”,
+     PROVE_TAC [SUBSET_ANTISYM])
+
+val SET_SUBSET_I =
+  prove
+    (“!A B:'a set. (!x. x IN A ==> x IN B) ==> A SUBSET B”,
+     REWRITE_TAC [SUBSET_DEF])
+
+val SET_SUBSET_D =
+  prove
+    (“!A B:'a set. !x. A SUBSET B ==> x IN A ==> x IN B”,
+     REWRITE_TAC [SUBSET_DEF] THEN PROVE_TAC [])
+
+val SET_SUBSET_CE =
+  prove
+    (“!A B:'a set. !x R. A SUBSET B ==>
+       (x NOTIN A ==> R) ==> (x IN B ==> R) ==> R”,
+     REWRITE_TAC [SUBSET_DEF] THEN PROVE_TAC [])
+
+val SET_INTER_I =
+  prove
+    (“!x A B:'a set. x IN A ==> x IN B ==> x IN A INTER B”,
+     REWRITE_TAC [IN_INTER] THEN PROVE_TAC [])
+
+val SET_INTER_E =
+  prove
+    (“!x A B:'a set. !R. x IN A INTER B ==>
+       (x IN A ==> x IN B ==> R) ==> R”,
+     REWRITE_TAC [IN_INTER] THEN PROVE_TAC [])
+
+val SET_UNION_CI =
+  prove
+    (“!x A B:'a set. (x NOTIN B ==> x IN A) ==> x IN A UNION B”,
+     REWRITE_TAC [IN_UNION] THEN PROVE_TAC [])
+
+val SET_UNION_E =
+  prove
+    (“!x A B:'a set. !R. x IN A UNION B ==>
+       (x IN A ==> R) ==> (x IN B ==> R) ==> R”,
+     REWRITE_TAC [IN_UNION] THEN PROVE_TAC [])
+
+val SET_BIGUNION_I =
+  prove
+    (“!x (C:'a set set) A. x IN A ==> A IN C ==>
+       x IN BIGUNION C”,
+     REWRITE_TAC [IN_BIGUNION] THEN PROVE_TAC [])
+
+val SET_BIGUNION_E =
+  prove
+    (“!x (C:'a set set) R. x IN BIGUNION C ==>
+       (!A. x IN A ==> A IN C ==> R) ==> R”,
+     REWRITE_TAC [IN_BIGUNION] THEN PROVE_TAC [])
+
+val SET_BIGUNION_IMAGE_I =
+  prove
+    (“!y (f:'a -> 'b set) C x. x IN C ==> y IN f x ==>
+       y IN BIGUNION (IMAGE f C)”,
+     REWRITE_TAC [IN_BIGUNION_IMAGE] THEN PROVE_TAC [])
+
+val SET_BIGUNION_IMAGE_E =
+  prove
+    (“!y (f:'a -> 'b set) C R. y IN BIGUNION (IMAGE f C) ==>
+       (!x. x IN C ==> y IN f x ==> R) ==> R”,
+     REWRITE_TAC [IN_BIGUNION_IMAGE] THEN PROVE_TAC [])
+
+val SET_BIGINTER_IMAGE_I =
+  prove
+    (“!y (f:'a -> 'b set) C. (!x. x IN C ==> y IN f x) ==>
+       y IN BIGINTER (IMAGE f C)”,
+     REWRITE_TAC [IN_BIGINTER_IMAGE])
+
+val SET_BIGINTER_IMAGE_D =
+  prove
+    (“!y (f:'a -> 'b set) C x. y IN BIGINTER (IMAGE f C) ==>
+       x IN C ==> y IN f x”,
+     REWRITE_TAC [IN_BIGINTER_IMAGE] THEN PROVE_TAC [])
+
+val SET_BIGINTER_IMAGE_E =
+  prove
+    (“!y (f:'a -> 'b set) C x R.
+       y IN BIGINTER (IMAGE f C) ==>
+       (x NOTIN C ==> R) ==> (y IN f x ==> R) ==> R”,
+     REWRITE_TAC [IN_BIGINTER_IMAGE] THEN PROVE_TAC [])
+
+val SET_SUBSET_SINGLETON_I =
+  prove
+    (“!ss:'a set set.
+       (!x y. x IN ss ==> y IN ss ==> (x = y)) ==>
+       ?z. ss SUBSET {z}”,
+     PROVE_TAC [MEMBER_NOT_EMPTY, SUBSET_DEF, IN_SING])
+
+val SET_SINGLETON_I =
+  prove
+    (“!x:'a. x IN {x}”,
+     REWRITE_TAC [IN_SING])
+
+val SET_SINGLETON_E =
+  prove
+    (“!x y:'a. !R. x IN {y} ==> (x = y ==> R) ==> R”,
+     REWRITE_TAC [IN_SING] THEN PROVE_TAC [])
+
+val blast_set_common_rules =
+  [clasetLib.SIntro SET_EQUAL_I,
+   clasetLib.SIntro SET_SUBSET_I,
+   clasetLib.Dest SET_SUBSET_D,
+   clasetLib.Elim SET_SUBSET_CE,
+   clasetLib.SIntro SET_INTER_I,
+   clasetLib.SElim SET_INTER_E,
+   clasetLib.SIntro SET_UNION_CI,
+   clasetLib.SElim SET_UNION_E,
+   clasetLib.SIntro SET_SINGLETON_I,
+   clasetLib.SDest SET_SINGLETON_E]
+
+val blast_union_image_rules =
+  blast_set_common_rules @
+  [clasetLib.Intro SET_BIGUNION_IMAGE_I,
+   clasetLib.SElim SET_BIGUNION_IMAGE_E]
+
+val blast_inter_image_rules =
+  blast_set_common_rules @
+  [clasetLib.SIntro SET_BIGINTER_IMAGE_I,
+   clasetLib.Dest SET_BIGINTER_IMAGE_D,
+   clasetLib.Elim SET_BIGINTER_IMAGE_E]
+
+val blast_singleton_rules =
+  blast_set_common_rules @
+  [clasetLib.SIntro SET_SUBSET_SINGLETON_I,
+   clasetLib.Intro SET_BIGUNION_I,
+   clasetLib.SElim SET_BIGUNION_E]
+
+fun set_rules "Union-image" = blast_union_image_rules
+  | set_rules "Inter-image" = blast_inter_image_rules
+  | set_rules _ = blast_singleton_rules
+
+val set_table1_problems : (string * int * Term.term) list =
+  [("Union-image", 3,
+    “BIGUNION (IMAGE (\x. f x UNION g x) C) =
+     BIGUNION (IMAGE f C) UNION BIGUNION (IMAGE g C)”),
+   ("Inter-image", 3,
+    “BIGINTER (IMAGE (\x. f x INTER g x) C) =
+     BIGINTER (IMAGE f C) INTER BIGINTER (IMAGE g C)”),
+   ("Singleton I", 4,
+    “(!x. x IN (ss:'a set set) ==>
+          !y. y IN ss ==> x SUBSET y) ==>
+     ?z. ss SUBSET {z}”),
+   ("Singleton II", 4,
+    “(!x. x IN (ss:'a set set) ==> BIGUNION ss SUBSET x) ==>
+     ?z. ss SUBSET {z}”)]
+
+val set_table1_solved = ref 0
+
+fun run_set_table1 (name, depth, proposition) =
+  let
+    val _ =
+      timed_blast ("BLAST_DEPTH_TAC " ^ name)
+        blast_regression_budget
+        (tableauLib.BLAST_DEPTH_TAC depth (set_rules name))
+        ([], proposition)
+  in
+    set_table1_solved := !set_table1_solved + 1
+  end
+
+val _ = List.app run_set_table1 set_table1_problems
+
+val _ =
+  test
+    ("Table-1 set-problem solved-goal count",
+     fn () =>
+       !set_table1_solved = length set_table1_problems andalso
+       !set_table1_solved = 4)
+
+fun selftest_level () =
+  case Option.mapPartial Int.fromString
+         (OS.Process.getEnv "HOLSELFTESTLEVEL") of
+      SOME level => level
+    | NONE => 1
+
+val halting_ii =
+  “(((?x:'a. A x /\ (!y. C y ==> !z. D x y z)) ==>
+      (?w. C w /\ (!y. C y ==> !z. D w y z))) /\
+    (!w. C w /\ (!u. C u ==> !v. D w u v) ==>
+      !y z.
+        (C y /\ P y z ==> Q w y z /\ OO w g) /\
+        (C y /\ ~P y z ==> Q w y z /\ OO w b)) /\
+    ((?w. C w /\
+       (!y. (C y /\ P y y ==> Q w y y /\ OO w g) /\
+            (C y /\ ~P y y ==> Q w y y /\ OO w b))) ==>
+     (?v. C v /\
+       (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
+            (C y /\ ~P y y ==> P v y /\ OO v b))))) ==>
+   (((?v. C v /\
+       (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
+            (C y /\ ~P y y ==> P v y /\ OO v b))) ==>
+     (?u. C u /\
+       (!y. (C y /\ P y y ==> ~P u y) /\
+            (C y /\ ~P y y ==> P u y /\ OO u b)))) ==>
+    ~(?x. A x /\ (!y. C y ==> !z. D x y z)))”
+
+val halting_solved = ref 0
+
+val _ =
+  if selftest_level () >= 2 then
+    (test
+       ("Halting-II translation matches its preprocessing theorem",
+        fn () =>
+          Term.aconv halting_ii
+            (concl (Drule.SPEC_ALL clasetSeedTheory.HALTING_II_THM)));
+     timed_blast_result "BLAST_DEPTH_TAC Halting II"
+       (Time.fromSeconds 120)
+       (tableauLib.BLAST_DEPTH_TAC 7 [])
+       ([], halting_ii);
+     halting_solved := 1;
+     test
+       ("Halting-II solved-goal count",
+        fn () => !halting_solved = 1))
+  else ()
+
+val _ =
+  test
+    ("higher-order unification requirement fails cleanly",
+     fn () =>
+       let
+         val goal = ([], “?f:'a -> 'a. f x = x”)
+         val started = Time.now ()
+         val failed =
+           Timeout.apply blast_regression_budget
+             (fn () =>
+                blast_fails
+                  (tableauLib.BLAST_DEPTH_TAC 2 []) goal) ()
+           handle Timeout.TIMEOUT _ => false
+       in
+         failed andalso
+         Time.< (Time.- (Time.now (), started),
+                 blast_regression_budget)
+       end)
+
+val _ =
+  test
+    ("weak [elim] marker warns and is skipped without aborting",
+     fn () =>
+       let
+         val p = mk_var ("marked_weak_p", bool)
+         val q = mk_var ("marked_weak_q", bool)
+         val r = mk_var ("marked_weak_r", bool)
+         val weak =
+           GENL [p, q, r]
+             (DISCH p (DISCH q (DISCH r (ASSUME r))))
+         val output = ref ([] : string list)
+         val old_trace = Feedback.current_trace "blast"
+         val started = Time.now ()
+         fun collect text = output := text :: !output
+         val _ = Feedback.set_trace "blast" 1
+         val (solved, skipped) =
+           Lib.with_flag (Feedback.WARNING_outstream, collect)
+             (fn () =>
+                let
+                  val (tagged, leftovers) =
+                    clasetLib.process_claset_tags
+                      [clasetLib.Elim weak] clasetLib.empty_cs
+                  val converted =
+                    blastRule.convertElim (blastRule.newCache ())
+                      [] weak
+                  val solved =
+                    blast_solves
+                      (tableauLib.BLAST_DEPTH_TAC 0
+                         [clasetLib.Elim weak])
+                      ([p, mk_imp (p, q)], q)
+                in
+                  (solved, null leftovers andalso
+                           length (clasetLib.rules_of tagged) = 1 andalso
+                           not (Option.isSome converted))
+                end) ()
+         val _ = Feedback.set_trace "blast" old_trace
+         val warning = String.concat (rev (!output))
+       in
+         solved andalso skipped andalso
+         String.isSubstring "Ignoring weak elimination rule" warning andalso
+         Time.< (Time.- (Time.now (), started),
+                 blast_regression_budget)
+       end)

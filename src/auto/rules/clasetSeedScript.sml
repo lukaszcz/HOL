@@ -92,6 +92,30 @@ Proof
   BasicProvers.PROVE_TAC []
 QED
 
+Theorem HALTING_II_THM:
+  (((?x. A x /\ (!y. C y ==> !z. D x y z)) ==>
+     (?w. C w /\ (!y. C y ==> !z. D w y z))) /\
+   (!w. C w /\ (!u. C u ==> !v. D w u v) ==>
+     !y z.
+       (C y /\ P y z ==> Q w y z /\ OO w g) /\
+       (C y /\ ~P y z ==> Q w y z /\ OO w b)) /\
+   ((?w. C w /\
+      (!y. (C y /\ P y y ==> Q w y y /\ OO w g) /\
+           (C y /\ ~P y y ==> Q w y y /\ OO w b))) ==>
+    (?v. C v /\
+      (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
+           (C y /\ ~P y y ==> P v y /\ OO v b))))) ==>
+  (((?v. C v /\
+      (!y. (C y /\ P y y ==> P v y /\ OO v g) /\
+           (C y /\ ~P y y ==> P v y /\ OO v b))) ==>
+    (?u. C u /\
+      (!y. (C y /\ P y y ==> ~P u y) /\
+           (C y /\ ~P y y ==> P u y /\ OO u b)))) ==>
+   ~(?x. A x /\ (!y. C y ==> !z. D x y z)))
+Proof
+  metis_tac []
+QED
+
 Theorem EXTENSIONAL_SYMMETRY_THM:
   (!x y. q x y <=> (!z. p z x <=> p z y)) ==>
   (!x y. q x y <=> q y x)

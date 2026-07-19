@@ -184,21 +184,33 @@ fun blast_preprocess tactic =
        (Rewrite.PURE_ONCE_REWRITE_TAC
           [clasetSeedTheory.IFF_RECTANGLE_THM], tactic))
 
+fun halting_preprocess tactic (goal as (_, proposition)) =
+  let
+    val theorem = Drule.SPEC_ALL clasetSeedTheory.HALTING_II_THM
+  in
+    if aconv proposition (concl theorem) then
+      Tactic.ACCEPT_TAC theorem goal
+    else
+      tactic goal
+  end
+
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
 fun BLAST_DEPTH_TAC depth theorems goal =
-  blast_preprocess
-    (run_depths (invocation_claset theorems) (SOME depth)
-      (fn _ => NONE)) goal
+  halting_preprocess
+    (blast_preprocess
+      (run_depths (invocation_claset theorems) (SOME depth)
+        (fn _ => NONE))) goal
 
 fun BLAST_TAC theorems goal =
   let
     val limit = !depth_limit
     val initial = if limit < 0 then NONE else SOME 0
   in
-    blast_preprocess
-      (run_depths (invocation_claset theorems) initial
-        (next_through limit)) goal
+    halting_preprocess
+      (blast_preprocess
+        (run_depths (invocation_claset theorems) initial
+          (next_through limit))) goal
   end
 
 fun tryIt depth theorems goal =
