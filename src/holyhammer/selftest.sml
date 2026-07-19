@@ -1314,6 +1314,54 @@ val _ = test_runner ()
 val _ = test_installed_provers ()
 val _ = test_holyHammer_e ()
 
+fun test_hhSchedule () =
+  case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
+      SOME _ => ()
+    | NONE =>
+  let
+    val name = "hh-schedule-fixture"
+    val slice : hhProver.slice =
+      {prover = name, format = "fof", type_enc = "", lam_trans = "",
+       nfacts = 0, filter = "none", extra_opts = [], slice_size = 1}
+    val fixture : hhProver.prover_config =
+      {name = name, exec_names = ["test-data/runner-print-e.sh"],
+       env_var = "", version_args = ["--version"],
+       parse_version = fn _ => SOME "test", tested_versions = ["test"],
+       mk_command = fn executable => fn _ => (executable, []),
+       parse_output = fn _ => (hhProver.SzsTheorem, SOME []),
+       default_nfacts = 0, slices = fn () => [slice], legacy = false}
+    val options : hhConfig.hh_options =
+      {timeout = 3, max_proofs = 1, provers = [name], slices = 1,
+       cores = 1, filter = "none", max_facts = NONE, minimize = true,
+       preplay_timeout = 1.0, minimize_timeout = 1.0, cache = false,
+       cache_dir = "", cache_max_entries = 100, debug_dir = NONE}
+    val events = ref ([] : string list)
+    fun event_name (hhSchedule.SliceStarted _) = "started"
+      | event_name (hhSchedule.SliceDone _) = "done"
+      | event_name (hhSchedule.ProofFound _) = "found"
+      | event_name (hhSchedule.Verified _) = "verified"
+      | event_name (hhSchedule.ScheduleDone _) = "schedule-done"
+    val _ = hhProver.register fixture
+    val result = hhSchedule.run
+      {options = options, goal = ([], boolSyntax.T), premises = [],
+       progress = SOME (fn event => events := event_name event :: !events)}
+    val _ = expect "scheduler fixture verifies and stops at max_proofs"
+      (#stopped result = hhSchedule.MaxProofs andalso
+       length (#suggestions result) = 1 andalso
+       length (#slices_run result) = 1 andalso #t_total result < 5.0)
+    val _ = expect_equal "scheduler event sequence"
+      ["started", "done", "found", "verified", "schedule-done"]
+      (List.rev (!events))
+    val _ = expect "scheduler exports the distinct zero-fact prefix"
+      (OS.FileSys.access
+        (join (join (join (hhConfig.state_dir ()) "problems") "0")
+          "atp_in", [OS.FileSys.A_READ]))
+  in
+    ()
+  end
+
+val _ = test_hhSchedule ()
+
 fun test_hhEval_integration () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
       SOME _ => ()
@@ -1372,5 +1420,5 @@ val _ = expect "hhEval smoke covers every pinned prover four times"
 
 local open hhReconstruct hhTranslate holyHammer hhExportLib hhExportFof
   hhExportTf0 hhExportTh0 hhExportTf1 hhExportTh1 hhConfig hhProver hhSlice
-  hhCache
+  hhCache hhSchedule
 in end

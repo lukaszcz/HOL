@@ -1,5 +1,5 @@
 all: $(DEFAULT_TARGETS) hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo \
-     hhEval.uo selftest.exe smoke.exe
+     hhSchedule.uo hhEval.uo selftest.exe smoke.exe
 
 hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
@@ -7,12 +7,15 @@ hhSlice.uo: hhSlice.sml hhSlice.ui hhConfig.uo hhProver.uo
 
 hhCache.uo: hhCache.sml hhCache.ui hhConfig.uo hhProver.uo
 
+hhSchedule.uo: hhSchedule.sml hhSchedule.ui hhConfig.uo hhProver.uo \
+               hhSlice.uo hhCache.uo
+
 hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo
 
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo
 
 selftest.uo: selftest.sml hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo \
-             hhEval.uo holyHammer.uo
+             hhSchedule.uo hhEval.uo holyHammer.uo
 
 smoke.uo: smoke.sml hhEval.uo
 .PHONY: all
