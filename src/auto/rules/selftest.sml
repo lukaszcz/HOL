@@ -48,6 +48,57 @@ val seed_expected_rules =
    (seed_intro_spec, "clasetSeed$EX1_INTRO_THM"),
    (seed_elim_spec, "clasetSeed$FORALL_ELIM_THM")]
 
+val seed_theory_name = "clasetSeed"
+
+fun seed_export_identity name = seed_theory_name ^ "$" ^ name
+
+val seed_programmatic_schemas =
+  map seed_export_identity
+    ["NOT_IMP_CELIM_THM", "NOT_FORALL_CELIM_THM", "NOT_ELIM_THM"]
+
+fun untagged_theorems
+  {theorem_names, persistent_rule_names, permitted} =
+  let
+    fun classified name =
+      List.exists
+        (fn rule_name => rule_name = name) persistent_rule_names orelse
+      List.exists (fn permitted_name => permitted_name = name) permitted
+  in
+    List.filter (not o classified) theorem_names
+  end
+
+val _ =
+  test
+    ("seed classification requires fully qualified persistent rule names",
+     fn () =>
+       untagged_theorems
+         {theorem_names =
+            map seed_export_identity ["TAGGED", "NOT_ELIM_THM", "UNTAGGED"],
+          persistent_rule_names =
+            [seed_export_identity "TAGGED", "foreign$UNTAGGED"],
+          permitted = seed_programmatic_schemas} =
+       [seed_export_identity "UNTAGGED"])
+
+val persisted_seed_claset =
+  case persistent_claset_of_theory {thyname = seed_theory_name} of
+      SOME cs => cs
+    | NONE => raise Fail "clasetSeed has no persisted claset data"
+
+val untagged_seed_theorems =
+  untagged_theorems
+    {theorem_names =
+       map (seed_export_identity o #1) (DB.theorems seed_theory_name),
+     persistent_rule_names = map (#1 o #2) (rules_of persisted_seed_claset),
+     permitted = seed_programmatic_schemas}
+
+val _ =
+  (tprint "every seed theorem is a claset rule or permitted schema";
+   case untagged_seed_theorems of
+       [] => OK ()
+     | names =>
+         die ("untagged clasetSeed theorem(s): " ^
+              String.concatWith ", " names))
+
 fun is_seed_rule (_, (name, _)) =
   List.exists (fn (_, expected_name) => name = expected_name)
     seed_expected_rules
@@ -1580,6 +1631,8 @@ fun tyinfo_idempotence_contribution _ =
   [(tyinfo_idempotence_spec,
     ("claset-tyinfo-idempotence", tyinfo_idempotence_rule))]
 
+val tyinfo_idempotence_key = "claset-selftest-idempotence"
+
 fun count_typebase_rules th =
   length
     (List.filter
@@ -1591,13 +1644,82 @@ val _ =
     ("claset TypeBase contributions silently deduplicate reprocessing",
      fn () =>
        let
-         val name = "claset-selftest-idempotence"
          val _ = register_tyinfo_contribution
-           (name, tyinfo_idempotence_contribution)
+           (tyinfo_idempotence_key, tyinfo_idempotence_contribution)
          val _ = register_tyinfo_contribution
-           (name, tyinfo_idempotence_contribution)
+           (tyinfo_idempotence_key, tyinfo_idempotence_contribution)
        in
          count_typebase_rules tyinfo_idempotence_rule = 1
+       end)
+
+val ambient_seed_spoof_name = seed_export_identity "AMBIENT_ONLY"
+val ambient_seed_spoof_rule = REFL ``ClasetHookA``
+
+fun ambient_seed_spoof_contribution _ =
+  [(tyinfo_idempotence_spec,
+    (ambient_seed_spoof_name, ambient_seed_spoof_rule))]
+
+val _ =
+  test
+    ("persistent theory clasets exclude ambient same-name rules",
+     fn () =>
+       let
+         val body_exception = ref (NONE : exn option)
+
+         fun restore_original_provider () =
+           (register_tyinfo_contribution
+              (tyinfo_idempotence_key, tyinfo_idempotence_contribution);
+            if has_named_rule ambient_seed_spoof_name (the_claset ()) then
+              raise Fail "ambient seed spoof survived provider restoration"
+            else
+              ())
+
+         fun cleanup () =
+           restore_original_provider ()
+           handle cleanup_exception =>
+             case !body_exception of
+                 SOME _ =>
+                   (* The body exception takes precedence when both fail.
+                      Reporting the cleanup failure is therefore best-effort:
+                      even WARNINGs_as_ERRs must not replace the body error. *)
+                   (HOL_WARNING "rules selftest" "cleanup"
+                      ("Failed to restore the temporary ambient spoof " ^
+                       "contributor after the test body raised; preserving " ^
+                       "the original body exception. Cleanup exception: " ^
+                       General.exnMessage cleanup_exception)
+                    handle _ => ())
+               | NONE => raise cleanup_exception
+
+         fun check () =
+           let
+             val _ = register_tyinfo_contribution
+               (tyinfo_idempotence_key, ambient_seed_spoof_contribution)
+             val persistent =
+               Option.valOf
+                 (persistent_claset_of_theory {thyname = seed_theory_name})
+             val effective =
+               Option.valOf (claset_of_theory {thyname = seed_theory_name})
+             val persistent_names = map (#1 o #2) (rules_of persistent)
+             val effective_names = map (#1 o #2) (rules_of effective)
+             val untagged =
+               untagged_theorems
+                 {theorem_names = [ambient_seed_spoof_name],
+                  persistent_rule_names = persistent_names,
+                  permitted = []}
+             fun named name = List.exists (fn name' => name = name')
+           in
+             not (named ambient_seed_spoof_name persistent_names) andalso
+             named ambient_seed_spoof_name effective_names andalso
+             untagged = [ambient_seed_spoof_name]
+           end
+
+         fun record_body_exception () =
+           check ()
+           handle body_exn =>
+             (body_exception := SOME body_exn;
+              raise body_exn)
+       in
+         Portable.finally cleanup record_body_exception ()
        end)
 
 val tyinfo_multispec_p = ``claset_tyinfo_multispec_p : bool``

@@ -30,6 +30,15 @@ sig
   val delrule : string -> unit
   val temp_delrule : string -> unit
   val augment_claset : (claset -> claset) -> unit
+
+  (* Reconstruct only the ancestry-persistent declarations recorded for the
+     named theory.  Unlike [claset_of_theory], this excludes rules derived
+     from the caller's current TypeBase. *)
+  val persistent_claset_of_theory :
+      {thyname : string} -> claset option
+
+  (* Reconstruct the named theory's persistent declarations and then catch
+     them up with rules derived from the caller's current TypeBase. *)
   val claset_of_theory : {thyname : string} -> claset option
   val merge_clasets : string list -> claset option
   val with_claset : claset -> ('a -> 'b) -> ('a -> 'b)

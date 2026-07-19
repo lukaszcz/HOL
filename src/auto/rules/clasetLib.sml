@@ -688,10 +688,14 @@ fun delrule name =
     #update_global_value adresult (apply_to_global delta)
   end
 
-(* Reconstruction replays only persistent deltas; TypeBase-derived rules are
-   never deltas, so add them here to match the live [the_claset]. *)
+(* The DB reconstruction is the raw ancestry-persistent view.  TypeBase facts
+   are derived from the caller's ambient state and are never deltas. *)
+fun persistent_claset_of_theory thy = Option.map #1 (#DB adresult thy)
+
+(* Preserve the historical effective view by catching the persistent state up
+   with the caller's current TypeBase, just as [the_claset] does. *)
 fun claset_of_theory thy =
-  Option.map (catch_up_typebase o #1) (#DB adresult thy)
+  Option.map catch_up_typebase (persistent_claset_of_theory thy)
 fun merge_clasets thys =
   Option.map (catch_up_typebase o #1) (#merge adresult thys)
 fun with_claset cs = AncestryData.with_temp_value adresult (cs, true, [])
