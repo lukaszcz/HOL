@@ -1358,6 +1358,16 @@ fun stop_event_name hhSchedule.MaxProofs = "max-proofs"
   | stop_event_name hhSchedule.Exhausted = "exhausted"
   | stop_event_name hhSchedule.Interrupted = "interrupted"
 
+fun szs_event_name hhProver.SzsTheorem = "theorem"
+  | szs_event_name hhProver.SzsCounterSat = "counter-sat"
+  | szs_event_name hhProver.SzsSatisfiable = "satisfiable"
+  | szs_event_name hhProver.SzsGaveUp = "gave-up"
+  | szs_event_name hhProver.SzsTimeout = "timeout"
+  | szs_event_name hhProver.SzsResourceOut = "resource-out"
+  | szs_event_name hhProver.SzsInappropriate = "inappropriate"
+  | szs_event_name (hhProver.SzsUnknown status) = status
+  | szs_event_name (hhProver.RunFailure message) = "failure:" ^ message
+
 fun observe_schedule_event (hhSchedule.SliceStarted slice) =
       "started|" ^ slice_event_tag slice
   | observe_schedule_event (hhSchedule.SliceDone (slice, _, _)) =
@@ -1520,12 +1530,27 @@ fun test_schedule_early_stop parser =
     val _ = hhProver.register (sleeper_config slow2 parser)
     val options = fixture_options [slow1, fast, slow2] 3 3 12 1 false ""
       (SOME debug)
-    val (result, _) = run_schedule options
+    val (result, events) = run_schedule options
     val children_gone =
       fixture_child_gone debug slow1 andalso fixture_child_gone debug slow2
+    val early_stop_ok =
+      #stopped result = hhSchedule.MaxProofs andalso
+      length (#suggestions result) = 1
+    val _ =
+      if early_stop_ok then ()
+      else
+        print ("early-stop diagnostic: stopped=" ^
+          stop_event_name (#stopped result) ^ ", suggestions=" ^
+          Int.toString (length (#suggestions result)) ^ ", slices=" ^
+          Int.toString (length (#slices_run result)) ^ ", total=" ^
+          Real.toString (#t_total result) ^ ", events=" ^
+          String.concatWith ";" events ^ ", results=" ^
+          String.concatWith ";"
+            (map (fn (slice, status, elapsed) =>
+              slice_event_tag slice ^ ":" ^ szs_event_name status ^ ":" ^
+              Real.toString elapsed) (#slices_run result)) ^ "\n")
     val _ = expect "scheduler early stop follows a verified proof"
-      (#stopped result = hhSchedule.MaxProofs andalso
-       length (#suggestions result) = 1)
+      early_stop_ok
     val _ = expect "scheduler early stop returns below the slice budget"
       (#t_total result < 8.0)
     val _ = expect "scheduler early stop kills laggard process groups"

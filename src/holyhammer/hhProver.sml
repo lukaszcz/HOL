@@ -489,7 +489,13 @@ type process_running =
 
 fun is_esrch error = OS.errorName error = "ESRCH"
 
-fun start_process path args limit : process_running =
+(* pipe(2) and fork(2) are separate operations in the Basis interface.  Keep
+   that setup window serial so a concurrent child cannot inherit a pipe
+   before its close-on-exec flags have been installed. *)
+val fork_mutex = Mutex.mutex ()
+
+fun start_process path args limit : process_running = with_mutex fork_mutex
+  (fn () =>
   let
     val started = Time.now ()
     val environment = Posix.ProcEnv.environ ()
@@ -499,8 +505,9 @@ fun start_process path args limit : process_running =
     val exec_failure : Word8.word = 0w127
     val {infd = read_fd, outfd = write_fd} = Posix.IO.pipe ()
     val {infd = error_read_fd, outfd = error_write_fd} = Posix.IO.pipe ()
-    val _ = Posix.IO.setfd
-      (error_write_fd, Posix.IO.FD.flags [Posix.IO.FD.cloexec])
+    val close_on_exec = Posix.IO.FD.flags [Posix.IO.FD.cloexec]
+    val _ = List.app (fn fd => Posix.IO.setfd (fd, close_on_exec))
+      [read_fd, write_fd, error_read_fd, error_write_fd]
     val error_byte = Word8Vector.fromList [0w1]
     val error_slice = Word8VectorSlice.full error_byte
     val stdout_dup = {old = write_fd, new = Posix.FileSys.stdout}
@@ -630,7 +637,7 @@ fun start_process path args limit : process_running =
       in
         {kill = signal_group, wait = wait}
       end
-  end
+  end)
 
 fun read_process path args limit =
   #wait (start_process path args limit) ()
