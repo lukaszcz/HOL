@@ -2120,6 +2120,308 @@ in
        "(lambda ((x Int)) x)))\n"))
 end
 
+fun smtlib_apply_operators_success () =
+let
+  val state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Int Int))\n" ^
+     "(assert (= (_ f 1 2) (@ f 1 2)))\n" ^
+     "(assert (= (_ (lambda ((x Int)) (+ x 1)) 2) " ^
+     "(@ (lambda ((renamed Int)) (+ renamed 1)) 2)))\n")
+  val (curried_equality, lambda_equality) =
+    case #assertions state of
+      [first, second] => (first, second)
+    | _ => die "apply operator script produced wrong assertion count"
+  val (underscore, at_sign) = boolSyntax.dest_eq curried_equality
+  val (f_head, args) = strip_comb underscore
+  val (lambda_underscore, lambda_at_sign) =
+    boolSyntax.dest_eq lambda_equality
+  val (lambda_head, _) = Term.dest_comb lambda_underscore
+  val flags = #surface_flags state
+  val nested_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const a (Array Int (-> Int Bool)))\n" ^
+     "(assert (_ (select a 0) 1))\n" ^
+     "(define-fun use ((g (-> Int Bool))) Bool (_ g 0))\n" ^
+     "(assert (use (lambda ((x Int)) true)))\n" ^
+     "(declare-const real_indices (Array Real Bool))\n" ^
+     "(assert (select real_indices 1))\n" ^
+     "(assert (= (ite true 1 2.0) 1.0))\n" ^
+     "(declare-datatype D ((mkD (getF (-> Int Bool)))))\n" ^
+     "(declare-const d D)\n" ^
+     "(assert (_ (getF d) 1))\n" ^
+     "(declare-datatype Box (par (T) ((box (value T)))))\n" ^
+     "(declare-const b (Box (-> Int Bool)))\n" ^
+     "(assert (_ (value b) 1))\n" ^
+     "(declare-const mixed (-> Int Real Bool))\n" ^
+     "(assert (= (_ mixed 1 2) (@ mixed 1 2)))\n")
+  val elaborated_state =
+    SmtLib_Parser.typecheck_script_string_with_options
+      {dict_logic = NONE, elaborate_datatypes = true}
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype ApplyBoxA2_06 " ^
+       "(par (T) ((applyBoxA2_06 (applyValueA2_06 T)))))\n" ^
+       "(declare-const b (ApplyBoxA2_06 (-> Int Bool)))\n" ^
+       "(assert (_ (applyValueA2_06 b) 1))\n")
+in
+  assert (Term.aconv underscore at_sign,
+    "_ and @ did not build the same HOL application");
+  assert (Lib.fst (Term.dest_var f_head) = "f" andalso
+      List.length args = 2,
+    "(_ f 1 2) was not built as a left-associated application");
+  assert (Term.aconv lambda_underscore lambda_at_sign andalso
+      Lib.can Term.dest_abs lambda_head,
+    "apply operators did not apply a TASK_05 lambda abstraction");
+  assert (#apply_operator_used flags,
+    "apply operator surface event was not recorded");
+  assert (#lambda_used flags andalso not (#partial_application_used flags),
+    "apply operator typechecking set incorrect related surface flags");
+  assert (List.length (#assertions nested_state) = 7 andalso
+      List.length (#assertions elaborated_state) = 1,
+    "apply lost map provenance or existing Int-to-Real coercions")
+end
+
+fun smtlib_apply_indexed_ambiguity_success () =
+let
+  val state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const w (_ BitVec 8))\n" ^
+     "(assert (= ((_ extract 3 0) w) (_ bv3 4)))\n")
+  val assertion = hd (#assertions state)
+  val w =
+    case List.find
+        (fn tm => Lib.fst (Term.dest_var tm) = "w")
+        (Term.free_vars assertion) of
+      SOME tm => tm
+    | NONE => die "indexed ambiguity script lost BitVec variable w"
+  val word8 = wordsSyntax.mk_word_type
+    (fcpLib.index_type (Arbnum.fromInt 8))
+in
+  assert (Term.type_of assertion = Type.bool,
+    "indexed extract ambiguity pin did not produce Bool");
+  assert (Type.compare (Term.type_of w, word8) = EQUAL,
+    "(_ BitVec 8) no longer denotes the expected word sort");
+  assert (not (#apply_operator_used (#surface_flags state)),
+    "indexed identifiers were misclassified as the _ apply operator")
+end
+
+fun smtlib_apply_operator_diagnostics () =
+let
+  fun typecheck text () =
+    ignore (SmtLib_Parser.typecheck_script_string text)
+  fun expect_sort_mismatch () =
+    let
+      val _ = typecheck
+        ("(set-logic ALL)\n" ^
+         "(declare-const f (-> Int Bool))\n" ^
+         "(assert (_ f true))\n") ()
+    in
+      die "apply operator accepted an argument of the wrong sort"
+    end
+    handle HOL_ERR holerr =>
+      let val msg = message_of holerr in
+        assert (contains "apply operator '_' argument 1 sort mismatch" msg andalso
+            contains "expected sort :int" msg andalso
+            contains "actual sort :bool" msg,
+          "apply operator sort diagnostic was imprecise: " ^ msg)
+      end
+in
+  expect_sort_mismatch ();
+  expect_hol_error_contains "apply non-map head"
+    "expected a map-sorted term before argument 1"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(assert (= (_ 1 2) 0))\n"));
+  expect_hol_error_contains "apply rigid declared sort mismatch"
+    "apply operator '_' argument 1 sort mismatch"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-sort U 0)\n" ^
+       "(declare-const f (-> U U))\n" ^
+       "(assert (= (_ f 1) 1))\n"));
+  expect_hol_error_contains "apply rigid composite sort mismatch"
+    "apply operator '_' argument 1 sort mismatch"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-sort U 0)\n" ^
+       "(declare-const f (-> U Bool))\n" ^
+       "(declare-const g (-> U Bool))\n" ^
+       "(assert (_ (ite true f g) 1))\n"));
+  expect_hol_error_contains "array is not an HO-Core map"
+    "expected a map-sorted term before argument 1"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const a (Array Int Bool))\n" ^
+       "(assert (@ a 0))\n"));
+  expect_hol_error_contains "array does not match a map argument sort"
+    "apply operator '_' argument 1 sort mismatch"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const f (-> (-> Int Bool) Bool))\n" ^
+       "(declare-const a (Array Int Bool))\n" ^
+       "(assert (_ f a))\n"));
+  expect_hol_error_contains "array cannot define a map-sorted value"
+    "surface sort mismatch"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const a (Array Int Bool))\n" ^
+       "(define-const f (-> Int Bool) a)\n"));
+  expect_hol_error_contains "curried apply second argument mismatch"
+    "apply operator '@' argument 2 sort mismatch"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const f (-> Int Bool Real))\n" ^
+       "(assert (= (@ f 1 2) 0.0))\n"));
+  expect_hol_error_contains "indexed family precedence"
+    "could not resolve indexed symbol 'extract'"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const extract (-> Int Int Int))\n" ^
+       "(assert (= (_ extract 3 0) 0))\n"));
+  expect_hol_error_contains "underscore apply missing argument"
+    "expects a map term and at least one argument"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const f (-> Int Bool))\n" ^
+       "(assert (= (_ f) f))\n"));
+  expect_hol_error_contains "at-sign apply missing argument"
+    "expects a map term and at least one argument"
+    (typecheck
+      ("(set-logic ALL)\n" ^
+       "(declare-const f (-> Int Bool))\n" ^
+       "(assert (= (@ f) f))\n"));
+  expect_hol_error_contains "apply operator theory scope"
+    "is unavailable in the selected theory"
+    (typecheck
+      ("(set-logic QF_UF)\n" ^
+       "(declare-const f (-> Bool Bool))\n" ^
+       "(declare-fun |@| ((-> Bool Bool) Bool) Bool)\n" ^
+       "(assert (@ f true))\n"))
+end
+
+fun smtlib_apply_operator_metadata_success () =
+let
+  val metadata = SmtLib_Logics.metadata_of_logic "ALL"
+  val underscore = find_symbol_metadata "HO_Core" "term" "_" metadata
+  val at_sign = find_symbol_metadata "HO_Core" "term" "@" metadata
+  val quoted_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic QF_LIA)\n" ^
+     "(declare-fun |@| (Int) Int)\n" ^
+     "(assert (= (|@| 1) 1))\n")
+  val quoted_underscore_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const |_| (-> Bool Bool))\n" ^
+     "(assert (= (_ |_| true) (@ |_| true)))\n")
+in
+  assert (metadata_is_official underscore,
+    "HO_Core _ apply metadata is not marked official");
+  assert (metadata_is_extension at_sign,
+    "HO_Core @ apply metadata is not marked as a cvc5 extension");
+  assert (#left_associative (#attributes underscore) andalso
+      #left_associative (#attributes at_sign),
+    "HO_Core apply metadata did not preserve left associativity");
+  assert (not (#apply_operator_used (#surface_flags quoted_state)),
+    "quoted @ symbol was misclassified as the cvc5 apply operator");
+  assert (#apply_operator_used (#surface_flags quoted_underscore_state),
+    "quoted |_| map term was misclassified as an indexed family")
+end
+
+fun smtlib_partial_application_success () =
+let
+  val state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Bool Real))\n" ^
+     "(declare-const residual (-> Bool Real))\n" ^
+     "(assert (= (f 1) residual))\n" ^
+     "(assert (= (f 1 true) (_ f 1 true)))\n" ^
+     "(assert (= ((f 1) true) (f 1 true)))\n")
+  val (residual_equality, sugar_equality, nested_equality) =
+    case #assertions state of
+      [first, second, third] => (first, second, third)
+    | _ => die "partial application script produced wrong assertion count"
+  val (partial, _) = boolSyntax.dest_eq residual_equality
+  val (sugar, explicit) = boolSyntax.dest_eq sugar_equality
+  val (nested, flat) = boolSyntax.dest_eq nested_equality
+  val flags = #surface_flags state
+  val partial_only_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Bool Real))\n" ^
+     "(declare-const residual (-> Bool Real))\n" ^
+     "(assert (= (f 1) residual))\n")
+  val explicit_partial_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Bool Real))\n" ^
+     "(declare-const residual (-> Bool Real))\n" ^
+     "(assert (= (_ f 1) residual))\n")
+  val full_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Bool Real))\n" ^
+     "(assert (= (f 1 true) 0.0))\n")
+  val coercion_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-const f (-> Int Real Bool))\n" ^
+     "(assert (= ((f 1) 2) (f 1 2)))\n")
+  val lambda_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(assert (= ((lambda ((x Int)) x) 1) 1))\n")
+in
+  assert (Type.compare
+      (Term.type_of partial, Type.--> (Type.bool, realSyntax.real_ty)) = EQUAL,
+    "(f 1) did not retain residual sort (-> Bool Real)");
+  assert (Term.aconv sugar explicit,
+    "full omission sugar did not equal full application via _");
+  assert (Term.aconv nested flat,
+    "nested omission sugar did not preserve the map-sorted residual");
+  assert (#partial_application_used flags andalso
+      #apply_operator_used flags,
+    "partial map application did not set the expected surface flags");
+  assert (#partial_application_used (#surface_flags partial_only_state),
+    "partial map-sorted head did not set its surface flag");
+  assert (#partial_application_used (#surface_flags explicit_partial_state)
+      andalso #apply_operator_used (#surface_flags explicit_partial_state),
+    "explicit partial application did not set both surface flags");
+  assert (not (#partial_application_used (#surface_flags full_state)),
+    "fully applied map-sorted head was marked as partial");
+  assert (List.length (#assertions coercion_state) = 1,
+    "nested omission sugar lost Int-to-Real argument coercion");
+  assert (#partial_application_used (#surface_flags lambda_state),
+    "non-atom higher-order application did not set its surface flag")
+end
+
+fun smtlib_ranked_partial_application_diagnostic () =
+let
+  val pinned =
+    "function symbol 'g' of rank 2 cannot be partially applied; " ^
+    "wrap it in a lambda (SMT-LIB 2.7 §3.9)"
+  val partial_script =
+    "(set-logic ALL)\n" ^
+    "(declare-fun g (Int Bool) Real)\n" ^
+    "(assert (= (g 0) (lambda ((b Bool)) 0.0)))\n"
+  val exact_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-fun g (Int Bool) Real)\n" ^
+     "(assert (= (g 0 true) 0.0))\n")
+  val map_result_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(declare-fun h (Int) (-> Bool Real))\n" ^
+     "(assert (= ((h 0) true) 0.0))\n")
+  fun reject_partial () =
+    ignore (SmtLib_Parser.typecheck_script_string partial_script)
+  val _ =
+    (reject_partial ();
+     die "ranked function symbol was partially applied")
+    handle HOL_ERR holerr =>
+      let val msg = message_of holerr in
+        assert (String.isSuffix pinned msg,
+          "ranked partial-application diagnostic changed: " ^ msg)
+      end
+in
+  assert (List.length (#assertions exact_state) = 1,
+    "exact application of a ranked function symbol stopped typechecking");
+  assert (List.length (#assertions map_result_state) = 1,
+    "map result of an exact ranked application could not be applied")
+end
+
 fun smtlib_command_malformed_diagnostics () =
   let
     fun typecheck text () = ignore (SmtLib_Parser.typecheck_script_string text)
@@ -5836,6 +6138,18 @@ let
       smtlib_lambda_body_sort_diagnostic),
     ("smtlib_lambda_surface_syntax_hygiene",
       smtlib_lambda_surface_syntax_hygiene),
+    ("smtlib_apply_operators_success",
+      smtlib_apply_operators_success),
+    ("smtlib_apply_indexed_ambiguity_success",
+      smtlib_apply_indexed_ambiguity_success),
+    ("smtlib_apply_operator_diagnostics",
+      smtlib_apply_operator_diagnostics),
+    ("smtlib_apply_operator_metadata_success",
+      smtlib_apply_operator_metadata_success),
+    ("smtlib_partial_application_success",
+      smtlib_partial_application_success),
+    ("smtlib_ranked_partial_application_diagnostic",
+      smtlib_ranked_partial_application_diagnostic),
     ("smtlib_command_malformed_diagnostics",
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",

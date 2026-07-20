@@ -555,6 +555,35 @@ in
         let val (domains, range) = Lib.front_last tys
         in boolSyntax.list_mk_fun (domains, range) end
 
+  fun apply_operator operator token indices terms =
+    let
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+          val arg =
+            if Type.compare (domain, realSyntax.real_ty) = EQUAL andalso
+               Type.compare (Term.type_of arg, intSyntax.int_ty) = EQUAL then
+              intrealSyntax.mk_real_of_int arg
+            else arg
+          val subst = Type.match_type domain (Term.type_of arg)
+          val rator = Term.inst subst rator
+        in
+          Term.mk_comb (rator, arg)
+        end
+    in
+      if token <> operator then
+        raise ERR ("<HO_Core." ^ operator ^ ">")
+          "operator name mismatch"
+      else if not (List.null indices) then
+        raise ERR ("<HO_Core." ^ operator ^ ">")
+          "no indices expected"
+      else
+        case terms of
+          rator :: arg :: args => List.foldl apply_one rator (arg :: args)
+        | _ => raise ERR ("<HO_Core." ^ operator ^ ">")
+            "a map term and at least one argument expected"
+    end
+
   fun unary_decl name dom rng =
     "(" ^ name ^ " " ^ dom ^ " " ^ rng ^ ")"
 
@@ -963,7 +992,19 @@ in
             raise ERR "<HO_Core.->>" "no indices expected")
     ]
 
-    val tmentries : Term.term symbol_entry list = []
+    (* The official apply spelling [_] is also the dictionary catch-all key.
+       [apply_operator] checks the token itself so this entry cannot consume an
+       unknown symbol routed through the catch-all path.  cvc5 spells the same
+       HO-Core operation [@], so its extension entry is deliberately keyed in
+       this dictionary and shares the implementation. *)
+    val tmentries = [
+      official_entry "_" left_assoc_attributes
+        ["(par (A B) (_ (-> A B) A B :left-assoc))"]
+        (apply_operator "_"),
+      extension_entry "cvc5" "@" left_assoc_attributes
+        ["cvc5 HO-Core apply: (@ (-> A B) A B :left-assoc)"]
+        (apply_operator "@")
+    ]
 
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
