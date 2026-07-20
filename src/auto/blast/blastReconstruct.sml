@@ -136,6 +136,332 @@ fun reconstructWith cs goal proof =
 fun reconstruct goal proof =
   reconstructWith clasetLib.empty_cs goal proof
 
+datatype step_kind =
+    HypSubstStep
+  | CloseAssumeStep
+  | CloseContradictionStep
+  | SafeRuleStep
+  | DeferGoalStep
+  | UnsafeRuleStep
+
+datatype phase =
+    ReplayRecursion
+  | AlternativeEnumeration
+  | TypedStep of step_kind
+  | StoredRuleSetup
+  | StoredRuleTransition
+  | DuplicateChildMove
+  | FinishOpenGoals
+  | GroundReplay
+  | KernelReplay
+  | FinishResidualGoals
+
+datatype boundary = Enter | Exit
+type observation = {boundary : boundary, phase : phase}
+
+(* TypedStep covers lazy-sequence setup.  AlternativeEnumeration covers
+   seq.cases and hence any lazy engine-transition forcing needed to expose a
+   node.  StoredRuleTransition begins only after such a node is yielded and
+   covers child counting plus optional duplicate movement.  Brackets emit an
+   Exit only on a normal return, so exception/backtracking paths can leave an
+   unmatched Enter.  See the signature for the complete phase contract. *)
+
+type statistics =
+  {cooperative_checkpoints : int,
+   phase_entries : int,
+   phase_exits : int,
+   replay_recursions : int,
+   alternative_pulls : int,
+   typed_steps : int,
+   hyp_subst_steps : int,
+   close_assume_steps : int,
+   close_contradiction_steps : int,
+   safe_rule_steps : int,
+   defer_goal_steps : int,
+   unsafe_rule_steps : int,
+   stored_rule_setups : int,
+   stored_rule_transitions : int,
+   duplicate_child_moves : int,
+   finish_open_goal_checks : int,
+   grounding_attempts : int,
+   kernel_replay_attempts : int,
+   finish_residual_goal_checks : int}
+
+datatype completion = Completed | Interrupted
+type measured_result =
+  {completion : completion,
+   current_phase : observation option,
+   result : (goal list * validation) option,
+   statistics : statistics}
+
+(* Measured reconstruction deliberately duplicates the small legacy worker
+   above.  The ordinary entry points therefore retain their original call
+   graph, allocation profile, and exception/control behavior. *)
+fun reconstructWithMeasured {observe, stop} cs goal
+      ({script, ...} : proof) =
+  let
+    exception INTERRUPTED
+    exception CALLBACK of exn
+
+    val current_phase = ref (NONE : observation option)
+    val cooperative_checkpoints = ref 0
+    val phase_entries = ref 0
+    val phase_exits = ref 0
+    val replay_recursions = ref 0
+    val alternative_pulls = ref 0
+    val typed_steps = ref 0
+    val hyp_subst_steps = ref 0
+    val close_assume_steps = ref 0
+    val close_contradiction_steps = ref 0
+    val safe_rule_steps = ref 0
+    val defer_goal_steps = ref 0
+    val unsafe_rule_steps = ref 0
+    val stored_rule_setups = ref 0
+    val stored_rule_transitions = ref 0
+    val duplicate_child_moves = ref 0
+    val finish_open_goal_checks = ref 0
+    val grounding_attempts = ref 0
+    val kernel_replay_attempts = ref 0
+    val finish_residual_goal_checks = ref 0
+
+    fun increment counter = counter := !counter + 1
+
+    fun count_entry phase =
+      (increment phase_entries;
+       case phase of
+           ReplayRecursion => increment replay_recursions
+         | AlternativeEnumeration => increment alternative_pulls
+         | TypedStep kind =>
+             (increment typed_steps;
+              case kind of
+                  HypSubstStep => increment hyp_subst_steps
+                | CloseAssumeStep => increment close_assume_steps
+                | CloseContradictionStep =>
+                    increment close_contradiction_steps
+                | SafeRuleStep => increment safe_rule_steps
+                | DeferGoalStep => increment defer_goal_steps
+                | UnsafeRuleStep => increment unsafe_rule_steps)
+         | StoredRuleSetup => increment stored_rule_setups
+         | StoredRuleTransition => increment stored_rule_transitions
+         | DuplicateChildMove => increment duplicate_child_moves
+         | FinishOpenGoals => increment finish_open_goal_checks
+         | GroundReplay => increment grounding_attempts
+         | KernelReplay => increment kernel_replay_attempts
+         | FinishResidualGoals =>
+             increment finish_residual_goal_checks)
+
+    fun invoke callback argument =
+      callback argument handle error => raise CALLBACK error
+
+    fun checkpoint boundary phase =
+      let
+        val observation = {boundary = boundary, phase = phase}
+        val _ = current_phase := SOME observation
+        val _ =
+          (case boundary of
+               Enter => count_entry phase
+             | Exit => increment phase_exits)
+        val _ =
+          case observe of
+              NONE => ()
+            | SOME observer => invoke observer observation
+        val _ = increment cooperative_checkpoints
+      in
+        if invoke stop () then raise INTERRUPTED else ()
+      end
+
+    fun bracket phase operation argument =
+      let
+        val _ = checkpoint Enter phase
+        val result = operation argument
+        val _ = checkpoint Exit phase
+      in
+        result
+      end
+
+    (* Lib.total is the legacy replay policy: it catches every exception
+       except the runtime Interrupt.  Preserve that policy while allowing
+       diagnostic control flow and callback exceptions to cross the same
+       internal boundaries. *)
+    fun total_m operation argument =
+      SOME (operation argument)
+      handle INTERRUPTED => raise INTERRUPTED
+           | CALLBACK error => raise CALLBACK error
+           | Interrupt => raise Interrupt
+           | _ => NONE
+
+    fun first_result_m phase sequence =
+      case bracket phase seq.cases sequence of
+          SOME (result, _) => result
+        | NONE =>
+            raise mk_HOL_ERR "blastReconstruct" "first_result_m"
+              "the recorded step does not apply"
+
+    fun apply_m kind step node =
+      bracket (TypedStep kind)
+        (fn () => seq.map #2 (step (node, 1))) ()
+
+    fun move_children_m count node =
+      let
+        fun move position current =
+          if position > count then current
+          else
+            move (position + 1)
+              (#2
+                (first_result_m DuplicateChildMove
+                  (clasetStep.blast_move_back_step 1
+                    (current, position))))
+      in
+        move 1 node
+      end
+
+    fun apply_pseudo_m kind step node =
+      seq.append (apply_m kind step node) (seq.result node)
+
+    fun apply_rule_m kind duplicate rule node =
+      case #origin rule of
+          blastRule.ImpIntro =>
+            apply_pseudo_m kind clasetStep.blast_disch_step node
+        | blastRule.AllIntro =>
+            apply_pseudo_m kind clasetStep.blast_gen_step node
+        | blastRule.Stored {is_elim, theorem} =>
+            bracket StoredRuleSetup
+              (fn () =>
+                let
+                  val replay_theorem =
+                    if duplicate andalso is_elim then
+                      clasetRules.REV_DUP_ELIM_RULE theorem
+                    else theorem
+                  val old_count = length (clasetGoal.goals node)
+                  val transitions =
+                    apply_m kind
+                      (clasetStep.blast_rule_step cs
+                        {theorem = replay_theorem, elim = is_elim}) node
+
+                  fun finish next =
+                    bracket StoredRuleTransition
+                      (fn () =>
+                        let
+                          val child_count =
+                            length (clasetGoal.goals next) - old_count + 1
+                        in
+                          if duplicate andalso is_elim then
+                            move_children_m child_count next
+                          else next
+                        end) ()
+                in
+                  seq.mapPartial (total_m finish) transitions
+                end) ()
+
+    fun execute_m step node =
+      case step of
+          blastSearch.HypSubst =>
+            apply_m HypSubstStep clasetStep.blast_hyp_subst_step node
+        | blastSearch.CloseAssume =>
+            apply_m CloseAssumeStep clasetStep.blast_assumption_step node
+        | blastSearch.CloseContradiction =>
+            apply_m CloseContradictionStep
+              clasetStep.blast_contradiction_step node
+        | blastSearch.SafeRule {rule, ...} =>
+            apply_rule_m SafeRuleStep false rule node
+        | blastSearch.DeferGoal =>
+            apply_m DeferGoalStep clasetStep.blast_ccontr_step node
+        | blastSearch.UnsafeRule {rule, duplicate, ...} =>
+            apply_rule_m UnsafeRuleStep duplicate rule node
+
+    fun finish final =
+      let
+        val _ =
+          bracket FinishOpenGoals
+            (fn () =>
+              if null (clasetGoal.goals final) then ()
+              else
+                raise mk_HOL_ERR "blastReconstruct" "finish"
+                  "the recorded script leaves open engine goals") ()
+        val grounded =
+          bracket GroundReplay
+            (fn () =>
+              clasetReplay.ground (clasetGoal.store final)
+                (clasetGoal.replay final)) ()
+        val result as (residuals, _) =
+          bracket KernelReplay
+            (fn () =>
+              Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal) ()
+        val _ =
+          bracket FinishResidualGoals
+            (fn () =>
+              if null residuals then ()
+              else
+                raise mk_HOL_ERR "blastReconstruct" "finish"
+                  "kernel replay leaves open goals") ()
+      in
+        result
+      end
+
+    fun replay [] node =
+          bracket ReplayRecursion (fn () => total_m finish node) ()
+      | replay (step :: rest) node =
+          (bracket ReplayRecursion
+            (fn () =>
+              let
+                fun alternatives sequence =
+                  case bracket AlternativeEnumeration seq.cases sequence of
+                      NONE => NONE
+                    | SOME (next, nodes) =>
+                        (case replay rest next of
+                             NONE => alternatives nodes
+                           | result => result)
+              in
+                alternatives (execute_m step node)
+              end) ()
+           handle HOL_ERR _ => NONE)
+
+    fun statistics () : statistics =
+      {cooperative_checkpoints = !cooperative_checkpoints,
+       phase_entries = !phase_entries,
+       phase_exits = !phase_exits,
+       replay_recursions = !replay_recursions,
+       alternative_pulls = !alternative_pulls,
+       typed_steps = !typed_steps,
+       hyp_subst_steps = !hyp_subst_steps,
+       close_assume_steps = !close_assume_steps,
+       close_contradiction_steps = !close_contradiction_steps,
+       safe_rule_steps = !safe_rule_steps,
+       defer_goal_steps = !defer_goal_steps,
+       unsafe_rule_steps = !unsafe_rule_steps,
+       stored_rule_setups = !stored_rule_setups,
+       stored_rule_transitions = !stored_rule_transitions,
+       duplicate_child_moves = !duplicate_child_moves,
+       finish_open_goal_checks = !finish_open_goal_checks,
+       grounding_attempts = !grounding_attempts,
+       kernel_replay_attempts = !kernel_replay_attempts,
+       finish_residual_goal_checks = !finish_residual_goal_checks}
+
+    fun report completion result : measured_result =
+      {completion = completion,
+       current_phase = !current_phase,
+       result = result,
+       statistics = statistics ()}
+
+    fun perform () =
+      case replay script (clasetGoal.from_goal goal) of
+          SOME result => result
+        | NONE =>
+            raise mk_HOL_ERR "blastReconstruct"
+              "reconstructWithMeasured"
+              "the recorded tableau has no kernel-valid replay"
+  in
+    ((report Completed (SOME (perform ()))
+      handle INTERRUPTED => report Interrupted NONE
+           | CALLBACK error => raise CALLBACK error
+           | Interrupt => raise Interrupt
+           | _ => report Completed NONE)
+     handle CALLBACK error => raise error)
+  end
+
+fun reconstructMeasured controls goal proof =
+  reconstructWithMeasured controls clasetLib.empty_cs goal proof
+
 fun accept cs goal proof =
   case reconstructWith cs goal proof of
       SOME result => (proof, result)

@@ -2645,6 +2645,144 @@ val _ =
 
 val _ =
   test
+    ("measured reconstruction reports exact completed close counters",
+     fn () =>
+       let
+         val p = mk_var ("measured_close_p", bool)
+         val goal = ([p], p)
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructMeasured
+                     {observe = NONE, stop = fn () => false}
+                     goal proof
+                 val statistics = #statistics report
+               in
+                 #completion report = blastReconstruct.Completed andalso
+                 Option.isSome (#result report) andalso
+                 #current_phase report =
+                   SOME
+                     {boundary = blastReconstruct.Exit,
+                      phase = blastReconstruct.ReplayRecursion} andalso
+                 #cooperative_checkpoints statistics = 16 andalso
+                 #phase_entries statistics = 8 andalso
+                 #phase_exits statistics = 8 andalso
+                 #replay_recursions statistics = 2 andalso
+                 #alternative_pulls statistics = 1 andalso
+                 #typed_steps statistics = 1 andalso
+                 #close_assume_steps statistics = 1 andalso
+                 #finish_open_goal_checks statistics = 1 andalso
+                 #grounding_attempts statistics = 1 andalso
+                 #kernel_replay_attempts statistics = 1 andalso
+                 #finish_residual_goal_checks statistics = 1
+               end
+       end)
+
+val _ =
+  test
+    ("measured close-contradiction has exact kernel-valid parity",
+     fn () =>
+       let
+         val p = mk_var ("measured_contradiction_p", bool)
+         val q = mk_var ("measured_contradiction_q", bool)
+         val goal = ([p, mk_neg p], q)
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val ordinary = blastReconstruct.reconstruct goal proof
+                 val report =
+                   blastReconstruct.reconstructMeasured
+                     {observe = NONE, stop = fn () => false}
+                     goal proof
+                 val statistics = #statistics report
+               in
+                 case (ordinary, #completion report, #result report) of
+                     (SOME ([], ordinary_validation),
+                      blastReconstruct.Completed,
+                      SOME ([], measured_validation)) =>
+                       #cooperative_checkpoints statistics = 16 andalso
+                       #phase_entries statistics = 8 andalso
+                       #phase_exits statistics = 8 andalso
+                       #replay_recursions statistics = 2 andalso
+                       #alternative_pulls statistics = 1 andalso
+                       #typed_steps statistics = 1 andalso
+                       #close_assume_steps statistics = 0 andalso
+                       #close_contradiction_steps statistics = 1 andalso
+                       #finish_open_goal_checks statistics = 1 andalso
+                       #grounding_attempts statistics = 1 andalso
+                       #kernel_replay_attempts statistics = 1 andalso
+                       #finish_residual_goal_checks statistics = 1 andalso
+                       (ignore (ordinary_validation []);
+                        ignore (measured_validation []);
+                        true)
+                   | _ => false
+               end
+       end)
+
+val _ =
+  test
+    ("measured reconstruction interruption returns its exact boundary",
+     fn () =>
+       let
+         val p = mk_var ("measured_interrupt_p", bool)
+         val goal = ([p], p)
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructMeasured
+                     {observe = NONE, stop = fn () => true}
+                     goal proof
+                 val statistics = #statistics report
+               in
+                 #completion report = blastReconstruct.Interrupted andalso
+                 not (Option.isSome (#result report)) andalso
+                 #current_phase report =
+                   SOME
+                     {boundary = blastReconstruct.Enter,
+                      phase = blastReconstruct.ReplayRecursion} andalso
+                 #cooperative_checkpoints statistics = 1 andalso
+                 #phase_entries statistics = 1 andalso
+                 #phase_exits statistics = 0 andalso
+                 #replay_recursions statistics = 1
+               end
+       end)
+
+val _ =
+  test
+    ("measured reconstruction does not swallow stop HOL_ERR values",
+     fn () =>
+       let
+         val p = mk_var ("measured_exception_p", bool)
+         val goal = ([p], p)
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               ((ignore
+                   (blastReconstruct.reconstructMeasured
+                     {observe = NONE,
+                      stop =
+                        fn () =>
+                          raise mk_HOL_ERR "measured-stop-sentinel"
+                            "stop" "propagate"}
+                     goal proof);
+                 false)
+                handle HOL_ERR error =>
+                         Feedback.top_structure_of error =
+                           "measured-stop-sentinel"
+                     | _ => false)
+       end)
+
+val _ =
+  test
     ("blast generation avoids hidden historical parameters",
      fn () =>
        let
@@ -2692,6 +2830,145 @@ val _ =
 
 val _ =
   test
+    ("measured stored replay exposes transition entry to observers",
+     fn () =>
+       let
+         val p = mk_var ("measured_stored_p", bool)
+         val q = mk_var ("measured_stored_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         val stop_now = ref false
+         fun observe
+               ({boundary, phase} : blastReconstruct.observation) =
+           case (boundary, phase) of
+               (blastReconstruct.Enter,
+                blastReconstruct.StoredRuleTransition) =>
+                  stop_now := true
+             | _ => ()
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = SOME observe, stop = fn () => !stop_now}
+                     cs goal proof
+                 val statistics = #statistics report
+               in
+                 #completion report = blastReconstruct.Interrupted andalso
+                 #current_phase report =
+                   SOME
+                     {boundary = blastReconstruct.Enter,
+                      phase = blastReconstruct.StoredRuleTransition} andalso
+                 #safe_rule_steps statistics = 1 andalso
+                 #stored_rule_setups statistics = 1 andalso
+                 #stored_rule_transitions statistics = 1
+               end
+       end)
+
+val _ =
+  test
+    ("deep measured reconstruction stop exceptions propagate unchanged",
+     fn () =>
+       let
+         val p = mk_var ("measured_deep_exception_p", bool)
+         val q = mk_var ("measured_deep_exception_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         val throw_now = ref false
+         fun observe
+               ({boundary, phase} : blastReconstruct.observation) =
+           case (boundary, phase) of
+               (blastReconstruct.Enter,
+                blastReconstruct.StoredRuleTransition) =>
+                  throw_now := true
+             | _ => ()
+         fun stop () =
+           if !throw_now then
+             raise mk_HOL_ERR "measured-deep-stop-sentinel"
+               "stop" "propagate"
+           else false
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               ((ignore
+                   (blastReconstruct.reconstructWithMeasured
+                     {observe = SOME observe, stop = stop}
+                     cs goal proof);
+                 false)
+                handle HOL_ERR error =>
+                         Feedback.top_structure_of error =
+                           "measured-deep-stop-sentinel"
+                     | _ => false)
+       end)
+
+val _ =
+  test
+    ("deep observer exceptions preserve HOL_ERR custom and Interrupt identity",
+     fn () =>
+       let
+         exception ObserverStop of int ref
+         val sentinel = ref 47
+         val p = mk_var ("measured_observer_exception_p", bool)
+         val q = mk_var ("measured_observer_exception_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+
+         fun at_transition action
+               ({boundary, phase} : blastReconstruct.observation) =
+           case (boundary, phase) of
+               (blastReconstruct.Enter,
+                blastReconstruct.StoredRuleTransition) => action ()
+             | _ => ()
+
+         fun hol_observer observation =
+           at_transition
+             (fn () =>
+               raise mk_HOL_ERR "measured-observer-hol-sentinel"
+                 "observe" "propagate") observation
+         fun custom_observer observation =
+           at_transition (fn () => raise ObserverStop sentinel) observation
+         fun interrupt_observer observation =
+           at_transition (fn () => raise Interrupt) observation
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 fun run observer =
+                   ignore
+                     (blastReconstruct.reconstructWithMeasured
+                       {observe = SOME observer, stop = fn () => false}
+                       cs goal proof)
+                 val hol_ok =
+                   ((run hol_observer; false)
+                    handle HOL_ERR error =>
+                             Feedback.top_structure_of error =
+                               "measured-observer-hol-sentinel"
+                         | _ => false)
+                 val custom_ok =
+                   ((run custom_observer; false)
+                    handle ObserverStop actual => actual = sentinel
+                         | _ => false)
+                 val interrupt_ok =
+                   ((run interrupt_observer; false)
+                    handle Interrupt => true
+                         | _ => false)
+               in
+                 hol_ok andalso custom_ok andalso interrupt_ok
+               end
+       end)
+
+val _ =
+  test
     ("T5 and T6 reconstruct a witness fixed by a later T2 close",
      fn () =>
        let
@@ -2706,13 +2983,25 @@ val _ =
        in
          case blastReconstruct.searchGoal cs 1 goal of
              SOME (proof, ([], validation)) =>
-               has_step
-                 (fn blastSearch.DeferGoal => true | _ => false)
-                 proof andalso
-               has_step
-                 (fn blastSearch.UnsafeRule _ => true | _ => false)
-                 proof andalso
-               (ignore (validation []); true)
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = NONE, stop = fn () => false}
+                     cs goal proof
+                 val statistics = #statistics report
+               in
+                 has_step
+                   (fn blastSearch.DeferGoal => true | _ => false)
+                   proof andalso
+                 has_step
+                   (fn blastSearch.UnsafeRule _ => true | _ => false)
+                   proof andalso
+                 #completion report = blastReconstruct.Completed andalso
+                 Option.isSome (#result report) andalso
+                 #defer_goal_steps statistics > 0 andalso
+                 #unsafe_rule_steps statistics > 0 andalso
+                 (ignore (validation []); true)
+               end
            | _ => false
        end)
 
@@ -2731,14 +3020,38 @@ val _ =
          val cs =
            clasetLib.add_elims
              [("allE", FORALL_ELIM_THM)] clasetLib.empty_cs
+         val stop_now = ref false
+         fun observe
+               ({boundary, phase} : blastReconstruct.observation) =
+           case (boundary, phase) of
+               (blastReconstruct.Enter,
+                blastReconstruct.DuplicateChildMove) =>
+                  stop_now := true
+             | _ => ()
        in
          case blastReconstruct.searchGoal cs 2 goal of
              SOME (proof, ([], validation)) =>
-               has_step
-                 (fn blastSearch.UnsafeRule {duplicate = true, ...} =>
-                       true
-                   | _ => false) proof andalso
-               (ignore (validation []); true)
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = SOME observe, stop = fn () => !stop_now}
+                     cs goal proof
+                 val statistics = #statistics report
+               in
+                 has_step
+                   (fn blastSearch.UnsafeRule {duplicate = true, ...} =>
+                         true
+                     | _ => false) proof andalso
+                 #completion report = blastReconstruct.Interrupted andalso
+                 #current_phase report =
+                   SOME
+                     {boundary = blastReconstruct.Enter,
+                      phase = blastReconstruct.DuplicateChildMove} andalso
+                 #unsafe_rule_steps statistics > 0 andalso
+                 #stored_rule_transitions statistics > 0 andalso
+                 #duplicate_child_moves statistics = 1 andalso
+                 (ignore (validation []); true)
+               end
            | _ => false
        end)
 
@@ -2765,10 +3078,21 @@ val _ =
        in
          case blastReconstruct.searchGoal cs 0 goal of
              SOME (proof, ([], validation)) =>
-               has_step
-                 (fn blastSearch.HypSubst => true | _ => false)
-                 proof andalso
-               (ignore (validation []); true)
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = NONE, stop = fn () => false}
+                     cs goal proof
+                 val statistics = #statistics report
+               in
+                 has_step
+                   (fn blastSearch.HypSubst => true | _ => false)
+                   proof andalso
+                 #completion report = blastReconstruct.Completed andalso
+                 Option.isSome (#result report) andalso
+                 #hyp_subst_steps statistics > 0 andalso
+                 (ignore (validation []); true)
+               end
            | _ => false
        end)
 
@@ -2821,13 +3145,34 @@ val _ =
              [("good-right", boolTheory.OR_INTRO_THM2),
               ("bad-left", bad)] clasetLib.empty_cs
          val attempts = ref 0
+         val failed_parity = ref false
+         val successful_parity = ref false
          val messages = ref ([] : string list)
          val old_trace = Feedback.current_trace "blast"
          fun accept proof =
-           (attempts := !attempts + 1;
-            case blastReconstruct.reconstruct goal proof of
-                SOME result => (proof, result)
-              | NONE => raise blastSearch.PROOF_FAILED)
+           let
+             val _ = attempts := !attempts + 1
+             val ordinary = blastReconstruct.reconstruct goal proof
+             val measured =
+               blastReconstruct.reconstructMeasured
+                 {observe = NONE, stop = fn () => false} goal proof
+             val _ =
+               case (ordinary, #completion measured, #result measured) of
+                   (NONE, blastReconstruct.Completed, NONE) =>
+                     failed_parity := true
+                 | (SOME (ordinary_goals, _),
+                    blastReconstruct.Completed,
+                    SOME (measured_goals, measured_validation)) =>
+                     successful_parity :=
+                       (null ordinary_goals andalso
+                        null measured_goals andalso
+                        (ignore (measured_validation []); true))
+                 | _ => ()
+           in
+             case ordinary of
+                 SOME result => (proof, result)
+               | NONE => raise blastSearch.PROOF_FAILED
+           end
          val _ = Feedback.set_trace "blast" 1
          val result =
            Lib.with_flag (Feedback.MESG_outstream,
@@ -2839,7 +3184,8 @@ val _ =
              (String.isSubstring "PROOF FAILED for depth 1")
              (!messages)
        in
-         !attempts = 2 andalso traced andalso
+         !attempts = 2 andalso !failed_parity andalso
+         !successful_parity andalso traced andalso
          case result of
              SOME (proof, ([], validation)) =>
                has_step
@@ -2863,9 +3209,23 @@ val _ =
            clasetLib.add_intros
              [("bad-left", bad)] clasetLib.empty_cs
        in
-         Option.isSome (blastSearch.tryGoal cs 1 goal) andalso
-         not (Option.isSome
-           (blastReconstruct.searchGoal cs 1 goal))
+         case blastSearch.tryGoal cs 1 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val ordinary =
+                   blastReconstruct.reconstructWith cs goal proof
+                 val measured =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = NONE, stop = fn () => false}
+                     cs goal proof
+               in
+                 not (Option.isSome ordinary) andalso
+                 #completion measured = blastReconstruct.Completed andalso
+                 not (Option.isSome (#result measured)) andalso
+                 not (Option.isSome
+                   (blastReconstruct.searchGoal cs 1 goal))
+               end
        end)
 
 fun blast_solves tactic goal =
