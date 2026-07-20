@@ -1636,8 +1636,8 @@ in
     "define-fun command changed user assertion count");
   assert (List.length local_definitions = 1,
     "define-fun definition was not tracked as a local definition");
-  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_UF" assertions =
-          NONE,
+  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_UF"
+          SmtLib_Logics.empty_surface_flags assertions = NONE,
     "define-fun local definition leaked into QF_UF assertion fragment check");
   assert (List.exists (fn query =>
       case query of
@@ -1663,8 +1663,8 @@ in
     "define-funs-rec command changed user assertion count");
   assert (List.length local_definitions = 1,
     "define-funs-rec definition was not tracked as a local definition");
-  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_UF" assertions =
-          NONE,
+  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_UF"
+          SmtLib_Logics.empty_surface_flags assertions = NONE,
     "define-funs-rec local definition leaked into QF_UF assertion fragment check");
   assert (List.exists (fn query =>
       case query of
@@ -2302,8 +2302,8 @@ end
 fun smtlib_apply_operator_metadata_success () =
 let
   val metadata = SmtLib_Logics.metadata_of_logic "ALL"
-  val underscore = find_symbol_metadata "HO_Core" "term" "_" metadata
-  val at_sign = find_symbol_metadata "HO_Core" "term" "@" metadata
+  val underscore = find_symbol_metadata "HO-Core" "term" "_" metadata
+  val at_sign = find_symbol_metadata "HO-Core" "term" "@" metadata
   val quoted_state = SmtLib_Parser.typecheck_script_string
     ("(set-logic QF_LIA)\n" ^
      "(declare-fun |@| (Int) Int)\n" ^
@@ -2314,12 +2314,12 @@ let
      "(assert (= (_ |_| true) (@ |_| true)))\n")
 in
   assert (metadata_is_official underscore,
-    "HO_Core _ apply metadata is not marked official");
+    "HO-Core _ apply metadata is not marked official");
   assert (metadata_is_extension at_sign,
-    "HO_Core @ apply metadata is not marked as a cvc5 extension");
+    "HO-Core @ apply metadata is not marked as a cvc5 extension");
   assert (#left_associative (#attributes underscore) andalso
       #left_associative (#attributes at_sign),
-    "HO_Core apply metadata did not preserve left associativity");
+    "HO-Core apply metadata did not preserve left associativity");
   assert (not (#apply_operator_used (#surface_flags quoted_state)),
     "quoted @ symbol was misclassified as the cvc5 apply operator");
   assert (#apply_operator_used (#surface_flags quoted_underscore_state),
@@ -2438,10 +2438,19 @@ fun smtlib_command_malformed_diagnostics () =
         ("(set-logic QF_UF)\n" ^
          "(declare-fun f (Bool) Bool)\n" ^
          "(assert (f true true))\n"));
-    typecheck
-      ("(set-logic QF_UF)\n" ^
-       "(declare-fun h ((-> Bool Bool)) Bool)\n" ^
-       "(check-sat)\n") ();
+    let
+      val state = SmtLib_Parser.typecheck_script_string
+        ("(set-logic QF_UF)\n" ^
+         "(declare-fun h ((-> Bool Bool)) Bool)\n" ^
+         "(check-sat)\n")
+      val diagnostic = SmtLib_Logics.fragment_violation_diagnostic "QF_UF"
+        (#surface_flags state) (#assertions state)
+    in
+      assert (diagnostic = SOME
+          ("higher-order construct (arrow sort) is outside logic fragment " ^
+           "QF_UF"),
+        "arrow sort in QF_UF did not produce its fragment violation")
+    end;
     expect_hol_error_contains "malformed function sort"
       "function sort '->' expects at least one domain sort and one range sort"
       (typecheck
@@ -2502,13 +2511,15 @@ fun smtlib_logic_fragment_diagnostics () =
       let
         val state = parse_smtlib_state text
       in
-        SmtLib_Logics.fragment_violation_diagnostic logic (#assertions state)
+        SmtLib_Logics.fragment_violation_diagnostic logic
+          (#surface_flags state) (#assertions state)
       end
     fun fragment_with_options options logic text =
       let
         val state = parse_smtlib_state_with_options options text
       in
-        SmtLib_Logics.fragment_violation_diagnostic logic (#assertions state)
+        SmtLib_Logics.fragment_violation_diagnostic logic
+          (#surface_flags state) (#assertions state)
       end
     fun expect_fragment label logic text expected =
       case fragment logic text of
@@ -2521,13 +2532,20 @@ fun smtlib_logic_fragment_diagnostics () =
         SOME msg =>
           die (label ^ " reported a spurious fragment violation: " ^ msg)
       | NONE => ()
+    fun expect_fragment_with_options label options logic text expected =
+      case fragment_with_options options logic text of
+        SOME msg =>
+          assert (contains expected msg,
+            label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
+      | NONE => die (label ^ " fragment violation was not detected")
     fun expect_no_fragment_with_options label options logic text =
       case fragment_with_options options logic text of
         SOME msg =>
           die (label ^ " reported a spurious fragment violation: " ^ msg)
       | NONE => ()
     fun expect_term_fragment label logic term expected =
-      case SmtLib_Logics.fragment_violation_diagnostic logic [term] of
+      case SmtLib_Logics.fragment_violation_diagnostic logic
+          SmtLib_Logics.empty_surface_flags [term] of
         SOME msg =>
           assert (contains expected msg,
             label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
@@ -2536,7 +2554,68 @@ fun smtlib_logic_fragment_diagnostics () =
       "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
     fun script_for_checker parse_logic body =
       script parse_logic body
+    val all_dicts = {dict_logic = SOME "ALL", elaborate_datatypes = false}
+    val all_elaborated =
+      {dict_logic = SOME "ALL", elaborate_datatypes = true}
   in
+    expect_fragment "FO arrow sort" "QF_LIA"
+      (script "QF_LIA"
+       ("(declare-const f (-> Int Int))\n" ^
+        "(assert (= f f))\n"))
+      "higher-order construct (arrow sort) is outside logic fragment QF_LIA";
+    expect_fragment_with_options "FO elaborated datatype arrow sort"
+      all_elaborated "QF_UF"
+      (script "QF_UF"
+       ("(declare-datatype FragArrowA4_08 " ^
+        "((mkFragArrowA4_08 " ^
+        "(fragMapA4_08 (-> Bool Bool)))))\n" ^
+        "(declare-const fragValueA4_08 FragArrowA4_08)\n" ^
+        "(assert (= (fragMapA4_08 fragValueA4_08) " ^
+        "(fragMapA4_08 fragValueA4_08)))\n"))
+      ("higher-order construct (arrow sort) is outside logic fragment " ^
+       "QF_UF");
+    expect_hol_error_contains "malformed elaborated datatype arrow sort"
+      "function sort '->' expects at least one domain sort and one range sort"
+      (fn () => ignore (parse_smtlib_state_with_options all_elaborated
+        ("(set-logic ALL)\n" ^
+         "(declare-datatype FragBadArrowA4_08 " ^
+         "((mkFragBadArrowA4_08 (fragBadMapA4_08 (-> Bool)))))\n")));
+    expect_fragment "FO lambda" "QF_UF"
+      (script "QF_UF"
+       ("(assert (= (lambda ((x Bool)) x) " ^
+        "(lambda ((y Bool)) y)))\n"))
+      "higher-order construct (lambda) is outside logic fragment QF_UF";
+    expect_fragment_with_options "FO apply operator" all_dicts "QF_AUFLIA"
+      (script "QF_AUFLIA"
+       ("(declare-const f (-> Int Bool))\n" ^
+        "(assert (_ f 0))\n"))
+      ("higher-order construct (apply operator) is outside logic fragment " ^
+       "QF_AUFLIA");
+    expect_fragment_with_options "FO partial application" all_dicts
+      "QF_UFLIA"
+      (script "QF_UFLIA"
+       ("(declare-const f (-> Int Bool Bool))\n" ^
+        "(declare-const residual (-> Bool Bool))\n" ^
+        "(assert (= (f 0) residual))\n"))
+      ("higher-order construct (partial application) is outside logic " ^
+       "fragment QF_UFLIA");
+    expect_no_fragment "ALL arrow sort" "ALL"
+      (script "ALL"
+       ("(declare-const f (-> Int Int))\n" ^
+        "(assert (= f f))\n"));
+    expect_no_fragment "ALL lambda" "ALL"
+      (script "ALL"
+       ("(assert (= (lambda ((x Bool)) x) " ^
+        "(lambda ((y Bool)) y)))\n"));
+    expect_no_fragment "ALL apply operator" "ALL"
+      (script "ALL"
+       ("(declare-const f (-> Int Bool))\n" ^
+        "(assert (_ f 0))\n"));
+    expect_no_fragment "ALL partial application" "ALL"
+      (script "ALL"
+       ("(declare-const f (-> Int Bool Bool))\n" ^
+        "(declare-const residual (-> Bool Bool))\n" ^
+        "(assert (= (f 0) residual))\n"));
     expect_fragment "QF quantifier" "QF_UF"
       (script "QF_UF"
        "(assert (forall ((p Bool)) p))\n")
@@ -3111,10 +3190,27 @@ let
         "legacy linear-arithmetic logic no longer classified linear: " ^
         logic);
       assert (#datatypes fragment = (logic = "ALL" orelse has_dt),
-        "datatype fragment bit was wrong for " ^ logic)
+        "datatype fragment bit was wrong for " ^ logic);
+      assert (#higher_order fragment = (logic = "ALL"),
+        "higher-order fragment bit was wrong for " ^ logic)
     end
 in
-  List.app require_logic logics
+  List.app require_logic logics;
+  assert (#higher_order (SmtLib_Logics.logic_fragment_of_logic "HO_QF_UF")
+      andalso
+      not (#quantifiers
+        (SmtLib_Logics.logic_fragment_of_logic "HO_QF_UF")) andalso
+      #uninterpreted
+        (SmtLib_Logics.logic_fragment_of_logic "HO_QF_UF"),
+    "HO_QF_UF fragment did not inherit its QF_UF stem");
+  assert (SmtLib_Logics.logic_fragment_of_logic "HO_ALL" =
+      SmtLib_Logics.logic_fragment_of_logic "ALL",
+    "HO_ALL fragment did not inherit ALL");
+  assert (#higher_order
+      (SmtLib_Logics.logic_fragment_of_logic "HO_AUFLIA") andalso
+      #arrays (SmtLib_Logics.logic_fragment_of_logic "HO_AUFLIA") andalso
+      SmtLib_Logics.is_linear_arith_logic "HO_AUFLIA",
+    "HO_AUFLIA fragment did not inherit its AUFLIA stem")
 end
 
 fun smtlib_translation_logic_inference_success () =

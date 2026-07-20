@@ -55,6 +55,7 @@ let
   val observed_logic = #logic state
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
+      (#surface_flags state)
       (typecheck_query_fragment_terms (#queries state))
 in
   if observed_logic <> expected_logic then

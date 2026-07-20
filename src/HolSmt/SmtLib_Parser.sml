@@ -179,12 +179,7 @@ struct
     | QueryGetInfo of string
     | QueryGetOption of string
 
-  type surface_flags = {
-    arrow_sort_used: bool,
-    lambda_used: bool,
-    apply_operator_used: bool,
-    partial_application_used: bool
-  }
+  type surface_flags = SmtLib_Logics.surface_flags
 
   type command_state_snapshot = {
     logic: string,
@@ -2287,12 +2282,7 @@ local
     WARNING cmd ("parsed command is not meaningful in proof reconstruction " ^
       "mode: " ^ msg)
 
-  fun empty_surface_flags () : surface_flags = {
-    arrow_sort_used = false,
-    lambda_used = false,
-    apply_operator_used = false,
-    partial_application_used = false
-  }
+  fun empty_surface_flags () = SmtLib_Logics.empty_surface_flags
 
   fun finalize_state cmd state : command_state_snapshot =
   let
@@ -2800,7 +2790,7 @@ local
       ({dictionary_metadata, ...}: typecheck_context) operator =
     List.exists
       (fn ({theory, kind, name, ...}: SmtLib_Theories.symbol_metadata) =>
-        theory = "HO_Core" andalso kind = "term" andalso name = operator)
+        theory = "HO-Core" andalso kind = "term" andalso name = operator)
       dictionary_metadata
 
   fun note_surface_event
@@ -2836,6 +2826,9 @@ local
              partial_application_used = true
            })
     end
+
+  fun note_arrow_sort_used context =
+    note_surface_event context ArrowSortUsed
 
   fun type_error fn_name ({description, ...}: typecheck_context) loc expected
       actual detail =
@@ -3173,22 +3166,14 @@ local
       fun function_sort loc args =
         let
           val sorts = arg_sorts args
-          fun split_last [] =
-                type_error "typecheck_sort" context loc NONE NONE
-                  ("function sort '->' expects at least one domain sort " ^
-                   "and one range sort")
-            | split_last [range] = ([], range)
-            | split_last (domain :: rest) =
-                let val (domains, range) = split_last rest
-                in (domain :: domains, range) end
-          val (domains, range) = split_last sorts
-        in
-          case domains of
-            [] =>
+          val function_ty =
+            SmtLib_Theories.function_ty sorts
+            handle Feedback.HOL_ERR holerr =>
               type_error "typecheck_sort" context loc NONE NONE
-                ("function sort '->' expects at least one domain sort " ^
-                 "and one range sort")
-          | _ => boolSyntax.list_mk_fun (domains, range)
+                (Feedback.message_of holerr)
+          val _ = note_arrow_sort_used context
+        in
+          function_ty
         end
       fun parse_index name_loc indices args =
         let
@@ -4437,6 +4422,36 @@ local
         type_error "typecheck_declare_datatype" context loc NONE NONE
           "datatype elaboration requested before SmtLib_Datatypes was loaded"
 
+  fun check_elaborated_datatype_surface context decl =
+    let
+      fun check_sort sort =
+        case node_of sort of
+          SortApply (head, args) =>
+            let
+              val _ =
+                if located_string_node head <> "->" then ()
+                else if List.length args >= 2 then
+                  note_arrow_sort_used context
+                else
+                  type_error "typecheck_sort" context (loc_of sort) NONE NONE
+                    ("function sort '->' expects at least one domain sort " ^
+                     "and one range sort")
+            in
+              List.app check_sort args
+            end
+        | _ => ()
+      fun check_selector selector =
+        case node_of selector of DatatypeSelector (_, sort) => check_sort sort
+      fun check_constructor constructor =
+        case node_of constructor of
+          DatatypeConstructor (_, _, selectors) =>
+            List.app check_selector selectors
+    in
+      case node_of decl of
+        DatatypeDecl (_, constructors) =>
+          List.app check_constructor constructors
+    end
+
   fun typecheck_declare_datatype elaborate_datatypes context name decl
       (tydict, tmdict, sigdict) =
     let
@@ -4445,8 +4460,12 @@ local
           DatatypeDecl (params, _) => List.length params
       val result =
         if elaborate_datatypes then
-          SOME (#define_datatype
-            (require_datatype_elaborator context (loc_of name)) (name, decl))
+          let
+            val _ = check_elaborated_datatype_surface context decl
+          in
+            SOME (#define_datatype
+              (require_datatype_elaborator context (loc_of name)) (name, decl))
+          end
         else NONE
       val tydict =
         if elaborate_datatypes then tydict
@@ -4505,6 +4524,7 @@ local
     in
       if elaborate_datatypes then
         let
+          val _ = List.app (check_elaborated_datatype_surface context) decls
           val hooks =
             require_datatype_elaborator context
               (case bindings of b :: _ => loc_of b

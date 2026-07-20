@@ -240,7 +240,7 @@ let
   val assumptions = z3_tac_query_assumptions queries
   val fragment_diagnostic =
     SmtLib_Logics.fragment_violation_diagnostic observed_logic
-      (z3_tac_query_fragment_terms queries)
+      (#surface_flags state) (z3_tac_query_fragment_terms queries)
 in
   if observed_logic <> expected_logic then
     z3_tac_die "Z3_TAC_FAIL"

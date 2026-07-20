@@ -20,6 +20,13 @@ fun cvc_cpc_conjunction [] = boolSyntax.T
   | cvc_cpc_conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
 
+fun cvc_cpc_query_fragment_terms queries =
+  List.concat (List.map (fn query =>
+    case query of
+      SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} =>
+        assertions @ assumptions
+    | _ => []) queries)
+
 fun cvc_cpc_goal queries =
   let
     val check_sat =
@@ -52,13 +59,33 @@ fun cvc_cpc_goal queries =
 fun cvc_cpc_run path expected_logic =
   let
     val _ = Library.trace := 0
-    val state = SmtLib_Parser.parse_file_state_with_options
-      {dict_logic = SOME expected_logic, elaborate_datatypes = true} path
+    val (state, scoped_parse_error) =
+      (SmtLib_Parser.parse_file_state_with_options
+         {dict_logic = NONE, elaborate_datatypes = true} path, NONE)
+      handle Feedback.HOL_ERR holerr =>
+        (SmtLib_Parser.parse_file_state_with_options
+           {dict_logic = SOME "ALL", elaborate_datatypes = true} path,
+         SOME holerr)
     val observed_logic = #logic state
-    val _ = observed_logic = expected_logic orelse
-      raise Feedback.mk_HOL_ERR "CVC_CPC_TAC_Driver" "cvc_cpc_run"
-        ("set-logic " ^ observed_logic ^ " does not match requested logic " ^
-         expected_logic)
+    val fragment_diagnostic =
+      SmtLib_Logics.fragment_violation_diagnostic observed_logic
+        (#surface_flags state)
+        (cvc_cpc_query_fragment_terms (#queries state))
+    val _ =
+      if observed_logic <> expected_logic then
+        raise Feedback.mk_HOL_ERR "CVC_CPC_TAC_Driver" "cvc_cpc_run"
+          ("set-logic " ^ observed_logic ^ " does not match requested logic " ^
+           expected_logic)
+      else
+        case fragment_diagnostic of
+          SOME diagnostic =>
+            raise Feedback.mk_HOL_ERR "CVC_CPC_TAC_Driver" "cvc_cpc_run"
+              ("checked mode must reject logic fragment violations before " ^
+               "reconstruction: " ^ diagnostic)
+        | NONE =>
+            (case scoped_parse_error of
+               SOME holerr => raise Feedback.HOL_ERR holerr
+             | NONE => ())
     val result = CVC.CVC_SMT_CPC_Prover (cvc_cpc_goal (#queries state))
     val fields = ["logic=" ^ observed_logic,
                   "cvc5_version=" ^ CVC.version_string ()]

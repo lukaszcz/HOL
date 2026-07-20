@@ -402,6 +402,20 @@ in
 
   datatype arith_fragment = NO_ARITH | LINEAR | NONLINEAR | DIFFERENCE
 
+  type surface_flags = {
+    arrow_sort_used : bool,
+    lambda_used : bool,
+    apply_operator_used : bool,
+    partial_application_used : bool
+  }
+
+  val empty_surface_flags : surface_flags = {
+    arrow_sort_used = false,
+    lambda_used = false,
+    apply_operator_used = false,
+    partial_application_used = false
+  }
+
   type logic_fragment = {
     quantifiers : bool,
     uninterpreted : bool,
@@ -412,7 +426,8 @@ in
     bitvectors : bool,
     strings : bool,
     floatingpoint : bool,
-    datatypes : bool
+    datatypes : bool,
+    higher_order : bool
   }
 
   fun logic_stem logic =
@@ -438,43 +453,64 @@ in
   fun logic_fragment_of_logic "ALL" = {
       quantifiers = true, uninterpreted = true, arrays = true,
       arith = NONLINEAR, ints = true, reals = true, bitvectors = true,
-      strings = true, floatingpoint = true, datatypes = true
+      strings = true, floatingpoint = true, datatypes = true,
+      higher_order = true
     }
     | logic_fragment_of_logic logic =
-    let
-      val stem = logic_stem logic
-      val arith = arith_fragment_of_stem stem
-      val strings = String.isSubstring "S" stem
-      val floatingpoint = String.isSubstring "FP" stem
-      val datatypes = String.isSubstring "DT" stem
-      val bitvectors = String.isSubstring "BV" stem orelse floatingpoint
-      val ints =
-        strings orelse floatingpoint orelse
-        bitvectors orelse
-        String.isSuffix "IDL" stem orelse
-        String.isSuffix "LIA" stem orelse
-        String.isSuffix "NIA" stem orelse
-        String.isSuffix "LIRA" stem orelse
-        String.isSuffix "NIRA" stem
-      val reals =
-        floatingpoint orelse
-        String.isSuffix "RDL" stem orelse
-        String.isSuffix "LRA" stem orelse
-        String.isSuffix "NRA" stem orelse
-        String.isSuffix "LIRA" stem orelse
-        String.isSuffix "NIRA" stem
-    in {
-      quantifiers = not (String.isPrefix "QF_" logic),
-      uninterpreted = String.isSubstring "UF" stem,
-      arrays = String.isPrefix "A" stem,
-      arith = arith,
-      ints = ints,
-      reals = reals,
-      bitvectors = bitvectors,
-      strings = strings,
-      floatingpoint = floatingpoint,
-      datatypes = datatypes
-    } end
+    if String.isPrefix "HO_" logic then
+      let
+        val {quantifiers, uninterpreted, arrays, arith, ints, reals,
+          bitvectors, strings, floatingpoint, datatypes, ...} =
+          logic_fragment_of_logic (String.extract (logic, 3, NONE))
+      in {
+        quantifiers = quantifiers,
+        uninterpreted = uninterpreted,
+        arrays = arrays,
+        arith = arith,
+        ints = ints,
+        reals = reals,
+        bitvectors = bitvectors,
+        strings = strings,
+        floatingpoint = floatingpoint,
+        datatypes = datatypes,
+        higher_order = true
+      } end
+    else
+      let
+        val stem = logic_stem logic
+        val arith = arith_fragment_of_stem stem
+        val strings = String.isSubstring "S" stem
+        val floatingpoint = String.isSubstring "FP" stem
+        val datatypes = String.isSubstring "DT" stem
+        val bitvectors = String.isSubstring "BV" stem orelse floatingpoint
+        val ints =
+          strings orelse floatingpoint orelse
+          bitvectors orelse
+          String.isSuffix "IDL" stem orelse
+          String.isSuffix "LIA" stem orelse
+          String.isSuffix "NIA" stem orelse
+          String.isSuffix "LIRA" stem orelse
+          String.isSuffix "NIRA" stem
+        val reals =
+          floatingpoint orelse
+          String.isSuffix "RDL" stem orelse
+          String.isSuffix "LRA" stem orelse
+          String.isSuffix "NRA" stem orelse
+          String.isSuffix "LIRA" stem orelse
+          String.isSuffix "NIRA" stem
+      in {
+        quantifiers = not (String.isPrefix "QF_" logic),
+        uninterpreted = String.isSubstring "UF" stem,
+        arrays = String.isPrefix "A" stem,
+        arith = arith,
+        ints = ints,
+        reals = reals,
+        bitvectors = bitvectors,
+        strings = strings,
+        floatingpoint = floatingpoint,
+        datatypes = datatypes,
+        higher_order = false
+      } end
 
   fun is_linear_arith_logic logic =
     case #arith (logic_fragment_of_logic logic) of
@@ -713,7 +749,8 @@ in
       else NONE
     end
 
-  fun fragment_violation_diagnostic logic assertions =
+  fun fragment_violation_diagnostic logic
+      (surface_flags : surface_flags) assertions =
     let
       val fragment = logic_fragment_of_logic logic
       val all_subterms = List.concat (List.map subterms assertions)
@@ -766,8 +803,23 @@ in
       fun free_sort_violation () =
         not (#uninterpreted fragment) andalso not (#arrays fragment) andalso
         some_subterm (term_type_contains type_contains_free_sort)
+      fun higher_order_violation () =
+        if #higher_order fragment then NONE
+        else if #partial_application_used surface_flags then
+          SOME "partial application"
+        else if #apply_operator_used surface_flags then
+          SOME "apply operator"
+        else if #lambda_used surface_flags then
+          SOME "lambda"
+        else if #arrow_sort_used surface_flags then
+          SOME "arrow sort"
+        else NONE
     in
-      if qf_violation () then
+      case higher_order_violation () of
+        SOME kind =>
+          SOME ("higher-order construct (" ^ kind ^
+            ") is outside logic fragment " ^ logic)
+      | NONE => if qf_violation () then
         SOME ("quantified formula is outside logic fragment " ^ logic)
       else if nonlinear_violation () then
         SOME ("nonlinear arithmetic product is outside logic fragment " ^

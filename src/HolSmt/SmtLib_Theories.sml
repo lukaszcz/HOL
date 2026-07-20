@@ -547,10 +547,10 @@ in
 
   fun function_ty tys =
     case tys of
-      [] => raise ERR "<HO_Core.->>"
-        "function sort expects at least one domain sort and one range sort"
-    | [_] => raise ERR "<HO_Core.->>"
-        "function sort expects at least one domain sort and one range sort"
+      [] => raise ERR "<HO-Core.->>"
+        "function sort '->' expects at least one domain sort and one range sort"
+    | [_] => raise ERR "<HO-Core.->>"
+        "function sort '->' expects at least one domain sort and one range sort"
     | _ =>
         let val (domains, range) = Lib.front_last tys
         in boolSyntax.list_mk_fun (domains, range) end
@@ -572,15 +572,15 @@ in
         end
     in
       if token <> operator then
-        raise ERR ("<HO_Core." ^ operator ^ ">")
+        raise ERR ("<HO-Core." ^ operator ^ ">")
           "operator name mismatch"
       else if not (List.null indices) then
-        raise ERR ("<HO_Core." ^ operator ^ ">")
+        raise ERR ("<HO-Core." ^ operator ^ ">")
           "no indices expected"
       else
         case terms of
           rator :: arg :: args => List.foldl apply_one rator (arg :: args)
-        | _ => raise ERR ("<HO_Core." ^ operator ^ ">")
+        | _ => raise ERR ("<HO-Core." ^ operator ^ ">")
             "a map term and at least one argument expected"
     end
 
@@ -989,7 +989,7 @@ in
           if List.null indices then
             function_ty args
           else
-            raise ERR "<HO_Core.->>" "no indices expected")
+            raise ERR "<HO-Core.->>" "no indices expected")
     ]
 
     (* The official apply spelling [_] is also the dictionary catch-all key.
@@ -1009,8 +1009,8 @@ in
     val tydict = dictionary_of_entries tyentries
     val tmdict = dictionary_of_entries tmentries
     val metadata =
-      metadata_of_entries "HO_Core" "sort" tyentries @
-      metadata_of_entries "HO_Core" "term" tmentries
+      metadata_of_entries "HO-Core" "sort" tyentries @
+      metadata_of_entries "HO-Core" "term" tmentries
 
   end
 
