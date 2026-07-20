@@ -3145,6 +3145,82 @@ in
     "Z3 extension signature assertion did not parse as Bool")
 end
 
+fun smtlib_ho_logic_packets_success () =
+let
+  val logic_pairs = [
+    ("HO_ALL", "ALL"),
+    ("HO_UF", "UF"),
+    ("HO_QF_UF", "QF_UF"),
+    ("HO_UFLIA", "UFLIA"),
+    ("HO_QF_UFLIA", "QF_UFLIA"),
+    ("HO_UFLRA", "UFLRA"),
+    ("HO_QF_UFLRA", "QF_UFLRA"),
+    ("HO_AUFLIA", "AUFLIA"),
+    ("HO_AUFLIRA", "AUFLIRA"),
+    ("HO_QF_AUFLIA", "QF_AUFLIA")
+  ]
+  fun same_base_fragment
+      ((ho : SmtLib_Logics.logic_fragment),
+       (base : SmtLib_Logics.logic_fragment)) =
+    #quantifiers ho = #quantifiers base andalso
+    #uninterpreted ho = #uninterpreted base andalso
+    #arrays ho = #arrays base andalso
+    #arith ho = #arith base andalso
+    #ints ho = #ints base andalso
+    #reals ho = #reals base andalso
+    #bitvectors ho = #bitvectors base andalso
+    #strings ho = #strings base andalso
+    #floatingpoint ho = #floatingpoint base andalso
+    #datatypes ho = #datatypes base
+  fun metadata_is_cvc5_extension
+      ({source = SmtLib_Theories.Extension "cvc5", ...}
+         : SmtLib_Theories.symbol_metadata) = true
+    | metadata_is_cvc5_extension _ = false
+  fun require_packet (logic, base_logic) =
+    let
+      val _ = SmtLib_Logics.parsedicts_of_logic logic
+      val metadata = SmtLib_Logics.metadata_of_logic logic
+      val underscore = find_symbol_metadata "HO-Core" "term" "_" metadata
+      val at_sign = find_symbol_metadata "HO-Core" "term" "@" metadata
+      val ho_fragment = SmtLib_Logics.logic_fragment_of_logic logic
+      val base_fragment = SmtLib_Logics.logic_fragment_of_logic base_logic
+      val state = SmtLib_Parser.typecheck_script_string
+        ("(set-logic " ^ logic ^ ")\n" ^
+         "(assert (= (lambda ((x Bool)) x) " ^
+         "(lambda ((y Bool)) y)))\n")
+      val diagnostic = SmtLib_Logics.fragment_violation_diagnostic logic
+        (#surface_flags state) (#assertions state)
+    in
+      assert (metadata_is_official underscore,
+        logic ^ " did not expose the official HO-Core apply operator");
+      assert (metadata_is_cvc5_extension at_sign,
+        logic ^ " did not expose the cvc5 HO-Core apply extension");
+      assert (#higher_order ho_fragment andalso
+          same_base_fragment (ho_fragment, base_fragment),
+        logic ^ " did not inherit the fragment of " ^ base_logic);
+      assert (List.length (#assertions state) = 1,
+        logic ^ " did not typecheck its higher-order smoke case");
+      assert (diagnostic = NONE,
+        logic ^ " rejected its higher-order smoke case")
+    end
+  fun unknown_dicts () =
+    ignore (SmtLib_Logics.parsedicts_of_logic "HO_XYZ")
+  fun unknown_metadata () =
+    ignore (SmtLib_Logics.metadata_of_logic "HO_XYZ")
+in
+  List.app require_packet logic_pairs;
+  assert (not (#quantifiers
+      (SmtLib_Logics.logic_fragment_of_logic "HO_QF_UF")),
+    "HO_QF_UF unexpectedly permits quantifiers");
+  assert (#arrays
+      (SmtLib_Logics.logic_fragment_of_logic "HO_AUFLIA"),
+    "HO_AUFLIA did not inherit array support");
+  expect_hol_error_contains "unknown HO logic dictionaries"
+    "unknown logic 'HO_XYZ'" unknown_dicts;
+  expect_hol_error_contains "unknown HO logic metadata"
+    "unknown logic 'HO_XYZ'" unknown_metadata
+end
+
 fun smtlib_scoped_logic_dictionary_success () =
 let
   val logics = [
@@ -6274,6 +6350,8 @@ let
       smtlib_string_regex_parse_signatures_success),
     ("smtlib_z3_extension_parse_signatures_success",
       smtlib_z3_extension_parse_signatures_success),
+    ("smtlib_ho_logic_packets_success",
+      smtlib_ho_logic_packets_success),
     ("smtlib_scoped_logic_dictionary_success",
       smtlib_scoped_logic_dictionary_success),
     ("smtlib_translation_logic_inference_success",

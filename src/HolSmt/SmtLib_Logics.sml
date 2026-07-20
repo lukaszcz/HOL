@@ -368,6 +368,74 @@ in
       BV_extension_metadata]
   end
 
+  (* SMT-LIB defines no official higher-order logic names.  These packets use
+     cvc5's non-official HO_ convention and add the official HO-Core theory to
+     the corresponding base packet.  ALL already includes HO-Core. *)
+  structure HO_ALL = ALL
+
+  structure HO_UF =
+  struct
+    val tydict = union_dicts [UF.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [UF.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [UF.metadata, HO_Core.metadata]
+  end
+
+  structure HO_QF_UF =
+  struct
+    val tydict = union_dicts [QF_UF.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [QF_UF.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [QF_UF.metadata, HO_Core.metadata]
+  end
+
+  structure HO_UFLIA =
+  struct
+    val tydict = union_dicts [UFLIA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [UFLIA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [UFLIA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_QF_UFLIA =
+  struct
+    val tydict = union_dicts [QF_UFLIA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [QF_UFLIA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [QF_UFLIA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_UFLRA =
+  struct
+    val tydict = union_dicts [UFLRA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [UFLRA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [UFLRA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_QF_UFLRA =
+  struct
+    val tydict = union_dicts [QF_UFLRA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [QF_UFLRA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [QF_UFLRA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_AUFLIA =
+  struct
+    val tydict = union_dicts [AUFLIA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [AUFLIA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [AUFLIA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_AUFLIRA =
+  struct
+    val tydict = union_dicts [AUFLIRA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [AUFLIRA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [AUFLIRA.metadata, HO_Core.metadata]
+  end
+
+  structure HO_QF_AUFLIA =
+  struct
+    val tydict = union_dicts [QF_AUFLIA.tydict, HO_Core.tydict]
+    val tmdict = union_dicts [QF_AUFLIA.tmdict, HO_Core.tmdict]
+    val metadata = union_metadata [QF_AUFLIA.metadata, HO_Core.metadata]
+  end
+
   (* structural term/type helpers shared via Library (see Library.sml) *)
   val type_contains = Library.type_contains
   val type_contains_int = Library.type_contains_int
@@ -857,6 +925,26 @@ in
     case logic of
       "ALL" =>
       (ALL.tydict, ALL.tmdict)
+    | "HO_ALL" =>
+      (HO_ALL.tydict, HO_ALL.tmdict)
+    | "HO_UF" =>
+      (HO_UF.tydict, HO_UF.tmdict)
+    | "HO_QF_UF" =>
+      (HO_QF_UF.tydict, HO_QF_UF.tmdict)
+    | "HO_UFLIA" =>
+      (HO_UFLIA.tydict, HO_UFLIA.tmdict)
+    | "HO_QF_UFLIA" =>
+      (HO_QF_UFLIA.tydict, HO_QF_UFLIA.tmdict)
+    | "HO_UFLRA" =>
+      (HO_UFLRA.tydict, HO_UFLRA.tmdict)
+    | "HO_QF_UFLRA" =>
+      (HO_QF_UFLRA.tydict, HO_QF_UFLRA.tmdict)
+    | "HO_AUFLIA" =>
+      (HO_AUFLIA.tydict, HO_AUFLIA.tmdict)
+    | "HO_AUFLIRA" =>
+      (HO_AUFLIRA.tydict, HO_AUFLIRA.tmdict)
+    | "HO_QF_AUFLIA" =>
+      (HO_QF_AUFLIA.tydict, HO_QF_AUFLIA.tmdict)
     | "QF_S" =>
       (QF_S.tydict, QF_S.tmdict)
     | "QF_SLIA" =>
@@ -1011,6 +1099,16 @@ in
   fun metadata_of_logic (logic : string) =
     case logic of
       "ALL" => ALL.metadata
+    | "HO_ALL" => HO_ALL.metadata
+    | "HO_UF" => HO_UF.metadata
+    | "HO_QF_UF" => HO_QF_UF.metadata
+    | "HO_UFLIA" => HO_UFLIA.metadata
+    | "HO_QF_UFLIA" => HO_QF_UFLIA.metadata
+    | "HO_UFLRA" => HO_UFLRA.metadata
+    | "HO_QF_UFLRA" => HO_QF_UFLRA.metadata
+    | "HO_AUFLIA" => HO_AUFLIA.metadata
+    | "HO_AUFLIRA" => HO_AUFLIRA.metadata
+    | "HO_QF_AUFLIA" => HO_QF_AUFLIA.metadata
     | "QF_S" => QF_S.metadata
     | "QF_SLIA" => QF_SLIA.metadata
     | "QF_SNIA" => QF_SNIA.metadata
