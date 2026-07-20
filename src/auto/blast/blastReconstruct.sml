@@ -269,13 +269,31 @@ type timed_detailed_measured_result =
    classical_times : classical_phase_times,
    attempt_wall_time : Time.time}
 
+type minor_unification_times = clasetStep.minor_unification_times
+
+type outer_reconstruction_times =
+  {alternative_enumeration_time : Time.time,
+   replay_continuation_time : Time.time,
+   other_outer_time : Time.time,
+   outer_reconstruction_time : Time.time}
+
+type timed_detailed_measured_result_v2 =
+  {base : timed_detailed_measured_result,
+   minor_unification_times : minor_unification_times,
+   outer_reconstruction_times : outer_reconstruction_times}
+
 datatype detailed_timing =
     DetailedUntimed
   | DetailedTimed of (unit -> Time.time)
+  | DetailedTimedV2 of
+      {clock : unit -> Time.time,
+       kernel_replay :
+         clasetReplay.grounded_script -> goal -> goal list * validation}
 
 datatype detailed_diagnostic_result =
     UntimedDetailedResult of detailed_measured_result
   | TimedDetailedResult of timed_detailed_measured_result
+  | TimedDetailedResultV2 of timed_detailed_measured_result_v2
 
 (* Measured reconstruction deliberately duplicates the small legacy worker
    above.  The ordinary entry points therefore retain their original call
@@ -592,6 +610,17 @@ fun reconstructWithMeasuredDetailedMode timing_mode
     val stored_rule_unsafe_attempts = ref 0
     val timed_rule_sequences =
       ref ([] : clasetStep.timed_rule_sequence list)
+    val timed_rule_sequences_v2 =
+      ref ([] : clasetStep.timed_rule_sequence_v2 list)
+    datatype outer_owner =
+        AlternativeOwner
+      | ReplayOwner
+      | OtherOwner
+    val outer_last = ref (NONE : Time.time option)
+    val outer_stack = ref ([] : outer_owner list)
+    val raw_alternative_time = ref Time.zeroTime
+    val raw_replay_time = ref Time.zeroTime
+    val raw_other_time = ref Time.zeroTime
 
     fun increment counter = counter := !counter + 1
 
@@ -621,6 +650,58 @@ fun reconstructWithMeasuredDetailedMode timing_mode
 
     fun invoke callback argument =
       callback argument handle error => raise CALLBACK error
+
+    fun timing_clock () =
+      case timing_mode of
+          DetailedTimedV2 {clock, ...} => SOME clock
+        | _ => NONE
+
+    fun owner_of AlternativeEnumeration = AlternativeOwner
+      | owner_of ReplayRecursion = ReplayOwner
+      | owner_of _ = OtherOwner
+
+    fun add_elapsed elapsed reference =
+      reference := Time.+ (!reference, elapsed)
+
+    fun account_outer finished =
+      case !outer_last of
+          NONE => outer_last := SOME finished
+        | SOME started =>
+            let
+              val _ =
+                if Time.< (finished, started) then
+                  raise CALLBACK
+                    (mk_HOL_ERR "blastReconstruct" "account_outer"
+                      "the timed diagnostic clock moved backwards")
+                else ()
+              val elapsed = Time.- (finished, started)
+              val _ = outer_last := SOME finished
+            in
+              case !outer_stack of
+                  AlternativeOwner :: _ =>
+                    add_elapsed elapsed raw_alternative_time
+                | ReplayOwner :: _ => add_elapsed elapsed raw_replay_time
+                | OtherOwner :: _ => add_elapsed elapsed raw_other_time
+                | [] => add_elapsed elapsed raw_other_time
+            end
+
+    fun outer_enter phase =
+      case timing_clock () of
+          NONE => ()
+        | SOME clock =>
+            (account_outer (invoke clock ());
+             outer_stack := owner_of phase :: !outer_stack)
+
+    (* This stack is timing state, not observer state.  In particular, an
+       operational failure deliberately has no fabricated Exit observation,
+       but it must still close its exclusive interval and restore exactly the
+       owner stack seen on entry before replay catches the failure. *)
+    fun outer_restore saved =
+      case timing_clock () of
+          NONE => outer_stack := saved
+        | SOME clock =>
+            ((account_outer (invoke clock ()); outer_stack := saved)
+             handle error => (outer_stack := saved; raise error))
 
     fun count_stored_rule_entry step_kind
           (rule : clasetStep.measured_rule_observation) =
@@ -710,7 +791,13 @@ fun reconstructWithMeasuredDetailedMode timing_mode
     fun bracket phase operation argument =
       let
         val _ = checkpoint Enter phase
-        val result = operation argument
+        val saved_outer_stack = !outer_stack
+        val _ = outer_enter phase
+        val result =
+          operation argument
+          handle error =>
+            (outer_restore saved_outer_stack; raise error)
+        val _ = outer_restore saved_outer_stack
         val _ = checkpoint Exit phase
       in
         result
@@ -764,6 +851,11 @@ fun reconstructWithMeasuredDetailedMode timing_mode
            is_elim : bool}
       | TimedStoredRuleTransitions of
           {sequence : clasetStep.timed_rule_sequence,
+           old_count : int,
+           duplicate : bool,
+           is_elim : bool}
+      | TimedStoredRuleTransitionsV2 of
+          {sequence : clasetStep.timed_rule_sequence_v2,
            old_count : int,
            duplicate : bool,
            is_elim : bool}
@@ -826,6 +918,28 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                               sequence :: !timed_rule_sequences
                         in
                           TimedStoredRuleTransitions
+                            {sequence = sequence,
+                             old_count = old_count,
+                             duplicate = duplicate, is_elim = is_elim}
+                        end
+                    | DetailedTimedV2 {clock, ...} =>
+                        let
+                          val sequence =
+                            bracket (TypedStep kind)
+                              (fn () =>
+                                clasetStep.blast_rule_step_timed_v2
+                                  {clock = fn () => invoke clock (),
+                                   observe = SOME observe_rule,
+                                   stop = stop_stored_rule}
+                                  cs
+                                  {theorem = replay_theorem,
+                                   elim = is_elim}
+                                  (node, 1)) ()
+                          val _ =
+                            timed_rule_sequences_v2 :=
+                              sequence :: !timed_rule_sequences_v2
+                        in
+                          TimedStoredRuleTransitionsV2
                             {sequence = sequence,
                              old_count = old_count,
                              duplicate = duplicate, is_elim = is_elim}
@@ -933,6 +1047,38 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                 in
                   pull sequence
                 end) ()
+        | TimedStoredRuleTransitionsV2
+            {sequence, old_count, duplicate, is_elim} =>
+            bracket AlternativeEnumeration
+              (fn () =>
+                let
+                  fun pull current =
+                    case
+                      (clasetStep.timed_rule_cases_v2 current
+                       handle CALLBACK error => raise CALLBACK error
+                            | error => raise CALLBACK error)
+                    of
+                        clasetStep.TimedRuleEmptyV2 => NONE
+                      | clasetStep.TimedRuleInterruptedV2 =>
+                          raise INTERRUPTED
+                      | clasetStep.TimedRuleYieldV2
+                          ((_, next), tail) =>
+                          (case total_m
+                            (finish_stored_rule old_count duplicate
+                              is_elim) next
+                           of
+                               SOME finished =>
+                                 SOME
+                                   (finished,
+                                    TimedStoredRuleTransitionsV2
+                                      {sequence = tail,
+                                       old_count = old_count,
+                                       duplicate = duplicate,
+                                       is_elim = is_elim})
+                             | NONE => pull tail)
+                in
+                  pull sequence
+                end) ()
 
     fun finish final =
       let
@@ -951,7 +1097,12 @@ fun reconstructWithMeasuredDetailedMode timing_mode
         val result as (residuals, _) =
           bracket KernelReplay
             (fn () =>
-              Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal) ()
+              case timing_mode of
+                  DetailedTimedV2 {kernel_replay, ...} =>
+                    kernel_replay grounded goal
+                | _ =>
+                    Tactical.VALID
+                      (clasetReplay.REPLAY_TAC grounded) goal) ()
         val _ =
           bracket FinishResidualGoals
             (fn () =>
@@ -1040,8 +1191,14 @@ fun reconstructWithMeasuredDetailedMode timing_mode
     fun classical_times () : classical_phase_times =
       let
         val snapshots =
-          map clasetStep.timed_rule_statistics
-            (!timed_rule_sequences)
+          case timing_mode of
+              DetailedTimedV2 _ =>
+                map
+                  (#base o clasetStep.timed_rule_statistics_v2)
+                  (!timed_rule_sequences_v2)
+            | _ =>
+                map clasetStep.timed_rule_statistics
+                  (!timed_rule_sequences)
       in
         {attempt_selection_time =
            List.foldl
@@ -1106,6 +1263,66 @@ fun reconstructWithMeasuredDetailedMode timing_mode
              Time.zeroTime snapshots}
       end
 
+    fun maximum_time (left, right) =
+      if Time.< (left, right) then right else left
+
+    fun minor_unification_times () : minor_unification_times =
+      let
+        val snapshots =
+          map
+            (#minor_unification_times o
+             clasetStep.timed_rule_statistics_v2)
+            (!timed_rule_sequences_v2)
+      in
+        {calls = List.foldl (fn (item, n) => #calls item + n) 0 snapshots,
+         failures =
+           List.foldl (fn (item, n) => #failures item + n) 0 snapshots,
+         normalization_setup_time =
+           List.foldl
+             (fn (item, total) =>
+               add_time (#normalization_setup_time item, total))
+             Time.zeroTime snapshots,
+         traversal_decomposition_binding_time =
+           List.foldl
+             (fn (item, total) =>
+               add_time
+                 (#traversal_decomposition_binding_time item, total))
+             Time.zeroTime snapshots,
+         failure_cleanup_time =
+           List.foldl
+             (fn (item, total) =>
+               add_time (#failure_cleanup_time item, total))
+             Time.zeroTime snapshots,
+         minor_unification_time =
+           List.foldl
+             (fn (item, total) =>
+               add_time (#minor_unification_time item, total))
+             Time.zeroTime snapshots,
+         max_normalization_setup_time =
+           List.foldl
+             (fn (item, current) =>
+               maximum_time
+                 (#max_normalization_setup_time item, current))
+             Time.zeroTime snapshots,
+         max_traversal_decomposition_binding_time =
+           List.foldl
+             (fn (item, current) =>
+               maximum_time
+                 (#max_traversal_decomposition_binding_time item,
+                  current))
+             Time.zeroTime snapshots,
+         max_failure_cleanup_time =
+           List.foldl
+             (fn (item, current) =>
+               maximum_time (#max_failure_cleanup_time item, current))
+             Time.zeroTime snapshots,
+         max_minor_unification_time =
+           List.foldl
+             (fn (item, current) =>
+               maximum_time (#max_minor_unification_time item, current))
+             Time.zeroTime snapshots}
+      end
+
     fun read_clock clock = invoke clock ()
 
     fun elapsed_at started finished =
@@ -1128,6 +1345,52 @@ fun reconstructWithMeasuredDetailedMode timing_mode
          statistics = statistics (),
          classical_times = classical_times (),
          attempt_wall_time = attempt_wall_time}
+
+    fun timed_report_v2 attempt_wall_time completion result =
+      let
+        val classical = classical_times ()
+        val classical_time = #classical_time classical
+        val alternative_time =
+          if Time.< (!raw_alternative_time, classical_time) then
+            raise CALLBACK
+              (mk_HOL_ERR "blastReconstruct" "timed_report_v2"
+                "classical time exceeds enclosing alternative time")
+          else Time.- (!raw_alternative_time, classical_time)
+        val outer_time =
+          Time.+
+            (alternative_time,
+             Time.+ (!raw_replay_time, !raw_other_time))
+        val expected_outer =
+          if Time.< (attempt_wall_time, classical_time) then
+            raise CALLBACK
+              (mk_HOL_ERR "blastReconstruct" "timed_report_v2"
+                "classical time exceeds whole-attempt time")
+          else Time.- (attempt_wall_time, classical_time)
+        val _ =
+          if outer_time = expected_outer then ()
+          else
+            raise CALLBACK
+              (mk_HOL_ERR "blastReconstruct" "timed_report_v2"
+                "exclusive reconstruction accounting is inconsistent")
+        val base : timed_detailed_measured_result =
+          {completion = completion,
+           current_phase = !current_phase,
+           current_stored_rule = !current_stored_rule,
+           result = result,
+           statistics = statistics (),
+           classical_times = classical,
+           attempt_wall_time = attempt_wall_time}
+        val outer : outer_reconstruction_times =
+          {alternative_enumeration_time = alternative_time,
+           replay_continuation_time = !raw_replay_time,
+           other_outer_time = !raw_other_time,
+           outer_reconstruction_time = outer_time}
+      in
+        TimedDetailedResultV2
+          {base = base,
+           minor_unification_times = minor_unification_times (),
+           outer_reconstruction_times = outer}
+      end
 
     fun perform () =
       case replay 1 script (clasetGoal.from_goal goal) of
@@ -1165,6 +1428,30 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                     | CALLBACK error => raise CALLBACK error
                     | Interrupt => raise Interrupt
                     | _ => terminal_report Completed NONE)
+            end
+        | DetailedTimedV2 {clock, ...} =>
+            let
+              val started = read_clock clock
+              val _ = outer_last := SOME started
+              fun terminal_report completion result =
+                let
+                  val finished = read_clock clock
+                  val _ = account_outer finished
+                  val attempt_wall_time = elapsed_at started finished
+                in
+                  timed_report_v2 attempt_wall_time completion result
+                end
+            in
+              (let
+                 val result = perform ()
+               in
+                 terminal_report Completed (SOME result)
+               end
+               handle INTERRUPTED =>
+                        terminal_report Interrupted NONE
+                    | CALLBACK error => raise CALLBACK error
+                    | Interrupt => raise Interrupt
+                    | _ => terminal_report Completed NONE)
             end)
      handle CALLBACK error => raise error)
   end
@@ -1175,6 +1462,10 @@ fun reconstructWithMeasuredDetailed controls cs goal proof =
   of
       UntimedDetailedResult result => result
     | TimedDetailedResult _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredDetailed"
+          "internal detailed diagnostic mode mismatch"
+    | TimedDetailedResultV2 _ =>
         raise mk_HOL_ERR "blastReconstruct"
           "reconstructWithMeasuredDetailed"
           "internal detailed diagnostic mode mismatch"
@@ -1190,6 +1481,50 @@ fun reconstructWithMeasuredTimedDetailed
         raise mk_HOL_ERR "blastReconstruct"
           "reconstructWithMeasuredTimedDetailed"
           "internal detailed diagnostic mode mismatch"
+    | TimedDetailedResultV2 _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredTimedDetailed"
+          "internal detailed diagnostic mode mismatch"
+
+fun reconstructWithMeasuredTimedDetailedV2
+      {clock, observe, observe_stored_rule, stop} cs goal proof =
+  case reconstructWithMeasuredDetailedMode
+    (DetailedTimedV2
+      {clock = clock,
+       kernel_replay =
+         fn grounded =>
+           Tactical.VALID (clasetReplay.REPLAY_TAC grounded)})
+    {observe = observe, observe_stored_rule = observe_stored_rule,
+     stop = stop} cs goal proof
+  of
+      TimedDetailedResultV2 result => result
+    | UntimedDetailedResult _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredTimedDetailedV2"
+          "internal detailed diagnostic mode mismatch"
+    | TimedDetailedResult _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredTimedDetailedV2"
+          "internal detailed diagnostic mode mismatch"
+
+fun reconstructWithMeasuredTimedDetailedV2UsingKernel
+      {clock, kernel_replay, observe, observe_stored_rule, stop}
+      cs goal proof =
+  case reconstructWithMeasuredDetailedMode
+    (DetailedTimedV2
+      {clock = clock, kernel_replay = kernel_replay})
+    {observe = observe, observe_stored_rule = observe_stored_rule,
+     stop = stop} cs goal proof
+  of
+      TimedDetailedResultV2 result => result
+    | UntimedDetailedResult _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredTimedDetailedV2UsingKernel"
+          "internal detailed diagnostic mode mismatch"
+    | TimedDetailedResult _ =>
+        raise mk_HOL_ERR "blastReconstruct"
+          "reconstructWithMeasuredTimedDetailedV2UsingKernel"
+          "internal detailed diagnostic mode mismatch"
 
 fun reconstructMeasured controls goal proof =
   reconstructWithMeasured controls clasetLib.empty_cs goal proof
@@ -1199,6 +1534,10 @@ fun reconstructMeasuredDetailed controls goal proof =
 
 fun reconstructMeasuredTimedDetailed controls goal proof =
   reconstructWithMeasuredTimedDetailed controls clasetLib.empty_cs goal
+    proof
+
+fun reconstructMeasuredTimedDetailedV2 controls goal proof =
+  reconstructWithMeasuredTimedDetailedV2 controls clasetLib.empty_cs goal
     proof
 
 fun accept cs goal proof =

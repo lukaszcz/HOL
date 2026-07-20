@@ -223,6 +223,57 @@ sig
      stop : unit -> bool} ->
     goal -> proof -> timed_detailed_measured_result
 
+  type minor_unification_times = clasetStep.minor_unification_times
+  type outer_reconstruction_times =
+    {alternative_enumeration_time : Time.time,
+     replay_continuation_time : Time.time,
+     other_outer_time : Time.time,
+     outer_reconstruction_time : Time.time}
+  type timed_detailed_measured_result_v2 =
+    {base : timed_detailed_measured_result,
+     minor_unification_times : minor_unification_times,
+     outer_reconstruction_times : outer_reconstruction_times}
+
+  (* Additive timed-v2 diagnostic.  Alternative and replay/continuation
+     fields are exclusive phase-owner times.  Classical intervals occur
+     while AlternativeEnumeration forces stored rules and are subtracted
+     exactly from that owner; consequently outer_reconstruction_time plus
+     base.classical_times.classical_time equals base.attempt_wall_time.
+     Other outer time retains top-level setup/terminal work and explicitly
+     bracketed phases other than AlternativeEnumeration and ReplayRecursion.
+     As with the earlier timed API, a phase clock begins after its Enter
+     callback/poll and ends before its Exit callback/poll, so those boundary
+     gaps belong to the enclosing exclusive owner.  This entry point
+     inherits the timed diagnostic's clock-exception identity and explicit
+     HOL_ERR on backwards movement. *)
+  val reconstructWithMeasuredTimedDetailedV2 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v2
+  (* Diagnostic dependency-injection seam for deterministic validation of
+     replay backtracking.  The ordinary V2 entry point above supplies exactly
+     [Tactical.VALID (clasetReplay.REPLAY_TAC grounded)]; production search,
+     reconstruction and tactic APIs do not pass through this seam. *)
+  val reconstructWithMeasuredTimedDetailedV2UsingKernel :
+    {clock : unit -> Time.time,
+     kernel_replay :
+       clasetReplay.grounded_script -> goal -> goal list * validation,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v2
+  val reconstructMeasuredTimedDetailedV2 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    goal -> proof -> timed_detailed_measured_result_v2
+
   (* Search continuations reject failed reconstruction with
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :

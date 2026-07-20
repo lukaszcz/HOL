@@ -774,6 +774,7 @@ type timed_rule_statistics =
 
 type measured_rule_timing =
   {clock : unit -> Time.time,
+   minor_unification_detail : clasetUnify.timed_unification option,
    attempt_selection_time : Time.time ref,
    freshening_setup_time : Time.time ref,
    minor_unification_time : Time.time ref,
@@ -919,17 +920,20 @@ fun measured_rule_bracket monitor assumption phase operation argument =
       case #timing monitor of
           NONE => operation argument
         | SOME timing =>
-            let
-              val started =
-                invoke_measured_rule (#clock timing) ()
-              val result =
-                operation argument
-                handle error =>
-                  (accumulate timing started; raise error)
-              val _ = accumulate timing started
-            in
-              result
-            end
+            (case (phase, #minor_unification_detail timing) of
+                 (MinorUnification, SOME _) => operation argument
+               | _ =>
+                   let
+                     val started =
+                       invoke_measured_rule (#clock timing) ()
+                     val result =
+                       operation argument
+                       handle error =>
+                         (accumulate timing started; raise error)
+                     val _ = accumulate timing started
+                   in
+                     result
+                   end)
     val _ =
       measured_rule_checkpoint monitor assumption RuleExit phase
   in
@@ -970,8 +974,21 @@ fun try_rule_measured monitor cs node pos
       case measured_rule_bracket monitor (Option.map #1 assumption)
         MinorUnification
         (fn () =>
-          clasetUnify.unify (#store fresh) config
-            (#conclusion fresh, w)) ()
+          case #timing monitor of
+              SOME timing =>
+                (case #minor_unification_detail timing of
+                     SOME detail =>
+                       (clasetUnify.unify_timed detail
+                         (#store fresh) config (#conclusion fresh, w)
+                        handle
+                          clasetUnify.TIMED_UNIFICATION_CALLBACK error =>
+                            raise MEASURED_RULE_CALLBACK error)
+                   | NONE =>
+                       clasetUnify.unify (#store fresh) config
+                         (#conclusion fresh, w))
+            | NONE =>
+                clasetUnify.unify (#store fresh) config
+                  (#conclusion fresh, w)) ()
       of
           NONE => raise Match
         | SOME store => store
@@ -1935,6 +1952,24 @@ datatype timed_rule_pull =
 
 fun new_measured_rule_timing clock : measured_rule_timing =
   {clock = clock,
+   minor_unification_detail = NONE,
+   attempt_selection_time = ref Time.zeroTime,
+   freshening_setup_time = ref Time.zeroTime,
+   minor_unification_time = ref Time.zeroTime,
+   elimination_major_unification_time = ref Time.zeroTime,
+   rule_instantiation_time = ref Time.zeroTime,
+   child_store_construction_time = ref Time.zeroTime,
+   direct_result_construction_time = ref Time.zeroTime,
+   lazy_result_yield_time = ref Time.zeroTime,
+   direct_child_replacement_time = ref Time.zeroTime,
+   replay_record_construction_time = ref Time.zeroTime,
+   record_insertion_time = ref Time.zeroTime,
+   classical_time = ref Time.zeroTime}
+
+fun new_measured_rule_timing_v2 clock : measured_rule_timing =
+  {clock = clock,
+   minor_unification_detail =
+     SOME (clasetUnify.new_timed_unification clock),
    attempt_selection_time = ref Time.zeroTime,
    freshening_setup_time = ref Time.zeroTime,
    minor_unification_time = ref Time.zeroTime,
@@ -2020,6 +2055,130 @@ fun timed_rule_statistics
        !(#replay_record_construction_time timing),
    record_insertion_time = !(#record_insertion_time timing),
    classical_time = !(#classical_time timing)}
+
+type minor_unification_times =
+  {calls : int,
+   failures : int,
+   normalization_setup_time : Time.time,
+   traversal_decomposition_binding_time : Time.time,
+   failure_cleanup_time : Time.time,
+   minor_unification_time : Time.time,
+   max_normalization_setup_time : Time.time,
+   max_traversal_decomposition_binding_time : Time.time,
+   max_failure_cleanup_time : Time.time,
+   max_minor_unification_time : Time.time}
+
+type timed_rule_statistics_v2 =
+  {base : timed_rule_statistics,
+   minor_unification_times : minor_unification_times}
+
+datatype timed_rule_sequence_v2 =
+  TimedRuleSequenceV2 of
+    {sequence : measured_rule_sequence,
+     timing : measured_rule_timing}
+
+datatype timed_rule_pull_v2 =
+    TimedRuleEmptyV2
+  | TimedRuleYieldV2 of
+      (step_record * node) * timed_rule_sequence_v2
+  | TimedRuleInterruptedV2
+
+fun blast_rule_step_timed_v2 {clock, observe, stop} cs specification
+      (input as (_, pos)) =
+  let
+    val rule_kind =
+      if #elim specification then ElimRule else IntroRule
+    val timing = new_measured_rule_timing_v2 clock
+    val monitor =
+      new_measured_rule_monitor {observe = observe, stop = stop}
+        (SOME timing) pos rule_kind
+    val sequence =
+      direct_step_measured monitor
+        (exact_rule_results_measured monitor cs specification) input
+  in
+    TimedRuleSequenceV2
+      {sequence =
+         MeasuredRuleSequence {sequence = sequence, monitor = monitor},
+       timing = timing}
+  end
+
+fun timed_rule_cases_v2 (TimedRuleSequenceV2 {sequence, timing}) =
+  case measured_rule_cases sequence of
+      MeasuredRuleEmpty => TimedRuleEmptyV2
+    | MeasuredRuleYield (value, tail) =>
+        TimedRuleYieldV2
+          (value, TimedRuleSequenceV2 {sequence = tail, timing = timing})
+    | MeasuredRuleInterrupted => TimedRuleInterruptedV2
+
+fun timed_rule_current_v2 (TimedRuleSequenceV2 {sequence, ...}) =
+  measured_rule_current sequence
+
+fun timed_rule_statistics_v2
+      (sequence as TimedRuleSequenceV2 {timing, ...}) =
+  let
+    val detail = valOf (#minor_unification_detail timing)
+    val split = clasetUnify.timed_unification_statistics detail
+    val minor_time = #unification_time split
+    val _ = #minor_unification_time timing := minor_time
+    val base_sequence =
+      case sequence of
+          TimedRuleSequenceV2 {sequence = measured, timing = current} =>
+            TimedRuleSequence {sequence = measured, timing = current}
+    val base0 = timed_rule_statistics base_sequence
+    val classical_time =
+      Time.+ (#classical_time base0, minor_time)
+    val base : timed_rule_statistics =
+      {cooperative_checkpoints = #cooperative_checkpoints base0,
+       phase_entries = #phase_entries base0,
+       phase_exits = #phase_exits base0,
+       attempt_selections = #attempt_selections base0,
+       freshening_setups = #freshening_setups base0,
+       minor_unifications = #minor_unifications base0,
+       elimination_major_unifications =
+         #elimination_major_unifications base0,
+       rule_instantiations = #rule_instantiations base0,
+       child_store_constructions = #child_store_constructions base0,
+       direct_result_constructions = #direct_result_constructions base0,
+       lazy_result_yields = #lazy_result_yields base0,
+       direct_child_replacements = #direct_child_replacements base0,
+       replay_record_constructions =
+         #replay_record_constructions base0,
+       record_insertions = #record_insertions base0,
+       intro_attempts = #intro_attempts base0,
+       elim_attempts = #elim_attempts base0,
+       attempt_selection_time = #attempt_selection_time base0,
+       freshening_setup_time = #freshening_setup_time base0,
+       minor_unification_time = minor_time,
+       elimination_major_unification_time =
+         #elimination_major_unification_time base0,
+       rule_instantiation_time = #rule_instantiation_time base0,
+       child_store_construction_time =
+         #child_store_construction_time base0,
+       direct_result_construction_time =
+         #direct_result_construction_time base0,
+       lazy_result_yield_time = #lazy_result_yield_time base0,
+       direct_child_replacement_time =
+         #direct_child_replacement_time base0,
+       replay_record_construction_time =
+         #replay_record_construction_time base0,
+       record_insertion_time = #record_insertion_time base0,
+       classical_time = classical_time}
+    val minor : minor_unification_times =
+      {calls = #calls split, failures = #failures split,
+       normalization_setup_time = #normalization_setup_time split,
+       traversal_decomposition_binding_time =
+         #traversal_decomposition_binding_time split,
+       failure_cleanup_time = #failure_cleanup_time split,
+       minor_unification_time = minor_time,
+       max_normalization_setup_time =
+         #max_normalization_setup_time split,
+       max_traversal_decomposition_binding_time =
+         #max_traversal_decomposition_binding_time split,
+       max_failure_cleanup_time = #max_failure_cleanup_time split,
+       max_minor_unification_time = #max_unification_time split}
+  in
+    {base = base, minor_unification_times = minor}
+  end
 
 val blast_disch_step = direct_step disch_results
 val blast_gen_step = direct_step gen_results

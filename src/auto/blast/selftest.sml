@@ -2668,6 +2668,9 @@ fun reconstruction_ticking_clock () =
       end
   end
 
+val reconstruct_v2_using_kernel =
+  blastReconstruct.reconstructWithMeasuredTimedDetailedV2UsingKernel
+
 fun classical_phase_time_sum
       (times : blastReconstruct.classical_phase_times) =
   List.foldl Time.+ Time.zeroTime
@@ -3175,6 +3178,533 @@ val _ =
                    Time.fromSeconds 1 andalso
                  #attempt_wall_time enter = Time.fromSeconds 9 andalso
                  #attempt_wall_time exit = Time.fromSeconds 11
+               end
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("timed-v2 reconstruction is exclusive bounded and API-equivalent",
+     fn () =>
+       let
+         val p = mk_var ("timed_v2_reconstruct_p", bool)
+         val q = mk_var ("timed_v2_reconstruct_q", bool)
+         val r = mk_var ("timed_v2_reconstruct_r", bool)
+         val goal = ([r, mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v2-reconstruct-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val untimed_observations = ref []
+                 val timed_observations = ref []
+                 val untimed =
+                   blastReconstruct.reconstructWithMeasuredDetailed
+                     {observe = NONE,
+                      observe_stored_rule =
+                        SOME
+                          (fn event =>
+                            untimed_observations :=
+                              event :: !untimed_observations),
+                      stop = fn () => false}
+                     cs goal proof
+                 val timed =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE,
+                      observe_stored_rule =
+                        SOME
+                          (fn event =>
+                            timed_observations :=
+                              event :: !timed_observations),
+                      stop = fn () => false}
+                     cs goal proof
+                 val base = #base timed
+                 val classical = #classical_times base
+                 val minor = #minor_unification_times timed
+                 val outer = #outer_reconstruction_times timed
+                 val minor_subtotal =
+                   Time.+
+                     (#normalization_setup_time minor,
+                      Time.+
+                        (#traversal_decomposition_binding_time minor,
+                         #failure_cleanup_time minor))
+                 val outer_subtotal =
+                   Time.+
+                     (#alternative_enumeration_time outer,
+                      Time.+
+                        (#replay_continuation_time outer,
+                         #other_outer_time outer))
+               in
+                 #completion untimed = #completion base andalso
+                 #statistics untimed = #statistics base andalso
+                 rev (!untimed_observations) =
+                   rev (!timed_observations) andalso
+                 (case (#result untimed, #result base) of
+                      (SOME ([], untimed_validation),
+                       SOME ([], timed_validation)) =>
+                        (ignore (untimed_validation []);
+                         ignore (timed_validation []); true)
+                    | _ => false) andalso
+                 #calls minor =
+                   #stored_rule_minor_unifications (#statistics base)
+                 andalso
+                 #failure_cleanup_time minor = Time.zeroTime andalso
+                 minor_subtotal = #minor_unification_time minor andalso
+                 #minor_unification_time minor =
+                   #minor_unification_time classical andalso
+                 classical_phase_time_sum classical =
+                   #classical_time classical andalso
+                 outer_subtotal = #outer_reconstruction_time outer
+                 andalso
+                 Time.+
+                   (#outer_reconstruction_time outer,
+                    #classical_time classical) =
+                   #attempt_wall_time base andalso
+                 not
+                   (Time.< (#minor_unification_time minor,
+                            #max_minor_unification_time minor))
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v2 interruption and callback exceptions retain boundaries",
+     fn () =>
+       let
+         exception TimedV2Callback of int ref
+         val sentinel = ref 149
+         val p = mk_var ("timed_v2_interrupt_p", bool)
+         val q = mk_var ("timed_v2_interrupt_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v2-interrupt-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val stop_now = ref false
+                 fun cutoff
+                       ({rule = {boundary, phase, ...}, ...} :
+                          blastReconstruct.stored_rule_observation) =
+                   if boundary = clasetStep.RuleEnter andalso
+                      phase = clasetStep.RuleInstantiation then
+                     stop_now := true
+                   else ()
+                 val interrupted =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE, observe_stored_rule = SOME cutoff,
+                      stop = fn () => !stop_now}
+                     cs goal proof
+                 val base = #base interrupted
+                 val outer = #outer_reconstruction_times interrupted
+                 val reconstruct_v2 =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                 val exception_ok =
+                   ((ignore
+                       (reconstruct_v2
+                          {clock = reconstruction_ticking_clock (),
+                           observe = NONE,
+                           observe_stored_rule =
+                             SOME
+                               (fn _ =>
+                                 raise TimedV2Callback sentinel),
+                           stop = fn () => false}
+                          cs goal proof);
+                     false)
+                    handle TimedV2Callback actual => actual = sentinel
+                         | _ => false)
+               in
+                 #completion base = blastReconstruct.Interrupted andalso
+                 not (Option.isSome (#result base)) andalso
+                 #current_stored_rule base =
+                   SOME
+                     {script_position = 1,
+                      step_kind = blastReconstruct.SafeRuleStep,
+                      duplicate = false,
+                      rule =
+                        {boundary = clasetStep.RuleEnter,
+                         phase = clasetStep.RuleInstantiation,
+                         goal_position = 1,
+                         rule_kind = clasetStep.ElimRule,
+                         assumption_position = SOME 1}} andalso
+                 Time.+
+                   (#outer_reconstruction_time outer,
+                    #classical_time (#classical_times base)) =
+                 #attempt_wall_time base andalso exception_ok
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v2 failed finish restores its exact outer owner stack",
+     fn () =>
+       let
+         exception OuterCleanupClock of int ref
+         val sentinel = ref 157
+         val p = mk_var ("timed_v2_none_p", bool)
+         val goal = ([], p)
+         val proof : blastSearch.proof =
+           {script = [], trace = [], depth = 0,
+            branches_created = 0, branches_closed = 0,
+            choices_pruned = 0}
+         val report =
+           blastReconstruct.reconstructMeasuredTimedDetailedV2
+             {clock = reconstruction_ticking_clock (), observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             goal proof
+         val base = #base report
+         val statistics = #statistics base
+         val outer = #outer_reconstruction_times report
+
+         fun cleanup_clock action =
+           let
+             val calls = ref 0
+           in
+             fn () =>
+               let
+                 val current = !calls
+                 val _ = calls := current + 1
+               in
+                 if current = 3 then action ()
+                 else Time.fromSeconds (Int.toLarge current)
+               end
+           end
+
+         val clock_identity =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV2
+                 {clock =
+                    cleanup_clock
+                      (fn () => raise OuterCleanupClock sentinel),
+                  observe = NONE, observe_stored_rule = NONE,
+                  stop = fn () => false}
+                 goal proof);
+             false)
+            handle OuterCleanupClock actual => actual = sentinel
+                 | _ => false)
+         val backwards_identity =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV2
+                 {clock =
+                    cleanup_clock (fn () => Time.fromSeconds 1),
+                  observe = NONE, observe_stored_rule = NONE,
+                  stop = fn () => false}
+                 goal proof);
+             false)
+            handle HOL_ERR error =>
+                     Feedback.top_structure_of error = "blastReconstruct"
+                 | _ => false)
+       in
+         #completion base = blastReconstruct.Completed andalso
+         not (Option.isSome (#result base)) andalso
+         #current_phase base =
+           SOME
+             {boundary = blastReconstruct.Exit,
+              phase = blastReconstruct.ReplayRecursion} andalso
+         #phase_entries statistics = 2 andalso
+         #phase_exits statistics = 1 andalso
+         #finish_open_goal_checks statistics = 1 andalso
+         #alternative_enumeration_time outer = Time.zeroTime andalso
+         #replay_continuation_time outer = Time.fromSeconds 2 andalso
+         #other_outer_time outer = Time.fromSeconds 3 andalso
+         #outer_reconstruction_time outer = Time.fromSeconds 5 andalso
+         #classical_time (#classical_times base) = Time.zeroTime andalso
+         #attempt_wall_time base = Time.fromSeconds 5 andalso
+         clock_identity andalso backwards_identity
+       end)
+
+val _ =
+  test
+    ("timed-v2 nested alternative backtracking has exact owners",
+     fn () =>
+       let
+         val p = mk_var ("timed_v2_nested_p", bool)
+         val q = mk_var ("timed_v2_nested_q", bool)
+         val r = mk_var ("timed_v2_nested_r", bool)
+         val goal = ([r, mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v2-nested-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE, observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val base = #base report
+                 val outer = #outer_reconstruction_times report
+               in
+                 #completion base = blastReconstruct.Completed andalso
+                 Option.isSome (#result base) andalso
+                 #alternative_pulls (#statistics base) = 2 andalso
+                 #alternative_enumeration_time outer =
+                   Time.fromSeconds 18 andalso
+                 #replay_continuation_time outer =
+                   Time.fromSeconds 13 andalso
+                 #other_outer_time outer = Time.fromSeconds 11 andalso
+                 #outer_reconstruction_time outer =
+                   Time.fromSeconds 42 andalso
+                 #classical_time (#classical_times base) =
+                   Time.fromSeconds 27 andalso
+                 #attempt_wall_time base = Time.fromSeconds 69
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v2 kernel failure backtracks with exact restored owners",
+     fn () =>
+       let
+         val p = mk_var ("timed_v2_kernel_p", bool)
+         val q = mk_var ("timed_v2_kernel_q", bool)
+         val r = mk_var ("timed_v2_kernel_r", bool)
+         val conjunction = mk_conj (p, q)
+         val goal = ([r, conjunction, conjunction], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v2-kernel-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val kernel_calls = ref 0
+                 val observations =
+                   ref
+                     ([] :
+                       (blastReconstruct.boundary *
+                        blastReconstruct.phase) list)
+
+                 fun kernel_replay grounded kernel_goal =
+                   (kernel_calls := !kernel_calls + 1;
+                    if !kernel_calls = 1 then
+                      raise mk_HOL_ERR "blast-selftest"
+                        "kernel_replay" "injected first alternative"
+                    else
+                      Tactical.VALID
+                        (clasetReplay.REPLAY_TAC grounded) kernel_goal)
+
+                 val reconstruct_v2 =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+
+                 val report =
+                   reconstruct_v2_using_kernel
+                     {clock = reconstruction_ticking_clock (),
+                      kernel_replay = kernel_replay,
+                      observe =
+                        SOME
+                          (fn event =>
+                            observations :=
+                              (#boundary event, #phase event) ::
+                              !observations),
+                      observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val base = #base report
+                 val outer = #outer_reconstruction_times report
+
+                 fun count boundary phase =
+                   List.length
+                     (List.filter
+                       (fn (actual_boundary, actual_phase) =>
+                         actual_boundary = boundary andalso
+                         actual_phase = phase)
+                       (!observations))
+
+                 val ordinary_observations =
+                   ref
+                     ([] :
+                       (blastReconstruct.boundary *
+                        blastReconstruct.phase) list)
+                 val injected_observations =
+                   ref
+                     ([] :
+                       (blastReconstruct.boundary *
+                        blastReconstruct.phase) list)
+                 fun remember reference event =
+                   reference :=
+                     (#boundary event, #phase event) :: !reference
+                 val ordinary =
+                   reconstruct_v2
+                     {clock = reconstruction_ticking_clock (),
+                      observe = SOME (remember ordinary_observations),
+                      observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val delegated =
+                   reconstruct_v2_using_kernel
+                     {clock = reconstruction_ticking_clock (),
+                      kernel_replay =
+                        fn grounded =>
+                          Tactical.VALID
+                            (clasetReplay.REPLAY_TAC grounded),
+                      observe = SOME (remember injected_observations),
+                      observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+               in
+                 !kernel_calls = 2 andalso
+                 #completion base = blastReconstruct.Completed andalso
+                 Option.isSome (#result base) andalso
+                 count blastReconstruct.Enter
+                   blastReconstruct.KernelReplay = 2 andalso
+                 count blastReconstruct.Exit
+                   blastReconstruct.KernelReplay = 1 andalso
+                 #kernel_replay_attempts (#statistics base) = 2 andalso
+                 #alternative_enumeration_time outer =
+                   Time.fromSeconds 33 andalso
+                 #replay_continuation_time outer =
+                   Time.fromSeconds 24 andalso
+                 #other_outer_time outer = Time.fromSeconds 16 andalso
+                 #outer_reconstruction_time outer =
+                   Time.fromSeconds 73 andalso
+                 #classical_time (#classical_times base) =
+                   Time.fromSeconds 44 andalso
+                 #attempt_wall_time base = Time.fromSeconds 117 andalso
+                 #completion (#base ordinary) =
+                   #completion (#base delegated) andalso
+                 #current_phase (#base ordinary) =
+                   #current_phase (#base delegated) andalso
+                 #statistics (#base ordinary) =
+                   #statistics (#base delegated) andalso
+                 #classical_times (#base ordinary) =
+                   #classical_times (#base delegated) andalso
+                 #attempt_wall_time (#base ordinary) =
+                   #attempt_wall_time (#base delegated) andalso
+                 Option.isSome (#result (#base ordinary)) andalso
+                 Option.isSome (#result (#base delegated)) andalso
+                 #minor_unification_times ordinary =
+                   #minor_unification_times delegated andalso
+                 #outer_reconstruction_times ordinary =
+                   #outer_reconstruction_times delegated andalso
+                 rev (!ordinary_observations) =
+                   rev (!injected_observations)
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v2 real replay failure then success restores owners",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'timed_v2_backtrack"
+         val x = mk_var ("timed_v2_backtrack_x", alpha)
+         val y = mk_var ("timed_v2_backtrack_y", alpha)
+         val pred = mk_var ("timed_v2_backtrack_P", alpha --> bool)
+         val p = mk_comb (pred, x)
+         val py = mk_comb (pred, y)
+         val q = mk_var ("timed_v2_backtrack_q", bool)
+         val r = mk_var ("timed_v2_backtrack_r", bool)
+         val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
+         val goal = ([mk_eq (x, y), p, q], mk_disj (py, q))
+         val cs =
+           clasetLib.add_intros
+             [("timed-v2-good-right", boolTheory.OR_INTRO_THM2),
+              ("timed-v2-bad-left", bad)] clasetLib.empty_cs
+         val attempts =
+           ref
+             ([] :
+               (blastReconstruct.timed_detailed_measured_result_v2 *
+                (blastReconstruct.boundary *
+                 blastReconstruct.phase) list) list)
+
+         fun accept proof =
+           let
+             val observations =
+               ref
+                 ([] :
+                   (blastReconstruct.boundary *
+                    blastReconstruct.phase) list)
+             val report =
+               blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                 {clock = reconstruction_ticking_clock (),
+                  observe =
+                    SOME
+                      (fn event =>
+                        observations :=
+                          (#boundary event, #phase event) ::
+                          !observations),
+                  observe_stored_rule = NONE, stop = fn () => false}
+                 cs goal proof
+             val _ =
+               attempts := (report, rev (!observations)) :: !attempts
+           in
+             case #result (#base report) of
+                 SOME result => (proof, result)
+               | NONE => raise blastSearch.PROOF_FAILED
+           end
+
+         val result = blastSearch.searchGoal cs 1 goal accept
+         val reports = rev (!attempts)
+
+         fun has boundary phase observations =
+           List.exists
+             (fn (actual_boundary, actual_phase) =>
+               actual_boundary = boundary andalso actual_phase = phase)
+             observations
+       in
+         Option.isSome result andalso
+         case reports of
+             [(failed, failed_observations),
+              (succeeded, succeeded_observations)] =>
+               let
+                 val failed_base = #base failed
+                 val failed_outer = #outer_reconstruction_times failed
+                 val succeeded_base = #base succeeded
+                 val succeeded_outer =
+                   #outer_reconstruction_times succeeded
+               in
+                 #completion failed_base = blastReconstruct.Completed
+                 andalso not (Option.isSome (#result failed_base)) andalso
+                 #kernel_replay_attempts (#statistics failed_base) = 0
+                 andalso
+                 #alternative_enumeration_time failed_outer =
+                   Time.fromSeconds 18 andalso
+                 #replay_continuation_time failed_outer =
+                   Time.fromSeconds 13 andalso
+                 #other_outer_time failed_outer = Time.fromSeconds 7
+                 andalso
+                 #outer_reconstruction_time failed_outer =
+                   Time.fromSeconds 38 andalso
+                 #classical_time (#classical_times failed_base) =
+                   Time.fromSeconds 31 andalso
+                 #attempt_wall_time failed_base = Time.fromSeconds 69
+                 andalso
+                 #completion succeeded_base = blastReconstruct.Completed
+                 andalso Option.isSome (#result succeeded_base) andalso
+                 has blastReconstruct.Enter blastReconstruct.KernelReplay
+                   succeeded_observations andalso
+                 has blastReconstruct.Exit blastReconstruct.KernelReplay
+                   succeeded_observations andalso
+                 #kernel_replay_attempts (#statistics succeeded_base) = 1
+                 andalso
+                 #alternative_enumeration_time succeeded_outer =
+                   Time.fromSeconds 20 andalso
+                 #replay_continuation_time succeeded_outer =
+                   Time.fromSeconds 21 andalso
+                 #other_outer_time succeeded_outer = Time.fromSeconds 15
+                 andalso
+                 #outer_reconstruction_time succeeded_outer =
+                   Time.fromSeconds 56 andalso
+                 #classical_time (#classical_times succeeded_base) =
+                   Time.fromSeconds 27 andalso
+                 #attempt_wall_time succeeded_base = Time.fromSeconds 83
                end
            | _ => false
        end)

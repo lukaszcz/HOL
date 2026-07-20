@@ -177,6 +177,42 @@ sig
   val timed_rule_statistics :
     timed_rule_sequence -> timed_rule_statistics
 
+  (* Timed-v2 is additive.  It preserves the timed replay protocol while
+     splitting MinorUnification according to the persistent unifier's
+     actual work.  Failed cleanup is explicitly zero because failed stores
+     are discarded immutable values, not rolled back. *)
+  type minor_unification_times =
+    {calls : int,
+     failures : int,
+     normalization_setup_time : Time.time,
+     traversal_decomposition_binding_time : Time.time,
+     failure_cleanup_time : Time.time,
+     minor_unification_time : Time.time,
+     max_normalization_setup_time : Time.time,
+     max_traversal_decomposition_binding_time : Time.time,
+     max_failure_cleanup_time : Time.time,
+     max_minor_unification_time : Time.time}
+  type timed_rule_statistics_v2 =
+    {base : timed_rule_statistics,
+     minor_unification_times : minor_unification_times}
+  type timed_rule_sequence_v2
+  datatype timed_rule_pull_v2 =
+      TimedRuleEmptyV2
+    | TimedRuleYieldV2 of
+        (step_record * node) * timed_rule_sequence_v2
+    | TimedRuleInterruptedV2
+  val blast_rule_step_timed_v2 :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v2
+  val timed_rule_cases_v2 : timed_rule_sequence_v2 -> timed_rule_pull_v2
+  val timed_rule_current_v2 :
+    timed_rule_sequence_v2 -> measured_rule_observation option
+  val timed_rule_statistics_v2 :
+    timed_rule_sequence_v2 -> timed_rule_statistics_v2
+
   val blast_disch_step : step
   val blast_gen_step : step
   val blast_ccontr_step : step

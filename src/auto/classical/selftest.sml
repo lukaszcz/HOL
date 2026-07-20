@@ -540,6 +540,457 @@ val _ =
              (rule_ty, bool_ty))
        end)
 
+fun same_unification_store left right =
+  let
+    val (left_types, left_terms) = clasetMeta.collapse left
+    val (right_types, right_terms) = clasetMeta.collapse right
+  in
+    type_subst_eq left_types right_types andalso
+    term_subst_eq left_terms right_terms
+  end
+
+fun parity_clock () =
+  let
+    val tick = ref 0
+  in
+    fn () =>
+      let
+        val current = !tick
+        val _ = tick := current + 1
+      in
+        Time.fromSeconds (Int.toLarge current)
+      end
+  end
+
+(* [unify_timed] intentionally remains a measured-only fork so this matrix
+   is the semantic guard for every production branch.  Each fixture is made
+   once and its persistent input store is shared by the ordinary and timed
+   calls; parity therefore covers both the outcome and the complete returned
+   substitution. *)
+val _ =
+  test
+    ("ordinary and timed unifiers have table-driven branch parity",
+     fn () =>
+       let
+         val unify_config =
+           {mode = clasetUnify.Unify, rule_metas = no_rule_metas}
+
+         fun type_meta_terms () =
+           let
+             val (a, store0) = clasetMeta.new_tymeta clasetMeta.empty
+             val (m, store1) =
+               clasetMeta.new_meta {allow = [], ty = a --> bool_ty}
+                 store0
+             val (n, store2) =
+               clasetMeta.new_meta
+                 {allow = [], ty = Type.ind --> bool_ty} store1
+           in
+             (store2, unify_config, (m, n))
+           end
+
+         fun type_meta_right () =
+           let
+             val (a, store0) = clasetMeta.new_tymeta clasetMeta.empty
+             val (m, store1) =
+               clasetMeta.new_meta {allow = [], ty = a} store0
+             val rigid = Term.mk_var ("parity_type_right", bool_ty)
+           in
+             (store1, unify_config, (rigid, m))
+           end
+
+         fun type_occurs () =
+           let
+             val (a, store0) = clasetMeta.new_tymeta clasetMeta.empty
+             val left = Term.mk_var ("parity_type_occurs_left", a)
+             val right =
+               Term.mk_var ("parity_type_occurs_right", a --> bool_ty)
+           in
+             (store0, unify_config, (left, right))
+           end
+
+         fun rigid_type_constructor_mismatch () =
+           (clasetMeta.empty, unify_config,
+            (boolSyntax.T,
+             Term.mk_var ("parity_rigid_type_ind", Type.ind)))
+
+         fun match_term rule_on_left () =
+           let
+             val (old, store0) = bool_meta [] clasetMeta.empty
+             val (rule, store1) = bool_meta [] store0
+             val metas = {terms = [rule], types = []}
+             val pair =
+               if rule_on_left then (rule, old) else (old, boolSyntax.T)
+           in
+             (store1,
+              {mode = clasetUnify.Match, rule_metas = metas}, pair)
+           end
+
+         fun match_type include_type () =
+           let
+             val (a, store0) = clasetMeta.new_tymeta clasetMeta.empty
+             val (m, store1) =
+               clasetMeta.new_meta {allow = [], ty = a} store0
+             val metas =
+               {terms = [m], types = if include_type then [a] else []}
+           in
+             (store1, {mode = clasetUnify.Match, rule_metas = metas},
+              (m, boolSyntax.T))
+           end
+
+         fun pattern reverse () =
+           let
+             val x = Term.genvar bool_ty
+             val (m, store0) = bool_fun_meta [x] clasetMeta.empty
+             val application = Term.mk_comb (m, x)
+             val target = boolSyntax.mk_neg x
+           in
+             (store0, unify_config,
+              if reverse then (target, application)
+              else (application, target))
+           end
+
+         fun pattern_fallback reverse () =
+           let
+             val x = Term.mk_var ("parity_fallback_x", bool_ty)
+             val (head, store0) = bool_fun_meta [] clasetMeta.empty
+             val store1 = the_store (clasetMeta.register_eigen x store0)
+             val (argument, store2) = bool_meta [x] store1
+             val pattern = Term.mk_comb (head, x)
+             val blocked = Term.mk_comb (head, argument)
+           in
+             (store2, unify_config,
+              if reverse then (blocked, pattern) else (pattern, blocked))
+           end
+
+         fun lambda equal () =
+           let
+             val x = Term.mk_var ("parity_lambda_x", bool_ty)
+             val y = Term.mk_var ("parity_lambda_y", bool_ty)
+             val (m, store) = bool_meta [] clasetMeta.empty
+             val left = Term.mk_abs (x, if equal then m else boolSyntax.T)
+             val right = Term.mk_abs (y, if equal then boolSyntax.T
+                                                   else boolSyntax.F)
+           in
+             (store, unify_config, (left, right))
+           end
+
+         fun approximation same_arity () =
+           let
+             val x = Term.mk_var ("parity_approx_x", bool_ty)
+             val y = Term.mk_var ("parity_approx_y", bool_ty)
+             val (m, store0) = bool_fun_meta [] clasetMeta.empty
+             val left = Term.mk_comb (m, x)
+             val right =
+               if same_arity then boolSyntax.mk_neg x
+               else boolSyntax.mk_conj (x, y)
+           in
+             (store0, unify_config, (left, right))
+           end
+
+         fun match_approximation () =
+           let
+             val x = Term.mk_var ("parity_match_approx_x", bool_ty)
+             val (head, store0) = bool_fun_meta [] clasetMeta.empty
+             val (argument, store1) = bool_meta [] store0
+             val metas = {terms = [argument], types = []}
+           in
+             (store1,
+              {mode = clasetUnify.Match, rule_metas = metas},
+              (Term.mk_comb (head, argument),
+               Term.mk_comb (head, boolSyntax.T)))
+           end
+
+         fun match_unequal_head_approximation () =
+           let
+             val x = Term.mk_var ("parity_match_unequal_x", bool_ty)
+             val (head, store0) = bool_fun_meta [] clasetMeta.empty
+             val (argument, store1) = bool_meta [] store0
+             val metas = {terms = [argument], types = []}
+           in
+             (store1,
+              {mode = clasetUnify.Match, rule_metas = metas},
+              (Term.mk_comb (head, argument), boolSyntax.mk_neg x))
+           end
+
+         fun occurs () =
+           let
+             val (m, store0) = bool_meta [] clasetMeta.empty
+           in
+             (store0, unify_config, (m, boolSyntax.mk_neg m))
+           end
+
+         fun allow_failure () =
+           let
+             val x = Term.mk_var ("parity_allow_x", bool_ty)
+             val (m, store0) = bool_meta [] clasetMeta.empty
+             val store1 = the_store (clasetMeta.register_eigen x store0)
+           in
+             (store1, unify_config, (m, x))
+           end
+
+         fun normalized_store () =
+           let
+             val x = Term.mk_var ("parity_normalized_x", bool_ty)
+             val identity = Term.mk_abs (x, x)
+             val (m, store0) = bool_fun_meta [] clasetMeta.empty
+             val store1 = the_store (clasetMeta.bind (m, identity) store0)
+           in
+             (store1, unify_config,
+              (Term.mk_comb (m, boolSyntax.T), boolSyntax.T))
+           end
+
+         fun beta_eta () =
+           let
+             val x = Term.mk_var ("parity_eta_x", bool_ty)
+             val f = Term.mk_var ("parity_eta_f", bool_ty --> bool_ty)
+           in
+             (clasetMeta.empty, unify_config,
+              (Term.mk_abs (x, Term.mk_comb (f, x)), f))
+           end
+
+         fun rigid_constants () =
+           (clasetMeta.empty, unify_config,
+            (boolSyntax.T, boolSyntax.F))
+
+         fun rigid_variables () =
+           (clasetMeta.empty, unify_config,
+            (Term.mk_var ("parity_rigid_left", bool_ty),
+             Term.mk_var ("parity_rigid_right", bool_ty)))
+
+         fun rigid_right_variable () =
+           (clasetMeta.empty, unify_config,
+            (boolSyntax.T,
+             Term.mk_var ("parity_structural_right", bool_ty)))
+
+         fun structural_wildcard_mismatch () =
+           let
+             val x = Term.mk_var ("parity_wildcard_x", bool_ty)
+             val not_head = #1 (strip_comb (boolSyntax.mk_neg x))
+           in
+             (clasetMeta.empty, unify_config,
+              (Term.mk_abs (x, boolSyntax.T), not_head))
+           end
+
+         fun combination_decomposition () =
+           let
+             val (m, store0) = bool_meta [] clasetMeta.empty
+           in
+             (store0, unify_config,
+              (boolSyntax.mk_conj (m, boolSyntax.T),
+               boolSyntax.mk_conj (boolSyntax.F, boolSyntax.T)))
+           end
+
+         fun succeeds (_, _, (left, right), SOME result) =
+               Term.aconv (clasetMeta.norm result left)
+                 (clasetMeta.norm result right)
+           | succeeds _ = false
+
+         fun fails (_, _, _, NONE) = true
+           | fails _ = false
+
+         (* A failed pattern binding falls through to equal-head
+            approximation.  Its distinguishing store leaves [head]
+            unbound and binds [argument] to the eigenvariable [x]. *)
+         fun fallback_succeeds reverse
+               (_, _, (left, right), SOME result) =
+               let
+                 val (head, left_args) = strip_comb left
+                 val (_, right_args) = strip_comb right
+                 val x = hd (if reverse then right_args else left_args)
+                 val argument =
+                   hd (if reverse then left_args else right_args)
+               in
+                 Term.aconv (clasetMeta.norm result head) head andalso
+                 Term.aconv (clasetMeta.norm result argument) x andalso
+                 Term.aconv (clasetMeta.norm result left)
+                   (clasetMeta.norm result right)
+               end
+           | fallback_succeeds _ _ = false
+
+         datatype parity_branch =
+             NoNamedBranch
+           | RigidTypeMismatch
+           | ProtectedUnequalHead
+           | RightPatternFallback
+           | LambdaDescent
+           | StructuralWildcard
+
+         fun exact_branch expected statistics =
+           #rigid_type_constructor_mismatches statistics =
+             (if expected = RigidTypeMismatch then 1 else 0) andalso
+           #protected_applied_meta_unequal_head_fallbacks statistics =
+             (if expected = ProtectedUnequalHead then 1 else 0) andalso
+           #right_pattern_binding_failure_fallbacks statistics =
+             (if expected = RightPatternFallback then 1 else 0) andalso
+           #structural_lambda_descents statistics =
+             (if expected = LambdaDescent then 1 else 0) andalso
+           #structural_wildcard_mismatches statistics =
+             (if expected = StructuralWildcard then 1 else 0)
+
+         (* The explicit term shapes in the failure rows select the named
+            branch before returning NONE; successful rows additionally pin
+            the complete unifying substitution through [succeeds]. *)
+         val fixtures =
+           [("type-constructor recursion and left type binding",
+             type_meta_terms, succeeds, NoNamedBranch),
+            ("right type-meta binding", type_meta_right, succeeds,
+             NoNamedBranch),
+            ("type occurs-check failure", type_occurs, fails,
+             NoNamedBranch),
+            ("rigid type-constructor mismatch",
+             rigid_type_constructor_mismatch, fails, RigidTypeMismatch),
+            ("Match rule-term binding", match_term true, succeeds,
+             NoNamedBranch),
+            ("Match protected left variable", match_term false, fails,
+             NoNamedBranch),
+            ("Match rule-type and term binding", match_type true, succeeds,
+             NoNamedBranch),
+            ("Match protected type-variable failure",
+             match_type false, fails, NoNamedBranch),
+            ("left-pattern binding", pattern false, succeeds,
+             NoNamedBranch),
+            ("right-pattern binding", pattern true, succeeds,
+             NoNamedBranch),
+            ("left-pattern binding-failure fallback",
+             pattern_fallback false, fallback_succeeds false,
+             NoNamedBranch),
+            ("right-pattern binding-failure fallback",
+             pattern_fallback true, fallback_succeeds true,
+             RightPatternFallback),
+            ("structural lambda descent and binding", lambda true, succeeds,
+             LambdaDescent),
+            ("structural lambda descent failure", lambda false, fails,
+             LambdaDescent),
+            ("flexible-head approximation", approximation true, succeeds,
+             NoNamedBranch),
+            ("approximation arity mismatch", approximation false, fails,
+             NoNamedBranch),
+            ("protected applied-meta equal-head fallback",
+             match_approximation, succeeds, NoNamedBranch),
+            ("protected applied-meta unequal-head fallback",
+             match_unequal_head_approximation, fails,
+             ProtectedUnequalHead),
+            ("term occurs-check failure", occurs, fails, NoNamedBranch),
+            ("term allow-set failure", allow_failure, fails, NoNamedBranch),
+            ("stored normalization and beta equality",
+             normalized_store, succeeds, NoNamedBranch),
+            ("eta-normalized equality", beta_eta, succeeds, NoNamedBranch),
+            ("structural rigid-constant mismatch", rigid_constants, fails,
+             NoNamedBranch),
+            ("structural left rigid-variable failure",
+             rigid_variables, fails, NoNamedBranch),
+            ("structural right rigid-variable failure",
+             rigid_right_variable, fails, NoNamedBranch),
+            ("structural combination decomposition",
+             combination_decomposition, succeeds, NoNamedBranch),
+            ("structural wildcard mismatch",
+             structural_wildcard_mismatch, fails, StructuralWildcard)]
+
+         fun agrees (_, make, expected, expected_branch) =
+           let
+             val (store, config, pair) = make ()
+             val ordinary = clasetUnify.unify store config pair
+             val timing = clasetUnify.new_timed_unification (parity_clock ())
+             val timed = clasetUnify.unify_timed timing store config pair
+             val statistics = clasetUnify.timed_unification_statistics timing
+             val branches =
+               clasetUnify.timed_unification_branch_statistics timing
+             val subtotal =
+               Time.+
+                 (#normalization_setup_time statistics,
+                  Time.+
+                    (#traversal_decomposition_binding_time statistics,
+                     #failure_cleanup_time statistics))
+             val outcome_equal =
+               case (ordinary, timed) of
+                   (NONE, NONE) => true
+                 | (SOME left, SOME right) =>
+                     same_unification_store left right
+                 | _ => false
+           in
+             expected (store, config, pair, ordinary) andalso
+             exact_branch expected_branch branches andalso
+             outcome_equal andalso #calls statistics = 1 andalso
+             #failures statistics =
+               (if Option.isSome ordinary then 0 else 1) andalso
+             #failure_cleanup_time statistics = Time.zeroTime andalso
+             #max_failure_cleanup_time statistics = Time.zeroTime andalso
+             subtotal = #unification_time statistics andalso
+             #normalization_setup_time statistics =
+               #max_normalization_setup_time statistics andalso
+             #traversal_decomposition_binding_time statistics =
+               #max_traversal_decomposition_binding_time statistics andalso
+             #unification_time statistics =
+               #max_unification_time statistics andalso
+             #max_unification_time statistics =
+               Time.+
+                 (#max_normalization_setup_time statistics,
+                  #max_traversal_decomposition_binding_time statistics)
+           end
+       in
+         List.all agrees fixtures
+       end)
+
+val _ =
+  test
+    ("timed unifier control and clock exceptions preserve identity",
+     fn () =>
+       let
+         exception TimedParity of int ref
+         val sentinel = ref 173
+         val config =
+           {mode = clasetUnify.Unify, rule_metas = no_rule_metas}
+
+         fun run clock check =
+           let
+             val timing = clasetUnify.new_timed_unification clock
+             val identity =
+               ((ignore
+                   (clasetUnify.unify_timed timing clasetMeta.empty config
+                     (boolSyntax.T, boolSyntax.T));
+                 false)
+                handle clasetUnify.TIMED_UNIFICATION_CALLBACK error =>
+                         check error
+                     | _ => false)
+             val statistics =
+               clasetUnify.timed_unification_statistics timing
+           in
+             identity andalso #calls statistics = 0 andalso
+             #failures statistics = 0 andalso
+             #unification_time statistics = Time.zeroTime andalso
+             #failure_cleanup_time statistics = Time.zeroTime andalso
+             #max_failure_cleanup_time statistics = Time.zeroTime
+           end
+
+         val custom_ok =
+           run (fn () => raise TimedParity sentinel)
+             (fn TimedParity actual => actual = sentinel | _ => false)
+         val hol_ok =
+           run
+             (fn () =>
+               raise mk_HOL_ERR "classical-selftest" "timed-parity"
+                 "sentinel")
+             (fn HOL_ERR error =>
+                   Feedback.top_structure_of error = "classical-selftest"
+               | _ => false)
+         val interrupt_ok =
+           run (fn () => raise Interrupt)
+             (fn Interrupt => true | _ => false)
+         val readings =
+           ref [Time.fromSeconds 2, Time.fromSeconds 1]
+         fun backwards () =
+           case !readings of
+               [] => raise Fail "parity backwards clock exhausted"
+             | value :: rest => (readings := rest; value)
+         val backwards_ok =
+           run backwards
+             (fn HOL_ERR error =>
+                   Feedback.top_structure_of error = "clasetUnify"
+               | _ => false)
+       in
+         custom_ok andalso hol_ok andalso interrupt_ok andalso backwards_ok
+       end)
+
 fun apply_substitution (tys, tms) tm =
   Term.subst tms (Term.inst tys tm)
 
@@ -2085,6 +2536,14 @@ fun drain_timed_exact sequence =
     | clasetStep.TimedRuleInterrupted =>
         raise Fail "unexpected timed exact-rule interruption"
 
+fun drain_timed_exact_v2 sequence =
+  case clasetStep.timed_rule_cases_v2 sequence of
+      clasetStep.TimedRuleEmptyV2 => []
+    | clasetStep.TimedRuleYieldV2 (value, rest) =>
+        value :: drain_timed_exact_v2 rest
+    | clasetStep.TimedRuleInterruptedV2 =>
+        raise Fail "unexpected timed-v2 exact-rule interruption"
+
 val timed_cases_api :
     clasetStep.timed_rule_sequence -> clasetStep.timed_rule_pull =
   clasetStep.timed_rule_cases
@@ -2427,6 +2886,155 @@ val _ =
            clasetStep.RuleEnter andalso
          #boundary (hd (!backwards_observations)) =
            clasetStep.RuleEnter
+       end)
+
+val _ =
+  test
+    ("timed-v2 minor split is exact bounded and replay-equivalent",
+     fn () =>
+       let
+         val p = Term.mk_var ("timed_v2_p", bool_ty)
+         val q = Term.mk_var ("timed_v2_q", bool_ty)
+         val r = Term.mk_var ("timed_v2_r", bool_ty)
+         val conjunction = boolSyntax.mk_conj (p, q)
+         val goal = ([r, conjunction, conjunction], p)
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
+         val ordinary =
+           drain_exact
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               specification (clasetGoal.from_goal goal, 1))
+         val sequence =
+           clasetStep.blast_rule_step_timed_v2
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification
+             (clasetGoal.from_goal goal, 1)
+         val timed = drain_timed_exact_v2 sequence
+         val report = clasetStep.timed_rule_statistics_v2 sequence
+         val base = #base report
+         val minor = #minor_unification_times report
+         val subtotal =
+           Time.+
+             (#normalization_setup_time minor,
+              Time.+
+                (#traversal_decomposition_binding_time minor,
+                 #failure_cleanup_time minor))
+       in
+         length ordinary = 2 andalso length timed = 2 andalso
+         ListPair.allEq (same_exact_transition goal) (ordinary, timed)
+         andalso
+         #attempt_selections base = 3 andalso
+         #minor_unifications base = 3 andalso #calls minor = 3 andalso
+         #failures minor = 0 andalso
+         #failure_cleanup_time minor = Time.zeroTime andalso
+         #max_failure_cleanup_time minor = Time.zeroTime andalso
+         subtotal = #minor_unification_time minor andalso
+         #minor_unification_time base = #minor_unification_time minor
+         andalso phase_time_sum base = #classical_time base andalso
+         not
+           (Time.< (#normalization_setup_time minor,
+                    #max_normalization_setup_time minor)) andalso
+         not
+           (Time.<
+             (#traversal_decomposition_binding_time minor,
+              #max_traversal_decomposition_binding_time minor)) andalso
+         not
+           (Time.< (#minor_unification_time minor,
+                    #max_minor_unification_time minor))
+       end)
+
+val _ =
+  test
+    ("timed-v2 failure interruption and clock errors tunnel exactly",
+     fn () =>
+       let
+         exception V2Clock of int ref
+         val sentinel = ref 131
+         val p = Term.mk_var ("timed_v2_failure_p", bool_ty)
+         val input = (clasetGoal.from_goal ([], p), 1)
+
+         fun make clock observe stop =
+           clasetStep.blast_rule_step_timed_v2
+             {clock = clock, observe = observe, stop = stop}
+             clasetLib.empty_cs
+             {theorem = boolTheory.TRUTH, elim = false} input
+
+         val failed = make (ticking_clock ()) NONE (fn () => false)
+         val failed_results = drain_timed_exact_v2 failed
+         val failed_report = clasetStep.timed_rule_statistics_v2 failed
+         val failed_minor = #minor_unification_times failed_report
+         val stop_now = ref false
+         fun observe event =
+           if #boundary event = clasetStep.RuleEnter andalso
+              #phase event = clasetStep.MinorUnification then
+             stop_now := true
+           else ()
+         val interrupted =
+           make (ticking_clock ()) (SOME observe) (fn () => !stop_now)
+         val interrupted_pull =
+           clasetStep.timed_rule_cases_v2 interrupted
+         val interrupted_report =
+           clasetStep.timed_rule_statistics_v2 interrupted
+         val interrupted_minor =
+           #minor_unification_times interrupted_report
+         fun arm armed event =
+           if #boundary event = clasetStep.RuleEnter andalso
+              #phase event = clasetStep.MinorUnification then
+             armed := true
+           else ()
+         val clock_ok =
+           let
+             val armed = ref false
+             val sequence =
+               make
+                 (fn () =>
+                   if !armed then raise V2Clock sentinel
+                   else Time.zeroTime)
+                 (SOME (arm armed))
+                 (fn () => false)
+           in
+             (ignore (clasetStep.timed_rule_cases_v2 sequence); false)
+             handle V2Clock actual => actual = sentinel | _ => false
+           end
+         val backwards_ok =
+           let
+             val armed = ref false
+             val readings =
+               ref [Time.fromSeconds 2, Time.fromSeconds 1]
+             fun backwards () =
+               if not (!armed) then Time.zeroTime
+               else
+                 case !readings of
+                     [] =>
+                       raise Fail "timed-v2 backwards clock exhausted"
+                   | value :: rest => (readings := rest; value)
+             val sequence =
+               make backwards (SOME (arm armed)) (fn () => false)
+           in
+             (ignore (clasetStep.timed_rule_cases_v2 sequence); false)
+             handle HOL_ERR error =>
+                      (Feedback.top_structure_of error = "clasetStep" orelse
+                       Feedback.top_structure_of error = "clasetUnify")
+                  | _ => false
+           end
+       in
+         null failed_results andalso #calls failed_minor = 1 andalso
+         #failures failed_minor = 1 andalso
+         #failure_cleanup_time failed_minor = Time.zeroTime andalso
+         #normalization_setup_time failed_minor =
+           #max_normalization_setup_time failed_minor andalso
+         #traversal_decomposition_binding_time failed_minor =
+           #max_traversal_decomposition_binding_time failed_minor
+         andalso
+         #minor_unification_time failed_minor =
+           #max_minor_unification_time failed_minor andalso
+         (case interrupted_pull of
+              clasetStep.TimedRuleInterruptedV2 => true
+            | _ => false) andalso
+         #calls interrupted_minor = 0 andalso
+         #minor_unification_time interrupted_minor = Time.zeroTime
+         andalso clock_ok andalso backwards_ok
        end)
 
 val _ =
