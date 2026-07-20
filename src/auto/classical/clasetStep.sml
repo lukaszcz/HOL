@@ -700,6 +700,326 @@ fun exact_rule_results cs {theorem, elim} (node, pos) =
     else attempt NONE
   end
 
+datatype measured_rule_kind = IntroRule | ElimRule
+
+datatype measured_rule_phase =
+    AttemptSelection
+  | FresheningSetup
+  | MinorUnification
+  | EliminationMajorUnification
+  | RuleInstantiation
+  | ChildStoreConstruction
+  | DirectResultConstruction
+  | LazyResultYield
+  | DirectChildReplacement
+  | ReplayRecordConstruction
+  | RecordInsertion
+
+datatype measured_rule_boundary = RuleEnter | RuleExit
+
+type measured_rule_observation =
+  {boundary : measured_rule_boundary,
+   phase : measured_rule_phase,
+   goal_position : goalpos,
+   rule_kind : measured_rule_kind,
+   assumption_position : int option}
+
+type measured_rule_statistics =
+  {cooperative_checkpoints : int,
+   phase_entries : int,
+   phase_exits : int,
+   attempt_selections : int,
+   freshening_setups : int,
+   minor_unifications : int,
+   elimination_major_unifications : int,
+   rule_instantiations : int,
+   child_store_constructions : int,
+   direct_result_constructions : int,
+   lazy_result_yields : int,
+   direct_child_replacements : int,
+   replay_record_constructions : int,
+   record_insertions : int,
+   intro_attempts : int,
+   elim_attempts : int}
+
+type measured_rule_monitor =
+  {observe : (measured_rule_observation -> unit) option,
+   stop : unit -> bool,
+   current : measured_rule_observation option ref,
+   goal_position : goalpos,
+   rule_kind : measured_rule_kind,
+   cooperative_checkpoints : int ref,
+   phase_entries : int ref,
+   phase_exits : int ref,
+   attempt_selections : int ref,
+   freshening_setups : int ref,
+   minor_unifications : int ref,
+   elimination_major_unifications : int ref,
+   rule_instantiations : int ref,
+   child_store_constructions : int ref,
+   direct_result_constructions : int ref,
+   lazy_result_yields : int ref,
+   direct_child_replacements : int ref,
+   replay_record_constructions : int ref,
+   record_insertions : int ref,
+   intro_attempts : int ref,
+   elim_attempts : int ref}
+
+exception MEASURED_RULE_INTERRUPTED
+exception MEASURED_RULE_CALLBACK of exn
+
+fun increment counter = counter := !counter + 1
+
+fun count_measured_rule_entry
+      (monitor : measured_rule_monitor) phase =
+  (increment (#phase_entries monitor);
+   case phase of
+       AttemptSelection =>
+         (increment (#attempt_selections monitor);
+          case #rule_kind monitor of
+              IntroRule => increment (#intro_attempts monitor)
+            | ElimRule => increment (#elim_attempts monitor))
+     | FresheningSetup => increment (#freshening_setups monitor)
+     | MinorUnification => increment (#minor_unifications monitor)
+     | EliminationMajorUnification =>
+         increment (#elimination_major_unifications monitor)
+     | RuleInstantiation => increment (#rule_instantiations monitor)
+     | ChildStoreConstruction =>
+         increment (#child_store_constructions monitor)
+     | DirectResultConstruction =>
+         increment (#direct_result_constructions monitor)
+     | LazyResultYield => increment (#lazy_result_yields monitor)
+     | DirectChildReplacement =>
+         increment (#direct_child_replacements monitor)
+     | ReplayRecordConstruction =>
+         increment (#replay_record_constructions monitor)
+     | RecordInsertion => increment (#record_insertions monitor))
+
+fun invoke_measured_rule callback argument =
+  callback argument
+  handle error => raise MEASURED_RULE_CALLBACK error
+
+fun measured_rule_checkpoint
+      (monitor : measured_rule_monitor) assumption boundary phase =
+  let
+    val observation : measured_rule_observation =
+      {boundary = boundary, phase = phase,
+       goal_position = #goal_position monitor,
+       rule_kind = #rule_kind monitor,
+       assumption_position = assumption}
+    val _ = #current monitor := SOME observation
+    val _ =
+      case boundary of
+          RuleEnter => count_measured_rule_entry monitor phase
+        | RuleExit => increment (#phase_exits monitor)
+    val _ =
+      case #observe monitor of
+          NONE => ()
+        | SOME observer => invoke_measured_rule observer observation
+    val _ = increment (#cooperative_checkpoints monitor)
+  in
+    if invoke_measured_rule (#stop monitor) () then
+      raise MEASURED_RULE_INTERRUPTED
+    else ()
+  end
+
+fun measured_rule_bracket monitor assumption phase operation argument =
+  let
+    val _ =
+      measured_rule_checkpoint monitor assumption RuleEnter phase
+    val result = operation argument
+    val _ =
+      measured_rule_checkpoint monitor assumption RuleExit phase
+  in
+    result
+  end
+
+fun measured_rule_total operation argument =
+  SOME (operation argument)
+  handle MEASURED_RULE_INTERRUPTED => raise MEASURED_RULE_INTERRUPTED
+       | MEASURED_RULE_CALLBACK error =>
+           raise MEASURED_RULE_CALLBACK error
+       | Interrupt => raise Interrupt
+       | _ => NONE
+
+(* This is intentionally a measured-only copy of the exact stored-rule
+   worker above.  The pure theorem, store, child and replay helpers remain
+   shared, while the ordinary performance-sensitive call graph receives no
+   monitor option, reference check or additional closure. *)
+fun try_rule_measured monitor cs node pos
+      (tag, (is_elim, theorem)) assumption =
+  let
+    val (asl, w) =
+      measured_rule_bracket monitor (Option.map #1 assumption)
+        AttemptSelection
+        (fn () => clasetGoal.render node pos) ()
+    val (fresh, config) =
+      measured_rule_bracket monitor (Option.map #1 assumption)
+        FresheningSetup
+        (fn () =>
+          let
+            val fresh = freshen_rule node pos is_elim theorem
+            val config =
+              {mode = clasetUnify.Unify, rule_metas = #metas fresh}
+          in
+            (fresh, config)
+          end) ()
+    val store1 =
+      case measured_rule_bracket monitor (Option.map #1 assumption)
+        MinorUnification
+        (fn () =>
+          clasetUnify.unify (#store fresh) config
+            (#conclusion fresh, w)) ()
+      of
+          NONE => raise Match
+        | SOME store => store
+    val (consumed, supplied, remaining, store2) =
+      if is_elim then
+        measured_rule_bracket monitor (Option.map #1 assumption)
+          EliminationMajorUnification
+          (fn () =>
+            let
+              val (assumption_pos, major) = valOf assumption
+              val rule_major = hd (#premises fresh)
+              val store =
+                case clasetUnify.unify store1 config
+                  (rule_major, major)
+                of
+                    NONE => raise Match
+                  | SOME result => result
+            in
+              (SOME assumption_pos, [major], tl (#premises fresh),
+               store)
+            end) ()
+      else (NONE, [], #premises fresh, store1)
+    val (final_store, normalized_rule, normalized_premises) =
+      measured_rule_bracket monitor (Option.map #1 assumption)
+        RuleInstantiation
+        (fn () =>
+          let
+            val (type_substitution, term_substitution) =
+              clasetMeta.collapse store2
+            val instantiated =
+              Drule.INST_TY_TERM
+                (term_substitution, type_substitution) (#core fresh)
+            val normalized_rule0 = normalize_rule_thm instantiated
+            val normalized_premises =
+              map (normalize_term store2) remaining
+
+            fun align_hypothesis (hypothesis, current) =
+              case List.find
+                (fn asm => closing_equal store2 hypothesis asm) asl
+              of
+                  NONE => raise Match
+                | SOME asm =>
+                    Drule.PROVE_HYP
+                      (assumption_thm asm hypothesis) current
+
+            val normalized_rule =
+              List.foldl align_hypothesis normalized_rule0
+                (hyp normalized_rule0)
+          in
+            (store2, normalized_rule, normalized_premises)
+          end) ()
+    val (children, child_store, child_goals) =
+      measured_rule_bracket monitor (Option.map #1 assumption)
+        ChildStoreConstruction
+        (fn () =>
+          let
+            val working = clasetGoal.set_store final_store node
+            val (children, child_store) =
+              clasetGoal.children working
+                {pos = pos, premises = normalized_premises,
+                 consumed = consumed}
+          in
+            (children, child_store,
+             map (cgoal_render child_store) children)
+          end) ()
+  in
+    measured_rule_bracket monitor (Option.map #1 assumption)
+      DirectResultConstruction
+      (fn () =>
+        let
+          val supplied_thms =
+            case (is_elim, assumption) of
+                (true, SOME (_, major)) =>
+                  [assumption_thm (normalize_term final_store major)
+                    (hd
+                      (clasetRules.rule_premises_of clasetRules.Elim
+                        normalized_rule))]
+              | _ => []
+          val target = normalize_term child_store w
+          val validation =
+            rule_validation normalized_rule supplied_thms children
+              normalized_premises target
+          val old_params =
+            map (fst o dest_var)
+              (#params (clasetGoal.goal_at node pos))
+          fun child_eigens ({params, ...} : clasetGoal.cgoal) =
+            List.filter
+              (fn name =>
+                not (List.exists (fn old => old = name) old_params))
+              (map (fst o dest_var) params)
+          val new_eigens = map child_eigens children
+          val created = #metas fresh
+          val (original, variant) = rule_origin cs false theorem
+
+          fun replay_instance store =
+            let
+              val (type_substitution, term_substitution) =
+                clasetMeta.collapse store
+              val replay_theorem =
+                Drule.INST_TY_TERM
+                  (term_substitution, type_substitution) (#core fresh)
+            in
+              {theorem = replay_theorem, elim = is_elim,
+               consumed = consumed, parameters = old_params,
+               eigenvariables = new_eigens}
+            end
+        in
+          Direct
+            {kind =
+               RuleApplication
+                 {original = original, theorem = theorem,
+                  variant = variant, elim = is_elim},
+             consumed = consumed, created = created,
+             eigenvariables = new_eigens,
+             result = (child_goals, validation),
+             children = SOME children,
+             action = clasetReplay.rule_action replay_instance,
+             closed = map (fn _ => NONE) children,
+             store = child_store}
+        end) ()
+  end
+
+fun exact_rule_results_measured monitor cs {theorem, elim} (node, pos) =
+  let
+    val tag : clasetLib.tag = {weight = 0, index = 0}
+    val entry = (tag, (elim, theorem))
+
+    fun attempt assumption =
+      seq.delay
+        (fn () =>
+          case measured_rule_total
+            (fn () =>
+              try_rule_measured monitor cs node pos entry assumption) ()
+          of
+              SOME direct =>
+                measured_rule_bracket monitor (Option.map #1 assumption)
+                  LazyResultYield seq.result direct
+            | NONE => seq.empty)
+
+    fun eliminations _ [] = seq.empty
+      | eliminations assumption_pos (major :: rest) =
+          seq.append (attempt (SOME (assumption_pos, major)))
+            (seq.delay
+              (fn () => eliminations (assumption_pos + 1) rest))
+  in
+    if elim then
+      eliminations 1 (#asl (clasetGoal.goal_at node pos))
+    else attempt NONE
+  end
+
 fun all_weights _ = true
 fun weight_is expected ({weight, ...} : clasetLib.tag) = weight = expected
 
@@ -1378,6 +1698,127 @@ val blast_contradiction_step =
   direct_step unifying_contradiction_results
 fun blast_rule_step cs specification =
   direct_step (exact_rule_results cs specification)
+
+datatype measured_rule_sequence =
+  MeasuredRuleSequence of
+    {sequence : (step_record * node) seq.seq,
+     monitor : measured_rule_monitor}
+
+datatype measured_rule_pull =
+    MeasuredRuleEmpty
+  | MeasuredRuleYield of
+      (step_record * node) * measured_rule_sequence
+  | MeasuredRuleInterrupted
+
+fun direct_step_measured monitor results (node, pos) =
+  seq.map
+    (fn direct =>
+      let
+        val assumption = direct_consumed direct
+        val (validation, next) =
+          measured_rule_bracket monitor assumption
+            DirectChildReplacement
+            (fn () =>
+              let
+                val (_, validation) = direct_result direct
+                val stored =
+                  clasetGoal.set_store (direct_store direct) node
+                val children =
+                  case direct_children direct of
+                      SOME values => values
+                    | NONE =>
+                        raise mk_HOL_ERR "clasetStep"
+                          "direct_step_measured"
+                          "an exact engine transition has no children"
+                val next =
+                  clasetGoal.replace_goal stored
+                    {pos = pos, children = children,
+                     store = direct_store direct}
+              in
+                (validation, next)
+              end) ()
+        val record =
+          measured_rule_bracket monitor assumption
+            ReplayRecordConstruction
+            (fn () => make_record pos validation direct) ()
+        val recorded =
+          measured_rule_bracket monitor assumption RecordInsertion
+            (fn () => clasetGoal.record_step record next) ()
+      in
+        (record, recorded)
+      end)
+    (results (node, pos))
+
+fun new_measured_rule_monitor {observe, stop} pos rule_kind =
+  {observe = observe, stop = stop,
+   current = ref (NONE : measured_rule_observation option),
+   goal_position = pos, rule_kind = rule_kind,
+   cooperative_checkpoints = ref 0,
+   phase_entries = ref 0, phase_exits = ref 0,
+   attempt_selections = ref 0, freshening_setups = ref 0,
+   minor_unifications = ref 0,
+   elimination_major_unifications = ref 0,
+   rule_instantiations = ref 0,
+   child_store_constructions = ref 0,
+   direct_result_constructions = ref 0,
+   lazy_result_yields = ref 0,
+   direct_child_replacements = ref 0,
+   replay_record_constructions = ref 0,
+   record_insertions = ref 0,
+   intro_attempts = ref 0, elim_attempts = ref 0}
+  : measured_rule_monitor
+
+fun blast_rule_step_measured controls cs specification (input as (_, pos)) =
+  let
+    val rule_kind =
+      if #elim specification then ElimRule else IntroRule
+    val monitor =
+      new_measured_rule_monitor controls pos rule_kind
+    val sequence =
+      direct_step_measured monitor
+        (exact_rule_results_measured monitor cs specification) input
+  in
+    MeasuredRuleSequence {sequence = sequence, monitor = monitor}
+  end
+
+fun measured_rule_cases
+      (MeasuredRuleSequence {sequence, monitor}) =
+  ((case seq.cases sequence of
+        NONE => MeasuredRuleEmpty
+      | SOME (value, tail) =>
+          MeasuredRuleYield
+            (value,
+             MeasuredRuleSequence {sequence = tail, monitor = monitor}))
+   handle MEASURED_RULE_INTERRUPTED => MeasuredRuleInterrupted
+        | MEASURED_RULE_CALLBACK error => raise error)
+
+fun measured_rule_current
+      (MeasuredRuleSequence {monitor, ...}) =
+  !(#current monitor)
+
+fun measured_rule_statistics
+      (MeasuredRuleSequence {monitor, ...}) : measured_rule_statistics =
+  {cooperative_checkpoints = !(#cooperative_checkpoints monitor),
+   phase_entries = !(#phase_entries monitor),
+   phase_exits = !(#phase_exits monitor),
+   attempt_selections = !(#attempt_selections monitor),
+   freshening_setups = !(#freshening_setups monitor),
+   minor_unifications = !(#minor_unifications monitor),
+   elimination_major_unifications =
+     !(#elimination_major_unifications monitor),
+   rule_instantiations = !(#rule_instantiations monitor),
+   child_store_constructions = !(#child_store_constructions monitor),
+   direct_result_constructions =
+     !(#direct_result_constructions monitor),
+   lazy_result_yields = !(#lazy_result_yields monitor),
+   direct_child_replacements =
+     !(#direct_child_replacements monitor),
+   replay_record_constructions =
+     !(#replay_record_constructions monitor),
+   record_insertions = !(#record_insertions monitor),
+   intro_attempts = !(#intro_attempts monitor),
+   elim_attempts = !(#elim_attempts monitor)}
+
 val blast_disch_step = direct_step disch_results
 val blast_gen_step = direct_step gen_results
 val blast_ccontr_step = direct_step ccontr_results

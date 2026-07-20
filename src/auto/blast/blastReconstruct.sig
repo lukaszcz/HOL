@@ -98,6 +98,79 @@ sig
     {observe : (observation -> unit) option, stop : unit -> bool} ->
     goal -> proof -> measured_result
 
+  type stored_rule_observation =
+    {script_position : int,
+     step_kind : step_kind,
+     duplicate : bool,
+     rule : clasetStep.measured_rule_observation}
+
+  type detailed_statistics =
+    {cooperative_checkpoints : int,
+     phase_entries : int,
+     phase_exits : int,
+     replay_recursions : int,
+     alternative_pulls : int,
+     typed_steps : int,
+     hyp_subst_steps : int,
+     close_assume_steps : int,
+     close_contradiction_steps : int,
+     safe_rule_steps : int,
+     defer_goal_steps : int,
+     unsafe_rule_steps : int,
+     stored_rule_setups : int,
+     stored_rule_transitions : int,
+     duplicate_child_moves : int,
+     finish_open_goal_checks : int,
+     grounding_attempts : int,
+     kernel_replay_attempts : int,
+     finish_residual_goal_checks : int,
+     stored_rule_checkpoints : int,
+     stored_rule_phase_entries : int,
+     stored_rule_phase_exits : int,
+     stored_rule_attempt_selections : int,
+     stored_rule_freshening_setups : int,
+     stored_rule_minor_unifications : int,
+     stored_rule_major_unifications : int,
+     stored_rule_instantiations : int,
+     stored_rule_child_store_constructions : int,
+     stored_rule_direct_result_constructions : int,
+     stored_rule_lazy_yields : int,
+     stored_rule_direct_child_replacements : int,
+     stored_rule_replay_record_constructions : int,
+     stored_rule_record_insertions : int,
+     stored_rule_intro_attempts : int,
+     stored_rule_elim_attempts : int,
+     stored_rule_safe_attempts : int,
+     stored_rule_unsafe_attempts : int}
+
+  type detailed_measured_result =
+    {completion : completion,
+     current_phase : observation option,
+     current_stored_rule : stored_rule_observation option,
+     result : (goal list * validation) option,
+     statistics : detailed_statistics}
+
+  (* The detailed entry points additionally publish classical exact-rule
+     boundaries.  Their snapshot combines the caller-owned script index and
+     safe/unsafe/duplicate label with the caller-neutral classical event.
+     Stored-rule checkpoints are included in cooperative_checkpoints, while
+     phase_entries/phase_exits continue to count outer reconstruction phases;
+     stored_rule_phase_entries/stored_rule_phase_exits count the classical
+     boundaries separately.  A classical interruption leaves the enclosing
+     AlternativeEnumeration Enter unmatched and returns Interrupted. *)
+  val reconstructWithMeasuredDetailed :
+    {observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> detailed_measured_result
+  val reconstructMeasuredDetailed :
+    {observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    goal -> proof -> detailed_measured_result
+
   (* Search continuations reject failed reconstruction with
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :

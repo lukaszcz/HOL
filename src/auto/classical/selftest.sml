@@ -2064,6 +2064,243 @@ fun valid_grounded_replay original final_node =
     List.null residues
   end
 
+fun drain_exact sequence =
+  case seq.cases sequence of
+      NONE => []
+    | SOME (value, rest) => value :: drain_exact rest
+
+fun drain_measured_exact sequence =
+  case clasetStep.measured_rule_cases sequence of
+      clasetStep.MeasuredRuleEmpty => []
+    | clasetStep.MeasuredRuleYield (value, rest) =>
+        value :: drain_measured_exact rest
+    | clasetStep.MeasuredRuleInterrupted =>
+        raise Fail "unexpected measured exact-rule interruption"
+
+fun same_exact_transition goal ((left_record, left_node),
+      (right_record, right_node)) =
+  clasetStep.consumed_of left_record =
+    clasetStep.consumed_of right_record andalso
+  same_goals (rendered_goals left_node) (rendered_goals right_node)
+  andalso
+  clasetGoal.replay_length left_node =
+    clasetGoal.replay_length right_node andalso
+  clasetReplay.to_string (clasetGoal.replay left_node) =
+    clasetReplay.to_string (clasetGoal.replay right_node) andalso
+  valid_step goal (left_record, left_node) andalso
+  valid_step goal (right_record, right_node)
+
+val _ =
+  test
+    ("measured exact rules preserve intro and elim sequence order",
+     fn () =>
+       let
+         val p = Term.mk_var ("measured_exact_p", bool_ty)
+         val q = Term.mk_var ("measured_exact_q", bool_ty)
+         val r = Term.mk_var ("measured_exact_r", bool_ty)
+         val conjunction = boolSyntax.mk_conj (p, q)
+         val intro_goal = ([p, q], conjunction)
+         val elim_goal = ([r, conjunction, conjunction], p)
+         val cs =
+           clasetLib.add_selims
+             [("measured-exact-and-elim",
+               clasetSeedTheory.CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+
+         fun compare specification goal =
+           let
+             val ordinary =
+               drain_exact
+                 (clasetStep.blast_rule_step cs specification
+                   (clasetGoal.from_goal goal, 1))
+             val measured_sequence =
+               clasetStep.blast_rule_step_measured
+                 {observe = NONE, stop = fn () => false}
+                 cs specification (clasetGoal.from_goal goal, 1)
+             val measured = drain_measured_exact measured_sequence
+           in
+             length ordinary = length measured andalso
+             ListPair.allEq (same_exact_transition goal)
+               (ordinary, measured)
+           end
+
+         val intro_ok =
+           compare {theorem = boolTheory.AND_INTRO_THM, elim = false}
+             intro_goal
+         val elim_specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
+         val ordinary_elims =
+           drain_exact
+             (clasetStep.blast_rule_step cs elim_specification
+               (clasetGoal.from_goal elim_goal, 1))
+         val measured_sequence =
+           clasetStep.blast_rule_step_measured
+             {observe = NONE, stop = fn () => false}
+             cs elim_specification (clasetGoal.from_goal elim_goal, 1)
+         val measured_elims = drain_measured_exact measured_sequence
+         val statistics =
+           clasetStep.measured_rule_statistics measured_sequence
+       in
+         intro_ok andalso length ordinary_elims = 2 andalso
+         map (clasetStep.consumed_of o #1) ordinary_elims =
+           [SOME 2, SOME 3] andalso
+         ListPair.allEq (same_exact_transition elim_goal)
+           (ordinary_elims, measured_elims) andalso
+         #attempt_selections statistics = 3 andalso
+         #elim_attempts statistics = 3 andalso
+         #minor_unifications statistics = 3 andalso
+         #elimination_major_unifications statistics = 3 andalso
+         #lazy_result_yields statistics = 2 andalso
+         #direct_child_replacements statistics = 2 andalso
+         #replay_record_constructions statistics = 2 andalso
+         #record_insertions statistics = 2
+       end)
+
+val _ =
+  test
+    ("measured exact-rule cutoff reports the precise deep boundary",
+     fn () =>
+       let
+         val p = Term.mk_var ("measured_cutoff_p", bool_ty)
+         val q = Term.mk_var ("measured_cutoff_q", bool_ty)
+         val stop_now = ref false
+         fun observe
+               ({boundary, phase, ...} :
+                  clasetStep.measured_rule_observation) =
+           case (boundary, phase) of
+               (clasetStep.RuleEnter,
+                clasetStep.ChildStoreConstruction) =>
+                  stop_now := true
+             | _ => ()
+         val sequence =
+           clasetStep.blast_rule_step_measured
+             {observe = SOME observe, stop = fn () => !stop_now}
+             clasetLib.empty_cs
+             {theorem = boolTheory.AND_INTRO_THM, elim = false}
+             (clasetGoal.from_goal
+                ([p, q], boolSyntax.mk_conj (p, q)), 1)
+         val pull = clasetStep.measured_rule_cases sequence
+         val statistics = clasetStep.measured_rule_statistics sequence
+       in
+         (case pull of
+              clasetStep.MeasuredRuleInterrupted => true
+            | _ => false) andalso
+         clasetStep.measured_rule_current sequence =
+           SOME
+             {boundary = clasetStep.RuleEnter,
+              phase = clasetStep.ChildStoreConstruction,
+              goal_position = 1,
+              rule_kind = clasetStep.IntroRule,
+              assumption_position = NONE} andalso
+         #cooperative_checkpoints statistics = 9 andalso
+         #phase_entries statistics = 5 andalso
+         #phase_exits statistics = 4 andalso
+         #child_store_constructions statistics = 1 andalso
+         #direct_result_constructions statistics = 0
+       end)
+
+val _ =
+  test
+    ("measured exact-rule callbacks preserve exception identity",
+     fn () =>
+       let
+         exception ExactObserver of int ref
+         val sentinel = ref 59
+         val p = Term.mk_var ("measured_callback_p", bool_ty)
+         val q = Term.mk_var ("measured_callback_q", bool_ty)
+         val input =
+           (clasetGoal.from_goal
+              ([p, q], boolSyntax.mk_conj (p, q)), 1)
+
+         fun at_instantiation action
+               ({boundary, phase, ...} :
+                  clasetStep.measured_rule_observation) =
+           case (boundary, phase) of
+               (clasetStep.RuleEnter,
+                clasetStep.RuleInstantiation) => action ()
+             | _ => ()
+
+         fun run observer =
+           let
+             val sequence =
+               clasetStep.blast_rule_step_measured
+                 {observe = SOME observer, stop = fn () => false}
+                 clasetLib.empty_cs
+                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
+                 input
+           in
+             ignore (clasetStep.measured_rule_cases sequence)
+           end
+         val hol_ok =
+           ((run
+               (at_instantiation
+                 (fn () =>
+                   raise mk_HOL_ERR "measured-exact-hol"
+                     "observe" "propagate"));
+             false)
+            handle HOL_ERR error =>
+                     Feedback.top_structure_of error =
+                       "measured-exact-hol"
+                 | _ => false)
+         val custom_ok =
+           ((run
+               (at_instantiation
+                 (fn () => raise ExactObserver sentinel));
+             false)
+            handle ExactObserver actual => actual = sentinel
+                 | _ => false)
+         val interrupt_ok =
+           ((run (at_instantiation (fn () => raise Interrupt)); false)
+            handle Interrupt => true | _ => false)
+       in
+         hol_ok andalso custom_ok andalso interrupt_ok
+       end)
+
+val _ =
+  test
+    ("measured exact-rule observations and outputs are deterministic",
+     fn () =>
+       let
+         val p = Term.mk_var ("measured_deterministic_p", bool_ty)
+         val q = Term.mk_var ("measured_deterministic_q", bool_ty)
+         val goal = ([p, q], boolSyntax.mk_conj (p, q))
+         fun run () =
+           let
+             val observations =
+               ref ([] : clasetStep.measured_rule_observation list)
+             fun observe event =
+               observations := event :: !observations
+             val sequence =
+               clasetStep.blast_rule_step_measured
+                 {observe = SOME observe, stop = fn () => false}
+                 clasetLib.empty_cs
+                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
+                 (clasetGoal.from_goal goal, 1)
+             val results = drain_measured_exact sequence
+             val views =
+               map
+                 (fn (record, node) =>
+                   (clasetStep.consumed_of record,
+                    rendered_goals node,
+                    clasetReplay.to_string (clasetGoal.replay node)))
+                 results
+           in
+             (rev (!observations), views,
+              clasetStep.measured_rule_statistics sequence)
+           end
+         val (observations1, views1, statistics1) = run ()
+         val (observations2, views2, statistics2) = run ()
+         fun same_view ((consumed1, goals1, replay1),
+                        (consumed2, goals2, replay2)) =
+           consumed1 = consumed2 andalso
+           same_goals goals1 goals2 andalso replay1 = replay2
+       in
+         observations1 = observations2 andalso
+         length views1 = length views2 andalso
+         ListPair.allEq same_view (views1, views2) andalso
+         statistics1 = statistics2
+       end)
+
 val _ =
   test
     ("match-mode derivation grounds and replays without search",

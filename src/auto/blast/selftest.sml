@@ -2627,6 +2627,34 @@ fun reconstructed cs depth goal =
 fun has_step predicate ({script, ...} : blastSearch.proof) =
   List.exists predicate script
 
+fun legacy_reconstruction_statistics_shape
+      ({cooperative_checkpoints, phase_entries, phase_exits,
+        replay_recursions, alternative_pulls, typed_steps,
+        hyp_subst_steps, close_assume_steps, close_contradiction_steps,
+        safe_rule_steps, defer_goal_steps, unsafe_rule_steps,
+        stored_rule_setups, stored_rule_transitions,
+        duplicate_child_moves, finish_open_goal_checks,
+        grounding_attempts, kernel_replay_attempts,
+        finish_residual_goal_checks} : blastReconstruct.statistics) =
+  cooperative_checkpoints + phase_entries + phase_exits +
+  replay_recursions + alternative_pulls + typed_steps +
+  hyp_subst_steps + close_assume_steps + close_contradiction_steps +
+  safe_rule_steps + defer_goal_steps + unsafe_rule_steps +
+  stored_rule_setups + stored_rule_transitions +
+  duplicate_child_moves + finish_open_goal_checks +
+  grounding_attempts + kernel_replay_attempts +
+  finish_residual_goal_checks >= 0
+
+fun legacy_reconstruction_result_shape
+      ({completion, current_phase, result, statistics} :
+         blastReconstruct.measured_result) =
+  (case completion of
+       blastReconstruct.Completed => true
+     | blastReconstruct.Interrupted => true) andalso
+  (case current_phase of NONE => true | SOME _ => true) andalso
+  (case result of NONE => true | SOME _ => true) andalso
+  legacy_reconstruction_statistics_shape statistics
+
 val _ =
   test
     ("reconstruction goldens cover T2 and T3 under Tactical.VALID",
@@ -2662,6 +2690,7 @@ val _ =
                  val statistics = #statistics report
                in
                  #completion report = blastReconstruct.Completed andalso
+                 legacy_reconstruction_result_shape report andalso
                  Option.isSome (#result report) andalso
                  #current_phase report =
                    SOME
@@ -2866,6 +2895,303 @@ val _ =
                  #safe_rule_steps statistics = 1 andalso
                  #stored_rule_setups statistics = 1 andalso
                  #stored_rule_transitions statistics = 1
+               end
+       end)
+
+val _ =
+  test
+    ("detailed stored replay has exact completed parity and counters",
+     fn () =>
+       let
+         val p = mk_var ("measured_detailed_p", bool)
+         val q = mk_var ("measured_detailed_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         val observations =
+           ref ([] : blastReconstruct.stored_rule_observation list)
+         fun observe event = observations := event :: !observations
+         val legacy_polls = ref 0
+         val detailed_polls = ref 0
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val ordinary =
+                   blastReconstruct.reconstructWith cs goal proof
+                 val legacy =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = NONE,
+                      stop =
+                        fn () =>
+                          (legacy_polls := !legacy_polls + 1; false)}
+                     cs goal proof
+                 val measured =
+                   blastReconstruct.reconstructWithMeasuredDetailed
+                     {observe = NONE,
+                      observe_stored_rule = SOME observe,
+                      stop =
+                        fn () =>
+                          (detailed_polls := !detailed_polls + 1; false)}
+                     cs goal proof
+                 val legacy_statistics = #statistics legacy
+                 val statistics = #statistics measured
+               in
+                 case (ordinary, #completion measured,
+                       #result measured,
+                       #current_stored_rule measured) of
+                     (SOME ([], ordinary_validation),
+                      blastReconstruct.Completed,
+                      SOME ([], measured_validation),
+                      SOME
+                        {script_position = 1,
+                         step_kind = blastReconstruct.SafeRuleStep,
+                         duplicate = false,
+                         rule =
+                           {boundary = clasetStep.RuleExit,
+                            phase = clasetStep.RecordInsertion,
+                            goal_position = 1,
+                            rule_kind = clasetStep.ElimRule,
+                            assumption_position = SOME 1}}) =>
+                       length (!observations) = 22 andalso
+                       legacy_reconstruction_result_shape legacy andalso
+                       #completion legacy = blastReconstruct.Completed
+                       andalso
+                       Option.isSome (#result legacy) andalso
+                       !legacy_polls =
+                         #cooperative_checkpoints legacy_statistics
+                       andalso
+                       !detailed_polls =
+                         #cooperative_checkpoints statistics andalso
+                       #cooperative_checkpoints statistics =
+                         #cooperative_checkpoints legacy_statistics +
+                         #stored_rule_checkpoints statistics andalso
+                       #phase_entries statistics =
+                         #phase_entries legacy_statistics andalso
+                       #phase_exits statistics =
+                         #phase_exits legacy_statistics andalso
+                       #stored_rule_checkpoints statistics = 22 andalso
+                       #stored_rule_phase_entries statistics = 11 andalso
+                       #stored_rule_phase_exits statistics = 11 andalso
+                       #stored_rule_attempt_selections statistics = 1
+                       andalso
+                       #stored_rule_freshening_setups statistics = 1
+                       andalso
+                       #stored_rule_minor_unifications statistics = 1
+                       andalso
+                       #stored_rule_major_unifications statistics = 1
+                       andalso
+                       #stored_rule_instantiations statistics = 1
+                       andalso
+                       #stored_rule_child_store_constructions statistics = 1
+                       andalso
+                       #stored_rule_direct_result_constructions statistics = 1
+                       andalso
+                       #stored_rule_lazy_yields statistics = 1 andalso
+                       #stored_rule_direct_child_replacements statistics = 1
+                       andalso
+                       #stored_rule_replay_record_constructions statistics = 1
+                       andalso
+                       #stored_rule_record_insertions statistics = 1
+                       andalso
+                       #stored_rule_intro_attempts statistics = 0 andalso
+                       #stored_rule_elim_attempts statistics = 1 andalso
+                       #stored_rule_safe_attempts statistics = 1 andalso
+                       #stored_rule_unsafe_attempts statistics = 0 andalso
+                       (ignore (ordinary_validation []);
+                        ignore (measured_validation []);
+                        true)
+                   | _ => false
+               end
+       end)
+
+val _ =
+  test
+    ("detailed stored replay interrupts at an exact classical boundary",
+     fn () =>
+       let
+         val p = mk_var ("measured_detailed_cutoff_p", bool)
+         val q = mk_var ("measured_detailed_cutoff_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         val stop_now = ref false
+         fun observe
+               ({rule = {boundary, phase, ...}, ...} :
+                  blastReconstruct.stored_rule_observation) =
+           case (boundary, phase) of
+               (clasetStep.RuleEnter,
+                clasetStep.RuleInstantiation) => stop_now := true
+             | _ => ()
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasuredDetailed
+                     {observe = NONE,
+                      observe_stored_rule = SOME observe,
+                      stop = fn () => !stop_now}
+                     cs goal proof
+                 val statistics = #statistics report
+               in
+                 #completion report = blastReconstruct.Interrupted andalso
+                 not (Option.isSome (#result report)) andalso
+                 #current_phase report =
+                   SOME
+                     {boundary = blastReconstruct.Enter,
+                      phase = blastReconstruct.AlternativeEnumeration}
+                 andalso
+                 #current_stored_rule report =
+                   SOME
+                     {script_position = 1,
+                      step_kind = blastReconstruct.SafeRuleStep,
+                      duplicate = false,
+                      rule =
+                        {boundary = clasetStep.RuleEnter,
+                         phase = clasetStep.RuleInstantiation,
+                         goal_position = 1,
+                         rule_kind = clasetStep.ElimRule,
+                         assumption_position = SOME 1}} andalso
+                 #stored_rule_checkpoints statistics = 9 andalso
+                 #stored_rule_phase_entries statistics = 5 andalso
+                 #stored_rule_phase_exits statistics = 4 andalso
+                 #stored_rule_attempt_selections statistics = 1 andalso
+                 #stored_rule_instantiations statistics = 1 andalso
+                 #stored_rule_child_store_constructions statistics = 0
+               end
+       end)
+
+val _ =
+  test
+    ("detailed stored observers cross reconstruction catch-all unchanged",
+     fn () =>
+       let
+         exception StoredObserver of int ref
+         val sentinel = ref 61
+         val p = mk_var ("measured_detailed_exception_p", bool)
+         val q = mk_var ("measured_detailed_exception_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+         fun at_instantiation action
+               ({rule = {boundary, phase, ...}, ...} :
+                  blastReconstruct.stored_rule_observation) =
+           case (boundary, phase) of
+               (clasetStep.RuleEnter,
+                clasetStep.RuleInstantiation) => action ()
+             | _ => ()
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 fun run observer =
+                   ignore
+                     (blastReconstruct.reconstructWithMeasuredDetailed
+                       {observe = NONE,
+                        observe_stored_rule = SOME observer,
+                        stop = fn () => false}
+                       cs goal proof)
+                 val hol_ok =
+                   ((run
+                       (at_instantiation
+                         (fn () =>
+                           raise mk_HOL_ERR
+                             "measured-stored-hol"
+                             "observe" "propagate"));
+                     false)
+                    handle HOL_ERR error =>
+                             Feedback.top_structure_of error =
+                               "measured-stored-hol"
+                         | _ => false)
+                 val custom_ok =
+                   ((run
+                       (at_instantiation
+                         (fn () => raise StoredObserver sentinel));
+                     false)
+                    handle StoredObserver actual => actual = sentinel
+                         | _ => false)
+                 val interrupt_ok =
+                   ((run (at_instantiation (fn () => raise Interrupt));
+                     false)
+                    handle Interrupt => true | _ => false)
+                 val stop_throw_now = ref false
+                 fun arm_stop observation =
+                   at_instantiation
+                     (fn () => stop_throw_now := true) observation
+                 val stop_ok =
+                   ((ignore
+                       (blastReconstruct.reconstructWithMeasuredDetailed
+                           {observe = NONE,
+                            observe_stored_rule = SOME arm_stop,
+                            stop =
+                              fn () =>
+                                if !stop_throw_now then
+                                  raise mk_HOL_ERR
+                                    "measured-stored-stop-hol"
+                                    "stop" "propagate"
+                                else false}
+                           cs goal proof);
+                     false)
+                    handle HOL_ERR error =>
+                             Feedback.top_structure_of error =
+                               "measured-stored-stop-hol"
+                         | _ => false)
+               in
+                 hol_ok andalso custom_ok andalso interrupt_ok andalso
+                 stop_ok
+               end
+       end)
+
+val _ =
+  test
+    ("detailed stored replay observations repeat deterministically",
+     fn () =>
+       let
+         val p = mk_var ("measured_detailed_repeat_p", bool)
+         val q = mk_var ("measured_detailed_repeat_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("andE", CONJ_ELIM_THM)] clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 fun run () =
+                   let
+                     val observations =
+                       ref
+                         ([] :
+                           blastReconstruct.stored_rule_observation list)
+                     fun observe event =
+                       observations := event :: !observations
+                     val report =
+                       blastReconstruct.reconstructWithMeasuredDetailed
+                         {observe = NONE,
+                          observe_stored_rule = SOME observe,
+                          stop = fn () => false}
+                         cs goal proof
+                   in
+                     (rev (!observations), #statistics report,
+                      #completion report,
+                      Option.isSome (#result report))
+                   end
+                 val (observations1, statistics1, completion1, result1) =
+                   run ()
+                 val (observations2, statistics2, completion2, result2) =
+                   run ()
+               in
+                 observations1 = observations2 andalso
+                 statistics1 = statistics2 andalso
+                 completion1 = completion2 andalso result1 = result2
                end
        end)
 
