@@ -28,10 +28,21 @@ sig
   (* Newest assignment first; used by blast's pruning test. *)
   val trailVars : state -> var list
   val clearTo : state -> int -> unit
+  (* As clearTo, calling the hook once after each restored assignment.  This
+     is used only by measured exception cleanup; ordinary state and rollback
+     carry no instrumentation. *)
+  val clearToWith : (unit -> unit) -> state -> int -> unit
   (* Normal measured rollback polls before each trail item.  If a poll raises,
      the remaining rollback is completed without callbacks before the exact
      exception is propagated. *)
   val clearToMeasured :
+    (unit -> unit) -> state -> int -> unit
+  (* Internal ownership-aware variant.  The cleanup callback receives the
+     exception, state and target mark after a checkpoint raises.  It may
+     decline restoration only when every term reachable from the state is
+     owned by the abandoning caller. *)
+  val clearToMeasuredWith :
+    (exn -> state -> int -> unit) ->
     (unit -> unit) -> state -> int -> unit
 
   val is_Var : term -> bool
@@ -81,5 +92,8 @@ sig
      back before the exception is propagated.  Rule-local assignments are
      deliberately off-trail and belong to the discarded rule instance. *)
   val unifyMeasured :
+    (unit -> unit) -> state -> var list * term * term -> bool
+  val unifyMeasuredWith :
+    (exn -> state -> int -> unit) ->
     (unit -> unit) -> state -> var list * term * term -> bool
 end

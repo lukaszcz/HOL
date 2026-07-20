@@ -66,6 +66,8 @@ type statistics =
    choices_pruned : int,
    rule_cache_hits : int,
    rule_conversions : int,
+   emergency_cleanup_assignments : int,
+   remaining_trail_assignments : int,
    cooperative_checkpoints : int,
    candidate_rules_enumerated : int,
    candidate_conversions_attempted : int,
@@ -745,10 +747,10 @@ fun tryClose state (formula, literal) =
     else NONE
   end
 
-fun tryCloseMeasured checkpoint state (formula, literal) =
+fun tryCloseMeasured cleanup checkpoint state (formula, literal) =
   let
     fun close (left, right, step) =
-      if unifyMeasured checkpoint state ([], left, right)
+      if unifyMeasuredWith cleanup checkpoint state ([], left, right)
       then SOME step
       else NONE
   in
@@ -824,7 +826,8 @@ datatype instrumentation =
   | On of {debug : bool, stop : unit -> bool}
 
 type phase_statistics =
-  {cooperative_checkpoints : int,
+  {emergency_cleanup_assignments : int,
+   cooperative_checkpoints : int,
    candidate_rules_enumerated : int,
    candidate_conversions_attempted : int,
    safe_rule_attempts : int,
@@ -837,7 +840,8 @@ type phase_statistics =
    literal_close_successes : int}
 
 val zero_phase_statistics : phase_statistics =
-  {cooperative_checkpoints = 0,
+  {emergency_cleanup_assignments = 0,
+   cooperative_checkpoints = 0,
    candidate_rules_enumerated = 0,
    candidate_conversions_attempted = 0,
    safe_rule_attempts = 0,
@@ -852,6 +856,7 @@ val zero_phase_statistics : phase_statistics =
 type phase_monitor =
   {checkpoint : unit -> unit,
    checkpointRollback : int -> unit,
+   cleanupException : exn -> blastTerm.state -> int -> unit,
    rule_monitor : blastRule.monitor,
    noteSafeRuleAttempt : unit -> unit,
    noteUnsafeRuleAttempt : unit -> unit,
@@ -865,7 +870,9 @@ datatype search_input =
     FormulaTerms of pterm list
   | GoalTerms of goal
 
-fun runTerms instrumentation claset depth input cont =
+datatype interruption_cleanup = Restore | AbandonOwned
+
+fun runTerms cleanup_policy instrumentation claset depth input cont =
   let
     exception INTERRUPTED
     exception STOP_EXCEPTION of exn
@@ -915,6 +922,7 @@ fun runTerms instrumentation claset depth input cont =
               val equality_successes = ref 0
               val literal_attempts = ref 0
               val literal_successes = ref 0
+              val emergency_cleanups = ref 0
 
               fun checkpoint () =
                 let
@@ -959,12 +967,30 @@ fun runTerms instrumentation claset depth input cont =
               fun literalSuccess () =
                 literal_successes := !literal_successes + 1
 
+              fun emergencyCleanup () =
+                emergency_cleanups := !emergency_cleanups + 1
+
+              (* Only INTERRUPTED may abandon state, and only because the
+                 goal entry point created every prototerm reachable from the
+                 search.  Predicate and continuation exceptions restore. *)
+              fun cleanupException exn cleanup_state mark =
+                case exn of
+                    INTERRUPTED =>
+                      (case cleanup_policy of
+                           Restore =>
+                             clearToWith emergencyCleanup cleanup_state mark
+                         | AbandonOwned => ())
+                  | _ =>
+                      clearToWith emergencyCleanup cleanup_state mark
+
               fun checkpointRollback mark =
                 checkpoint ()
-                handle exn => (clearTo state mark; raise exn)
+                handle exn =>
+                  (cleanupException exn state mark; raise exn)
 
               fun phaseResult () : phase_statistics =
-                {cooperative_checkpoints = !checkpoints,
+                {emergency_cleanup_assignments = !emergency_cleanups,
+                 cooperative_checkpoints = !checkpoints,
                  candidate_rules_enumerated = !candidates,
                  candidate_conversions_attempted = !conversions,
                  safe_rule_attempts = !safe_attempts,
@@ -983,6 +1009,7 @@ fun runTerms instrumentation claset depth input cont =
                SOME
                  {checkpoint = checkpoint,
                   checkpointRollback = checkpointRollback,
+                  cleanupException = cleanupException,
                   rule_monitor = rule_monitor,
                   noteSafeRuleAttempt = ruleAttempt safe_attempts,
                   noteUnsafeRuleAttempt = ruleAttempt unsafe_attempts,
@@ -1216,7 +1243,8 @@ fun runTerms instrumentation claset depth input cont =
                         #checkpointRollback monitor mark
 
                       fun rollback () =
-                        clearToMeasured (#checkpoint monitor) state mark
+                        clearToMeasuredWith (#cleanupException monitor)
+                          (#checkpoint monitor) state mark
 
                       fun newBranchesMeasured (vars', lim') prems =
                         let
@@ -1269,7 +1297,9 @@ fun runTerms instrumentation claset depth input cont =
                               val _ = #noteSafeRuleAttempt monitor ()
                             in
                               if not
-                                   (unifyMeasured checkpoint state
+                                   (unifyMeasuredWith
+                                      (#cleanupException monitor)
+                                      checkpoint state
                                       (rule_vars, pattern, formula)) then
                                 deeper other
                               else
@@ -1333,7 +1363,9 @@ fun runTerms instrumentation claset depth input cont =
                               val _ = checkpoint ()
                               val _ = #noteLiteralAttempt monitor ()
                             in
-                              case tryCloseMeasured checkpoint state
+                              case tryCloseMeasured
+                                     (#cleanupException monitor)
+                                     checkpoint state
                                      (formula, literal) of
                                   NONE => closeF literals
                                 | SOME step =>
@@ -1568,7 +1600,8 @@ fun runTerms instrumentation claset depth input cont =
                            #checkpointRollback monitor mark
 
                          fun rollback () =
-                           clearToMeasured (#checkpoint monitor) state mark
+                           clearToMeasuredWith (#cleanupException monitor)
+                             (#checkpoint monitor) state mark
 
                          fun map_checked _ [] = []
                            | map_checked f (item :: items) =
@@ -1628,7 +1661,9 @@ fun runTerms instrumentation claset depth input cont =
                                    #noteUnsafeRuleAttempt monitor ()
                                in
                                  if not
-                                      (unifyMeasured checkpoint state
+                                      (unifyMeasuredWith
+                                         (#cleanupException monitor)
+                                         checkpoint state
                                          (rule_vars, pattern, formula)) then
                                    deeper other
                                  else
@@ -1723,8 +1758,24 @@ fun runTerms instrumentation claset depth input cont =
                        [initial])))
               end
               handle PROVE => (Completed, NONE)
-                   | INTERRUPTED => (Interrupted, NONE))
-             handle STOP_EXCEPTION exn => raise exn)
+                   | INTERRUPTED =>
+                       (case phaseMonitor of
+                            SOME monitor =>
+                              #cleanupException monitor INTERRUPTED state 0
+                          | NONE => ();
+                        (Interrupted, NONE)))
+             handle STOP_EXCEPTION exn =>
+                      (case phaseMonitor of
+                           SOME monitor =>
+                             (#cleanupException monitor exn state 0;
+                              raise exn)
+                         | NONE => raise exn)
+                  | exn =>
+                      (case phaseMonitor of
+                           SOME monitor =>
+                             (#cleanupException monitor exn state 0;
+                              raise exn)
+                         | NONE => raise exn))
     val (inferences, maximum_resource_cost, fullTrace, phase) =
       instrumentationResult ()
     val statistics =
@@ -1736,6 +1787,9 @@ fun runTerms instrumentation claset depth input cont =
        choices_pruned = !pruned,
        rule_cache_hits = blastRule.hitCount rule_cache,
        rule_conversions = blastRule.conversionCount rule_cache,
+       emergency_cleanup_assignments =
+         #emergency_cleanup_assignments phase,
+       remaining_trail_assignments = trailSize state,
        cooperative_checkpoints = #cooperative_checkpoints phase,
        candidate_rules_enumerated = #candidate_rules_enumerated phase,
        candidate_conversions_attempted =
@@ -1756,26 +1810,27 @@ fun runTerms instrumentation claset depth input cont =
   end
 
 fun searchTerms claset depth formulas cont =
-  #result (runTerms Off claset depth (FormulaTerms formulas) cont)
+  #result
+    (runTerms Restore Off claset depth (FormulaTerms formulas) cont)
 
 fun searchTermsMeasured options claset depth formulas cont =
-  runTerms (On options) claset depth (FormulaTerms formulas) cont
+  runTerms Restore (On options) claset depth (FormulaTerms formulas) cont
 
 fun goalTerms goal = map first (blastRule.initialBranch goal)
 
 fun searchGoalMeasured options claset depth goal cont =
-  runTerms (On options) claset depth (GoalTerms goal) cont
+  runTerms AbandonOwned (On options) claset depth (GoalTerms goal) cont
 
 fun searchGoalWithStats claset depth goal cont =
   let
     val report =
-      runTerms Stats claset depth (GoalTerms goal) cont
+      runTerms Restore Stats claset depth (GoalTerms goal) cont
   in
     {result = #result report, statistics = #statistics report}
   end
 
 fun searchGoal claset depth goal cont =
-  #result (runTerms Off claset depth (GoalTerms goal) cont)
+  #result (runTerms Restore Off claset depth (GoalTerms goal) cont)
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)

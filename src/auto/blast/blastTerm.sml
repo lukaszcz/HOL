@@ -472,7 +472,18 @@ struct
              trail := vs;
              ntrail := !ntrail - 1)
 
-  fun clearToMeasured checkpoint (state as State {ntrail, trail}) mark =
+  fun clearToWith note (State {ntrail, trail}) mark =
+    while !ntrail <> mark do
+      case !trail of
+          [] => raise Fail "blastTerm.clearToWith: invalid trail mark"
+        | v :: vs =>
+            (v := NONE;
+             trail := vs;
+             ntrail := !ntrail - 1;
+             note ())
+
+  fun clearToMeasuredWith cleanup checkpoint
+        (state as State {ntrail, trail, ...}) mark =
     let
       fun clear () =
         if !ntrail = mark then ()
@@ -487,8 +498,14 @@ struct
                   clear ()))
     in
       clear ()
-      handle exn => (clearTo state mark; raise exn)
+      handle exn => (cleanup exn state mark; raise exn)
     end
+
+  fun clearToMeasured checkpoint state mark =
+    clearToMeasuredWith
+      (fn _ => fn cleanup_state => fn cleanup_mark =>
+         clearTo cleanup_state cleanup_mark)
+      checkpoint state mark
 
   fun unify state (vars, left, right) =
     let
@@ -529,7 +546,7 @@ struct
       handle UNIFY => (clearTo state mark; false)
     end
 
-  fun unifyMeasured checkpoint state (vars, left, right) =
+  fun unifyMeasuredWith cleanup checkpoint state (vars, left, right) =
     let
       val State {ntrail, trail} = state
       val mark = !ntrail
@@ -696,8 +713,15 @@ struct
         | unifysAux _ = raise UNIFY
     in
       ((unifyAux false (left, right); true)
-       handle UNIFY => (clearToMeasured checkpoint state mark; false)
-            | exn => (clearTo state mark; raise exn))
+       handle UNIFY =>
+                (clearToMeasuredWith cleanup checkpoint state mark; false)
+            | exn => (cleanup exn state mark; raise exn))
     end
+
+  fun unifyMeasured checkpoint state arguments =
+    unifyMeasuredWith
+      (fn _ => fn cleanup_state => fn cleanup_mark =>
+         clearTo cleanup_state cleanup_mark)
+      checkpoint state arguments
 
 end

@@ -1019,6 +1019,8 @@ fun zero_measured_work depth (statistics : blastSearch.statistics) =
   #choices_pruned statistics = 0 andalso
   #rule_cache_hits statistics = 0 andalso
   #rule_conversions statistics = 0 andalso
+  #emergency_cleanup_assignments statistics = 0 andalso
+  #remaining_trail_assignments statistics = 0 andalso
   #cooperative_checkpoints statistics > 0 andalso
   #candidate_rules_enumerated statistics = 0 andalso
   #candidate_conversions_attempted statistics = 0 andalso
@@ -1302,6 +1304,30 @@ fun same_phase_statistics
   #literal_close_attempts left = #literal_close_attempts right andalso
   #literal_close_successes left = #literal_close_successes right
 
+fun same_cleanup_statistics
+      (left : blastSearch.statistics, right : blastSearch.statistics) =
+  #emergency_cleanup_assignments left =
+    #emergency_cleanup_assignments right andalso
+  #remaining_trail_assignments left =
+    #remaining_trail_assignments right
+
+fun trace_variables trace =
+  List.concat
+    (map
+       (fn branches =>
+          List.concat
+            (map (fn (branch : blastSearch.branch) => #vars branch)
+               branches))
+       trace)
+
+fun trace_has_assignment trace =
+  List.exists (fn variable => Option.isSome (!variable))
+    (trace_variables trace)
+
+fun trace_is_unassigned trace =
+  List.all (fn variable => not (Option.isSome (!variable)))
+    (trace_variables trace)
+
 fun same_list compare ([], []) = true
   | same_list compare (left :: lefts, right :: rights) =
       compare (left, right) andalso same_list compare (lefts, rights)
@@ -1432,7 +1458,9 @@ val _ =
              same_proof_options (ordinary, #result stats) andalso
              same_proof_options (#result stats, #result measured) andalso
              same_old_statistics
-               (#statistics stats, #statistics measured)
+               (#statistics stats, #statistics measured) andalso
+             #emergency_cleanup_assignments (#statistics stats) = 0 andalso
+             #emergency_cleanup_assignments (#statistics measured) = 0
            end
        in
          run clasetLib.empty_cs 0 ([p], p) false andalso
@@ -1506,6 +1534,8 @@ val _ =
                  same_old_statistics
                    (measured_stats, repeated_stats) andalso
                  same_phase_statistics
+                   (measured_stats, repeated_stats) andalso
+                 same_cleanup_statistics
                    (measured_stats, repeated_stats) andalso
                  same_traces_alpha
                    (#fullTrace measured, #fullTrace repeated) andalso
@@ -1933,6 +1963,8 @@ val _ =
        in
          #completion report = blastSearch.Interrupted andalso
          not (Option.isSome (!branch)) andalso
+         #emergency_cleanup_assignments statistics = 1 andalso
+         #remaining_trail_assignments statistics = 0 andalso
          not (null (#fullTrace report)) andalso
          #cooperative_checkpoints statistics > 0 andalso
          #safe_rule_attempts statistics = 1 andalso
@@ -1940,6 +1972,237 @@ val _ =
          #rule_unification_successes statistics = 1 andalso
          #inferences_performed statistics = 0 andalso
          #branches_closed statistics = 0
+       end)
+
+val _ =
+  test
+    ("goal interruption abandons a large engine-owned trail exactly",
+     fn () =>
+       let
+         val trail_length = 256
+         fun variables 0 = []
+           | variables count =
+               mk_var
+                 ("owned_interrupt_" ^ Int.toString count, bool) ::
+               variables (count - 1)
+         val variables = variables trail_length
+         val body =
+           List.foldr
+             (fn (variable, rest) => mk_conj (variable, rest))
+             boolSyntax.T variables
+         val proposition =
+           List.foldr
+             (fn (variable, rest) => mk_exists (variable, rest))
+             body variables
+         val goal = ([], proposition)
+         val cs =
+           clasetLib.add_sintros
+             [("owned-and", boolTheory.AND_INTRO_THM),
+              ("owned-truth", boolTheory.TRUTH)]
+             (clasetLib.add_intros
+                [("owned-exists", EXISTS_INTRO_THM)]
+                clasetLib.empty_cs)
+         val completed_polls = ref 0
+         val completed_continuations = ref 0
+         val completed =
+           blastSearch.searchGoalMeasured
+             {debug = false,
+              stop = fn () =>
+                (completed_polls := !completed_polls + 1; false)}
+             cs trail_length goal
+             (fn proof =>
+                (completed_continuations :=
+                   !completed_continuations + 1;
+                 proof))
+         val cutoff = !completed_polls
+
+         fun interrupted_run () =
+           let
+             val polls = ref 0
+             val continuations = ref 0
+             val report =
+               blastSearch.searchGoalMeasured
+                 {debug = false,
+                  stop = fn () =>
+                    (polls := !polls + 1; !polls >= cutoff)}
+                 cs trail_length goal
+                 (fn proof =>
+                    (continuations := !continuations + 1; proof))
+           in
+             (report, !polls, !continuations)
+           end
+
+         val (interrupted, interrupted_polls,
+              interrupted_continuations) = interrupted_run ()
+         val completed_statistics = #statistics completed
+         val interrupted_statistics = #statistics interrupted
+         val repeats = List.tabulate (4, fn _ => interrupted_run ())
+
+         fun same_run (report, polls, continuations) =
+           let
+             val statistics = #statistics report
+           in
+             #completion report = blastSearch.Interrupted andalso
+             not (Option.isSome (#result report)) andalso
+             #fullTrace report = [] andalso polls = cutoff andalso
+             continuations = 0 andalso
+             same_old_statistics
+               (interrupted_statistics, statistics) andalso
+             same_phase_statistics
+               (interrupted_statistics, statistics) andalso
+             same_cleanup_statistics
+               (interrupted_statistics, statistics)
+           end
+       in
+         #completion completed = blastSearch.Completed andalso
+         Option.isSome (#result completed) andalso
+         !completed_continuations = 1 andalso cutoff > 0 andalso
+         #completion interrupted = blastSearch.Interrupted andalso
+         not (Option.isSome (#result interrupted)) andalso
+         #fullTrace interrupted = [] andalso
+         interrupted_polls = cutoff andalso
+         interrupted_continuations = 0 andalso
+         same_old_statistics
+           (completed_statistics, interrupted_statistics) andalso
+         same_phase_statistics
+           (completed_statistics, interrupted_statistics) andalso
+         #remaining_trail_assignments interrupted_statistics =
+           trail_length andalso
+         #emergency_cleanup_assignments interrupted_statistics = 0 andalso
+         List.all same_run repeats
+       end)
+
+val _ =
+  test
+    ("debug goal interruption retains a coherent owned-state trace",
+     fn () =>
+       let
+         val witness = mk_var ("owned_debug_witness", bool)
+         val goal = ([], mk_exists (witness, witness))
+         val cs =
+           clasetLib.add_sintros
+             [("owned-debug-truth", boolTheory.TRUTH)]
+             (clasetLib.add_intros
+                [("owned-debug-exists", EXISTS_INTRO_THM)]
+                clasetLib.empty_cs)
+         val completed_polls = ref 0
+         val completed =
+           blastSearch.searchGoalMeasured
+             {debug = true,
+              stop = fn () =>
+                (completed_polls := !completed_polls + 1; false)}
+             cs 1 goal (fn proof => proof)
+         val cutoff = !completed_polls
+         val interrupted_polls = ref 0
+         val continuations = ref 0
+         val interrupted =
+           blastSearch.searchGoalMeasured
+             {debug = true,
+              stop = fn () =>
+                (interrupted_polls := !interrupted_polls + 1;
+                 !interrupted_polls >= cutoff)}
+             cs 1 goal
+             (fn proof =>
+                (continuations := !continuations + 1; proof))
+         val completed_statistics = #statistics completed
+         val interrupted_statistics = #statistics interrupted
+       in
+         #completion completed = blastSearch.Completed andalso
+         Option.isSome (#result completed) andalso cutoff > 0 andalso
+         #completion interrupted = blastSearch.Interrupted andalso
+         not (Option.isSome (#result interrupted)) andalso
+         !interrupted_polls = cutoff andalso !continuations = 0 andalso
+         not (null (#fullTrace interrupted)) andalso
+         trace_has_assignment (#fullTrace interrupted) andalso
+         length (#fullTrace completed) =
+           length (#fullTrace interrupted) + 1 andalso
+         same_old_statistics
+           (completed_statistics, interrupted_statistics) andalso
+         same_phase_statistics
+           (completed_statistics, interrupted_statistics) andalso
+         #remaining_trail_assignments interrupted_statistics = 1 andalso
+         #emergency_cleanup_assignments interrupted_statistics = 0
+       end)
+
+val _ =
+  test
+    ("goal continuation exceptions restore reachable owned assignments",
+     fn () =>
+       let
+         exception GoalContinuationStop of int ref
+         val sentinel = ref 37
+         val witness = mk_var ("owned_continuation_witness", bool)
+         val goal = ([], mk_exists (witness, witness))
+         val cs =
+           clasetLib.add_sintros
+             [("owned-continuation-truth", boolTheory.TRUTH)]
+             (clasetLib.add_intros
+                [("owned-continuation-exists", EXISTS_INTRO_THM)]
+                clasetLib.empty_cs)
+         val saved = ref NONE
+         val assigned_at_entry = ref false
+         fun reject proof =
+           (saved := SOME proof;
+            assigned_at_entry := trace_has_assignment (#trace proof);
+            raise GoalContinuationStop sentinel)
+
+         fun restored () =
+           case !saved of
+               SOME proof => trace_is_unassigned (#trace proof)
+             | NONE => false
+       in
+         (ignore
+            (blastSearch.searchGoalMeasured
+               {debug = false, stop = fn () => false}
+               cs 1 goal reject);
+          false)
+         handle GoalContinuationStop actual =>
+                  actual = sentinel andalso !assigned_at_entry andalso
+                  restored ()
+              | _ => false
+       end)
+
+val _ =
+  test
+    ("goal stop exceptions at live owned state restore and rethrow",
+     fn () =>
+       let
+         exception GoalStop of int ref
+         val sentinel = ref 41
+         val witness = mk_var ("owned_stop_witness", bool)
+         val goal = ([], mk_exists (witness, witness))
+         val cs =
+           clasetLib.add_sintros
+             [("owned-stop-truth", boolTheory.TRUTH)]
+             (clasetLib.add_intros
+                [("owned-stop-exists", EXISTS_INTRO_THM)]
+                clasetLib.empty_cs)
+         val calibration_polls = ref 0
+         val calibration =
+           blastSearch.searchGoalMeasured
+             {debug = true,
+              stop = fn () =>
+                (calibration_polls := !calibration_polls + 1; false)}
+             cs 1 goal (fn proof => proof)
+         val cutoff = !calibration_polls
+         val polls = ref 0
+         val continuations = ref 0
+         fun stop () =
+           (polls := !polls + 1;
+            if !polls >= cutoff then raise GoalStop sentinel else false)
+       in
+         #completion calibration = blastSearch.Completed andalso
+         #remaining_trail_assignments (#statistics calibration) = 1 andalso
+         (ignore
+            (blastSearch.searchGoalMeasured {debug = true, stop = stop}
+               cs 1 goal
+               (fn proof =>
+                  (continuations := !continuations + 1; proof)));
+          false)
+         handle GoalStop actual =>
+                  actual = sentinel andalso !polls = cutoff andalso
+                  !continuations = 0
+              | _ => false
        end)
 
 val _ =
@@ -1965,6 +2228,33 @@ val _ =
           false)
          handle InnerStop actual =>
                   actual = sentinel andalso !seen_assignment andalso
+                  not (Option.isSome (!branch))
+              | _ => false
+       end)
+
+val _ =
+  test
+    ("continuation exceptions restore caller-owned assignments",
+     fn () =>
+       let
+         exception ReconstructionStop of int ref
+         val sentinel = ref 31
+         val branch = ref NONE
+         val entered = ref false
+         val cs =
+           clasetLib.add_sintros
+             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
+         fun reject _ =
+           (entered := Option.isSome (!branch);
+            raise ReconstructionStop sentinel)
+       in
+         (ignore
+            (blastSearch.searchTermsMeasured
+               {debug = false, stop = fn () => false}
+               cs 0 [mkGoal (Var branch)] reject);
+          false)
+         handle ReconstructionStop actual =>
+                  actual = sentinel andalso !entered andalso
                   not (Option.isSome (!branch))
               | _ => false
        end)

@@ -45,6 +45,8 @@ sig
      choices_pruned : int,
      rule_cache_hits : int,
      rule_conversions : int,
+     emergency_cleanup_assignments : int,
+     remaining_trail_assignments : int,
      cooperative_checkpoints : int,
      candidate_rules_enumerated : int,
      candidate_conversions_attempted : int,
@@ -138,17 +140,30 @@ sig
      coherent partial snapshot.  A completed exhaustion has completion =
      Completed and result = NONE.  If debug is false, fullTrace is empty.
      Exceptions raised by stop propagate unchanged; they are never interpreted
-     as search-control exceptions.  Normal measured rollback polls once per
-     trail item.  If interruption or a stop-predicate exception occurs during
-     destructive work or normal rollback, emergency rollback finishes without
-     polling before the original exception escapes.
+     as search-control exceptions.  searchTermsMeasured treats its prototerms
+     as caller-owned: interruption and stop-predicate exceptions restore all
+     trailed assignments before returning or escaping.  In contrast,
+     searchGoalMeasured translates the HOL goal into fresh engine-owned
+     prototerms.  On the explicit Interrupted path only, it abandons those
+     engine-owned assignments instead of traversing their trail.  With debug
+     enabled, fullTrace can expose those prototerms as part of the returned
+     snapshot; their cutoff-time bindings are intentionally left intact, but
+     no caller-supplied reference is involved.  Predicate and continuation
+     exceptions still restore before they propagate unchanged.
+     emergency_cleanup_assignments records assignments traversed by exception
+     cleanup; normal search backtracking is excluded.
+     remaining_trail_assignments records the engine-local trail size when the
+     snapshot is assembled.  It is zero after a restored interruption, but
+     may be nonzero after an owned interruption or successful continuation.
 
      This is cooperative timing, not a hard real-time bound.  Polling excludes
      time spent in the arbitrary caller-supplied stop predicate, the arbitrary
      successful continuation and proof reconstruction it may invoke, one
      indivisible HOL kernel or other primitive operation between checkpoints,
-     and emergency rollback cleanup after interruption.  Consequently none of
-     those intervals has a latency bound supplied by this API.
+     and caller-owned emergency rollback cleanup.  Consequently none of those
+     intervals has a latency bound supplied by this API.  Goal-owned explicit
+     interruption has no trail-cleanup interval, so once its checkpoint is
+     reached the coherent snapshot is assembled without a trail traversal.
      Ordinary and statistics-only search select the original unmeasured worker
      families and do not construct measured local workers. *)
   val searchGoalMeasured :
