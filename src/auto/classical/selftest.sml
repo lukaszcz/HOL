@@ -2077,6 +2077,56 @@ fun drain_measured_exact sequence =
     | clasetStep.MeasuredRuleInterrupted =>
         raise Fail "unexpected measured exact-rule interruption"
 
+fun drain_timed_exact sequence =
+  case clasetStep.timed_rule_cases sequence of
+      clasetStep.TimedRuleEmpty => []
+    | clasetStep.TimedRuleYield (value, rest) =>
+        value :: drain_timed_exact rest
+    | clasetStep.TimedRuleInterrupted =>
+        raise Fail "unexpected timed exact-rule interruption"
+
+val timed_cases_api :
+    clasetStep.timed_rule_sequence -> clasetStep.timed_rule_pull =
+  clasetStep.timed_rule_cases
+
+val timed_current_api :
+    clasetStep.timed_rule_sequence ->
+      clasetStep.measured_rule_observation option =
+  clasetStep.timed_rule_current
+
+val timed_statistics_api :
+    clasetStep.timed_rule_sequence ->
+      clasetStep.timed_rule_statistics =
+  clasetStep.timed_rule_statistics
+
+fun ticking_clock () =
+  let
+    val tick = ref 0
+  in
+    fn () =>
+      let
+        val current = !tick
+        val _ = tick := current + 1
+      in
+        Time.fromSeconds (Int.toLarge current)
+      end
+  end
+
+fun phase_time_sum
+      (statistics : clasetStep.timed_rule_statistics) =
+  List.foldl Time.+ Time.zeroTime
+    [#attempt_selection_time statistics,
+     #freshening_setup_time statistics,
+     #minor_unification_time statistics,
+     #elimination_major_unification_time statistics,
+     #rule_instantiation_time statistics,
+     #child_store_construction_time statistics,
+     #direct_result_construction_time statistics,
+     #lazy_result_yield_time statistics,
+     #direct_child_replacement_time statistics,
+     #replay_record_construction_time statistics,
+     #record_insertion_time statistics]
+
 fun same_exact_transition goal ((left_record, left_node),
       (right_record, right_node)) =
   clasetStep.consumed_of left_record =
@@ -2154,6 +2204,229 @@ val _ =
          #direct_child_replacements statistics = 2 andalso
          #replay_record_constructions statistics = 2 andalso
          #record_insertions statistics = 2
+       end)
+
+val _ =
+  test
+    ("timed exact rules account successful and failed attempts exactly",
+     fn () =>
+       let
+         val p = Term.mk_var ("timed_exact_p", bool_ty)
+         val q = Term.mk_var ("timed_exact_q", bool_ty)
+         val r = Term.mk_var ("timed_exact_r", bool_ty)
+         val conjunction = boolSyntax.mk_conj (p, q)
+         val goal = ([r, conjunction, conjunction], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-exact-and-elim",
+               clasetSeedTheory.CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
+         val untimed =
+           clasetStep.blast_rule_step_measured
+             {observe = NONE, stop = fn () => false}
+             cs specification (clasetGoal.from_goal goal, 1)
+         val timed =
+           clasetStep.blast_rule_step_timed
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             cs specification (clasetGoal.from_goal goal, 1)
+         val untimed_results = drain_measured_exact untimed
+         val timed_results = drain_timed_exact timed
+         val ordinary_statistics =
+           clasetStep.measured_rule_statistics untimed
+         val statistics = clasetStep.timed_rule_statistics timed
+         val second = Time.fromSeconds 1
+       in
+         length untimed_results = 2 andalso
+         length timed_results = 2 andalso
+         ListPair.allEq (same_exact_transition goal)
+           (untimed_results, timed_results) andalso
+         #phase_entries statistics =
+           #phase_entries ordinary_statistics andalso
+         #phase_exits statistics =
+           #phase_exits ordinary_statistics andalso
+         #attempt_selections statistics = 3 andalso
+         #elimination_major_unifications statistics = 3 andalso
+         #lazy_result_yields statistics = 2 andalso
+         #attempt_selection_time statistics =
+           Time.+ (second, Time.+ (second, second)) andalso
+         #elimination_major_unification_time statistics =
+           Time.+ (second, Time.+ (second, second)) andalso
+         #lazy_result_yield_time statistics =
+           Time.+ (second, second) andalso
+         #classical_time statistics = Time.fromSeconds 26 andalso
+         phase_time_sum statistics = #classical_time statistics
+       end)
+
+val _ =
+  test
+    ("timed fake-clock observations results and totals repeat exactly",
+     fn () =>
+       let
+         val p = Term.mk_var ("timed_repeat_p", bool_ty)
+         val q = Term.mk_var ("timed_repeat_q", bool_ty)
+         val r = Term.mk_var ("timed_repeat_r", bool_ty)
+         val goal = ([r, boolSyntax.mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-repeat-and-elim",
+               clasetSeedTheory.CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
+
+         fun run () =
+           let
+             val observations =
+               ref ([] : clasetStep.measured_rule_observation list)
+             val sequence =
+               clasetStep.blast_rule_step_timed
+                 {clock = ticking_clock (),
+                  observe =
+                    SOME
+                      (fn event =>
+                        observations := event :: !observations),
+                  stop = fn () => false}
+                 cs specification (clasetGoal.from_goal goal, 1)
+             val results = drain_timed_exact sequence
+             val views =
+               map
+                 (fn (record, node) =>
+                   (clasetStep.consumed_of record,
+                    rendered_goals node,
+                    clasetReplay.to_string (clasetGoal.replay node)))
+                 results
+           in
+             (rev (!observations), views,
+              clasetStep.timed_rule_statistics sequence)
+           end
+         val (observations1, views1, statistics1) = run ()
+         val (observations2, views2, statistics2) = run ()
+         fun same_view ((consumed1, goals1, replay1),
+                        (consumed2, goals2, replay2)) =
+           consumed1 = consumed2 andalso
+           same_goals goals1 goals2 andalso replay1 = replay2
+       in
+         observations1 = observations2 andalso
+         length views1 = length views2 andalso
+         ListPair.allEq same_view (views1, views2) andalso
+         statistics1 = statistics2 andalso
+         #classical_time statistics1 = Time.fromSeconds 15 andalso
+         phase_time_sum statistics1 = #classical_time statistics1
+       end)
+
+val _ =
+  test
+    ("timed exact-rule Enter and Exit cutoffs have exact accounting",
+     fn () =>
+       let
+         val p = Term.mk_var ("timed_cutoff_p", bool_ty)
+         val q = Term.mk_var ("timed_cutoff_q", bool_ty)
+         val goal = ([p, q], boolSyntax.mk_conj (p, q))
+
+         fun run cutoff_boundary =
+           let
+             val stop_now = ref false
+             val observations =
+               ref ([] : clasetStep.measured_rule_observation list)
+             fun observe event =
+               (observations := event :: !observations;
+                if #boundary event = cutoff_boundary andalso
+                   #phase event =
+                     clasetStep.ChildStoreConstruction then
+                  stop_now := true
+                else ())
+             val sequence =
+               clasetStep.blast_rule_step_timed
+                 {clock = ticking_clock (), observe = SOME observe,
+                  stop = fn () => !stop_now}
+                 clasetLib.empty_cs
+                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
+                 (clasetGoal.from_goal goal, 1)
+             val pull = clasetStep.timed_rule_cases sequence
+           in
+             (pull, rev (!observations),
+              clasetStep.timed_rule_statistics sequence)
+           end
+         val (enter_pull, enter_observations, enter_statistics) =
+           run clasetStep.RuleEnter
+         val (exit_pull, exit_observations, exit_statistics) =
+           run clasetStep.RuleExit
+         fun interrupted pull =
+           case pull of clasetStep.TimedRuleInterrupted => true
+             | _ => false
+       in
+         interrupted enter_pull andalso interrupted exit_pull andalso
+         #classical_time enter_statistics = Time.fromSeconds 4 andalso
+         #child_store_construction_time enter_statistics =
+           Time.zeroTime andalso
+         #phase_entries enter_statistics = 5 andalso
+         #phase_exits enter_statistics = 4 andalso
+         #classical_time exit_statistics = Time.fromSeconds 5 andalso
+         #child_store_construction_time exit_statistics =
+           Time.fromSeconds 1 andalso
+         #phase_entries exit_statistics = 5 andalso
+         #phase_exits exit_statistics = 5 andalso
+         length enter_observations = 9 andalso
+         length exit_observations = 10
+       end)
+
+val _ =
+  test
+    ("timed exact-rule clock failures propagate without fabricated Exit",
+     fn () =>
+       let
+         exception ClockFailure of int ref
+         val sentinel = ref 83
+         val p = Term.mk_var ("timed_clock_p", bool_ty)
+         val q = Term.mk_var ("timed_clock_q", bool_ty)
+         val input =
+           (clasetGoal.from_goal
+              ([p, q], boolSyntax.mk_conj (p, q)), 1)
+
+         fun run clock observations =
+           let
+             val sequence =
+               clasetStep.blast_rule_step_timed
+                 {clock = clock,
+                  observe = SOME
+                    (fn event => observations := event :: !observations),
+                  stop = fn () => false}
+                 clasetLib.empty_cs
+                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
+                 input
+           in
+             ignore (clasetStep.timed_rule_cases sequence)
+           end
+         val custom_observations = ref []
+         val custom_ok =
+           ((run (fn () => raise ClockFailure sentinel)
+               custom_observations;
+             false)
+            handle ClockFailure actual => actual = sentinel
+                 | _ => false)
+         val backwards_observations = ref []
+         val readings =
+           ref [Time.fromSeconds 2, Time.fromSeconds 1]
+         fun backwards () =
+           case !readings of
+               [] => raise Fail "backwards clock exhausted"
+             | value :: rest => (readings := rest; value)
+         val backwards_ok =
+           ((run backwards backwards_observations; false)
+            handle HOL_ERR error =>
+                     Feedback.top_structure_of error = "clasetStep"
+                 | _ => false)
+       in
+         custom_ok andalso backwards_ok andalso
+         length (!custom_observations) = 1 andalso
+         length (!backwards_observations) = 1 andalso
+         #boundary (hd (!custom_observations)) =
+           clasetStep.RuleEnter andalso
+         #boundary (hd (!backwards_observations)) =
+           clasetStep.RuleEnter
        end)
 
 val _ =

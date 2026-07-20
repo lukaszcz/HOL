@@ -171,6 +171,58 @@ sig
      stop : unit -> bool} ->
     goal -> proof -> detailed_measured_result
 
+  type classical_phase_times =
+    {attempt_selection_time : Time.time,
+     freshening_setup_time : Time.time,
+     minor_unification_time : Time.time,
+     elimination_major_unification_time : Time.time,
+     rule_instantiation_time : Time.time,
+     child_store_construction_time : Time.time,
+     direct_result_construction_time : Time.time,
+     lazy_result_yield_time : Time.time,
+     direct_child_replacement_time : Time.time,
+     replay_record_construction_time : Time.time,
+     record_insertion_time : Time.time,
+     classical_time : Time.time}
+
+  type timed_detailed_measured_result =
+    {completion : completion,
+     current_phase : observation option,
+     current_stored_rule : stored_rule_observation option,
+     result : (goal list * validation) option,
+     statistics : detailed_statistics,
+     classical_times : classical_phase_times,
+     attempt_wall_time : Time.time}
+
+  (* This is the timed-only form of the detailed diagnostic.  It preserves
+     the detailed observer and polling protocol and adds exclusive elapsed
+     time for the eleven non-nested classical phases.  attempt_wall_time is
+     captured immediately when replay reaches Completed SOME, Completed NONE,
+     or Interrupted, before statistics and classical timing snapshots are
+     aggregated.  Thus subtracting classical_time gives the unaccounted
+     outer-reconstruction, observer and timing share only up to that terminal
+     outcome, without double counting or diagnostic report aggregation.
+
+     The injected clock keeps exact tests deterministic; callers should use
+     Time.now in production.  The wall clock is assumed not to move backwards.
+     A negative delta is reported as HOL_ERR, and arbitrary clock exceptions
+     propagate unchanged.  Clock reads and accumulator updates are part of
+     the diagnostic's measurement overhead. *)
+  val reconstructWithMeasuredTimedDetailed :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result
+  val reconstructMeasuredTimedDetailed :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    goal -> proof -> timed_detailed_measured_result
+
   (* Search continuations reject failed reconstruction with
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :

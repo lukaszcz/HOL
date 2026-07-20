@@ -117,6 +117,66 @@ sig
   val measured_rule_statistics :
     measured_rule_sequence -> measured_rule_statistics
 
+  (* Timed exact replay is a diagnostic-only extension of the measured
+     sequence above.  The clock is read only after an Enter callback/poll and
+     immediately before the corresponding Exit callback/poll.  Thus the
+     accumulated intervals exclude observers and stop predicates, include
+     failed/backtracked engine work, and never invent an Exit boundary.
+
+     Time.now is the intended production clock.  Time.time is exact, but the
+     Basis wall clock need not be monotonic on every platform; a backwards
+     clock is detected and reported as HOL_ERR instead of being accumulated.
+     Clock exceptions propagate unchanged.  Reading the clock and updating
+     the diagnostic references are measurement overhead.  Classical phases
+     are non-nested, so classical_time is exactly the sum of its eleven
+     fields. *)
+  type timed_rule_statistics =
+    {cooperative_checkpoints : int,
+     phase_entries : int,
+     phase_exits : int,
+     attempt_selections : int,
+     freshening_setups : int,
+     minor_unifications : int,
+     elimination_major_unifications : int,
+     rule_instantiations : int,
+     child_store_constructions : int,
+     direct_result_constructions : int,
+     lazy_result_yields : int,
+     direct_child_replacements : int,
+     replay_record_constructions : int,
+     record_insertions : int,
+     intro_attempts : int,
+     elim_attempts : int,
+     attempt_selection_time : Time.time,
+     freshening_setup_time : Time.time,
+     minor_unification_time : Time.time,
+     elimination_major_unification_time : Time.time,
+     rule_instantiation_time : Time.time,
+     child_store_construction_time : Time.time,
+     direct_result_construction_time : Time.time,
+     lazy_result_yield_time : Time.time,
+     direct_child_replacement_time : Time.time,
+     replay_record_construction_time : Time.time,
+     record_insertion_time : Time.time,
+     classical_time : Time.time}
+  type timed_rule_sequence
+  datatype timed_rule_pull =
+      TimedRuleEmpty
+    | TimedRuleYield of
+        (step_record * node) * timed_rule_sequence
+    | TimedRuleInterrupted
+  val blast_rule_step_timed :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence
+  val timed_rule_cases : timed_rule_sequence -> timed_rule_pull
+  val timed_rule_current :
+    timed_rule_sequence -> measured_rule_observation option
+  val timed_rule_statistics :
+    timed_rule_sequence -> timed_rule_statistics
+
   val blast_disch_step : step
   val blast_gen_step : step
   val blast_ccontr_step : step

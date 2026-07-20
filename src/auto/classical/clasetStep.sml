@@ -742,9 +742,55 @@ type measured_rule_statistics =
    intro_attempts : int,
    elim_attempts : int}
 
+type timed_rule_statistics =
+  {cooperative_checkpoints : int,
+   phase_entries : int,
+   phase_exits : int,
+   attempt_selections : int,
+   freshening_setups : int,
+   minor_unifications : int,
+   elimination_major_unifications : int,
+   rule_instantiations : int,
+   child_store_constructions : int,
+   direct_result_constructions : int,
+   lazy_result_yields : int,
+   direct_child_replacements : int,
+   replay_record_constructions : int,
+   record_insertions : int,
+   intro_attempts : int,
+   elim_attempts : int,
+   attempt_selection_time : Time.time,
+   freshening_setup_time : Time.time,
+   minor_unification_time : Time.time,
+   elimination_major_unification_time : Time.time,
+   rule_instantiation_time : Time.time,
+   child_store_construction_time : Time.time,
+   direct_result_construction_time : Time.time,
+   lazy_result_yield_time : Time.time,
+   direct_child_replacement_time : Time.time,
+   replay_record_construction_time : Time.time,
+   record_insertion_time : Time.time,
+   classical_time : Time.time}
+
+type measured_rule_timing =
+  {clock : unit -> Time.time,
+   attempt_selection_time : Time.time ref,
+   freshening_setup_time : Time.time ref,
+   minor_unification_time : Time.time ref,
+   elimination_major_unification_time : Time.time ref,
+   rule_instantiation_time : Time.time ref,
+   child_store_construction_time : Time.time ref,
+   direct_result_construction_time : Time.time ref,
+   lazy_result_yield_time : Time.time ref,
+   direct_child_replacement_time : Time.time ref,
+   replay_record_construction_time : Time.time ref,
+   record_insertion_time : Time.time ref,
+   classical_time : Time.time ref}
+
 type measured_rule_monitor =
   {observe : (measured_rule_observation -> unit) option,
    stop : unit -> bool,
+   timing : measured_rule_timing option,
    current : measured_rule_observation option ref,
    goal_position : goalpos,
    rule_kind : measured_rule_kind,
@@ -827,7 +873,63 @@ fun measured_rule_bracket monitor assumption phase operation argument =
   let
     val _ =
       measured_rule_checkpoint monitor assumption RuleEnter phase
-    val result = operation argument
+
+    fun add elapsed reference =
+      reference := Time.+ (!reference, elapsed)
+
+    fun accumulate timing started =
+      let
+        val finished =
+          invoke_measured_rule (#clock timing) ()
+        val _ =
+          if Time.< (finished, started) then
+            raise MEASURED_RULE_CALLBACK
+              (mk_HOL_ERR "clasetStep" "measured_rule_bracket"
+                "the timed diagnostic clock moved backwards")
+          else ()
+        val elapsed = Time.- (finished, started)
+        val _ = add elapsed (#classical_time timing)
+      in
+        case phase of
+            AttemptSelection =>
+              add elapsed (#attempt_selection_time timing)
+          | FresheningSetup =>
+              add elapsed (#freshening_setup_time timing)
+          | MinorUnification =>
+              add elapsed (#minor_unification_time timing)
+          | EliminationMajorUnification =>
+              add elapsed (#elimination_major_unification_time timing)
+          | RuleInstantiation =>
+              add elapsed (#rule_instantiation_time timing)
+          | ChildStoreConstruction =>
+              add elapsed (#child_store_construction_time timing)
+          | DirectResultConstruction =>
+              add elapsed (#direct_result_construction_time timing)
+          | LazyResultYield =>
+              add elapsed (#lazy_result_yield_time timing)
+          | DirectChildReplacement =>
+              add elapsed (#direct_child_replacement_time timing)
+          | ReplayRecordConstruction =>
+              add elapsed (#replay_record_construction_time timing)
+          | RecordInsertion =>
+              add elapsed (#record_insertion_time timing)
+      end
+
+    val result =
+      case #timing monitor of
+          NONE => operation argument
+        | SOME timing =>
+            let
+              val started =
+                invoke_measured_rule (#clock timing) ()
+              val result =
+                operation argument
+                handle error =>
+                  (accumulate timing started; raise error)
+              val _ = accumulate timing started
+            in
+              result
+            end
     val _ =
       measured_rule_checkpoint monitor assumption RuleExit phase
   in
@@ -1749,8 +1851,9 @@ fun direct_step_measured monitor results (node, pos) =
       end)
     (results (node, pos))
 
-fun new_measured_rule_monitor {observe, stop} pos rule_kind =
+fun new_measured_rule_monitor {observe, stop} timing pos rule_kind =
   {observe = observe, stop = stop,
+   timing = timing,
    current = ref (NONE : measured_rule_observation option),
    goal_position = pos, rule_kind = rule_kind,
    cooperative_checkpoints = ref 0,
@@ -1773,7 +1876,7 @@ fun blast_rule_step_measured controls cs specification (input as (_, pos)) =
     val rule_kind =
       if #elim specification then ElimRule else IntroRule
     val monitor =
-      new_measured_rule_monitor controls pos rule_kind
+      new_measured_rule_monitor controls NONE pos rule_kind
     val sequence =
       direct_step_measured monitor
         (exact_rule_results_measured monitor cs specification) input
@@ -1818,6 +1921,105 @@ fun measured_rule_statistics
    record_insertions = !(#record_insertions monitor),
    intro_attempts = !(#intro_attempts monitor),
    elim_attempts = !(#elim_attempts monitor)}
+
+datatype timed_rule_sequence =
+  TimedRuleSequence of
+    {sequence : measured_rule_sequence,
+     timing : measured_rule_timing}
+
+datatype timed_rule_pull =
+    TimedRuleEmpty
+  | TimedRuleYield of
+      (step_record * node) * timed_rule_sequence
+  | TimedRuleInterrupted
+
+fun new_measured_rule_timing clock : measured_rule_timing =
+  {clock = clock,
+   attempt_selection_time = ref Time.zeroTime,
+   freshening_setup_time = ref Time.zeroTime,
+   minor_unification_time = ref Time.zeroTime,
+   elimination_major_unification_time = ref Time.zeroTime,
+   rule_instantiation_time = ref Time.zeroTime,
+   child_store_construction_time = ref Time.zeroTime,
+   direct_result_construction_time = ref Time.zeroTime,
+   lazy_result_yield_time = ref Time.zeroTime,
+   direct_child_replacement_time = ref Time.zeroTime,
+   replay_record_construction_time = ref Time.zeroTime,
+   record_insertion_time = ref Time.zeroTime,
+   classical_time = ref Time.zeroTime}
+
+fun blast_rule_step_timed {clock, observe, stop} cs specification
+      (input as (_, pos)) =
+  let
+    val rule_kind =
+      if #elim specification then ElimRule else IntroRule
+    val timing = new_measured_rule_timing clock
+    val monitor =
+      new_measured_rule_monitor {observe = observe, stop = stop}
+        (SOME timing) pos rule_kind
+    val sequence =
+      direct_step_measured monitor
+        (exact_rule_results_measured monitor cs specification) input
+  in
+    TimedRuleSequence
+      {sequence =
+         MeasuredRuleSequence {sequence = sequence, monitor = monitor},
+       timing = timing}
+  end
+
+fun timed_rule_cases (TimedRuleSequence {sequence, timing}) =
+  case measured_rule_cases sequence of
+      MeasuredRuleEmpty => TimedRuleEmpty
+    | MeasuredRuleYield (value, tail) =>
+        TimedRuleYield
+          (value, TimedRuleSequence {sequence = tail, timing = timing})
+    | MeasuredRuleInterrupted => TimedRuleInterrupted
+
+fun timed_rule_current (TimedRuleSequence {sequence, ...}) =
+  measured_rule_current sequence
+
+fun timed_rule_statistics
+      (TimedRuleSequence
+        {sequence = MeasuredRuleSequence {monitor, ...}, timing})
+      : timed_rule_statistics =
+  {cooperative_checkpoints = !(#cooperative_checkpoints monitor),
+     phase_entries = !(#phase_entries monitor),
+     phase_exits = !(#phase_exits monitor),
+     attempt_selections = !(#attempt_selections monitor),
+     freshening_setups = !(#freshening_setups monitor),
+     minor_unifications = !(#minor_unifications monitor),
+     elimination_major_unifications =
+       !(#elimination_major_unifications monitor),
+     rule_instantiations = !(#rule_instantiations monitor),
+     child_store_constructions =
+       !(#child_store_constructions monitor),
+     direct_result_constructions =
+       !(#direct_result_constructions monitor),
+     lazy_result_yields = !(#lazy_result_yields monitor),
+     direct_child_replacements =
+       !(#direct_child_replacements monitor),
+     replay_record_constructions =
+       !(#replay_record_constructions monitor),
+     record_insertions = !(#record_insertions monitor),
+     intro_attempts = !(#intro_attempts monitor),
+     elim_attempts = !(#elim_attempts monitor),
+     attempt_selection_time = !(#attempt_selection_time timing),
+     freshening_setup_time = !(#freshening_setup_time timing),
+     minor_unification_time = !(#minor_unification_time timing),
+     elimination_major_unification_time =
+       !(#elimination_major_unification_time timing),
+     rule_instantiation_time = !(#rule_instantiation_time timing),
+     child_store_construction_time =
+       !(#child_store_construction_time timing),
+     direct_result_construction_time =
+       !(#direct_result_construction_time timing),
+     lazy_result_yield_time = !(#lazy_result_yield_time timing),
+     direct_child_replacement_time =
+       !(#direct_child_replacement_time timing),
+     replay_record_construction_time =
+       !(#replay_record_construction_time timing),
+   record_insertion_time = !(#record_insertion_time timing),
+   classical_time = !(#classical_time timing)}
 
 val blast_disch_step = direct_step disch_results
 val blast_gen_step = direct_step gen_results
