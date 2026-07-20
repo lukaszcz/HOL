@@ -62,6 +62,10 @@ sig
   val match_elim_candidates : claset_part -> term -> (tag * brl) list
   val unify_intro_candidates : claset_part -> term -> (tag * brl) list
   val unify_elim_candidates : claset_part -> term -> (tag * brl) list
+  val unify_intro_candidates_measured :
+    (unit -> unit) -> claset_part -> term -> (tag * brl) list
+  val unify_elim_candidates_measured :
+    (unit -> unit) -> claset_part -> term -> (tag * brl) list
 
   val SIntro : thm -> thm
   val Intro : thm -> thm

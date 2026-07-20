@@ -326,11 +326,53 @@ fun match_elim_candidates (_, enet) tm =
 
 fun free_var_set tm = boolSyntax.FVLset [tm]
 
+fun free_var_set_measured checkpoint tm =
+  let
+    val empty = HOLset.empty Term.compare
+    fun collect ([], variables) = variables
+      | collect ((item, bound) :: rest, variables) =
+          (checkpoint ();
+           if is_var item then
+             collect
+               (rest,
+                if HOLset.member (bound, item) then variables
+                else HOLset.add (variables, item))
+           else if is_comb item then
+             let val (operator, operand) = dest_comb item
+             in
+               collect
+                 ((operator, bound) :: (operand, bound) :: rest, variables)
+             end
+           else if is_abs item then
+             let val (binder, body) = dest_abs item
+             in
+               collect
+                 ((body, HOLset.add (bound, binder)) :: rest, variables)
+             end
+           else collect (rest, variables))
+  in
+    collect ([(tm, empty)], empty)
+  end
+
 fun unify_intro_candidates (inet, _) tm =
   candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} inet)
 
 fun unify_elim_candidates (_, enet) tm =
   candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
+
+fun unify_intro_candidates_measured checkpoint (inet, _) tm =
+  let val qvars = free_var_set_measured checkpoint tm
+  in
+    candidate_order_measured checkpoint
+      (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} inet)
+  end
+
+fun unify_elim_candidates_measured checkpoint (_, enet) tm =
+  let val qvars = free_var_set_measured checkpoint tm
+  in
+    candidate_order_measured checkpoint
+      (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} enet)
+  end
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)

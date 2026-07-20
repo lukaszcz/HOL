@@ -20,6 +20,8 @@ sig
   val canonical_rule_of : rulekind -> thm -> thm
   val canonical_form : thm -> canonical
   val canonical_form_of : rulekind -> thm -> canonical
+  val canonical_form_of_measured :
+    (unit -> unit) -> rulekind -> thm -> canonical
   val rule_index : rulekind -> thm -> term
   val rule_index_of : rulekind -> canonical -> term
   val rule_premises : thm -> term list
@@ -51,6 +53,8 @@ sig
   val dest_decls : decls -> decl list
   val merge_decls : decls * decls -> decl list * decls
   val candidate_order : (tag * brl) list -> (tag * brl) list
+  val candidate_order_measured :
+    (unit -> unit) -> (tag * brl) list -> (tag * brl) list
 
   datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
   val encode_delta : cdelta -> ThyDataSexp.t

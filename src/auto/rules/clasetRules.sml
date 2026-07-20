@@ -120,6 +120,208 @@ fun form_of th' =
 fun canonical_form th = form_of (canonical_rule th)
 fun canonical_form_of kind th = form_of (canonical_rule_of kind th)
 
+(* The measured canonicalizer deliberately has its own recursion.  The
+   ordinary rule database path above remains free of polling closures, while
+   measured blast conversion gets a safe point between theorem-kernel stages
+   and between items of the outer theorem spine. *)
+fun canonical_form_of_measured checkpoint kind th =
+  let
+    fun member _ [] = false
+      | member variable (item :: items) =
+          (checkpoint ();
+           Term.aconv variable item orelse member variable items)
+
+    (* Mirrors Term.free_vars/free_varsl, including their accumulator order,
+       while exposing the recursive term and list walks.  Theorems contain
+       ordinary kernel terms, so no delayed Clos node can occur here. *)
+    fun free_vars tm =
+      let
+        fun collect [] accumulated = accumulated
+          | collect ((item, bound) :: pending) accumulated =
+              (checkpoint ();
+               if is_var item then
+                 collect pending
+                   (if member item bound orelse member item accumulated then
+                      accumulated
+                    else item :: accumulated)
+               else if is_comb item then
+                 let val (rator, rand) = dest_comb item
+                 in
+                   collect
+                     ((rator, bound) :: (rand, bound) :: pending)
+                     accumulated
+                 end
+               else if is_abs item then
+                 let val (binder, body) = dest_abs item
+                 in
+                   collect ((body, binder :: bound) :: pending)
+                     accumulated
+                 end
+               else collect pending accumulated)
+      in
+        collect [(tm, [])] []
+      end
+
+    fun union [] right = right
+      | union (item :: items) right =
+          (checkpoint ();
+           union items
+             (if member item right then right else item :: right))
+
+    fun free_varsl [] = []
+      | free_varsl (tm :: terms) =
+          let
+            val _ = checkpoint ()
+            val right = free_varsl terms
+          in
+            union (free_vars tm) right
+          end
+
+    fun specl [] theorem = theorem
+      | specl (variable :: variables) theorem =
+          (checkpoint ();
+           specl variables (SPEC variable theorem))
+
+    fun genl [] theorem = theorem
+      | genl (variable :: variables) theorem =
+          let
+            val body = genl variables theorem
+            val _ = checkpoint ()
+          in
+            GEN variable body
+          end
+
+    fun strip_foralls tm =
+      (checkpoint ();
+       case total dest_forall tm of
+           NONE => ([], tm)
+         | SOME (v, body) =>
+             let val (vs, core) = strip_foralls body
+             in (v :: vs, core) end)
+
+    fun strip_imps tm =
+      (checkpoint ();
+       case total dest_imp_only tm of
+           NONE => ([], tm)
+         | SOME (prem, rest) =>
+             let val (prems, cncl) = strip_imps rest
+             in (prem :: prems, cncl) end)
+
+    fun canonical_prems tm =
+      (checkpoint ();
+       case total dest_imp_only tm of
+           NONE => true
+         | SOME (prem, rest) =>
+             not (is_conj prem) andalso canonical_prems rest)
+
+    fun already_canonical Intro theorem =
+          let val (_, body) = strip_foralls (concl theorem)
+          in canonical_prems body end
+      | already_canonical (Elim | Dest) theorem =
+          let val (_, body) = strip_foralls (concl theorem)
+          in
+            checkpoint ();
+            case total dest_imp_only body of
+                NONE => true
+              | SOME (_, rest) => canonical_prems rest
+          end
+
+    fun fresh_vars theorem vars =
+      let
+        val _ = checkpoint ()
+        val avoids = free_varsl (hyp theorem)
+        fun freshen _ [] = []
+          | freshen avoid (v :: vs) =
+              let
+                val _ = checkpoint ()
+                val v' = variant avoid v
+              in
+                v' :: freshen (v' :: avoid) vs
+              end
+      in
+        freshen avoids vars
+      end
+
+    fun curry theorem =
+      (checkpoint ();
+       case total dest_imp_only (concl theorem) of
+           NONE => theorem
+         | SOME (prem, _) =>
+             if is_conj prem then
+               let
+                 val _ = checkpoint ()
+                 val (left, right) = dest_conj prem
+                 val _ = checkpoint ()
+                 val tail = snd (dest_imp_only (concl theorem))
+                 val _ = checkpoint ()
+                 val curry_thm =
+                   SYM
+                     (Drule.SPECL [left, right, tail]
+                        boolTheory.AND_IMP_INTRO)
+                 val _ = checkpoint ()
+               in
+                 curry (EQ_MP curry_thm theorem)
+               end
+             else
+               let
+                 val _ = checkpoint ()
+                 val tail = MP theorem (ASSUME prem)
+                 val tail' = curry tail
+                 val _ = checkpoint ()
+               in
+                 DISCH prem tail'
+               end)
+
+    fun canonicalize rulekind theorem =
+      if already_canonical rulekind theorem then theorem
+      else
+        let
+          val (vars, _) = strip_foralls (concl theorem)
+          val vars' = fresh_vars theorem vars
+          val _ = checkpoint ()
+          val body = specl vars' theorem
+        in
+          case rulekind of
+              Intro =>
+                let
+                  val body' = curry body
+                  val _ = checkpoint ()
+                in
+                  genl vars' body'
+                end
+            | Elim => canonicalize_elim theorem vars' body
+            | Dest => canonicalize_elim theorem vars' body
+        end
+
+    and canonicalize_elim theorem vars body =
+      (checkpoint ();
+       case total dest_imp_only (concl body) of
+           NONE => canonicalize Intro theorem
+         | SOME (major, _) =>
+             let
+               val _ = checkpoint ()
+               val tail = MP body (ASSUME major)
+               val tail' = curry tail
+               val _ = checkpoint ()
+               val discharged = DISCH major tail'
+               val _ = checkpoint ()
+             in
+               genl vars discharged
+             end)
+
+    val theorem = canonicalize kind th
+    val (vars, body) = strip_foralls (concl theorem)
+    val (prems, cncl) = strip_imps body
+    fun add_vars [] set = set
+      | add_vars (v :: vs) set =
+          (checkpoint (); add_vars vs (HOLset.add (set, v)))
+  in
+    {thm = theorem,
+     patvars = add_vars vars (HOLset.empty Term.compare),
+     prems = prems,
+     concl = cncl}
+  end
+
 fun rule_premises th = #prems (canonical_form th)
 fun rule_premises_of kind th = #prems (canonical_form_of kind th)
 fun rule_conclusion th = #concl (canonical_form th)
@@ -427,6 +629,12 @@ fun compare_tag ({weight = w1, index = i1} : tag,
 fun candidate_order candidates =
   Listsort.sort (fn ((tag1, _), (tag2, _)) => compare_tag (tag1, tag2))
                 candidates
+
+fun candidate_order_measured checkpoint candidates =
+  Listsort.sort
+    (fn ((tag1, _), (tag2, _)) =>
+       (checkpoint (); compare_tag (tag1, tag2)))
+    candidates
 
 fun same_kind ({kind = kind1, safe = safe1, ...} : rulespec)
               ({kind = kind2, safe = safe2, ...} : rulespec) =

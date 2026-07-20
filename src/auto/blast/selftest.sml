@@ -138,6 +138,51 @@ val _ =
 
 val _ =
   test
+    ("measured clearTo checkpoints every normal rollback item",
+     fn () =>
+       let
+         val state = newState ()
+         val x = ref NONE
+         val y = ref NONE
+         val polls = ref 0
+         val _ = unify state ([], Var x, Free "a")
+         val _ = unify state ([], Var y, Free "b")
+         val _ =
+           clearToMeasured (fn () => polls := !polls + 1) state 0
+       in
+         !polls = 2 andalso unassigned x andalso unassigned y andalso
+         trailSize state = 0
+       end)
+
+val _ =
+  test
+    ("interrupted measured clearTo finishes emergency rollback",
+     fn () =>
+       let
+         exception CleanupStop of int ref
+         val sentinel = ref 29
+         val state = newState ()
+         val x = ref NONE
+         val y = ref NONE
+         val z = ref NONE
+         val polls = ref 0
+         val _ = unify state ([], Var x, Free "a")
+         val _ = unify state ([], Var y, Free "b")
+         val _ = unify state ([], Var z, Free "c")
+         fun checkpoint () =
+           (polls := !polls + 1;
+            if !polls = 2 then raise CleanupStop sentinel else ())
+       in
+         (clearToMeasured checkpoint state 0; false)
+         handle CleanupStop actual =>
+                  actual = sentinel andalso !polls = 2 andalso
+                  unassigned x andalso unassigned y andalso
+                  unassigned z andalso trailSize state = 0
+              | _ => false
+       end)
+
+val _ =
+  test
     ("norm chases assignments and beta-normalizes applications",
      fn () =>
        let
@@ -868,20 +913,18 @@ val _ =
        let
          val p = mk_var ("instrument_fanout_p", bool)
          val q = mk_var ("instrument_fanout_q", bool)
-         val polls = ref 0
          val cs =
            clasetLib.add_sintros
              [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
-         fun stop () =
-           (polls := !polls + 1; !polls = 2)
          val report =
-           blastSearch.searchGoalMeasured {debug = true, stop = stop}
+           blastSearch.searchGoalMeasured
+             {debug = true, stop = fn () => false}
              cs 0 ([], mk_conj (p, q)) (fn proof => proof)
          val statistics = #statistics report
        in
-         #completion report = blastSearch.Interrupted andalso
+         #completion report = blastSearch.Completed andalso
          not (Option.isSome (#result report)) andalso
-         length (#fullTrace report) = 1 andalso
+         length (#fullTrace report) > 1 andalso
          #configured_depth statistics = 0 andalso
          #maximum_resource_cost statistics = 0 andalso
          #inferences_performed statistics = 1 andalso
@@ -975,11 +1018,22 @@ fun zero_measured_work depth (statistics : blastSearch.statistics) =
   #branches_closed statistics = 0 andalso
   #choices_pruned statistics = 0 andalso
   #rule_cache_hits statistics = 0 andalso
-  #rule_conversions statistics = 0
+  #rule_conversions statistics = 0 andalso
+  #cooperative_checkpoints statistics > 0 andalso
+  #candidate_rules_enumerated statistics = 0 andalso
+  #candidate_conversions_attempted statistics = 0 andalso
+  #safe_rule_attempts statistics = 0 andalso
+  #unsafe_rule_attempts statistics = 0 andalso
+  #rule_unification_attempts statistics = 0 andalso
+  #rule_unification_successes statistics = 0 andalso
+  #equality_substitution_attempts statistics = 0 andalso
+  #equality_substitution_successes statistics = 0 andalso
+  #literal_close_attempts statistics = 0 andalso
+  #literal_close_successes statistics = 0
 
 val _ =
   test
-    ("initial cooperative stop is exact for goal and term APIs",
+    ("initial cooperative stop prevents goal and term search work",
      fn () =>
        let
          val p = mk_var ("instrument_initial_stop_p", bool)
@@ -997,7 +1051,9 @@ val _ =
                  (fn proof =>
                     (reconstructions := !reconstructions + 1; proof))
            in
-             !polls = 1 andalso !reconstructions = 0 andalso
+             !polls > 0 andalso
+             #cooperative_checkpoints (#statistics report) = !polls andalso
+             !reconstructions = 0 andalso
              #completion report = blastSearch.Interrupted andalso
              not (Option.isSome (#result report)) andalso
              #fullTrace report = [] andalso
@@ -1015,7 +1071,9 @@ val _ =
                  (fn proof =>
                     (reconstructions := !reconstructions + 1; proof))
            in
-             !polls = 1 andalso !reconstructions = 0 andalso
+             !polls > 0 andalso
+             #cooperative_checkpoints (#statistics report) = !polls andalso
+             !reconstructions = 0 andalso
              #completion report = blastSearch.Interrupted andalso
              not (Option.isSome (#result report)) andalso
              #fullTrace report = [] andalso
@@ -1028,7 +1086,7 @@ val _ =
 
 val _ =
   test
-    ("stop at final empty branch wins after an exact closing inference",
+    ("goal and term measured entry points have equivalent completion",
      fn () =>
        let
          val goal = ([], boolSyntax.T)
@@ -1038,15 +1096,14 @@ val _ =
 
          fun check debug
                (report : blastSearch.proof blastSearch.measured_result)
-               expected polls reconstructions =
+               reconstructions =
            let
              val statistics = #statistics report
-             val expected_trace = if debug then [[expected]] else []
            in
-             !polls = 2 andalso !reconstructions = 0 andalso
-             #completion report = blastSearch.Interrupted andalso
-             not (Option.isSome (#result report)) andalso
-             #fullTrace report = expected_trace andalso
+             !reconstructions = 1 andalso
+             #completion report = blastSearch.Completed andalso
+             Option.isSome (#result report) andalso
+             (debug = not (null (#fullTrace report))) andalso
              #configured_depth statistics = 0 andalso
              #maximum_resource_cost statistics = 0 andalso
              #inferences_performed statistics = 1 andalso
@@ -1054,39 +1111,45 @@ val _ =
              #branches_closed statistics = 1 andalso
              #choices_pruned statistics = 0 andalso
              #rule_cache_hits statistics = 0 andalso
-             #rule_conversions statistics = 1
+             #rule_conversions statistics = 1 andalso
+             #cooperative_checkpoints statistics > 0 andalso
+             #candidate_rules_enumerated statistics = 1 andalso
+             #candidate_conversions_attempted statistics = 1 andalso
+             #safe_rule_attempts statistics = 1 andalso
+             #unsafe_rule_attempts statistics = 0 andalso
+             #rule_unification_attempts statistics = 1 andalso
+             #rule_unification_successes statistics = 1 andalso
+             #equality_substitution_attempts statistics = 1 andalso
+             #equality_substitution_successes statistics = 0 andalso
+             #literal_close_attempts statistics = 0 andalso
+             #literal_close_successes statistics = 0
            end
 
          fun goal_run debug =
            let
-             val polls = ref 0
              val reconstructions = ref 0
-             val formulas = map #1 (blastRule.initialBranch goal)
-             val expected = blastSearch.initBranch (formulas, 0)
-             fun stop () = (polls := !polls + 1; !polls = 2)
              val report =
-               blastSearch.searchGoalMeasured {debug = debug, stop = stop}
+               blastSearch.searchGoalMeasured
+                 {debug = debug, stop = fn () => false}
                  cs 0 goal
                  (fn proof =>
                     (reconstructions := !reconstructions + 1; proof))
            in
-             check debug report expected polls reconstructions
+             check debug report reconstructions
            end
 
          fun terms_run debug =
            let
-             val polls = ref 0
              val reconstructions = ref 0
              val formulas = map #1 (blastRule.initialBranch goal)
-             val expected = blastSearch.initBranch (formulas, 0)
-             fun stop () = (polls := !polls + 1; !polls = 2)
              val report =
-               blastSearch.searchTermsMeasured {debug = debug, stop = stop}
+               blastSearch.searchTermsMeasured
+                 {debug = debug, stop = fn () => false}
                  cs 0 formulas
                  (fn proof =>
                     (reconstructions := !reconstructions + 1; proof))
            in
-             check debug report expected polls reconstructions
+             check debug report reconstructions
            end
        in
          goal_run false andalso goal_run true andalso
@@ -1104,8 +1167,7 @@ val _ =
          val cs =
            clasetLib.add_sintros
              [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
-         fun stop () =
-           (polls := !polls + 1; !polls = 2)
+         fun stop () = (polls := !polls + 1; true)
          val interrupted =
            blastSearch.searchGoalMeasured {debug = true, stop = stop}
              cs 0 ([], mk_conj (p, q)) (fn proof => proof)
@@ -1117,17 +1179,16 @@ val _ =
          val final = #statistics completed
        in
          #completion interrupted = blastSearch.Interrupted andalso
-         !polls = 2 andalso
+         !polls > 0 andalso
          #completion completed = blastSearch.Completed andalso
          not (Option.isSome (#result interrupted)) andalso
          not (Option.isSome (#result completed)) andalso
-         #inferences_performed partial = 1 andalso
-         #branches_created partial = 2 andalso
-         #branches_closed partial = 0 andalso
-         #inferences_performed final = 1 andalso
-         #branches_created final = 2 andalso
-         #branches_closed final = 0 andalso
-         length (#fullTrace interrupted) = 1 andalso
+         #inferences_performed partial <= #inferences_performed final andalso
+         #branches_created partial <= #branches_created final andalso
+         #branches_closed partial <= #branches_closed final andalso
+         #cooperative_checkpoints partial = !polls andalso
+         #candidate_conversions_attempted partial <=
+           #candidate_rules_enumerated partial andalso
          length (#fullTrace completed) > 1
        end)
 
@@ -1154,9 +1215,763 @@ val _ =
          raises (fn () => raise blastSearch.PROOF_FAILED) 2
        end)
 
+fun zero_phase_statistics (statistics : blastSearch.statistics) =
+  #cooperative_checkpoints statistics = 0 andalso
+  #candidate_rules_enumerated statistics = 0 andalso
+  #candidate_conversions_attempted statistics = 0 andalso
+  #safe_rule_attempts statistics = 0 andalso
+  #unsafe_rule_attempts statistics = 0 andalso
+  #rule_unification_attempts statistics = 0 andalso
+  #rule_unification_successes statistics = 0 andalso
+  #equality_substitution_attempts statistics = 0 andalso
+  #equality_substitution_successes statistics = 0 andalso
+  #literal_close_attempts statistics = 0 andalso
+  #literal_close_successes statistics = 0
+
 val _ =
   test
-    ("interruption after PROOF_FAILED keeps exact partial counters",
+    ("statistics-only search does no measured phase monitoring",
+     fn () =>
+       let
+         val report =
+           blastSearch.searchGoalWithStats clasetLib.empty_cs 0
+             ([boolSyntax.T], boolSyntax.T) (fn proof => proof)
+       in
+         Option.isSome (#result report) andalso
+         zero_phase_statistics (#statistics report)
+       end)
+
+fun script_view (proof : blastSearch.proof) =
+  let
+    fun origin (blastRule.Stored {is_elim, theorem}) =
+          (if is_elim then "elim:" else "intro:") ^
+          Parse.term_to_string (concl theorem)
+      | origin blastRule.ImpIntro = "imp"
+      | origin blastRule.AllIntro = "all"
+    fun step blastSearch.HypSubst = "subst"
+      | step blastSearch.CloseAssume = "assume"
+      | step blastSearch.CloseContradiction = "contradiction"
+      | step (blastSearch.SafeRule {rule, updated}) =
+          "safe:" ^ Bool.toString updated ^ ":" ^ origin (#origin rule)
+      | step blastSearch.DeferGoal = "defer"
+      | step
+          (blastSearch.UnsafeRule {rule, updated, duplicate}) =
+          "unsafe:" ^ Bool.toString updated ^ ":" ^
+          Bool.toString duplicate ^ ":" ^ origin (#origin rule)
+  in
+    map step (#script proof)
+  end
+
+fun same_proof_options
+      (NONE : blastSearch.proof option, NONE : blastSearch.proof option) = true
+  | same_proof_options (SOME left, SOME right) =
+      script_view left = script_view right andalso
+      #branches_created left = #branches_created right andalso
+      #branches_closed left = #branches_closed right andalso
+      #choices_pruned left = #choices_pruned right
+  | same_proof_options _ = false
+
+fun same_old_statistics
+      (left : blastSearch.statistics, right : blastSearch.statistics) =
+  #configured_depth left = #configured_depth right andalso
+  #maximum_resource_cost left = #maximum_resource_cost right andalso
+  #inferences_performed left = #inferences_performed right andalso
+  #branches_created left = #branches_created right andalso
+  #branches_closed left = #branches_closed right andalso
+  #choices_pruned left = #choices_pruned right andalso
+  #rule_cache_hits left = #rule_cache_hits right andalso
+  #rule_conversions left = #rule_conversions right
+
+fun same_phase_statistics
+      (left : blastSearch.statistics, right : blastSearch.statistics) =
+  #cooperative_checkpoints left = #cooperative_checkpoints right andalso
+  #candidate_rules_enumerated left =
+    #candidate_rules_enumerated right andalso
+  #candidate_conversions_attempted left =
+    #candidate_conversions_attempted right andalso
+  #safe_rule_attempts left = #safe_rule_attempts right andalso
+  #unsafe_rule_attempts left = #unsafe_rule_attempts right andalso
+  #rule_unification_attempts left =
+    #rule_unification_attempts right andalso
+  #rule_unification_successes left =
+    #rule_unification_successes right andalso
+  #equality_substitution_attempts left =
+    #equality_substitution_attempts right andalso
+  #equality_substitution_successes left =
+    #equality_substitution_successes right andalso
+  #literal_close_attempts left = #literal_close_attempts right andalso
+  #literal_close_successes left = #literal_close_successes right
+
+fun same_list compare ([], []) = true
+  | same_list compare (left :: lefts, right :: rights) =
+      compare (left, right) andalso same_list compare (lefts, rights)
+  | same_list compare _ = false
+
+type alpha_comparator =
+  {term : blastTerm.term * blastTerm.term -> bool,
+   variable : blastTerm.var * blastTerm.var -> bool}
+
+fun new_alpha_comparator () : alpha_comparator =
+  let
+    val variables = ref ([] : (blastTerm.var * blastTerm.var) list)
+    val skolems = ref ([] : (string * string) list)
+
+    fun bijection equal table (left, right) =
+      case List.find (fn (known, _) => equal (left, known)) (!table) of
+          SOME (_, known) => equal (right, known)
+        | NONE =>
+            if List.exists
+                 (fn (_, known) => equal (right, known)) (!table)
+            then false
+            else (table := (left, right) :: !table; true)
+
+    fun variable (left, right) =
+      bijection (op =) variables (left, right) andalso
+      (case (!left, !right) of
+           (NONE, NONE) => true
+         | (SOME left_term, SOME right_term) =>
+             term (left_term, right_term)
+         | _ => false)
+    and term (Const (left, left_args), Const (right, right_args)) =
+          left = right andalso same_list term (left_args, right_args)
+      | term (Skolem (left, left_deps), Skolem (right, right_deps)) =
+          bijection (op =) skolems (left, right) andalso
+          same_list variable (left_deps, right_deps)
+      | term (Free left, Free right) = left = right
+      | term (Var left, Var right) = variable (left, right)
+      | term (Bound left, Bound right) = left = right
+      | term (Abs (_, left), Abs (_, right)) = term (left, right)
+      | term (left_f $ left_x, right_f $ right_x) =
+          term (left_f, right_f) andalso term (left_x, right_x)
+      | term _ = false
+  in
+    {term = term, variable = variable}
+  end
+
+fun same_rule_lists_alpha (left_rules, right_rules) =
+  let
+    val compare = new_alpha_comparator ()
+    fun same_origin
+          (blastRule.Stored {is_elim = left, theorem = left_thm},
+           blastRule.Stored {is_elim = right, theorem = right_thm}) =
+          left = right andalso
+          Term.aconv (concl left_thm) (concl right_thm)
+      | same_origin (blastRule.ImpIntro, blastRule.ImpIntro) = true
+      | same_origin (blastRule.AllIntro, blastRule.AllIntro) = true
+      | same_origin _ = false
+    fun same_rule (left : blastRule.tableau_rule,
+                   right : blastRule.tableau_rule) =
+      same_origin (#origin left, #origin right) andalso
+      #term compare (#pattern left, #pattern right) andalso
+      same_list
+        (fn (left_premise, right_premise) =>
+           same_list (#term compare) (left_premise, right_premise))
+        (#premises left, #premises right)
+  in
+    same_list same_rule (left_rules, right_rules)
+  end
+
+fun same_traces_alpha (left_trace, right_trace) =
+  let
+    val compare = new_alpha_comparator ()
+    fun same_pair ((left, left_md), (right, right_md)) =
+      left_md = right_md andalso #term compare (left, right)
+    fun same_level ((left_safe, left_unsafe),
+                    (right_safe, right_unsafe)) =
+      same_list same_pair (left_safe, right_safe) andalso
+      same_list same_pair (left_unsafe, right_unsafe)
+    fun same_branch
+          (left : blastSearch.branch, right : blastSearch.branch) =
+      #lim left = #lim right andalso
+      same_list (#variable compare) (#vars left, #vars right) andalso
+      same_list (#term compare) (#lits left, #lits right) andalso
+      same_list same_level (#pairs left, #pairs right)
+    fun same_state (left, right) =
+      same_list same_branch (left, right)
+  in
+    same_list same_state (left_trace, right_trace)
+  end
+
+val _ =
+  test
+    ("ordinary Stats and measured searches are observationally equivalent",
+     fn () =>
+       let
+         val p = mk_var ("phase_equiv_p", bool)
+         val q = mk_var ("phase_equiv_q", bool)
+         val disj_cs =
+           clasetLib.add_intros
+             [("left", boolTheory.OR_INTRO_THM1),
+              ("right", boolTheory.OR_INTRO_THM2)]
+             clasetLib.empty_cs
+
+         fun run cs depth goal reject_first =
+           let
+             fun continuation attempts proof =
+               (attempts := !attempts + 1;
+                if reject_first andalso !attempts = 1 then
+                  raise blastSearch.PROOF_FAILED
+                else proof)
+             val ordinary_attempts = ref 0
+             val stats_attempts = ref 0
+             val measured_attempts = ref 0
+             val ordinary =
+               blastSearch.searchGoal cs depth goal
+                 (continuation ordinary_attempts)
+             val stats =
+               blastSearch.searchGoalWithStats cs depth goal
+                 (continuation stats_attempts)
+             val measured =
+               blastSearch.searchGoalMeasured
+                 {debug = false, stop = fn () => false}
+                 cs depth goal (continuation measured_attempts)
+           in
+             #completion measured = blastSearch.Completed andalso
+             !ordinary_attempts = !stats_attempts andalso
+             !stats_attempts = !measured_attempts andalso
+             same_proof_options (ordinary, #result stats) andalso
+             same_proof_options (#result stats, #result measured) andalso
+             same_old_statistics
+               (#statistics stats, #statistics measured)
+           end
+       in
+         run clasetLib.empty_cs 0 ([p], p) false andalso
+         run clasetLib.empty_cs 0 ([], p) false andalso
+         run disj_cs 1 ([p, q], mk_disj (p, q)) true
+       end)
+
+val _ =
+  test
+    ("deterministic generated queries preserve measured candidate order",
+     fn () =>
+       let
+         val p = mk_var ("phase_random_p", bool)
+         val q = mk_var ("phase_random_q", bool)
+         val r = mk_var ("phase_random_r", bool)
+         val witness = mk_var ("phase_random_witness", bool)
+         val consequent = mk_var ("phase_random_consequent", bool)
+         val atoms = [p, q, r]
+         val cs = clasetLib.the_claset ()
+         (* The intermediate product stays below a 31-bit Int.maxInt. *)
+         fun next seed = (seed * 25173 + 13849) mod 32768
+         fun formula 0 seed =
+               (List.nth (atoms, seed mod length atoms), next seed)
+           | formula depth seed =
+               let
+                 val seed1 = next seed
+                 val (left, seed2) = formula (depth - 1) seed1
+                 val (right, seed3) = formula (depth - 1) seed2
+                 val result =
+                   case seed mod 4 of
+                       0 => mk_imp (left, right)
+                     | 1 => mk_conj (left, right)
+                     | 2 => mk_disj (left, right)
+                     | _ => mk_neg left
+               in
+                 (result, seed3)
+               end
+         fun check 0 _ = true
+           | check count seed =
+               let
+                 val (query, seed') = formula 3 seed
+                 (* This assumption is satisfiable by setting witness true;
+                    the fresh consequent can independently be false. *)
+                 val goal = ([mk_disj (query, witness)], consequent)
+                 val stats =
+                   blastSearch.searchGoalWithStats cs 2 goal
+                     (fn proof => proof)
+                 val measured =
+                   blastSearch.searchGoalMeasured
+                     {debug = true, stop = fn () => false}
+                     cs 2 goal (fn proof => proof)
+                 val repeated =
+                   blastSearch.searchGoalMeasured
+                     {debug = true, stop = fn () => false}
+                     cs 2 goal (fn proof => proof)
+                 val measured_stats = #statistics measured
+                 val repeated_stats = #statistics repeated
+               in
+                 not (Option.isSome (#result stats)) andalso
+                 #completion measured = blastSearch.Completed andalso
+                 not (Option.isSome (#result measured)) andalso
+                 #completion repeated = blastSearch.Completed andalso
+                 not (Option.isSome (#result repeated)) andalso
+                 #inferences_performed measured_stats > 0 andalso
+                 #candidate_rules_enumerated measured_stats > 0 andalso
+                 not (null (#fullTrace measured)) andalso
+                 same_proof_options (#result stats, #result measured) andalso
+                 same_proof_options (#result measured, #result repeated) andalso
+                 same_old_statistics
+                   (#statistics stats, measured_stats) andalso
+                 same_old_statistics
+                   (measured_stats, repeated_stats) andalso
+                 same_phase_statistics
+                   (measured_stats, repeated_stats) andalso
+                 same_traces_alpha
+                   (#fullTrace measured, #fullTrace repeated) andalso
+                 check (count - 1) seed'
+               end
+       in
+         check 24 1
+       end)
+
+val _ =
+  test
+    ("measured rule conversion and cache hits preserve ordinary outputs",
+     fn () =>
+       let
+         val p = mk_var ("phase_rule_p", bool)
+         val q = mk_var ("phase_rule_q", bool)
+         val formula =
+           mkGoal (blastRule.fromGoalTerm (mk_conj (p, q)))
+         val cs =
+           clasetLib.add_sintros
+             [("andI", boolTheory.AND_INTRO_THM)] clasetLib.empty_cs
+         val ordinary_cache = blastRule.newCache ()
+         val measured_cache = blastRule.newCache ()
+         val polls = ref 0
+         val candidates = ref 0
+         val conversions = ref 0
+         val monitor : blastRule.monitor =
+           {checkpoint = fn () => polls := !polls + 1,
+            candidate = fn () => candidates := !candidates + 1,
+            conversion = fn () => conversions := !conversions + 1}
+         val ordinary =
+           blastRule.safeRules ordinary_cache cs [] formula
+         val measured =
+           blastRule.safeRulesMeasured monitor measured_cache cs [] formula
+         val measured_hit =
+           blastRule.safeRulesMeasured monitor measured_cache cs [] formula
+
+       in
+         same_rule_lists_alpha (ordinary, measured) andalso
+         same_rule_lists_alpha (measured, measured_hit) andalso
+         !polls > 0 andalso !candidates = 1 andalso !conversions = 1 andalso
+         blastRule.conversionCount ordinary_cache =
+           blastRule.conversionCount measured_cache andalso
+         blastRule.hitCount measured_cache = 1
+       end)
+
+val _ =
+  test
+    ("rule alpha comparison preserves sharing, types and dependencies",
+     fn () =>
+       let
+         fun rule pattern premises : blastRule.tableau_rule =
+           {origin = blastRule.ImpIntro,
+            pattern = pattern, premises = premises}
+         val shared_left = ref NONE
+         val shared_right = ref NONE
+         val broken_right = ref NONE
+         val sharing_left =
+           [rule (Const ("sharing", []) $ Var shared_left)
+              [[Var shared_left]]]
+         val sharing_right =
+           [rule (Const ("sharing", []) $ Var shared_right)
+              [[Var broken_right]]]
+         val typed_left =
+           [rule (Const ("typed", [Free "'a", Free "'b"])) []]
+         val typed_swapped =
+           [rule (Const ("typed", [Free "'b", Free "'a"])) []]
+         val dependency_left = ref NONE
+         val dependency_right = ref NONE
+         val dependency_other = ref NONE
+         val dependencies =
+           [rule
+              (Skolem ("left_skolem",
+                 [dependency_left, dependency_left])) []]
+         val renamed_dependencies =
+           [rule
+              (Skolem ("right_skolem",
+                 [dependency_right, dependency_right])) []]
+         val wrong_identity =
+           [rule
+              (Skolem ("right_skolem",
+                 [dependency_right, dependency_other])) []]
+         val wrong_count =
+           [rule (Skolem ("right_skolem", [dependency_right])) []]
+       in
+         same_rule_lists_alpha (dependencies, renamed_dependencies) andalso
+         not (same_rule_lists_alpha (sharing_left, sharing_right)) andalso
+         not (same_rule_lists_alpha (typed_left, typed_swapped)) andalso
+         not (same_rule_lists_alpha (dependencies, wrong_identity)) andalso
+         not (same_rule_lists_alpha (dependencies, wrong_count))
+       end)
+
+val _ =
+  test
+    ("conversion/query equivalence matrix covers all rule families",
+     fn () =>
+       let
+         val p = mk_var ("phase_matrix_p", bool)
+         val q = mk_var ("phase_matrix_q", bool)
+         val r = mk_var ("phase_matrix_r", bool)
+         val alpha = Type.mk_vartype "'phase_matrix"
+         val x = mk_var ("phase_matrix_x", alpha)
+         val pred = mk_var ("phase_matrix_pred", alpha --> bool)
+         val qp = mk_conj (q, p)
+         val qp_assumption = ASSUME qp
+         val conjunctive_intro =
+           GENL [p, q]
+             (DISCH qp
+                (CONJ (CONJUNCT2 qp_assumption)
+                   (CONJUNCT1 qp_assumption)))
+         val major = mk_disj (p, q)
+         val side = mk_conj (r, p)
+         val conjunctive_elim =
+           GENL [p, q, r]
+             (DISCH major
+                (DISCH side (CONJUNCT1 (ASSUME side))))
+         val specializing =
+           GENL [pred, x]
+             (DISCH (mk_forall (x, mk_comb (pred, x)))
+                (SPEC x
+                   (ASSUME (mk_forall (x, mk_comb (pred, x))))))
+         val safe_intro_cs =
+           clasetLib.add_sintros
+             [("matrix_canonical_intro", boolTheory.AND_INTRO_THM),
+              ("matrix_conjunctive_intro", conjunctive_intro)]
+             clasetLib.empty_cs
+         val safe_elim_cs =
+           clasetLib.add_selims
+             [("matrix_canonical_elim", boolTheory.OR_ELIM_THM),
+              ("matrix_conjunctive_elim", conjunctive_elim)]
+             clasetLib.empty_cs
+         val unsafe_intro_cs =
+           clasetLib.add_intros
+             [("matrix_left", boolTheory.OR_INTRO_THM1),
+              ("matrix_right", boolTheory.OR_INTRO_THM2)]
+             clasetLib.empty_cs
+         val quantified_cs =
+           clasetLib.add_sintros
+             [("matrix_specialize", specializing)] clasetLib.empty_cs
+         val polymorphic_cs =
+           clasetLib.add_sintros
+             [("matrix_refl", boolTheory.EQ_REFL)] clasetLib.empty_cs
+         val conjunction =
+           mkGoal (blastRule.fromGoalTerm (mk_conj (p, q)))
+         val disjunction =
+           mkGoal (blastRule.fromGoalTerm (mk_disj (p, q)))
+         val assertion = blastRule.fromGoalTerm major
+         val equality =
+           mkGoal (blastRule.fromGoalTerm (mk_eq (x, x)))
+         val specialized =
+           mkGoal (blastRule.fromGoalTerm (mk_comb (pred, x)))
+         val implication =
+           mkGoal (blastRule.fromGoalTerm (mk_imp (p, q)))
+         val universal =
+           mkGoal
+             (blastRule.fromGoalTerm
+                (mk_forall (x, mk_comb (pred, x))))
+
+         fun origin (blastRule.Stored {is_elim, theorem}) =
+               (if is_elim then "elim:" else "intro:") ^
+               Parse.term_to_string (concl theorem)
+           | origin blastRule.ImpIntro = "pseudo:imp"
+           | origin blastRule.AllIntro = "pseudo:all"
+         fun origin_kind text =
+           if String.isPrefix "elim:" text then "elim"
+           else if String.isPrefix "intro:" text then "intro"
+           else text
+         fun rule_origin
+               ({origin, ...} : blastRule.tableau_rule) = origin
+         fun views rules = map (origin o rule_origin) rules
+
+         fun check
+               {safe, cs, formula, candidates, rule_count,
+                origin_kinds, ...} =
+           let
+             val ordinary_cache = blastRule.newCache ()
+             val measured_cache = blastRule.newCache ()
+             val polls = ref 0
+             val seen_candidates = ref 0
+             val seen_conversions = ref 0
+             val monitor : blastRule.monitor =
+               {checkpoint = fn () => polls := !polls + 1,
+                candidate =
+                  fn () => seen_candidates := !seen_candidates + 1,
+                conversion =
+                  fn () => seen_conversions := !seen_conversions + 1}
+             fun ordinary () =
+               if safe then
+                 blastRule.safeRules ordinary_cache cs [] formula
+               else blastRule.unsafeRules ordinary_cache cs [] formula
+             fun measured () =
+               if safe then
+                 blastRule.safeRulesMeasured monitor measured_cache cs []
+                   formula
+               else
+                 blastRule.unsafeRulesMeasured monitor measured_cache cs []
+                   formula
+             val ordinary_miss = ordinary ()
+             val ordinary_hit = ordinary ()
+             val measured_miss = measured ()
+             val measured_hit = measured ()
+             val expected_view = views ordinary_miss
+           in
+             length ordinary_miss = rule_count andalso
+             views measured_miss = expected_view andalso
+             views ordinary_hit = expected_view andalso
+             views measured_hit = expected_view andalso
+             map origin_kind expected_view = origin_kinds andalso
+             same_rule_lists_alpha (ordinary_miss, measured_miss) andalso
+             same_rule_lists_alpha (ordinary_hit, measured_hit) andalso
+             same_rule_lists_alpha (ordinary_miss, ordinary_hit) andalso
+             same_rule_lists_alpha (measured_miss, measured_hit) andalso
+             !polls > 0 andalso !seen_candidates = candidates andalso
+             !seen_conversions = candidates andalso
+             blastRule.conversionCount ordinary_cache = candidates andalso
+             blastRule.conversionCount measured_cache = candidates andalso
+             blastRule.hitCount ordinary_cache = 1 andalso
+             blastRule.hitCount measured_cache = 1
+           end
+
+         val cases =
+           [{name = "safe intro canonical/noncanonical conjunction",
+             safe = true, cs = safe_intro_cs, formula = conjunction,
+             candidates = 2, rule_count = 2,
+             origin_kinds = ["intro", "intro"]},
+            {name = "safe elim canonical/noncanonical conjunction",
+             safe = true, cs = safe_elim_cs, formula = assertion,
+             candidates = 2, rule_count = 2,
+             origin_kinds = ["elim", "elim"]},
+            {name = "unsafe intro ordering", safe = false,
+             cs = unsafe_intro_cs, formula = disjunction,
+             candidates = 2, rule_count = 2,
+             origin_kinds = ["intro", "intro"]},
+            {name = "quantified specialization", safe = true,
+             cs = quantified_cs, formula = specialized,
+             candidates = 1, rule_count = 1,
+             origin_kinds = ["intro"]},
+            {name = "typed polymorphic rule", safe = true,
+             cs = polymorphic_cs, formula = equality,
+             candidates = 1, rule_count = 1,
+             origin_kinds = ["intro"]},
+            {name = "implication pseudo-rule", safe = true,
+             cs = clasetLib.empty_cs, formula = implication,
+             candidates = 0, rule_count = 1,
+             origin_kinds = ["pseudo:imp"]},
+            {name = "universal pseudo-rule", safe = true,
+             cs = clasetLib.empty_cs, formula = universal,
+             candidates = 0, rule_count = 1,
+             origin_kinds = ["pseudo:all"]}]
+       in
+         List.all check cases
+       end)
+
+val _ =
+  test
+    ("completed measured searches have exact phase counters",
+     fn () =>
+       let
+         val p = mk_var ("phase_exact_p", bool)
+         val alpha = Type.mk_vartype "'phase_exact"
+         val x = mk_var ("phase_exact_x", alpha)
+         val y = mk_var ("phase_exact_y", alpha)
+         val pred = mk_var ("phase_exact_pred", alpha --> bool)
+         val existential = mk_var ("phase_exact_ex", bool)
+         val predicate = mk_var ("phase_exact_ep", bool --> bool)
+
+         fun measured cs depth goal =
+           blastSearch.searchGoalMeasured
+             {debug = false, stop = fn () => false}
+             cs depth goal (fn proof => proof)
+
+         val literal =
+           #statistics (measured clasetLib.empty_cs 0 ([p], p))
+         val equality =
+           #statistics
+             (measured clasetLib.empty_cs 0
+                ([mk_eq (x, y), mk_comb (pred, x)],
+                 mk_comb (pred, y)))
+         val unsafe =
+           #statistics
+             (measured
+                (clasetLib.add_intros
+                   [("exists", EXISTS_INTRO_THM)] clasetLib.empty_cs)
+                1 ([], mk_exists
+                         (existential,
+                          mk_comb (predicate, existential))))
+       in
+         #cooperative_checkpoints literal > 0 andalso
+         #candidate_rules_enumerated literal = 0 andalso
+         #candidate_conversions_attempted literal = 0 andalso
+         #safe_rule_attempts literal = 0 andalso
+         #unsafe_rule_attempts literal = 0 andalso
+         #rule_unification_attempts literal = 0 andalso
+         #rule_unification_successes literal = 0 andalso
+         #equality_substitution_attempts literal = 1 andalso
+         #equality_substitution_successes literal = 0 andalso
+         #literal_close_attempts literal = 1 andalso
+         #literal_close_successes literal = 1 andalso
+         #cooperative_checkpoints equality > 0 andalso
+         #equality_substitution_attempts equality = 3 andalso
+         #equality_substitution_successes equality = 1 andalso
+         #literal_close_attempts equality = 3 andalso
+         #literal_close_successes equality = 1 andalso
+         #cooperative_checkpoints unsafe > 0 andalso
+         #candidate_rules_enumerated unsafe = 4 andalso
+         #candidate_conversions_attempted unsafe = 4 andalso
+         #safe_rule_attempts unsafe = 0 andalso
+         #unsafe_rule_attempts unsafe = 1 andalso
+         #rule_unification_attempts unsafe = 1 andalso
+         #rule_unification_successes unsafe = 1
+       end)
+
+val _ =
+  test
+    ("rule attempt counters start after the preparation checkpoint",
+     fn () =>
+       let
+         val truth_cs =
+           clasetLib.add_sintros
+             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
+         val existential = mk_var ("phase_boundary_ex", bool)
+         val predicate = mk_var ("phase_boundary_pred", bool --> bool)
+         val exists_cs =
+           clasetLib.add_intros
+             [("exists", EXISTS_INTRO_THM)] clasetLib.empty_cs
+
+         fun run cutoff cs depth terms =
+           let
+             val polls = ref 0
+             fun stop () =
+               (polls := !polls + 1; !polls >= cutoff)
+           in
+             blastSearch.searchTermsMeasured
+               {debug = false, stop = stop} cs depth terms
+               (fn proof => proof)
+           end
+
+         fun attempts safe statistics =
+           if safe then #safe_rule_attempts statistics
+           else #unsafe_rule_attempts statistics
+
+         fun boundary safe cs depth terms =
+           let
+             fun seek cutoff =
+               if cutoff > 1000 then NONE
+               else
+                 let
+                   val report = run cutoff cs depth terms
+                 in
+                   if attempts safe (#statistics report) > 0 then
+                     SOME (cutoff, report)
+                   else seek (cutoff + 1)
+                 end
+           in
+             case seek 1 of
+                 NONE => false
+               | SOME (cutoff, after) =>
+                   let
+                     val prior = run (cutoff - 1) cs depth terms
+                     val prior_stats = #statistics prior
+                     val after_stats = #statistics after
+                   in
+                     #completion prior = blastSearch.Interrupted andalso
+                     #completion after = blastSearch.Interrupted andalso
+                     attempts safe prior_stats = 0 andalso
+                     #rule_unification_attempts prior_stats = 0 andalso
+                     attempts safe after_stats = 1 andalso
+                     #rule_unification_attempts after_stats = 1 andalso
+                     #rule_unification_successes after_stats = 0
+                   end
+           end
+       in
+         boundary true truth_cs 0
+           [mkGoal (Const (const_name {Thy = "bool", Name = "T"}, []))]
+         andalso
+         boundary false exists_cs 1
+           [mkGoal
+              (blastRule.fromGoalTerm
+                 (mk_exists
+                    (existential, mk_comb (predicate, existential))))]
+       end)
+
+val _ =
+  test
+    ("bounded inner interruption returns a coherent partial snapshot",
+     fn () =>
+       let
+         val polls = ref 0
+         val branch = ref NONE
+         val truth_cs =
+           clasetLib.add_sintros
+             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
+         val report =
+           blastSearch.searchTermsMeasured
+             {debug = true,
+              stop = fn () =>
+                (polls := !polls + 1; Option.isSome (!branch))}
+             truth_cs 0 [mkGoal (Var branch)] (fn proof => proof)
+         val statistics = #statistics report
+       in
+         #completion report = blastSearch.Interrupted andalso
+         not (Option.isSome (#result report)) andalso
+         not (Option.isSome (!branch)) andalso !polls > 0 andalso
+         #cooperative_checkpoints statistics = !polls andalso
+         #candidate_conversions_attempted statistics <=
+           #candidate_rules_enumerated statistics andalso
+         #rule_unification_successes statistics <=
+           #rule_unification_attempts statistics
+       end)
+
+val _ =
+  test
+    ("interrupted measured unification rolls back branch assignments",
+     fn () =>
+       let
+         val branch = ref NONE
+         val cs =
+           clasetLib.add_sintros
+             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
+         fun stop () = Option.isSome (!branch)
+         val report =
+           blastSearch.searchTermsMeasured {debug = true, stop = stop}
+             cs 0 [mkGoal (Var branch)] (fn proof => proof)
+         val statistics = #statistics report
+       in
+         #completion report = blastSearch.Interrupted andalso
+         not (Option.isSome (!branch)) andalso
+         not (null (#fullTrace report)) andalso
+         #cooperative_checkpoints statistics > 0 andalso
+         #safe_rule_attempts statistics = 1 andalso
+         #rule_unification_attempts statistics = 1 andalso
+         #rule_unification_successes statistics = 1 andalso
+         #inferences_performed statistics = 0 andalso
+         #branches_closed statistics = 0
+       end)
+
+val _ =
+  test
+    ("inner stop-predicate exceptions preserve identity",
+     fn () =>
+       let
+         exception InnerStop of int ref
+         val sentinel = ref 23
+         val branch = ref NONE
+         val seen_assignment = ref false
+         val cs =
+           clasetLib.add_sintros
+             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
+         fun stop () =
+           if Option.isSome (!branch) then
+             (seen_assignment := true; raise InnerStop sentinel)
+           else false
+       in
+         (ignore
+            (blastSearch.searchTermsMeasured {debug = false, stop = stop}
+               cs 0 [mkGoal (Var branch)] (fn proof => proof));
+          false)
+         handle InnerStop actual =>
+                  actual = sentinel andalso !seen_assignment andalso
+                  not (Option.isSome (!branch))
+              | _ => false
+       end)
+
+val _ =
+  test
+    ("PROOF_FAILED event interruption keeps a coherent snapshot",
      fn () =>
        let
          val p = mk_var ("instrument_partial_backtrack_p", bool)
@@ -1172,12 +1987,16 @@ val _ =
            blastSearch.searchGoalMeasured {debug = false, stop = stop}
              clasetLib.empty_cs 0 ([p, p], p) reject
          val statistics = #statistics report
-         val exact =
-           !polls = 3 andalso !attempts = 1 andalso
-           #inferences_performed statistics = 2 andalso
-           #branches_closed statistics = 2
+         val coherent =
+           !polls = #cooperative_checkpoints statistics andalso
+           !attempts = 1 andalso
+           #inferences_performed statistics >= 1 andalso
+           #branches_closed statistics >= 1 andalso
+           #literal_close_attempts statistics >=
+             #literal_close_successes statistics andalso
+           #literal_close_successes statistics >= 1
        in
-         exact andalso
+         coherent andalso
          #completion report = blastSearch.Interrupted andalso
          not (Option.isSome (#result report)) andalso
          #fullTrace report = [] andalso

@@ -44,7 +44,18 @@ sig
      branches_closed : int,
      choices_pruned : int,
      rule_cache_hits : int,
-     rule_conversions : int}
+     rule_conversions : int,
+     cooperative_checkpoints : int,
+     candidate_rules_enumerated : int,
+     candidate_conversions_attempted : int,
+     safe_rule_attempts : int,
+     unsafe_rule_attempts : int,
+     rule_unification_attempts : int,
+     rule_unification_successes : int,
+     equality_substitution_attempts : int,
+     equality_substitution_successes : int,
+     literal_close_attempts : int,
+     literal_close_successes : int}
 
   datatype completion = Completed | Interrupted
 
@@ -92,23 +103,54 @@ sig
      queue manipulation and reconstruction are not inferences under this
      counter.  branches_created separately counts tableau branches.
 
+     The phase counters are measured-search diagnostics.  Candidate counts
+     exclude pseudo-rules and cache hits; conversion attempts include
+     elimination rules rejected during conversion.  Rule-unification counts
+     exclude literal closing, which has its own counters.  Equality success
+     means a complete substituted branch was produced.  Literal-close
+     success means unification found a closer, whether or not later
+     backtracking retains it.  cooperative_checkpoints is exactly the number
+     of stop-predicate calls.  searchGoalWithStats and ordinary search report
+     zero for these measured-only fields.  An attempt is recorded only after
+     its immediately preceding cooperative poll succeeds, just before the
+     candidate conversion, rule unification, equality substitution, or
+     literal-close operation starts.
+
      These are internal search-engine metrics.  For comparison with
      Isabelle's published Table 1, only configured_depth and the
      branches_created value from one completed, fixed-depth run correspond
      to its depth and ntried columns.  maximum_resource_cost and
-     inferences_performed are not published Isabelle/Blast statistics, and
-     values accumulated across iterative-deepening runs are not Table-1
-     values. *)
+     inferences_performed, all phase counters, and values accumulated across
+     iterative-deepening runs are not published Isabelle/Blast statistics. *)
   val searchGoalWithStats :
     claset -> int -> goal -> (proof -> 'a) ->
     {result : 'a option, statistics : statistics}
 
-  (* Cooperative fixed-depth search.  stop is polled once at every prv
-     entry.  A true result ends the run with completion = Interrupted and
-     returns counters accumulated up to that poll.  A completed exhaustion
-     has completion = Completed and result = NONE.  If debug is false,
-     fullTrace is empty.  Exceptions raised by stop propagate unchanged;
-     they are never interpreted as search-control exceptions. *)
+  (* Cooperative fixed-depth search.  stop is polled while translating and
+     collecting variables from the initial goal, at every prv entry, and
+     between recursive items in normalization, premise construction, gamma
+     requeueing, pruning/clash checks, literal insertion and closing, equality
+     substitution, rule iteration/unification, net edge/result traversal,
+     candidate ordering/conversion, and cached-rule copying.  Measured theorem
+     conversion also polls its HOL/type translation, canonical free-variable
+     walk, each quantified SPEC/GEN stage, and blast-term bound-variable walks.
+     A true result ends the run with completion = Interrupted and returns a
+     coherent partial snapshot.  A completed exhaustion has completion =
+     Completed and result = NONE.  If debug is false, fullTrace is empty.
+     Exceptions raised by stop propagate unchanged; they are never interpreted
+     as search-control exceptions.  Normal measured rollback polls once per
+     trail item.  If interruption or a stop-predicate exception occurs during
+     destructive work or normal rollback, emergency rollback finishes without
+     polling before the original exception escapes.
+
+     This is cooperative timing, not a hard real-time bound.  Polling excludes
+     time spent in the arbitrary caller-supplied stop predicate, the arbitrary
+     successful continuation and proof reconstruction it may invoke, one
+     indivisible HOL kernel or other primitive operation between checkpoints,
+     and emergency rollback cleanup after interruption.  Consequently none of
+     those intervals has a latency bound supplied by this API.
+     Ordinary and statistics-only search select the original unmeasured worker
+     families and do not construct measured local workers. *)
   val searchGoalMeasured :
     {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result

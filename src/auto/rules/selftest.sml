@@ -1197,6 +1197,28 @@ fun same_candidates (cs1 : (tag * brl) list) (cs2 : (tag * brl) list) =
        #1 brl1 = #1 brl2 andalso same_thm (#2 brl1) (#2 brl2))
     (cs1, cs2)
 
+val _ =
+  test
+    ("measured candidate FVL preserves a free variable beside its shadow",
+     fn () =>
+       let
+         val rigid =
+           ``(P : bool -> (bool -> bool) -> bool) T (\x : bool. x)``
+         val rule = ASSUME rigid
+         val cs = add_intros [("rigid", rule)] empty_cs
+         val query =
+           ``(P : bool -> (bool -> bool) -> bool) (x : bool)
+               (\x : bool. x)``
+         val ordinary = unify_intro_candidates (unsafe_part cs) query
+         val polls = ref 0
+         val measured =
+           unify_intro_candidates_measured
+             (fn () => polls := !polls + 1) (unsafe_part cs) query
+       in
+         !polls > 0 andalso has_thm rule ordinary andalso
+         same_candidates ordinary measured
+       end)
+
 fun rule_entries index kind (th, swapped) =
   let
     fun entry is_elim index th =
