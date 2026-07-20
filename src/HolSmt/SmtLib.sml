@@ -21,8 +21,13 @@ datatype encoding_mode =
   | ConservativeEmbedding
   | Preprocessing
 
+datatype ho_dialect = Standard27 | Z3LambdaArray
+
+datatype regime = FirstOrder | HigherOrder of ho_dialect
+
 datatype translation_record =
-    LogicSelection of {logic : string, reason : string,
+    RegimeSelection of {regime : regime, reason : string}
+  | LogicSelection of {logic : string, reason : string,
                        features : logic_features}
   | TypeDeclaration of {hol_type : Type.hol_type, smt_name : string,
                         declaration : string}
@@ -43,6 +48,7 @@ datatype translation_record =
 
 type translation = {
   logic : string,
+  regime : regime,
   tydict : (Type.hol_type, string) Redblackmap.dict,
   tmdict : (Term.term * int, string) Redblackmap.dict,
   (* built lazily: only the Unittest diagnostics force this, never the
@@ -412,13 +418,13 @@ local
 
   fun is_function_type ty = Lib.can Type.dom_rng ty
 
-  fun smt_sort_of_type tydict ty =
+  fun smt_sort_of_type regime tydict ty =
     if is_function_type ty then
       let
         val (dom, rng) = Type.dom_rng ty
       in
-        "(Array " ^ smt_sort_of_type tydict dom ^ " " ^
-        smt_sort_of_type tydict rng ^ ")"
+        "(Array " ^ smt_sort_of_type regime tydict dom ^ " " ^
+        smt_sort_of_type regime tydict rng ^ ")"
       end
     else
       case first_success (fn (_, f) => f ty)
@@ -557,7 +563,8 @@ local
       ("nonlinear", nonlinear)
     ]))
 
-  fun infer_logic_from_features (features as LogicFeatures {
+  fun infer_logic_from_features_for_regime regime
+      (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
       strings, datatypes, nonlinear}) =
     let
@@ -684,15 +691,16 @@ local
       (logic, reason)
     end
 
-  fun term_decl_for_tmdict tydict ((tm, arity), name) =
+  fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
     let
       fun doms_rng acc 0 ty = (List.rev acc, ty)
         | doms_rng acc n ty =
           let val (dom, rng) = Type.dom_rng ty
           in doms_rng (dom :: acc) (n - 1) rng end
       val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
-      val domain_sorts = List.map (smt_sort_of_type tydict) domtys
-      val range_sort = smt_sort_of_type tydict rngty
+      val domain_sorts =
+        List.map (smt_sort_of_type regime tydict) domtys
+      val range_sort = smt_sort_of_type regime tydict rngty
       val declaration = "(declare-fun " ^ name ^ " (" ^
         String.concatWith " " domain_sorts ^ ") " ^ range_sort ^ ")\n"
     in
@@ -949,7 +957,7 @@ local
       String.concatWith " " datatype_decls ^ "))\n"
     end
 
-  fun datatype_decl_record tydict ty =
+  fun datatype_decl_record regime tydict ty =
     case datatype_family ty of
       NONE => NONE
     | SOME family =>
@@ -957,7 +965,7 @@ local
         val names = List.map (fn fam_ty => Redblackmap.find (tydict, fam_ty))
           family
         val declaration = datatype_declaration_text
-          (smt_sort_of_type tydict) family names
+          (smt_sort_of_type regime tydict) family names
       in
         SOME (DatatypeDeclaration {hol_types = family, smt_names = names,
           declaration = declaration}, family)
@@ -965,7 +973,7 @@ local
       handle Redblackmap.NotFound => NONE
            | Feedback.HOL_ERR _ => NONE
 
-  fun infer_features terms tydict tmdict =
+  fun infer_features regime terms tydict tmdict =
     let
       fun encoding_subterms tm =
         let
@@ -1160,15 +1168,18 @@ local
       [datatype_record, fp_record, z3_ext_record, regex_record]
     end
 
-  fun build_translation_records terms logic reason features tydict tmdict =
+  fun build_translation_records regime regime_reason terms logic reason
+      features tydict tmdict =
     let
+      val regime_record =
+        RegimeSelection {regime = regime, reason = regime_reason}
       val logic_record = LogicSelection {logic = logic, reason = reason,
         features = features}
       fun add_type_record (ty, name, (seen, acc)) =
         if member_type ty seen then
           (seen, acc)
         else
-          case datatype_decl_record tydict ty of
+          case datatype_decl_record regime tydict ty of
             SOME (record, family) =>
               (List.foldl (fn (fam_ty, seen) => add_type fam_ty seen)
                 seen family, record :: acc)
@@ -1176,12 +1187,12 @@ local
               (add_type ty seen, type_decl_record (ty, name) :: acc)
       val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
-        term_decl_for_tmdict tydict (key, name) :: acc) [] tmdict
+        term_decl_for_tmdict regime tydict (key, name) :: acc) [] tmdict
       val builtin_records = encoded_symbol_records terms
       val advanced_records = advanced_encoding_records terms
     in
-      logic_record :: List.rev type_records @ List.rev term_records @
-      List.rev builtin_records @ advanced_records
+      regime_record :: logic_record :: List.rev type_records @
+      List.rev term_records @ List.rev builtin_records @ advanced_records
     end
 
   fun datatype_tester_term ty constructor arg =
@@ -1333,12 +1344,12 @@ local
         ();
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
-  fun translate_type (tydict, ty) =
+  fun translate_type regime (tydict, ty) =
     if is_function_type ty then
       let
         val (dom, rng) = Type.dom_rng ty
-        val (tydict, (domdecls, domname)) = translate_type (tydict, dom)
-        val (tydict, (rngdecls, rngname)) = translate_type (tydict, rng)
+        val (tydict, (domdecls, domname)) = translate_type regime (tydict, dom)
+        val (tydict, (rngdecls, rngname)) = translate_type regime (tydict, rng)
       in
         (tydict, (domdecls @ rngdecls, "(Array " ^ domname ^ " " ^
           rngname ^ ")"))
@@ -1351,7 +1362,7 @@ local
         (case Redblackmap.peek (tydict, ty) of
           SOME name => (tydict, ([], name))
         | NONE =>
-          (case translate_datatype_type (tydict, ty) of
+          (case translate_datatype_type regime (tydict, ty) of
             SOME result => result
           | NONE =>
             let
@@ -1367,7 +1378,7 @@ local
             in
               uninterpreted_type (tydict, ty)
             end))
-  and translate_datatype_type (tydict, ty) =
+  and translate_datatype_type regime (tydict, ty) =
     case datatype_family ty of
       NONE => NONE
     | SOME family =>
@@ -1397,8 +1408,12 @@ local
                 val constructor = TypeBasePure.cinst fam_ty constructor
                 val (doms, _) = boolSyntax.strip_fun (Term.type_of constructor)
                 fun translate_dom (dom, (dict, decls)) =
-                  let val (dict, (new_decls, _)) = translate_type (dict, dom)
-                  in (dict, decls @ new_decls) end
+                  let
+                    val (dict, (new_decls, _)) =
+                      translate_type regime (dict, dom)
+                  in
+                    (dict, decls @ new_decls)
+                  end
               in
                 List.foldl translate_dom (dict, decls) doms
               end
@@ -1409,7 +1424,7 @@ local
         val (tydict, dependency_decls) =
           List.foldl translate_constructor_doms (tydict_with_family, []) family
         val declaration = datatype_declaration_text
-          (smt_sort_of_type tydict) family names
+          (smt_sort_of_type regime tydict) family names
         val name =
           case Redblackmap.peek (tydict, ty) of
             SOME n => n
@@ -1433,7 +1448,7 @@ local
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
-  fun translate_term (acc as (tydict, tmdict), (bounds, tm)) =
+  fun translate_term regime (acc as (tydict, tmdict), (bounds, tm)) =
   let
     fun sexpr x [] = x
       | sexpr x xs = "(" ^ x ^ " " ^ String.concatWith " " xs ^ ")"
@@ -1445,7 +1460,7 @@ local
         val (name, rands) = Lib.tryfind (fn parsefn => parsefn (rator, rands))
           (Net.match rator builtin_symbols)  (* may fail *)
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term (a, (bounds, t))) (acc, rands)
+          (fn (a, t) => translate_term regime (a, (bounds, t))) (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (List.concat declss, sexpr name names))
@@ -1461,7 +1476,7 @@ local
           (Redblackmap.insert (bounds, v, name), name)
         end
     fun ensure_type ((tydict, tmdict), ty) =
-      let val (tydict, (decls, name)) = translate_type (tydict, ty)
+      let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
     fun constructor_info_for tydict ty constructor =
       let
@@ -1489,7 +1504,7 @@ local
         val tmdict = Redblackmap.insert (tmdict, (rator, arity), cname)
         val acc = (tydict, tmdict)
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term (a, (bounds, t))) (acc, rands)
+          (fn (a, t) => translate_term regime (a, (bounds, t))) (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (typedecls @ List.concat declss, sexpr cname names))
@@ -1540,7 +1555,8 @@ local
             SOME name => name
           | NONE => raise ERR "translate_term" "not a selector case"
         val acc = (tydict, tmdict)
-        val (acc, (elemdecls, elemname)) = translate_term (acc, (bounds, elem))
+        val (acc, (elemdecls, elemname)) =
+          translate_term regime (acc, (bounds, elem))
       in
         (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
       end
@@ -1572,9 +1588,11 @@ local
           beta_reduce (Term.list_mk_comb (casefn, selector_terms info))
         val branch_terms = ListPair.mapEq branch_term (cases, infos)
         val acc = (tydict, tmdict)
-        val (acc, (elemdecls, elemname)) = translate_term (acc, (bounds, elem))
+        val (acc, (elemdecls, elemname)) =
+          translate_term regime (acc, (bounds, elem))
         val (acc, declbranches) = Lib.foldl_map
-          (fn (a, t) => translate_term (a, (bounds, t))) (acc, branch_terms)
+          (fn (a, t) => translate_term regime (a, (bounds, t)))
+          (acc, branch_terms)
         val (branchdeclss, branchnames) = Lib.split declbranches
         fun tester (_, cname, _) = sexpr ("(_ is " ^ cname ^ ")") [elemname]
         fun cascaded [] [] = raise ERR "translate_term" "empty datatype case"
@@ -1608,7 +1626,8 @@ local
         val selector_name = Lib.fst (List.nth (selectors, j))
         val tmdict = Redblackmap.insert (tmdict, (select, 1), selector_name)
         val acc = (tydict, tmdict)
-        val (acc, (xdecls, xname)) = translate_term (acc, (bounds, x))
+        val (acc, (xdecls, xname)) =
+          translate_term regime (acc, (bounds, x))
       in
         (acc, (typedecls @ xdecls, sexpr selector_name [xname]))
       end
@@ -1646,9 +1665,10 @@ local
             [info] => info
           | _ => raise ERR "translate_term" "record has multiple constructors"
         val acc = (tydict, tmdict)
-        val (acc, (xdecls, xname)) = translate_term (acc, (bounds, x))
+        val (acc, (xdecls, xname)) =
+          translate_term regime (acc, (bounds, x))
         val (acc, (newdecls, newname)) =
-          translate_term (acc, (bounds, new_val))
+          translate_term regime (acc, (bounds, new_val))
         fun field_name (n, (selector_name, _)) =
           if n = j then newname else sexpr selector_name [xname]
         val field_names = ListPair.mapEq field_name
@@ -1668,13 +1688,13 @@ local
         else
           raise ERR "translate_term" "not a binder"  (* handled below *)
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
-      val (tydict, vardecltys) = Lib.foldl_map translate_type
+      val (tydict, vardecltys) = Lib.foldl_map (translate_type regime)
         (tydict, List.map Term.type_of vars)
       val (vardeclss, vartys) = Lib.split vardecltys
       val vardecls = List.concat vardeclss
       val smtvars = ListPair.mapEq (fn (v, ty) => "(" ^ v ^ " " ^ ty ^ ")")
         (smtvars, vartys)
-      val (acc, (bodydecls, body)) = translate_term
+      val (acc, (bodydecls, body)) = translate_term regime
         ((tydict, tmdict), (bounds, body))
     in
       (acc, (vardecls @ bodydecls, "(" ^ binder ^ " (" ^
@@ -1688,7 +1708,8 @@ local
       val (vars, bodies) = ListPair.unzip bindings
       (* we should translate the bodies without first creating the bound names *)
       val bounds_bodies = List.map (fn body => (bounds, body)) bodies
-      val (acc, decls_bodies) = Lib.foldl_map translate_term (acc, bounds_bodies)
+      val (acc, decls_bodies) =
+        Lib.foldl_map (translate_term regime) (acc, bounds_bodies)
       (* now we can create the bound names *)
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
       val decls_bodies_smtvars = ListPair.zipEq (decls_bodies, smtvars)
@@ -1696,7 +1717,8 @@ local
         (d @ decls, "(" ^ v ^ " " ^ b ^ ")" :: smtbinds)) ([], [])
           decls_bodies_smtvars
       val bindings_str = String.concatWith " " (List.rev smtbinds)
-      val (acc, (bodydecls, body)) = translate_term (acc, (bounds, body))
+      val (acc, (bodydecls, body)) =
+        translate_term regime (acc, (bounds, body))
     in
       (acc, (decls @ bodydecls,
         "(let (" ^ bindings_str ^ ") " ^ body ^ ")"))
@@ -1747,11 +1769,11 @@ local
       let
         val ((index, value), array) = combinSyntax.dest_update_comb tm
         val (acc, (arraydecls, arrayname)) =
-          translate_term (acc, (bounds, array))
+          translate_term regime (acc, (bounds, array))
         val (acc, (indexdecls, indexname)) =
-          translate_term (acc, (bounds, index))
+          translate_term regime (acc, (bounds, index))
         val (acc, (valuedecls, valuename)) =
-          translate_term (acc, (bounds, value))
+          translate_term regime (acc, (bounds, value))
       in
         (acc, (arraydecls @ indexdecls @ valuedecls,
           sexpr "store" [arrayname, indexname, valuename]))
@@ -1769,9 +1791,9 @@ local
           else
             ()
         val (acc, (functiondecls, functionname)) =
-          translate_term (acc, (bounds, function))
+          translate_term regime (acc, (bounds, function))
         val (acc, (argumentdecls, argumentname)) =
-          translate_term (acc, (bounds, argument))
+          translate_term regime (acc, (bounds, argument))
       in
         (acc, (functiondecls @ argumentdecls,
           sexpr "select" [functionname, argumentname]))
@@ -1783,9 +1805,15 @@ local
         val _ =
           if Term.is_const rator orelse Term.is_var rator then ()
           else
-            raise ERR "translate_term"
-              ("unsupported higher-order rator expression: " ^
-               Hol_pp.term_to_string rator)
+            (case regime of
+               FirstOrder =>
+                 raise ERR "translate_term"
+                   ("unsupported higher-order rator expression: " ^
+                    Hol_pp.term_to_string rator)
+             | HigherOrder _ =>
+                 raise ERR "translate_term"
+                   ("HO regime translation not yet implemented: " ^
+                    "non-constant/non-variable rator"))
         val (acc, (decls, name)) =
           (* translate the rator as a previously defined symbol *)
           (acc, ([], Redblackmap.find (tmdict, (rator, rands_count))))
@@ -1806,11 +1834,12 @@ local
             (* strip only 'rands_count' many 'domtys', leaving the remaining
                argument types in 'rngty' *)
             val (domtys, rngty) = doms_rng [] rands_count (Term.type_of rator)
-            val (tydict, domdecltys) = Lib.foldl_map translate_type
+            val (tydict, domdecltys) = Lib.foldl_map (translate_type regime)
               (tydict, domtys)
             val (domdeclss, domtys) = Lib.split domdecltys
             val domdecls = List.concat domdeclss
-            val (tydict, (rngdecls, rngty)) = translate_type (tydict, rngty)
+            val (tydict, (rngdecls, rngty)) =
+              translate_type regime (tydict, rngty)
             (* invent new name for 'rator' *)
             val name = tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
             val _ = if !Library.trace > 0 andalso Term.is_const rator then
@@ -1832,13 +1861,131 @@ local
           end
         (* translate 'rands' *)
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term (a, (bounds, t))) (acc, rands)
+          (fn (a, t) => translate_term regime (a, (bounds, t))) (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (decls @ List.concat declss, sexpr name names))
       end
     end
   end
+
+  datatype datatype_case_scan =
+      NotDatatypeCase
+    | DatatypeCase of string option
+
+  fun first_reason scan [] = NONE
+    | first_reason scan (tm :: tms) =
+      (case scan tm of
+         SOME reason => SOME reason
+       | NONE => first_reason scan tms)
+
+  (* Report only the higher-order shapes that the first-order translator
+     rejects.  Binder, let, datatype-case, and update abstractions are
+     encoding scaffolding rather than first-class function values. *)
+  fun goal_ho_reason (assumptions, conclusion) =
+    let
+      fun datatype_case_reason scan inherited tm =
+        let
+          val (_, elem, clauses) = TypeBase.dest_case tm
+          fun clause_reason (pattern, rhs) =
+            let
+              val (_, pattern_args) = boolSyntax.strip_comb pattern
+              val selector_vars = List.filter
+                (is_function_type o Term.type_of) pattern_args
+            in
+              scan (selector_vars @ inherited) rhs
+            end
+        in
+          DatatypeCase
+            (case scan inherited elem of
+               SOME reason => SOME reason
+             | NONE => Lib.get_first clause_reason clauses)
+        end
+        handle Feedback.HOL_ERR _ => NotDatatypeCase
+      fun record_update_operands tm =
+        let
+          val (update_f, record) = Term.dest_comb tm
+          val (update, updater) = Term.dest_comb update_f
+          val new_value =
+            combinSyntax.dest_K_1 updater
+            handle Feedback.HOL_ERR _ =>
+              let
+                val (var1, body) = Term.dest_abs updater
+                val (k_tm, var2) = Term.dest_comb body
+                val _ = if Term.aconv var1 var2 then ()
+                        else raise ERR "goal_ho_reason" "not record update"
+              in
+                combinSyntax.dest_K_1 k_tm
+              end
+          val record_ty = Term.type_of record
+          val value_ty = Term.type_of new_value
+          val fields = TypeBase.fields_of record_ty
+          val _ =
+            case List.find
+              (fn (_, {ty = field_ty, fupd, ...} :
+                       TypeBasePure.rcd_fieldinfo) =>
+                Term.same_const update fupd andalso
+                Lib.can (Type.match_type field_ty) value_ty) fields of
+              SOME _ => ()
+            | NONE => raise ERR "goal_ho_reason" "not record update"
+        in
+          SOME [record, new_value]
+        end
+        handle Feedback.HOL_ERR _ => NONE
+      fun scan inherited tm =
+        if boolSyntax.is_forall tm then
+          scan inherited (Lib.snd (boolSyntax.dest_forall tm))
+        else if boolSyntax.is_exists tm then
+          scan inherited (Lib.snd (boolSyntax.dest_exists tm))
+        else
+          case Lib.total pairSyntax.dest_anylet tm of
+            SOME (bindings, body) =>
+              first_reason (scan inherited)
+                (List.map Lib.snd bindings @ [body])
+          | NONE =>
+            (case datatype_case_reason scan inherited tm of
+               DatatypeCase reason => reason
+             | NotDatatypeCase =>
+               (case Lib.total combinSyntax.dest_update_comb tm of
+                  SOME ((index, value), array) =>
+                    first_reason (scan inherited) [array, index, value]
+                | NONE =>
+                  (case record_update_operands tm of
+                     SOME operands =>
+                       first_reason (scan inherited) operands
+                   | NONE =>
+                     if Term.is_abs tm then
+                       SOME "automatic:surviving-abstraction"
+                     else
+                       case Lib.total boolSyntax.strip_comb tm of
+                         SOME (rator, rands) =>
+                           if List.exists (Term.aconv rator) inherited then
+                             SOME
+                               "automatic:non-constant/non-variable-rator"
+                           else if Term.is_const rator orelse
+                                   Term.is_var rator then
+                             first_reason (scan inherited) rands
+                           else
+                             SOME
+                               "automatic:non-constant/non-variable-rator"
+                       | NONE => NONE)))
+    in
+      first_reason (scan []) (assumptions @ [conclusion])
+    end
+
+  fun goal_requires_ho_aux goal = Option.isSome (goal_ho_reason goal)
+
+  datatype regime_request =
+      AutomaticRegime of ho_dialect
+    | RegimeOverride of regime
+
+  fun select_regime request goal =
+    case request of
+      RegimeOverride regime => (regime, "explicit override")
+    | AutomaticRegime dialect =>
+        (case goal_ho_reason goal of
+           NONE => (FirstOrder, "automatic:no-ho-trigger")
+         | SOME reason => (HigherOrder dialect, reason))
 
   (* Returns a string list representing the input goal in SMT-LIB file
      format, together with two dictionaries that map types and terms
@@ -1848,29 +1995,32 @@ local
      arguments to the term.  (Because SMT-LIB is first-order,
      partially applied functions are mapped to different SMT-LIB
      identifiers, depending on the number of actual arguments.) *)
-  fun goal_to_SmtLib_aux (policy : logic_selection_policy)
-      (ts, t) : translation * string list =
+  fun goal_to_SmtLib_aux request (policy : logic_selection_policy)
+      (goal as (ts, t)) : translation * string list =
   let
+    val (regime, regime_reason) = select_regime request goal
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
     val (acc, smtlibs) = Lib.foldl_map
-      (fn (acc, tm) => translate_term (acc, (bounds, tm)))
+      (fn (acc, tm) => translate_term regime (acc, (bounds, tm)))
       ((tydict, tmdict), terms)
     val (tydict, tmdict) = acc
-    val features = infer_features terms tydict tmdict
-    val (inferred_logic, reason) = infer_logic_from_features features
+    val features = infer_features regime terms tydict tmdict
+    val (inferred_logic, reason) =
+      infer_logic_from_features_for_regime regime features
     val (selected_logic, reason) =
       case policy {features = features, inferred_logic = inferred_logic,
                    reason = reason} of
         NONE => (inferred_logic, reason)
       | SOME {logic, reason} => (logic, reason)
     val records = fn () =>
-      build_translation_records terms selected_logic reason features tydict tmdict
-    val translation = {logic = selected_logic, tydict = tydict,
-      tmdict = tmdict, records = records}
+      build_translation_records regime regime_reason terms selected_logic
+        reason features tydict tmdict
+    val translation = {logic = selected_logic, regime = regime,
+      tydict = tydict, tmdict = tmdict, records = records}
     (* we choose to intertwine declarations and assertions (for no
        particular reason; an alternative would be to emit all
        declarations before all assertions) *)
@@ -2318,10 +2468,15 @@ in
   val include_theorems = ref true
 
   fun translation_logic ({logic, ...} : translation) = logic
+  fun translation_regime ({regime, ...} : translation) = regime
   fun translation_records ({records, ...} : translation) = records ()
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux
-  val infer_logic_from_features = infer_logic_from_features
+  fun infer_logic_from_features features =
+    infer_logic_from_features_for_regime FirstOrder features
+  val goal_requires_ho = goal_requires_ho_aux
+  fun regime_for_goal dialect goal =
+    select_regime (AutomaticRegime dialect) goal
 
   fun option_logic_policy logic
       ({features, inferred_logic, reason} : {
@@ -2331,11 +2486,47 @@ in
     | SOME selected_logic =>
         SOME {logic = selected_logic, reason = "caller override"}
 
+  fun goal_to_SmtLib_translation_with_policy_and_regime policy regime =
+    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o
+      goal_to_SmtLib_aux (RegimeOverride regime) policy
+
+  fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
+    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o
+      goal_to_SmtLib_aux (AutomaticRegime dialect) policy
+
+  (* Generic callers default to the standard dialect.  Solver consumers use
+     the with_dialect variants to keep automatic FO/HO selection while
+     choosing their HO printer. *)
   fun goal_to_SmtLib_translation_with_policy policy =
-    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o (goal_to_SmtLib_aux policy)
+    goal_to_SmtLib_translation_with_policy_and_dialect
+      policy Standard27
+
+  fun goal_to_SmtLib_translation_with_regime regime logic =
+    goal_to_SmtLib_translation_with_policy_and_regime
+      (option_logic_policy logic) regime
+
+  fun goal_to_SmtLib_translation_with_dialect dialect logic =
+    goal_to_SmtLib_translation_with_policy_and_dialect
+      (option_logic_policy logic) dialect
 
   fun goal_to_SmtLib_translation logic =
     goal_to_SmtLib_translation_with_policy (option_logic_policy logic)
+
+  fun goal_to_SmtLib_with_regime regime logic goal =
+    let
+      val (translation, strings) =
+        goal_to_SmtLib_translation_with_regime regime logic goal
+    in
+      (translation_dicts translation, strings)
+    end
+
+  fun goal_to_SmtLib_with_dialect dialect logic goal =
+    let
+      val (translation, strings) =
+        goal_to_SmtLib_translation_with_dialect dialect logic goal
+    in
+      (translation_dicts translation, strings)
+    end
 
   fun goal_to_SmtLib logic goal =
     let
@@ -2344,13 +2535,49 @@ in
       (translation_dicts translation, strings)
     end
 
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy policy =
+  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime
+      policy regime =
     Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
-      (goal_to_SmtLib_aux policy)
+      goal_to_SmtLib_aux (RegimeOverride regime) policy
+
+  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
+      policy dialect =
+    Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
+      goal_to_SmtLib_aux (AutomaticRegime dialect) policy
+
+  fun goal_to_SmtLib_with_get_proof_translation_with_policy policy =
+    goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
+      policy Standard27
+
+  fun goal_to_SmtLib_with_get_proof_translation_with_regime regime logic =
+    goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime
+      (option_logic_policy logic) regime
+
+  fun goal_to_SmtLib_with_get_proof_translation_with_dialect dialect logic =
+    goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
+      (option_logic_policy logic) dialect
 
   fun goal_to_SmtLib_with_get_proof_translation logic =
     goal_to_SmtLib_with_get_proof_translation_with_policy
       (option_logic_policy logic)
+
+  fun goal_to_SmtLib_with_get_proof_with_regime regime logic goal =
+    let
+      val (translation, strings) =
+        goal_to_SmtLib_with_get_proof_translation_with_regime
+          regime logic goal
+    in
+      (translation_dicts translation, strings)
+    end
+
+  fun goal_to_SmtLib_with_get_proof_with_dialect dialect logic goal =
+    let
+      val (translation, strings) =
+        goal_to_SmtLib_with_get_proof_translation_with_dialect
+          dialect logic goal
+    in
+      (translation_dicts translation, strings)
+    end
 
   fun goal_to_SmtLib_with_get_proof logic goal =
     let

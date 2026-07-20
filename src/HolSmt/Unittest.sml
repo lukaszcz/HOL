@@ -3899,9 +3899,108 @@ in
     "higher-order abstraction lacked a declaration for H")
 end
 
-(* D10 enforcement: the future P3.4 regime trigger must leave every one of
-   these first-order translations byte-identical.  In particular, the final
-   case is the abstraction witness that must continue to take the FO route. *)
+fun smtlib_regime_trigger_success () =
+let
+  fun preprocess goal =
+    Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true) goal)
+  fun regime_record translation =
+    case List.find
+      (fn SmtLib.RegimeSelection _ => true | _ => false)
+      (SmtLib.translation_records translation) of
+      SOME (SmtLib.RegimeSelection selection) => selection
+    | _ => die "FAIL: translation lacked RegimeSelection record"
+  fun expect_record expected expected_reason translation =
+    let
+      val {regime, reason} = regime_record translation
+    in
+      assert (SmtLib.translation_regime translation = expected,
+        "translation regime accessor disagreed with expected regime");
+      assert (regime = expected,
+        "RegimeSelection recorded the wrong regime");
+      assert (reason = expected_reason,
+        "RegimeSelection reason was '" ^ reason ^ "', expected '" ^
+        expected_reason ^ "'")
+    end
+  fun translate_with regime goal =
+    Lib.fst (SmtLib.goal_to_SmtLib_translation_with_regime regime NONE goal)
+  val fo_goals = [
+    ([], ``(x:int) + 7 <= y - ~3``),
+    ([], ``!x:int. ?y:int. x + 2 <= y``),
+    ([], ``(f:'a -> 'b) x = g y``),
+    ([], ``(H:('a -> 'b) -> bool) f``),
+    ([], ``option_CASE (SOME (x:int)) n s = s x``),
+    preprocess ([],
+      ``option_CASE (box:int option) 0 (\z. z + 1) = y``)
+  ]
+  val surviving =
+    preprocess ([], ``(H:(int -> int) -> bool) (\x. x + 1)``)
+  val complex_rator =
+    ([], ``((\f:int -> int. f) g) (x:int) = y``)
+  val reduced_rator = preprocess complex_rator
+  val datatype_rator = preprocess ([],
+    ``option_CASE (box:(int -> int) option) 0 (\f. f (x:int)) = y``)
+  val automatic_fo =
+    Lib.fst (SmtLib.goal_to_SmtLib_translation NONE (List.hd fo_goals))
+  val forced_fo = translate_with SmtLib.FirstOrder (List.hd fo_goals)
+  val forced_standard =
+    translate_with (SmtLib.HigherOrder SmtLib.Standard27)
+      (List.hd fo_goals)
+  val forced_z3 =
+    translate_with (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
+      (List.hd fo_goals)
+  val (surviving_regime, surviving_reason) =
+    SmtLib.regime_for_goal SmtLib.Standard27 surviving
+  val (datatype_regime, datatype_reason) =
+    SmtLib.regime_for_goal SmtLib.Z3LambdaArray datatype_rator
+in
+  List.app
+    (fn goal => assert (not (SmtLib.goal_requires_ho goal),
+      "first-order trigger-table goal selected HigherOrder"))
+    fo_goals;
+  assert (SmtLib.goal_requires_ho surviving,
+    "surviving first-class lambda did not select HigherOrder");
+  assert (SmtLib.goal_requires_ho complex_rator,
+    "non-constant/non-variable rator did not select HigherOrder");
+  assert (not (SmtLib.goal_requires_ho reduced_rator),
+    "preprocessing-reduced rator did not return to FirstOrder");
+  assert (SmtLib.goal_requires_ho datatype_rator,
+    "datatype branch normalization missed a complex rator");
+  assert (surviving_regime =
+      SmtLib.HigherOrder SmtLib.Standard27 andalso
+      surviving_reason = "automatic:surviving-abstraction",
+    "Standard27 automatic selection lost the surviving-lambda reason");
+  assert (datatype_regime =
+      SmtLib.HigherOrder SmtLib.Z3LambdaArray andalso
+      datatype_reason =
+        "automatic:non-constant/non-variable-rator",
+    "Z3 automatic selection lost the normalized-rator reason");
+  expect_hol_error_contains "automatic surviving-lambda regime"
+    "HO regime translation not yet implemented"
+    (fn () => ignore (SmtLib.goal_to_SmtLib_translation NONE surviving));
+  expect_hol_error_contains "automatic complex-rator regime"
+    "HO regime translation not yet implemented"
+    (fn () => ignore
+      (SmtLib.goal_to_SmtLib_translation NONE complex_rator));
+  expect_hol_error_contains "forced FirstOrder surviving lambda"
+    "unsupported higher-order rator expression"
+    (fn () => ignore
+      (SmtLib.goal_to_SmtLib_translation_with_regime
+        SmtLib.FirstOrder NONE surviving));
+  expect_hol_error_contains "automatic datatype-rator regime"
+    "HO regime translation not yet implemented"
+    (fn () => ignore
+      (SmtLib.goal_to_SmtLib_translation NONE datatype_rator));
+  expect_record SmtLib.FirstOrder "automatic:no-ho-trigger" automatic_fo;
+  expect_record SmtLib.FirstOrder "explicit override" forced_fo;
+  expect_record (SmtLib.HigherOrder SmtLib.Standard27)
+    "explicit override" forced_standard;
+  expect_record (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
+    "explicit override" forced_z3
+end
+
+(* D10 enforcement: the P3.4 regime trigger leaves every one of these
+   first-order translations byte-identical.  In particular, the final case
+   is the abstraction witness that must continue to take the FO route. *)
 fun smtlib_fo_emission_golden_success () =
 let
   fun prelude logic = [
@@ -4006,10 +4105,23 @@ let
       val expected = body @ ["(exit)\n"]
       val expected_with_proof =
         body @ ["(get-proof)\n", "(exit)\n"]
-      val (_, actual) = SmtLib.goal_to_SmtLib_translation NONE goal
-      val (_, actual_with_proof) =
+      val (translation, actual) =
+        SmtLib.goal_to_SmtLib_translation NONE goal
+      val (proof_translation, actual_with_proof) =
         SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
+      fun recorded_first_order tr =
+        SmtLib.translation_regime tr = SmtLib.FirstOrder andalso
+        List.exists
+          (fn SmtLib.RegimeSelection {regime = SmtLib.FirstOrder, ...} =>
+                true
+            | _ => false)
+          (SmtLib.translation_records tr)
     in
+      assert (not (SmtLib.goal_requires_ho goal),
+        "FO golden '" ^ name ^ "' triggered HigherOrder");
+      assert (recorded_first_order translation andalso
+          recorded_first_order proof_translation,
+        "FO golden '" ^ name ^ "' lacked FirstOrder regime records");
       assert_golden name "goal_to_SmtLib" expected actual;
       assert_golden name "goal_to_SmtLib_with_get_proof"
         expected_with_proof actual_with_proof
@@ -6374,6 +6486,8 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
+    ("smtlib_regime_trigger_success",
+      smtlib_regime_trigger_success),
     ("smtlib_fo_emission_golden_success",
       smtlib_fo_emission_golden_success),
     ("smtlib_translation_shape_matrix_success",
