@@ -5419,3 +5419,88 @@ val _ =
        in
          child_ok andalso Term.aconv (concl replayed) qy
        end)
+
+val _ =
+  test
+    ("recorded beta-redex hyp-subst and close replay exactly",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'beta_replay"
+         val x = Term.mk_var ("beta_replay_x", alpha)
+         val y = Term.mk_var ("beta_replay_y", alpha)
+         val a = Term.mk_var ("beta_replay_a", alpha)
+         val z = Term.mk_var ("beta_replay_z", alpha)
+         val p = Term.mk_var ("beta_replay_P", alpha --> Type.bool)
+         val redex = Term.mk_comb (Term.mk_abs (z, x), a)
+         val goal =
+           ([boolSyntax.mk_eq (redex, y), Term.mk_comb (p, y)],
+            Term.mk_comb (p, redex))
+         val root = clasetGoal.from_goal goal
+         val (_, substituted) =
+           case seq.cases
+             (clasetStep.blast_hyp_subst_step (root, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "beta replay substitution"
+         val (_, closed) =
+           case seq.cases
+             (clasetStep.blast_assumption_step (substituted, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "beta replay close"
+         val grounded =
+           clasetReplay.ground (clasetGoal.store closed)
+             (clasetGoal.replay closed)
+       in
+         case total
+           (Tactical.VALID (clasetReplay.REPLAY_TAC grounded)) goal of
+             SOME ([], validation) =>
+               let
+                 val theorem = validation []
+               in
+                 Term.term_eq (concl theorem) (#2 goal) andalso
+                 HOLset.equal
+                   (Thm.hypset theorem,
+                    HOLset.fromList Term.compare (#1 goal))
+               end
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("recorded beta/eta target contradiction replay exactly",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'contradiction_replay"
+         val x = Term.mk_var ("contradiction_replay_x", alpha)
+         val a = Term.mk_var ("contradiction_replay_a", alpha)
+         val z = Term.mk_var ("contradiction_replay_z", alpha)
+         val f =
+           Term.mk_var
+             ("contradiction_replay_f", alpha --> Type.bool)
+         val p = Term.mk_var ("contradiction_replay_p", Type.bool)
+         val eta = Term.mk_abs (x, Term.mk_comb (f, x))
+         val q = boolSyntax.mk_eq (eta, f)
+         val target = Term.mk_comb (Term.mk_abs (z, q), a)
+         val goal = ([boolSyntax.mk_neg p, p], target)
+         val root = clasetGoal.from_goal goal
+         val (_, closed) =
+           case seq.cases
+             (clasetStep.blast_contradiction_step (root, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "beta/eta contradiction close"
+         val grounded =
+           clasetReplay.ground (clasetGoal.store closed)
+             (clasetGoal.replay closed)
+       in
+         case total
+           (Tactical.VALID (clasetReplay.REPLAY_TAC grounded)) goal of
+             SOME ([], validation) =>
+               let
+                 val theorem = validation []
+               in
+                 Term.term_eq (concl theorem) (#2 goal) andalso
+                 HOLset.equal
+                   (Thm.hypset theorem,
+                    HOLset.fromList Term.compare (#1 goal))
+               end
+           | _ => false
+       end)

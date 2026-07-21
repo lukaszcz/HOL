@@ -86,6 +86,29 @@ val normalize_conv =
 
 fun normalize_thm th = Conv.CONV_RULE normalize_conv th
 
+fun restore_target function_name target normalized_target theorem =
+  let
+    val conclusion = concl theorem
+    val aligned =
+      if aconv conclusion normalized_target then
+        EQ_MP (ALPHA conclusion normalized_target) theorem
+      else
+        raise mk_HOL_ERR "clasetReplay" function_name
+          "the produced theorem misses the normalized target"
+    val target_equality = normalize_conv target
+    val normalized_input_target = rhs (concl target_equality)
+  in
+    if aconv normalized_target target then
+      EQ_MP (ALPHA normalized_target target) aligned
+    else if aconv normalized_target normalized_input_target then
+      EQ_MP (SYM target_equality)
+        (EQ_MP
+          (ALPHA normalized_target normalized_input_target) aligned)
+    else
+      raise mk_HOL_ERR "clasetReplay" function_name
+        "the normalized target cannot be restored exactly"
+  end
+
 fun normalize_rule_thm th =
   let
     fun normalize_hypothesis (hypothesis, current) =
@@ -122,10 +145,19 @@ fun assumption_thm store asm target =
   let
     val asm' = clasetMeta.norm store asm
     val target' = clasetMeta.norm store target
-    val normalized = normalize_thm (ASSUME asm')
+    val asm_equality = normalize_conv asm
+    val normalized_input_asm = rhs (concl asm_equality)
+    val assumption =
+      if aconv asm' asm then ASSUME asm
+      else if aconv asm' normalized_input_asm then
+        EQ_MP asm_equality (ASSUME asm)
+      else
+        raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
+          "the normalized assumption cannot be restored exactly"
+    val normalized = normalize_thm assumption
   in
     if aconv (concl normalized) target' then
-      EQ_MP (ALPHA (concl normalized) target') normalized
+      restore_target "ASSUMPTION_TAC" target target' normalized
     else
       raise mk_HOL_ERR "clasetReplay" "ASSUMPTION_TAC"
         "the selected assumption does not close the goal"
@@ -148,13 +180,17 @@ fun CONTRADICTION_TAC store (negative_pos, positive_pos) (asl, w) =
     val positive = nth1 "CONTRADICTION_TAC" asl positive_pos
     val negative' = clasetMeta.norm store negative
     val proposition = dest_neg negative'
+    val normalized_target = clasetMeta.norm store w
     fun validation [] =
           let
             val nthm = assumption_thm store negative negative'
             val pthm = assumption_thm store positive proposition
+            val contradiction =
+              Drule.CONTR normalized_target
+                (MP (NOT_ELIM nthm) pthm)
           in
-            Drule.CONTR (clasetMeta.norm store w)
-              (MP (NOT_ELIM nthm) pthm)
+            restore_target "CONTRADICTION_TAC" w normalized_target
+              contradiction
           end
       | validation _ =
           raise mk_HOL_ERR "clasetReplay" "CONTRADICTION_TAC"
@@ -387,6 +423,8 @@ fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
     val (changed, unchanged) = List.partition affected remaining
     val reordered = map substituted (changed @ unchanged)
     val target = substituted w
+    val target_equality = normalize_conv w
+    val normalized_target = rhs (concl target_equality)
     val (children, validation0) =
       Tactic.SUBST_ALL_TAC equality_thm (remaining, w)
     val _ =
@@ -396,7 +434,21 @@ fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
             raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
               "substitution did not produce one child"
 
-    fun validation [child_thm] = validation0 [child_thm]
+    fun validation [child_thm] =
+          let
+            val result0 = validation0 [child_thm]
+            val result_equality = normalize_conv (concl result0)
+            val normalized_result = rhs (concl result_equality)
+            val result = EQ_MP result_equality result0
+          in
+            if aconv normalized_result normalized_target then
+              restore_target "BLAST_HYP_SUBST_TAC_AT" w
+                normalized_target result
+            else
+              raise mk_HOL_ERR "clasetReplay"
+                "BLAST_HYP_SUBST_TAC_AT"
+                "substitution validation misses the original target"
+          end
       | validation _ =
           raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
             "validation received the wrong number of theorems"

@@ -2826,9 +2826,23 @@ val _ =
     ("measured close-contradiction has exact kernel-valid parity",
      fn () =>
        let
+         val alpha = Type.mk_vartype "'measured_contradiction"
+         val x = mk_var ("measured_contradiction_x", alpha)
+         val a = mk_var ("measured_contradiction_a", alpha)
+         val z = mk_var ("measured_contradiction_z", alpha)
+         val f =
+           mk_var
+             ("measured_contradiction_f", alpha --> bool)
          val p = mk_var ("measured_contradiction_p", bool)
-         val q = mk_var ("measured_contradiction_q", bool)
-         val goal = ([p, mk_neg p], q)
+         val eta = mk_abs (x, mk_comb (f, x))
+         val q = mk_eq (eta, f)
+         val target = mk_comb (mk_abs (z, q), a)
+         val goal = ([p, mk_neg p], target)
+         fun exact theorem =
+           Term.term_eq (concl theorem) (#2 goal) andalso
+           HOLset.equal
+             (Thm.hypset theorem,
+              HOLset.fromList Term.compare (#1 goal))
        in
          case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
              NONE => false
@@ -2845,6 +2859,9 @@ val _ =
                      (SOME ([], ordinary_validation),
                       blastReconstruct.Completed,
                       SOME ([], measured_validation)) =>
+                       has_step
+                         (fn blastSearch.CloseContradiction => true
+                           | _ => false) proof andalso
                        #cooperative_checkpoints statistics = 16 andalso
                        #phase_entries statistics = 8 andalso
                        #phase_exits statistics = 8 andalso
@@ -2857,9 +2874,8 @@ val _ =
                        #grounding_attempts statistics = 1 andalso
                        #kernel_replay_attempts statistics = 1 andalso
                        #finish_residual_goal_checks statistics = 1 andalso
-                       (ignore (ordinary_validation []);
-                        ignore (measured_validation []);
-                        true)
+                       exact (ordinary_validation []) andalso
+                       exact (measured_validation [])
                    | _ => false
                end
        end)
@@ -5202,6 +5218,53 @@ val _ =
        in
          Option.isSome (blastSearch.tryGoal cs 2 goal) andalso
          Option.isSome (reconstructed cs 2 goal)
+       end)
+
+val _ =
+  test
+    ("hyp-subst reconstructs an equality with a beta-redex side",
+     fn () =>
+       let
+         val alpha = Type.mk_vartype "'beta_subst"
+         val x = mk_var ("beta_subst_x", alpha)
+         val y = mk_var ("beta_subst_y", alpha)
+         val a = mk_var ("beta_subst_a", alpha)
+         val z = mk_var ("beta_subst_z", alpha)
+         val p = mk_var ("beta_subst_P", alpha --> bool)
+         val redex = mk_comb (mk_abs (z, x), a)
+         val goal =
+           ([mk_eq (redex, y), mk_comb (p, y)], mk_comb (p, redex))
+         fun exact theorem =
+           Term.term_eq (concl theorem) (#2 goal) andalso
+           HOLset.equal
+             (Thm.hypset theorem,
+              HOLset.fromList Term.compare (#1 goal))
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val ordinary = blastReconstruct.reconstruct goal proof
+                 val measured =
+                   blastReconstruct.reconstructMeasured
+                     {observe = NONE, stop = fn () => false} goal proof
+               in
+                 case (ordinary, #completion measured, #result measured) of
+                     (SOME ([], ordinary_validation),
+                      blastReconstruct.Completed,
+                      SOME ([], measured_validation)) =>
+                       has_step
+                         (fn blastSearch.HypSubst => true | _ => false)
+                         proof andalso
+                       has_step
+                         (fn blastSearch.CloseAssume => true | _ => false)
+                         proof andalso
+                       #hyp_subst_steps (#statistics measured) > 0 andalso
+                       #close_assume_steps (#statistics measured) > 0 andalso
+                       exact (ordinary_validation []) andalso
+                       exact (measured_validation [])
+                   | _ => false
+               end
        end)
 
 val _ =
