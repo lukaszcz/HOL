@@ -5349,6 +5349,16 @@ val _ =
 
 val _ =
   test
+    ("kernel replay preserves transition-established rule instances",
+     fn () =>
+       blast_solves (tableauLib.BLAST_DEPTH_TAC 4 [])
+         ([],
+          “(!x:'a y.
+               relation x y <=> (label x <=> label y)) ==>
+            !x y. relation x y <=> relation y x”))
+
+val _ =
+  test
     ("public blast tactics read configuration when they run",
      fn () =>
        let
@@ -5706,7 +5716,7 @@ val pelletier_solved = ref 0
    forces the list to shrink -- the accounting has teeth in both
    directions.  A problem is NEVER to be closed by naming it, or its
    statement, in a preprocessor, rewrite table or claset seed. *)
-val pelletier_expected_failures = [34, 38, 41, 42, 43, 45]
+val pelletier_expected_failures = [34, 45]
 
 fun expected_failure number =
   List.exists (fn known => known = number) pelletier_expected_failures
@@ -5752,7 +5762,7 @@ val _ =
      fn () =>
        !pelletier_solved =
          length pelletier_corpus - length pelletier_expected_failures
-       andalso !pelletier_solved = 42)
+       andalso !pelletier_solved = 46)
 
 (* -------------------------------------------------------------------------
  * TASK_24: Table-1 depths, set problems, Halting II, and robustness.
@@ -5811,7 +5821,7 @@ val table1_solved = ref 0
 
 (* The same search deficiencies as pelletier_expected_failures, seen at
    the published depths.  See .agent-files/PLAN_phase_1_2_green.md. *)
-val table1_expected_failures = [34, 38, 43]
+val table1_expected_failures = [34]
 
 fun run_table1_depth (number, depth) =
   let
@@ -5845,7 +5855,7 @@ val _ =
      fn () =>
        !table1_solved =
          length table1_depths - length table1_expected_failures
-       andalso !table1_solved = 6)
+       andalso !table1_solved = 8)
 
 val _ =
   test

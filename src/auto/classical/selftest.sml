@@ -2166,6 +2166,32 @@ val _ =
 
 val _ =
   test
+    ("SAFE_TAC validates an eta-reduced EXISTS major in match mode",
+     fn () =>
+       let
+         val bound = Term.mk_var ("safe_eta_bound", Type.ind)
+         val predicate =
+           Term.mk_var ("safe_eta_predicate", Type.ind --> bool_ty)
+         val target = Term.mk_var ("safe_eta_target", bool_ty)
+         val major =
+           boolSyntax.mk_exists
+             (bound, Term.mk_comb (predicate, bound))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC []) ([major], target)
+       in
+         case residues of
+             [([assumption], conclusion)] =>
+               let val (head, arguments) = strip_comb assumption
+               in
+                 Term.aconv head predicate andalso
+                 length arguments = 1 andalso
+                 Term.aconv conclusion boolSyntax.F
+               end
+           | _ => false
+       end)
+
+val _ =
+  test
     ("CLARIFY_TAC leaves a genuinely branching conjunction intact",
      fn () =>
        let
@@ -3089,6 +3115,274 @@ fun ticking_clock () =
       end
   end
 
+fun exact_transition_variants cs specification goal =
+  let
+    val ordinary =
+      drain_exact
+        (clasetStep.blast_rule_step cs specification
+          (clasetGoal.from_goal goal, 1))
+    val measured =
+      drain_measured_exact
+        (clasetStep.blast_rule_step_measured
+          {observe = NONE, stop = fn () => false}
+          cs specification (clasetGoal.from_goal goal, 1))
+    val timed_v3 =
+      drain_timed_exact_v3
+        (clasetStep.blast_rule_step_timed_v3
+          {clock = ticking_clock (), observe = NONE,
+           stop = fn () => false}
+          cs specification (clasetGoal.from_goal goal, 1))
+  in
+    [ordinary, measured, timed_v3]
+  end
+
+fun valid_open_replay goal (record, node) =
+  let
+    val expected = rendered_goals node
+    val grounded =
+      clasetReplay.ground (clasetGoal.store node)
+        (clasetGoal.replay node)
+    val (actual, _) =
+      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+  in
+    valid_step goal (record, node) andalso
+    same_goals actual expected
+  end
+
+val _ =
+  test
+    ("exact intro keeps an implication-valued conclusion intact",
+     fn () =>
+       let
+         val schema = Term.mk_var ("bounded_intro_schema", bool_ty)
+         val atom = Term.mk_var ("bounded_intro_atom", bool_ty)
+         val target = boolSyntax.mk_imp (atom, atom)
+         val theorem = GEN schema (DISCH schema (ASSUME schema))
+         val goal = ([], target)
+         val variants =
+           exact_transition_variants clasetLib.empty_cs
+             {theorem = theorem, elim = false} goal
+
+         fun exact result =
+           case result of
+               [(record, node)] =>
+                 same_goals (rendered_goals node) [([atom], atom)]
+                 andalso valid_open_replay goal (record, node)
+             | _ => false
+       in
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact elim keeps an implication-valued target intact",
+     fn () =>
+       let
+         val bound = Term.mk_var ("bounded_elim_bound", Type.ind)
+         val predicate =
+           Term.mk_var
+             ("bounded_elim_predicate", Type.ind --> bool_ty)
+         val marker =
+           Term.mk_var ("bounded_elim_marker", bool_ty)
+         val atom = Term.mk_var ("bounded_elim_atom", bool_ty)
+         val target = boolSyntax.mk_imp (atom, atom)
+         val major =
+           boolSyntax.mk_exists
+             (bound,
+              boolSyntax.mk_conj
+                (Term.mk_comb (predicate, bound), marker))
+         val goal = ([major], target)
+         val variants =
+           exact_transition_variants clasetLib.empty_cs
+             {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+              elim = true} goal
+
+         fun exact result =
+           case result of
+               [(record, node)] =>
+                 (case rendered_goals node of
+                      [(assumptions, conclusion)] =>
+                        let
+                          fun predicate_assumption assumption =
+                            case total boolSyntax.dest_conj assumption of
+                                SOME (left, right) =>
+                                  let
+                                    val (head, arguments) = strip_comb left
+                                  in
+                                    Term.aconv head predicate andalso
+                                    length arguments = 1 andalso
+                                    Term.aconv right marker
+                                  end
+                              | NONE => false
+                          val shape =
+                            length assumptions = 2 andalso
+                            List.exists predicate_assumption assumptions
+                            andalso
+                            List.exists
+                              (fn assumption => Term.aconv assumption atom)
+                              assumptions andalso
+                            Term.aconv conclusion atom
+                        in
+                          shape andalso
+                          clasetStep.consumed_of record = SOME 1 andalso
+                          valid_open_replay goal (record, node)
+                        end
+                    | _ => false)
+             | _ => false
+       in
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact EXISTS elim preserves an eta-reduced major assumption",
+     fn () =>
+       let
+         val bound = Term.mk_var ("eta_major_bound", Type.ind)
+         val predicate =
+           Term.mk_var
+             ("eta_major_predicate", Type.ind --> bool_ty)
+         val target = Term.mk_var ("eta_major_target", bool_ty)
+         val major =
+           boolSyntax.mk_exists
+             (bound, Term.mk_comb (predicate, bound))
+         val goal = ([major], target)
+         val variants =
+           exact_transition_variants clasetLib.empty_cs
+             {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+              elim = true} goal
+
+         fun exact result =
+           case result of
+               [(record, node)] =>
+                 (case rendered_goals node of
+                      [([assumption], conclusion)] =>
+                        let
+                          val (head, arguments) = strip_comb assumption
+                        in
+                          Term.aconv head predicate andalso
+                          length arguments = 1 andalso
+                          Term.aconv conclusion target andalso
+                          clasetStep.consumed_of record = SOME 1 andalso
+                          valid_open_replay goal (record, node)
+                        end
+                    | _ => false)
+             | _ => false
+       in
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact EXISTS elim instantiates an engine-meta major soundly",
+     fn () =>
+       let
+         val target = Term.mk_var ("meta_major_target", bool_ty)
+         val (major, store) =
+           clasetMeta.new_meta
+             {allow = [], ty = bool_ty} clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals = [{params = [], asl = [major], w = target}],
+              store = store, level = 0}
+         val specification =
+           {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+            elim = true}
+         val ordinary =
+           drain_exact
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               specification (node, 1))
+         val measured =
+           drain_measured_exact
+             (clasetStep.blast_rule_step_measured
+               {observe = NONE, stop = fn () => false}
+               clasetLib.empty_cs specification (node, 1))
+         val timed_v3 =
+           drain_timed_exact_v3
+             (clasetStep.blast_rule_step_timed_v3
+               {clock = ticking_clock (), observe = NONE,
+                stop = fn () => false}
+               clasetLib.empty_cs specification (node, 1))
+
+         fun exact result =
+           case result of
+               [(record, next)] =>
+                 let
+                   val final_store = clasetGoal.store next
+                   val materialized_major =
+                     clasetMeta.norm final_store major
+                   val materialized_goal =
+                     ([materialized_major], target)
+                   val expected = rendered_goals next
+                   val (direct, _) =
+                     Tactical.VALID
+                       (fn _ =>
+                         (expected, clasetStep.validation_of record))
+                       materialized_goal
+                   val ground_store = clasetMeta.ground final_store
+                   val grounded_goal =
+                     ([clasetMeta.norm ground_store major], target)
+                   val grounded_node =
+                     clasetGoal.set_store ground_store next
+                   val grounded =
+                     clasetReplay.ground final_store
+                       (clasetGoal.replay next)
+                   val (replayed, _) =
+                     Tactical.VALID
+                       (clasetReplay.REPLAY_TAC grounded) grounded_goal
+                 in
+                   not (Term.aconv materialized_major major) andalso
+                   length expected = 1 andalso
+                   same_goals direct expected andalso
+                   same_goals replayed (rendered_goals grounded_node)
+                 end
+             | _ => false
+       in
+         List.all exact [ordinary, measured, timed_v3]
+       end)
+
+val _ =
+  test
+    ("dest-generated elim keeps an implication-valued target intact",
+     fn () =>
+       let
+         val left = Term.mk_var ("bounded_dest_left", bool_ty)
+         val right = Term.mk_var ("bounded_dest_right", bool_ty)
+         val atom = Term.mk_var ("bounded_dest_atom", bool_ty)
+         val target = boolSyntax.mk_imp (atom, atom)
+         val conjunction = boolSyntax.mk_conj (left, right)
+         val original =
+           DISCH conjunction
+             (CONJUNCT1 (ASSUME conjunction))
+         val specification =
+           {kind = clasetRules.Dest, safe = true, prio = NONE}
+         val {rl = (generated, _), ...} =
+           clasetRules.ext_info specification original
+         val cs =
+           clasetLib.add_sdests
+             [("bounded-dest-generated", original)]
+             clasetLib.empty_cs
+         val goal = ([conjunction], target)
+         val variants =
+           exact_transition_variants cs
+             {theorem = generated, elim = true} goal
+
+         fun exact result =
+           case result of
+               [(record, node)] =>
+                 same_goals (rendered_goals node)
+                   [([atom, left], atom)]
+                 andalso
+                 (case clasetStep.kind_of record of
+                      clasetStep.RuleApplication
+                        {variant = clasetStep.MakeElim, ...} => true
+                    | _ => false)
+                 andalso valid_open_replay goal (record, node)
+             | _ => false
+       in
+         List.all exact variants
+       end)
+
 fun phase_time_sum
       (statistics : clasetStep.timed_rule_statistics) =
   List.foldl Time.+ Time.zeroTime
@@ -3181,6 +3475,58 @@ val _ =
          #direct_child_replacements statistics = 2 andalso
          #replay_record_constructions statistics = 2 andalso
          #record_insertions statistics = 2
+       end)
+
+val _ =
+  test
+    ("exact elimination premises preserve parent eigenparameters",
+     fn () =>
+       let
+         val outer = Term.mk_var ("x", Type.ind)
+         val witness = Term.mk_var ("y", Type.ind)
+         val label =
+           Term.mk_var ("capture_label", Type.ind --> bool_ty)
+         val relation =
+           Term.mk_var
+             ("capture_relation",
+              Type.ind --> Type.ind --> bool_ty)
+         fun label_app argument = Term.mk_comb (label, argument)
+         fun relation_app left right =
+           Term.list_mk_comb (relation, [left, right])
+         val major =
+           boolSyntax.mk_exists
+             (witness,
+              boolSyntax.mk_conj
+                (label_app witness, relation_app outer witness))
+         val store =
+           valOf (clasetMeta.register_eigen outer clasetMeta.empty)
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [outer], asl = [major], w = boolSyntax.F}],
+              store = store, level = 0}
+         val transition =
+           seq.cases
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+                elim = true} (node, 1))
+       in
+         case transition of
+             NONE => false
+           | SOME ((record, next), _) =>
+               let
+                 val child = the_singleton (clasetGoal.goals next)
+                 val fresh = List.nth (#params child, 1)
+                 val expected =
+                   boolSyntax.mk_conj
+                     (label_app fresh, relation_app outer fresh)
+               in
+                 not (Term.aconv outer fresh) andalso
+                 List.exists (fn assumption =>
+                   Term.aconv assumption expected) (#asl child) andalso
+                 clasetStep.consumed_of record = SOME 1 andalso
+                 valid_step ([major], boolSyntax.F) (record, next)
+               end
        end)
 
 val _ =

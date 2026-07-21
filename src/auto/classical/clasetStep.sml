@@ -53,15 +53,57 @@ fun normalize_rule_thm th =
     normalize_thm (List.foldl normalize_hypothesis th (hyp th))
   end
 
+fun split_imp_prefix function_name arity tm =
+  let
+    fun split 0 premises conclusion =
+          (List.rev premises, conclusion)
+      | split remaining premises current =
+          (case total dest_imp_only current of
+               SOME (premise, rest) =>
+                 split (remaining - 1) (premise :: premises) rest
+             | NONE =>
+                 raise mk_HOL_ERR "clasetStep" function_name
+                   "the instantiated rule has fewer premises than recorded")
+  in
+    if arity < 0 then
+      raise mk_HOL_ERR "clasetStep" function_name
+        "negative implication-prefix arity"
+    else split arity [] tm
+  end
+
+fun normalize_assumption_thm theorem =
+  let val equality = normalize_conv (concl theorem)
+  in (rhs (concl equality), EQ_MP equality theorem) end
+
+fun normalize_assumption asm =
+  normalize_assumption_thm (ASSUME asm)
+
 fun assumption_thm asm target =
   let
-    val normalized = normalize_thm (ASSUME asm)
+    val (normalized, theorem) = normalize_assumption asm
   in
-    if aconv (concl normalized) target then
-      EQ_MP (ALPHA (concl normalized) target) normalized
+    if aconv normalized target then
+      EQ_MP (ALPHA normalized target) theorem
     else
       raise mk_HOL_ERR "clasetStep" "assumption_thm"
         "the assumption does not close the target"
+  end
+
+fun supplied_major_thm store major target =
+  let
+    val (type_substitution, term_substitution) =
+      clasetMeta.collapse store
+    val instantiated =
+      Drule.INST_TY_TERM
+        (term_substitution, type_substitution) (ASSUME major)
+    val (normalized, theorem) =
+      normalize_assumption_thm instantiated
+  in
+    if aconv normalized target then
+      EQ_MP (ALPHA normalized target) theorem
+    else
+      raise mk_HOL_ERR "clasetStep" "supplied_major_thm"
+        "the selected assumption misses the instantiated major premise"
   end
 
 fun nth1 values pos = List.nth (values, pos - 1)
@@ -554,8 +596,6 @@ fun try_rule mode cs duplicated node pos
       Drule.INST_TY_TERM
         (term_substitution, type_substitution) (#core fresh)
     val normalized_rule0 = normalize_rule_thm instantiated
-    val normalized_premises =
-      map (normalize_term final_store) remaining
 
     fun align_hypothesis (hypothesis, current) =
       case List.find
@@ -570,6 +610,17 @@ fun try_rule mode cs duplicated node pos
     val normalized_rule =
       List.foldl align_hypothesis normalized_rule0
         (hyp normalized_rule0)
+    val (all_premises, _) =
+      split_imp_prefix "try_rule" (length (#premises fresh))
+        (concl normalized_rule)
+    val normalized_premises =
+      if is_elim then
+        (case all_premises of
+             _ :: premises => premises
+           | [] =>
+               raise mk_HOL_ERR "clasetStep" "try_rule"
+                 "an elimination rule has no major premise")
+      else all_premises
     val working = clasetGoal.set_store final_store node
     val (children, child_store) =
       clasetGoal.children working
@@ -579,10 +630,7 @@ fun try_rule mode cs duplicated node pos
     val supplied_thms =
       case (is_elim, assumption) of
           (true, SOME (_, major)) =>
-            [assumption_thm (normalize_term final_store major)
-              (hd
-                (clasetRules.rule_premises_of clasetRules.Elim
-                  normalized_rule))]
+            [supplied_major_thm final_store major (hd all_premises)]
         | _ => []
     val target = normalize_term child_store w
     val validation =
@@ -604,7 +652,7 @@ fun try_rule mode cs duplicated node pos
           clasetMeta.collapse store
         val replay_theorem =
           Drule.INST_TY_TERM
-            (term_substitution, type_substitution) (#core fresh)
+            (term_substitution, type_substitution) normalized_rule
       in
         {theorem = replay_theorem, elim = is_elim,
          consumed = consumed, parameters = old_params,
@@ -1011,7 +1059,8 @@ fun try_rule_measured monitor cs node pos
                store)
             end) ()
       else (NONE, [], #premises fresh, store1)
-    val (final_store, normalized_rule, normalized_premises) =
+    val (final_store, normalized_rule, all_premises,
+         normalized_premises) =
       measured_rule_bracket monitor (Option.map #1 assumption)
         RuleInstantiation
         (fn () =>
@@ -1022,8 +1071,6 @@ fun try_rule_measured monitor cs node pos
               Drule.INST_TY_TERM
                 (term_substitution, type_substitution) (#core fresh)
             val normalized_rule0 = normalize_rule_thm instantiated
-            val normalized_premises =
-              map (normalize_term store2) remaining
 
             fun align_hypothesis (hypothesis, current) =
               case List.find
@@ -1037,8 +1084,21 @@ fun try_rule_measured monitor cs node pos
             val normalized_rule =
               List.foldl align_hypothesis normalized_rule0
                 (hyp normalized_rule0)
+            val (all_premises, _) =
+              split_imp_prefix "try_rule_measured"
+                (length (#premises fresh)) (concl normalized_rule)
+            val normalized_premises =
+              if is_elim then
+                (case all_premises of
+                     _ :: premises => premises
+                   | [] =>
+                       raise mk_HOL_ERR "clasetStep"
+                         "try_rule_measured"
+                         "an elimination rule has no major premise")
+              else all_premises
           in
-            (store2, normalized_rule, normalized_premises)
+            (store2, normalized_rule, all_premises,
+             normalized_premises)
           end) ()
     val (children, child_store, child_goals) =
       measured_rule_bracket monitor (Option.map #1 assumption)
@@ -1062,10 +1122,8 @@ fun try_rule_measured monitor cs node pos
           val supplied_thms =
             case (is_elim, assumption) of
                 (true, SOME (_, major)) =>
-                  [assumption_thm (normalize_term final_store major)
-                    (hd
-                      (clasetRules.rule_premises_of clasetRules.Elim
-                        normalized_rule))]
+                  [supplied_major_thm final_store major
+                    (hd all_premises)]
               | _ => []
           val target = normalize_term child_store w
           val validation =
@@ -1089,7 +1147,7 @@ fun try_rule_measured monitor cs node pos
                 clasetMeta.collapse store
               val replay_theorem =
                 Drule.INST_TY_TERM
-                  (term_substitution, type_substitution) (#core fresh)
+                  (term_substitution, type_substitution) normalized_rule
             in
               {theorem = replay_theorem, elim = is_elim,
                consumed = consumed, parameters = old_params,
@@ -2409,7 +2467,8 @@ fun try_rule_measured_v3 monitor cs node pos
               (SOME assumption_pos, [major], tl (#premises fresh), store)
             end) ()
       else (NONE, [], #premises fresh, store1)
-    val (final_store, normalized_rule, normalized_premises) =
+    val (final_store, normalized_rule, all_premises,
+         normalized_premises) =
       measured_rule_bracket_v3 monitor (Option.map #1 assumption)
         RuleInstantiation
         (fn () =>
@@ -2420,8 +2479,6 @@ fun try_rule_measured_v3 monitor cs node pos
               Drule.INST_TY_TERM
                 (term_substitution, type_substitution) (#core fresh)
             val normalized_rule0 = normalize_rule_thm instantiated
-            val normalized_premises =
-              map (normalize_term store2) remaining
 
             fun align_hypothesis (hypothesis, current) =
               case List.find
@@ -2435,8 +2492,21 @@ fun try_rule_measured_v3 monitor cs node pos
             val normalized_rule =
               List.foldl align_hypothesis normalized_rule0
                 (hyp normalized_rule0)
+            val (all_premises, _) =
+              split_imp_prefix "try_rule_measured_v3"
+                (length (#premises fresh)) (concl normalized_rule)
+            val normalized_premises =
+              if is_elim then
+                (case all_premises of
+                     _ :: premises => premises
+                   | [] =>
+                       raise mk_HOL_ERR "clasetStep"
+                         "try_rule_measured_v3"
+                         "an elimination rule has no major premise")
+              else all_premises
           in
-            (store2, normalized_rule, normalized_premises)
+            (store2, normalized_rule, all_premises,
+             normalized_premises)
           end) ()
     val (children, child_store, child_goals) =
       measured_rule_bracket_v3 monitor (Option.map #1 assumption)
@@ -2460,10 +2530,8 @@ fun try_rule_measured_v3 monitor cs node pos
           val supplied_thms =
             case (is_elim, assumption) of
                 (true, SOME (_, major)) =>
-                  [assumption_thm (normalize_term final_store major)
-                    (hd
-                      (clasetRules.rule_premises_of clasetRules.Elim
-                        normalized_rule))]
+                  [supplied_major_thm final_store major
+                    (hd all_premises)]
               | _ => []
           val target = normalize_term child_store w
           val validation =
@@ -2486,7 +2554,7 @@ fun try_rule_measured_v3 monitor cs node pos
                 clasetMeta.collapse store
               val replay_theorem =
                 Drule.INST_TY_TERM
-                  (term_substitution, type_substitution) (#core fresh)
+                  (term_substitution, type_substitution) normalized_rule
             in
               {theorem = replay_theorem, elim = is_elim,
                consumed = consumed, parameters = old_params,

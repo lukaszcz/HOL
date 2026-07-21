@@ -100,6 +100,24 @@ fun normalize_rule_thm th =
     normalize_thm (List.foldl normalize_hypothesis th (hyp th))
   end
 
+fun split_imp_prefix function_name arity tm =
+  let
+    fun split 0 premises conclusion =
+          (List.rev premises, conclusion)
+      | split remaining premises current =
+          (case total dest_imp_only current of
+               SOME (premise, rest) =>
+                 split (remaining - 1) (premise :: premises) rest
+             | NONE =>
+                 raise mk_HOL_ERR "clasetReplay" function_name
+                   "the instantiated rule has fewer premises than recorded")
+  in
+    if arity < 0 then
+      raise mk_HOL_ERR "clasetReplay" function_name
+        "negative implication-prefix arity"
+    else split arity [] tm
+  end
+
 fun assumption_thm store asm target =
   let
     val asm' = clasetMeta.norm store asm
@@ -213,7 +231,10 @@ fun RULE_TAC
     val rule0 = normalize_rule_thm theorem
     val target_equality = normalize_conv w
     val normalized_target = rhs (concl target_equality)
-    val (_, initial_conclusion) = strip_imp_only (concl rule0)
+    val recorded_arity =
+      length eigenvariables + (if elim then 1 else 0)
+    val (_, initial_conclusion) =
+      split_imp_prefix "RULE_TAC" recorded_arity (concl rule0)
     val (term_substitution, type_substitution) =
       Term.match_term initial_conclusion normalized_target
     fun allowed_parameter {redex, residue} =
@@ -232,7 +253,8 @@ fun RULE_TAC
         (fn (hypothesis, current) =>
           Drule.PROVE_HYP (theorem_hypothesis asl hypothesis) current)
         aligned_rule (hyp aligned_rule)
-    val (premises0, conclusion) = strip_imp_only (concl rule)
+    val (premises0, conclusion) =
+      split_imp_prefix "RULE_TAC" recorded_arity (concl rule)
     val _ =
       if aconv conclusion normalized_target then ()
       else
