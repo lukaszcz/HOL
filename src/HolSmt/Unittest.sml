@@ -253,6 +253,8 @@ val _ = new_constant ("smt_nonfree_nil", ``:'a smt_nonfree``)
 val _ = new_constant
   ("smt_nonfree_cons", ``:'a -> 'a smt_nonfree -> 'a smt_nonfree``)
 val _ = new_constant ("smtlib_uf_logic_foo", ``:int -> int``)
+val _ = new_constant
+  ("smtlib_ho_rank2", ``:int -> bool -> int``)
 val smt_nonfree_ind = new_axiom
   ("smt_nonfree_ind",
    ``!P. P smt_nonfree_nil /\
@@ -318,6 +320,32 @@ fun num_binder_relativization_non_num_noop_success () =
     ("non-num binder relativization no-op",
      ``!i :int. i <= i``,
      ``!i :int. i <= i``)
+
+fun num_to_int_under_abstraction_success () =
+let
+  val input =
+    ``(H:(int -> bool) -> bool)
+        (\x:int. x <= 0 /\ (n:num) = 1)``
+  val expected =
+    ``(H:(int -> bool) -> bool)
+        (\x:int. x <= 0 /\ (&(n:num):int) = 1)``
+  val thm = SmtLib.NUM_TO_INT_CONV input
+  val binder_input =
+    ``(H:(int -> bool) -> bool) (\x:int. !n:num. x <= &n)``
+  val binder_expected =
+    ``(H:(int -> bool) -> bool)
+        (\x:int. !i:int. 0 <= i ==> x <= &(Num i))``
+  val binder_thm = SmtLib.NUM_BINDERS_TO_INT_CONV binder_input
+in
+  assert_no_hyps ("NUM_TO_INT_CONV under abstraction", thm);
+  assert_concl_alpha
+    ("NUM_TO_INT_CONV under abstraction", thm,
+     boolSyntax.mk_eq (input, expected));
+  assert_no_hyps ("num binder conversion under abstraction", binder_thm);
+  assert_concl_alpha
+    ("num binder conversion under abstraction", binder_thm,
+     boolSyntax.mk_eq (binder_input, binder_expected))
+end
 
 (* Test: `Z3_ProofReplay.remove_definitions` works without any definitions *)
 fun remove_defs_no_defs () = ([], [])
@@ -3975,10 +4003,10 @@ in
         "automatic:non-constant/non-variable-rator",
     "Z3 automatic selection lost the normalized-rator reason");
   expect_hol_error_contains "automatic surviving-lambda regime"
-    "HO regime translation not yet implemented"
+    "Standard27 higher-order printer not yet implemented"
     (fn () => ignore (SmtLib.goal_to_SmtLib_translation NONE surviving));
   expect_hol_error_contains "automatic complex-rator regime"
-    "HO regime translation not yet implemented"
+    "Standard27 higher-order printer not yet implemented"
     (fn () => ignore
       (SmtLib.goal_to_SmtLib_translation NONE complex_rator));
   expect_hol_error_contains "forced FirstOrder surviving lambda"
@@ -3987,7 +4015,7 @@ in
       (SmtLib.goal_to_SmtLib_translation_with_regime
         SmtLib.FirstOrder NONE surviving));
   expect_hol_error_contains "automatic datatype-rator regime"
-    "HO regime translation not yet implemented"
+    "Standard27 higher-order printer not yet implemented"
     (fn () => ignore
       (SmtLib.goal_to_SmtLib_translation NONE datatype_rator));
   expect_record SmtLib.FirstOrder "automatic:no-ho-trigger" automatic_fo;
@@ -3996,6 +4024,87 @@ in
     "explicit override" forced_standard;
   expect_record (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
     "explicit override" forced_z3
+end
+
+fun smtlib_z3_lambda_array_translation_success () =
+let
+  val z3_regime = SmtLib.HigherOrder SmtLib.Z3LambdaArray
+  fun translate goal =
+    SmtLib.goal_to_SmtLib_translation_with_regime z3_regime NONE goal
+  fun translate_automatic goal =
+    SmtLib.goal_to_SmtLib_translation_with_dialect
+      SmtLib.Z3LambdaArray NONE goal
+  fun text_of result = String.concat (Lib.snd result)
+  fun assert_has name text snippet =
+    assert (contains snippet text,
+      name ^ " missed SMT-LIB snippet '" ^ snippet ^
+      "'\nSMT-LIB:\n" ^ text)
+  fun assert_lacks name text snippet =
+    assert (not (contains snippet text),
+      name ^ " unexpectedly emitted SMT-LIB snippet '" ^ snippet ^
+      "'\nSMT-LIB:\n" ^ text)
+  val lambda_result = translate_automatic
+    ([], ``(H:(int -> int) -> bool) (\x. x + 1)``)
+  val lambda_translation = Lib.fst lambda_result
+  val lambda_text = text_of lambda_result
+  val arrows_text = text_of (translate
+    ([], ``(ff:int -> bool -> int) = gg``))
+  val eta_result = translate
+    ([], ``smtlib_ho_rank2 (x:int) = (f:bool -> int) /\
+           smtlib_ho_rank2 x p = y``)
+  val eta_translation = Lib.fst eta_result
+  val eta_text = text_of eta_result
+  val rank2_declarations =
+    List.filter
+      (fn SmtLib.TermDeclaration {hol_term, ...} =>
+            Term.is_const hol_term andalso
+            Term.same_const hol_term ``smtlib_ho_rank2``
+        | _ => false)
+      (SmtLib.translation_records eta_translation)
+  val selects_text = text_of (translate
+    ([], ``(u:int -> int -> int) x y = z``))
+  val ite_text = text_of (translate
+    ([], ``(if p then (f:int -> int) else g) x = y``))
+  val complex_result = translate_automatic
+    ([], ``((\f:int -> int. f) g) (x:int) = y``)
+  val complex_translation = Lib.fst complex_result
+  val complex_text = text_of complex_result
+in
+  assert (SmtLib.translation_regime lambda_translation = z3_regime,
+    "automatic lambda translation selected the wrong dialect");
+  assert_has "lambda lowering" lambda_text "(set-logic ALL)\n";
+  assert_has "lambda lowering" lambda_text
+    "(declare-fun v0 () (Array (Array Int Int) Bool))";
+  assert_has "lambda lowering" lambda_text
+    "(select v0 (lambda ((b0 Int)) (+ b0 1)))";
+  assert_has "nested arrow lowering" arrows_text
+    "(Array Int (Array Bool Int))";
+  assert_lacks "nested arrow lowering" arrows_text "(-> ";
+  assert_has "ranked eta expansion" eta_text
+    "(declare-fun v0 (Int Bool) Int)";
+  assert_has "ranked eta expansion" eta_text
+    "(lambda ((b0 Bool)) (v0 v1 b0))";
+  assert_has "ranked eta expansion" eta_text "(v0 v1 v3)";
+  assert_lacks "ranked eta expansion" eta_text
+    "(declare-fun v0 (Int) (Array Bool Int))";
+  assert (List.length rank2_declarations = 1,
+    "partial and full ranked applications did not share one declaration");
+  (case List.hd rank2_declarations of
+     SmtLib.TermDeclaration {arity, ...} =>
+       assert (arity = 2, "ranked constant was not declared at full rank")
+   | _ => raise Fail "impossible non-declaration record");
+  assert_has "nested select application" selects_text
+    "(select (select v0 v1) v2)";
+  assert_lacks "nested select application" selects_text
+    "(select v0 v1 v2)";
+  assert_has "function-valued builtin application" ite_text
+    "(select (ite v0 v1 v2) v3)";
+  assert_lacks "function-valued builtin application" ite_text
+    "(ite v0 v1 v2 v3)";
+  assert (SmtLib.translation_regime complex_translation = z3_regime,
+    "automatic complex-rator translation selected the wrong dialect");
+  assert_has "complex-rator application" complex_text
+    "(select (select (lambda ((b0 (Array Int Int))) b0) v0) v1)"
 end
 
 (* D10 enforcement: the P3.4 regime trigger leaves every one of these
@@ -6319,6 +6428,8 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("num_to_int_under_abstraction_success",
+      num_to_int_under_abstraction_success),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",
@@ -6488,6 +6599,8 @@ let
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
+    ("smtlib_z3_lambda_array_translation_success",
+      smtlib_z3_lambda_array_translation_success),
     ("smtlib_fo_emission_golden_success",
       smtlib_fo_emission_golden_success),
     ("smtlib_translation_shape_matrix_success",

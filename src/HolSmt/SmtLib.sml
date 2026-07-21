@@ -1445,6 +1445,10 @@ local
      'tmdict' maps terms along with the number of their actual
      arguments to an SMT-LIB representation. *)
 
+  (* Recursive failures must bypass the recognizer exception cascade: once a
+     term's shape is known, an error in its body is the real diagnostic. *)
+  exception NestedTranslation of exn
+
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
@@ -1478,6 +1482,46 @@ local
     fun ensure_type ((tydict, tmdict), ty) =
       let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
+    fun declared_const_arity c =
+      let
+        val {Thy, Name, ...} = Term.dest_thy_const c
+        val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
+        val (doms, _) = boolSyntax.strip_fun (Term.type_of generic)
+      in
+        List.length doms
+      end
+    fun translate_lambda acc =
+      let
+        val (v, body) = Term.dest_abs tm
+        val (bounds, smtvar) = create_bound_name (bounds, v)
+        val (((tydict, tmdict), typedecls), tyname) =
+          ensure_type (acc, Term.type_of v)
+        val (acc, (bodydecls, bodyname)) =
+          translate_term regime ((tydict, tmdict), (bounds, body))
+          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+      in
+        (acc, (typedecls @ bodydecls,
+          "(lambda ((" ^ smtvar ^ " " ^ tyname ^ ")) " ^
+          bodyname ^ ")"))
+      end
+    fun eta_expand_ranked_constant acc applied rator rank rands_count =
+      let
+        fun drop 0 ty = ty
+          | drop n ty = drop (n - 1) (Lib.snd (Type.dom_rng ty))
+        fun take_doms 0 _ acc = List.rev acc
+          | take_doms n ty acc =
+              let val (dom, rng) = Type.dom_rng ty
+              in take_doms (n - 1) rng (dom :: acc) end
+        val residual_ty = drop rands_count (Term.type_of rator)
+        val missing_doms =
+          take_doms (rank - rands_count) residual_ty []
+        val vars = List.map Term.genvar missing_doms
+        val expanded = Term.list_mk_abs
+          (vars, Term.list_mk_comb (applied, vars))
+      in
+        translate_term regime (acc, (bounds, expanded))
+        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+      end
     fun constructor_info_for tydict ty constructor =
       let
         val type_name =
@@ -1729,6 +1773,12 @@ local
     (acc, ([], Redblackmap.find (bounds, tm)))
     handle Redblackmap.NotFound =>
 
+    (* Native lambda terms survive preprocessing only in the HO regime. *)
+    (case regime of
+       FirstOrder => raise ERR "translate_term" "not first-order"
+     | HigherOrder _ => translate_lambda acc)
+    handle Feedback.HOL_ERR _ =>
+
     (* translate the entire term (e.g., for numerals), using the dictionary of
        built-in symbols; however, only do this if 'tm' has base type *)
     (if tm_has_base_type then
@@ -1741,9 +1791,14 @@ local
     let
       val (rator, rands) = boolSyntax.strip_comb tm
     in
-      (* translate the rator as a built-in symbol (applied to its rands); only
-         do this if 'tm' has base type *)
-      (if tm_has_base_type then
+      (* In an HO regime a fully ranked built-in may itself return a map.
+         Translate that ranked prefix before any remaining map applications. *)
+      (if (case regime of
+             FirstOrder => tm_has_base_type
+           | HigherOrder _ =>
+               Term.is_const rator andalso
+               List.length rands = declared_const_arity rator)
+       then
         builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
@@ -1783,17 +1838,28 @@ local
       let
         val (function, argument) = Term.dest_comb tm
         val _ = Type.dom_rng (Term.type_of function)
-        val (head, _) = boolSyntax.strip_comb tm
+        val (head, head_rands) = boolSyntax.strip_comb tm
         val _ =
           if Term.is_const head andalso
              not (combinSyntax.is_update_comb function) then
-            raise ERR "translate_term" "HOL constants are emitted as functions"
+            (case regime of
+               FirstOrder =>
+                 raise ERR "translate_term"
+                   "HOL constants are emitted as functions"
+             | HigherOrder _ =>
+                 if List.length head_rands > declared_const_arity head then
+                   ()
+                 else
+                   raise ERR "translate_term"
+                     "ranked HOL constant application")
           else
             ()
         val (acc, (functiondecls, functionname)) =
           translate_term regime (acc, (bounds, function))
+          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
         val (acc, (argumentdecls, argumentname)) =
           translate_term regime (acc, (bounds, argument))
+          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
         (acc, (functiondecls @ argumentdecls,
           sexpr "select" [functionname, argumentname]))
@@ -1805,66 +1871,81 @@ local
         val _ =
           if Term.is_const rator orelse Term.is_var rator then ()
           else
-            (case regime of
-               FirstOrder =>
-                 raise ERR "translate_term"
-                   ("unsupported higher-order rator expression: " ^
-                    Hol_pp.term_to_string rator)
-             | HigherOrder _ =>
-                 raise ERR "translate_term"
-                   ("HO regime translation not yet implemented: " ^
-                    "non-constant/non-variable rator"))
-        val (acc, (decls, name)) =
-          (* translate the rator as a previously defined symbol *)
-          (acc, ([], Redblackmap.find (tmdict, (rator, rands_count))))
-          handle Redblackmap.NotFound =>
-
-          (* translate the rator as a new (i.e., uninterpreted) symbol *)
-          let
-            (* translate 'rator' types required for the rator's
-               SMT-LIB declaration *)
-            fun doms_rng acc 0 ty =
-              (List.rev acc, ty)
-              | doms_rng acc n ty =
-              let
-                val (dom, rng) = Type.dom_rng ty
-              in
-                doms_rng (dom :: acc) (n - 1) rng
-              end
-            (* strip only 'rands_count' many 'domtys', leaving the remaining
-               argument types in 'rngty' *)
-            val (domtys, rngty) = doms_rng [] rands_count (Term.type_of rator)
-            val (tydict, domdecltys) = Lib.foldl_map (translate_type regime)
-              (tydict, domtys)
-            val (domdeclss, domtys) = Lib.split domdecltys
-            val domdecls = List.concat domdeclss
-            val (tydict, (rngdecls, rngty)) =
-              translate_type regime (tydict, rngty)
-            (* invent new name for 'rator' *)
-            val name = tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
-            val _ = if !Library.trace > 0 andalso Term.is_const rator then
-              WARNING "translate_term"
-                ("uninterpreted constant " ^ Hol_pp.term_to_string rator)
-              else
-                ();
-            val _ = if !Library.trace > 2 then
-                Feedback.HOL_MESG ("HolSmtLib (SmtLib): inventing name '" ^
-                  name ^ "' for HOL term '" ^ Hol_pp.term_to_string rator ^
-                  "' (applied to " ^ Int.toString rands_count ^ " argument(s))")
-              else
-                ()
-            val tmdict = Redblackmap.insert (tmdict, (rator, rands_count), name)
-            val decl = "(declare-fun " ^ name ^ " (" ^
-              String.concatWith " " domtys ^ ") " ^ rngty ^ ")\n"
-          in
-            ((tydict, tmdict), (domdecls @ rngdecls @ [decl], name))
-          end
-        (* translate 'rands' *)
-        val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term regime (a, (bounds, t))) (acc, rands)
-        val (declss, names) = Lib.split declnames
+            raise ERR "translate_term"
+              ("unsupported higher-order rator expression: " ^
+               Hol_pp.term_to_string rator)
+        val declaration_arity =
+          case regime of
+            FirstOrder => rands_count
+          | HigherOrder _ =>
+              if Term.is_const rator then declared_const_arity rator else 0
       in
-        (acc, (decls @ List.concat declss, sexpr name names))
+        if declaration_arity > rands_count then
+          eta_expand_ranked_constant acc tm rator declaration_arity
+            rands_count
+        else
+          let
+            val (acc, (decls, name)) =
+              (* translate the rator as a previously defined symbol *)
+              (acc, ([], Redblackmap.find
+                (tmdict, (rator, declaration_arity))))
+              handle Redblackmap.NotFound =>
+
+              (* translate the rator as a new (i.e., uninterpreted) symbol *)
+              let
+                (* translate 'rator' types required for the rator's
+                   SMT-LIB declaration *)
+                fun doms_rng acc 0 ty =
+                  (List.rev acc, ty)
+                  | doms_rng acc n ty =
+                  let
+                    val (dom, rng) = Type.dom_rng ty
+                  in
+                    doms_rng (dom :: acc) (n - 1) rng
+                  end
+                (* In the HO regime constants use their declared rank, not
+                   their occurrence arity.  This canonical key prevents
+                   partial and full applications from splitting one symbol. *)
+                val (domtys, rngty) = doms_rng [] declaration_arity
+                  (Term.type_of rator)
+                val (tydict, domdecltys) =
+                  Lib.foldl_map (translate_type regime) (tydict, domtys)
+                val (domdeclss, domtys) = Lib.split domdecltys
+                val domdecls = List.concat domdeclss
+                val (tydict, (rngdecls, rngty)) =
+                  translate_type regime (tydict, rngty)
+                (* invent new name for 'rator' *)
+                val name = tm_prefix ^
+                  Int.toString (Redblackmap.numItems tmdict)
+                val _ = if !Library.trace > 0 andalso Term.is_const rator then
+                  WARNING "translate_term"
+                    ("uninterpreted constant " ^ Hol_pp.term_to_string rator)
+                  else
+                    ();
+                val _ = if !Library.trace > 2 then
+                    Feedback.HOL_MESG
+                      ("HolSmtLib (SmtLib): inventing name '" ^ name ^
+                       "' for HOL term '" ^ Hol_pp.term_to_string rator ^
+                       "' (declared at rank " ^
+                       Int.toString declaration_arity ^ ")")
+                  else
+                    ()
+                val tmdict = Redblackmap.insert
+                  (tmdict, (rator, declaration_arity), name)
+                val decl = "(declare-fun " ^ name ^ " (" ^
+                  String.concatWith " " domtys ^ ") " ^ rngty ^ ")\n"
+              in
+                ((tydict, tmdict),
+                 (domdecls @ rngdecls @ [decl], name))
+              end
+            (* translate 'rands' *)
+            val (acc, declnames) = Lib.foldl_map
+              (fn (a, t) => translate_term regime (a, (bounds, t)))
+              (acc, rands)
+            val (declss, names) = Lib.split declnames
+          in
+            (acc, (decls @ List.concat declss, sexpr name names))
+          end
       end
     end
   end
@@ -1999,6 +2080,14 @@ local
       (goal as (ts, t)) : translation * string list =
   let
     val (regime, regime_reason) = select_regime request goal
+    (* TASK_12 supplies the native SMT-LIB 2.7 sort/application printer.  Do
+       not silently label the interim array lowering as Standard27. *)
+    val _ =
+      case (regime, goal_ho_reason goal) of
+        (HigherOrder Standard27, SOME _) =>
+          raise ERR "goal_to_SmtLib_aux"
+            "Standard27 higher-order printer not yet implemented"
+      | _ => ()
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
@@ -2007,10 +2096,22 @@ local
     val (acc, smtlibs) = Lib.foldl_map
       (fn (acc, tm) => translate_term regime (acc, (bounds, tm)))
       ((tydict, tmdict), terms)
+      handle NestedTranslation e => raise e
     val (tydict, tmdict) = acc
     val features = infer_features regime terms tydict tmdict
-    val (inferred_logic, reason) =
+    val (feature_logic, feature_reason) =
       infer_logic_from_features_for_regime regime features
+    (* Z3's array-lambda extension is accepted uniformly under ALL, while
+       narrower FO array logics reject lambda as quantified syntax on some
+       supported Z3 versions.  The C1 replay corpus also uses ALL, so keeping
+       that logic in the translation record gives proof parsing the same broad
+       dictionaries as the solver.  Caller overrides still take precedence. *)
+    val (inferred_logic, reason) =
+      case regime of
+        HigherOrder Z3LambdaArray =>
+          ("ALL", "Z3 array-lambda lowering requires logic ALL; " ^
+            feature_reason)
+      | _ => (feature_logic, feature_reason)
     val (selected_logic, reason) =
       case policy {features = features, inferred_logic = inferred_logic,
                    reason = reason} of
@@ -2070,6 +2171,8 @@ local
   end
 
   fun NUM_BINDERS_TO_INT_CONV tm =
+    (* TOP_DEPTH_CONV uses SUB_CONV/ABS_CONV, so surviving first-class
+       abstractions are traversed as well as quantifier binders. *)
     Conv.THENC
       (Conv.TOP_DEPTH_CONV num_binder_to_int_once_conv,
        Conv.TOP_DEPTH_CONV Thm.BETA_CONV) tm
