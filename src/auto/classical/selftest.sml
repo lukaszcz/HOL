@@ -153,6 +153,139 @@ val _ =
 
 val _ =
   test
+    ("diagnostic normalization and binding have exact ordered traces",
+     fn () =>
+       let
+         fun phase_code phase =
+           case phase of
+               clasetMeta.DiagnosticNormalizationSetup => "N"
+             | clasetMeta.DiagnosticStoreLookupWalk => "L"
+             | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
+             | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
+             | clasetMeta.DiagnosticTraversalOther => "T"
+         fun event_code (boundary, phase) =
+           (case boundary of
+                clasetMeta.DiagnosticEnter => "+"
+              | clasetMeta.DiagnosticExit => "-") ^ phase_code phase
+         fun capture operation =
+           let
+             val events = ref []
+             fun switch event = events := event :: !events
+             val result = operation switch
+             val encoded = String.concat (map event_code (rev (!events)))
+           in
+             (result, encoded)
+           end
+         val (tymeta, typed_store) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val nested_ty = (tymeta --> bool_ty) --> (bool_ty --> tymeta)
+         val x = Term.mk_var ("diagnostic_x", bool_ty)
+         val f = Term.mk_var ("diagnostic_f", bool_ty --> bool_ty)
+         val lambda =
+           Term.mk_abs
+             (x, Term.mk_comb
+                   (Term.mk_abs (x, Term.mk_comb (f, x)), x))
+         val (m, store0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (foreign, _) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val store1 = the_store (clasetMeta.bind (m, fixed) store0)
+         val (nested_result, nested_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.norm_type_diagnostic switch typed_store nested_ty)
+         val (lambda_result, lambda_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.norm_diagnostic switch store0 lambda)
+         val (bind_success, bind_success_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.bind_diagnostic switch (m, fixed) store0)
+         val (bind_foreign, bind_foreign_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.bind_diagnostic switch (m, foreign) store0)
+         val (bind_occurs, bind_occurs_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.bind_diagnostic switch (m, m) store0)
+         val (bind_type_mismatch, bind_type_mismatch_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.bind_diagnostic switch
+               (m, Term.genvar Type.ind) store0)
+         val (bind_bound, bind_bound_trace) =
+           capture
+           (fn switch =>
+             clasetMeta.bind_diagnostic switch (m, fixed) store1)
+         val (occurs_tymeta, occurs_ty_store) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val ordinary_ty_occurs =
+           clasetMeta.bind_ty
+             (occurs_tymeta, occurs_tymeta) occurs_ty_store
+         val (diagnostic_ty_occurs, bind_ty_occurs_trace) =
+           capture
+             (fn switch =>
+               clasetMeta.bind_ty_diagnostic switch
+                 (occurs_tymeta, occurs_tymeta) occurs_ty_store)
+
+         val expected_nested_trace =
+           "+D-D+N+D-D+N+D-D+L-L+D-D+N-N-N+D-D+N+D-D+N-N" ^
+           "+D-D+L-L-N-N"
+         val expected_lambda_trace =
+           "+L-L+N-N+D-D+L-L+N-N+D-D+L-L+N-N+D-D+L-L+N-N" ^
+           "+D-D+L-L+N-N+D-D+L-L+N-N+D-D+N-N+N-N+L-L+N-N" ^
+           "+D-D+N-N+N-N"
+         val expected_bind_success_trace =
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
+           "+D-D+D+L-L+N-N+D-D+T-T+T-T+T+D-D-T+T-T-D+D-D" ^
+           "+N-N+D-D+N-N+D-D+T-T+D-D+T-T+B-B+L-L+D+L-L" ^
+           "+L-L+N-N+D-D+T-T+D+L-L-D-D"
+         val expected_bind_foreign_trace =
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
+           "+D-D+D-D+L-L+D+L-L+N-N+D-D+D-D+L-L+T-T+T-T" ^
+           "+T+D-D+D-D+L-L-T+T-T-D+D-D+N-N+D-D+N-N+D-D" ^
+           "+T-T+D-D+D-D+L-L"
+         val expected_bind_occurs_trace =
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+D+L-L" ^
+           "+N-N+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L" ^
+           "+T-T+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D" ^
+           "+T-T-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
+         val expected_bind_type_mismatch_trace =
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
+           "+D-D+D+L-L+N-N+D-D+T-T+T-T+T+D-D-T+T-T-D+D-D" ^
+           "+N-N+D-D+N-N+D-D"
+         val expected_bind_bound_trace =
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L"
+         val expected_bind_ty_occurs_trace =
+           "+D-D+D-D+L-L+L-L+D-D+L-L+D+T-T-D+T-T" ^
+           "+D-D+D-D+L-L"
+       in
+         nested_result = nested_ty andalso
+         Term.aconv lambda_result f andalso
+         Option.isSome bind_success andalso
+         not (Option.isSome bind_foreign) andalso
+         not (Option.isSome bind_occurs) andalso
+         not (Option.isSome bind_type_mismatch) andalso
+         not (Option.isSome bind_bound) andalso
+         not (Option.isSome ordinary_ty_occurs) andalso
+         not (Option.isSome diagnostic_ty_occurs) andalso
+         nested_trace = expected_nested_trace andalso
+         lambda_trace = expected_lambda_trace andalso
+         bind_success_trace = expected_bind_success_trace andalso
+         bind_foreign_trace = expected_bind_foreign_trace andalso
+         bind_occurs_trace = expected_bind_occurs_trace andalso
+         bind_type_mismatch_trace = expected_bind_type_mismatch_trace
+         andalso bind_bound_trace = expected_bind_bound_trace andalso
+         bind_ty_occurs_trace = expected_bind_ty_occurs_trace
+       end)
+
+val _ =
+  test
     ("stores are persistent",
      fn () =>
        let
@@ -163,6 +296,147 @@ val _ =
        in
          Term.aconv (clasetMeta.walk store0 m) m andalso
          Term.aconv (clasetMeta.walk store1 m) fixed
+       end)
+
+val _ =
+  test
+    ("nested operation clock and sink exceptions unwind exactly",
+     fn () =>
+       let
+         exception NestedOperation of int ref
+         exception NestedClock of int ref
+         exception NestedSink of int ref
+         val sentinel = ref 991
+         fun meta_code (boundary, phase) =
+           (case boundary of
+                clasetMeta.DiagnosticEnter => "+"
+              | clasetMeta.DiagnosticExit => "-") ^
+           (case phase of
+                clasetMeta.DiagnosticNormalizationSetup => "N"
+              | clasetMeta.DiagnosticStoreLookupWalk => "L"
+              | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
+              | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
+              | clasetMeta.DiagnosticTraversalOther => "T")
+         fun v3_code (boundary, phase) =
+           (case boundary of
+                clasetUnify.V3PhaseEnter => "+"
+              | clasetUnify.V3PhaseExit => "-") ^
+           (case phase of
+                clasetUnify.V3NormalizationSetup => "N"
+              | clasetUnify.V3PersistentStoreLookupWalk => "L"
+              | clasetUnify.V3StructuralDecompositionRecursion => "S"
+              | clasetUnify.V3PatternOccursAllowDecision => "D"
+              | clasetUnify.V3PersistentBindingUpdate => "B"
+              | clasetUnify.V3TraversalOther => "T")
+         val (unwind_tymeta, unwind_store) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val unwind_type =
+           (unwind_tymeta --> bool_ty) --> (bool_ty --> unwind_tymeta)
+         val operation_events = ref []
+         val operation_enters = ref 0
+         fun operation_switch (event as (boundary, _)) =
+           (operation_events := event :: !operation_events;
+            case boundary of
+                clasetMeta.DiagnosticExit => ()
+              | clasetMeta.DiagnosticEnter =>
+                  (operation_enters := !operation_enters + 1;
+                   if !operation_enters = 4 then
+                     raise NestedOperation sentinel
+                   else ()))
+         val operation_identity =
+           ((ignore
+               (clasetMeta.norm_type_diagnostic operation_switch
+                 unwind_store unwind_type);
+             false)
+            handle NestedOperation actual => actual = sentinel | _ => false)
+         val operation_trace =
+           String.concat (map meta_code (rev (!operation_events)))
+         val config =
+           {mode = clasetUnify.Unify,
+            rule_metas = {terms = [], types = []}}
+         val clock_calls = ref 0
+         fun clock () =
+           (clock_calls := !clock_calls + 1;
+            if !clock_calls = 4 then raise NestedClock sentinel
+            else Time.fromSeconds (Int.toLarge (!clock_calls)))
+         val clock_timing = clasetUnify.new_timed_unification_v3 clock
+         val clock_identity =
+           ((ignore
+               (clasetUnify.unify_timed_v3 clock_timing clasetMeta.empty
+                 config (boolSyntax.T, boolSyntax.T));
+             false)
+            handle clasetUnify.TIMED_UNIFICATION_CALLBACK
+                     (NestedClock actual) => actual = sentinel
+                 | _ => false)
+         val clock_trace =
+           #operation_phase_trace
+             (clasetUnify.timed_unification_statistics_v3 clock_timing)
+         val clock_trace_code = String.concat (map v3_code clock_trace)
+         val clock_recovered =
+           Option.isSome
+             (clasetUnify.unify_timed_v3 clock_timing clasetMeta.empty
+               config (boolSyntax.T, boolSyntax.T))
+         val clock_recovery_statistics =
+           clasetUnify.timed_unification_statistics_v3 clock_timing
+         val sink_fails = ref true
+         val sink_timing =
+           let
+             val ticks = ref 0
+             fun sink_clock () =
+               (ticks := !ticks + 1;
+                Time.fromSeconds (Int.toLarge (!ticks)))
+           in
+             clasetUnify.new_timed_unification_v3_with_sink
+               {clock = sink_clock,
+                elapsed =
+                  fn _ =>
+                    if !sink_fails then raise NestedSink sentinel else ()}
+           end
+         val sink_identity =
+           ((ignore
+               (clasetUnify.unify_timed_v3 sink_timing clasetMeta.empty
+                 config (boolSyntax.T, boolSyntax.T));
+             false)
+            handle clasetUnify.TIMED_UNIFICATION_CALLBACK
+                     (NestedSink actual) => actual = sentinel
+                 | _ => false)
+         val sink_trace =
+           #operation_phase_trace
+             (clasetUnify.timed_unification_statistics_v3 sink_timing)
+         val sink_trace_code = String.concat (map v3_code sink_trace)
+         val _ = sink_fails := false
+         val sink_recovered =
+           Option.isSome
+             (clasetUnify.unify_timed_v3 sink_timing clasetMeta.empty
+               config (boolSyntax.T, boolSyntax.T))
+         val sink_recovery_statistics =
+           clasetUnify.timed_unification_statistics_v3 sink_timing
+         fun partitions statistics =
+           Time.+
+             (#normalization_setup_time statistics,
+              Time.+
+                (#persistent_store_lookup_walk_time statistics,
+                 Time.+
+                   (#structural_decomposition_recursion_time statistics,
+                    Time.+
+                      (#pattern_occurs_allow_decision_time statistics,
+                       Time.+
+                         (#persistent_binding_update_time statistics,
+                          #traversal_other_time statistics)))))
+       in
+         operation_identity andalso clock_identity andalso sink_identity
+         andalso clock_recovered andalso sink_recovered andalso
+         #calls clock_recovery_statistics = 1 andalso
+         #calls sink_recovery_statistics = 1 andalso
+         partitions clock_recovery_statistics =
+           #unification_time clock_recovery_statistics andalso
+         partitions sink_recovery_statistics =
+           #unification_time sink_recovery_statistics andalso
+         operation_trace = "+D-D+N+D-D+N-N" andalso
+         clock_trace_code = "+S+D-D-S" andalso
+         sink_trace_code =
+           "+S+D-D+N-N+D-D+N-N+D-D+L-L+N-N+D-D+L-L+N-N" ^
+           "+D-D+D-D+D-D-S"
        end)
 
 val _ =
@@ -562,11 +836,10 @@ fun parity_clock () =
       end
   end
 
-(* [unify_timed] intentionally remains a measured-only fork so this matrix
-   is the semantic guard for every production branch.  Each fixture is made
-   once and its persistent input store is shared by the ordinary and timed
-   calls; parity therefore covers both the outcome and the complete returned
-   substitution. *)
+(* The timed forks intentionally remain measured-only, so this matrix is the
+   semantic guard for every production branch.  Each fixture is made once
+   and its persistent input store is shared by ordinary, v2 and v3 calls;
+   parity covers both outcome and the complete returned substitution. *)
 val _ =
   test
     ("ordinary and timed unifiers have table-driven branch parity",
@@ -827,66 +1100,122 @@ val _ =
            #structural_wildcard_mismatches statistics =
              (if expected = StructuralWildcard then 1 else 0)
 
+         fun trace_is_scoped trace =
+           let
+             fun step [] [] = true
+               | step _ [] = false
+               | step stack
+                   ((clasetUnify.V3PhaseEnter, phase) :: rest) =
+                   step (phase :: stack) rest
+               | step (active :: stack)
+                   ((clasetUnify.V3PhaseExit, phase) :: rest) =
+                   active = phase andalso step stack rest
+               | step [] ((clasetUnify.V3PhaseExit, _) :: _) = false
+           in
+             step [] trace
+           end
+
+         val rigid_type_trace =
+           [(clasetUnify.V3PhaseEnter,
+             clasetUnify.V3StructuralDecompositionRecursion),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3NormalizationSetup),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3NormalizationSetup),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3NormalizationSetup),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3NormalizationSetup),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseEnter,
+             clasetUnify.V3StructuralDecompositionRecursion),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3StructuralDecompositionRecursion),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3PatternOccursAllowDecision),
+            (clasetUnify.V3PhaseExit,
+             clasetUnify.V3StructuralDecompositionRecursion)]
+
          (* The explicit term shapes in the failure rows select the named
             branch before returning NONE; successful rows additionally pin
             the complete unifying substitution through [succeeds]. *)
          val fixtures =
            [("type-constructor recursion and left type binding",
-             type_meta_terms, succeeds, NoNamedBranch),
+             type_meta_terms, succeeds, [73, 28, 5, 112, 2, 10],
+             NoNamedBranch),
             ("right type-meta binding", type_meta_right, succeeds,
-             NoNamedBranch),
+             [18, 17, 2, 42, 2, 9], NoNamedBranch),
             ("type occurs-check failure", type_occurs, fails,
-             NoNamedBranch),
+             [4, 6, 1, 13, 0, 2], NoNamedBranch),
             ("rigid type-constructor mismatch",
-             rigid_type_constructor_mismatch, fails, RigidTypeMismatch),
+             rigid_type_constructor_mismatch, fails, [2, 0, 2, 3, 0, 0],
+             RigidTypeMismatch),
             ("Match rule-term binding", match_term true, succeeds,
-             NoNamedBranch),
+             [25, 22, 2, 55, 1, 8], NoNamedBranch),
             ("Match protected left variable", match_term false, fails,
-             NoNamedBranch),
+             [6, 4, 2, 15, 0, 0], NoNamedBranch),
             ("Match rule-type and term binding", match_type true, succeeds,
-             NoNamedBranch),
+             [18, 16, 2, 40, 2, 9], NoNamedBranch),
             ("Match protected type-variable failure",
-             match_type false, fails, NoNamedBranch),
+             match_type false, fails, [1, 1, 1, 3, 0, 0], NoNamedBranch),
             ("left-pattern binding", pattern false, succeeds,
-             NoNamedBranch),
+             [39, 21, 1, 47, 1, 7], NoNamedBranch),
             ("right-pattern binding", pattern true, succeeds,
-             NoNamedBranch),
+             [39, 21, 1, 48, 1, 7], NoNamedBranch),
             ("left-pattern binding-failure fallback",
              pattern_fallback false, fallback_succeeds false,
-             NoNamedBranch),
+             [114, 60, 6, 162, 1, 13], NoNamedBranch),
             ("right-pattern binding-failure fallback",
              pattern_fallback true, fallback_succeeds true,
-             RightPatternFallback),
+             [114, 60, 6, 162, 1, 13], RightPatternFallback),
             ("structural lambda descent and binding", lambda true, succeeds,
-             LambdaDescent),
+             [27, 19, 4, 51, 2, 7], LambdaDescent),
             ("structural lambda descent failure", lambda false, fails,
-             LambdaDescent),
+             [16, 8, 4, 28, 1, 0], LambdaDescent),
             ("flexible-head approximation", approximation true, succeeds,
-             NoNamedBranch),
+             [49, 22, 6, 76, 1, 7], NoNamedBranch),
             ("approximation arity mismatch", approximation false, fails,
-             NoNamedBranch),
+             [19, 11, 2, 25, 0, 0], NoNamedBranch),
             ("protected applied-meta equal-head fallback",
-             match_approximation, succeeds, NoNamedBranch),
+             match_approximation, succeeds, [37, 23, 5, 64, 1, 7],
+             NoNamedBranch),
             ("protected applied-meta unequal-head fallback",
              match_unequal_head_approximation, fails,
-             ProtectedUnequalHead),
-            ("term occurs-check failure", occurs, fails, NoNamedBranch),
-            ("term allow-set failure", allow_failure, fails, NoNamedBranch),
+             [18, 10, 2, 27, 0, 0], ProtectedUnequalHead),
+            ("term occurs-check failure", occurs, fails,
+             [29, 21, 2, 49, 0, 5], NoNamedBranch),
+            ("term allow-set failure", allow_failure, fails,
+             [16, 15, 2, 32, 1, 7], NoNamedBranch),
             ("stored normalization and beta equality",
-             normalized_store, succeeds, NoNamedBranch),
-            ("eta-normalized equality", beta_eta, succeeds, NoNamedBranch),
-            ("structural rigid-constant mismatch", rigid_constants, fails,
+             normalized_store, succeeds, [18, 9, 1, 20, 0, 0],
              NoNamedBranch),
+            ("eta-normalized equality", beta_eta, succeeds,
+             [13, 5, 1, 14, 0, 0], NoNamedBranch),
+            ("structural rigid-constant mismatch", rigid_constants, fails,
+             [4, 2, 2, 10, 0, 0], NoNamedBranch),
             ("structural left rigid-variable failure",
-             rigid_variables, fails, NoNamedBranch),
+             rigid_variables, fails, [4, 2, 2, 11, 0, 0], NoNamedBranch),
             ("structural right rigid-variable failure",
-             rigid_right_variable, fails, NoNamedBranch),
+             rigid_right_variable, fails, [4, 2, 2, 11, 0, 0],
+             NoNamedBranch),
             ("structural combination decomposition",
-             combination_decomposition, succeeds, NoNamedBranch),
+             combination_decomposition, succeeds, [63, 35, 8, 95, 1, 7],
+             NoNamedBranch),
             ("structural wildcard mismatch",
-             structural_wildcard_mismatch, fails, StructuralWildcard)]
+             structural_wildcard_mismatch, fails, [10, 3, 2, 15, 0, 0],
+             StructuralWildcard)]
 
-         fun agrees (_, make, expected, expected_branch) =
+         fun agrees (_, make, expected, expected_events,
+               expected_branch) =
            let
              val (store, config, pair) = make ()
              val ordinary = clasetUnify.unify store config pair
@@ -895,6 +1224,14 @@ val _ =
              val statistics = clasetUnify.timed_unification_statistics timing
              val branches =
                clasetUnify.timed_unification_branch_statistics timing
+             val timing_v3 =
+               clasetUnify.new_timed_unification_v3 (parity_clock ())
+             val timed_v3 =
+               clasetUnify.unify_timed_v3 timing_v3 store config pair
+             val statistics_v3 =
+               clasetUnify.timed_unification_statistics_v3 timing_v3
+             val branches_v3 =
+               clasetUnify.timed_unification_branch_statistics_v3 timing_v3
              val subtotal =
                Time.+
                  (#normalization_setup_time statistics,
@@ -902,14 +1239,52 @@ val _ =
                     (#traversal_decomposition_binding_time statistics,
                      #failure_cleanup_time statistics))
              val outcome_equal =
-               case (ordinary, timed) of
-                   (NONE, NONE) => true
-                 | (SOME left, SOME right) =>
-                     same_unification_store left right
+               case (ordinary, timed, timed_v3) of
+                   (NONE, NONE, NONE) => true
+                 | (SOME left, SOME right, SOME right_v3) =>
+                     same_unification_store left right andalso
+                     same_unification_store left right_v3
                  | _ => false
+             val traversal_v3 =
+               Time.+
+                 (#persistent_store_lookup_walk_time statistics_v3,
+                  Time.+
+                    (#structural_decomposition_recursion_time statistics_v3,
+                     Time.+
+                       (#pattern_occurs_allow_decision_time statistics_v3,
+                        Time.+
+                          (#persistent_binding_update_time statistics_v3,
+                           #traversal_other_time statistics_v3))))
+             val total_v3 =
+               Time.+
+                 (#normalization_setup_time statistics_v3,
+                  Time.+
+                    (#traversal_decomposition_binding_time statistics_v3,
+                     #failure_cleanup_time statistics_v3))
+             val actual_events =
+               [#normalization_setup_events statistics_v3,
+                #persistent_store_lookup_walk_events statistics_v3,
+                #structural_decomposition_recursion_events statistics_v3,
+                #pattern_occurs_allow_decision_events statistics_v3,
+                #persistent_binding_update_events statistics_v3,
+                #traversal_other_events statistics_v3]
+             val phase_trace = #operation_phase_trace statistics_v3
+             val exact_trace =
+               if expected_branch = RigidTypeMismatch then
+                 phase_trace = rigid_type_trace
+               else true
            in
              expected (store, config, pair, ordinary) andalso
+             actual_events = expected_events andalso
+             length phase_trace = 2 * List.foldl op+ 0 actual_events andalso
+             trace_is_scoped phase_trace andalso exact_trace andalso
+             (case phase_trace of
+                  (clasetUnify.V3PhaseEnter,
+                   clasetUnify.V3StructuralDecompositionRecursion) :: _ =>
+                    true
+                | _ => false) andalso
              exact_branch expected_branch branches andalso
+             exact_branch expected_branch branches_v3 andalso
              outcome_equal andalso #calls statistics = 1 andalso
              #failures statistics =
                (if Option.isSome ordinary then 0 else 1) andalso
@@ -926,9 +1301,35 @@ val _ =
                Time.+
                  (#max_normalization_setup_time statistics,
                   #max_traversal_decomposition_binding_time statistics)
+             andalso #calls statistics_v3 = 1 andalso
+             #failures statistics_v3 =
+               (if Option.isSome ordinary then 0 else 1) andalso
+             traversal_v3 =
+               #traversal_decomposition_binding_time statistics_v3
+             andalso total_v3 = #unification_time statistics_v3 andalso
+             #failure_cleanup_time statistics_v3 = Time.zeroTime andalso
+             #max_failure_cleanup_time statistics_v3 = Time.zeroTime andalso
+             #normalization_setup_time statistics_v3 =
+               #max_normalization_setup_time statistics_v3 andalso
+             #persistent_store_lookup_walk_time statistics_v3 =
+               #max_persistent_store_lookup_walk_time statistics_v3 andalso
+             #structural_decomposition_recursion_time statistics_v3 =
+               #max_structural_decomposition_recursion_time statistics_v3
+             andalso
+             #pattern_occurs_allow_decision_time statistics_v3 =
+               #max_pattern_occurs_allow_decision_time statistics_v3 andalso
+             #persistent_binding_update_time statistics_v3 =
+               #max_persistent_binding_update_time statistics_v3 andalso
+             #traversal_other_time statistics_v3 =
+               #max_traversal_other_time statistics_v3 andalso
+             #traversal_decomposition_binding_time statistics_v3 =
+               #max_traversal_decomposition_binding_time statistics_v3
+             andalso #unification_time statistics_v3 =
+               #max_unification_time statistics_v3
            end
        in
-         List.all agrees fixtures
+         List.foldl
+           (fn (fixture, all) => agrees fixture andalso all) true fixtures
        end)
 
 val _ =
@@ -2544,6 +2945,14 @@ fun drain_timed_exact_v2 sequence =
     | clasetStep.TimedRuleInterruptedV2 =>
         raise Fail "unexpected timed-v2 exact-rule interruption"
 
+fun drain_timed_exact_v3 sequence =
+  case clasetStep.timed_rule_cases_v3 sequence of
+      clasetStep.TimedRuleEmptyV3 => []
+    | clasetStep.TimedRuleYieldV3 (value, rest) =>
+        value :: drain_timed_exact_v3 rest
+    | clasetStep.TimedRuleInterruptedV3 =>
+        raise Fail "unexpected timed-v3 exact-rule interruption"
+
 val timed_cases_api :
     clasetStep.timed_rule_sequence -> clasetStep.timed_rule_pull =
   clasetStep.timed_rule_cases
@@ -3035,6 +3444,103 @@ val _ =
          #calls interrupted_minor = 0 andalso
          #minor_unification_time interrupted_minor = Time.zeroTime
          andalso clock_ok andalso backwards_ok
+       end)
+
+val _ =
+  test
+    ("timed-v3 minor components partition traversal and preserve replay",
+     fn () =>
+       let
+         val p = Term.mk_var ("timed_v3_p", bool_ty)
+         val q = Term.mk_var ("timed_v3_q", bool_ty)
+         val conjunction = boolSyntax.mk_conj (p, q)
+         val goal = ([conjunction, conjunction], p)
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
+         val ordinary =
+           drain_exact
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               specification (clasetGoal.from_goal goal, 1))
+         val v2_sequence =
+           clasetStep.blast_rule_step_timed_v2
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification
+             (clasetGoal.from_goal goal, 1)
+         val v2 = drain_timed_exact_v2 v2_sequence
+         val v3_sequence =
+           clasetStep.blast_rule_step_timed_v3
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification
+             (clasetGoal.from_goal goal, 1)
+         val v3 = drain_timed_exact_v3 v3_sequence
+         val report = clasetStep.timed_rule_statistics_v3 v3_sequence
+         val base_v2 = #base report
+         val base = #base base_v2
+         val coarse = #minor_unification_times base_v2
+         val minor = #minor_unification_times report
+         val traversal =
+           Time.+
+             (#persistent_store_lookup_walk_time minor,
+              Time.+
+                (#structural_decomposition_recursion_time minor,
+                 Time.+
+                   (#pattern_occurs_allow_decision_time minor,
+                    Time.+
+                      (#persistent_binding_update_time minor,
+                       #traversal_other_time minor))))
+         val total =
+           Time.+
+             (#normalization_setup_time minor,
+              Time.+
+                (#traversal_decomposition_binding_time minor,
+                 #failure_cleanup_time minor))
+         fun bounded (value, maximum) = not (Time.< (value, maximum))
+       in
+         length ordinary = 2 andalso length v2 = 2 andalso length v3 = 2
+         andalso ListPair.allEq (same_exact_transition goal) (ordinary, v2)
+         andalso ListPair.allEq (same_exact_transition goal) (ordinary, v3)
+         andalso #calls minor = #minor_unifications base andalso
+         #calls minor = #calls coarse andalso
+         #failures minor = #failures coarse andalso
+         traversal = #traversal_decomposition_binding_time minor andalso
+         traversal = #traversal_decomposition_binding_time coarse andalso
+         total = #minor_unification_time minor andalso
+         total = #minor_unification_time coarse andalso
+         #minor_unification_time minor = #minor_unification_time base andalso
+         #failure_cleanup_time minor = Time.zeroTime andalso
+         #max_failure_cleanup_time minor = Time.zeroTime andalso
+         #normalization_setup_events minor > 0 andalso
+         #persistent_store_lookup_walk_events minor > 0 andalso
+         #structural_decomposition_recursion_events minor > 0 andalso
+         #pattern_occurs_allow_decision_events minor > 0 andalso
+         #persistent_binding_update_events minor > 0 andalso
+         #traversal_other_events minor > 0 andalso
+         bounded
+           (#normalization_setup_time minor,
+            #max_normalization_setup_time minor) andalso
+         bounded
+           (#persistent_store_lookup_walk_time minor,
+            #max_persistent_store_lookup_walk_time minor) andalso
+         bounded
+           (#structural_decomposition_recursion_time minor,
+            #max_structural_decomposition_recursion_time minor) andalso
+         bounded
+           (#pattern_occurs_allow_decision_time minor,
+            #max_pattern_occurs_allow_decision_time minor) andalso
+         bounded
+           (#persistent_binding_update_time minor,
+            #max_persistent_binding_update_time minor) andalso
+         bounded
+           (#traversal_other_time minor,
+            #max_traversal_other_time minor) andalso
+         bounded
+           (#traversal_decomposition_binding_time minor,
+            #max_traversal_decomposition_binding_time minor) andalso
+         bounded
+           (#minor_unification_time minor,
+            #max_minor_unification_time minor)
        end)
 
 val _ =

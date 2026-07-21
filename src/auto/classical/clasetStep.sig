@@ -213,6 +213,72 @@ sig
   val timed_rule_statistics_v2 :
     timed_rule_sequence_v2 -> timed_rule_statistics_v2
 
+  (* Timed-v3 preserves every earlier sequence/result shape and adds the
+     operation-honest minor-unification partition.  Component times are
+     mutually exclusive and sum exactly to the retained coarse traversal;
+     immutable-store cleanup remains exactly zero. *)
+  type minor_unification_times_v3 =
+    {calls : int,
+     failures : int,
+     normalization_setup_events : int,
+     persistent_store_lookup_walk_events : int,
+     structural_decomposition_recursion_events : int,
+     pattern_occurs_allow_decision_events : int,
+     persistent_binding_update_events : int,
+     binding_operation_failures : int,
+     traversal_other_events : int,
+     operation_phase_trace :
+       (clasetUnify.timed_phase_boundary_v3 *
+        clasetUnify.timed_phase_v3) list,
+     normalization_setup_time : Time.time,
+     persistent_store_lookup_walk_time : Time.time,
+     structural_decomposition_recursion_time : Time.time,
+     pattern_occurs_allow_decision_time : Time.time,
+     persistent_binding_update_time : Time.time,
+     traversal_other_time : Time.time,
+     traversal_decomposition_binding_time : Time.time,
+     failure_cleanup_time : Time.time,
+     minor_unification_time : Time.time,
+     max_normalization_setup_time : Time.time,
+     max_persistent_store_lookup_walk_time : Time.time,
+     max_structural_decomposition_recursion_time : Time.time,
+     max_pattern_occurs_allow_decision_time : Time.time,
+     max_persistent_binding_update_time : Time.time,
+     max_traversal_other_time : Time.time,
+     max_traversal_decomposition_binding_time : Time.time,
+     max_failure_cleanup_time : Time.time,
+     max_minor_unification_time : Time.time}
+  type timed_rule_statistics_v3 =
+    {base : timed_rule_statistics_v2,
+     minor_unification_times : minor_unification_times_v3}
+  type timed_rule_sequence_v3
+  datatype timed_rule_pull_v3 =
+      TimedRuleEmptyV3
+    | TimedRuleYieldV3 of
+        (step_record * node) * timed_rule_sequence_v3
+    | TimedRuleInterruptedV3
+  exception TIMED_RULE_CALLBACK_V3 of exn
+  val blast_rule_step_timed_v3 :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v3
+  val blast_rule_step_timed_v3_with_sink :
+    {classical_elapsed : Time.time -> unit,
+     clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v3
+  val timed_rule_cases_v3 :
+    timed_rule_sequence_v3 -> timed_rule_pull_v3
+  val timed_rule_current_v3 :
+    timed_rule_sequence_v3 -> measured_rule_observation option
+  val timed_rule_statistics_v3 :
+    timed_rule_sequence_v3 -> timed_rule_statistics_v3
+  val timed_rule_statistics_reads_v3 : timed_rule_sequence_v3 -> int
+
   val blast_disch_step : step
   val blast_gen_step : step
   val blast_ccontr_step : step

@@ -327,6 +327,412 @@ fun bind_ty (tymeta, ty) store =
                    (#ty_bindings store, name, (tymeta, residue))}
         end
 
+(* These copies expose diagnostic phase boundaries without placing hooks in
+   the ordinary persistent-store path.  Dictionary inspection and binding
+   walks are StoreLookupWalk; term/type rebuilding is NormalizationSetup;
+   pattern, ownership, occurs and eigen-allow predicates are Decision; only
+   construction of a new persistent map/record is BindingUpdate. *)
+datatype diagnostic_phase =
+    DiagnosticNormalizationSetup
+  | DiagnosticStoreLookupWalk
+  | DiagnosticPatternOccursAllowDecision
+  | DiagnosticPersistentBindingUpdate
+  | DiagnosticTraversalOther
+
+datatype diagnostic_boundary = DiagnosticEnter | DiagnosticExit
+
+type diagnostic_switch = diagnostic_boundary * diagnostic_phase -> unit
+
+fun diagnostic_scope switch phase operation =
+  let
+    val _ = switch (DiagnosticEnter, phase)
+    val result =
+      operation ()
+      handle error =>
+        ((switch (DiagnosticExit, phase) handle _ => ()); raise error)
+    val _ = switch (DiagnosticExit, phase)
+  in
+    result
+  end
+
+fun norm_ty_diagnostic switch store ty =
+  let
+    fun recurse current =
+      case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => tymeta_name current)
+      of
+            SOME name =>
+              (case diagnostic_scope switch DiagnosticStoreLookupWalk
+                (fn () => Redblackmap.peek (#ty_bindings store, name))
+               of
+                   SOME (_, residue) => recurse residue
+                 | NONE => current)
+          | NONE =>
+              diagnostic_scope switch DiagnosticNormalizationSetup
+                (fn () =>
+                  if is_vartype current then current
+                  else
+                    let
+                      val {Thy, Tyop, Args} = dest_thy_type current
+                      val args = map recurse Args
+                    in
+                      mk_thy_type {Thy = Thy, Tyop = Tyop, Args = args}
+                    end)
+  in
+    recurse ty
+  end
+
+val norm_type_diagnostic = norm_ty_diagnostic
+
+fun owned_tymeta_diagnostic switch store ty =
+  case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+    (fn () => tymeta_name ty)
+  of
+       NONE => false
+     | SOME name =>
+         diagnostic_scope switch DiagnosticStoreLookupWalk
+           (fn () => Redblackmap.inDomain (#tymetas store, name))
+
+fun owned_meta_diagnostic switch store tm =
+  case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+    (fn () => meta_name tm)
+  of
+       NONE => false
+     | SOME name =>
+         (case diagnostic_scope switch DiagnosticStoreLookupWalk
+           (fn () => Redblackmap.peek (#metas store, name))
+          of
+              NONE => false
+            | SOME registered =>
+                let
+                  val left =
+                    norm_ty_diagnostic switch store (type_of tm)
+                  val right =
+                    norm_ty_diagnostic switch store (type_of registered)
+                in
+                  diagnostic_scope switch
+                    DiagnosticPatternOccursAllowDecision
+                    (fn () => left = right)
+                end)
+
+fun type_substitution_diagnostic switch store =
+  let
+    val bindings =
+      diagnostic_scope switch DiagnosticStoreLookupWalk
+        (fn () => Redblackmap.listItems (#ty_bindings store))
+  in
+    map
+      (fn (_, (redex, residue)) =>
+        {redex = redex,
+         residue = norm_ty_diagnostic switch store residue})
+      bindings
+  end
+
+fun inst_types_diagnostic switch store tm =
+  let
+    val substitution = type_substitution_diagnostic switch store
+  in
+    diagnostic_scope switch DiagnosticNormalizationSetup
+      (fn () => Term.inst substitution tm)
+  end
+
+fun walk_with_diagnostic switch store instantiate tm =
+  let
+    fun recurse current =
+      let
+        val current' = instantiate current
+      in
+        case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+          (fn () => meta_name current')
+        of
+            SOME name =>
+              if owned_meta_diagnostic switch store current' then
+                (case diagnostic_scope switch DiagnosticStoreLookupWalk
+                  (fn () => Redblackmap.peek (#tm_bindings store, name))
+                 of
+                     SOME residue => recurse residue
+                   | NONE => current')
+              else current'
+          | NONE => current'
+      end
+  in
+    recurse tm
+  end
+
+fun norm_diagnostic switch store tm =
+  let
+    fun eta_reduce abs = Term.eta_conv abs handle HOL_ERR _ => abs
+    fun instantiate current = inst_types_diagnostic switch store current
+    val walk_current = walk_with_diagnostic switch store instantiate
+
+    fun recurse current =
+      let
+        val current' = walk_current current
+      in
+        if is_meta current' then current'
+        else
+          case dest_term current' of
+              COMB (rator, rand) =>
+                let
+                  val rator' = recurse rator
+                  val rand' = recurse rand
+                  val combination =
+                    diagnostic_scope switch DiagnosticNormalizationSetup
+                      (fn () => mk_comb (rator', rand'))
+                in
+                  if is_abs rator' then
+                    recurse
+                      (diagnostic_scope switch DiagnosticNormalizationSetup
+                        (fn () => beta_conv combination))
+                  else combination
+                end
+            | LAMB (bvar, body) =>
+                let
+                  val body' = recurse body
+                in
+                  diagnostic_scope switch DiagnosticNormalizationSetup
+                    (fn () => eta_reduce (mk_abs (bvar, body')))
+                end
+            | _ => current'
+      end
+  in
+    recurse tm
+  end
+
+fun metas_of_diagnostic switch store tm =
+  let
+    fun insert (m, metas) =
+      case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => meta_name m)
+      of
+           SOME name =>
+             if owned_meta_diagnostic switch store m then
+               diagnostic_scope switch DiagnosticTraversalOther
+                 (fn () => Redblackmap.insert (metas, name, m))
+             else metas
+         | NONE => metas
+    val normalized = norm_diagnostic switch store tm
+    val variables =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => free_vars normalized)
+    val initial =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => Redblackmap.mkDict string_compare)
+    val collected =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => List.foldl insert initial variables)
+  in
+    diagnostic_scope switch DiagnosticTraversalOther
+      (fn () => map #2 (Redblackmap.listItems collected))
+  end
+
+fun listed_as_eigen_diagnostic switch store variable =
+  let
+    val eigens =
+      diagnostic_scope switch DiagnosticStoreLookupWalk
+        (fn () => Redblackmap.listItems (#eigens store))
+    fun listed (eigen, ()) =
+      let
+        val left = inst_types_diagnostic switch store variable
+        val right = inst_types_diagnostic switch store eigen
+      in
+        diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+          (fn () => aconv left right)
+      end
+  in
+    List.exists listed eigens
+  end
+
+fun is_eigen_diagnostic switch store variable =
+  diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+    (fn () => is_var variable) andalso
+  listed_as_eigen_diagnostic switch store variable
+
+fun eigen_allowed_diagnostic switch store allow variable =
+  not (listed_as_eigen_diagnostic switch store variable) orelse
+  let
+    val instantiated_variable = inst_types_diagnostic switch store variable
+    fun same allowed =
+      diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => aconv instantiated_variable allowed)
+  in
+    List.exists same (map (inst_types_diagnostic switch store) allow)
+  end
+
+fun residue_owned_diagnostic switch store residue =
+  let
+    fun term_owned variable =
+      diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => not (is_meta variable)) orelse
+      owned_meta_diagnostic switch store variable
+    fun type_owned variable =
+      diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => not (is_tymeta variable)) orelse
+      owned_tymeta_diagnostic switch store variable
+    val term_variables =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => free_vars residue)
+  in
+    List.all term_owned term_variables andalso
+    List.all type_owned
+      (diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => type_vars_in_term residue))
+  end
+
+fun binding_respects_allow_diagnostic switch store (name, residue) =
+  let
+    val allow =
+      diagnostic_scope switch DiagnosticStoreLookupWalk
+        (fn () => valOf (Redblackmap.peek (#allows store, name)))
+    val normalized = norm_diagnostic switch store residue
+    val variables =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => free_vars normalized)
+  in
+    diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+      (fn () =>
+        List.all (eigen_allowed_diagnostic switch store allow) variables)
+  end
+
+fun register_eigen_diagnostic switch eigen store =
+  if diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+       (fn () => not (is_var eigen) orelse is_meta eigen) orelse
+     diagnostic_scope switch DiagnosticStoreLookupWalk
+       (fn () => Redblackmap.inDomain (#eigens store, eigen))
+  then NONE
+  else
+    let
+      val candidate =
+        diagnostic_scope switch DiagnosticPersistentBindingUpdate
+          (fn () =>
+            {allows = #allows store,
+             eigens = Redblackmap.insert (#eigens store, eigen, ()),
+             metas = #metas store,
+             tm_bindings = #tm_bindings store,
+             tymetas = #tymetas store,
+             ty_bindings = #ty_bindings store})
+      val bindings =
+        diagnostic_scope switch DiagnosticStoreLookupWalk
+          (fn () => Redblackmap.listItems (#tm_bindings candidate))
+      val permitted =
+        diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+          (fn () =>
+            List.all
+              (binding_respects_allow_diagnostic switch candidate)
+              bindings)
+    in
+      if permitted then SOME candidate else NONE
+    end
+
+fun bind_diagnostic switch (m, tm) store =
+  case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+    (fn () => meta_name m)
+  of
+        NONE => NONE
+      | SOME name =>
+          if not (owned_meta_diagnostic switch store m) orelse
+             diagnostic_scope switch DiagnosticStoreLookupWalk
+               (fn () => Redblackmap.inDomain (#tm_bindings store, name))
+          then NONE
+          else
+            let
+              val residue = norm_diagnostic switch store tm
+              val occurs =
+                diagnostic_scope switch
+                  DiagnosticPatternOccursAllowDecision
+                  (fn () =>
+                    List.exists
+                      (fn other => meta_name other = SOME name)
+                      (metas_of_diagnostic switch store residue))
+              val left_type =
+                norm_ty_diagnostic switch store (type_of m)
+              val right_type =
+                norm_ty_diagnostic switch store (type_of residue)
+              val same_type =
+                diagnostic_scope switch
+                  DiagnosticPatternOccursAllowDecision
+                  (fn () => left_type = right_type)
+            in
+              if occurs orelse not same_type orelse
+                 not (residue_owned_diagnostic switch store residue)
+              then
+                NONE
+              else
+                let
+                  val candidate =
+                    diagnostic_scope switch DiagnosticPersistentBindingUpdate
+                      (fn () =>
+                        {allows = #allows store,
+                         eigens = #eigens store,
+                         metas = #metas store,
+                         tm_bindings =
+                           Redblackmap.insert
+                             (#tm_bindings store, name, residue),
+                         tymetas = #tymetas store,
+                         ty_bindings = #ty_bindings store})
+                  val bindings =
+                    diagnostic_scope switch DiagnosticStoreLookupWalk
+                      (fn () =>
+                        Redblackmap.listItems (#tm_bindings candidate))
+                  val permitted =
+                    diagnostic_scope switch
+                      DiagnosticPatternOccursAllowDecision
+                      (fn () =>
+                        List.all
+                          (binding_respects_allow_diagnostic switch candidate)
+                          bindings)
+                in
+                  if permitted then SOME candidate else NONE
+                end
+            end
+
+fun bind_ty_diagnostic switch (tymeta, ty) store =
+  case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+    (fn () => tymeta_name tymeta)
+  of
+        NONE => NONE
+      | SOME name =>
+          if not (owned_tymeta_diagnostic switch store tymeta) orelse
+             diagnostic_scope switch DiagnosticStoreLookupWalk
+               (fn () => Redblackmap.inDomain (#ty_bindings store, name))
+          then NONE
+          else
+            let
+              val residue = norm_ty_diagnostic switch store ty
+              val occurs =
+                diagnostic_scope switch
+                  DiagnosticPatternOccursAllowDecision
+                  (fn () =>
+                    List.exists
+                      (fn variable => tymeta_name variable = SOME name)
+                      (diagnostic_scope switch DiagnosticTraversalOther
+                        (fn () => type_vars residue)))
+              val owned =
+                List.all
+                  (fn variable =>
+                    diagnostic_scope switch
+                      DiagnosticPatternOccursAllowDecision
+                      (fn () => not (is_tymeta variable)) orelse
+                    owned_tymeta_diagnostic switch store variable)
+                  (diagnostic_scope switch DiagnosticTraversalOther
+                    (fn () => type_vars residue))
+            in
+              if occurs orelse not owned then NONE
+              else
+                SOME
+                  (diagnostic_scope switch
+                    DiagnosticPersistentBindingUpdate
+                    (fn () =>
+                      {allows = #allows store,
+                       eigens = #eigens store,
+                       metas = #metas store,
+                       tm_bindings = #tm_bindings store,
+                       tymetas = #tymetas store,
+                       ty_bindings =
+                         Redblackmap.insert
+                           (#ty_bindings store, name, (tymeta, residue))}))
+            end
+
 fun ground_types store =
   let
     fun ground_one ((name, tymeta), current) =

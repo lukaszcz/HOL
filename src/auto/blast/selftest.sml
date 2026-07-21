@@ -1528,7 +1528,8 @@ val _ =
                  #candidate_rules_enumerated measured_stats > 0 andalso
                  not (null (#fullTrace measured)) andalso
                  same_proof_options (#result stats, #result measured) andalso
-                 same_proof_options (#result measured, #result repeated) andalso
+                 same_proof_options
+                   (#result measured, #result repeated) andalso
                  same_old_statistics
                    (#statistics stats, measured_stats) andalso
                  same_old_statistics
@@ -2671,6 +2672,9 @@ fun reconstruction_ticking_clock () =
 val reconstruct_v2_using_kernel =
   blastReconstruct.reconstructWithMeasuredTimedDetailedV2UsingKernel
 
+val reconstruct_v3_using_kernel =
+  blastReconstruct.reconstructWithMeasuredTimedDetailedV3UsingKernel
+
 fun classical_phase_time_sum
       (times : blastReconstruct.classical_phase_times) =
   List.foldl Time.+ Time.zeroTime
@@ -3325,6 +3329,11 @@ val _ =
                in
                  #completion base = blastReconstruct.Interrupted andalso
                  not (Option.isSome (#result base)) andalso
+                 #current_phase base =
+                   SOME
+                     {boundary = blastReconstruct.Enter,
+                      phase = blastReconstruct.AlternativeEnumeration}
+                 andalso
                  #current_stored_rule base =
                    SOME
                      {script_position = 1,
@@ -3340,6 +3349,298 @@ val _ =
                    (#outer_reconstruction_time outer,
                     #classical_time (#classical_times base)) =
                  #attempt_wall_time base andalso exception_ok
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v3 Completed NONE pull and callback errors are exact",
+     fn () =>
+       let
+         exception V3Callback of int ref
+         val sentinel = ref 211
+         val p = mk_var ("timed_v3_none_p", bool)
+         val goal = ([], p)
+         val proof : blastSearch.proof =
+           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+            branches_created = 0, branches_closed = 0,
+            choices_pruned = 0}
+         val report =
+           blastReconstruct.reconstructMeasuredTimedDetailedV3
+             {clock = reconstruction_ticking_clock (), observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             goal proof
+         val base = #base (#base report)
+         val outer = #outer_reconstruction_times (#base report)
+         val pulls = #alternative_pull_times report
+
+         fun raises callback =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV3
+                 callback goal proof);
+             false)
+            handle V3Callback actual => actual = sentinel
+                 | _ => false)
+
+         val observer_ok =
+           raises
+             {clock = reconstruction_ticking_clock (),
+              observe =
+                SOME
+                  (fn {boundary, phase} =>
+                    if boundary = blastReconstruct.Enter andalso
+                       phase = blastReconstruct.AlternativeEnumeration
+                    then raise V3Callback sentinel
+                    else ()),
+              observe_stored_rule = NONE, stop = fn () => false}
+         val stop_ok =
+           raises
+             {clock = reconstruction_ticking_clock (), observe = NONE,
+              observe_stored_rule = NONE,
+              stop = fn () => raise V3Callback sentinel}
+         val clock_ok =
+           raises
+             {clock = fn () => raise V3Callback sentinel,
+              observe = NONE, observe_stored_rule = NONE,
+              stop = fn () => false}
+         val interrupt_ok =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV3
+                 {clock = reconstruction_ticking_clock (),
+                  observe = SOME (fn _ => raise Interrupt),
+                  observe_stored_rule = NONE, stop = fn () => false}
+                 goal proof);
+             false)
+            handle Interrupt => true | _ => false)
+         val readings =
+           ref [Time.fromSeconds 2, Time.fromSeconds 1]
+         fun backwards () =
+           case !readings of
+               [] => raise Fail "timed-v3 backwards clock exhausted"
+             | value :: rest => (readings := rest; value)
+         val backwards_ok =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV3
+                 {clock = backwards, observe = NONE,
+                  observe_stored_rule = NONE, stop = fn () => false}
+                 goal proof);
+             false)
+            handle HOL_ERR error =>
+                     Feedback.top_structure_of error = "blastReconstruct"
+                 | _ => false)
+       in
+         #completion base = blastReconstruct.Completed andalso
+         not (Option.isSome (#result base)) andalso
+         #completed_pulls pulls = 0 andalso
+         #failed_pulls pulls = 1 andalso
+         #interrupted_pulls pulls = 0 andalso
+         #completed_pull_time pulls = Time.zeroTime andalso
+         #failed_pull_time pulls = Time.fromSeconds 1 andalso
+         #alternative_pull_time pulls = Time.fromSeconds 1 andalso
+         #alternative_residual_time pulls = Time.zeroTime andalso
+         #max_completed_pull_time pulls = Time.zeroTime andalso
+         #max_failed_pull_time pulls = Time.fromSeconds 1 andalso
+         #max_alternative_pull_time pulls = Time.fromSeconds 1 andalso
+         #alternative_enumeration_time outer = Time.fromSeconds 1 andalso
+         observer_ok andalso stop_ok andalso clock_ok andalso
+         interrupt_ok andalso backwards_ok
+       end)
+
+val _ =
+  test
+    ("timed-v3 Alternative Enter and Exit stops classify exactly",
+     fn () =>
+       let
+         val p = mk_var ("timed_v3_outer_stop_p", bool)
+         val goal = ([p], p)
+         val proof : blastSearch.proof =
+           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+            branches_created = 0, branches_closed = 0,
+            choices_pruned = 0}
+
+         fun run cutoff =
+           let
+             val stop_now = ref false
+             fun observe {boundary, phase} =
+               if phase = blastReconstruct.AlternativeEnumeration andalso
+                  boundary = cutoff
+               then stop_now := true
+               else ()
+           in
+             blastReconstruct.reconstructMeasuredTimedDetailedV3
+               {clock = reconstruction_ticking_clock (),
+                observe = SOME observe, observe_stored_rule = NONE,
+                stop = fn () => !stop_now}
+               goal proof
+           end
+
+         val entered = run blastReconstruct.Enter
+         val exited = run blastReconstruct.Exit
+         val entered_pulls = #alternative_pull_times entered
+         val exited_pulls = #alternative_pull_times exited
+         val entered_base = #base (#base entered)
+         val exited_base = #base (#base exited)
+
+         exception ExitObserver of int ref
+         val sentinel = ref 251
+         val exit_callback_identity =
+           ((ignore
+               (blastReconstruct.reconstructMeasuredTimedDetailedV3
+                 {clock = reconstruction_ticking_clock (),
+                  observe =
+                    SOME
+                      (fn {boundary, phase} =>
+                        if boundary = blastReconstruct.Exit andalso
+                           phase =
+                             blastReconstruct.AlternativeEnumeration
+                        then raise ExitObserver sentinel
+                        else ()),
+                  observe_stored_rule = NONE, stop = fn () => false}
+                 goal proof);
+             false)
+            handle ExitObserver actual => actual = sentinel
+                 | _ => false)
+       in
+         #completion entered_base = blastReconstruct.Interrupted andalso
+         #interrupted_pulls entered_pulls = 1 andalso
+         #completed_pulls entered_pulls = 0 andalso
+         #failed_pulls entered_pulls = 0 andalso
+         #classical_elapsed_snapshots entered_pulls = 0 andalso
+         #interrupted_pull_time entered_pulls = Time.zeroTime andalso
+         #max_interrupted_pull_time entered_pulls = Time.zeroTime andalso
+         #completion exited_base = blastReconstruct.Interrupted andalso
+         #interrupted_pulls exited_pulls = 1 andalso
+         #completed_pulls exited_pulls = 0 andalso
+         #failed_pulls exited_pulls = 0 andalso
+         #classical_elapsed_snapshots exited_pulls = 2 andalso
+         #interrupted_pull_time exited_pulls = Time.fromSeconds 1 andalso
+         #alternative_pull_time exited_pulls = Time.fromSeconds 1 andalso
+         #max_interrupted_pull_time exited_pulls = Time.fromSeconds 1 andalso
+         #max_alternative_pull_time exited_pulls = Time.fromSeconds 1 andalso
+         exit_callback_identity
+       end)
+
+val _ =
+  test
+    ("timed-v3 transition failures retain replay policy and later success",
+     fn () =>
+       let
+         exception OperationalTransition of int ref
+         val sentinel = ref 263
+         val p = mk_var ("timed_v3_transition_p", bool)
+         val q = mk_var ("timed_v3_transition_q", bool)
+         val goal = ([p, q], mk_conj (p, q))
+         val cs =
+           clasetLib.add_sintros
+             [("timed-v3-transition-and", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+         val first = ref true
+         fun transition sequence =
+           if !first then
+             (first := false; raise OperationalTransition sentinel)
+           else clasetStep.timed_rule_cases_v3 sequence
+         val reconstruct_transition =
+           let
+             open blastReconstruct
+           in
+             reconstructWithMeasuredTimedDetailedV3UsingTransition
+           end
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 fun run () =
+                   reconstruct_transition
+                     {clock = reconstruction_ticking_clock (),
+                      kernel_replay =
+                        fn grounded =>
+                          Tactical.VALID
+                            (clasetReplay.REPLAY_TAC grounded),
+                      transition = transition, observe = NONE,
+                      observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val failed = run ()
+                 val succeeded = run ()
+                 val failed_base = #base (#base failed)
+                 val succeeded_base = #base (#base succeeded)
+                 val failed_pulls = #alternative_pull_times failed
+                 val succeeded_pulls = #alternative_pull_times succeeded
+               in
+                 not (!first) andalso
+                 #completion failed_base = blastReconstruct.Completed andalso
+                 not (Option.isSome (#result failed_base)) andalso
+                 #failed_pulls failed_pulls = 1 andalso
+                 #completed_pulls failed_pulls = 0 andalso
+                 #classical_elapsed_snapshots failed_pulls = 2 andalso
+                 #completion succeeded_base =
+                   blastReconstruct.Completed andalso
+                 Option.isSome (#result succeeded_base) andalso
+                 #completed_pulls succeeded_pulls >= 1 andalso
+                 #failed_pulls succeeded_pulls = 0
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v3 many sequences never scan statistics while pulling",
+     fn () =>
+       let
+         val ps =
+           List.tabulate
+             (8, fn index =>
+               mk_var ("timed_v3_many_" ^ Int.toString index, bool))
+         fun conjunction [item] = item
+           | conjunction (item :: rest) =
+               mk_conj (item, conjunction rest)
+           | conjunction [] = raise Fail "empty many-sequence fixture"
+         val target = conjunction ps
+         val goal = (ps, target)
+         val cs =
+           clasetLib.add_sintros
+             [("timed-v3-many-and", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val reads_were_zero = ref true
+                 val observed_sequence_pulls = ref 0
+                 fun transition sequence =
+                   (observed_sequence_pulls := !observed_sequence_pulls + 1;
+                    if clasetStep.timed_rule_statistics_reads_v3 sequence = 0
+                    then ()
+                    else reads_were_zero := false;
+                    clasetStep.timed_rule_cases_v3 sequence)
+                 val report =
+                   let
+                     open blastReconstruct
+                   in
+                     reconstructWithMeasuredTimedDetailedV3UsingTransition
+                       {clock = reconstruction_ticking_clock (),
+                        kernel_replay =
+                          fn grounded =>
+                            Tactical.VALID
+                              (clasetReplay.REPLAY_TAC grounded),
+                        transition = transition, observe = NONE,
+                        observe_stored_rule = NONE,
+                        stop = fn () => false}
+                       cs goal proof
+                   end
+                 val base = #base (#base report)
+                 val statistics = #statistics base
+                 val pulls = #alternative_pull_times report
+                 val sequences = #stored_rule_setups statistics
+               in
+                 sequences >= 7 andalso
+                 !reads_were_zero andalso
+                 !observed_sequence_pulls > 0 andalso
+                 #alternative_pulls statistics >= sequences andalso
+                 #classical_elapsed_snapshots pulls =
+                   2 * #alternative_pulls statistics andalso
+                 #sequence_statistics_reads pulls = 3 * sequences
                end
        end)
 
@@ -3462,6 +3763,79 @@ val _ =
                  #classical_time (#classical_times base) =
                    Time.fromSeconds 27 andalso
                  #attempt_wall_time base = Time.fromSeconds 69
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v3 Alternative pulls have exact exclusive distribution",
+     fn () =>
+       let
+         val p = mk_var ("timed_v3_nested_p", bool)
+         val q = mk_var ("timed_v3_nested_q", bool)
+         val r = mk_var ("timed_v3_nested_r", bool)
+         val goal = ([r, mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v3-nested-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV3
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE, observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val v2 = #base report
+                 val base = #base v2
+                 val outer = #outer_reconstruction_times v2
+                 val pulls = #alternative_pull_times report
+                 val report_v2 =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE, observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val ordinary =
+                   blastReconstruct.reconstructWith cs goal proof
+                 val subtotal =
+                   Time.+
+                     (#completed_pull_time pulls,
+                      Time.+
+                        (#failed_pull_time pulls,
+                         #interrupted_pull_time pulls))
+               in
+                 #completion base = blastReconstruct.Completed andalso
+                 Option.isSome (#result base) andalso
+                 Option.isSome ordinary andalso
+                 #completion base = #completion (#base report_v2) andalso
+                 #current_phase base = #current_phase (#base report_v2)
+                 andalso
+                 #statistics base = #statistics (#base report_v2) andalso
+                 Option.isSome (#result base) =
+                   Option.isSome (#result (#base report_v2)) andalso
+                 #completed_pulls pulls = 2 andalso
+                 #failed_pulls pulls = 0 andalso
+                 #interrupted_pulls pulls = 0 andalso
+                 #completed_pull_time pulls = Time.fromSeconds 18 andalso
+                 #failed_pull_time pulls = Time.zeroTime andalso
+                 #interrupted_pull_time pulls = Time.zeroTime andalso
+                 #alternative_pull_time pulls = Time.fromSeconds 18 andalso
+                 #alternative_residual_time pulls = Time.zeroTime andalso
+                 #max_completed_pull_time pulls = Time.fromSeconds 17 andalso
+                 #max_failed_pull_time pulls = Time.zeroTime andalso
+                 #max_interrupted_pull_time pulls = Time.zeroTime andalso
+                 #max_alternative_pull_time pulls = Time.fromSeconds 17
+                 andalso
+                 subtotal = #alternative_pull_time pulls andalso
+                 Time.+
+                   (#alternative_pull_time pulls,
+                    #alternative_residual_time pulls) =
+                   #alternative_enumeration_time outer
                end
        end)
 
@@ -3595,6 +3969,128 @@ val _ =
                    #outer_reconstruction_times delegated andalso
                  rev (!ordinary_observations) =
                    rev (!injected_observations)
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v3 caught continuation failure retains pull ownership",
+     fn () =>
+       let
+         val p = mk_var ("timed_v3_kernel_p", bool)
+         val q = mk_var ("timed_v3_kernel_q", bool)
+         val r = mk_var ("timed_v3_kernel_r", bool)
+         val conjunction = mk_conj (p, q)
+         val goal = ([r, conjunction, conjunction], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v3-kernel-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val kernel_calls = ref 0
+                 fun kernel_replay grounded kernel_goal =
+                   (kernel_calls := !kernel_calls + 1;
+                    if !kernel_calls = 1 then
+                      raise mk_HOL_ERR "blast-selftest"
+                        "v3-kernel" "injected first continuation"
+                    else
+                      Tactical.VALID
+                        (clasetReplay.REPLAY_TAC grounded) kernel_goal)
+                 val report =
+                   reconstruct_v3_using_kernel
+                     {clock = reconstruction_ticking_clock (),
+                      kernel_replay = kernel_replay,
+                      observe = NONE, observe_stored_rule = NONE,
+                      stop = fn () => false}
+                     cs goal proof
+                 val base = #base (#base report)
+                 val outer = #outer_reconstruction_times (#base report)
+                 val pulls = #alternative_pull_times report
+               in
+                 !kernel_calls = 2 andalso
+                 #completion base = blastReconstruct.Completed andalso
+                 Option.isSome (#result base) andalso
+                 (* Both lazy pulls complete honestly; the injected failure
+                    is in their replay continuation, outside the exclusive
+                    AlternativeEnumeration owner, before backtracking. *)
+                 #completed_pulls pulls = 4 andalso
+                 #failed_pulls pulls = 1 andalso
+                 #interrupted_pulls pulls = 0 andalso
+                 #completed_pull_time pulls = Time.fromSeconds 32 andalso
+                 #failed_pull_time pulls = Time.fromSeconds 1 andalso
+                 #interrupted_pull_time pulls = Time.zeroTime andalso
+                 #alternative_pull_time pulls = Time.fromSeconds 33 andalso
+                 #alternative_residual_time pulls = Time.zeroTime andalso
+                 #max_completed_pull_time pulls = Time.fromSeconds 17 andalso
+                 #max_failed_pull_time pulls = Time.fromSeconds 1 andalso
+                 #max_interrupted_pull_time pulls = Time.zeroTime andalso
+                 #max_alternative_pull_time pulls = Time.fromSeconds 17
+                 andalso
+                 Time.+
+                   (#alternative_pull_time pulls,
+                    #alternative_residual_time pulls) =
+                   #alternative_enumeration_time outer
+               end
+       end)
+
+val _ =
+  test
+    ("timed-v3 interrupted pull has one exact terminal outcome",
+     fn () =>
+       let
+         val p = mk_var ("timed_v3_interrupt_p", bool)
+         val q = mk_var ("timed_v3_interrupt_q", bool)
+         val goal = ([mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims
+             [("timed-v3-interrupt-andE", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastSearch.tryGoal cs 0 goal of
+             NONE => false
+           | SOME proof =>
+               let
+                 val stop_now = ref false
+                 fun cutoff
+                       ({rule = {boundary, phase, ...}, ...} :
+                          blastReconstruct.stored_rule_observation) =
+                   if boundary = clasetStep.RuleEnter andalso
+                      phase = clasetStep.RuleInstantiation then
+                     stop_now := true
+                   else ()
+                 val report =
+                   blastReconstruct.reconstructWithMeasuredTimedDetailedV3
+                     {clock = reconstruction_ticking_clock (),
+                      observe = NONE, observe_stored_rule = SOME cutoff,
+                      stop = fn () => !stop_now}
+                     cs goal proof
+                 val base = #base (#base report)
+                 val outer = #outer_reconstruction_times (#base report)
+                 val pulls = #alternative_pull_times report
+               in
+                 #completion base = blastReconstruct.Interrupted andalso
+                 not (Option.isSome (#result base)) andalso
+                 #completed_pulls pulls = 0 andalso
+                 #failed_pulls pulls = 0 andalso
+                 #interrupted_pulls pulls = 1 andalso
+                 #classical_elapsed_snapshots pulls = 2 andalso
+                 #completed_pull_time pulls = Time.zeroTime andalso
+                 #failed_pull_time pulls = Time.zeroTime andalso
+                 #interrupted_pull_time pulls = Time.fromSeconds 5 andalso
+                 #alternative_pull_time pulls = Time.fromSeconds 5 andalso
+                 #alternative_residual_time pulls = Time.zeroTime andalso
+                 #max_completed_pull_time pulls = Time.zeroTime andalso
+                 #max_failed_pull_time pulls = Time.zeroTime andalso
+                 #max_interrupted_pull_time pulls = Time.fromSeconds 5 andalso
+                 #max_alternative_pull_time pulls = Time.fromSeconds 5 andalso
+                 Time.+
+                   (#alternative_pull_time pulls,
+                    #alternative_residual_time pulls) =
+                   #alternative_enumeration_time outer
                end
        end)
 

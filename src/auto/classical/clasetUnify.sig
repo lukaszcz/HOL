@@ -48,4 +48,65 @@ sig
     timed_unification -> timed_unification_statistics
   val timed_unification_branch_statistics :
     timed_unification -> timed_unification_branch_statistics
+
+  (* Timed-v3 is an additive, measured-only fork.  Its mutually exclusive
+     traversal components are selected at actual operation boundaries;
+     [traversal_other] covers only explicit residual operations such as
+     free-variable collection and dictionary folding.  There is no
+     synthetic initial interval.  Event counts count scoped operation
+     intervals, not recursive unifier calls; operation_phase_trace records
+     their properly nested Enter/Exit order.
+     [binding_operation_failures] counts diagnostic bind, bind_ty and
+     register_eigen operations that return NONE; an immutable map update
+     itself cannot fail and is never described as rollback. *)
+  datatype timed_phase_v3 =
+      V3NormalizationSetup
+    | V3PersistentStoreLookupWalk
+    | V3StructuralDecompositionRecursion
+    | V3PatternOccursAllowDecision
+    | V3PersistentBindingUpdate
+    | V3TraversalOther
+  datatype timed_phase_boundary_v3 = V3PhaseEnter | V3PhaseExit
+  type timed_unification_v3
+  type timed_unification_statistics_v3 =
+    {calls : int,
+     failures : int,
+     normalization_setup_events : int,
+     persistent_store_lookup_walk_events : int,
+     structural_decomposition_recursion_events : int,
+     pattern_occurs_allow_decision_events : int,
+     persistent_binding_update_events : int,
+     binding_operation_failures : int,
+     traversal_other_events : int,
+     operation_phase_trace :
+       (timed_phase_boundary_v3 * timed_phase_v3) list,
+     normalization_setup_time : Time.time,
+     persistent_store_lookup_walk_time : Time.time,
+     structural_decomposition_recursion_time : Time.time,
+     pattern_occurs_allow_decision_time : Time.time,
+     persistent_binding_update_time : Time.time,
+     traversal_other_time : Time.time,
+     traversal_decomposition_binding_time : Time.time,
+     failure_cleanup_time : Time.time,
+     unification_time : Time.time,
+     max_normalization_setup_time : Time.time,
+     max_persistent_store_lookup_walk_time : Time.time,
+     max_structural_decomposition_recursion_time : Time.time,
+     max_pattern_occurs_allow_decision_time : Time.time,
+     max_persistent_binding_update_time : Time.time,
+     max_traversal_other_time : Time.time,
+     max_traversal_decomposition_binding_time : Time.time,
+     max_failure_cleanup_time : Time.time,
+     max_unification_time : Time.time}
+  val new_timed_unification_v3 :
+    (unit -> Time.time) -> timed_unification_v3
+  val new_timed_unification_v3_with_sink :
+    {clock : unit -> Time.time,
+     elapsed : Time.time -> unit} -> timed_unification_v3
+  val unify_timed_v3 :
+    timed_unification_v3 -> store -> config -> term * term -> store option
+  val timed_unification_statistics_v3 :
+    timed_unification_v3 -> timed_unification_statistics_v3
+  val timed_unification_branch_statistics_v3 :
+    timed_unification_v3 -> timed_unification_branch_statistics
 end

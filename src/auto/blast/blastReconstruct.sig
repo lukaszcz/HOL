@@ -274,6 +274,71 @@ sig
      stop : unit -> bool} ->
     goal -> proof -> timed_detailed_measured_result_v2
 
+  type minor_unification_times_v3 = clasetStep.minor_unification_times_v3
+  type alternative_pull_times =
+    {completed_pulls : int,
+     failed_pulls : int,
+     interrupted_pulls : int,
+     (* Two O(1) elapsed snapshots bracket each started pull.  Statistics
+        reads occur only during the three terminal report aggregations. *)
+     classical_elapsed_snapshots : int,
+     sequence_statistics_reads : int,
+     completed_pull_time : Time.time,
+     failed_pull_time : Time.time,
+     interrupted_pull_time : Time.time,
+     alternative_pull_time : Time.time,
+     alternative_residual_time : Time.time,
+     max_completed_pull_time : Time.time,
+     max_failed_pull_time : Time.time,
+     max_interrupted_pull_time : Time.time,
+     max_alternative_pull_time : Time.time}
+  type timed_detailed_measured_result_v3 =
+    {base : timed_detailed_measured_result_v2,
+     minor_unification_times : minor_unification_times_v3,
+     alternative_pull_times : alternative_pull_times}
+
+  (* Timed-v3 is additive.  Every AlternativeEnumeration Enter that can
+     produce a report has exactly one yielded/completed, exhausted/failed or
+     interrupted outcome.  A caught operational exception is failed too.
+     Pull times are exclusive of nested classical intervals;
+     their sum plus alternative_residual_time equals the v2 Alternative
+     total.  Observer/stop/clock exceptions retain identity, and operational
+     failure/interruption closes timing ownership without fabricating Exit. *)
+  val reconstructWithMeasuredTimedDetailedV3 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v3
+  val reconstructWithMeasuredTimedDetailedV3UsingKernel :
+    {clock : unit -> Time.time,
+     kernel_replay :
+       clasetReplay.grounded_script -> goal -> goal list * validation,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v3
+  val reconstructWithMeasuredTimedDetailedV3UsingTransition :
+    {clock : unit -> Time.time,
+     kernel_replay :
+       clasetReplay.grounded_script -> goal -> goal list * validation,
+     transition :
+       clasetStep.timed_rule_sequence_v3 -> clasetStep.timed_rule_pull_v3,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v3
+  val reconstructMeasuredTimedDetailedV3 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    goal -> proof -> timed_detailed_measured_result_v3
+
   (* Search continuations reject failed reconstruction with
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :
