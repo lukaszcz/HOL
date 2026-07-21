@@ -3328,14 +3328,14 @@ let
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
       reals = reals, strings = strings, datatypes = false,
-      nonlinear = nonlinear}
+      nonlinear = nonlinear, higher_order = false}
   fun mk_datatype_features (quantifiers, uninterpreted, arrays, bitvectors,
                             integers, reals, strings, nonlinear) =
     SmtLib.LogicFeatures {
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
       reals = reals, strings = strings, datatypes = true,
-      nonlinear = nonlinear}
+      nonlinear = nonlinear, higher_order = false}
   fun expect_features expected (name, feature_tuple) =
     let
       val (logic, reason) =
@@ -3568,7 +3568,7 @@ let
   fun features arrays = SmtLib.LogicFeatures {
     quantifiers = true, uninterpreted = false, arrays = arrays,
     bitvectors = false, integers = true, reals = false, strings = false,
-    datatypes = true, nonlinear = false}
+    datatypes = true, nonlinear = false, higher_order = false}
   fun selection version logic arrays =
     Z3.z3_414_logic_policy version {
       features = features arrays, inferred_logic = logic,
@@ -3988,6 +3988,12 @@ let
     SmtLib.regime_for_goal SmtLib.Z3LambdaArray datatype_rator
   val (function_conditional_regime, function_conditional_reason) =
     SmtLib.regime_for_goal SmtLib.Z3LambdaArray function_conditional
+  val automatic_surviving = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation NONE surviving)
+  val automatic_complex = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation NONE complex_rator)
+  val automatic_datatype = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation NONE datatype_rator)
 in
   List.app
     (fn goal => assert (not (SmtLib.goal_requires_ho goal),
@@ -4017,28 +4023,205 @@ in
       datatype_reason =
         "automatic:non-constant/non-variable-rator",
     "Z3 automatic selection lost the normalized-rator reason");
-  expect_hol_error_contains "automatic surviving-lambda regime"
-    "Standard27 higher-order printer not yet implemented"
-    (fn () => ignore (SmtLib.goal_to_SmtLib_translation NONE surviving));
-  expect_hol_error_contains "automatic complex-rator regime"
-    "Standard27 higher-order printer not yet implemented"
-    (fn () => ignore
-      (SmtLib.goal_to_SmtLib_translation NONE complex_rator));
+  expect_record (SmtLib.HigherOrder SmtLib.Standard27)
+    "automatic:surviving-abstraction" automatic_surviving;
+  expect_record (SmtLib.HigherOrder SmtLib.Standard27)
+    "automatic:non-constant/non-variable-rator" automatic_complex;
+  expect_record (SmtLib.HigherOrder SmtLib.Standard27)
+    "automatic:non-constant/non-variable-rator" automatic_datatype;
   expect_hol_error_contains "forced FirstOrder surviving lambda"
     "unsupported higher-order rator expression"
     (fn () => ignore
       (SmtLib.goal_to_SmtLib_translation_with_regime
         SmtLib.FirstOrder NONE surviving));
-  expect_hol_error_contains "automatic datatype-rator regime"
-    "Standard27 higher-order printer not yet implemented"
-    (fn () => ignore
-      (SmtLib.goal_to_SmtLib_translation NONE datatype_rator));
   expect_record SmtLib.FirstOrder "automatic:no-ho-trigger" automatic_fo;
   expect_record SmtLib.FirstOrder "explicit override" forced_fo;
   expect_record (SmtLib.HigherOrder SmtLib.Standard27)
     "explicit override" forced_standard;
   expect_record (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
     "explicit override" forced_z3
+end
+
+fun smtlib_standard27_translation_success () =
+let
+  val standard_regime = SmtLib.HigherOrder SmtLib.Standard27
+  fun translate goal =
+    SmtLib.goal_to_SmtLib_translation_with_regime
+      standard_regime NONE goal
+  fun translate_apply operator goal =
+    SmtLib.goal_to_SmtLib_translation_with_regime_and_apply_operator
+      standard_regime operator NONE goal
+  fun text_of result = String.concat (Lib.snd result)
+  fun assert_has name text snippet =
+    assert (contains snippet text,
+      name ^ " missed SMT-LIB snippet '" ^ snippet ^
+      "'\nSMT-LIB:\n" ^ text)
+  fun assert_lacks name text snippet =
+    assert (not (contains snippet text),
+      name ^ " unexpectedly emitted SMT-LIB snippet '" ^ snippet ^
+      "'\nSMT-LIB:\n" ^ text)
+  fun logic_selection_of translation =
+    case List.find
+      (fn SmtLib.LogicSelection _ => true | _ => false)
+      (SmtLib.translation_records translation) of
+      SOME (SmtLib.LogicSelection selection) => selection
+    | _ => die "FAIL: translation lacked LogicSelection features"
+  fun features_of translation = #features (logic_selection_of translation)
+  fun reason_of translation = #reason (logic_selection_of translation)
+  fun feature_vector {quantifiers, uninterpreted, arrays, bitvectors,
+      integers, reals, strings, datatypes, nonlinear} =
+    SmtLib.LogicFeatures {
+      quantifiers = quantifiers, uninterpreted = uninterpreted,
+      arrays = arrays, bitvectors = bitvectors, integers = integers,
+      reals = reals, strings = strings, datatypes = datatypes,
+      nonlinear = nonlinear, higher_order = true}
+  fun expect_ho_logic expected name fields =
+    let
+      val (logic, _) = SmtLib.infer_logic_from_features_with_regime
+        standard_regime (feature_vector fields)
+    in
+      assert (logic = expected,
+        "Standard27 logic inference '" ^ name ^ "' expected " ^ expected ^
+        ", got " ^ logic)
+    end
+  val arrow_result = translate
+    ([], ``(ff:int -> bool -> int) = gg``)
+  val arrow_translation = Lib.fst arrow_result
+  val arrow_text = text_of arrow_result
+  val pure_ho_translation = Lib.fst (translate
+    ([], ``(puref:'a -> 'b -> 'c) = pureg``))
+  val symbol_text = text_of (translate
+    ([], ``(u:int -> bool -> int) x p = y``))
+  val ranked_result = translate
+    ([], ``smtlib_ho_rank2 (x:int) = (f:bool -> int) /\
+           smtlib_ho_rank2 x p = y``)
+  val ranked_translation = Lib.fst ranked_result
+  val ranked_text = text_of ranked_result
+  val lambda_text = text_of (translate
+    ([], ``(H:((int -> int) -> int -> int) -> bool)
+      (\f x. f x)``))
+  val complex_goal =
+    ([], ``((\f:int -> int. f) g) (x:int) = y``)
+  val underscore_text = text_of
+    (translate_apply SmtLib.ApplyUnderscore complex_goal)
+  val at_text = text_of (translate_apply SmtLib.ApplyAt complex_goal)
+  val update_array = ``updatef:int -> int``
+  val update_index = ``update_i:int``
+  val update_value = ``update_x:int``
+  val update_query = ``update_j:int``
+  val updated = Term.mk_comb
+    (combinSyntax.mk_update (update_index, update_value), update_array)
+  val update_result = translate
+    ([], boolSyntax.mk_eq (Term.mk_comb (updated, update_query),
+      ``update_y:int``))
+  val update_translation = Lib.fst update_result
+  val update_text = text_of update_result
+  val feature_goal = ([], ``(mapf:'a -> 'b) x = mapf x``)
+  val fo_translation = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation_with_regime
+      SmtLib.FirstOrder NONE feature_goal)
+  val ho_translation = Lib.fst (translate feature_goal)
+  val z3_translation = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation_with_regime
+      (SmtLib.HigherOrder SmtLib.Z3LambdaArray) NONE feature_goal)
+  val SmtLib.LogicFeatures {
+    arrays = fo_arrays, higher_order = fo_higher_order, ...} =
+    features_of fo_translation
+  val SmtLib.LogicFeatures {
+    arrays = ho_arrays, higher_order = ho_higher_order, ...} =
+    features_of ho_translation
+  val SmtLib.LogicFeatures {
+    arrays = update_arrays, higher_order = update_higher_order, ...} =
+    features_of update_translation
+  val rank2_declarations =
+    List.filter
+      (fn SmtLib.TermDeclaration {hol_term, ...} =>
+            Term.is_const hol_term andalso
+            Term.same_const hol_term ``smtlib_ho_rank2``
+        | _ => false)
+      (SmtLib.translation_records ranked_translation)
+in
+  assert (SmtLib.translation_logic arrow_translation = "HO_ALL",
+    "uncurated Standard27 integer stem did not fall back to HO_ALL");
+  assert (SmtLib.translation_logic pure_ho_translation = "HO_QF_UF",
+    "Standard27 pure HO goal did not select HO_QF_UF");
+  assert (contains "higher-order" (reason_of arrow_translation),
+    "higher-order feature was absent from the logic-selection reason");
+  assert_has "curried arrow declaration" arrow_text
+    "(declare-const v0 (-> Int Bool Int))";
+  assert_lacks "curried arrow declaration" arrow_text "(Array ";
+  assert_has "symbol omission sugar" symbol_text "(v0 v1 v2)";
+  assert_lacks "symbol omission sugar" symbol_text "(select ";
+  assert_lacks "symbol omission sugar" symbol_text "(@ ";
+  assert_has "ranked true-type declaration" ranked_text
+    "(declare-fun v0 (Int Bool) Int)";
+  assert_has "ranked partial omission sugar" ranked_text "(v0 v1)";
+  assert_has "ranked full omission sugar" ranked_text "(v0 v1 v3)";
+  assert (List.length rank2_declarations = 1,
+    "Standard27 split one ranked symbol into multiple declarations");
+  assert_has "native lambda" lambda_text
+    "(lambda ((b0 (-> Int Int))) (lambda ((b1 Int)) (b0 b1)))";
+  assert_lacks "native lambda" lambda_text "(select ";
+  assert_has "standard explicit apply" underscore_text
+    "(_ (_ (lambda ((b0 (-> Int Int))) b0) v0) v1)";
+  assert_lacks "standard explicit apply" underscore_text "(@ ";
+  assert_has "cvc5 explicit apply" at_text
+    "(@ (@ (lambda ((b0 (-> Int Int))) b0) v0) v1)";
+  assert_lacks "cvc5 explicit apply" at_text "(_ (";
+  assert_has "native map update" update_text
+    "(_ (lambda ((b0 Int)) (ite (= b0 v1) v2 (v0 b0))) v3)";
+  assert_lacks "native map update" update_text "(store ";
+  assert (update_arrays andalso update_higher_order,
+    "Standard27 UPDATE did not retain the arrays feature");
+  assert (fo_arrays andalso not fo_higher_order,
+    "FO function variable lost its arrays-only feature classification");
+  assert (not ho_arrays andalso ho_higher_order,
+    "HO function variable retained the FO arrays coupling");
+  assert (SmtLib.translation_logic z3_translation = "ALL",
+    "Z3LambdaArray set-logic choice changed from TASK_11");
+  List.app (fn (expected, name, fields) =>
+      expect_ho_logic expected name fields) [
+    ("HO_QF_UF", "core",
+      {quantifiers = false, uninterpreted = false, arrays = false,
+       bitvectors = false, integers = false, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_UF", "quantified core",
+      {quantifiers = true, uninterpreted = false, arrays = false,
+       bitvectors = false, integers = false, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_QF_UFLIA", "curated integer UF",
+      {quantifiers = false, uninterpreted = true, arrays = false,
+       bitvectors = false, integers = true, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_UFLIA", "quantified integer UF",
+      {quantifiers = true, uninterpreted = true, arrays = false,
+       bitvectors = false, integers = true, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_QF_UFLRA", "curated real UF",
+      {quantifiers = false, uninterpreted = true, arrays = false,
+       bitvectors = false, integers = false, reals = true,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_UFLRA", "quantified real UF",
+      {quantifiers = true, uninterpreted = true, arrays = false,
+       bitvectors = false, integers = false, reals = true,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_QF_AUFLIA", "curated array integer",
+      {quantifiers = false, uninterpreted = false, arrays = true,
+       bitvectors = false, integers = true, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_AUFLIA", "quantified array integer UF",
+      {quantifiers = true, uninterpreted = true, arrays = true,
+       bitvectors = false, integers = true, reals = false,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_AUFLIRA", "quantified array mixed arithmetic UF",
+      {quantifiers = true, uninterpreted = true, arrays = true,
+       bitvectors = false, integers = true, reals = true,
+       strings = false, datatypes = false, nonlinear = false}),
+    ("HO_ALL", "uncurated integer",
+      {quantifiers = false, uninterpreted = false, arrays = false,
+       bitvectors = false, integers = true, reals = false,
+       strings = false, datatypes = false, nonlinear = false})
+  ]
 end
 
 fun smtlib_z3_lambda_array_translation_success () =
@@ -6634,6 +6817,8 @@ let
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
+    ("smtlib_standard27_translation_success",
+      smtlib_standard27_translation_success),
     ("smtlib_z3_lambda_array_translation_success",
       smtlib_z3_lambda_array_translation_success),
     ("smtlib_fo_emission_golden_success",
