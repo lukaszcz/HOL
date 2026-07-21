@@ -1128,7 +1128,7 @@ local
         nonlinear = nonlinear, higher_order = higher_order}
     end
 
-  fun advanced_encoding_records terms =
+  fun advanced_encoding_records regime terms =
     let
       val all_subterms = List.concat (List.map subterms terms)
       fun subterm_types p =
@@ -1208,9 +1208,41 @@ local
           proof_obligation =
             "A checked soundness argument must relate HOL regex languages to SMT-LIB RegLan membership and Unicode string semantics before replay support."
         }
+      val (ho_mode, ho_notes) =
+        case regime of
+          FirstOrder =>
+            (ConservativeEmbedding,
+             "The FirstOrder regime conservatively embeds HOL function " ^
+             "types as nested SMT-LIB Arrays, with select/store for " ^
+             "application/update.")
+        | HigherOrder Standard27 =>
+            (NativeSMTLIB,
+             "The HigherOrder Standard27 regime emits native SMT-LIB 2.7 " ^
+             "HO-Core maps, lambdas, and application.")
+        | HigherOrder Z3LambdaArray =>
+            (NativeSMTLIB,
+             "The HigherOrder Z3LambdaArray dialect lowers HO-Core maps " ^
+             "to equivalent nested Arrays/select while retaining lambdas.")
+      val ho_core_record =
+        HOLTheoryEncoding {
+          feature =
+            "HOL function types, lambda abstractions, and application",
+          smt_theory = "HO-Core",
+          mode = ho_mode,
+          parse = true,
+          typecheck = true,
+          translate = true,
+          replay = false,
+          notes = ho_notes,
+          proof_obligation =
+            "Checked replay must reconstruct lambda, beta/eta, partial " ^
+            "application, and function-extensionality proof steps without " ^
+            "oracles before replay support is claimed."
+        }
     in
       (if has_strings then [string_record] else []) @
-      [datatype_record, fp_record, z3_ext_record, regex_record]
+      [datatype_record, fp_record, z3_ext_record, regex_record,
+       ho_core_record]
     end
 
   fun build_translation_records regime regime_reason terms logic reason
@@ -1234,7 +1266,7 @@ local
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
         term_decl_for_tmdict regime tydict (key, name) :: acc) [] tmdict
       val builtin_records = encoded_symbol_records terms
-      val advanced_records = advanced_encoding_records terms
+      val advanced_records = advanced_encoding_records regime terms
     in
       regime_record :: logic_record :: List.rev type_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
@@ -1339,7 +1371,8 @@ local
       List.foldl add_constructor dict infos
     end
 
-  fun parser_dicts_for_translation_aux ({logic, tydict, tmdict, ...} : translation) =
+  fun parser_dicts_for_translation_aux
+      ({logic, regime, tydict, tmdict, ...} : translation) =
     let
       fun parsedicts_for_logic logic =
         SmtLib_Logics.parsedicts_of_logic logic
@@ -1352,12 +1385,21 @@ local
         Redblackmap.insert (dict, s, [SmtLib_Theories.K_zero_zero ty]))
         (Redblackmap.mkDict String.compare) tydict
       val tm_dict = Redblackmap.foldl (fn ((tm, n), s, dict) =>
-        Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
-          (fn args =>
-            if List.length args = n then
-              Term.list_mk_comb (tm, args)
-            else
-              raise ERR ("<" ^ s ^ ">") "wrong number of arguments"))]))
+        let
+          val full_arity =
+            List.length (Lib.fst (boolSyntax.strip_fun (Term.type_of tm)))
+          fun accepted_arity args =
+            case regime of
+              FirstOrder => List.length args = n
+            | HigherOrder _ => List.length args <= full_arity
+        in
+          Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
+            (fn args =>
+              if accepted_arity args then
+                Term.list_mk_comb (tm, args)
+              else
+                raise ERR ("<" ^ s ^ ">") "wrong number of arguments"))])
+        end)
         (Redblackmap.mkDict String.compare) tmdict
       val tm_dict = Redblackmap.foldl (fn (ty, name, dict) =>
         case datatype_family ty of
@@ -1494,15 +1536,12 @@ local
       handle Feedback.HOL_ERR _ => NONE
            | Redblackmap.NotFound => NONE
 
-  (* SMT-LIB is first-order.  Thus, higher-order arguments must be abstracted
-     so that they are
-     of (uninterpreted) base type.  We achieve this by abstracting the
-     offending function type to a fresh base type, and by abstracting
-     the argument's rator to an uninterpreted term that returns the
-     correct (abstracted) type.  Note that the same function/operator
-     may appear both with and without arguments in a HOL formula.
-     'tmdict' maps terms along with the number of their actual
-     arguments to an SMT-LIB representation. *)
+  (* Translation has two regimes.  FirstOrder preserves the legacy,
+     arity-keyed encoding: function values use nested Array sorts and
+     application/update use select/store.  HigherOrder preserves first-class
+     functions, lambdas, and partial application.  Standard27 emits native
+     HO-Core syntax; Z3LambdaArray lowers function sorts and applications to
+     nested Array/select and eta-expands partially applied ranked constants. *)
 
   (* Recursive failures must bypass the recognizer exception cascade: once a
      term's shape is known, an error in its body is the real diagnostic. *)
@@ -2235,14 +2274,11 @@ local
            NONE => (FirstOrder, "automatic:no-ho-trigger")
          | SOME reason => (HigherOrder dialect, reason))
 
-  (* Returns a string list representing the input goal in SMT-LIB file
-     format, together with two dictionaries that map types and terms
-     to identifiers used in the SMT-LIB representation.  The goal's
-     conclusion is negated before translation into SMT-LIB format.
-     The integer in the term dictionary gives the number of actual
-     arguments to the term.  (Because SMT-LIB is first-order,
-     partially applied functions are mapped to different SMT-LIB
-     identifiers, depending on the number of actual arguments.) *)
+  (* Returns the selected translation and SMT-LIB text for the input goal;
+     the conclusion is negated before emission.  A term-dictionary integer is
+     the occurrence arity in FirstOrder.  HigherOrder uses a constant's
+     declared rank, or zero for a function-valued variable, so partial and
+     full applications share one symbol. *)
   fun goal_to_SmtLib_aux request apply_operator
       (policy : logic_selection_policy)
       (goal as (ts, t)) : translation * string list =

@@ -3905,10 +3905,12 @@ in
     "translation records lacked sequence/set/bag matrix row")
 end
 
+(* P3.4 leaves this function-valued argument on the byte-identical FO route:
+   nested Arrays preserve it without encountering an HO-trigger shape. *)
 fun smtlib_higher_order_translation_abstraction_success () =
 let
-  val (logic, _, records, translation) =
-    inferred_logic ``(H:('a -> 'b) -> bool) f``
+  val goal = ([], ``(H:('a -> 'b) -> bool) f``)
+  val (logic, _, records, translation) = inferred_logic (Lib.snd goal)
   val has_array_sort_decl =
     List.exists
       (fn SmtLib.TermDeclaration {arity = 0, range_sort, hol_term, ...} =>
@@ -3920,14 +3922,116 @@ let
       (fn SmtLib.TermDeclaration {arity = 0, hol_term, ...} =>
             term_is_var_named "H" hol_term
         | _ => false) records
+  val has_ho_core_array_audit =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "HO-Core",
+            mode = SmtLib.ConservativeEmbedding,
+            parse = true, typecheck = true, translate = true, ...} => true
+        | _ => false) records
+  val has_fo_selection =
+    List.exists
+      (fn SmtLib.RegimeSelection {
+            regime = SmtLib.FirstOrder,
+            reason = "automatic:no-ho-trigger"} => true
+        | _ => false) records
   val _ = SmtLib.parser_dicts_for_translation translation
 in
+  assert (not (SmtLib.goal_requires_ho goal),
+    "function-valued FO witness unexpectedly triggered HigherOrder");
+  assert (SmtLib.translation_regime translation = SmtLib.FirstOrder,
+    "function-valued FO witness did not route through FirstOrder");
+  assert (has_fo_selection,
+    "function-valued FO witness lacked its automatic FirstOrder record");
   assert (logic = "QF_AX",
-    "higher-order abstraction expected QF_AX, got " ^ logic);
+    "function-valued FO witness expected QF_AX, got " ^ logic);
   assert (has_array_sort_decl,
-    "higher-order abstraction lacked nested array sort declaration");
+    "function-valued FO witness lacked nested array sort declaration");
   assert (has_h_decl,
-    "higher-order abstraction lacked a declaration for H")
+    "function-valued FO witness lacked a declaration for H");
+  assert (has_ho_core_array_audit,
+    "function-valued FO witness lacked the HO-Core Array audit row")
+end
+
+fun smtlib_ho_parser_dict_currying_success () =
+let
+  val standard_regime = SmtLib.HigherOrder SmtLib.Standard27
+  val z3_regime = SmtLib.HigherOrder SmtLib.Z3LambdaArray
+  val h = ``H:(int -> int) -> bool``
+  val lambda = ``\n:int. n + 1``
+  val lambda_application = Term.mk_comb (h, lambda)
+  val rank2 = ``smtlib_ho_rank2``
+  val x = ``x:int``
+  val p = ``p:bool``
+  val partial = Term.mk_comb (rank2, x)
+  val full = Term.mk_comb (partial, p)
+  val goal = ([], boolSyntax.mk_conj
+    (lambda_application, boolSyntax.mk_eq (full, ``y:int``)))
+  fun translate regime =
+    Lib.fst (SmtLib.goal_to_SmtLib_translation_with_regime
+      regime NONE goal)
+  val standard_translation = translate standard_regime
+  val z3_translation = translate z3_regime
+  fun generated_name translation wanted =
+    case List.find
+        (fn SmtLib.TermDeclaration {hol_term, ...} =>
+              Term.aconv hol_term wanted
+          | _ => false)
+        (SmtLib.translation_records translation) of
+      SOME (SmtLib.TermDeclaration {smt_name, ...}) => smt_name
+    | _ => die ("FAIL: no generated declaration for " ^
+        term_with_types wanted)
+  fun parse_generated translation wanted args =
+    let
+      val (_, tm_dict) =
+        SmtLib.parser_dicts_for_translation translation
+      val name = generated_name translation wanted
+      val parsefn = List.hd (Redblackmap.find (tm_dict, name))
+    in
+      parsefn name [] args
+    end
+  fun has_native_ho_core_audit translation =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "HO-Core", mode = SmtLib.NativeSMTLIB,
+            parse = true, typecheck = true, translate = true, ...} => true
+        | _ => false)
+      (SmtLib.translation_records translation)
+  val parsed_lambda = parse_generated standard_translation h [lambda]
+  val parsed_atom = parse_generated standard_translation rank2 []
+  val parsed_partial = parse_generated standard_translation rank2 [x]
+  val parsed_full = parse_generated standard_translation rank2 [x, p]
+  val parsed_z3_partial = parse_generated z3_translation rank2 [x]
+  val (fo_translation, _) =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([], boolSyntax.mk_eq (full, ``y:int``))
+  val parsed_fo_full = parse_generated fo_translation rank2 [x, p]
+in
+  assert (Term.aconv parsed_lambda lambda_application,
+    "HO dictionary did not round-trip a lambda-containing application");
+  assert (Term.aconv parsed_atom rank2,
+    "HO dictionary did not accept a bare ranked symbol");
+  assert (Term.aconv parsed_partial partial andalso
+      Type.compare (Term.type_of parsed_partial, ``:bool -> int``) = EQUAL,
+    "Standard27 curried entry did not build the residual application");
+  assert (Term.aconv parsed_full full,
+    "Standard27 curried entry did not accept the full arity");
+  assert (Term.aconv parsed_z3_partial partial,
+    "Z3LambdaArray curried entry did not build a residual application");
+  assert (has_native_ho_core_audit standard_translation andalso
+      has_native_ho_core_audit z3_translation,
+    "an HO regime lacked its native HO-Core audit row");
+  expect_hol_error_contains "HO dictionary over-application"
+    "wrong number of arguments"
+    (fn () => ignore
+      (parse_generated standard_translation rank2 [x, p, ``q:bool``]));
+  assert (SmtLib.translation_regime fo_translation = SmtLib.FirstOrder,
+    "pinned FO dictionary translation did not select FirstOrder");
+  assert (Term.aconv parsed_fo_full full,
+    "pinned FO dictionary changed its exact-arity behavior");
+  expect_hol_error_contains "FO dictionary partial application"
+    "wrong number of arguments"
+    (fn () => ignore (parse_generated fo_translation rank2 [x]))
 end
 
 fun smtlib_regime_trigger_success () =
@@ -6815,6 +6919,8 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
+    ("smtlib_ho_parser_dict_currying_success",
+      smtlib_ho_parser_dict_currying_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
     ("smtlib_standard27_translation_success",

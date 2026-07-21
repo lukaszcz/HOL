@@ -316,10 +316,15 @@ isPREFIX, string_lt and string_le.  It emits SMT-LIB UnicodeStrings symbols;
 the semantic mismatch with HOL's char-list strings is deliberately recorded as
 a soundness-audit proof obligation.
 
-Higher-order/function-valued HOL terms that would require abstracting function
-sorts are rejected deterministically by SmtLib.translate_type/translate_term.
-First-order applications such as (P:'a -> bool) x remain supported as
-uninterpreted functions.
+HOL-to-SMT translation has two regimes, selected by the P3.4 failure trigger
+after preprocessing.  The byte-identical FirstOrder path encodes function
+values as nested Array sorts, with select/store for application/update; terms
+such as (P:'a -> bool) x remain supported there.  Shapes that path cannot
+preserve, including surviving lambdas and non-symbol operators, select
+HigherOrder.  Standard27 emits native SMT-LIB 2.7 HO-Core syntax, while
+Z3LambdaArray lowers maps and application to nested Array/select and
+eta-expands partially applied ranked constants.  Callers may override the
+selection; unsupported residual shapes still fail deterministically.
 
 Z3 version diagnostics and CI hooks:
 
