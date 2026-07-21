@@ -517,7 +517,7 @@ datatype timed_phase_v3 =
 
 datatype timed_phase_boundary_v3 = V3PhaseEnter | V3PhaseExit
 
-type timed_unification_v3 =
+type timed_unification_common =
   {clock : unit -> Time.time,
    elapsed_sink : Time.time -> unit,
    calls : int ref,
@@ -529,8 +529,6 @@ type timed_unification_v3 =
    persistent_binding_update_events : int ref,
    binding_operation_failures : int ref,
    traversal_other_events : int ref,
-   operation_phase_trace :
-     (timed_phase_boundary_v3 * timed_phase_v3) list ref,
    normalization_setup_time : Time.time ref,
    persistent_store_lookup_walk_time : Time.time ref,
    structural_decomposition_recursion_time : Time.time ref,
@@ -552,6 +550,14 @@ type timed_unification_v3 =
    right_pattern_binding_failure_fallbacks : int ref,
    structural_lambda_descents : int ref,
    structural_wildcard_mismatches : int ref}
+
+type timed_unification_v3 =
+  {timing : timed_unification_common,
+   operation_phase_trace :
+     (timed_phase_boundary_v3 * timed_phase_v3) list ref}
+
+datatype timed_unification_v4 =
+  TimedUnificationV4 of timed_unification_common
 
 type timed_unification_statistics_v3 =
   {calls : int,
@@ -584,8 +590,8 @@ type timed_unification_statistics_v3 =
    max_failure_cleanup_time : Time.time,
    max_unification_time : Time.time}
 
-fun new_timed_unification_v3_with_sink {clock, elapsed}
-      : timed_unification_v3 =
+fun new_timed_unification_common {clock, elapsed}
+      : timed_unification_common =
   {clock = clock, elapsed_sink = elapsed, calls = ref 0, failures = ref 0,
    normalization_setup_events = ref 0,
    persistent_store_lookup_walk_events = ref 0,
@@ -594,7 +600,6 @@ fun new_timed_unification_v3_with_sink {clock, elapsed}
    persistent_binding_update_events = ref 0,
    binding_operation_failures = ref 0,
    traversal_other_events = ref 0,
-   operation_phase_trace = ref [],
    normalization_setup_time = ref Time.zeroTime,
    persistent_store_lookup_walk_time = ref Time.zeroTime,
    structural_decomposition_recursion_time = ref Time.zeroTime,
@@ -617,11 +622,25 @@ fun new_timed_unification_v3_with_sink {clock, elapsed}
    structural_lambda_descents = ref 0,
    structural_wildcard_mismatches = ref 0}
 
+fun new_timed_unification_v3_with_sink arguments
+      : timed_unification_v3 =
+  {timing = new_timed_unification_common arguments,
+   operation_phase_trace = ref []}
+
 fun new_timed_unification_v3 clock =
   new_timed_unification_v3_with_sink
     {clock = clock, elapsed = fn _ => ()}
 
-fun timed_unification_statistics_v3 (timing : timed_unification_v3) =
+fun new_timed_unification_v4_with_sink arguments
+      : timed_unification_v4 =
+  TimedUnificationV4 (new_timed_unification_common arguments)
+
+fun new_timed_unification_v4 clock =
+  new_timed_unification_v4_with_sink
+    {clock = clock, elapsed = fn _ => ()}
+
+fun timed_unification_statistics_v3
+      ({timing, operation_phase_trace} : timed_unification_v3) =
   {calls = !(#calls timing), failures = !(#failures timing),
    normalization_setup_events = !(#normalization_setup_events timing),
    persistent_store_lookup_walk_events =
@@ -634,7 +653,7 @@ fun timed_unification_statistics_v3 (timing : timed_unification_v3) =
      !(#persistent_binding_update_events timing),
    binding_operation_failures = !(#binding_operation_failures timing),
    traversal_other_events = !(#traversal_other_events timing),
-   operation_phase_trace = rev (!(#operation_phase_trace timing)),
+   operation_phase_trace = rev (!operation_phase_trace),
    normalization_setup_time = !(#normalization_setup_time timing),
    persistent_store_lookup_walk_time =
      !(#persistent_store_lookup_walk_time timing),
@@ -666,7 +685,7 @@ fun timed_unification_statistics_v3 (timing : timed_unification_v3) =
    max_unification_time = !(#max_unification_time timing)}
 
 fun timed_unification_branch_statistics_v3
-      (timing : timed_unification_v3) =
+      ({timing, ...} : timed_unification_v3) =
   {rigid_type_constructor_mismatches =
      !(#rigid_type_constructor_mismatches timing),
    protected_applied_meta_unequal_head_fallbacks =
@@ -677,7 +696,96 @@ fun timed_unification_branch_statistics_v3
    structural_wildcard_mismatches =
      !(#structural_wildcard_mismatches timing)}
 
-fun unify_timed_v3 (timing : timed_unification_v3) store config pair =
+type timed_unification_statistics_v4 =
+  {calls : int,
+   failures : int,
+   normalization_setup_events : int,
+   persistent_store_lookup_walk_events : int,
+   structural_decomposition_recursion_events : int,
+   pattern_occurs_allow_decision_events : int,
+   persistent_binding_update_events : int,
+   binding_operation_failures : int,
+   traversal_other_events : int,
+   normalization_setup_time : Time.time,
+   persistent_store_lookup_walk_time : Time.time,
+   structural_decomposition_recursion_time : Time.time,
+   pattern_occurs_allow_decision_time : Time.time,
+   persistent_binding_update_time : Time.time,
+   traversal_other_time : Time.time,
+   traversal_decomposition_binding_time : Time.time,
+   failure_cleanup_time : Time.time,
+   unification_time : Time.time,
+   max_normalization_setup_time : Time.time,
+   max_persistent_store_lookup_walk_time : Time.time,
+   max_structural_decomposition_recursion_time : Time.time,
+   max_pattern_occurs_allow_decision_time : Time.time,
+   max_persistent_binding_update_time : Time.time,
+   max_traversal_other_time : Time.time,
+   max_traversal_decomposition_binding_time : Time.time,
+   max_failure_cleanup_time : Time.time,
+   max_unification_time : Time.time}
+
+fun timed_unification_statistics_v4
+      (TimedUnificationV4 timing) =
+  {calls = !(#calls timing), failures = !(#failures timing),
+   normalization_setup_events = !(#normalization_setup_events timing),
+     persistent_store_lookup_walk_events =
+       !(#persistent_store_lookup_walk_events timing),
+     structural_decomposition_recursion_events =
+       !(#structural_decomposition_recursion_events timing),
+     pattern_occurs_allow_decision_events =
+       !(#pattern_occurs_allow_decision_events timing),
+     persistent_binding_update_events =
+       !(#persistent_binding_update_events timing),
+     binding_operation_failures = !(#binding_operation_failures timing),
+     traversal_other_events = !(#traversal_other_events timing),
+     normalization_setup_time = !(#normalization_setup_time timing),
+     persistent_store_lookup_walk_time =
+       !(#persistent_store_lookup_walk_time timing),
+     structural_decomposition_recursion_time =
+       !(#structural_decomposition_recursion_time timing),
+     pattern_occurs_allow_decision_time =
+       !(#pattern_occurs_allow_decision_time timing),
+     persistent_binding_update_time =
+       !(#persistent_binding_update_time timing),
+     traversal_other_time = !(#traversal_other_time timing),
+     traversal_decomposition_binding_time =
+       !(#traversal_decomposition_binding_time timing),
+     failure_cleanup_time = Time.zeroTime,
+     unification_time = !(#unification_time timing),
+     max_normalization_setup_time =
+       !(#max_normalization_setup_time timing),
+     max_persistent_store_lookup_walk_time =
+       !(#max_persistent_store_lookup_walk_time timing),
+     max_structural_decomposition_recursion_time =
+       !(#max_structural_decomposition_recursion_time timing),
+     max_pattern_occurs_allow_decision_time =
+       !(#max_pattern_occurs_allow_decision_time timing),
+     max_persistent_binding_update_time =
+       !(#max_persistent_binding_update_time timing),
+     max_traversal_other_time = !(#max_traversal_other_time timing),
+     max_traversal_decomposition_binding_time =
+       !(#max_traversal_decomposition_binding_time timing),
+     max_failure_cleanup_time = Time.zeroTime,
+     max_unification_time = !(#max_unification_time timing)}
+
+fun timed_unification_branch_statistics_v4
+      (TimedUnificationV4 timing) =
+  {rigid_type_constructor_mismatches =
+     !(#rigid_type_constructor_mismatches timing),
+   protected_applied_meta_unequal_head_fallbacks =
+     !(#protected_applied_meta_unequal_head_fallbacks timing),
+   right_pattern_binding_failure_fallbacks =
+     !(#right_pattern_binding_failure_fallbacks timing),
+   structural_lambda_descents = !(#structural_lambda_descents timing),
+   structural_wildcard_mismatches =
+     !(#structural_wildcard_mismatches timing)}
+
+fun timed_unification_trace_allocations_v4
+      (_ : timed_unification_v4) = 0
+
+fun unify_timed_common record (timing : timed_unification_common)
+      store config pair =
   let
     datatype phase_frame =
         RunningFrame of timed_phase_v3 * Time.time
@@ -732,10 +840,6 @@ fun unify_timed_v3 (timing : timed_unification_v3) store config pair =
         | V3PersistentBindingUpdate =>
             increment (#persistent_binding_update_events timing)
         | V3TraversalOther => increment (#traversal_other_events timing)
-
-    fun record boundary phase =
-      #operation_phase_trace timing :=
-        (boundary, phase) :: !(#operation_phase_trace timing)
 
     fun backwards () =
       raise TIMED_UNIFICATION_CALLBACK
@@ -1121,5 +1225,17 @@ fun unify_timed_v3 (timing : timed_unification_v3) store config pair =
   in
     result
   end
+
+fun unify_timed_v3
+      ({timing, operation_phase_trace} : timed_unification_v3)
+      store config pair =
+  unify_timed_common
+    (fn boundary => fn phase =>
+      operation_phase_trace :=
+        (boundary, phase) :: !operation_phase_trace)
+    timing store config pair
+
+fun unify_timed_v4 (TimedUnificationV4 timing) store config pair =
+  unify_timed_common (fn _ => fn _ => ()) timing store config pair
 
 end

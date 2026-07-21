@@ -339,6 +339,67 @@ sig
      stop : unit -> bool} ->
     goal -> proof -> timed_detailed_measured_result_v3
 
+  (* Timed-v4 is the additive bounded-summary adapter.  It uses the same
+     operation-honest phase scopes and per-pull accounting as v3, but never
+     retains, reverses, concatenates or scans fine phase traces.  One shared
+     O(1) classical summary replaces the retained sequence list. *)
+  type minor_unification_times_v4 = clasetStep.minor_unification_times_v4
+  type alternative_pull_times_v4 =
+    {completed_pulls : int,
+     failed_pulls : int,
+     interrupted_pulls : int,
+     classical_elapsed_snapshots : int,
+     sequence_statistics_reads : int,
+     summary_statistics_reads : int,
+     retained_trace_allocations : int,
+     completed_pull_time : Time.time,
+     failed_pull_time : Time.time,
+     interrupted_pull_time : Time.time,
+     alternative_pull_time : Time.time,
+     alternative_residual_time : Time.time,
+     max_completed_pull_time : Time.time,
+     max_failed_pull_time : Time.time,
+     max_interrupted_pull_time : Time.time,
+     max_alternative_pull_time : Time.time}
+  type timed_detailed_measured_result_v4 =
+    {base : timed_detailed_measured_result_v2,
+     minor_unification_times : minor_unification_times_v4,
+     alternative_pull_times : alternative_pull_times_v4}
+  val reconstructWithMeasuredTimedDetailedV4 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v4
+  val reconstructWithMeasuredTimedDetailedV4UsingKernel :
+    {clock : unit -> Time.time,
+     kernel_replay :
+       clasetReplay.grounded_script -> goal -> goal list * validation,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v4
+  val reconstructWithMeasuredTimedDetailedV4UsingTransition :
+    {clock : unit -> Time.time,
+     kernel_replay :
+       clasetReplay.grounded_script -> goal -> goal list * validation,
+     transition :
+       clasetStep.timed_rule_sequence_v4 -> clasetStep.timed_rule_pull_v4,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    claset -> goal -> proof -> timed_detailed_measured_result_v4
+  val reconstructMeasuredTimedDetailedV4 :
+    {clock : unit -> Time.time,
+     observe : (observation -> unit) option,
+     observe_stored_rule :
+       (stored_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    goal -> proof -> timed_detailed_measured_result_v4
+
   (* Search continuations reject failed reconstruction with
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :

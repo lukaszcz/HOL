@@ -279,6 +279,75 @@ sig
     timed_rule_sequence_v3 -> timed_rule_statistics_v3
   val timed_rule_statistics_reads_v3 : timed_rule_sequence_v3 -> int
 
+  (* Bounded timed-v4 shares one O(1) summary across any number of lazy
+     sequences.  Fine unification traces are absent from its types and are
+     never allocated.  Pulling never reads or scans summary statistics. *)
+  type minor_unification_times_v4 =
+    {calls : int,
+     failures : int,
+     normalization_setup_events : int,
+     persistent_store_lookup_walk_events : int,
+     structural_decomposition_recursion_events : int,
+     pattern_occurs_allow_decision_events : int,
+     persistent_binding_update_events : int,
+     binding_operation_failures : int,
+     traversal_other_events : int,
+     normalization_setup_time : Time.time,
+     persistent_store_lookup_walk_time : Time.time,
+     structural_decomposition_recursion_time : Time.time,
+     pattern_occurs_allow_decision_time : Time.time,
+     persistent_binding_update_time : Time.time,
+     traversal_other_time : Time.time,
+     traversal_decomposition_binding_time : Time.time,
+     failure_cleanup_time : Time.time,
+     minor_unification_time : Time.time,
+     max_normalization_setup_time : Time.time,
+     max_persistent_store_lookup_walk_time : Time.time,
+     max_structural_decomposition_recursion_time : Time.time,
+     max_pattern_occurs_allow_decision_time : Time.time,
+     max_persistent_binding_update_time : Time.time,
+     max_traversal_other_time : Time.time,
+     max_traversal_decomposition_binding_time : Time.time,
+     max_failure_cleanup_time : Time.time,
+     max_minor_unification_time : Time.time}
+  type timed_rule_statistics_v4 =
+    {base : timed_rule_statistics_v2,
+     minor_unification_times : minor_unification_times_v4}
+  type timed_rule_summary_v4
+  type timed_rule_sequence_v4
+  datatype timed_rule_pull_v4 =
+      TimedRuleEmptyV4
+    | TimedRuleYieldV4 of
+        (step_record * node) * timed_rule_sequence_v4
+    | TimedRuleInterruptedV4
+  exception TIMED_RULE_CALLBACK_V4 of exn
+  val new_timed_rule_summary_v4 :
+    {clock : unit -> Time.time,
+     classical_elapsed : Time.time -> unit} -> timed_rule_summary_v4
+  val blast_rule_step_timed_v4 :
+    {classical_elapsed : Time.time -> unit,
+     clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v4
+  val blast_rule_step_timed_v4_with_summary :
+    {summary : timed_rule_summary_v4,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v4
+  val timed_rule_cases_v4 :
+    timed_rule_sequence_v4 -> timed_rule_pull_v4
+  val timed_rule_current_v4 :
+    timed_rule_sequence_v4 -> measured_rule_observation option
+  val timed_rule_summary_of_v4 :
+    timed_rule_sequence_v4 -> timed_rule_summary_v4
+  val timed_rule_statistics_v4 :
+    timed_rule_summary_v4 -> timed_rule_statistics_v4
+  val timed_rule_statistics_reads_v4 : timed_rule_summary_v4 -> int
+  val timed_rule_trace_allocations_v4 : timed_rule_summary_v4 -> int
+
   val blast_disch_step : step
   val blast_gen_step : step
   val blast_ccontr_step : step

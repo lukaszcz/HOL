@@ -1334,6 +1334,115 @@ val _ =
 
 val _ =
   test
+    ("bounded-v4 unifier matches v3 without trace allocation",
+     fn () =>
+       let
+         val p = Term.mk_var ("bounded_v4_unify_p", bool_ty)
+         val q = Term.mk_var ("bounded_v4_unify_q", bool_ty)
+         val config =
+           {mode = clasetUnify.Unify, rule_metas = no_rule_metas}
+         val timing_v3 : clasetUnify.timed_unification_v3 =
+           clasetUnify.new_timed_unification_v3 (parity_clock ())
+         val timing_v4 : clasetUnify.timed_unification_v4 =
+           clasetUnify.new_timed_unification_v4 (parity_clock ())
+         fun repeat 0 = true
+           | repeat count =
+               let
+                 val pair = if count mod 2 = 0 then (p, p) else (p, q)
+                 val left =
+                   clasetUnify.unify_timed_v3 timing_v3 clasetMeta.empty
+                     config pair
+                 val right =
+                   clasetUnify.unify_timed_v4 timing_v4 clasetMeta.empty
+                     config pair
+               in
+                 Option.isSome left = Option.isSome right andalso
+                 clasetUnify.timed_unification_trace_allocations_v4
+                   timing_v4 = 0 andalso repeat (count - 1)
+               end
+         val outcomes_match = repeat 200
+         val v3 =
+           clasetUnify.timed_unification_statistics_v3 timing_v3
+         val v4 =
+           clasetUnify.timed_unification_statistics_v4 timing_v4
+         val v3_trace = #operation_phase_trace v3
+         fun counts_v3
+               (statistics :
+                  clasetUnify.timed_unification_statistics_v3) =
+           [#calls statistics, #failures statistics,
+            #normalization_setup_events statistics,
+            #persistent_store_lookup_walk_events statistics,
+            #structural_decomposition_recursion_events statistics,
+            #pattern_occurs_allow_decision_events statistics,
+            #persistent_binding_update_events statistics,
+            #binding_operation_failures statistics,
+            #traversal_other_events statistics]
+         fun counts_v4
+               (statistics :
+                  clasetUnify.timed_unification_statistics_v4) =
+           [#calls statistics, #failures statistics,
+            #normalization_setup_events statistics,
+            #persistent_store_lookup_walk_events statistics,
+            #structural_decomposition_recursion_events statistics,
+            #pattern_occurs_allow_decision_events statistics,
+            #persistent_binding_update_events statistics,
+            #binding_operation_failures statistics,
+            #traversal_other_events statistics]
+         fun times_v3
+               (statistics :
+                  clasetUnify.timed_unification_statistics_v3) =
+           [#normalization_setup_time statistics,
+            #persistent_store_lookup_walk_time statistics,
+            #structural_decomposition_recursion_time statistics,
+            #pattern_occurs_allow_decision_time statistics,
+            #persistent_binding_update_time statistics,
+            #traversal_other_time statistics,
+            #traversal_decomposition_binding_time statistics,
+            #failure_cleanup_time statistics,
+            #unification_time statistics,
+            #max_normalization_setup_time statistics,
+            #max_persistent_store_lookup_walk_time statistics,
+            #max_structural_decomposition_recursion_time statistics,
+            #max_pattern_occurs_allow_decision_time statistics,
+            #max_persistent_binding_update_time statistics,
+            #max_traversal_other_time statistics,
+            #max_traversal_decomposition_binding_time statistics,
+            #max_failure_cleanup_time statistics,
+            #max_unification_time statistics]
+         fun times_v4
+               (statistics :
+                  clasetUnify.timed_unification_statistics_v4) =
+           [#normalization_setup_time statistics,
+            #persistent_store_lookup_walk_time statistics,
+            #structural_decomposition_recursion_time statistics,
+            #pattern_occurs_allow_decision_time statistics,
+            #persistent_binding_update_time statistics,
+            #traversal_other_time statistics,
+            #traversal_decomposition_binding_time statistics,
+            #failure_cleanup_time statistics,
+            #unification_time statistics,
+            #max_normalization_setup_time statistics,
+            #max_persistent_store_lookup_walk_time statistics,
+            #max_structural_decomposition_recursion_time statistics,
+            #max_pattern_occurs_allow_decision_time statistics,
+            #max_persistent_binding_update_time statistics,
+            #max_traversal_other_time statistics,
+            #max_traversal_decomposition_binding_time statistics,
+            #max_failure_cleanup_time statistics,
+            #max_unification_time statistics]
+       in
+         outcomes_match andalso counts_v3 v3 = counts_v4 v4 andalso
+         length v3_trace =
+           2 * List.foldl (op +) 0 (tl (tl (counts_v3 v3))) andalso
+         times_v3 v3 = times_v4 v4 andalso
+         clasetUnify.timed_unification_branch_statistics_v3 timing_v3 =
+           clasetUnify.timed_unification_branch_statistics_v4 timing_v4
+         andalso
+         clasetUnify.timed_unification_trace_allocations_v4 timing_v4 = 0
+       end)
+
+val _ =
+  test
     ("timed unifier control and clock exceptions preserve identity",
      fn () =>
        let

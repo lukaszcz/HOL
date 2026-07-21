@@ -109,4 +109,51 @@ sig
     timed_unification_v3 -> timed_unification_statistics_v3
   val timed_unification_branch_statistics_v3 :
     timed_unification_v3 -> timed_unification_branch_statistics
+
+  (* Timed-v4 is the bounded-summary form of timed-v3.  It uses the same
+     operation scopes and counters, but its public statistics type has no
+     trace field and its worker never allocates a trace node. *)
+  type timed_unification_v4
+  type timed_unification_statistics_v4 =
+    {calls : int,
+     failures : int,
+     normalization_setup_events : int,
+     persistent_store_lookup_walk_events : int,
+     structural_decomposition_recursion_events : int,
+     pattern_occurs_allow_decision_events : int,
+     persistent_binding_update_events : int,
+     binding_operation_failures : int,
+     traversal_other_events : int,
+     normalization_setup_time : Time.time,
+     persistent_store_lookup_walk_time : Time.time,
+     structural_decomposition_recursion_time : Time.time,
+     pattern_occurs_allow_decision_time : Time.time,
+     persistent_binding_update_time : Time.time,
+     traversal_other_time : Time.time,
+     traversal_decomposition_binding_time : Time.time,
+     failure_cleanup_time : Time.time,
+     unification_time : Time.time,
+     max_normalization_setup_time : Time.time,
+     max_persistent_store_lookup_walk_time : Time.time,
+     max_structural_decomposition_recursion_time : Time.time,
+     max_pattern_occurs_allow_decision_time : Time.time,
+     max_persistent_binding_update_time : Time.time,
+     max_traversal_other_time : Time.time,
+     max_traversal_decomposition_binding_time : Time.time,
+     max_failure_cleanup_time : Time.time,
+     max_unification_time : Time.time}
+  val new_timed_unification_v4 :
+    (unit -> Time.time) -> timed_unification_v4
+  val new_timed_unification_v4_with_sink :
+    {clock : unit -> Time.time,
+     elapsed : Time.time -> unit} -> timed_unification_v4
+  val unify_timed_v4 :
+    timed_unification_v4 -> store -> config -> term * term -> store option
+  val timed_unification_statistics_v4 :
+    timed_unification_v4 -> timed_unification_statistics_v4
+  val timed_unification_branch_statistics_v4 :
+    timed_unification_v4 -> timed_unification_branch_statistics
+  (* Test seam: this is zero for every bounded timer, independent of work. *)
+  val timed_unification_trace_allocations_v4 :
+    timed_unification_v4 -> int
 end
