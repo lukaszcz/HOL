@@ -245,6 +245,9 @@ val _ = Hol_datatype
   `smt_tri = SmtTriA | SmtTriB of int | SmtTriC of bool`
 
 val _ = Hol_datatype
+  `smt_fun_rec = <| smt_fun : int -> bool -> int |>`
+
+val _ = Hol_datatype
   `smt_left = SmtLeftDone | SmtLeft of smt_right;
    smt_right = SmtRightDone | SmtRight of smt_left`
 
@@ -3967,6 +3970,9 @@ let
   val reduced_rator = preprocess complex_rator
   val datatype_rator = preprocess ([],
     ``option_CASE (box:(int -> int) option) 0 (\f. f (x:int)) = y``)
+  val function_conditional =
+    ([], ``(H:(int -> int) -> bool)
+      (if p then (f:int -> int) else g)``)
   val automatic_fo =
     Lib.fst (SmtLib.goal_to_SmtLib_translation NONE (List.hd fo_goals))
   val forced_fo = translate_with SmtLib.FirstOrder (List.hd fo_goals)
@@ -3980,6 +3986,8 @@ let
     SmtLib.regime_for_goal SmtLib.Standard27 surviving
   val (datatype_regime, datatype_reason) =
     SmtLib.regime_for_goal SmtLib.Z3LambdaArray datatype_rator
+  val (function_conditional_regime, function_conditional_reason) =
+    SmtLib.regime_for_goal SmtLib.Z3LambdaArray function_conditional
 in
   List.app
     (fn goal => assert (not (SmtLib.goal_requires_ho goal),
@@ -3993,6 +4001,13 @@ in
     "preprocessing-reduced rator did not return to FirstOrder");
   assert (SmtLib.goal_requires_ho datatype_rator,
     "datatype branch normalization missed a complex rator");
+  assert (SmtLib.goal_requires_ho function_conditional,
+    "function-valued conditional did not select HigherOrder");
+  assert (function_conditional_regime =
+      SmtLib.HigherOrder SmtLib.Z3LambdaArray andalso
+      function_conditional_reason =
+        "automatic:function-valued-conditional",
+    "function-valued conditional lost its automatic regime reason");
   assert (surviving_regime =
       SmtLib.HigherOrder SmtLib.Standard27 andalso
       surviving_reason = "automatic:surviving-abstraction",
@@ -4063,8 +4078,17 @@ let
       (SmtLib.translation_records eta_translation)
   val selects_text = text_of (translate
     ([], ``(u:int -> int -> int) x y = z``))
-  val ite_text = text_of (translate
-    ([], ``(if p then (f:int -> int) else g) x = y``))
+  val ite_result = translate_automatic
+    ([], ``(if p then (f:int -> int) else g) x = y``)
+  val ite_translation = Lib.fst ite_result
+  val ite_text = text_of ite_result
+  val conditional_value_result = translate_automatic
+    ([], ``(H:(int -> int) -> bool)
+      (if p then (f:int -> int) else g)``)
+  val conditional_value_translation = Lib.fst conditional_value_result
+  val conditional_value_text = text_of conditional_value_result
+  val selector_text = text_of (translate
+    ([], ``((r:smt_fun_rec).smt_fun) x p = y``))
   val complex_result = translate_automatic
     ([], ``((\f:int -> int. f) g) (x:int) = y``)
   val complex_translation = Lib.fst complex_result
@@ -4097,10 +4121,21 @@ in
     "(select (select v0 v1) v2)";
   assert_lacks "nested select application" selects_text
     "(select v0 v1 v2)";
+  assert (SmtLib.translation_regime ite_translation = z3_regime,
+    "applied function-valued conditional selected the wrong dialect");
   assert_has "function-valued builtin application" ite_text
     "(select (ite v0 v1 v2) v3)";
   assert_lacks "function-valued builtin application" ite_text
     "(ite v0 v1 v2 v3)";
+  assert (SmtLib.translation_regime conditional_value_translation =
+      z3_regime,
+    "automatic function-valued built-in selected the wrong dialect");
+  assert_has "automatic function-valued built-in" conditional_value_text
+    "(select v0 (ite v1 v2 v3))";
+  assert_has "function-valued record selector" selector_text
+    "(select (select (recordtype_smt_fun_rec_seldef_smt_fun v1) v2) v3)";
+  assert_lacks "function-valued record selector" selector_text
+    "(declare-fun v0 (Smt_fun_rec Int Bool) Int)";
   assert (SmtLib.translation_regime complex_translation = z3_regime,
     "automatic complex-rator translation selected the wrong dialect");
   assert_has "complex-rator application" complex_text

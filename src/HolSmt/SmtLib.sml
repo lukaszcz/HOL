@@ -1648,6 +1648,35 @@ local
         (acc, (typedecls @ elemdecls @ List.concat branchdeclss,
           cascaded infos branchnames))
       end
+    fun is_record_selector_term candidate =
+      let
+        val (select, _) = Term.dest_comb candidate
+        val (_, select_ty) = Term.dest_const select
+        val (record_ty, rng_ty) = Type.dom_rng select_ty
+        val fields = TypeBase.fields_of record_ty
+      in
+        List.exists
+          (fn (_, {ty = field_ty, accessor, ...} :
+                   TypeBasePure.rcd_fieldinfo) =>
+            Term.same_const select accessor andalso
+            Lib.can (Type.match_type field_ty) rng_ty) fields
+      end
+      handle Feedback.HOL_ERR _ => false
+    fun has_semantic_function_prefix head rands =
+      let
+        fun loop _ [] = false
+          | loop applied (rand :: rands) =
+              let val applied = Term.mk_comb (applied, rand)
+              in
+                (is_function_type (Term.type_of applied) andalso
+                 (is_record_selector_term applied orelse
+                  Lib.can TypeBase.dest_case applied)) orelse
+                loop applied rands
+              end
+      in
+        loop head rands
+      end
+      handle Feedback.HOL_ERR _ => false
     fun translate_record_selector acc =
       let
         val (select, x) = Term.dest_comb tm
@@ -1847,7 +1876,8 @@ local
                  raise ERR "translate_term"
                    "HOL constants are emitted as functions"
              | HigherOrder _ =>
-                 if List.length head_rands > declared_const_arity head then
+                 if List.length head_rands > declared_const_arity head orelse
+                    has_semantic_function_prefix head head_rands then
                    ()
                  else
                    raise ERR "translate_term"
@@ -1960,11 +1990,25 @@ local
          SOME reason => SOME reason
        | NONE => first_reason scan tms)
 
-  (* Report only the higher-order shapes that the first-order translator
-     rejects.  Binder, let, datatype-case, and update abstractions are
-     encoding scaffolding rather than first-class function values. *)
+  (* Report higher-order shapes that the first-order translator rejects or
+     would encode without preserving a built-in's semantics.  Binder, let,
+     datatype-case, and update abstractions are encoding scaffolding rather
+     than first-class function values. *)
   fun goal_ho_reason (assumptions, conclusion) =
     let
+      fun is_function_valued_conditional tm =
+        let
+          val (rator, rands) = boolSyntax.strip_comb tm
+          val conditional =
+            case rands of
+              test :: then_tm :: else_tm :: _ =>
+                Term.list_mk_comb (rator, [test, then_tm, else_tm])
+            | _ => raise ERR "goal_ho_reason" "partial conditional"
+        in
+          Term.same_const rator boolSyntax.conditional andalso
+          is_function_type (Term.type_of conditional)
+        end
+        handle Feedback.HOL_ERR _ => false
       fun datatype_case_reason scan inherited tm =
         let
           val (_, elem, clauses) = TypeBase.dest_case tm
@@ -2024,10 +2068,18 @@ local
               first_reason (scan inherited)
                 (List.map Lib.snd bindings @ [body])
           | NONE =>
-            (case datatype_case_reason scan inherited tm of
-               DatatypeCase reason => reason
-             | NotDatatypeCase =>
-               (case Lib.total combinSyntax.dest_update_comb tm of
+            if is_function_valued_conditional tm then
+              (* The FO datatype-case path treats a function-valued
+                 conditional as abstraction scaffolding, then emits its
+                 branches without preserving ite semantics.  Select HO before
+                 datatype-case normalization so the native function-valued
+                 result is retained. *)
+              SOME "automatic:function-valued-conditional"
+            else
+              (case datatype_case_reason scan inherited tm of
+                 DatatypeCase reason => reason
+               | NotDatatypeCase =>
+                 (case Lib.total combinSyntax.dest_update_comb tm of
                   SOME ((index, value), array) =>
                     first_reason (scan inherited) [array, index, value]
                 | NONE =>
