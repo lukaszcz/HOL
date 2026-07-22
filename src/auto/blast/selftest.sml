@@ -6151,7 +6151,6 @@ val pelletier_solved = ref 0
 
 (* Problems the tableau search does not yet solve within the budget.
    These are search deficiencies to fix, not properties of the goals:
-   the remedies are scoped in .agent-files/PLAN_phase_1_2_green.md.
    Entries are asserted to FAIL, so fixing one turns this suite red and
    forces the list to shrink -- the accounting has teeth in both
    directions.  A problem is NEVER to be closed by naming it, or its
@@ -6259,8 +6258,9 @@ val table1_depths =
 
 val table1_solved = ref 0
 
-(* Search deficiencies seen at the published depths.  See
-   .agent-files/PLAN_phase_1_2_green.md. *)
+(* Entries here are search deficiencies at the published depths, not
+   properties of the goals.  Each is asserted to fail, so improved
+   search must shrink the list and raise the solved-goal count. *)
 val table1_expected_failures = []
 
 fun run_table1_depth (number, depth) =
@@ -6514,8 +6514,8 @@ val halting_ii =
 (* Halting II is not yet within reach of the search at depth 7; it was
    previously "solved" by a preprocessor that recognised the goal and
    handed back a metis-proved theorem.  That preprocessor is gone.  The
-   remedy is scoped in .agent-files/PLAN_phase_1_2_green.md; until then
-   this is an asserted expected failure, never an answer lookup. *)
+   remedy must improve the search generally; until then this remains an
+   asserted expected failure, never an answer lookup. *)
 val _ =
   if selftest_level () >= 2 then
     let
