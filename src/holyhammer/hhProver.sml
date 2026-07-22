@@ -353,8 +353,7 @@ val e_config : prover_config =
    mk_command = e_command, parse_output = parse_tstp,
    default_nfacts = 128,
    slices = slices "e"
-     [(128, ["--auto-schedule"]), (512, ["--auto-schedule"]),
-      (32, ["--auto"]), (1024, ["--auto-schedule"])],
+     [(128, []), (512, []), (32, ["--auto"]), (1024, [])],
    legacy = false}
 
 val vampire_config : prover_config =

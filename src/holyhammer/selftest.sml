@@ -467,10 +467,10 @@ fun test_hhSlice () =
     val zipperposition_slices =
       map slice_summary (#slices (prover "zipperposition") ())
     val _ = expect_equal "E slice table"
-      [expected "e" 128 ["--auto-schedule"],
-       expected "e" 512 ["--auto-schedule"],
+      [expected "e" 128 [],
+       expected "e" 512 [],
        expected "e" 32 ["--auto"],
-       expected "e" 1024 ["--auto-schedule"]] e_slices
+       expected "e" 1024 []] e_slices
     val _ = expect_equal "Vampire slice table"
       [expected "vampire" 96 vampire_options,
        expected "vampire" 512 vampire_options,
@@ -496,18 +496,50 @@ fun test_hhSlice () =
     val default_schedule = hhSlice.mk_schedule defaults
     val expected_default =
       [("vampire", 96, "knn", vampire_options),
-       ("e", 128, "knn", ["--auto-schedule"]),
+       ("e", 128, "knn", []),
        ("zipperposition", 128, "knn", []),
        ("vampire", 512, "knn", vampire_options),
-       ("e", 512, "knn", ["--auto-schedule"]),
+       ("e", 512, "knn", []),
        ("vampire", 32, "knn", vampire_options),
        ("zipperposition", 512, "knn", []),
        ("vampire", 1024, "knn", vampire_options),
        ("e", 32, "knn", ["--auto"]),
-       ("e", 1024, "knn", ["--auto-schedule"]),
+       ("e", 1024, "knn", []),
        ("zipperposition", 32, "knn", [])]
     val _ = expect_equal "default options produce all eleven slices"
       expected_default (schedule_summary default_schedule)
+    val gate30 = slice_options ["e", "vampire", "zipperposition"]
+      8 8 30 "knn" NONE
+    val gate10 = slice_options ["e", "vampire", "zipperposition"]
+      8 8 10 "knn" NONE
+    val gate30_schedule = hhSlice.mk_schedule gate30
+    val gate10_schedule = hhSlice.mk_schedule gate10
+    val expected_gate = List.take (expected_default, 8)
+    val _ = expect_equal "gate freezes the first eight schedule slices"
+      expected_gate (schedule_summary gate30_schedule)
+    val _ = expect_equal "S30 and S10 use the same frozen schedule"
+      (schedule_summary gate30_schedule) (schedule_summary gate10_schedule)
+    fun close expected actual = Real.abs (expected - actual) < 0.000001
+    val _ = expect "eight-core gate gives every S30 slice 30 seconds"
+      (List.all (fn (_, slice) =>
+         close 30.0 (hhSlice.slice_budget 8 gate30 slice)) gate30_schedule)
+    val _ = expect "eight-core gate gives every S10 slice 10 seconds"
+      (List.all (fn (_, slice) =>
+         close 10.0 (hhSlice.slice_budget 8 gate10 slice)) gate10_schedule)
+    val anchors = List.take (gate30_schedule, 3)
+    fun anchor_command_equal (config, slice) =
+      let
+        val baseline : hhProver.run_request =
+          {timeout = 30, problem = "anchor.p", extra = [], debug_dir = NONE}
+        val scheduled : hhProver.run_request =
+          {timeout = 30, problem = "anchor.p", extra = #extra_opts slice,
+           debug_dir = NONE}
+      in
+        #mk_command config "anchor-prover" baseline =
+        #mk_command config "anchor-prover" scheduled
+      end
+    val _ = expect "gate anchors are command-equivalent to one-shot B"
+      (List.all anchor_command_equal anchors)
     val small = hhSlice.mk_schedule
       (slice_options ["e", "vampire", "zipperposition"] 5 2 30 "knn"
         NONE)
@@ -516,18 +548,18 @@ fun test_hhSlice () =
     val subset = hhSlice.mk_schedule
       (slice_options ["zipperposition", "e"] 7 4 30 "knn" NONE)
     val _ = expect_equal "prover subset consumes each table head-first"
-      [("e", 128, "knn", ["--auto-schedule"]),
+      [("e", 128, "knn", []),
        ("zipperposition", 128, "knn", []),
-       ("e", 512, "knn", ["--auto-schedule"]),
+       ("e", 512, "knn", []),
        ("zipperposition", 512, "knn", []),
        ("e", 32, "knn", ["--auto"]),
        ("zipperposition", 32, "knn", []),
-       ("e", 1024, "knn", ["--auto-schedule"])]
+       ("e", 1024, "knn", [])]
       (schedule_summary subset)
     val overridden = hhSlice.mk_schedule
       (slice_options ["e"] 20 2 30 "none" (SOME 40))
     val _ = expect_equal "fact and filter overrides precede deduplication"
-      [("e", 40, "none", ["--auto-schedule"]),
+      [("e", 40, "none", []),
        ("e", 32, "none", ["--auto"])]
       (schedule_summary overridden)
     val exhausted = hhSlice.mk_schedule
@@ -544,7 +576,6 @@ fun test_hhSlice () =
        type_enc = #type_enc first_slice, lam_trans = #lam_trans first_slice,
        nfacts = #nfacts first_slice, filter = #filter first_slice,
        extra_opts = #extra_opts first_slice, slice_size = 3}
-    fun close expected actual = Real.abs (expected - actual) < 0.000001
     val _ = expect "budget uses full timeout when slices fit on cores"
       (close 30.0 (hhSlice.slice_budget (length default_schedule) defaults
         first_slice))
