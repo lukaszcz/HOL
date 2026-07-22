@@ -152,6 +152,16 @@ passes the same theorem batch to every reducer and prepends it to
 assumptions introduced while traversing congruence rules, not merely the
 initial user rewrite theorems.
 
+`TRAVERSE_WITH_CONTEXT` separates its initial context into
+`reducer_context` and `solver_context`.  Reducer-context theorems initialize
+both forms, as with `TRAVERSE`; solver-context theorems do not affect private
+reducer contexts, but extend both `context_thms` and the shared `freevars`
+capture context.  Including their hypothesis free variables ensures that
+descent under binders remains capture-avoiding.  `ROOT_REWRITE_WITH_CONTEXT`
+provides the corresponding root-only operation.  This separation lets
+callers expose the source theorem for an already-installed rule to solvers
+without installing a second reducer or refreshing a bounded rewrite.
+
 ## Engine Side-Condition Pipeline
 
 A reducer or congruence procedure calls the engine solver when a conditional
@@ -192,6 +202,25 @@ while different simpsets can select independent settings.
 The depth setting bounds nested conditional-rewrite attempts.  The term
 order controls the orientation guard for unbounded permutative rewrites;
 bounded rewrites continue to bypass that guard.
+
+## Prepared Global Rewrites
+
+`GEN_GLOBAL_SIMP_TAC` decodes its invocation-supplied ordinary rewrite
+theorems once into prepared theorems and controls.  They are not added to
+the simpset history.  Each assumption, conclusion, or implication-rebuild
+traversal first processes its remaining marker directives, then runs that
+marker-adjusted simpset's `mk_rewrs` filter over the same prepared values.
+The resulting conversion closures therefore share one invocation-wide
+bounded control even when local `Excl`, `ExclSF`, `SF`, `Cong`, `Split`, or
+`AC` directives rebuild or alter the simpset.
+
+Generic solvers, binder-capture tracking, and decision procedures receive
+the prepared rules' underlying source theorems, with any artificial bounded
+hypothesis removed.  Prepared conversions are installed only in each
+traversal's sole rewriter reducer.  Public
+`traversedata_for_ss`, `SIMP_CONV`,
+`GEN_SIMP_TAC`, `TRAVERSE`, and `ROOT_REWRITE` retain their legacy behavior;
+the prepared path is internal to `simpLib`.
 
 ## Tactic Loop and Conversion Boundary
 

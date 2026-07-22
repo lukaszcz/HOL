@@ -147,8 +147,18 @@ sig
 
    val TRAVERSE : traverse_data -> thm list -> conv
 
+   (* As TRAVERSE, but keep initial reducer additions separate from theorems
+      which extend generic solver and binder-capture contexts only. *)
+   val TRAVERSE_WITH_CONTEXT :
+       traverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
+
    (* Apply one reducer at the root, without descending.  Recursive
       side-condition proving still uses the full traversal. *)
    val ROOT_REWRITE : traverse_data -> thm list -> conv
+
+   val ROOT_REWRITE_WITH_CONTEXT :
+       traverse_data ->
+       {reducer_context : thm list, solver_context : thm list} -> conv
 
 end (* sig *)

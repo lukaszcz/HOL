@@ -1140,7 +1140,30 @@ fun clear_rules (SS s) =
 
  exception CONVNET of net;
 
- fun rewriter_for_ss (SS{mk_rewrs,travrules,initial_net,...}) = let
+ (* Invocation-supplied bounded rewrites are decoded once, then compiled
+    against each marker-adjusted simpset without allocating fresh controls. *)
+ type prepared_rewrites = controlled_thm list
+
+ fun prepare_rewrites thms : prepared_rewrites =
+   map dest_tagged_rewrite thms
+
+ fun source_thms (prepared : prepared_rewrites) = map #1 prepared
+
+ fun prepared_convdata mk_rewrs (prepared : prepared_rewrites) =
+   let
+     val rwts0 = flatten (map mk_rewrs prepared)
+     val rwts =
+       map (fn th =>
+               (SOME {Thy = "", Name = "rewrite: prepared context"}, th))
+           rwts0
+   in
+     List.mapPartial mk_rewr_convdata rwts
+   end
+
+ fun rewriter_for_ss_prepared
+       (SS{mk_rewrs,travrules,initial_net,...}) prepared = let
+   val prepared_net =
+     net_add_convs initial_net (prepared_convdata mk_rewrs prepared)
    fun addcontext (context,thms) = let
      val net = (raise context) handle CONVNET net => net
      val cthms = map dest_tagged_rewrite thms
@@ -1160,14 +1183,20 @@ fun clear_rules (SS s) =
    end
    in REDUCER {name=SOME"rewriter_for_ss",
                addcontext=addcontext, apply=apply,
-               initial=CONVNET initial_net}
+               initial=CONVNET prepared_net}
    end;
 
- fun traversedata_for_ss (ss as (SS ssdata)) =
-   let val strategy = #strategy ssdata
+ fun traversedata_for_ss_prepared
+       (ss as (SS ssdata)) (prepared : prepared_rewrites) =
+   let
+     val strategy = #strategy ssdata
+     val dprocs =
+       if null prepared then #dprocs ssdata
+       else
+         map (Traverse.addctxt (source_thms prepared)) (#dprocs ssdata)
    in
-      {rewriters=[rewriter_for_ss ss],
-       dprocs= #dprocs ssdata,
+      {rewriters=[rewriter_for_ss_prepared ss prepared],
+       dprocs=dprocs,
        relation= boolSyntax.equality,
        travrules= #travrules ssdata,
        limit = #limit ssdata,
@@ -1177,7 +1206,18 @@ fun clear_rules (SS s) =
        term_ord= #term_ord strategy}
    end;
 
- fun SIMP_QCONV ss = TRAVERSE (traversedata_for_ss ss);
+ fun traversedata_for_ss ss = traversedata_for_ss_prepared ss [];
+
+ fun SIMP_QCONV_WITH_PREPARED_CONTEXT
+       ss prepared reducer_context solver_context =
+   Traverse.TRAVERSE_WITH_CONTEXT
+     (traversedata_for_ss_prepared ss prepared)
+     {reducer_context=reducer_context,solver_context=solver_context};
+
+ fun SIMP_QCONV_WITH_CONTEXT ss reducer_context solver_context =
+   SIMP_QCONV_WITH_PREPARED_CONTEXT ss [] reducer_context solver_context;
+
+ fun SIMP_QCONV ss thms = SIMP_QCONV_WITH_CONTEXT ss thms [];
 
 val Cong   = markerLib.Cong
 val Split  = markerLib.Split
@@ -1338,14 +1378,28 @@ fun reconcile_hyps asl th =
     Lib.itlist ADD_ASSUM asl (Lib.itlist replace_hyp (hyp th) th)
   end
 
-fun final_solver_tac mode ss context_thms =
+fun simp_conv_with_prepared_context
+      ss prepared reducer_context solver_context =
+  TRY_CONV
+    (SIMP_QCONV_WITH_PREPARED_CONTEXT
+       ss prepared reducer_context solver_context)
+
+fun simp_rule_with_prepared_context
+      ss prepared reducer_context solver_context =
+  CONV_RULE
+    (simp_conv_with_prepared_context
+       ss prepared reducer_context solver_context)
+
+fun final_solver_tac prepared mode ss reducer_context solver_context =
   let
     val s = strategy_of ss
     val solvers =
       if #safe mode then #safe_solvers s else #unsafe_solvers s
     val prover_ctxt =
-      {stack=[], context_thms=context_thms,
-       recurse=QCONV (SIMP_CONV ss context_thms)}
+      {stack=[], context_thms=reducer_context @ solver_context,
+       recurse=QCONV
+         (simp_conv_with_prepared_context
+            ss prepared reducer_context solver_context)}
     fun solve_with ({solve,...} : Traverse.ssolver) (asl,w) =
       let
         val th = solve prover_ctxt w
@@ -1382,7 +1436,8 @@ fun bounded_looper rounds tac g =
           end
     | NONE => tac g
 
-fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
+fun gen_simp_tac_with_prepared
+      prepared solver_context (mode : simp_mode) ss ths =
   fn g =>
     let
       val rounds = ref (getlimit ss)
@@ -1394,11 +1449,11 @@ fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
                 process_tags ss tagged_thms
               val rewr_tac =
                 CONV_TAC
-                  (SIMP_CONV invocation_ss
-                             (context_thms @ extra_context))
+                  (simp_conv_with_prepared_context
+                     invocation_ss prepared context_thms solver_context)
               val solve_tac =
-                final_solver_tac mode invocation_ss
-                                 (context_thms @ extra_context)
+                final_solver_tac prepared mode invocation_ss
+                                 context_thms solver_context
               val loop_tac =
                 bounded_looper rounds (looper_tac invocation_ss)
             in
@@ -1412,6 +1467,9 @@ fun gen_simp_tac extra_context (mode : simp_mode) ss ths =
     in
       markerLib.process_taclist_then_recur {arg=ths} start g
     end
+
+fun gen_simp_tac solver_context =
+  gen_simp_tac_with_prepared [] solver_context
 
 fun GEN_SIMP_TAC mode = gen_simp_tac [] mode
 
@@ -1543,7 +1601,7 @@ fun then_annotated (goals,validation) next =
 fun rotate_assumption cfg =
     popper_of cfg (BF_ASSUME_TAC (not (#oldestfirst cfg)))
 
-fun counted_psr cfg ss extra_context g =
+fun counted_psr cfg ss prepared solver_context g =
     let
       (* [simplify] runs inside a callback, so what it learns about the
          assumption is smuggled out through this cell. *)
@@ -1552,7 +1610,10 @@ fun counted_psr cfg ss extra_context g =
         ASSUM_LIST
           (fn asms => fn popped_goal =>
              let
-               val simplified = SIMP_RULE ss (asms @ extra_context) th
+               val (invocation_ss,reducer_context) = process_tags ss asms
+               val simplified =
+                 simp_rule_with_prepared_context
+                   invocation_ss prepared reducer_context solver_context th
                val ordinary =
                  BF_ASSUME_TAC (not (#oldestfirst cfg)) simplified popped_goal
                val _ =
@@ -1574,7 +1635,7 @@ fun counted_psr cfg ss extra_context g =
       (map (fn goal => (goal,info)) goals,validation)
     end
 
-fun counted_pass cfg ss extra_context initial_k (g as (asl,_)) =
+fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
     let
       val initial =
         {last= ~1, structural=false, k=initial_k,
@@ -1589,7 +1650,7 @@ fun counted_pass cfg ss extra_context initial_k (g as (asl,_)) =
                     val info = {changed=false,structural=false}
                 in (map (fn g => (g,info)) goals,validation)
                 end
-              else counted_psr cfg ss extra_context goal
+              else counted_psr cfg ss prepared solver_context goal
             fun next {changed,structural} =
               let
                 val k =
@@ -1619,11 +1680,14 @@ fun GEN_GLOBAL_SIMP_TAC
           fn thl =>
              let
                val (ss1,thl') = process_tags ss0 thl
-               val ss = ss1 ++ rewrites thl'
+               val prepared = prepare_rewrites thl'
+               val solver_context = source_thms prepared
+               (* Each local marker-adjusted simpset compiles these prepared
+                  rules while retaining their invocation-wide controls. *)
+               val ss = ss1
                val conclusion_tac =
-                 gen_simp_tac thl' {safe=false} ss []
-               val root_rewrite =
-                 Traverse.ROOT_REWRITE (traversedata_for_ss ss)
+                 gen_simp_tac_with_prepared
+                   prepared solver_context {safe=false} ss []
 
                fun strip_implications (g as (_,w)) =
                  if can boolSyntax.dest_imp_only w then
@@ -1638,9 +1702,17 @@ fun GEN_GLOBAL_SIMP_TAC
                    | a::rest =>
                        let
                          val target = mk_imp (a,nested)
-                         val context = map ASSUME rest @ thl'
+                         val (invocation_ss,reducer_context) =
+                           process_tags ss (map ASSUME rest)
+                         val root_rewrite =
+                           Traverse.ROOT_REWRITE_WITH_CONTEXT
+                             (traversedata_for_ss_prepared
+                                invocation_ss prepared)
                        in
-                         case SOME (root_rewrite context target)
+                         case SOME
+                                (root_rewrite
+                                   {reducer_context=reducer_context,
+                                    solver_context=solver_context} target)
                               handle HOL_ERR _ => NONE
                                    | Conv.UNCHANGED => NONE of
                              SOME eq => SOME (count,target,eq)
@@ -1651,7 +1723,7 @@ fun GEN_GLOBAL_SIMP_TAC
                fun fixpoint k goal =
                  let
                    val pass as (annotated,validation) =
-                     counted_pass base ss thl' k goal
+                     counted_pass base ss prepared solver_context k goal
                    val unchanged =
                      same_goals (map #1 annotated,[goal])
                    fun clear_change state =
@@ -1891,4 +1963,3 @@ val pp_ssfrag = Parse.mlower o pp_ssfrag
 val pp_simpset = Parse.mlower o pp_simpset
 
 end (* struct *)
-

@@ -2022,16 +2022,65 @@ val _ = let
       [([fix_asm1],fix_concl1)]
       (GEN_GLOBAL_SIMP_TAC (xcfg true false) gate_ss []) gate_goal
 
+  val once_p = ``global_once_p:bool``
+  val once_rule = CONJUNCT1 (SPEC once_p boolTheory.AND_CLAUSES)
+  val once_goal = ([],mk_conj(boolSyntax.T,mk_conj(boolSyntax.T,once_p)))
+  val _ =
+    check "global supplied Once rewrite is installed exactly once"
+      [([],mk_conj(boolSyntax.T,once_p))]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) empty_ss [Once once_rule])
+      once_goal
+
+  val once_asm_p = ``global_once_asm_p:bool``
+  val once_concl_p = ``global_once_concl_p:bool``
+  val once_across_goal =
+    ([mk_conj(boolSyntax.T,once_asm_p)],
+     mk_conj(boolSyntax.T,once_concl_p))
+  val _ =
+    check "global supplied Once lifetime spans assumptions and conclusion"
+      [([once_asm_p],mk_conj(boolSyntax.T,once_concl_p))]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) empty_ss [Once once_rule])
+      once_across_goal
+
+  val local_exclsf = concl (ExclSF "BOOL")
+  val local_exclsf_target = ``T /\ global_local_exclsf_p``
+  (* The target is popped first, leaving ExclSF in the local context. *)
+  val local_exclsf_goal =
+    ([local_exclsf,local_exclsf_target],``global_local_exclsf_q:bool``)
+  val _ =
+    check "global remaining ExclSF applies while simplifying assumptions"
+      [local_exclsf_goal]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss [])
+      local_exclsf_goal
+
+  val once_exclsf_asm = ``T /\ global_once_exclsf_asm_p``
+  val once_exclsf_concl = ``T /\ global_once_exclsf_concl_p``
+  val once_exclsf_goal =
+    ([local_exclsf,once_exclsf_asm],once_exclsf_concl)
+  val _ =
+    check "global ExclSF rebuild preserves supplied Once lifetime"
+      [([local_exclsf,``global_once_exclsf_asm_p:bool``],
+         once_exclsf_concl)]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss [Once once_rule])
+      once_exclsf_goal
+
   val supplied_sentinel = REFL ``global_supplied_sentinel:'a``
+  fun has_only_untagged_sentinel thms =
+    let
+      val sentinels =
+        List.filter
+          (fn th => aconv (concl th) (concl supplied_sentinel))
+          thms
+    in
+      not (null sentinels) andalso
+      List.all (not o can BoundedRewrites.DEST_BOUNDED) sentinels
+    end
   val supplied_condition =
     SPEC ``global_traversal_p:bool`` boolTheory.EXCLUDED_MIDDLE
   val supplied_solver_calls = ref 0
   fun supplied_solver {context_thms,...} tm =
     let
-      val has_sentinel =
-        List.exists
-          (fn th => aconv (concl th) (concl supplied_sentinel))
-          context_thms
+      val has_sentinel = has_only_untagged_sentinel context_thms
       val _ = supplied_solver_calls := !supplied_solver_calls + 1
     in
       if aconv tm (concl supplied_condition) andalso has_sentinel then
@@ -2049,10 +2098,10 @@ val _ = let
          {name="global supplied traversal context",solve=supplied_solver}
   val _ = supplied_solver_calls := 0
   val _ =
-    check "global traversals see supplied theorems"
+    check "global traversals see supplied source theorem without bound tag"
       []
       (GEN_GLOBAL_SIMP_TAC (xcfg false false) supplied_ss
-                           [supplied_sentinel])
+                           [Once supplied_sentinel])
       ([supplied_tm],supplied_tm)
   val _ =
     if !supplied_solver_calls >= 2 then ()
@@ -2079,18 +2128,54 @@ val _ = let
       [([``~imp_q``],``~imp_p``)]
       (GEN_GLOBAL_SIMP_TAC (xcfg false true) imp_ss []) imp_goal
 
+  val excluded_imp_name = "global excluded implication rebuild"
+  val excluded_imp_marker = concl (ExclSF excluded_imp_name)
+  val excluded_imp_target = ``excluded_imp_a ==> excluded_imp_q``
+  fun excluded_imp_conv _ _ tm =
+    if aconv tm excluded_imp_target then
+      REWR_CONV (GSYM boolTheory.CONTRAPOS_THM) tm
+    else NO_CONV tm
+  val excluded_imp_ss =
+    empty_ss ++
+    name_ss excluded_imp_name
+      (conv_ss
+         {name=excluded_imp_name,key=SOME ([],excluded_imp_target),trace=0,
+          conv=excluded_imp_conv})
+  val excluded_imp_goal =
+    ([``excluded_imp_a:bool``,excluded_imp_marker],
+     ``excluded_imp_q:bool``)
+  val _ =
+    check "imp_rebuild applies remaining ExclSF before root rewriting"
+      [excluded_imp_goal]
+      (GEN_GLOBAL_SIMP_TAC (xcfg false true) excluded_imp_ss [])
+      excluded_imp_goal
+
   val supplied_imp_target =
     ``global_supplied_imp_a ==> global_supplied_imp_b``
-  fun supplied_imp_apply {solver,stack,...} tm =
+  exception SUPPLIED_IMP_CONTEXT of bool
+  fun supplied_imp_has_context context =
+    (raise context) handle SUPPLIED_IMP_CONTEXT present => present
+                         | _ => false
+  fun supplied_imp_addcontext (context,thms) =
+    let
+      val has_source = has_only_untagged_sentinel thms
+    in
+      SUPPLIED_IMP_CONTEXT
+        (supplied_imp_has_context context orelse has_source)
+    end
+  fun supplied_imp_apply {solver,stack,context,...} tm =
     if aconv tm supplied_imp_target then
-      (solver stack supplied_tm;
+      (supplied_imp_has_context context orelse
+       raise mk_HOL_ERR "selftest" "supplied_imp_apply"
+                         "supplied source theorem absent from dproc context";
+       solver stack supplied_tm;
        REWR_CONV (GSYM boolTheory.CONTRAPOS_THM) tm)
     else NO_CONV tm
   val supplied_imp_reducer =
     Traverse.REDUCER
       {name=SOME "global supplied implication rebuild",
-       initial=Fail "global supplied implication rebuild",
-       addcontext=fn (ctxt,_) => ctxt,
+       initial=SUPPLIED_IMP_CONTEXT false,
+       addcontext=supplied_imp_addcontext,
        apply=supplied_imp_apply}
   val supplied_imp_ss =
     empty_ss ++ dproc_ss supplied_imp_reducer
@@ -2101,7 +2186,7 @@ val _ = let
       [([``~global_supplied_imp_b``],
          ``~global_supplied_imp_a``)]
       (GEN_GLOBAL_SIMP_TAC (xcfg false true) supplied_imp_ss
-                           [supplied_sentinel])
+                           [Once supplied_sentinel])
       ([``global_supplied_imp_a:bool``],
        ``global_supplied_imp_b:bool``)
 in

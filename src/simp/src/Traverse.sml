@@ -118,6 +118,25 @@ in
   doit
 end
 
+(* Add facts to the generic prover and binder-capture contexts without also
+   reinstalling them in every reducer.  Hypothesis free variables force
+   capture-avoiding renaming when traversal descends under a binder. *)
+fun add_solver_context (context, thms) =
+  if null thms then context
+  else
+    let
+      val TSTATE {contexts1,contexts2,context_thms,freevars,
+                  relation_info,relation} = context
+      val more_freevars = free_varsl (flatten (map hyp thms))
+      val _ = map (fn thm => trace(2,MORE_CONTEXT thm)) thms
+    in
+      TSTATE
+        {contexts1=contexts1, contexts2=contexts2,
+         context_thms=context_thms @ thms,
+         freevars=freevars @ more_freevars,
+         relation=relation, relation_info=relation_info}
+    end
+
 
 (* ---------------------------------------------------------------------
  * get_relation
@@ -363,10 +382,15 @@ fun with_option_flag _ NONE f x = f x
 
 (* Reducer contexts contain mutable rewrite controls, so rebuild the context
    for every application of a reusable conversion. *)
-fun GEN_TRAVERSE root_only (data : traverse_data) thms tm =
+fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
+      {reducer_context,solver_context} tm =
    let
      val {dprocs,rewriters,cond_depth,term_ord,...} = data
-     val context' = add_context rewriters dprocs (initial_context data,thms)
+     val context' =
+       add_solver_context
+         (add_context rewriters dprocs
+            (initial_context data,reducer_context),
+          solver_context)
      fun traverse tm =
        TRAVERSE_IN_CONTEXT root_only data [] context' tm
      fun with_order tm =
@@ -375,7 +399,13 @@ fun GEN_TRAVERSE root_only (data : traverse_data) thms tm =
      with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
    end;
 
+fun GEN_TRAVERSE root_only data thms =
+  GEN_TRAVERSE_WITH_CONTEXT root_only data
+    {reducer_context=thms,solver_context=[]}
+
 val TRAVERSE = GEN_TRAVERSE false
 val ROOT_REWRITE = GEN_TRAVERSE true
+val TRAVERSE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT false
+val ROOT_REWRITE_WITH_CONTEXT = GEN_TRAVERSE_WITH_CONTEXT true
 
 end (* struct *)
