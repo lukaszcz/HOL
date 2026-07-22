@@ -83,6 +83,9 @@ sig
   val MOVE_ASSUMPTION_TO_BACK_TAC : int -> tactic
 
   val assumption_action : int -> replay_action
+  (* Unlike [assumption_action], this exact-replay action never scans for a
+     different closing assumption when the recorded occurrence has drifted. *)
+  val strict_assumption_action : int -> replay_action
   val contradiction_action : int * int -> replay_action
   val mp_action : {implication : int, antecedent : int} -> replay_action
   val rule_action :

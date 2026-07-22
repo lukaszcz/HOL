@@ -5637,6 +5637,46 @@ val _ =
 
 val _ =
   test
+    ("strict assumption replay rejects selector drift while legacy recovers",
+     fn () =>
+       let
+         val p = Term.mk_var ("strict_replay_p", Type.bool)
+         val q = Term.mk_var ("strict_replay_q", Type.bool)
+         val recorded_goal = ([q, p], p)
+         val drifted_goal = ([p, q], p)
+         val root = clasetGoal.from_goal recorded_goal
+         val legacy =
+           drain_exact (clasetStep.blast_assumption_step (root, 1))
+         val strict =
+           drain_exact
+             (clasetStep.blast_assumption_step_at 2 (root, 1))
+         fun grounded node =
+           clasetReplay.ground (clasetGoal.store node)
+             (clasetGoal.replay node)
+         val legacy_result =
+           case legacy of
+               [(_, node)] =>
+                 total
+                   (Tactical.VALID
+                     (clasetReplay.REPLAY_TAC (grounded node)))
+                   drifted_goal
+             | _ => NONE
+         val strict_result =
+           case strict of
+               [(_, node)] => clasetReplay.replay (grounded node) drifted_goal
+             | _ => raise Fail "missing strict assumption transition"
+       in
+         (case legacy_result of
+              SOME ([], validation) =>
+                (ignore (validation []); true)
+            | _ => false) andalso
+         (case strict_result of
+              clasetReplay.ReplayFailed _ => true
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("exact rule selector validates shape range and nonmatching major",
      fn () =>
        let

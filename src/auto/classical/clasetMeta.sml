@@ -287,7 +287,18 @@ fun bind (m, tm) store =
                      (#tm_bindings store, name, residue),
                  tymetas = #tymetas store,
                  ty_bindings = #ty_bindings store}
+              (* Adding a binding whose normalized residue contains no
+                 eigenvariable cannot invalidate the eigen scopes of any
+                 existing binding.  A later binding which does introduce an
+                 eigenvariable still performs the complete transitive check,
+                 so this fast path preserves the store invariant while
+                 avoiding a quadratic rescan for rigid propositional
+                 structure. *)
+              val introduces_eigen =
+                List.exists (listed_as_eigen candidate)
+                  (free_vars (norm candidate residue))
               val permitted =
+                not introduces_eigen orelse
                 List.all (binding_respects_allow candidate)
                   (Redblackmap.listItems (#tm_bindings candidate))
             in

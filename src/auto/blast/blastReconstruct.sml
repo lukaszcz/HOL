@@ -35,7 +35,7 @@ fun move_children count node =
 fun apply_pseudo step node =
   seq.append (apply step node) (seq.result node)
 
-fun apply_rule cs duplicate rule node =
+fun apply_rule cs duplicate major rule node =
   case #origin rule of
       blastRule.ImpIntro =>
         apply_pseudo clasetStep.blast_disch_step node
@@ -49,8 +49,9 @@ fun apply_rule cs duplicate rule node =
           val old_count = length (clasetGoal.goals node)
           val transitions =
             apply
-              (clasetStep.blast_rule_step cs
-                {theorem = replay_theorem, elim = is_elim}) node
+              (clasetStep.blast_rule_step_at cs
+                {theorem = replay_theorem, elim = is_elim,
+                 major = major}) node
 
           fun finish next =
             let
@@ -67,24 +68,24 @@ fun apply_rule cs duplicate rule node =
 
 fun execute cs step node =
   case step of
-      blastSearch.HypSubst =>
-        apply clasetStep.blast_hyp_subst_step node
-    | blastSearch.CloseAssume =>
-        apply clasetStep.blast_assumption_step node
-    | blastSearch.CloseContradiction =>
-        apply clasetStep.blast_contradiction_step node
-    | blastSearch.SafeRule {rule, ...} =>
-        apply_rule cs false rule node
+      blastSearch.HypSubst {equality} =>
+        apply (clasetStep.blast_hyp_subst_step_at equality) node
+    | blastSearch.CloseAssume {assumption} =>
+        apply (clasetStep.blast_assumption_step_at assumption) node
+    | blastSearch.CloseContradiction positions =>
+        apply (clasetStep.blast_contradiction_step_at positions) node
+    | blastSearch.SafeRule {rule, major, ...} =>
+        apply_rule cs false major rule node
     | blastSearch.DeferGoal =>
         apply clasetStep.blast_ccontr_step node
-    | blastSearch.UnsafeRule {rule, duplicate, ...} =>
-        apply_rule cs duplicate rule node
+    | blastSearch.UnsafeRule {rule, duplicate, major, ...} =>
+        apply_rule cs duplicate major rule node
 
-(* The tableau records rule provenance, but an elimination theorem can
-   resolve against several assumptions.  Explore those typed engine
-   transitions lazily; only a completely grounded, kernel-valid replay is
-   accepted.  Exhausting them still rejects this tableau through the search
-   continuation's PROOF_FAILED hook. *)
+(* Every ambiguous script step selects its exact typed assumption occurrence.
+   Pull the resulting typed engine sequence lazily, but never fall back to a
+   different assumption or rule position.  Only a completely grounded,
+   kernel-valid replay is accepted; failure rejects this tableau through the
+   search continuation's PROOF_FAILED hook. *)
 fun perform_with cs goal ({script, ...} : proof) =
   let
     fun finish final =
@@ -487,7 +488,7 @@ fun reconstructWithMeasured {observe, stop} cs goal
     fun apply_pseudo_m kind step node =
       seq.append (apply_m kind step node) (seq.result node)
 
-    fun apply_rule_m kind duplicate rule node =
+    fun apply_rule_m kind duplicate major rule node =
       case #origin rule of
           blastRule.ImpIntro =>
             apply_pseudo_m kind clasetStep.blast_disch_step node
@@ -504,8 +505,9 @@ fun reconstructWithMeasured {observe, stop} cs goal
                   val old_count = length (clasetGoal.goals node)
                   val transitions =
                     apply_m kind
-                      (clasetStep.blast_rule_step cs
-                        {theorem = replay_theorem, elim = is_elim}) node
+                      (clasetStep.blast_rule_step_at cs
+                        {theorem = replay_theorem, elim = is_elim,
+                         major = major}) node
 
                   fun finish next =
                     bracket StoredRuleTransition
@@ -524,19 +526,21 @@ fun reconstructWithMeasured {observe, stop} cs goal
 
     fun execute_m step node =
       case step of
-          blastSearch.HypSubst =>
-            apply_m HypSubstStep clasetStep.blast_hyp_subst_step node
-        | blastSearch.CloseAssume =>
-            apply_m CloseAssumeStep clasetStep.blast_assumption_step node
-        | blastSearch.CloseContradiction =>
+          blastSearch.HypSubst {equality} =>
+            apply_m HypSubstStep
+              (clasetStep.blast_hyp_subst_step_at equality) node
+        | blastSearch.CloseAssume {assumption} =>
+            apply_m CloseAssumeStep
+              (clasetStep.blast_assumption_step_at assumption) node
+        | blastSearch.CloseContradiction positions =>
             apply_m CloseContradictionStep
-              clasetStep.blast_contradiction_step node
-        | blastSearch.SafeRule {rule, ...} =>
-            apply_rule_m SafeRuleStep false rule node
+              (clasetStep.blast_contradiction_step_at positions) node
+        | blastSearch.SafeRule {rule, major, ...} =>
+            apply_rule_m SafeRuleStep false major rule node
         | blastSearch.DeferGoal =>
             apply_m DeferGoalStep clasetStep.blast_ccontr_step node
-        | blastSearch.UnsafeRule {rule, duplicate, ...} =>
-            apply_rule_m UnsafeRuleStep duplicate rule node
+        | blastSearch.UnsafeRule {rule, duplicate, major, ...} =>
+            apply_rule_m UnsafeRuleStep duplicate major rule node
 
     fun finish final =
       let
@@ -764,9 +768,9 @@ fun reconstructWithMeasuredDetailedModeV3
               "internal detailed diagnostic mode mismatch"
 
     val make_timed_rule_v3 =
-      clasetStep.blast_rule_step_timed_v3_with_sink
+      clasetStep.blast_rule_step_timed_v3_with_sink_at
     val make_timed_rule_v4 =
-      clasetStep.blast_rule_step_timed_v4_with_summary
+      clasetStep.blast_rule_step_timed_v4_with_summary_at
 
     fun owner_of AlternativeEnumeration = AlternativeOwner
       | owner_of ReplayRecursion = ReplayOwner
@@ -1058,7 +1062,7 @@ fun reconstructWithMeasuredDetailedModeV3
            duplicate : bool,
            is_elim : bool}
 
-    fun apply_rule_m script_position kind duplicate rule node =
+    fun apply_rule_m script_position kind duplicate major rule node =
       case #origin rule of
           blastRule.ImpIntro =>
             OrdinaryTransitionsV3
@@ -1095,7 +1099,7 @@ fun reconstructWithMeasuredDetailedModeV3
                                    stop = stop_stored_rule}
                                   cs
                                   {theorem = replay_theorem,
-                                   elim = is_elim}
+                                   elim = is_elim, major = major}
                                   (node, 1)) ()
                           val _ =
                             timed_rule_sequences_v3 :=
@@ -1117,7 +1121,7 @@ fun reconstructWithMeasuredDetailedModeV3
                                    stop = stop_stored_rule}
                                   cs
                                   {theorem = replay_theorem,
-                                   elim = is_elim}
+                                   elim = is_elim, major = major}
                                   (node, 1)) ()
                         in
                           TimedStoredRuleTransitionsV4
@@ -1129,23 +1133,26 @@ fun reconstructWithMeasuredDetailedModeV3
 
     fun execute_m script_position step node =
       case step of
-          blastSearch.HypSubst =>
+          blastSearch.HypSubst {equality} =>
             OrdinaryTransitionsV3
-              (apply_m HypSubstStep clasetStep.blast_hyp_subst_step node)
-        | blastSearch.CloseAssume =>
+              (apply_m HypSubstStep
+                (clasetStep.blast_hyp_subst_step_at equality) node)
+        | blastSearch.CloseAssume {assumption} =>
             OrdinaryTransitionsV3
-              (apply_m CloseAssumeStep clasetStep.blast_assumption_step node)
-        | blastSearch.CloseContradiction =>
+              (apply_m CloseAssumeStep
+                (clasetStep.blast_assumption_step_at assumption) node)
+        | blastSearch.CloseContradiction positions =>
             OrdinaryTransitionsV3
               (apply_m CloseContradictionStep
-                clasetStep.blast_contradiction_step node)
-        | blastSearch.SafeRule {rule, ...} =>
-            apply_rule_m script_position SafeRuleStep false rule node
+                (clasetStep.blast_contradiction_step_at positions) node)
+        | blastSearch.SafeRule {rule, major, ...} =>
+            apply_rule_m script_position SafeRuleStep false major rule node
         | blastSearch.DeferGoal =>
             OrdinaryTransitionsV3
               (apply_m DeferGoalStep clasetStep.blast_ccontr_step node)
-        | blastSearch.UnsafeRule {rule, duplicate, ...} =>
-            apply_rule_m script_position UnsafeRuleStep duplicate rule node
+        | blastSearch.UnsafeRule {rule, duplicate, major, ...} =>
+            apply_rule_m script_position UnsafeRuleStep duplicate major rule
+              node
 
     fun finish_stored_rule old_count duplicate is_elim next =
       bracket StoredRuleTransition
@@ -2094,7 +2101,7 @@ fun reconstructWithMeasuredDetailedMode timing_mode
            duplicate : bool,
            is_elim : bool}
 
-    fun apply_rule_m script_position kind duplicate rule node =
+    fun apply_rule_m script_position kind duplicate major rule node =
       case #origin rule of
           blastRule.ImpIntro =>
             OrdinaryTransitions
@@ -2121,12 +2128,12 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                           val sequence =
                             bracket (TypedStep kind)
                               (fn () =>
-                                clasetStep.blast_rule_step_measured
+                                clasetStep.blast_rule_step_measured_at
                                   {observe = SOME observe_rule,
                                    stop = stop_stored_rule}
                                   cs
                                   {theorem = replay_theorem,
-                                   elim = is_elim}
+                                   elim = is_elim, major = major}
                                   (node, 1)) ()
                         in
                           StoredRuleTransitions
@@ -2139,13 +2146,13 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                           val sequence =
                             bracket (TypedStep kind)
                               (fn () =>
-                                clasetStep.blast_rule_step_timed
+                                clasetStep.blast_rule_step_timed_at
                                   {clock = fn () => invoke clock (),
                                    observe = SOME observe_rule,
                                    stop = stop_stored_rule}
                                   cs
                                   {theorem = replay_theorem,
-                                   elim = is_elim}
+                                   elim = is_elim, major = major}
                                   (node, 1)) ()
                           val _ =
                             timed_rule_sequences :=
@@ -2161,13 +2168,13 @@ fun reconstructWithMeasuredDetailedMode timing_mode
                           val sequence =
                             bracket (TypedStep kind)
                               (fn () =>
-                                clasetStep.blast_rule_step_timed_v2
+                                clasetStep.blast_rule_step_timed_v2_at
                                   {clock = fn () => invoke clock (),
                                    observe = SOME observe_rule,
                                    stop = stop_stored_rule}
                                   cs
                                   {theorem = replay_theorem,
-                                   elim = is_elim}
+                                   elim = is_elim, major = major}
                                   (node, 1)) ()
                           val _ =
                             timed_rule_sequences_v2 :=
@@ -2182,25 +2189,26 @@ fun reconstructWithMeasuredDetailedMode timing_mode
 
     fun execute_m script_position step node =
       case step of
-          blastSearch.HypSubst =>
+          blastSearch.HypSubst {equality} =>
             OrdinaryTransitions
               (apply_m HypSubstStep
-                clasetStep.blast_hyp_subst_step node)
-        | blastSearch.CloseAssume =>
+                (clasetStep.blast_hyp_subst_step_at equality) node)
+        | blastSearch.CloseAssume {assumption} =>
             OrdinaryTransitions
               (apply_m CloseAssumeStep
-                clasetStep.blast_assumption_step node)
-        | blastSearch.CloseContradiction =>
+                (clasetStep.blast_assumption_step_at assumption) node)
+        | blastSearch.CloseContradiction positions =>
             OrdinaryTransitions
               (apply_m CloseContradictionStep
-                clasetStep.blast_contradiction_step node)
-        | blastSearch.SafeRule {rule, ...} =>
-            apply_rule_m script_position SafeRuleStep false rule node
+                (clasetStep.blast_contradiction_step_at positions) node)
+        | blastSearch.SafeRule {rule, major, ...} =>
+            apply_rule_m script_position SafeRuleStep false major rule node
         | blastSearch.DeferGoal =>
             OrdinaryTransitions
               (apply_m DeferGoalStep clasetStep.blast_ccontr_step node)
-        | blastSearch.UnsafeRule {rule, duplicate, ...} =>
-            apply_rule_m script_position UnsafeRuleStep duplicate rule node
+        | blastSearch.UnsafeRule {rule, duplicate, major, ...} =>
+            apply_rule_m script_position UnsafeRuleStep duplicate major rule
+              node
 
     fun finish_stored_rule old_count duplicate is_elim next =
       bracket StoredRuleTransition

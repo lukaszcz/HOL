@@ -20,7 +20,8 @@ datatype origin =
 type tableau_rule =
   {origin : origin,
    pattern : pterm,
-   premises : pterm list list}
+   premises : pterm list list,
+   hidden_assumptions : int option list}
 
 type monitor =
   {candidate : unit -> unit,
@@ -469,16 +470,35 @@ fun is_false_var term =
            | _ => false)
     | _ => false
 
-fun delete_concl [] = raise ElimBadPrem
-  | delete_concl (formula :: formulas) =
+fun delete_concl_from _ [] = raise ElimBadPrem
+  | delete_concl_from assumption_index (formula :: formulas) =
       (case formula of
            Const (name, _) $ value =>
              if (name = goal_name orelse
                  name = const_name {Thy = "bool", Name = "~"}) andalso
                 is_false_var value
-             then formulas
-             else formula :: delete_concl formulas
-         | _ => formula :: delete_concl formulas)
+             then
+               (formulas,
+                if name = goal_name then NONE else SOME assumption_index)
+             else
+               let
+                 val next =
+                   if name = goal_name then assumption_index
+                   else assumption_index + 1
+                 val (remaining, hidden) =
+                   delete_concl_from next formulas
+               in
+                 (formula :: remaining, hidden)
+               end
+         | _ =>
+             let
+               val (remaining, hidden) =
+                 delete_concl_from (assumption_index + 1) formulas
+             in
+               (formula :: remaining, hidden)
+             end)
+
+fun delete_concl formulas = delete_concl_from 0 formulas
 
 fun canonical_data is_elim theorem =
   let
@@ -529,7 +549,8 @@ fun convertIntro cache vars theorem =
   in
     {origin = Stored {is_elim = false, theorem = theorem},
      pattern = mkGoal conclusion,
-     premises = map one premises}
+     premises = map one premises,
+     hidden_assumptions = map (fn _ => NONE) premises}
   end
 
 fun convertIntroMeasured checkpoint cache vars theorem =
@@ -549,7 +570,8 @@ fun convertIntroMeasured checkpoint cache vars theorem =
   in
     {origin = Stored {is_elim = false, theorem = theorem},
      pattern = mkGoal conclusion,
-     premises = convert premises}
+     premises = convert premises,
+     hidden_assumptions = map (fn _ => NONE) premises}
   end
 
 fun weak_warning theorem =
@@ -586,11 +608,13 @@ fun convertElim cache vars theorem =
     val _ = false_var := SOME (Const (false_name, []))
     fun one premise =
       delete_concl (convertPrem (skoPrem cache vars premise))
+    val converted = map one minors
   in
     SOME
       {origin = Stored {is_elim = true, theorem = theorem},
        pattern = major,
-       premises = map one minors}
+       premises = map #1 converted,
+       hidden_assumptions = map #2 converted}
   end
   handle ElimBadPrem => (weak_warning theorem; NONE)
        | ElimBadConcl =>
@@ -599,18 +623,40 @@ fun convertElim cache vars theorem =
             else ();
             NONE)
 
-fun delete_concl_measured checkpoint [] =
+fun delete_concl_measured_from checkpoint _ [] =
       (checkpoint (); raise ElimBadPrem)
-  | delete_concl_measured checkpoint (formula :: formulas) =
+  | delete_concl_measured_from checkpoint assumption_index
+      (formula :: formulas) =
       (checkpoint ();
        case formula of
            Const (name, _) $ value =>
              if (name = goal_name orelse
                  name = const_name {Thy = "bool", Name = "~"}) andalso
                 is_false_var value
-             then formulas
-             else formula :: delete_concl_measured checkpoint formulas
-         | _ => formula :: delete_concl_measured checkpoint formulas)
+             then
+               (formulas,
+                if name = goal_name then NONE else SOME assumption_index)
+             else
+               let
+                 val next =
+                   if name = goal_name then assumption_index
+                   else assumption_index + 1
+                 val (remaining, hidden) =
+                   delete_concl_measured_from checkpoint next formulas
+               in
+                 (formula :: remaining, hidden)
+               end
+         | _ =>
+             let
+               val (remaining, hidden) =
+                 delete_concl_measured_from checkpoint
+                   (assumption_index + 1) formulas
+             in
+               (formula :: remaining, hidden)
+             end)
+
+fun delete_concl_measured checkpoint formulas =
+  delete_concl_measured_from checkpoint 0 formulas
 
 fun convertElimMeasured checkpoint cache vars theorem =
   let
@@ -646,10 +692,13 @@ fun convertElimMeasured checkpoint cache vars theorem =
             minor :: convert rest
           end
   in
-    SOME
+    let val converted = convert minors
+    in SOME
       {origin = Stored {is_elim = true, theorem = theorem},
        pattern = major,
-       premises = convert minors}
+       premises = map #1 converted,
+       hidden_assumptions = map #2 converted}
+    end
   end
   handle ElimBadPrem => (weak_warning theorem; NONE)
        | ElimBadConcl =>
@@ -791,10 +840,12 @@ fun copyRules cache vars formula fresh_skolems rules =
         | Abs (name, body) => Abs (name, copy_term body)
         | left $ right => copy_term left $ copy_term right
 
-    fun copy_rule ({origin, pattern, premises} : tableau_rule) =
+    fun copy_rule
+          ({origin, pattern, premises, hidden_assumptions} : tableau_rule) =
       {origin = origin,
        pattern = copy_term pattern,
-       premises = map (map copy_term) premises}
+       premises = map (map copy_term) premises,
+       hidden_assumptions = hidden_assumptions}
   in
     map copy_rule rules
   end
@@ -999,7 +1050,8 @@ fun pseudoRules cache vars formula =
       case proto_imp body of
           SOME (premise, conclusion) =>
             [{origin = ImpIntro, pattern = formula,
-              premises = [[mkGoal conclusion, premise]]}]
+              premises = [[mkGoal conclusion, premise]],
+              hidden_assumptions = [NONE]}]
         | NONE =>
             (case dest_forall_body body of
                  SOME predicate =>
@@ -1008,7 +1060,8 @@ fun pseudoRules cache vars formula =
                    in
                      [{origin = AllIntro, pattern = formula,
                        premises = [[mkGoal
-                         (apply_predicate predicate skolem)]]}]
+                         (apply_predicate predicate skolem)]],
+                       hidden_assumptions = [NONE]}]
                    end
                | NONE => [])
     end
@@ -1023,7 +1076,8 @@ fun pseudoRulesMeasured checkpoint cache vars formula =
       case proto_imp body of
           SOME (premise, conclusion) =>
             [{origin = ImpIntro, pattern = formula,
-              premises = [[mkGoal conclusion, premise]]}]
+              premises = [[mkGoal conclusion, premise]],
+              hidden_assumptions = [NONE]}]
         | NONE =>
             (checkpoint ();
              case dest_forall_body body of
@@ -1035,7 +1089,8 @@ fun pseudoRulesMeasured checkpoint cache vars formula =
                        apply_predicate_measured checkpoint predicate skolem
                    in
                      [{origin = AllIntro, pattern = formula,
-                       premises = [[mkGoal applied]]}]
+                       premises = [[mkGoal applied]],
+                       hidden_assumptions = [NONE]}]
                    end
                | NONE => [])
     end
@@ -1253,11 +1308,13 @@ fun copyRulesMeasured ({checkpoint, ...} : monitor)
           (checkpoint ();
            copy_premise premise :: copy_premises premises)
 
-    fun copy_rule ({origin, pattern, premises} : tableau_rule) =
+    fun copy_rule
+          ({origin, pattern, premises, hidden_assumptions} : tableau_rule) =
       (checkpoint ();
        {origin = origin,
         pattern = copy_term pattern,
-        premises = copy_premises premises})
+        premises = copy_premises premises,
+        hidden_assumptions = hidden_assumptions})
     fun copy_rules [] = []
       | copy_rules (rule :: rest) =
           (checkpoint (); copy_rule rule :: copy_rules rest)

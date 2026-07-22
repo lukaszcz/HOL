@@ -18,13 +18,15 @@ sig
   (* T1--T6 of the blast report.  Rule steps always rotate their new
      material; this is implicit because the search has no other mode. *)
   datatype script_step =
-      HypSubst
-    | CloseAssume
-    | CloseContradiction
-    | SafeRule of {rule : tableau_rule, updated : bool}
+      HypSubst of {equality : int}
+    | CloseAssume of {assumption : int}
+    | CloseContradiction of {negative : int, positive : int}
+    | SafeRule of
+        {rule : tableau_rule, updated : bool, major : int option}
     | DeferGoal
     | UnsafeRule of
-        {rule : tableau_rule, updated : bool, duplicate : bool}
+        {rule : tableau_rule, updated : bool, duplicate : bool,
+         major : int option}
 
   type script = script_step list
 

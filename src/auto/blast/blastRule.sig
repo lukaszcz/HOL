@@ -14,7 +14,11 @@ sig
   type tableau_rule =
     {origin : origin,
      pattern : pterm,
-     premises : pterm list list}
+     premises : pterm list list,
+     (* Parallel to premises.  SOME n records the typed elimination
+        antecedent ~F which tableau conversion hides after n visible
+        antecedents; exact replay still retains that assumption. *)
+     hidden_assumptions : int option list}
 
   (* A cache belongs to one tableau search.  Cached rule templates are
      instantiated freshly on retrieval because their variables are mutable. *)

@@ -609,6 +609,10 @@ fun assumption_action pos store (goal as (asl, w)) =
   in
     ASSUMPTION_TAC store actual goal
   end
+
+(* Exact reconstruction must reject a stale occurrence selector. *)
+fun strict_assumption_action pos store goal =
+  ASSUMPTION_TAC store pos goal
 fun contradiction_action positions store =
   CONTRADICTION_TAC store positions
 fun mp_action positions store = MP_TAC store positions

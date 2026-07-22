@@ -1720,7 +1720,7 @@ fun prepare_unifying_assumption node pos : unifying_assumption_context =
     {asl = asl, w = w, store = clasetGoal.store node}
   end
 
-fun unifying_assumption_candidate
+fun unifying_assumption_candidate_with action_of
       ({w, store = initial_store, ...} : unifying_assumption_context)
       (asm_pos, asm) =
   case clasetUnify.unify initial_store unify_config (w, asm) of
@@ -1741,15 +1741,21 @@ fun unifying_assumption_candidate
                    consumed = SOME asm_pos, created = no_created,
                    eigenvariables = [], result = ([], validation),
                    children = SOME [],
-                   action = clasetReplay.assumption_action asm_pos,
+                   action = action_of asm_pos,
                    closed = [], store = store})
             end
 
+fun unifying_assumption_candidate prepared positioned =
+  unifying_assumption_candidate_with clasetReplay.assumption_action
+    prepared positioned
+
 fun unifying_assumption_in
-      (prepared as {asl, ...} : unifying_assumption_context) asm_pos =
+      action_of (prepared as {asl, ...} : unifying_assumption_context)
+      asm_pos =
   if asm_pos <= 0 orelse asm_pos > length asl then NONE
   else
-    unifying_assumption_candidate prepared (asm_pos, nth1 asl asm_pos)
+    unifying_assumption_candidate_with action_of prepared
+      (asm_pos, nth1 asl asm_pos)
 
 fun unifying_assumption_results (node, pos) =
   list_seq
@@ -1765,6 +1771,7 @@ fun unifying_assumption_results_at asm_pos (node, pos) =
   list_seq
     (fn () =>
       case unifying_assumption_in
+        clasetReplay.strict_assumption_action
         (prepare_unifying_assumption node pos) asm_pos of
           NONE => []
         | SOME direct => [direct])

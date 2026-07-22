@@ -525,6 +525,9 @@ val _ =
          group_lengths conjunction = [1, 1] andalso
          group_lengths disjunction = [2] andalso
          group_lengths exists = [1] andalso
+         #hidden_assumptions conjunction = [NONE, NONE] andalso
+         #hidden_assumptions disjunction = [NONE] andalso
+         #hidden_assumptions exists = [NONE] andalso
          is_head "bool$/\\" (rand (#pattern conjunction)) andalso
          is_head "bool$\\/" (rand (#pattern disjunction)) andalso
          is_head "bool$?" (rand (#pattern exists))
@@ -541,21 +544,43 @@ val _ =
            blastRule.convertElim cache [] boolTheory.OR_ELIM_THM
          val exists = blastRule.convertElim cache [] EXISTS_ELIM_THM
          val iff = blastRule.convertElim cache [] IFF_CELIM_THM
+         val p = mk_var ("hidden_golden_p", bool)
+         val q = mk_var ("hidden_golden_q", bool)
+         val r = mk_var ("hidden_golden_r", bool)
+         val hidden_theorem =
+           prove
+             (list_mk_forall
+                ([p, q, r],
+                 mk_imp
+                   (mk_conj (mk_neg p, q),
+                    mk_imp (mk_imp (q, mk_imp (mk_neg r, p)), r))),
+              PROVE_TAC [boolTheory.EXCLUDED_MIDDLE])
+         val hidden = blastRule.convertElim cache [] hidden_theorem
        in
-         case (conjunction, disjunction, exists, iff) of
+         case (conjunction, disjunction, exists, iff, hidden) of
              (SOME conjunction', SOME disjunction', SOME exists',
-              SOME iff') =>
+              SOME iff', SOME hidden') =>
                stored_elim conjunction' andalso
                group_lengths conjunction' = [2] andalso
                group_lengths disjunction' = [1, 1] andalso
                group_lengths exists' = [1] andalso
                group_lengths iff' = [2, 2] andalso
+               #hidden_assumptions conjunction' = [NONE] andalso
+               #hidden_assumptions disjunction' = [NONE, NONE] andalso
+               #hidden_assumptions exists' = [NONE] andalso
+               #hidden_assumptions iff' = [NONE, NONE] andalso
+               #hidden_assumptions hidden' = [SOME 1] andalso
                is_head "bool$/\\" (#pattern conjunction') andalso
                is_head "bool$\\/" (#pattern disjunction') andalso
                is_head "bool$?" (#pattern exists') andalso
                is_head "min$=" (#pattern iff') andalso
                (case #premises exists' of
                     [[formula]] => has_skolem formula
+                  | _ => false) andalso
+               (case #premises hidden' of
+                    [[goal_formula, visible]] =>
+                      isGoal goal_formula andalso
+                      not (isGoal visible)
                   | _ => false)
            | _ => false
        end)
@@ -591,6 +616,8 @@ val _ =
              ([imp_rule], [all_rule]) =>
                pseudo_origin "imp" imp_rule andalso
                pseudo_origin "all" all_rule andalso
+               #hidden_assumptions imp_rule = [NONE] andalso
+               #hidden_assumptions all_rule = [NONE] andalso
                (case #premises imp_rule of
                     [[Const ("*Goal*", []) $ Skolem (qname, []),
                       Skolem (pname, [])]] => pname <> qname
@@ -870,7 +897,7 @@ val _ =
          (case #result report of
               SOME proof =>
                 List.exists
-                  (fn blastSearch.HypSubst => true | _ => false)
+                  (fn blastSearch.HypSubst _ => true | _ => false)
                   (#script proof)
             | NONE => false) andalso
          #configured_depth statistics = 0 andalso
@@ -1250,18 +1277,49 @@ fun script_view (proof : blastSearch.proof) =
           Parse.term_to_string (concl theorem)
       | origin blastRule.ImpIntro = "imp"
       | origin blastRule.AllIntro = "all"
-    fun step blastSearch.HypSubst = "subst"
-      | step blastSearch.CloseAssume = "assume"
-      | step blastSearch.CloseContradiction = "contradiction"
-      | step (blastSearch.SafeRule {rule, updated}) =
-          "safe:" ^ Bool.toString updated ^ ":" ^ origin (#origin rule)
+    fun option NONE = "-"
+      | option (SOME position) = Int.toString position
+    fun hidden rule =
+      String.concatWith "," (map option (#hidden_assumptions rule))
+    fun step (blastSearch.HypSubst {equality}) =
+          "subst:" ^ Int.toString equality
+      | step (blastSearch.CloseAssume {assumption}) =
+          "assume:" ^ Int.toString assumption
+      | step (blastSearch.CloseContradiction {negative, positive}) =
+          "contradiction:" ^ Int.toString negative ^ ":" ^
+          Int.toString positive
+      | step (blastSearch.SafeRule {rule, updated, major}) =
+          "safe:" ^ Bool.toString updated ^ ":" ^ origin (#origin rule) ^
+          ":" ^ option major ^ ":" ^ hidden rule
       | step blastSearch.DeferGoal = "defer"
       | step
-          (blastSearch.UnsafeRule {rule, updated, duplicate}) =
+          (blastSearch.UnsafeRule
+            {rule, updated, duplicate, major}) =
           "unsafe:" ^ Bool.toString updated ^ ":" ^
-          Bool.toString duplicate ^ ":" ^ origin (#origin rule)
+          Bool.toString duplicate ^ ":" ^ origin (#origin rule) ^ ":" ^
+          option major ^ ":" ^ hidden rule
   in
     map step (#script proof)
+  end
+
+fun selector_view ({script, ...} : blastSearch.proof) =
+  let
+    fun option NONE = "-"
+      | option (SOME position) = Int.toString position
+    fun step (blastSearch.HypSubst {equality}) =
+          "subst:" ^ Int.toString equality
+      | step (blastSearch.CloseAssume {assumption}) =
+          "assume:" ^ Int.toString assumption
+      | step (blastSearch.CloseContradiction {negative, positive}) =
+          "contr:" ^ Int.toString negative ^ ":" ^
+          Int.toString positive
+      | step (blastSearch.SafeRule {major, ...}) =
+          "safe:" ^ option major
+      | step blastSearch.DeferGoal = "defer"
+      | step (blastSearch.UnsafeRule {major, duplicate, ...}) =
+          "unsafe:" ^ option major ^ ":" ^ Bool.toString duplicate
+  in
+    map step script
   end
 
 fun same_proof_options
@@ -1389,6 +1447,7 @@ fun same_rule_lists_alpha (left_rules, right_rules) =
                    right : blastRule.tableau_rule) =
       same_origin (#origin left, #origin right) andalso
       #term compare (#pattern left, #pattern right) andalso
+      #hidden_assumptions left = #hidden_assumptions right andalso
       same_list
         (fn (left_premise, right_premise) =>
            same_list (#term compare) (left_premise, right_premise))
@@ -1590,7 +1649,8 @@ val _ =
        let
          fun rule pattern premises : blastRule.tableau_rule =
            {origin = blastRule.ImpIntro,
-            pattern = pattern, premises = premises}
+            pattern = pattern, premises = premises,
+            hidden_assumptions = map (fn _ => NONE) premises}
          val shared_left = ref NONE
          val shared_right = ref NONE
          val broken_right = ref NONE
@@ -1621,12 +1681,69 @@ val _ =
                  [dependency_right, dependency_other])) []]
          val wrong_count =
            [rule (Skolem ("right_skolem", [dependency_right])) []]
+         val hidden_left : blastRule.tableau_rule list =
+           [{origin = blastRule.ImpIntro,
+             pattern = Const ("hidden", []), premises = [[]],
+             hidden_assumptions = [NONE]}]
+         val hidden_right : blastRule.tableau_rule list =
+           [{origin = blastRule.ImpIntro,
+             pattern = Const ("hidden", []), premises = [[]],
+             hidden_assumptions = [SOME 0]}]
        in
          same_rule_lists_alpha (dependencies, renamed_dependencies) andalso
          not (same_rule_lists_alpha (sharing_left, sharing_right)) andalso
          not (same_rule_lists_alpha (typed_left, typed_swapped)) andalso
          not (same_rule_lists_alpha (dependencies, wrong_identity)) andalso
-         not (same_rule_lists_alpha (dependencies, wrong_count))
+         not (same_rule_lists_alpha (dependencies, wrong_count)) andalso
+         not (same_rule_lists_alpha (hidden_left, hidden_right))
+       end)
+
+val _ =
+  test
+    ("hidden provenance is identical on ordinary measured and cache paths",
+     fn () =>
+       let
+         val p = mk_var ("hidden_parity_p", bool)
+         val q = mk_var ("hidden_parity_q", bool)
+         val r = mk_var ("hidden_parity_r", bool)
+         val theorem =
+           prove
+             (list_mk_forall
+                ([p, q, r],
+                 mk_imp
+                   (mk_conj (mk_neg p, q),
+                    mk_imp (mk_imp (q, mk_imp (mk_neg r, p)), r))),
+              PROVE_TAC [boolTheory.EXCLUDED_MIDDLE])
+         val cs =
+           clasetLib.add_selims [("hidden-parity", theorem)]
+             clasetLib.empty_cs
+         val formula =
+           blastRule.fromGoalTerm (mk_conj (mk_neg p, q))
+         val ordinary_cache = blastRule.newCache ()
+         val measured_cache = blastRule.newCache ()
+         val monitor : blastRule.monitor =
+           {checkpoint = fn () => (), candidate = fn () => (),
+            conversion = fn () => ()}
+         val ordinary =
+           blastRule.safeRules ordinary_cache cs [] formula
+         val ordinary_hit =
+           blastRule.safeRules ordinary_cache cs [] formula
+         val measured =
+           blastRule.safeRulesMeasured monitor measured_cache cs [] formula
+         val measured_hit =
+           blastRule.safeRulesMeasured monitor measured_cache cs [] formula
+         fun hidden (rules : blastRule.tableau_rule list) =
+           map #hidden_assumptions rules
+       in
+         hidden ordinary = [[SOME 0]] andalso
+         hidden ordinary_hit = hidden ordinary andalso
+         hidden measured = hidden ordinary andalso
+         hidden measured_hit = hidden ordinary andalso
+         same_rule_lists_alpha (ordinary, ordinary_hit) andalso
+         same_rule_lists_alpha (ordinary, measured) andalso
+         same_rule_lists_alpha (measured, measured_hit) andalso
+         blastRule.hitCount ordinary_cache = 1 andalso
+         blastRule.hitCount measured_cache = 1
        end)
 
 val _ =
@@ -2411,14 +2528,179 @@ val _ =
            scripts contr @ scripts exists
          fun has predicate = List.exists predicate all
        in
-         has (fn blastSearch.HypSubst => true | _ => false) andalso
-         has (fn blastSearch.CloseAssume => true | _ => false) andalso
+         has (fn blastSearch.HypSubst _ => true | _ => false) andalso
+         has (fn blastSearch.CloseAssume _ => true | _ => false) andalso
          has
-           (fn blastSearch.CloseContradiction => true | _ => false)
+           (fn blastSearch.CloseContradiction _ => true | _ => false)
            andalso
          has (fn blastSearch.SafeRule _ => true | _ => false) andalso
          has (fn blastSearch.DeferGoal => true | _ => false) andalso
          has (fn blastSearch.UnsafeRule _ => true | _ => false)
+       end)
+
+val _ =
+  test
+    ("duplicate initial occurrences survive literal-choice backtracking",
+     fn () =>
+       let
+         val p = mk_var ("provenance_duplicate_p", bool)
+         val goal = ([p, p], p)
+         val views = ref ([] : string list list)
+         fun accept proof =
+           case blastReconstruct.reconstruct goal proof of
+               SOME ([], validation) =>
+                 (ignore (validation []);
+                  views := selector_view proof :: !views;
+                  if length (!views) = 1 then
+                    raise blastSearch.PROOF_FAILED
+                  else proof)
+             | _ => raise blastSearch.PROOF_FAILED
+         val result =
+           blastSearch.searchGoal clasetLib.empty_cs 0 goal accept
+       in
+         Option.isSome result andalso
+         rev (!views) = [["assume:1"], ["assume:2"]]
+       end)
+
+val _ =
+  test
+    ("DeferGoal gives constructed negation its exact occurrence",
+     fn () =>
+       let
+         val x = mk_var ("provenance_defer_x", bool)
+         val a = mk_var ("provenance_defer_a", bool)
+         val pred = mk_var ("provenance_defer_P", bool --> bool)
+         val pa = mk_comb (pred, a)
+         val goal = ([pa], mk_exists (x, mk_comb (pred, x)))
+       in
+         case blastReconstruct.searchGoal
+           (clasetLib.the_claset ()) 1 goal of
+             SOME (proof, ([], validation)) =>
+               selector_view proof =
+                 ["defer", "unsafe:1:true", "assume:2"] andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("hidden elimination antecedent shifts exact child selectors",
+     fn () =>
+       let
+         val p = mk_var ("provenance_hidden_p", bool)
+         val q = mk_var ("provenance_hidden_q", bool)
+         val r = mk_var ("provenance_hidden_r", bool)
+         val theorem =
+           prove
+             (list_mk_forall
+                ([p, q, r],
+                 mk_imp
+                   (mk_conj (mk_neg p, q),
+                    mk_imp (mk_imp (q, mk_imp (mk_neg r, p)), r))),
+              PROVE_TAC [boolTheory.EXCLUDED_MIDDLE])
+         val cs =
+           clasetLib.add_selims [("provenance-hidden", theorem)]
+             (clasetLib.the_claset ())
+         val goal = ([p, mk_conj (mk_neg p, q)], r)
+       in
+         case blastReconstruct.searchGoal cs 0 goal of
+             SOME (proof, ([], validation)) =>
+               selector_view proof =
+                 ["defer", "safe:3", "assume:5"] andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("nonduplicate elimination deletes and renumbers its major",
+     fn () =>
+       let
+         val p = mk_var ("provenance_delete_p", bool)
+         val q = mk_var ("provenance_delete_q", bool)
+         val r = mk_var ("provenance_delete_r", bool)
+         val goal = ([r, mk_conj (p, q)], p)
+         val cs =
+           clasetLib.add_selims [("provenance-and", CONJ_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastReconstruct.searchGoal cs 0 goal of
+             SOME (proof, ([], validation)) =>
+               selector_view proof = ["safe:2", "assume:2"] andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("multi-child elimination clones tokens in stable child order",
+     fn () =>
+       let
+         val p = mk_var ("provenance_children_p", bool)
+         val q = mk_var ("provenance_children_q", bool)
+         val r = mk_var ("provenance_children_r", bool)
+         val goal =
+           ([mk_disj (p, q), mk_imp (p, r), mk_imp (q, r)], r)
+       in
+         case blastReconstruct.searchGoal
+           (clasetLib.the_claset ()) 0 goal of
+             SOME (proof, ([], validation)) =>
+               selector_view proof =
+                 ["defer", "safe:2", "safe:3", "contr:1:2",
+                  "contr:3:1", "safe:3", "safe:4", "contr:1:3",
+                  "contr:4:1", "contr:3:1"] andalso
+               #branches_created proof > 1 andalso
+               (ignore (validation []); true)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("duplicate elimination retains and moves back its exact major",
+     fn () =>
+       let
+         val x = mk_var ("provenance_gamma_x", bool)
+         val a = mk_var ("provenance_gamma_a", bool)
+         val pred = mk_var ("provenance_gamma_P", bool --> bool)
+         val universal = mk_forall (x, mk_comb (pred, x))
+         val goal = ([universal], mk_comb (pred, a))
+         val cs =
+           clasetLib.add_elims
+             [("provenance-all", FORALL_ELIM_THM)]
+             clasetLib.empty_cs
+       in
+         case blastReconstruct.searchGoal cs 1 goal of
+             SOME (proof, ([], validation)) =>
+               let
+                 val report =
+                   blastReconstruct.reconstructWithMeasured
+                     {observe = NONE, stop = fn () => false}
+                     cs goal proof
+               in
+                 selector_view proof =
+                   ["unsafe:1:true", "assume:1"] andalso
+                 #completion report = blastReconstruct.Completed andalso
+                 Option.isSome (#result report) andalso
+                 #duplicate_child_moves (#statistics report) = 1 andalso
+                 (ignore (validation []); true)
+               end
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("literal polarity records exact negative and positive representatives",
+     fn () =>
+       let
+         val p = mk_var ("provenance_polarity_p", bool)
+         val q = mk_var ("provenance_polarity_q", bool)
+         val goal = ([p, mk_neg p], q)
+       in
+         case blastReconstruct.searchGoal clasetLib.empty_cs 0 goal of
+             SOME (proof, ([], validation)) =>
+               selector_view proof = ["contr:2:1"] andalso
+               (ignore (validation []); true)
+           | _ => false
        end)
 
 val _ =
@@ -2627,6 +2909,85 @@ fun reconstructed cs depth goal =
 
 fun has_step predicate ({script, ...} : blastSearch.proof) =
   List.exists predicate script
+
+val _ =
+  test
+    ("Blast exact reconstruction rejects a corrupted assumption selector",
+     fn () =>
+       let
+         val p = mk_var ("corrupt_assume_p", bool)
+         val q = mk_var ("corrupt_assume_q", bool)
+         val goal = ([q, p, p], p)
+         fun corrupt_step (blastSearch.CloseAssume _) =
+               blastSearch.CloseAssume {assumption = 1}
+           | corrupt_step step = step
+         fun corrupt (proof : blastSearch.proof) : blastSearch.proof =
+           {script = map corrupt_step (#script proof),
+            trace = #trace proof, depth = #depth proof,
+            branches_created = #branches_created proof,
+            branches_closed = #branches_closed proof,
+            choices_pruned = #choices_pruned proof}
+       in
+         case blastSearch.tryGoal clasetLib.empty_cs 0 goal of
+             SOME (proof : blastSearch.proof) =>
+               let
+                 val corrupted = corrupt proof
+                 val exact_script =
+                   case #script proof of
+                       [blastSearch.CloseAssume {assumption = 2}] => true
+                     | _ => false
+                 val original = blastReconstruct.reconstruct goal proof
+                 val rejected =
+                   blastReconstruct.reconstruct goal corrupted
+                 val measured =
+                   blastReconstruct.reconstructMeasured
+                     {observe = NONE, stop = fn () => false}
+                     goal corrupted
+                 val reentry_attempts = ref 0
+                 val reentry_views = ref ([] : string list list)
+                 fun reject candidate =
+                   let
+                     val bad = corrupt candidate
+                     val ordinary =
+                       blastReconstruct.reconstruct goal bad
+                     val diagnostic =
+                       blastReconstruct.reconstructMeasured
+                         {observe = NONE, stop = fn () => false}
+                         goal bad
+                     val _ = reentry_attempts := !reentry_attempts + 1
+                     val _ =
+                       reentry_views :=
+                         selector_view candidate :: !reentry_views
+                     val _ =
+                       if not (Option.isSome ordinary) andalso
+                          not (Option.isSome (#result diagnostic)) andalso
+                          #kernel_replay_attempts
+                            (#statistics diagnostic) = 0
+                       then ()
+                       else raise Fail "corrupt selector replay recovered"
+                   in
+                     raise blastSearch.PROOF_FAILED
+                   end
+                 val reentered =
+                   blastSearch.searchGoal clasetLib.empty_cs 0 goal reject
+               in
+                 exact_script andalso
+                 (case original of
+                      SOME ([], validation) =>
+                        (ignore (validation []); true)
+                    | _ => false) andalso
+                 not (Option.isSome rejected) andalso
+                 #completion measured = blastReconstruct.Completed andalso
+                 not (Option.isSome (#result measured)) andalso
+                 #kernel_replay_attempts (#statistics measured) = 0 andalso
+                 not (Option.isSome reentered) andalso
+                 !reentry_attempts = 4 andalso
+                 rev (!reentry_views) =
+                   [["assume:2"], ["assume:3"],
+                    ["assume:2"], ["assume:3"]]
+               end
+           | NONE => false
+       end)
 
 fun legacy_reconstruction_statistics_shape
       ({cooperative_checkpoints, phase_entries, phase_exits,
@@ -2860,7 +3221,7 @@ val _ =
                       blastReconstruct.Completed,
                       SOME ([], measured_validation)) =>
                        has_step
-                         (fn blastSearch.CloseContradiction => true
+                         (fn blastSearch.CloseContradiction _ => true
                            | _ => false) proof andalso
                        #cooperative_checkpoints statistics = 16 andalso
                        #phase_entries statistics = 8 andalso
@@ -3136,7 +3497,7 @@ val _ =
 
 val _ =
   test
-    ("timed detailed replay accounts failed alternatives exactly",
+    ("timed detailed replay accounts exact selected alternative",
      fn () =>
        let
          val p = mk_var ("timed_detailed_p", bool)
@@ -3191,21 +3552,21 @@ val _ =
                         (ignore (untimed_validation []);
                          ignore (timed_validation []); true)
                     | _ => false) andalso
-                 #stored_rule_attempt_selections statistics = 2 andalso
-                 #stored_rule_major_unifications statistics = 2 andalso
+                 #stored_rule_attempt_selections statistics = 1 andalso
+                 #stored_rule_major_unifications statistics = 1 andalso
                  #stored_rule_instantiations statistics = 1 andalso
-                 #attempt_selection_time times = Time.fromSeconds 2
+                 #attempt_selection_time times = Time.fromSeconds 1
                  andalso
-                 #freshening_setup_time times = Time.fromSeconds 2
+                 #freshening_setup_time times = Time.fromSeconds 1
                  andalso
-                 #minor_unification_time times = Time.fromSeconds 2
+                 #minor_unification_time times = Time.fromSeconds 1
                  andalso
                  #elimination_major_unification_time times =
-                   Time.fromSeconds 2 andalso
-                 #classical_time times = Time.fromSeconds 15 andalso
+                   Time.fromSeconds 1 andalso
+                 #classical_time times = Time.fromSeconds 11 andalso
                  classical_phase_time_sum times =
                    #classical_time times andalso
-                 #attempt_wall_time timed = Time.fromSeconds 31
+                 #attempt_wall_time timed = Time.fromSeconds 23
                end
        end)
 
@@ -3454,7 +3815,8 @@ val _ =
          val p = mk_var ("timed_v3_none_p", bool)
          val goal = ([], p)
          val proof : blastSearch.proof =
-           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+           {script = [blastSearch.CloseAssume {assumption = 1}],
+            trace = [], depth = 0,
             branches_created = 0, branches_closed = 0,
             choices_pruned = 0}
          val report =
@@ -3546,7 +3908,8 @@ val _ =
          val p = mk_var ("timed_v3_outer_stop_p", bool)
          val goal = ([p], p)
          val proof : blastSearch.proof =
-           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+           {script = [blastSearch.CloseAssume {assumption = 1}],
+            trace = [], depth = 0,
             branches_created = 0, branches_closed = 0,
             choices_pruned = 0}
 
@@ -3915,15 +4278,15 @@ val _ =
                  Option.isSome (#result base) andalso
                  #alternative_pulls (#statistics base) = 2 andalso
                  #alternative_enumeration_time outer =
-                   Time.fromSeconds 18 andalso
+                   Time.fromSeconds 14 andalso
                  #replay_continuation_time outer =
                    Time.fromSeconds 13 andalso
                  #other_outer_time outer = Time.fromSeconds 11 andalso
                  #outer_reconstruction_time outer =
-                   Time.fromSeconds 42 andalso
+                   Time.fromSeconds 38 andalso
                  #classical_time (#classical_times base) =
-                   Time.fromSeconds 27 andalso
-                 #attempt_wall_time base = Time.fromSeconds 69
+                   Time.fromSeconds 17 andalso
+                 #attempt_wall_time base = Time.fromSeconds 55
                end
        end)
 
@@ -3982,15 +4345,15 @@ val _ =
                  #completed_pulls pulls = 2 andalso
                  #failed_pulls pulls = 0 andalso
                  #interrupted_pulls pulls = 0 andalso
-                 #completed_pull_time pulls = Time.fromSeconds 18 andalso
+                 #completed_pull_time pulls = Time.fromSeconds 14 andalso
                  #failed_pull_time pulls = Time.zeroTime andalso
                  #interrupted_pull_time pulls = Time.zeroTime andalso
-                 #alternative_pull_time pulls = Time.fromSeconds 18 andalso
+                 #alternative_pull_time pulls = Time.fromSeconds 14 andalso
                  #alternative_residual_time pulls = Time.zeroTime andalso
-                 #max_completed_pull_time pulls = Time.fromSeconds 17 andalso
+                 #max_completed_pull_time pulls = Time.fromSeconds 13 andalso
                  #max_failed_pull_time pulls = Time.zeroTime andalso
                  #max_interrupted_pull_time pulls = Time.zeroTime andalso
-                 #max_alternative_pull_time pulls = Time.fromSeconds 17
+                 #max_alternative_pull_time pulls = Time.fromSeconds 13
                  andalso
                  subtotal = #alternative_pull_time pulls andalso
                  Time.+
@@ -4062,7 +4425,7 @@ val _ =
 
 val _ =
   test
-    ("timed-v2 kernel failure backtracks with exact restored owners",
+    ("timed-v2 kernel failure rejects exact provenance without scanning",
      fn () =>
        let
          val p = mk_var ("timed_v2_kernel_p", bool)
@@ -4154,24 +4517,24 @@ val _ =
                       stop = fn () => false}
                      cs goal proof
                in
-                 !kernel_calls = 2 andalso
+                 !kernel_calls = 1 andalso
                  #completion base = blastReconstruct.Completed andalso
-                 Option.isSome (#result base) andalso
+                 not (Option.isSome (#result base)) andalso
                  count blastReconstruct.Enter
-                   blastReconstruct.KernelReplay = 2 andalso
-                 count blastReconstruct.Exit
                    blastReconstruct.KernelReplay = 1 andalso
-                 #kernel_replay_attempts (#statistics base) = 2 andalso
+                 count blastReconstruct.Exit
+                   blastReconstruct.KernelReplay = 0 andalso
+                 #kernel_replay_attempts (#statistics base) = 1 andalso
                  #alternative_enumeration_time outer =
-                   Time.fromSeconds 33 andalso
+                   Time.fromSeconds 16 andalso
                  #replay_continuation_time outer =
-                   Time.fromSeconds 24 andalso
-                 #other_outer_time outer = Time.fromSeconds 16 andalso
+                   Time.fromSeconds 14 andalso
+                 #other_outer_time outer = Time.fromSeconds 10 andalso
                  #outer_reconstruction_time outer =
-                   Time.fromSeconds 73 andalso
+                   Time.fromSeconds 40 andalso
                  #classical_time (#classical_times base) =
-                   Time.fromSeconds 44 andalso
-                 #attempt_wall_time base = Time.fromSeconds 117 andalso
+                   Time.fromSeconds 17 andalso
+                 #attempt_wall_time base = Time.fromSeconds 57 andalso
                  #completion (#base ordinary) =
                    #completion (#base delegated) andalso
                  #current_phase (#base ordinary) =
@@ -4195,7 +4558,7 @@ val _ =
 
 val _ =
   test
-    ("timed-v3 caught continuation failure retains pull ownership",
+    ("timed-v3 continuation failure rejects exact provenance",
      fn () =>
        let
          val p = mk_var ("timed_v3_kernel_p", bool)
@@ -4232,29 +4595,35 @@ val _ =
                  val outer = #outer_reconstruction_times (#base report)
                  val pulls = #alternative_pull_times report
                in
-                 !kernel_calls = 2 andalso
+                 !kernel_calls = 1 andalso
                  #completion base = blastReconstruct.Completed andalso
-                 Option.isSome (#result base) andalso
-                 (* Both lazy pulls complete honestly; the injected failure
-                    is in their replay continuation, outside the exclusive
-                    AlternativeEnumeration owner, before backtracking. *)
-                 #completed_pulls pulls = 4 andalso
-                 #failed_pulls pulls = 1 andalso
+                 not (Option.isSome (#result base)) andalso
+                 #stored_rule_attempt_selections (#statistics base) = 1
+                 andalso
+                 #completed_pulls pulls = 2 andalso
+                 #failed_pulls pulls = 2 andalso
                  #interrupted_pulls pulls = 0 andalso
-                 #completed_pull_time pulls = Time.fromSeconds 32 andalso
-                 #failed_pull_time pulls = Time.fromSeconds 1 andalso
+                 #completed_pull_time pulls = Time.fromSeconds 14 andalso
+                 #failed_pull_time pulls = Time.fromSeconds 2 andalso
                  #interrupted_pull_time pulls = Time.zeroTime andalso
-                 #alternative_pull_time pulls = Time.fromSeconds 33 andalso
+                 #alternative_pull_time pulls = Time.fromSeconds 16 andalso
                  #alternative_residual_time pulls = Time.zeroTime andalso
-                 #max_completed_pull_time pulls = Time.fromSeconds 17 andalso
+                 #max_completed_pull_time pulls =
+                   Time.fromSeconds 13 andalso
                  #max_failed_pull_time pulls = Time.fromSeconds 1 andalso
                  #max_interrupted_pull_time pulls = Time.zeroTime andalso
-                 #max_alternative_pull_time pulls = Time.fromSeconds 17
-                 andalso
-                 Time.+
-                   (#alternative_pull_time pulls,
-                    #alternative_residual_time pulls) =
-                   #alternative_enumeration_time outer
+                 #max_alternative_pull_time pulls =
+                   Time.fromSeconds 13 andalso
+                 #alternative_enumeration_time outer =
+                   Time.fromSeconds 16 andalso
+                 #replay_continuation_time outer =
+                   Time.fromSeconds 14 andalso
+                 #other_outer_time outer = Time.fromSeconds 10 andalso
+                 #outer_reconstruction_time outer =
+                   Time.fromSeconds 40 andalso
+                 #classical_time (#classical_times base) =
+                   Time.fromSeconds 131 andalso
+                 #attempt_wall_time base = Time.fromSeconds 171
                end
        end)
 
@@ -4389,8 +4758,10 @@ val _ =
                  val interrupted_pulls =
                    #alternative_pull_times interrupted
                in
-                 !v3_calls = 2 andalso !v4_calls = 2 andalso
+                 !v3_calls = 1 andalso !v4_calls = 1 andalso
                  #completion base_v3 = #completion base_v4 andalso
+                 not (Option.isSome (#result base_v3)) andalso
+                 not (Option.isSome (#result base_v4)) andalso
                  #statistics base_v3 = #statistics base_v4 andalso
                  #classical_times base_v3 = #classical_times base_v4
                  andalso #attempt_wall_time base_v3 =
@@ -4425,7 +4796,8 @@ val _ =
          val p = mk_var ("bounded_v4_callback_p", bool)
          val goal = ([], p)
          val proof : blastSearch.proof =
-           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+           {script = [blastSearch.CloseAssume {assumption = 1}],
+            trace = [], depth = 0,
             branches_created = 0, branches_closed = 0,
             choices_pruned = 0}
          fun raises controls =
@@ -4466,7 +4838,7 @@ val _ =
 
 val _ =
   test
-    ("timed-v2 real replay failure then success restores owners",
+    ("timed-v2 exact replay failure re-enters search",
      fn () =>
        let
          val alpha = Type.mk_vartype "'timed_v2_backtrack"
@@ -4541,16 +4913,16 @@ val _ =
                  #kernel_replay_attempts (#statistics failed_base) = 0
                  andalso
                  #alternative_enumeration_time failed_outer =
-                   Time.fromSeconds 18 andalso
+                   Time.fromSeconds 10 andalso
                  #replay_continuation_time failed_outer =
                    Time.fromSeconds 13 andalso
                  #other_outer_time failed_outer = Time.fromSeconds 7
                  andalso
                  #outer_reconstruction_time failed_outer =
-                   Time.fromSeconds 38 andalso
+                   Time.fromSeconds 30 andalso
                  #classical_time (#classical_times failed_base) =
-                   Time.fromSeconds 31 andalso
-                 #attempt_wall_time failed_base = Time.fromSeconds 69
+                   Time.fromSeconds 11 andalso
+                 #attempt_wall_time failed_base = Time.fromSeconds 41
                  andalso
                  #completion succeeded_base = blastReconstruct.Completed
                  andalso Option.isSome (#result succeeded_base) andalso
@@ -4561,16 +4933,16 @@ val _ =
                  #kernel_replay_attempts (#statistics succeeded_base) = 1
                  andalso
                  #alternative_enumeration_time succeeded_outer =
-                   Time.fromSeconds 20 andalso
+                   Time.fromSeconds 16 andalso
                  #replay_continuation_time succeeded_outer =
                    Time.fromSeconds 21 andalso
                  #other_outer_time succeeded_outer = Time.fromSeconds 15
                  andalso
                  #outer_reconstruction_time succeeded_outer =
-                   Time.fromSeconds 56 andalso
+                   Time.fromSeconds 52 andalso
                  #classical_time (#classical_times succeeded_base) =
-                   Time.fromSeconds 27 andalso
-                 #attempt_wall_time succeeded_base = Time.fromSeconds 83
+                   Time.fromSeconds 17 andalso
+                 #attempt_wall_time succeeded_base = Time.fromSeconds 69
                end
            | _ => false
        end)
@@ -4655,7 +5027,8 @@ val _ =
 
          val p = mk_var ("timed_terminal_p", bool)
          val completed_proof : blastSearch.proof =
-           {script = [blastSearch.CloseAssume], trace = [], depth = 0,
+           {script = [blastSearch.CloseAssume {assumption = 1}],
+            trace = [], depth = 0,
             branches_created = 0, branches_closed = 0,
             choices_pruned = 0}
          val none_proof : blastSearch.proof =
@@ -5181,8 +5554,12 @@ val _ =
                  val statistics = #statistics report
                in
                  has_step
-                   (fn blastSearch.HypSubst => true | _ => false)
+                   (fn blastSearch.HypSubst {equality = 1} => true
+                     | _ => false)
                    proof andalso
+                 (case #script proof of
+                      blastSearch.HypSubst {equality = 1} :: _ => true
+                    | _ => false) andalso
                  #completion report = blastReconstruct.Completed andalso
                  Option.isSome (#result report) andalso
                  #hyp_subst_steps statistics > 0 andalso
@@ -5254,10 +5631,10 @@ val _ =
                       blastReconstruct.Completed,
                       SOME ([], measured_validation)) =>
                        has_step
-                         (fn blastSearch.HypSubst => true | _ => false)
+                         (fn blastSearch.HypSubst _ => true | _ => false)
                          proof andalso
                        has_step
-                         (fn blastSearch.CloseAssume => true | _ => false)
+                         (fn blastSearch.CloseAssume _ => true | _ => false)
                          proof andalso
                        #hyp_subst_steps (#statistics measured) > 0 andalso
                        #close_assume_steps (#statistics measured) > 0 andalso
@@ -5331,7 +5708,7 @@ val _ =
          case result of
              SOME (proof, ([], validation)) =>
                has_step
-                 (fn blastSearch.HypSubst => true | _ => false)
+                 (fn blastSearch.HypSubst _ => true | _ => false)
                  proof andalso
                (ignore (validation []); true)
            | _ => false
@@ -5779,7 +6156,7 @@ val pelletier_solved = ref 0
    forces the list to shrink -- the accounting has teeth in both
    directions.  A problem is NEVER to be closed by naming it, or its
    statement, in a preprocessor, rewrite table or claset seed. *)
-val pelletier_expected_failures = [34, 45]
+val pelletier_expected_failures = [45]
 
 fun expected_failure number =
   List.exists (fn known => known = number) pelletier_expected_failures
@@ -5825,7 +6202,7 @@ val _ =
      fn () =>
        !pelletier_solved =
          length pelletier_corpus - length pelletier_expected_failures
-       andalso !pelletier_solved = 46)
+       andalso !pelletier_solved = 47)
 
 (* -------------------------------------------------------------------------
  * TASK_24: Table-1 depths, set problems, Halting II, and robustness.
@@ -5882,9 +6259,9 @@ val table1_depths =
 
 val table1_solved = ref 0
 
-(* The same search deficiencies as pelletier_expected_failures, seen at
-   the published depths.  See .agent-files/PLAN_phase_1_2_green.md. *)
-val table1_expected_failures = [34]
+(* Search deficiencies seen at the published depths.  See
+   .agent-files/PLAN_phase_1_2_green.md. *)
+val table1_expected_failures = []
 
 fun run_table1_depth (number, depth) =
   let
@@ -5918,7 +6295,7 @@ val _ =
      fn () =>
        !table1_solved =
          length table1_depths - length table1_expected_failures
-       andalso !table1_solved = 8)
+       andalso !table1_solved = 9)
 
 val _ =
   test
