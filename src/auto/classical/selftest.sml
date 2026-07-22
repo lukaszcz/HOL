@@ -3088,6 +3088,14 @@ fun drain_timed_exact_v3 sequence =
     | clasetStep.TimedRuleInterruptedV3 =>
         raise Fail "unexpected timed-v3 exact-rule interruption"
 
+fun drain_timed_exact_v4 sequence =
+  case clasetStep.timed_rule_cases_v4 sequence of
+      clasetStep.TimedRuleEmptyV4 => []
+    | clasetStep.TimedRuleYieldV4 (value, rest) =>
+        value :: drain_timed_exact_v4 rest
+    | clasetStep.TimedRuleInterruptedV4 =>
+        raise Fail "unexpected timed-v4 exact-rule interruption"
+
 val timed_cases_api :
     clasetStep.timed_rule_sequence -> clasetStep.timed_rule_pull =
   clasetStep.timed_rule_cases
@@ -3196,6 +3204,12 @@ val _ =
            exact_transition_variants clasetLib.empty_cs
              {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
               elim = true} goal
+         val selected =
+           drain_exact
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+                elim = true, major = SOME 1}
+               (clasetGoal.from_goal goal, 1))
 
          fun exact result =
            case result of
@@ -3230,7 +3244,7 @@ val _ =
                     | _ => false)
              | _ => false
        in
-         List.all exact variants
+         List.all exact (selected :: variants)
        end)
 
 val _ =
@@ -3251,6 +3265,12 @@ val _ =
            exact_transition_variants clasetLib.empty_cs
              {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
               elim = true} goal
+         val selected =
+           drain_exact
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+                elim = true, major = SOME 1}
+               (clasetGoal.from_goal goal, 1))
 
          fun exact result =
            case result of
@@ -3269,7 +3289,7 @@ val _ =
                     | _ => false)
              | _ => false
        in
-         List.all exact variants
+         List.all exact (selected :: variants)
        end)
 
 val _ =
@@ -3303,6 +3323,11 @@ val _ =
                {clock = ticking_clock (), observe = NONE,
                 stop = fn () => false}
                clasetLib.empty_cs specification (node, 1))
+         val selected =
+           drain_exact
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+                elim = true, major = SOME 1} (node, 1))
 
          fun exact result =
            case result of
@@ -3338,7 +3363,7 @@ val _ =
                  end
              | _ => false
        in
-         List.all exact [ordinary, measured, timed_v3]
+         List.all exact [ordinary, measured, timed_v3, selected]
        end)
 
 val _ =
@@ -5503,4 +5528,391 @@ val _ =
                     HOLset.fromList Term.compare (#1 goal))
                end
            | _ => false
+       end)
+
+(* Position-directed replay selectors are intentionally tested at this
+   owning layer: duplicate syntax must not erase occurrence identity. *)
+
+val _ =
+  test
+    ("exact intro sequences defer goal lookup until their first pull",
+     fn () =>
+       let
+         val p = Term.mk_var ("exact_lazy_p", Type.bool)
+         val theorem = Thm.ASSUME p
+         val input = (clasetGoal.from_goal ([], p), 2)
+         val specification = {theorem = theorem, elim = false}
+         val controls =
+           {clock = ticking_clock (), observe = NONE,
+            stop = fn () => false}
+         val ordinary =
+           clasetStep.blast_rule_step clasetLib.empty_cs
+             specification input
+         val selected =
+           clasetStep.blast_rule_step_at clasetLib.empty_cs
+             {theorem = theorem, elim = false, major = NONE} input
+         val measured =
+           clasetStep.blast_rule_step_measured
+             {observe = NONE, stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed =
+           clasetStep.blast_rule_step_timed controls
+             clasetLib.empty_cs specification input
+         val timed_v2 =
+           clasetStep.blast_rule_step_timed_v2 controls
+             clasetLib.empty_cs specification input
+         val timed_v3 =
+           clasetStep.blast_rule_step_timed_v3 controls
+             clasetLib.empty_cs specification input
+         val timed_v4 =
+           clasetStep.blast_rule_step_timed_v4
+             {classical_elapsed = fn _ => (),
+              clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+       in
+         seq.null ordinary andalso seq.null selected andalso
+         (case clasetStep.measured_rule_cases measured of
+              clasetStep.MeasuredRuleEmpty => true
+            | _ => false) andalso
+         (case clasetStep.timed_rule_cases timed of
+              clasetStep.TimedRuleEmpty => true
+            | _ => false) andalso
+         (case clasetStep.timed_rule_cases_v2 timed_v2 of
+              clasetStep.TimedRuleEmptyV2 => true
+            | _ => false) andalso
+         (case clasetStep.timed_rule_cases_v3 timed_v3 of
+              clasetStep.TimedRuleEmptyV3 => true
+            | _ => false) andalso
+         (case clasetStep.timed_rule_cases_v4 timed_v4 of
+              clasetStep.TimedRuleEmptyV4 => true
+            | _ => false)
+       end)
+
+val _ =
+  test
+    ("exact closure selectors preserve duplicate occurrence identity",
+     fn () =>
+       let
+         val p = Term.mk_var ("exact_selector_p", Type.bool)
+         val q = Term.mk_var ("exact_selector_q", Type.bool)
+         val assumption_goal = ([p, p], p)
+         val contradiction_goal =
+           ([boolSyntax.mk_neg p, p, p], q)
+         val assumption =
+           drain_exact
+             (clasetStep.blast_assumption_step_at 2
+               (clasetGoal.from_goal assumption_goal, 1))
+         val contradiction =
+           drain_exact
+             (clasetStep.blast_contradiction_step_at
+               {negative = 1, positive = 3}
+               (clasetGoal.from_goal contradiction_goal, 1))
+         val wrong_assumption =
+           seq.null
+             (clasetStep.blast_assumption_step_at 1
+               (clasetGoal.from_goal ([q, p], p), 1))
+         val wrong_polarity =
+           seq.null
+             (clasetStep.blast_contradiction_step_at
+               {negative = 2, positive = 1}
+               (clasetGoal.from_goal contradiction_goal, 1))
+       in
+         case (assumption, contradiction) of
+             ([(assumption_record, assumption_node)],
+              [(contradiction_record, contradiction_node)]) =>
+               clasetStep.consumed_of assumption_record = SOME 2 andalso
+               (case clasetStep.kind_of assumption_record of
+                    clasetStep.Assumption 2 => true
+                  | _ => false) andalso
+               (case clasetStep.kind_of contradiction_record of
+                    clasetStep.Contradiction (1, 3) => true
+                  | _ => false) andalso
+               valid_grounded_replay assumption_goal assumption_node andalso
+               valid_grounded_replay contradiction_goal
+                 contradiction_node andalso
+               wrong_assumption andalso wrong_polarity
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("exact rule selector validates shape range and nonmatching major",
+     fn () =>
+       let
+         val p = Term.mk_var ("exact_shape_p", Type.bool)
+         val q = Term.mk_var ("exact_shape_q", Type.bool)
+         val bound = Term.mk_var ("exact_shape_x", Type.ind)
+         val predicate =
+           Term.mk_var ("exact_shape_P", Type.ind --> Type.bool)
+         val major =
+           boolSyntax.mk_exists
+             (bound, Term.mk_comb (predicate, bound))
+         val theorem = clasetSeedTheory.EXISTS_ELIM_THM
+         val node = clasetGoal.from_goal ([q, major], p)
+         fun empty specification =
+           seq.null
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               specification (node, 1))
+         val observed = ref 0
+         val measured =
+           clasetStep.blast_rule_step_measured_at
+             {observe =
+                SOME
+                  (fn {boundary = clasetStep.RuleEnter,
+                       phase = clasetStep.AttemptSelection, ...} =>
+                        observed := !observed + 1
+                    | _ => ()),
+              stop = fn () => false}
+             clasetLib.empty_cs
+             {theorem = theorem, elim = true, major = SOME 1}
+             (node, 1)
+         val no_result = List.null (drain_measured_exact measured)
+         val statistics = clasetStep.measured_rule_statistics measured
+       in
+         empty {theorem = theorem, elim = false, major = SOME 1}
+         andalso empty {theorem = theorem, elim = true, major = NONE}
+         andalso
+         empty {theorem = theorem, elim = true, major = SOME 0}
+         andalso
+         empty {theorem = theorem, elim = true, major = SOME 3}
+         andalso no_result andalso !observed = 1 andalso
+         #attempt_selections statistics = 1
+       end)
+
+val _ =
+  test
+    ("selected exact rule has ordinary and timed-family parity",
+     fn () =>
+       let
+         val p = Term.mk_var ("exact_parity_p", Type.bool)
+         val bound = Term.mk_var ("exact_parity_x", Type.ind)
+         val predicate =
+           Term.mk_var ("exact_parity_P", Type.ind --> Type.bool)
+         val major =
+           boolSyntax.mk_exists
+             (bound, Term.mk_comb (predicate, bound))
+         val goal = ([major, major], p)
+         val input = (clasetGoal.from_goal goal, 1)
+         val specification =
+           {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+            elim = true, major = SOME 2}
+         val controls =
+           {clock = ticking_clock (), observe = NONE,
+            stop = fn () => false}
+         val ordinary =
+           drain_exact
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               specification input)
+         val measured_sequence =
+           clasetStep.blast_rule_step_measured_at
+             {observe = NONE, stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val measured = drain_measured_exact measured_sequence
+         val timed_sequence =
+           clasetStep.blast_rule_step_timed_at controls
+             clasetLib.empty_cs specification input
+         val timed = drain_timed_exact timed_sequence
+         val timed_v2_sequence =
+           clasetStep.blast_rule_step_timed_v2_at
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed_v2 = drain_timed_exact_v2 timed_v2_sequence
+         val timed_v3_sequence =
+           clasetStep.blast_rule_step_timed_v3_at
+             {clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed_v3 = drain_timed_exact_v3 timed_v3_sequence
+         val timed_v3_sink_elapsed = ref Time.zeroTime
+         fun add_v3_sink_elapsed elapsed =
+           timed_v3_sink_elapsed :=
+             Time.+ (!timed_v3_sink_elapsed, elapsed)
+         val timed_v3_sink_sequence =
+           clasetStep.blast_rule_step_timed_v3_with_sink_at
+             {classical_elapsed = add_v3_sink_elapsed,
+              clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed_v3_sink =
+           drain_timed_exact_v3 timed_v3_sink_sequence
+         val timed_v4_sequence =
+           clasetStep.blast_rule_step_timed_v4_at
+             {classical_elapsed = fn _ => (),
+              clock = ticking_clock (), observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed_v4 = drain_timed_exact_v4 timed_v4_sequence
+         val shared_summary =
+           clasetStep.new_timed_rule_summary_v4
+             {clock = ticking_clock (), classical_elapsed = fn _ => ()}
+         fun shared_v4_sequence () =
+           clasetStep.blast_rule_step_timed_v4_with_summary_at
+             {summary = shared_summary, observe = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs specification input
+         val timed_v4_shared_sequence1 = shared_v4_sequence ()
+         val timed_v4_shared1 =
+           drain_timed_exact_v4 timed_v4_shared_sequence1
+         val timed_v4_shared_statistics1 =
+           #base (#base
+             (clasetStep.timed_rule_statistics_v4 shared_summary))
+         val timed_v4_shared_sequence2 = shared_v4_sequence ()
+         val timed_v4_shared2 =
+           drain_timed_exact_v4 timed_v4_shared_sequence2
+         val measured_statistics =
+           clasetStep.measured_rule_statistics measured_sequence
+         val timed_statistics =
+           clasetStep.timed_rule_statistics timed_sequence
+         val timed_v2_statistics =
+           #base (clasetStep.timed_rule_statistics_v2 timed_v2_sequence)
+         val timed_v3_statistics =
+           #base (#base
+             (clasetStep.timed_rule_statistics_v3 timed_v3_sequence))
+         val timed_v3_sink_statistics =
+           #base (#base
+             (clasetStep.timed_rule_statistics_v3
+               timed_v3_sink_sequence))
+         val timed_v4_summary =
+           clasetStep.timed_rule_summary_of_v4 timed_v4_sequence
+         val timed_v4_statistics =
+           #base (#base
+             (clasetStep.timed_rule_statistics_v4 timed_v4_summary))
+         val timed_v4_shared_statistics2 =
+           #base (#base
+             (clasetStep.timed_rule_statistics_v4 shared_summary))
+         val variants =
+           [ordinary, measured, timed, timed_v2, timed_v3,
+            timed_v3_sink, timed_v4, timed_v4_shared1,
+            timed_v4_shared2]
+         fun selected result =
+           case result of
+               [(record, node)] =>
+                 clasetStep.consumed_of record = SOME 2 andalso
+                 valid_open_replay goal (record, node)
+             | _ => false
+         fun one_timed_attempt
+               (statistics : clasetStep.timed_rule_statistics) =
+           #attempt_selections statistics = 1 andalso
+           #elim_attempts statistics = 1
+       in
+         List.all selected variants andalso
+         #attempt_selections measured_statistics = 1 andalso
+         #elim_attempts measured_statistics = 1 andalso
+         one_timed_attempt timed_statistics andalso
+         one_timed_attempt timed_v2_statistics andalso
+         one_timed_attempt timed_v3_statistics andalso
+         one_timed_attempt timed_v3_sink_statistics andalso
+         !timed_v3_sink_elapsed =
+           #classical_time timed_v3_sink_statistics andalso
+         phase_time_sum timed_v3_sink_statistics =
+           #classical_time timed_v3_sink_statistics andalso
+         one_timed_attempt timed_v4_statistics andalso
+         one_timed_attempt timed_v4_shared_statistics1 andalso
+         #attempt_selections timed_v4_shared_statistics2 =
+           #attempt_selections timed_v4_shared_statistics1 + 1 andalso
+         #elim_attempts timed_v4_shared_statistics2 =
+           #elim_attempts timed_v4_shared_statistics1 + 1
+       end)
+
+val _ =
+  test
+    ("selected blast hyp-subst uses only the recorded equality",
+     fn () =>
+       let
+         val x = Term.mk_var ("exact_subst_x", Type.bool)
+         val y = Term.mk_var ("exact_subst_y", Type.bool)
+         val z = Term.mk_var ("exact_subst_z", Type.bool)
+         val p = Term.mk_var ("exact_subst_P", Type.bool --> Type.bool)
+         fun app argument = Term.mk_comb (p, argument)
+         val first = boolSyntax.mk_eq (x, y)
+         val selected = boolSyntax.mk_eq (y, z)
+         val transformed_first = boolSyntax.mk_eq (x, z)
+         val unchanged = app z
+         val goal = ([first, selected, unchanged, app y], app y)
+         val node = clasetGoal.from_goal goal
+         val results =
+           drain_exact (clasetStep.blast_hyp_subst_step_at 2 (node, 1))
+         val wrong =
+           seq.null (clasetStep.blast_hyp_subst_step_at 5 (node, 1))
+       in
+         case results of
+             [(record, next)] =>
+               (case rendered_goals next of
+                    [(assumptions, conclusion)] =>
+                      List.exists (Term.aconv transformed_first)
+                        assumptions andalso
+                      List.exists (Term.aconv unchanged) assumptions andalso
+                      not (List.exists (Term.aconv selected) assumptions)
+                      andalso Term.aconv conclusion (app z) andalso
+                      valid_open_replay goal (record, next) andalso wrong
+                  | _ => false)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("legacy closure and substitution enumeration keeps occurrence order",
+     fn () =>
+       let
+         val p = Term.mk_var ("prepared_legacy_p", Type.bool)
+         val q = Term.mk_var ("prepared_legacy_q", Type.bool)
+         val assumption_goal = ([p, q, p], p)
+         val assumption_node = clasetGoal.from_goal assumption_goal
+         val assumptions =
+           drain_exact
+             (clasetStep.blast_assumption_step (assumption_node, 1))
+         val selected_assumptions =
+           List.concat
+             (map
+               (fn position =>
+                 drain_exact
+                   (clasetStep.blast_assumption_step_at position
+                     (assumption_node, 1)))
+               [1, 2, 3])
+         val contradiction_goal = ([boolSyntax.mk_neg p, p, p], q)
+         val contradictions =
+           drain_exact
+             (clasetStep.blast_contradiction_step
+               (clasetGoal.from_goal contradiction_goal, 1))
+         val x = Term.mk_var ("prepared_legacy_x", Type.bool)
+         val y = Term.mk_var ("prepared_legacy_y", Type.bool)
+         val z = Term.mk_var ("prepared_legacy_z", Type.bool)
+         val predicate =
+           Term.mk_var
+             ("prepared_legacy_P", Type.bool --> Type.bool)
+         val substitution_goal =
+           ([boolSyntax.mk_eq (x, y), boolSyntax.mk_eq (y, z),
+             Term.mk_comb (predicate, x)],
+            Term.mk_comb (predicate, y))
+         val substitution_node = clasetGoal.from_goal substitution_goal
+         val substitutions =
+           drain_exact
+             (clasetStep.blast_hyp_subst_step
+               (substitution_node, 1))
+         val selected_substitutions =
+           List.concat
+             (map
+               (fn position =>
+                 drain_exact
+                   (clasetStep.blast_hyp_subst_step_at position
+                     (substitution_node, 1)))
+               [1, 2, 3])
+         fun same_nodes ([], []) = true
+           | same_nodes ((_, left) :: lefts, (_, right) :: rights) =
+               clasetGoal.equal (left, right) andalso
+               same_nodes (lefts, rights)
+           | same_nodes _ = false
+       in
+         map (clasetStep.consumed_of o fst) assumptions =
+           [SOME 1, SOME 3] andalso
+         same_nodes (assumptions, selected_assumptions) andalso
+         (case contradictions of
+              [(record, _)] =>
+                (case clasetStep.kind_of record of
+                     clasetStep.Contradiction (1, 2) => true
+                   | _ => false)
+            | _ => false) andalso
+         same_nodes (substitutions, selected_substitutions)
        end)

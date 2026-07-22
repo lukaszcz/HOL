@@ -721,7 +721,38 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
         entries tagged
       end)
 
-fun exact_rule_results cs {theorem, elim} (node, pos) =
+datatype exact_major_selector = AllMajors | ExactMajor of int option
+
+(* Keep the legacy exact-rule path just as lazy as it was before selectors:
+   introductions do not inspect the goal until their delayed attempt is
+   pulled, and eliminations walk the original assumption list incrementally.
+   Only the additive exact selector indexes an assumption eagerly. *)
+fun exact_rule_attempts attempt selector elim node pos =
+  case (selector, elim) of
+      (AllMajors, false) => attempt NONE
+    | (AllMajors, true) =>
+        let
+          fun eliminations _ [] = seq.empty
+            | eliminations assumption_pos (major :: rest) =
+                seq.append
+                  (attempt (SOME (assumption_pos, major)))
+                  (seq.delay
+                    (fn () =>
+                      eliminations (assumption_pos + 1) rest))
+        in
+          eliminations 1 (#asl (clasetGoal.goal_at node pos))
+        end
+    | (ExactMajor NONE, false) => attempt NONE
+    | (ExactMajor (SOME major), true) =>
+        let val assumptions = #asl (clasetGoal.goal_at node pos)
+        in
+          if major > 0 andalso major <= length assumptions then
+            attempt (SOME (major, nth1 assumptions major))
+          else seq.empty
+        end
+    | _ => seq.empty
+
+fun exact_rule_results_with selector cs {theorem, elim} (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
     val entry = (tag, (elim, theorem))
@@ -737,16 +768,12 @@ fun exact_rule_results cs {theorem, elim} (node, pos) =
               SOME direct => seq.result direct
             | NONE => seq.empty)
 
-    fun eliminations _ [] = seq.empty
-      | eliminations assumption_pos (major :: rest) =
-          seq.append (attempt (SOME (assumption_pos, major)))
-            (seq.delay
-              (fn () => eliminations (assumption_pos + 1) rest))
   in
-    if elim then
-      eliminations 1 (#asl (clasetGoal.goal_at node pos))
-    else attempt NONE
+    exact_rule_attempts attempt selector elim node pos
   end
+
+fun exact_rule_results cs specification =
+  exact_rule_results_with AllMajors cs specification
 
 datatype measured_rule_kind = IntroRule | ElimRule
 
@@ -1169,7 +1196,8 @@ fun try_rule_measured monitor cs node pos
         end) ()
   end
 
-fun exact_rule_results_measured monitor cs {theorem, elim} (node, pos) =
+fun exact_rule_results_measured_with selector monitor cs {theorem, elim}
+      (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
     val entry = (tag, (elim, theorem))
@@ -1186,16 +1214,10 @@ fun exact_rule_results_measured monitor cs {theorem, elim} (node, pos) =
                   LazyResultYield seq.result direct
             | NONE => seq.empty)
 
-    fun eliminations _ [] = seq.empty
-      | eliminations assumption_pos (major :: rest) =
-          seq.append (attempt (SOME (assumption_pos, major)))
-            (seq.delay
-              (fn () => eliminations (assumption_pos + 1) rest))
   in
-    if elim then
-      eliminations 1 (#asl (clasetGoal.goal_at node pos))
-    else attempt NONE
+    exact_rule_attempts attempt selector elim node pos
   end
+
 
 fun all_weights _ = true
 fun weight_is expected ({weight, ...} : clasetLib.tag) = weight = expected
@@ -1449,39 +1471,65 @@ fun instantiate_without_reduction store tm =
     recurse tm
   end
 
+type blast_hyp_subst_context =
+  {store : clasetMeta.store,
+   params : term list,
+   assumption_count : int,
+   goal : term list * term}
+
+fun prepare_blast_hyp_subst node pos : blast_hyp_subst_context =
+  let
+    val store = clasetGoal.store node
+    val {params, asl, w} = clasetGoal.goal_at node pos
+    val instantiate = instantiate_without_reduction store
+    val goal = (map instantiate asl, instantiate w)
+  in
+    {store = store, params = params, assumption_count = length asl,
+     goal = goal}
+  end
+
+fun blast_hyp_subst_in
+      ({store, params, assumption_count, goal} :
+        blast_hyp_subst_context) position =
+  if position <= 0 orelse position > assumption_count then NONE
+  else
+    case total (clasetReplay.BLAST_HYP_SUBST_TAC_AT position) goal of
+        NONE => NONE
+      | SOME (result as (goals, _)) =>
+          let
+            fun child (child_asl, child_w) =
+              {params = params, asl = child_asl, w = child_w}
+          in
+            SOME
+              (Direct
+                {kind = HypSubst, consumed = NONE,
+                 created = no_created,
+                 eigenvariables = map (fn _ => []) goals,
+                 result = result, children = SOME (map child goals),
+                 action =
+                   clasetReplay.blast_hyp_subst_action_at position,
+                 closed = map (fn _ => NONE) goals, store = store})
+          end
+
 fun blast_hyp_subst_results (node, pos) =
   list_seq
     (fn () =>
       let
-        val store = clasetGoal.store node
-        val {params, asl, w} = clasetGoal.goal_at node pos
-        val instantiate = instantiate_without_reduction store
-        val goal = (map instantiate asl, instantiate w)
-
-        fun attempt position =
-          case total
-                 (clasetReplay.BLAST_HYP_SUBST_TAC_AT position) goal of
-              NONE => NONE
-            | SOME (result as (goals, _)) =>
-                let
-                  fun child (child_asl, child_w) =
-                    {params = params, asl = child_asl, w = child_w}
-                in
-                  SOME
-                    (Direct
-                      {kind = HypSubst, consumed = NONE,
-                       created = no_created,
-                       eigenvariables = map (fn _ => []) goals,
-                       result = result, children = SOME (map child goals),
-                       action =
-                         clasetReplay.blast_hyp_subst_action_at position,
-                       closed = map (fn _ => NONE) goals,
-                       store = store})
-                end
-        val positions = List.tabulate (length asl, fn index => index + 1)
+        val prepared = prepare_blast_hyp_subst node pos
+        val positions =
+          List.tabulate
+            (#assumption_count prepared, fn index => index + 1)
       in
-        List.mapPartial attempt positions
+        List.mapPartial (blast_hyp_subst_in prepared) positions
       end)
+
+fun blast_hyp_subst_results_at position (node, pos) =
+  list_seq
+    (fn () =>
+      case blast_hyp_subst_in (prepare_blast_hyp_subst node pos)
+        position of
+          NONE => []
+        | SOME direct => [direct])
 
 val ccontr_results =
   plain_tactic_results CContr
@@ -1662,53 +1710,181 @@ val empty_rule_metas : clasetUnify.rule_metas = {terms = [], types = []}
 val unify_config =
   {mode = clasetUnify.Unify, rule_metas = empty_rule_metas}
 
+type unifying_assumption_context =
+  {asl : term list, w : term, store : clasetMeta.store}
+
+fun prepare_unifying_assumption node pos : unifying_assumption_context =
+  let
+    val (asl, w) = clasetGoal.render node pos
+  in
+    {asl = asl, w = w, store = clasetGoal.store node}
+  end
+
+fun unifying_assumption_candidate
+      ({w, store = initial_store, ...} : unifying_assumption_context)
+      (asm_pos, asm) =
+  case clasetUnify.unify initial_store unify_config (w, asm) of
+          NONE => NONE
+        | SOME store =>
+            let
+              fun validation [] =
+                    assumption_thm (normalize_term store asm)
+                      (normalize_term store w)
+                | validation _ =
+                    raise mk_HOL_ERR "clasetStep"
+                      "unifying_assumption_results"
+                      "assumption validation has children"
+            in
+              SOME
+                (Direct
+                  {kind = Assumption asm_pos,
+                   consumed = SOME asm_pos, created = no_created,
+                   eigenvariables = [], result = ([], validation),
+                   children = SOME [],
+                   action = clasetReplay.assumption_action asm_pos,
+                   closed = [], store = store})
+            end
+
+fun unifying_assumption_in
+      (prepared as {asl, ...} : unifying_assumption_context) asm_pos =
+  if asm_pos <= 0 orelse asm_pos > length asl then NONE
+  else
+    unifying_assumption_candidate prepared (asm_pos, nth1 asl asm_pos)
+
 fun unifying_assumption_results (node, pos) =
   list_seq
     (fn () =>
       let
-        val (asl, w) = clasetGoal.render node pos
-
-        fun attempt (asm_pos, asm) =
-          case clasetUnify.unify (clasetGoal.store node) unify_config
-            (w, asm)
-          of
-              NONE => NONE
-            | SOME store =>
-                let
-                  fun validation [] =
-                        assumption_thm (normalize_term store asm)
-                          (normalize_term store w)
-                    | validation _ =
-                        raise mk_HOL_ERR "clasetStep"
-                          "unifying_assumption_results"
-                          "assumption validation has children"
-                in
-                  SOME
-                    (Direct
-                      {kind = Assumption asm_pos,
-                       consumed = SOME asm_pos, created = no_created,
-                       eigenvariables = [], result = ([], validation),
-                       children = SOME [],
-                       action = clasetReplay.assumption_action asm_pos,
-                       closed = [], store = store})
-                end
+        val prepared = prepare_unifying_assumption node pos
       in
-        List.mapPartial attempt (position_map (fn value => value) asl)
+        List.mapPartial (unifying_assumption_candidate prepared)
+          (position_map (fn value => value) (#asl prepared))
       end)
+
+fun unifying_assumption_results_at asm_pos (node, pos) =
+  list_seq
+    (fn () =>
+      case unifying_assumption_in
+        (prepare_unifying_assumption node pos) asm_pos of
+          NONE => []
+        | SOME direct => [direct])
+
+type unifying_contradiction_context =
+  {asl : term list,
+   w : term,
+   params : term list,
+   store : clasetMeta.store}
+
+fun prepare_unifying_contradiction node pos :
+      unifying_contradiction_context =
+  let
+    val (asl, w) = clasetGoal.render node pos
+    val params = #params (clasetGoal.goal_at node pos)
+  in
+    {asl = asl, w = w, params = params, store = clasetGoal.store node}
+  end
+
+fun unifying_contradiction_in
+      ({asl, w, params, store = initial_store} :
+        unifying_contradiction_context)
+      {negative = negative_pos, positive = positive_pos} =
+  if negative_pos <= 0 orelse positive_pos <= 0 orelse
+     negative_pos > length asl orelse positive_pos > length asl orelse
+     negative_pos = positive_pos
+  then NONE
+  else
+    let
+        val major = nth1 asl negative_pos
+        val candidate = nth1 asl positive_pos
+        val (positive, store1) =
+          clasetMeta.new_meta {allow = params, ty = Type.bool}
+            initial_store
+        val (result, fresh_store) =
+          clasetMeta.new_meta {allow = params, ty = Type.bool} store1
+        val created = {terms = [positive, result], types = []}
+        val config =
+          {mode = clasetUnify.Unify, rule_metas = created}
+      in
+        case clasetUnify.unify fresh_store config (result, w) of
+            NONE => NONE
+          | SOME result_store =>
+              (case clasetUnify.unify result_store config
+                 (mk_neg positive, major)
+               of
+                   NONE => NONE
+                 | SOME major_store =>
+                     let
+                       val selected_store =
+                         if closing_equal major_store positive candidate then
+                           SOME major_store
+                         else
+                           clasetUnify.unify major_store unify_config
+                             (positive, candidate)
+                     in
+                       Option.map
+                         (fn store =>
+                           let
+                             fun validation [] =
+                                   let
+                                     val normalized_major =
+                                       normalize_term store major
+                                     val normalized_positive =
+                                       normalize_term store positive
+                                     val negative_thm =
+                                       assumption_thm major normalized_major
+                                     val positive_thm =
+                                       assumption_thm candidate
+                                         normalized_positive
+                                     val false_thm =
+                                       MP (NOT_ELIM negative_thm)
+                                         positive_thm
+                                   in
+                                     Drule.CONTR (normalize_term store w)
+                                       false_thm
+                                   end
+                               | validation _ =
+                                   raise mk_HOL_ERR "clasetStep"
+                                     "unifying_contradiction_at"
+                                     "contradiction validation has children"
+                           in
+                             Direct
+                               {kind =
+                                  Contradiction
+                                    (negative_pos, positive_pos),
+                                consumed = SOME negative_pos,
+                                created = created, eigenvariables = [],
+                                result = ([], validation),
+                                children = SOME [],
+                                action =
+                                  clasetReplay.contradiction_action
+                                    (negative_pos, positive_pos),
+                                closed = [], store = store}
+                           end)
+                         selected_store
+                     end)
+    end
+
+fun unifying_contradiction_results_at positions (node, pos) =
+  list_seq
+    (fn () =>
+      case unifying_contradiction_in
+        (prepare_unifying_contradiction node pos) positions of
+          NONE => []
+        | SOME direct => [direct])
 
 fun unifying_contradiction_results (node, pos) =
   list_seq
     (fn () =>
       let
-        val (asl, w) = clasetGoal.render node pos
-        val params = #params (clasetGoal.goal_at node pos)
+        val prepared = prepare_unifying_contradiction node pos
+        val {asl, w, params, store = initial_store} = prepared
         val positioned = position_map (fn value => value) asl
 
         fun major_alternatives (major_pos, major) =
           let
             val (positive, store1) =
               clasetMeta.new_meta {allow = params, ty = Type.bool}
-                (clasetGoal.store node)
+                initial_store
             val (result, fresh_store) =
               clasetMeta.new_meta {allow = params, ty = Type.bool} store1
             val created = {terms = [positive, result], types = []}
@@ -1873,8 +2049,16 @@ fun direct_step results (node, pos) =
 val blast_assumption_step = direct_step unifying_assumption_results
 val blast_contradiction_step =
   direct_step unifying_contradiction_results
+fun blast_assumption_step_at position =
+  direct_step (unifying_assumption_results_at position)
+fun blast_contradiction_step_at positions =
+  direct_step (unifying_contradiction_results_at positions)
 fun blast_rule_step cs specification =
   direct_step (exact_rule_results cs specification)
+fun blast_rule_step_at cs {theorem, elim, major} =
+  direct_step
+    (exact_rule_results_with (ExactMajor major) cs
+      {theorem = theorem, elim = elim})
 
 datatype measured_rule_sequence =
   MeasuredRuleSequence of
@@ -1946,7 +2130,8 @@ fun new_measured_rule_monitor {observe, stop} timing pos rule_kind =
    intro_attempts = ref 0, elim_attempts = ref 0}
   : measured_rule_monitor
 
-fun blast_rule_step_measured controls cs specification (input as (_, pos)) =
+fun blast_rule_step_measured_with selector controls cs specification
+      (input as (_, pos)) =
   let
     val rule_kind =
       if #elim specification then ElimRule else IntroRule
@@ -1954,10 +2139,18 @@ fun blast_rule_step_measured controls cs specification (input as (_, pos)) =
       new_measured_rule_monitor controls NONE pos rule_kind
     val sequence =
       direct_step_measured monitor
-        (exact_rule_results_measured monitor cs specification) input
+        (exact_rule_results_measured_with selector monitor cs specification)
+        input
   in
     MeasuredRuleSequence {sequence = sequence, monitor = monitor}
   end
+
+fun blast_rule_step_measured controls cs specification =
+  blast_rule_step_measured_with AllMajors controls cs specification
+
+fun blast_rule_step_measured_at controls cs {theorem, elim, major} =
+  blast_rule_step_measured_with (ExactMajor major) controls cs
+    {theorem = theorem, elim = elim}
 
 fun measured_rule_cases
       (MeasuredRuleSequence {sequence, monitor}) =
@@ -2041,7 +2234,7 @@ fun new_measured_rule_timing_v2 clock : measured_rule_timing =
    record_insertion_time = ref Time.zeroTime,
    classical_time = ref Time.zeroTime}
 
-fun blast_rule_step_timed {clock, observe, stop} cs specification
+fun blast_rule_step_timed_with selector {clock, observe, stop} cs specification
       (input as (_, pos)) =
   let
     val rule_kind =
@@ -2052,13 +2245,21 @@ fun blast_rule_step_timed {clock, observe, stop} cs specification
         (SOME timing) pos rule_kind
     val sequence =
       direct_step_measured monitor
-        (exact_rule_results_measured monitor cs specification) input
+        (exact_rule_results_measured_with selector monitor cs specification)
+        input
   in
     TimedRuleSequence
       {sequence =
          MeasuredRuleSequence {sequence = sequence, monitor = monitor},
        timing = timing}
   end
+
+fun blast_rule_step_timed controls cs specification =
+  blast_rule_step_timed_with AllMajors controls cs specification
+
+fun blast_rule_step_timed_at controls cs {theorem, elim, major} =
+  blast_rule_step_timed_with (ExactMajor major) controls cs
+    {theorem = theorem, elim = elim}
 
 fun timed_rule_cases (TimedRuleSequence {sequence, timing}) =
   case measured_rule_cases sequence of
@@ -2141,7 +2342,8 @@ datatype timed_rule_pull_v2 =
       (step_record * node) * timed_rule_sequence_v2
   | TimedRuleInterruptedV2
 
-fun blast_rule_step_timed_v2 {clock, observe, stop} cs specification
+fun blast_rule_step_timed_v2_with selector {clock, observe, stop} cs
+      specification
       (input as (_, pos)) =
   let
     val rule_kind =
@@ -2152,13 +2354,21 @@ fun blast_rule_step_timed_v2 {clock, observe, stop} cs specification
         (SOME timing) pos rule_kind
     val sequence =
       direct_step_measured monitor
-        (exact_rule_results_measured monitor cs specification) input
+        (exact_rule_results_measured_with selector monitor cs specification)
+        input
   in
     TimedRuleSequenceV2
       {sequence =
          MeasuredRuleSequence {sequence = sequence, monitor = monitor},
        timing = timing}
   end
+
+fun blast_rule_step_timed_v2 controls cs specification =
+  blast_rule_step_timed_v2_with AllMajors controls cs specification
+
+fun blast_rule_step_timed_v2_at controls cs {theorem, elim, major} =
+  blast_rule_step_timed_v2_with (ExactMajor major) controls cs
+    {theorem = theorem, elim = elim}
 
 fun timed_rule_cases_v2 (TimedRuleSequenceV2 {sequence, timing}) =
   case measured_rule_cases sequence of
@@ -2576,7 +2786,8 @@ fun try_rule_measured_v3 monitor cs node pos
         end) ()
   end
 
-fun exact_rule_results_measured_v3 monitor cs {theorem, elim} (node, pos) =
+fun exact_rule_results_measured_v3_with selector monitor cs {theorem, elim}
+      (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
     val entry = (tag, (elim, theorem))
@@ -2593,15 +2804,8 @@ fun exact_rule_results_measured_v3 monitor cs {theorem, elim} (node, pos) =
                   LazyResultYield seq.result direct
             | NONE => seq.empty)
 
-    fun eliminations _ [] = seq.empty
-      | eliminations assumption_pos (major :: rest) =
-          seq.append (attempt (SOME (assumption_pos, major)))
-            (seq.delay
-              (fn () => eliminations (assumption_pos + 1) rest))
   in
-    if elim then
-      eliminations 1 (#asl (clasetGoal.goal_at node pos))
-    else attempt NONE
+    exact_rule_attempts attempt selector elim node pos
   end
 
 fun direct_step_measured_v3 monitor results (node, pos) =
@@ -2732,7 +2936,7 @@ datatype timed_rule_pull_v3 =
 
 exception TIMED_RULE_CALLBACK_V3 of exn
 
-fun blast_rule_step_timed_v3_with_sink
+fun blast_rule_step_timed_v3_with_sink_selector selector
       {classical_elapsed, clock, observe, stop} cs specification
       (input as (_, pos)) =
   let
@@ -2746,14 +2950,29 @@ fun blast_rule_step_timed_v3_with_sink
         timing pos rule_kind
     val sequence =
       direct_step_measured_v3 monitor
-        (exact_rule_results_measured_v3 monitor cs specification) input
+        (exact_rule_results_measured_v3_with selector monitor cs
+          specification) input
   in
     TimedRuleSequenceV3
       {sequence = sequence, monitor = monitor, timing = timing}
   end
 
+fun blast_rule_step_timed_v3_with_sink controls cs specification =
+  blast_rule_step_timed_v3_with_sink_selector AllMajors controls cs
+    specification
+
+fun blast_rule_step_timed_v3_with_sink_at controls cs
+      {theorem, elim, major} =
+  blast_rule_step_timed_v3_with_sink_selector (ExactMajor major) controls
+    cs {theorem = theorem, elim = elim}
+
 fun blast_rule_step_timed_v3 {clock, observe, stop} =
   blast_rule_step_timed_v3_with_sink
+    {classical_elapsed = fn _ => (), clock = clock,
+     observe = observe, stop = stop}
+
+fun blast_rule_step_timed_v3_at {clock, observe, stop} =
+  blast_rule_step_timed_v3_with_sink_at
     {classical_elapsed = fn _ => (), clock = clock,
      observe = observe, stop = stop}
 
@@ -3064,7 +3283,7 @@ datatype timed_rule_pull_v4 =
 
 exception TIMED_RULE_CALLBACK_V4 of exn
 
-fun blast_rule_step_timed_v4_with_summary
+fun blast_rule_step_timed_v4_with_summary_selector selector
       {summary, observe, stop} cs specification (input as (_, pos)) =
   let
     val rule_kind =
@@ -3074,22 +3293,40 @@ fun blast_rule_step_timed_v4_with_summary
         summary pos rule_kind
     val sequence =
       direct_step_measured_v3 monitor
-        (exact_rule_results_measured_v3 monitor cs specification) input
+        (exact_rule_results_measured_v3_with selector monitor cs
+          specification) input
   in
     TimedRuleSequenceV4
       {sequence = sequence, monitor = monitor, summary = summary}
   end
 
-fun blast_rule_step_timed_v4
+fun blast_rule_step_timed_v4_with_summary controls cs specification =
+  blast_rule_step_timed_v4_with_summary_selector AllMajors controls cs
+    specification
+
+fun blast_rule_step_timed_v4_with_summary_at controls cs
+      {theorem, elim, major} =
+  blast_rule_step_timed_v4_with_summary_selector (ExactMajor major)
+    controls cs {theorem = theorem, elim = elim}
+
+fun blast_rule_step_timed_v4_with selector
       {classical_elapsed, clock, observe, stop} cs specification input =
   let
     val summary = new_timed_rule_summary_v4
       {clock = clock, classical_elapsed = classical_elapsed}
   in
-    blast_rule_step_timed_v4_with_summary
+    blast_rule_step_timed_v4_with_summary_selector selector
       {summary = summary, observe = observe, stop = stop}
       cs specification input
   end
+
+
+fun blast_rule_step_timed_v4 controls cs specification =
+  blast_rule_step_timed_v4_with AllMajors controls cs specification
+
+fun blast_rule_step_timed_v4_at controls cs {theorem, elim, major} =
+  blast_rule_step_timed_v4_with (ExactMajor major) controls cs
+    {theorem = theorem, elim = elim}
 
 fun timed_rule_cases_v4
       (TimedRuleSequenceV4 {sequence, monitor, summary}) =
@@ -3239,6 +3476,8 @@ val blast_disch_step = direct_step disch_results
 val blast_gen_step = direct_step gen_results
 val blast_ccontr_step = direct_step ccontr_results
 val blast_hyp_subst_step = direct_step blast_hyp_subst_results
+fun blast_hyp_subst_step_at position =
+  direct_step (blast_hyp_subst_results_at position)
 fun blast_move_back_step position =
   direct_step (move_back_results position)
 

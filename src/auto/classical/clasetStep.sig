@@ -36,6 +36,17 @@ sig
   val blast_contradiction_step : step
   val blast_rule_step :
     clasetLib.claset -> {theorem : thm, elim : bool} -> step
+  (* The additive [_at] forms select assumption occurrences before applying
+     theorem/tactic logic.  Rule selectors use NONE only for introductions
+     and a positive, in-range SOME position only for eliminations; a shape,
+     range, polarity or matching error is clean nonapplication.  Internally
+     all diagnostic families share this same singleton selection layer. *)
+  val blast_assumption_step_at : int -> step
+  val blast_contradiction_step_at :
+    {negative : int, positive : int} -> step
+  val blast_rule_step_at :
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} -> step
 
   (* Measured exact stored-rule replay is a caller-neutral, parallel path.
      It leaves [blast_rule_step] unchanged and exposes only facts owned by
@@ -110,6 +121,12 @@ sig
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
     node * goalpos -> measured_rule_sequence
+  val blast_rule_step_measured_at :
+    {observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
+    node * goalpos -> measured_rule_sequence
   val measured_rule_cases :
     measured_rule_sequence -> measured_rule_pull
   val measured_rule_current :
@@ -171,6 +188,13 @@ sig
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
     node * goalpos -> timed_rule_sequence
+  val blast_rule_step_timed_at :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
+    node * goalpos -> timed_rule_sequence
   val timed_rule_cases : timed_rule_sequence -> timed_rule_pull
   val timed_rule_current :
     timed_rule_sequence -> measured_rule_observation option
@@ -206,6 +230,13 @@ sig
      observe : (measured_rule_observation -> unit) option,
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v2
+  val blast_rule_step_timed_v2_at :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
     node * goalpos -> timed_rule_sequence_v2
   val timed_rule_cases_v2 : timed_rule_sequence_v2 -> timed_rule_pull_v2
   val timed_rule_current_v2 :
@@ -264,12 +295,27 @@ sig
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
     node * goalpos -> timed_rule_sequence_v3
+  val blast_rule_step_timed_v3_at :
+    {clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
+    node * goalpos -> timed_rule_sequence_v3
   val blast_rule_step_timed_v3_with_sink :
     {classical_elapsed : Time.time -> unit,
      clock : unit -> Time.time,
      observe : (measured_rule_observation -> unit) option,
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v3
+  val blast_rule_step_timed_v3_with_sink_at :
+    {classical_elapsed : Time.time -> unit,
+     clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
     node * goalpos -> timed_rule_sequence_v3
   val timed_rule_cases_v3 :
     timed_rule_sequence_v3 -> timed_rule_pull_v3
@@ -331,11 +377,26 @@ sig
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
     node * goalpos -> timed_rule_sequence_v4
+  val blast_rule_step_timed_v4_at :
+    {classical_elapsed : Time.time -> unit,
+     clock : unit -> Time.time,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
+    node * goalpos -> timed_rule_sequence_v4
   val blast_rule_step_timed_v4_with_summary :
     {summary : timed_rule_summary_v4,
      observe : (measured_rule_observation -> unit) option,
      stop : unit -> bool} ->
     clasetLib.claset -> {theorem : thm, elim : bool} ->
+    node * goalpos -> timed_rule_sequence_v4
+  val blast_rule_step_timed_v4_with_summary_at :
+    {summary : timed_rule_summary_v4,
+     observe : (measured_rule_observation -> unit) option,
+     stop : unit -> bool} ->
+    clasetLib.claset ->
+    {theorem : thm, elim : bool, major : int option} ->
     node * goalpos -> timed_rule_sequence_v4
   val timed_rule_cases_v4 :
     timed_rule_sequence_v4 -> timed_rule_pull_v4
@@ -352,6 +413,7 @@ sig
   val blast_gen_step : step
   val blast_ccontr_step : step
   val blast_hyp_subst_step : step
+  val blast_hyp_subst_step_at : int -> step
   val blast_move_back_step : int -> step
 
   (* [depth_step cs part m] selects the duplicating or non-duplicating
