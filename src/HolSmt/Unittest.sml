@@ -5833,6 +5833,244 @@ in
     term_with_types actual ^ ", expected " ^ term_with_types expected)
 end
 
+fun z3_beta_eta_replay_rungs_success () =
+let
+  val beta_var = ``beta_x:int``
+  val beta_lhs = Term.mk_comb
+    (Term.mk_abs (beta_var, beta_var), ``2i``)
+  val beta_rhs = ``2i``
+  val beta_thm = Z3_ProofReplay.beta_equal_for_test (beta_lhs, beta_rhs)
+  val eta_lhs = ``\x:bool. (p:bool->bool) x``
+  val eta_rhs = ``p:bool->bool``
+  val eta_thm = Z3_ProofReplay.eta_equal_for_test (eta_lhs, eta_rhs)
+  val beta_mono = Z3_ProofReplay.monotonicity_prove_for_test
+    ([], boolSyntax.mk_eq (beta_lhs, beta_rhs))
+  val eta_mono = Z3_ProofReplay.monotonicity_prove_for_test
+    ([], boolSyntax.mk_eq (eta_lhs, eta_rhs))
+in
+  assert (Thm.concl beta_thm ~~ boolSyntax.mk_eq (beta_lhs, beta_rhs),
+    "beta replay rung returned the wrong equality");
+  assert (Thm.concl eta_thm ~~ boolSyntax.mk_eq (eta_lhs, eta_rhs),
+    "eta replay rung returned the wrong equality");
+  assert (Thm.concl beta_mono ~~ boolSyntax.mk_eq (beta_lhs, beta_rhs),
+    "monotonicity beta rung returned the wrong equality");
+  assert (Thm.concl eta_mono ~~ boolSyntax.mk_eq (eta_lhs, eta_rhs),
+    "monotonicity eta rung returned the wrong equality");
+  Library.check_oracle_tags "Z3 beta replay rung" beta_thm;
+  Library.check_oracle_tags "Z3 eta replay rung" eta_thm;
+  Library.check_oracle_tags "Z3 monotonicity beta rung" beta_mono;
+  Library.check_oracle_tags "Z3 monotonicity eta rung" eta_mono
+end
+
+fun z3_beta_eta_replay_rungs_shaped_failure () =
+let
+  fun expect_failure name thunk =
+    (ignore (thunk ());
+     die ("FAIL: malformed " ^ name ^ " replay rung succeeded"))
+    handle Feedback.HOL_ERR _ => ()
+in
+  expect_failure "beta"
+    (fn () =>
+      let
+        val x = ``beta_x:int``
+        val redex = Term.mk_comb (Term.mk_abs (x, x), ``2i``)
+      in
+        Z3_ProofReplay.beta_equal_for_test (redex, ``4i``)
+      end);
+  expect_failure "eta"
+    (fn () => Z3_ProofReplay.eta_equal_for_test
+      (``\x:bool. (p:bool->bool) x``, ``q:bool->bool``))
+end
+
+fun z3_rewrite_beta_eta_abs_rungs_success () =
+let
+  val beta = replay_z3_proof_string
+    "((declare-fun k () Int) \
+    \(proof (rewrite (= \
+    \(select (lambda ((x Int)) (+ x k)) 7) (+ 7 k))))))"
+  val eta = replay_z3_proof_string
+    "((declare-fun f () (Array Int Int)) \
+    \(proof (rewrite (= \
+    \(lambda ((x Int)) (select f x)) f))))"
+  val abs = replay_z3_proof_string
+    "((proof (rewrite (= \
+    \(lambda ((x Int)) (+ x 1)) \
+    \(lambda ((x Int)) (+ 1 x))))))"
+in
+  assert (Thm.concl beta ~~ ``(\x:int. x + k) 7 = 7 + k``,
+    "rewrite beta rung returned the wrong equality");
+  assert (Thm.concl eta ~~ ``(\x:int. (f:int->int) x) = f``,
+    "rewrite eta rung returned the wrong equality");
+  assert (Thm.concl abs ~~ ``(\x:int. x + 1) = (\x. 1 + x)``,
+    "rewrite ABS rung returned the wrong equality");
+  Library.check_oracle_tags "Z3 rewrite beta rung" beta;
+  Library.check_oracle_tags "Z3 rewrite eta rung" eta;
+  Library.check_oracle_tags "Z3 rewrite ABS rung" abs
+end
+
+fun z3_rewrite_abs_rung_shaped_failure () =
+  expect_hol_error_contains "rewrite ABS body mismatch"
+    "proof rule: rewrite"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (rewrite (= \
+      \(lambda ((x Int)) (+ x 1)) \
+      \(lambda ((x Int)) (+ x 2))))))"))
+
+fun z3_abs_congruence_replay_rung_success () =
+let
+  val x = ``x:int``
+  val premise = intLib.ARITH_PROVE ``x + 0i = x``
+  val target = ``(\x:int. x + 0i) = (\x. x)``
+  val thm = Z3_ProofReplay.monotonicity_prove_for_test ([premise], target)
+  val capture_safe_target = ``(\x:int. x + 0i) = (\y. y)``
+  val capture_safe = Z3_ProofReplay.monotonicity_prove_for_test
+    ([premise], capture_safe_target)
+in
+  assert (Thm.concl thm ~~ target,
+    "ABS congruence replay rung returned the wrong equality");
+  assert (Thm.concl capture_safe ~~ capture_safe_target,
+    "ABS congruence did not preserve alpha-renamed binders");
+  Library.check_oracle_tags "Z3 ABS congruence replay rung" thm;
+  Library.check_oracle_tags "Z3 capture-safe ABS congruence" capture_safe
+end
+
+fun z3_abs_congruence_replay_rung_shaped_failure () =
+let
+  val x = ``x:int``
+  val captured = Thm.ASSUME ``x + 0i = x``
+  val target = ``(\x:int. x + 0i) = (\x. x)``
+in
+  (ignore (Z3_ProofReplay.monotonicity_prove_for_test ([captured], target));
+   die "FAIL: ABS congruence captured a variable from a hypothesis")
+  handle Feedback.HOL_ERR _ => ()
+end
+
+fun z3_lambda_intro_def_replay_success () =
+let
+  val thm = replay_z3_proof_string
+    "((declare-fun z () (Array Int Int)) \
+    \(proof (intro-def (forall ((x Int)) \
+    \(= (+ x 1) (select z x))))))"
+  val expected = ``!x:int. x + 1 = (z:int->int) x``
+  val def = ``(z:int->int) = (\x. x + 1)``
+  val left = replay_z3_proof_string
+    "((declare-fun zl () (Array Int Int)) \
+    \(proof (intro-def (forall ((x Int)) \
+    \(= (select zl x) (+ x 1))))))"
+  val left_expected = ``!x:int. (zl:int->int) x = x + 1``
+  val left_def = ``(zl:int->int) = (\x. x + 1)``
+  val binary = replay_z3_proof_string
+    "((declare-fun z2 () (Array Int (Array Int Int))) \
+    \(proof (intro-def (forall ((x Int) (y Int)) \
+    \(= (+ x y) (select (select z2 x) y))))))"
+  val binary_expected =
+    ``!x y:int. x + y = (z2:int->int->int) x y``
+  val binary_def = ``(z2:int->int->int) = (\x y. x + y)``
+in
+  assert (Thm.concl thm ~~ expected,
+    ":lambda-def intro-def replay returned the wrong conclusion");
+  assert (HOLset.member (Thm.hypset thm, def),
+    ":lambda-def intro-def did not record its function definition");
+  assert (Thm.concl left ~~ left_expected,
+    "left-oriented :lambda-def returned the wrong conclusion");
+  assert (HOLset.member (Thm.hypset left, left_def),
+    "left-oriented :lambda-def did not record its function definition");
+  assert (Thm.concl binary ~~ binary_expected,
+    "two-binder :lambda-def returned the wrong conclusion");
+  assert (HOLset.member (Thm.hypset binary, binary_def),
+    "two-binder :lambda-def did not record its function definition: " ^
+    String.concatWith ", "
+      (List.map term_with_types (HOLset.listItems (Thm.hypset binary))));
+  Library.check_oracle_tags "Z3 :lambda-def intro-def" thm;
+  Library.check_oracle_tags "Z3 left-oriented :lambda-def" left;
+  Library.check_oracle_tags "Z3 two-binder :lambda-def" binary
+end
+
+fun z3_lambda_intro_def_replay_shaped_failure () =
+  expect_hol_error_contains ":lambda-def without a Z3 name"
+    "unsupported :lambda-def intro-def shape"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (intro-def (forall ((x Int)) (= x x)))))"))
+
+fun z3_proof_bind_consumers_replay_success () =
+let
+  (* Complete intro-def/nnf-pos/quant-intro chain minimized directly from
+     the C1 4.12.4--4.15.3 lambda-equality certificates. *)
+  val thm = replay_z3_proof_string
+    "((declare-fun z () (Array Int Int)) \
+    \(proof (mp \
+    \(mp~ \
+    \(intro-def (forall ((x Int)) \
+    \(= (+ 1 x) (select z x)))) \
+    \(nnf-pos \
+    \(proof-bind (lambda ((x Int)) \
+    \(refl (~ (= (+ 1 x) (select z x)) \
+    \(= (+ 1 x) (select z x)))))) \
+    \(~ (forall ((x Int)) (= (+ 1 x) (select z x))) \
+    \(forall ((x Int)) (= (+ 1 x) (select z x))))) \
+    \(forall ((x Int)) (= (+ 1 x) (select z x)))) \
+    \(quant-intro \
+    \(proof-bind (lambda ((x Int)) \
+    \(rewrite (= \
+    \(= (+ 1 x) (select z x)) \
+    \(= (+ x (* (- 1) (select z x))) (- 1)))))) \
+    \(= (forall ((x Int)) (= (+ 1 x) (select z x))) \
+    \(forall ((x Int)) \
+    \(= (+ x (* (- 1) (select z x))) (- 1))))) \
+    \(forall ((x Int)) \
+    \(= (+ x (* (- 1) (select z x))) (- 1)))))))"
+  val expected = ``!x:int. x + -1 * (z:int->int) x = -1``
+  val two_bound = replay_z3_proof_string
+    "((proof (quant-intro \
+    \(proof-bind (lambda ((x Int) (y Int)) \
+    \(refl (= (= (+ x y) (+ y x)) (= (+ x y) (+ y x)))))) \
+    \(= (forall ((x Int) (y Int)) (= (+ x y) (+ y x))) \
+    \(forall ((x Int) (y Int)) (= (+ x y) (+ y x)))))))"
+  val two_bound_nnf = replay_z3_proof_string
+    "((proof (nnf-pos \
+    \(proof-bind (lambda ((x Int) (y Int)) \
+    \(refl (~ (= (+ x y) (+ y x)) (= (+ x y) (+ y x)))))) \
+    \(~ (forall ((x Int) (y Int)) (= (+ x y) (+ y x))) \
+    \(forall ((x Int) (y Int)) (= (+ x y) (+ y x)))))))"
+in
+  assert (Thm.concl thm ~~ expected,
+    "C1 proof-bind consumer chain returned the wrong conclusion");
+  List.app (fn (name, bound_thm) =>
+    let
+      val (lhs, rhs) = boolSyntax.dest_eq (Thm.concl bound_thm)
+      val (vars, _) = boolSyntax.strip_forall lhs
+    in
+      assert (List.length vars = 2 andalso lhs ~~ rhs,
+        "two-binder proof-bind " ^ name ^
+        " returned the wrong conclusion: " ^
+        term_with_types (Thm.concl bound_thm))
+    end)
+    [("quant-intro", two_bound), ("nnf-pos", two_bound_nnf)];
+  Library.check_oracle_tags "Z3 C1 proof-bind consumer chain" thm;
+  Library.check_oracle_tags "Z3 two-binder proof-bind" two_bound;
+  Library.check_oracle_tags "Z3 two-binder proof-bind nnf-pos" two_bound_nnf
+end
+
+fun z3_proof_bind_quant_intro_shaped_failure () =
+  expect_hol_error_contains "proof-bind quant-intro binder mismatch"
+    "proof-bind binder mismatch"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (quant-intro \
+      \(proof-bind (lambda ((x Int)) \
+      \(refl (= (= x x) (= x x))))) \
+      \(= (forall ((x Int) (y Int)) (= x x)) \
+      \(forall ((x Int) (y Int)) (= x x))))))"))
+
+fun z3_proof_bind_nnf_pos_shaped_failure () =
+  expect_hol_error_contains "proof-bind nnf-pos binder capture"
+    "proof rule: nnf_pos"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof (nnf-pos \
+      \(proof-bind (lambda ((x Int)) \
+      \(hypothesis (= x x)))) \
+      \(~ (forall ((x Int)) (= x x)) \
+      \(forall ((x Int)) (= x x))))))"))
+
 fun z3_remove_extra_hyps_only_p_eq_p_success () =
 let
   val asserted = Term.empty_tmset
@@ -7099,6 +7337,28 @@ let
       z3_proof_parser_rule_name_term_boundary),
     ("z3_proof_parser_is_int_translation_collision_success",
       z3_proof_parser_is_int_translation_collision_success),
+    ("z3_beta_eta_replay_rungs_success",
+      z3_beta_eta_replay_rungs_success),
+    ("z3_beta_eta_replay_rungs_shaped_failure",
+      z3_beta_eta_replay_rungs_shaped_failure),
+    ("z3_rewrite_beta_eta_abs_rungs_success",
+      z3_rewrite_beta_eta_abs_rungs_success),
+    ("z3_rewrite_abs_rung_shaped_failure",
+      z3_rewrite_abs_rung_shaped_failure),
+    ("z3_abs_congruence_replay_rung_success",
+      z3_abs_congruence_replay_rung_success),
+    ("z3_abs_congruence_replay_rung_shaped_failure",
+      z3_abs_congruence_replay_rung_shaped_failure),
+    ("z3_lambda_intro_def_replay_success",
+      z3_lambda_intro_def_replay_success),
+    ("z3_lambda_intro_def_replay_shaped_failure",
+      z3_lambda_intro_def_replay_shaped_failure),
+    ("z3_proof_bind_consumers_replay_success",
+      z3_proof_bind_consumers_replay_success),
+    ("z3_proof_bind_quant_intro_shaped_failure",
+      z3_proof_bind_quant_intro_shaped_failure),
+    ("z3_proof_bind_nnf_pos_shaped_failure",
+      z3_proof_bind_nnf_pos_shaped_failure),
     ("z3_remove_extra_hyps_only_p_eq_p_success",
       z3_remove_extra_hyps_only_p_eq_p_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",

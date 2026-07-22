@@ -733,9 +733,99 @@ local
     Lib.tryfind prove_from_lit lits
   end
 
+  val EDIV_ZERO_SIGN_CLAUSE = Tactical.prove(
+    ``!j:int. j >= 0 \/ ediv 0 j <= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``0i < j`` THENL [
+      intLib.ARITH_TAC,
+      Tactic.ASM_CASES_TAC ``j = 0i`` THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
+      ]
+    ])
+
+  val EDIV_ZERO_GE_CLAUSE = Tactical.prove(
+    ``!j:int. j >= 0 \/ ediv 0 j >= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``0i < j`` THENL [
+      intLib.ARITH_TAC,
+      Tactic.ASM_CASES_TAC ``j = 0i`` THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
+      ]
+    ])
+
+  val EDIV_ZERO_NONPOS_CLAUSE = Tactical.prove(
+    ``!j:int. j <= 0 \/ ediv 0 j <= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
+      ]
+    ])
+
+  val EDIV_ZERO_NONNEG_CLAUSE = Tactical.prove(
+    ``!j:int. j <= 0 \/ ediv 0 j >= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
+      ]
+    ])
+
+  val EMOD_ZERO_SIGN_CLAUSE = Tactical.prove(
+    ``!j:int. j <= 0 \/ emod 0 j >= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
+        STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
+           integerTheory.INT_MOD0]
+      ]
+    ])
+
+  val EMOD_ZERO_NONPOS_CLAUSE = Tactical.prove(
+    ``!j:int. j <= 0 \/ emod 0 j <= 0``,
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
+        STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
+           integerTheory.INT_MOD0]
+      ]
+    ])
+
+  val SMT_RDIV_CANCEL_CLAUSE = Tactical.prove(
+    ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
+    Tactic.ASM_CASES_TAC ``(y:real) = 0`` THENL [
+      ASM_REWRITE_TAC [],
+      bossLib.ASM_SIMP_TAC (bossLib.srw_ss())
+        [HolSmtTheory.smt_rdiv_eq_div, realTheory.REAL_DIV_LMUL]
+    ])
+
+  val SMT_RDIV_INTRO_CANCEL_CLAUSE = Tactical.prove(
+    ``HolSmt$smt_rdiv (x:real) y = k ==>
+      y = 0 \/ y * k = x``,
+    bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
+
+  fun exact_inst thm t =
+    Drule.INST_TY_TERM (Term.match_term (Thm.concl thm) t) thm
+
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
   fun arith_prove t =
+    exact_inst SMT_RDIV_INTRO_CANCEL_CLAUSE t
+    handle Feedback.HOL_ERR _ =>
+    exact_inst SMT_RDIV_CANCEL_CLAUSE t
+    handle Feedback.HOL_ERR _ =>
     arith_prove_smt_rdiv t
     handle Feedback.HOL_ERR _ =>
     arith_prove_linear t
@@ -779,7 +869,11 @@ local
       Tactical.TAC_PROOF (([], t),
         (* rewrite the `ediv` and `emod` symbols so that the arithmetic
            decision procedures can solve terms containing these functions *)
-        PURE_REWRITE_TAC[integerTheory.EDIV_DEF, integerTheory.EMOD_DEF]
+        PURE_REWRITE_TAC[EDIV_ZERO_SIGN_CLAUSE, EDIV_ZERO_GE_CLAUSE,
+          EDIV_ZERO_NONPOS_CLAUSE, EDIV_ZERO_NONNEG_CLAUSE,
+          EMOD_ZERO_SIGN_CLAUSE,
+          EMOD_ZERO_NONPOS_CLAUSE, integerTheory.EDIV_DEF,
+          integerTheory.EMOD_DEF]
         (* the next rewrites are a workaround for this issue:
            https://github.com/HOL-Theorem-Prover/HOL/issues/1207 *)
         >> PURE_REWRITE_TAC[integerTheory.INT_ABS, integerTheory.NUM_OF_INT]
@@ -1008,9 +1102,13 @@ local
      This is done to avoid ending up with circular definitions in the final
      theorem. *)
 
-  fun z3_intro_def (state, t) =
+  fun z3_intro_def_proforma (state, t) =
   let
-    val thm = List.hd (Net.match t Z3_ProformaThms.intro_def_thms)
+    val thm =
+      case Net.match t Z3_ProformaThms.intro_def_thms of
+        thm :: _ => thm
+      | [] => raise ERR "z3_intro_def_proforma"
+          "unsupported intro-def shape"
     val substs = Term.match_term (Thm.concl thm) t
     val term_substs = Lib.fst substs
     (* Check if the hypothesis should be changed from `name = term` to
@@ -1032,6 +1130,64 @@ local
   in
     (state_define state asl, inst_thm)
   end
+
+  (* A :lambda-def axiom is printed pointwise, while replay records the
+     underlying function definition.  HOL's first-order matcher deliberately
+     refuses to instantiate a schematic function with a term containing the
+     matched binder, so derive these C1-observed one- and two-binder forms
+     explicitly.  Repeated AP_THM followed by beta is the kernel derivation
+     underlying the corresponding FUN_EQ_THM instance. *)
+  fun z3_intro_def_lambda (state, t) =
+  let
+    val _ = if List.null (Net.match t Z3_ProformaThms.intro_def_thms)
+      then raise ERR "z3_intro_def_lambda"
+        "unsupported :lambda-def intro-def shape"
+      else ()
+    val (vars, body) = boolSyntax.strip_forall t
+    val _ = if List.length vars = 1 orelse List.length vars = 2 then ()
+      else raise ERR "z3_intro_def_lambda"
+        "unsupported :lambda-def binder count"
+    val (lhs, rhs) = boolSyntax.dest_eq body
+    fun same_terms ([], []) = true
+      | same_terms (x :: xs, y :: ys) = x ~~ y andalso same_terms (xs, ys)
+      | same_terms _ = false
+    fun named_application side =
+      let
+        val (name, args) = strip_comb side
+      in
+        if Term.is_var name andalso
+           HOLset.member (#var_set state, name) andalso
+           same_terms (args, vars)
+        then SOME name
+        else NONE
+      end
+    val (name, term, name_on_left) =
+      case (named_application lhs, named_application rhs) of
+        (SOME name, _) => (name, rhs, true)
+      | (_, SOME name) => (name, lhs, false)
+      | _ => raise ERR "z3_intro_def_lambda"
+          "pointwise axiom does not define a Z3 name"
+    val residue = Term.list_mk_abs (vars, term)
+    val def = boolSyntax.mk_eq (name, residue)
+    val def_thm = Thm.ASSUME def
+    val applied = List.foldl (fn (var, thm) => Thm.AP_THM thm var)
+      def_thm vars
+    val applied_rhs = Lib.snd (boolSyntax.dest_eq (Thm.concl applied))
+    val beta = Conv.TOP_DEPTH_CONV Thm.BETA_CONV applied_rhs
+    val pointwise = Thm.TRANS applied beta
+    val pointwise = if name_on_left then pointwise else Thm.SYM pointwise
+    val inst_thm = List.foldr (fn (var, thm) => Thm.GEN var thm)
+      pointwise vars
+    val _ = if Thm.concl inst_thm ~~ t then ()
+      else raise ERR "z3_intro_def_lambda"
+        "derived :lambda-def has the wrong conclusion"
+  in
+    (state_define state [def], inst_thm)
+  end
+
+  fun z3_intro_def (args as (_, t)) =
+    if boolSyntax.is_forall t then z3_intro_def_lambda args
+    else z3_intro_def_proforma args
 
   (*  [l1, ..., ln] |- F
      --------------------
@@ -1088,49 +1244,105 @@ local
     (state, prove (thm, t))
   end
 
+  fun conversion_equal conv (l, r) =
+  let
+    fun forward (from, dest) =
+      let
+        val thm = conv from
+          handle Conv.UNCHANGED =>
+            raise ERR "conversion_equal" "conversion made no change"
+        val normalized = Lib.snd (boolSyntax.dest_eq (Thm.concl thm))
+      in
+        Thm.TRANS thm (Thm.ALPHA normalized dest)
+      end
+  in
+    forward (l, r)
+    handle Feedback.HOL_ERR _ => Thm.SYM (forward (r, l))
+  end
+
+  val beta_equal = conversion_equal Thm.BETA_CONV
+  val eta_equal = conversion_equal Drule.ETA_CONV
+
   (* |- l1 = r1  ...  |- ln = rn
      ----------------------------
-     |- f l1 ... ln = f r1 ... rn *)
-  fun z3_monotonicity (state, thms, t) =
+     |- f l1 ... ln = f r1 ... rn
+
+     C1 also exercises this rule below abstractions.  The ABS branch keeps the
+     binder explicit, while beta and eta are closing rungs after structural
+     application congruence has failed. *)
+  fun monotonicity_prove (thms, t) =
   let
     val l_r_thms = List.map
       (fn thm => (boolSyntax.dest_eq (Thm.concl thm), thm)) thms
-    fun make_equal (l, r) =
+    fun from_premise (l, r) =
+      Lib.tryfind (fn ((l', r'), thm) =>
+        Thm.TRANS (Thm.ALPHA l l') (Thm.TRANS thm (Thm.ALPHA r' r))
+          handle Feedback.HOL_ERR _ =>
+            Thm.TRANS (Thm.ALPHA l r')
+              (Thm.TRANS (Thm.SYM thm) (Thm.ALPHA l' r))) l_r_thms
+    fun abs_equal (l, r) =
+      let
+        val (lvar, _) = Term.dest_abs l
+        val (rvar, _) = Term.dest_abs r
+        val _ = if Term.type_of lvar = Term.type_of rvar then ()
+          else raise ERR "abs_equal" "binder type mismatch"
+        val var =
+          if not (List.exists (Term.term_eq lvar) (Term.free_vars r)) then
+            lvar
+          else if not (List.exists (Term.term_eq rvar) (Term.free_vars l)) then
+            rvar
+          else
+            Term.genvar (Term.type_of lvar)
+        val lalpha = if Term.term_eq lvar var then Thm.REFL l
+          else Drule.ALPHA_CONV var l
+        val ralpha = if Term.term_eq rvar var then Thm.REFL r
+          else Drule.ALPHA_CONV var r
+        val (_, lbody) = Term.dest_abs
+          (Lib.snd (boolSyntax.dest_eq (Thm.concl lalpha)))
+        val (_, rbody) = Term.dest_abs
+          (Lib.snd (boolSyntax.dest_eq (Thm.concl ralpha)))
+        val body_thm = make_equal (lbody, rbody)
+      in
+        Thm.TRANS lalpha
+          (Thm.TRANS (Thm.ABS var body_thm) (Thm.SYM ralpha))
+      end
+    and comb_equal (l, r) =
+      let
+        val (l_op, l_arg) = Term.dest_comb l
+        val (r_op, r_arg) = Term.dest_comb r
+      in
+        Thm.MK_COMB (make_equal (l_op, r_op), make_equal (l_arg, r_arg))
+      end
+    and make_equal (l, r) =
       Thm.ALPHA l r
-      handle Feedback.HOL_ERR _ =>
-        Lib.tryfind (fn ((l', r'), thm) =>
-          Thm.TRANS (Thm.ALPHA l l') (Thm.TRANS thm (Thm.ALPHA r' r))
-            handle Feedback.HOL_ERR _ =>
-              Thm.TRANS (Thm.ALPHA l r')
-                (Thm.TRANS (Thm.SYM thm) (Thm.ALPHA l' r))) l_r_thms
-      handle Feedback.HOL_ERR _ =>
-        let
-          val (l_op, l_arg) = Term.dest_comb l
-          val (r_op, r_arg) = Term.dest_comb r
-        in
-          Thm.MK_COMB (make_equal (l_op, r_op), make_equal (l_arg, r_arg))
-        end
+      handle Feedback.HOL_ERR _ => from_premise (l, r)
+      handle Feedback.HOL_ERR _ => abs_equal (l, r)
+      handle Feedback.HOL_ERR _ => comb_equal (l, r)
+      handle Feedback.HOL_ERR _ => beta_equal (l, r)
+      handle Feedback.HOL_ERR _ => eta_equal (l, r)
     val (l, r) = boolSyntax.dest_eq t
-    val thm = make_equal (l, r)
-      handle Feedback.HOL_ERR _ =>
-        (* surprisingly, 'l' is sometimes of the form ``x /\ y ==> z``
-           and must be transformed into ``x ==> y ==> z`` before any
-           of the theorems in 'thms' can be applied - this is arguably
-           a bug in Z3 (2.11) *)
-        let
-          val (xy, z) = boolSyntax.dest_imp l
-          val (x, y) = boolSyntax.dest_conj xy
-          val var_names = ["p", "q", "r"]
-          val redexes = List.map (fn v => Term.mk_var (v, Type.bool)) var_names
-          val substs = List.map Lib.|-> (ListPair.zip (redexes, [x, y, z]))
-          val th1 = Thm.INST substs AND_IMP_INTRO_SYM
-          val l' = Lib.snd (boolSyntax.dest_eq (Thm.concl th1))
-        in
-          Thm.TRANS th1 (make_equal (l', r))
-        end
   in
-    (state, thm)
+    make_equal (l, r)
+    handle Feedback.HOL_ERR _ =>
+      (* surprisingly, 'l' is sometimes of the form ``x /\ y ==> z``
+         and must be transformed into ``x ==> y ==> z`` before any
+         of the theorems in 'thms' can be applied - this is arguably
+         a bug in Z3 (2.11) *)
+      let
+        val (xy, z) = boolSyntax.dest_imp l
+        val (x, y) = boolSyntax.dest_conj xy
+        val var_names = ["p", "q", "r"]
+        val redexes = List.map (fn v => Term.mk_var (v, Type.bool)) var_names
+        val substs = List.map Lib.|-> (ListPair.zip (redexes, [x, y, z]))
+        val th1 = Thm.INST substs AND_IMP_INTRO_SYM
+        val l' = Lib.snd (boolSyntax.dest_eq (Thm.concl th1))
+      in
+        Thm.TRANS th1 (make_equal (l', r))
+      end
   end
+
+  fun z3_monotonicity (state, thms, t) =
+    (state, monotonicity_prove (thms, t))
 
   fun z3_mp (state, thm1, thm2, t) =
     (state, Thm.MP thm2 thm1 handle Feedback.HOL_ERR _ => Thm.EQ_MP thm2 thm1)
@@ -1152,6 +1364,31 @@ local
      premise equivalences. METIS remains only as a profiled last resort. *)
   fun z3_nnf_pos (state, thms, t) =
     (state, nnf_prove (thms, t))
+
+  (* proof-bind records exactly which free variables in a pointwise premise
+     are bound by the surrounding NNF step.  Keep the pointwise theorem for
+     ordinary rewriting and add its checked forall congruence; ABS/FORALL_EQ
+     rejects any attempt to capture a variable occurring in a hypothesis. *)
+  fun z3_nnf_bound z3_nnf (state, bound_thms, t) =
+  let
+    fun lift ([], thm) = [thm]
+      | lift (vars, thm) =
+          let
+            val lifted = List.foldr
+              (fn (var, result) => Drule.FORALL_EQ var result) thm vars
+          in
+            [thm, lifted]
+          end
+    val thms = List.concat (List.map lift bound_thms)
+  in
+    z3_nnf (state, thms, t)
+  end
+
+  (* The C1 HO corpus uses only nnf-pos.  Existing 4.15 FO certificates also
+     put proof-bind below nnf-neg, so retain the same checked lifting there to
+     avoid regressing the pre-existing replay surface. *)
+  val z3_nnf_neg_bound = z3_nnf_bound z3_nnf_neg
+  val z3_nnf_pos_bound = z3_nnf_bound z3_nnf_pos
 
   (* ~(... \/ p \/ ...)
      ------------------
@@ -1246,6 +1483,42 @@ local
     (state, thm)
   end
 
+  fun z3_quant_intro_bound (state, [], thm, t) =
+      z3_quant_intro (state, thm, t)
+    | z3_quant_intro_bound (state, vars, thm, t) =
+  let
+    fun strip_quant_vars term acc =
+      if boolSyntax.is_forall term then
+        let val (var, body) = boolSyntax.dest_forall term
+        in strip_quant_vars body (var :: acc) end
+      else if boolSyntax.is_exists term then
+        let val (var, body) = boolSyntax.dest_exists term
+        in strip_quant_vars body (var :: acc) end
+      else
+        List.rev acc
+    val (lhs, _) = boolSyntax.dest_eq t
+    val (prem_lhs, _) = boolSyntax.dest_eq (Thm.concl thm)
+    val target_vars = strip_quant_vars lhs []
+    val premise_vars = strip_quant_vars prem_lhs []
+    val new_count = List.length target_vars - List.length premise_vars
+    val new_vars = if new_count < 0 then []
+      else List.take (target_vars, new_count)
+    fun same_types ([], []) = true
+      | same_types (v1 :: vs1, v2 :: vs2) =
+          Type.compare (Term.type_of v1, Term.type_of v2) = EQUAL andalso
+          same_types (vs1, vs2)
+      | same_types _ = false
+    val _ = if new_count = List.length vars andalso
+        same_types (vars, new_vars) then ()
+      else raise ERR "z3_quant_intro_bound"
+        ("proof-bind binder mismatch: wrapper has " ^
+         Int.toString (List.length vars) ^
+         " variable(s), quant-intro introduces " ^
+         Int.toString (Int.max (new_count, 0)))
+  in
+    z3_quant_intro (state, thm, t)
+  end
+
   (* A proof for `R t t`, where R is a reflexive relation. The only `R` that are
      used are equivalence modulo namings, equality and equivalence, i.e. `~`,
      `=` or `iff`, all represented in HOL4 terms as `boolSyntax.mk_eq`. *)
@@ -1306,6 +1579,27 @@ local
     (state, profile "rewrite(06)(all_distinct)" rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>
 
+    (* Resolve proof-local names before arithmetic.  These rewrites are not
+       arithmetic tautologies until the fresh Z3 variable is recorded as a
+       definition, and nonlinear fallback can otherwise spend a long time on
+       the deliberately underconstrained formula. *)
+    let
+      val thm = profile "rewrite(12.1)(unification)"
+        Library.gen_instantiation (l, r, #var_set state)
+      val asl = Thm.hyp thm
+      fun is_safe_early_definition tm =
+        let val (name, residue) = boolSyntax.dest_eq tm
+        in Term.type_of name = Type.bool orelse not (Term.is_var residue) end
+      val _ = if not (List.null asl) andalso
+          List.all is_safe_early_definition asl then ()
+        else raise ERR "z3_rewrite"
+          "early unification rejected a variable alias"
+    in
+      (state_define (state_cache_thm state thm) asl, thm)
+    end
+
+    handle Feedback.HOL_ERR _ =>
+
     let
       val thm = profile "rewrite(07)(SIMP_PROVE_UPDATE)" SIMP_PROVE_UPDATE t
         handle Feedback.HOL_ERR _ =>
@@ -1364,6 +1658,45 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* Congruence below a lambda.  Alpha-convert both binders to a fresh
+       variable before replaying the body, so a free variable on either side
+       cannot be captured. *)
+    profile "rewrite(11.2)(abs-congruence)" (fn () =>
+      let
+        val (lvar, _) = Term.dest_abs l
+        val (rvar, _) = Term.dest_abs r
+        val _ = if Term.type_of lvar = Term.type_of rvar then ()
+          else raise ERR "z3_rewrite" "lambda binder type mismatch"
+        val var =
+          if not (List.exists (Term.term_eq lvar) (Term.free_vars r)) then
+            lvar
+          else if not (List.exists (Term.term_eq rvar) (Term.free_vars l)) then
+            rvar
+          else
+            Term.genvar (Term.type_of lvar)
+        val lalpha = if Term.term_eq lvar var then Thm.REFL l
+          else Drule.ALPHA_CONV var l
+        val ralpha = if Term.term_eq rvar var then Thm.REFL r
+          else Drule.ALPHA_CONV var r
+        val (_, lbody) = Term.dest_abs
+          (Lib.snd (boolSyntax.dest_eq (Thm.concl lalpha)))
+        val (_, rbody) = Term.dest_abs
+          (Lib.snd (boolSyntax.dest_eq (Thm.concl ralpha)))
+        val (state, body_thm) = z3_rewrite
+          (state, boolSyntax.mk_eq (lbody, rbody))
+        val thm = Thm.TRANS lalpha
+          (Thm.TRANS (Thm.ABS var body_thm) (Thm.SYM ralpha))
+      in
+        (state, thm)
+      end) ()
+    handle Feedback.HOL_ERR _ =>
+
+    (state, profile "rewrite(11.3)(beta)" beta_equal (l, r))
+    handle Feedback.HOL_ERR _ =>
+
+    (state, profile "rewrite(11.4)(eta)" eta_equal (l, r))
+    handle Feedback.HOL_ERR _ =>
+
     (* If nothing worked, let's try unifying terms.
        As a motivating example, when proving `(if x < y then x else y) <= x`,
        Z3 v4.12.4 asks us to prove the following rewrite as one of the proof
@@ -1388,17 +1721,6 @@ local
        ``z3name!0 = if ... then y else x`` to the list of Z3-provided
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
-
-    let
-      val (lhs, rhs) = boolSyntax.dest_eq t
-      val thm = profile "rewrite(12.1)(unification)" Library.gen_instantiation
-        (lhs, rhs, #var_set state)
-      val asl = Thm.hyp thm
-    in
-      (state_define (state_cache_thm state thm) asl, thm)
-    end
-
-    handle Feedback.HOL_ERR _ =>
 
     let
       val (lhs, rhs) = boolSyntax.dest_eq t
@@ -1931,20 +2253,13 @@ local
     continuation ((state, proof), thm)
   end
 
-  (* Until the binder-aware rule handlers land, replay a structured
-     proof-bind premise through its body, exactly as the former parser shim
-     did.  The outer proofterm still retains the variables for those handlers;
-     a proof-bind outside a registered consuming rule reaches the loud stub. *)
-  fun proof_bind_body (PROOF_BIND (_, body)) = body
-    | proof_bind_body pt = pt
-
   fun one_prem (state_proof : state * proof)
       (name : string)
       (z3_rule_fn : state * Thm.thm * Term.term -> state * Thm.thm)
       (pt : proofterm, concl : Term.term)
       (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
       : (state * proof) * Thm.thm =
-    thm_of_proofterm (state_proof, proof_bind_body pt) (continuation o
+    thm_of_proofterm (state_proof, pt) (continuation o
       (fn ((state, proof), thm) =>
         let
           val (state, thm) = profile name z3_rule_fn (state, thm, concl)
@@ -1956,6 +2271,35 @@ local
         in
           ((state, proof), thm)
         end))
+
+  and one_bound_prem (state_proof : state * proof)
+      (name : string)
+      (z3_rule_fn : state * Term.term list * Thm.thm * Term.term ->
+        state * Thm.thm)
+      (pt : proofterm, concl : Term.term)
+      (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
+      : (state * proof) * Thm.thm =
+    let
+      val (vars, body) =
+        case pt of
+          PROOF_BIND pair => pair
+        | _ => ([], pt)
+    in
+      thm_of_proofterm (state_proof, body) (continuation o
+        (fn ((state, proof), thm) =>
+          let
+            val (state, thm) = profile name z3_rule_fn
+              (state, vars, thm, concl)
+              handle Feedback.HOL_ERR holerr =>
+                raise_replay_error name state name [pt] concl [thm] holerr
+            val _ = profile "check_thm" check_thm (name, thm, concl)
+              handle Feedback.HOL_ERR holerr =>
+                raise_replay_error "check_thm" state name [pt] concl
+                  [thm] holerr
+          in
+            ((state, proof), thm)
+          end))
+    end
 
   and two_prems (state_proof : state * proof)
       (name : string)
@@ -2005,10 +2349,50 @@ local
       (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
       (acc : Thm.thm list)
       : (state * proof) * Thm.thm =
-    thm_of_proofterm (state_proof, proof_bind_body pt)
+    thm_of_proofterm (state_proof, pt)
       (fn (state_proof, thm) =>
         list_prems state_proof name z3_rule_fn (pts, concl) continuation
           (thm :: acc))
+
+  and list_bound_prems (state : state, proof : proof)
+      (name : string)
+      (z3_rule_fn : state * (Term.term list * Thm.thm) list * Term.term ->
+        state * Thm.thm)
+      ([] : proofterm list, concl : Term.term)
+      (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
+      (acc : (Term.term list * Thm.thm) list)
+      : (state * proof) * Thm.thm =
+    let
+      val acc = List.rev acc
+      val thms = List.map Lib.snd acc
+      val (state, thm) = profile name z3_rule_fn (state, acc, concl)
+        handle Feedback.HOL_ERR holerr =>
+          raise_replay_error name state name [] concl thms holerr
+      val _ = profile "check_thm" check_thm (name, thm, concl)
+        handle Feedback.HOL_ERR holerr =>
+          raise_replay_error "check_thm" state name [] concl
+            (thm :: thms) holerr
+    in
+      continuation ((state, proof), thm)
+    end
+    | list_bound_prems (state_proof : state * proof)
+      (name : string)
+      (z3_rule_fn : state * (Term.term list * Thm.thm) list * Term.term ->
+        state * Thm.thm)
+      (pt :: pts : proofterm list, concl : Term.term)
+      (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
+      (acc : (Term.term list * Thm.thm) list)
+      : (state * proof) * Thm.thm =
+    let
+      val (vars, body) =
+        case pt of
+          PROOF_BIND pair => pair
+        | _ => ([], pt)
+    in
+      thm_of_proofterm (state_proof, body) (fn (state_proof, thm) =>
+        list_bound_prems state_proof name z3_rule_fn (pts, concl)
+          continuation ((vars, thm) :: acc))
+    end
 
   and thm_of_proofterm (state_proof, AND_ELIM x) continuation =
         one_prem state_proof "and_elim" z3_and_elim x continuation
@@ -2039,16 +2423,19 @@ local
     | thm_of_proofterm (state_proof, MP_EQ x) continuation =
         two_prems state_proof "mp~" z3_mp_eq x continuation
     | thm_of_proofterm (state_proof, NNF_NEG x) continuation =
-        list_prems state_proof "nnf_neg" z3_nnf_neg x continuation []
+        list_bound_prems state_proof "nnf_neg" z3_nnf_neg_bound x
+          continuation []
     | thm_of_proofterm (state_proof, NNF_POS x) continuation =
-        list_prems state_proof "nnf_pos" z3_nnf_pos x continuation []
+        list_bound_prems state_proof "nnf_pos" z3_nnf_pos_bound x
+          continuation []
     | thm_of_proofterm (state_proof, NOT_OR_ELIM x) continuation =
         one_prem state_proof "not_or_elim" z3_not_or_elim x continuation
     | thm_of_proofterm (_, PROOF_BIND x) _ = z3_proof_bind_stub x
     | thm_of_proofterm (state_proof, QUANT_INST x) continuation =
         one_arg_zero_prems state_proof "quant_inst" z3_quant_inst x continuation
     | thm_of_proofterm (state_proof, QUANT_INTRO x) continuation =
-        one_prem state_proof "quant_intro" z3_quant_intro x continuation
+        one_bound_prem state_proof "quant_intro" z3_quant_intro_bound x
+          continuation
     | thm_of_proofterm (state_proof, REFL x) continuation =
         zero_prems state_proof "refl" z3_refl x continuation
     | thm_of_proofterm (state_proof, REWRITE x) continuation =
@@ -2485,6 +2872,9 @@ in
   (* For unit tests *)
   val remove_definitions = remove_definitions
   val remove_extra_hyps = remove_extra_hyps
+  val beta_equal_for_test = beta_equal
+  val eta_equal_for_test = eta_equal
+  val monotonicity_prove_for_test = monotonicity_prove
 
   fun replay_root_for_test proof : Thm.thm =
   let

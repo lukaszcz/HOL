@@ -662,6 +662,12 @@ QED
   val _ = s ("i002", Drule.UNDISCH (T ``(n = t) ==> ~n \/ t``))
   val _ = s ("i003", Drule.UNDISCH (T ``(n = t) ==> (n \/ ~t) /\ (~n \/ t)``))
   val _ = s ("i004", Drule.UNDISCH (P ``(n = if c then t1 else t2) ==> (~c \/ (n = t1)) /\ (c \/ (n = t2))``))
+  (* Z3's C1-observed :lambda-def axioms expose one- and two-argument
+     function definitions pointwise. *)
+  val _ = s ("i005", Drule.UNDISCH (P
+    ``(n = t) ==> (!x. t x = n x)``))
+  val _ = s ("i006", Drule.UNDISCH (P
+    ``(n = t) ==> (!x y. t x y = n x y)``))
 
   (* used for Z3's proof rule rewrite *)
 

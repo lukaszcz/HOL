@@ -59,7 +59,7 @@ in
      d025, d026, d027, d028]
 
   val intro_def_thms = thm_net_from_list
-    [i001, i002, i003, i004]
+    [i001, i002, i003, i004, i005, i006]
 
   val rewrite_thms = thm_net_from_list
     [r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
