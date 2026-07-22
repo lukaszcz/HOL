@@ -142,7 +142,24 @@ fun type_substitution store =
       {redex = redex, residue = norm_ty store residue})
     (Redblackmap.listItems (#ty_bindings store))
 
-fun inst_types store = Term.inst (type_substitution store)
+(* A replay store retains fresh variables from earlier proof steps.  Most
+   terms mention only the few type variables created by their own step, so
+   rebuilding a substitution for the complete historical store on every
+   walk makes long proofs quadratic in dead bindings.  Instantiate exactly
+   the type variables reachable from the term instead. *)
+fun inst_types store tm =
+  let
+    fun binding ty =
+      case tymeta_name ty of
+          NONE => NONE
+        | SOME name =>
+            (case Redblackmap.peek (#ty_bindings store, name) of
+                 NONE => NONE
+               | SOME (redex, residue) =>
+                   SOME {redex = redex, residue = norm_ty store residue})
+  in
+    Term.inst (List.mapPartial binding (type_vars_in_term tm)) tm
+  end
 
 fun walk_with store instantiate tm =
   let
@@ -342,7 +359,18 @@ fun bind_ty (tymeta, ty) store =
    the ordinary persistent-store path.  Dictionary inspection and binding
    walks are StoreLookupWalk; term/type rebuilding is NormalizationSetup;
    pattern, ownership, occurs and eigen-allow predicates are Decision; only
-   construction of a new persistent map/record is BindingUpdate. *)
+   construction of a new persistent map/record is BindingUpdate.
+
+   They are semantically equivalent to the ordinary path, but timed-v3
+   deliberately retains its historical operation sequence.  In particular,
+   it builds full-store type substitutions and scans every binding after a
+   bind, whereas production filters substitutions to the current term and
+   can skip the scan for an eigen-free binding.  This preserves the exact
+   events, counters, checkpoints and time ownership expected by timed-v3
+   tests.  Its timings and cost attribution may therefore amplify production
+   reconstruction cost and must not be used as estimates of it.  Mirroring
+   either optimization requires a versioned diagnostic contract and revised
+   expectations. *)
 datatype diagnostic_phase =
     DiagnosticNormalizationSetup
   | DiagnosticStoreLookupWalk
@@ -441,6 +469,8 @@ fun type_substitution_diagnostic switch store =
 
 fun inst_types_diagnostic switch store tm =
   let
+    (* Keep the full-store substitution: selecting only [tm]'s type variables
+       would change timed-v3 lookup and normalization events and counters. *)
     val substitution = type_substitution_diagnostic switch store
   in
     diagnostic_scope switch DiagnosticNormalizationSetup
@@ -681,6 +711,9 @@ fun bind_diagnostic switch (m, tm) store =
                              (#tm_bindings store, name, residue),
                          tymetas = #tymetas store,
                          ty_bindings = #ty_bindings store})
+                  (* Keep the complete scan even when [residue] is eigen-free:
+                     skipping it would change timed-v3 counters and
+                     checkpoints, though the acceptance result is the same. *)
                   val bindings =
                     diagnostic_scope switch DiagnosticStoreLookupWalk
                       (fn () =>

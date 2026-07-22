@@ -6156,7 +6156,7 @@ val pelletier_solved = ref 0
    forces the list to shrink -- the accounting has teeth in both
    directions.  A problem is NEVER to be closed by naming it, or its
    statement, in a preprocessor, rewrite table or claset seed. *)
-val pelletier_expected_failures = [45]
+val pelletier_expected_failures = []
 
 fun expected_failure number =
   List.exists (fn known => known = number) pelletier_expected_failures
@@ -6202,7 +6202,7 @@ val _ =
      fn () =>
        !pelletier_solved =
          length pelletier_corpus - length pelletier_expected_failures
-       andalso !pelletier_solved = 47)
+       andalso !pelletier_solved = 48)
 
 (* -------------------------------------------------------------------------
  * TASK_24: Table-1 depths, set problems, Halting II, and robustness.

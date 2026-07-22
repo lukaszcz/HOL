@@ -116,6 +116,31 @@ val _ =
 
 val _ =
   test
+    ("term walks ignore unrelated historical type bindings",
+     fn () =>
+       let
+         fun add_types 0 store = store
+           | add_types remaining store =
+               let
+                 val (tymeta, store1) = clasetMeta.new_tymeta store
+                 val store2 =
+                   the_store (clasetMeta.bind_ty (tymeta, bool_ty) store1)
+               in
+                 add_types (remaining - 1) store2
+               end
+         val store = add_types 5000 clasetMeta.empty
+         fun walk 0 = true
+           | walk remaining =
+               Term.aconv
+                 (clasetMeta.walk store boolSyntax.T) boolSyntax.T andalso
+               walk (remaining - 1)
+       in
+         Timeout.apply (Time.fromSeconds 3) walk 20000
+         handle Timeout.TIMEOUT _ => false
+       end)
+
+val _ =
+  test
     ("bind rejects occurs-check and allow-set violations",
      fn () =>
        let
