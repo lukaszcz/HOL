@@ -102,8 +102,16 @@ fun supplied_major_thm store major target =
     if aconv normalized target then
       EQ_MP (ALPHA normalized target) theorem
     else
-      raise mk_HOL_ERR "clasetStep" "supplied_major_thm"
-        "the selected assumption misses the instantiated major premise"
+      let
+        val major' = normalize_term store major
+        val (normalized', theorem') = normalize_assumption major'
+      in
+        if aconv normalized' target then
+          EQ_MP (ALPHA normalized' target) theorem'
+        else
+          raise mk_HOL_ERR "clasetStep" "supplied_major_thm"
+            "the selected assumption misses the instantiated major premise"
+      end
   end
 
 fun nth1 values pos = List.nth (values, pos - 1)

@@ -3565,6 +3565,152 @@ val _ =
 
 val _ =
   test
+    ("exact quantified major uses the final engine store before ASSUME",
+     fn () =>
+       let
+         val parameter =
+           Term.mk_var ("quantified_major_x", Type.ind)
+         val bound =
+           Term.mk_var ("quantified_major_x", Type.ind)
+         val predicate =
+           Term.mk_var
+             ("quantified_major_R",
+              Type.ind --> Type.ind --> bool_ty)
+         val marker =
+           Term.mk_var
+             ("quantified_major_S", Type.ind --> bool_ty)
+         val (meta, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val store =
+           valOf (clasetMeta.bind (meta, parameter) store0)
+         val quantified =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (predicate, [meta, bound]))
+         val target = Term.mk_comb (marker, parameter)
+         val major = boolSyntax.mk_conj (quantified, target)
+         val normalized_major = clasetMeta.norm store major
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true, major = SOME 2}
+         fun input () =
+           (clasetGoal.create
+              {goals =
+                 [{params = [parameter], asl = [major, major],
+                   w = target}],
+               store = store, level = 0},
+            1)
+         fun controls () =
+           {clock = ticking_clock (), observe = NONE,
+            stop = fn () => false}
+         fun v4_controls () =
+           {classical_elapsed = fn _ => (),
+            clock = ticking_clock (), observe = NONE,
+            stop = fn () => false}
+         fun summary () =
+           clasetStep.new_timed_rule_summary_v4
+             {clock = ticking_clock (),
+              classical_elapsed = fn _ => ()}
+         val plain =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true}
+         val all_variants =
+           [drain_exact
+              (clasetStep.blast_rule_step clasetLib.empty_cs
+                plain (input ())),
+            drain_measured_exact
+              (clasetStep.blast_rule_step_measured
+                {observe = NONE, stop = fn () => false}
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact
+              (clasetStep.blast_rule_step_timed (controls ())
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact_v2
+              (clasetStep.blast_rule_step_timed_v2 (controls ())
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact_v3
+              (clasetStep.blast_rule_step_timed_v3 (controls ())
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact_v3
+              (clasetStep.blast_rule_step_timed_v3_with_sink
+                {classical_elapsed = fn _ => (),
+                 clock = ticking_clock (), observe = NONE,
+                 stop = fn () => false}
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact_v4
+              (clasetStep.blast_rule_step_timed_v4 (v4_controls ())
+                clasetLib.empty_cs plain (input ())),
+            drain_timed_exact_v4
+              (clasetStep.blast_rule_step_timed_v4_with_summary
+                {summary = summary (), observe = NONE,
+                 stop = fn () => false}
+                clasetLib.empty_cs plain (input ()))]
+         val selected_variants =
+           [drain_exact
+              (clasetStep.blast_rule_step_at clasetLib.empty_cs
+                specification (input ())),
+            drain_measured_exact
+              (clasetStep.blast_rule_step_measured_at
+                {observe = NONE, stop = fn () => false}
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact
+              (clasetStep.blast_rule_step_timed_at (controls ())
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact_v2
+              (clasetStep.blast_rule_step_timed_v2_at (controls ())
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact_v3
+              (clasetStep.blast_rule_step_timed_v3_at (controls ())
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact_v3
+              (clasetStep.blast_rule_step_timed_v3_with_sink_at
+                {classical_elapsed = fn _ => (),
+                 clock = ticking_clock (), observe = NONE,
+                 stop = fn () => false}
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact_v4
+              (clasetStep.blast_rule_step_timed_v4_at (v4_controls ())
+                clasetLib.empty_cs specification (input ())),
+            drain_timed_exact_v4
+              (clasetStep.blast_rule_step_timed_v4_with_summary_at
+                {summary = summary (), observe = NONE,
+                 stop = fn () => false}
+                clasetLib.empty_cs specification (input ()))]
+         val invalid =
+           drain_exact
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+                elim = true, major = SOME 3} (input ()))
+
+         fun exact position result =
+           case result of
+               [(record, next)] =>
+                 let
+                   val proof =
+                     clasetStep.validation_of record [ASSUME target]
+                 in
+                   clasetStep.consumed_of record = SOME position andalso
+                   Term.aconv (concl proof) target andalso
+                   aconv_list (hyp proof) [normalized_major]
+                 end
+             | _ => false
+         fun all_exact results =
+           ListPair.allEq
+             (fn (result, position) => exact position [result])
+             (results, [1, 2])
+       in
+         Term.aconv
+           (clasetMeta.norm (clasetGoal.store (#1 (input ()))) major)
+           normalized_major andalso
+         Term.aconv (List.nth ([major, major], 1)) major andalso
+         List.all all_exact all_variants andalso
+         List.all (exact 2) selected_variants andalso null invalid
+       end)
+
+val _ =
+  test
     ("dest-generated elim keeps a newly exposed implication intact",
      fn () =>
        let

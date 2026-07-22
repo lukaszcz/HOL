@@ -3577,6 +3577,144 @@ val _ =
            (!v3_transition_calls = 1 andalso !v4_transition_calls = 1)
        end)
 
+val _ =
+  test
+    ("quantified stored major reaches every reconstruction seam",
+     fn () =>
+       let
+         val outer = mk_var ("quantified_reconstruct_x", Type.ind)
+         val inner = mk_var ("quantified_reconstruct_y", Type.ind)
+         val predicate =
+           mk_var
+             ("quantified_reconstruct_R",
+              Type.ind --> Type.ind --> bool)
+         val marker =
+           mk_var
+             ("quantified_reconstruct_S", Type.ind --> bool)
+         val nested =
+           mk_forall
+             (inner,
+              Term.list_mk_comb (predicate, [outer, inner]))
+         val source =
+           mk_forall
+             (outer, mk_conj (nested, mk_comb (marker, outer)))
+         val target = mk_forall (inner, mk_comb (marker, inner))
+         val goal = ([source], target)
+         val cs = clasetLib.the_claset ()
+         val proof =
+           case blastSearch.tryGoal cs 3 goal of
+               SOME result => result
+             | NONE => raise Fail "quantified reconstruction tableau"
+         val controls = {observe = NONE, stop = fn () => false}
+         fun detailed_controls () =
+           {clock = reconstruction_ticking_clock (),
+            observe = NONE, observe_stored_rule = NONE,
+            stop = fn () => false}
+         fun kernel grounded input =
+           Tactical.VALID (clasetReplay.REPLAY_TAC grounded) input
+         fun v3_transition sequence =
+           clasetStep.timed_rule_cases_v3 sequence
+         fun v4_transition sequence =
+           clasetStep.timed_rule_cases_v4 sequence
+         val r0_with =
+           blastReconstruct.reconstructWith cs goal proof
+         val r0_empty = blastReconstruct.reconstruct goal proof
+         val r1_with =
+           blastReconstruct.reconstructWithMeasured controls cs goal proof
+         val r1_empty =
+           blastReconstruct.reconstructMeasured controls goal proof
+         val detailed =
+           {observe = NONE, observe_stored_rule = NONE,
+            stop = fn () => false}
+         val r2_with =
+           blastReconstruct.reconstructWithMeasuredDetailed detailed
+             cs goal proof
+         val r2_empty =
+           blastReconstruct.reconstructMeasuredDetailed detailed goal proof
+         val r3_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailed
+             (detailed_controls ()) cs goal proof
+         val r3_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailed
+             (detailed_controls ()) goal proof
+         val r4_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+             (detailed_controls ()) cs goal proof
+         val r4_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV2UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel, observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             cs goal proof
+         val r4_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV2
+             (detailed_controls ()) goal proof
+         val r5_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV3
+             (detailed_controls ()) cs goal proof
+         val r5_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV3UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel, observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             cs goal proof
+         val r5_transition =
+           reconstruct_v3_using_transition
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel, transition = v3_transition,
+              observe = NONE, observe_stored_rule = NONE,
+              stop = fn () => false}
+             cs goal proof
+         val r5_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV3
+             (detailed_controls ()) goal proof
+         val r6_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV4
+             (detailed_controls ()) cs goal proof
+         val r6_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV4UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel, observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             cs goal proof
+         val r6_transition =
+           reconstruct_v4_using_transition
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel, transition = v4_transition,
+              observe = NONE, observe_stored_rule = NONE,
+              stop = fn () => false}
+             cs goal proof
+         val r6_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV4
+             (detailed_controls ()) goal proof
+         val results =
+           [r0_with, r0_empty, #result r1_with, #result r1_empty,
+            #result r2_with, #result r2_empty,
+            #result r3_with, #result r3_empty,
+            #result (#base r4_with), #result (#base r4_kernel),
+            #result (#base r4_empty),
+            #result (#base (#base r5_with)),
+            #result (#base (#base r5_kernel)),
+            #result (#base (#base r5_transition)),
+            #result (#base (#base r5_empty)),
+            #result (#base (#base r6_with)),
+            #result (#base (#base r6_kernel)),
+            #result (#base (#base r6_transition)),
+            #result (#base (#base r6_empty))]
+         fun exact (SOME ([], validation)) =
+               let val theorem = validation []
+               in
+                 Term.aconv (concl theorem) target andalso
+                 HOLset.equal
+                   (Thm.hypset theorem,
+                    HOLset.fromList Term.compare [source])
+               end
+           | exact _ = false
+       in
+         length (#script proof) = 5 andalso
+         length results = 19 andalso List.all exact results
+       end)
+
 fun same_fine_v3_v4
       (left : blastReconstruct.minor_unification_times_v3)
       (right : blastReconstruct.minor_unification_times_v4) =
