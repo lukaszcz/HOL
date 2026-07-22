@@ -1568,18 +1568,13 @@ local
               (fn (vars, body) =>
                 List.foldr (fn (v, acc) => boolSyntax.mk_select (v, acc))
                   body vars)
-          (* SMT-LIB 2.6 doesn't have special `lambda` terms, but Z3 proof
-             certificates do. So we only parse them when allowed by the
-             parser configuration, otherwise we will parse identifiers that are
-             coincidentally named `lambda` as if they were special (this cannot
-             happen in Z3 proof certificates since all user identifiers are
-             renamed to non-conflicting names).
-             In Z3 proof certificates, `lambda` terms only seem to be a local
-             declaration of variable names/types that apparently need to be
-             interpreted as free variables in the enclosed term. *)
+          (* Lambda parsing is enabled only for proof-certificate dialects;
+             benchmark lambdas use the located AST typechecker.  Preserve the
+             binder as a genuine HOL abstraction so bound variables cannot
+             escape as free variables. *)
           else if token = "lambda" andalso #parse_lambda cfg then
             parse_binder_term cfg get_token (tydict, tmdict)
-              Lib.snd
+              (fn (vars, body) => Term.list_mk_abs (vars, body))
           else if token = "!" then
             parse_annotated_term cfg get_token (tydict, tmdict)
           else

@@ -1706,6 +1706,11 @@ local
   fun z3_unit_resolution (state, thms, t) =
     (state, unit_resolution (thms, t))
 
+  fun z3_proof_bind_stub (vars, _) =
+    raise ERR "proof_bind"
+      ("structured proof-bind replay is not yet implemented (" ^
+       Int.toString (List.length vars) ^ " bound variable(s))")
+
   (* end of inference rule implementations *)
 
   (***************************************************************************)
@@ -1763,6 +1768,7 @@ local
     | proofterm_replay_handler (NNF_NEG _) = "nnf_neg"
     | proofterm_replay_handler (NNF_POS _) = "nnf_pos"
     | proofterm_replay_handler (NOT_OR_ELIM _) = "not_or_elim"
+    | proofterm_replay_handler (PROOF_BIND _) = "proof_bind"
     | proofterm_replay_handler (QUANT_INST _) = "quant_inst"
     | proofterm_replay_handler (QUANT_INTRO _) = "quant_intro"
     | proofterm_replay_handler (REFL _) = "refl"
@@ -1817,6 +1823,7 @@ local
     | proofterm_concl (NNF_NEG (_, concl)) = SOME concl
     | proofterm_concl (NNF_POS (_, concl)) = SOME concl
     | proofterm_concl (NOT_OR_ELIM (_, concl)) = SOME concl
+    | proofterm_concl (PROOF_BIND _) = NONE
     | proofterm_concl (QUANT_INST (_, concl)) = SOME concl
     | proofterm_concl (QUANT_INTRO (_, concl)) = SOME concl
     | proofterm_concl (REFL concl) = SOME concl
@@ -1924,13 +1931,20 @@ local
     continuation ((state, proof), thm)
   end
 
+  (* Until the binder-aware rule handlers land, replay a structured
+     proof-bind premise through its body, exactly as the former parser shim
+     did.  The outer proofterm still retains the variables for those handlers;
+     a proof-bind outside a registered consuming rule reaches the loud stub. *)
+  fun proof_bind_body (PROOF_BIND (_, body)) = body
+    | proof_bind_body pt = pt
+
   fun one_prem (state_proof : state * proof)
       (name : string)
       (z3_rule_fn : state * Thm.thm * Term.term -> state * Thm.thm)
       (pt : proofterm, concl : Term.term)
       (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
       : (state * proof) * Thm.thm =
-    thm_of_proofterm (state_proof, pt) (continuation o
+    thm_of_proofterm (state_proof, proof_bind_body pt) (continuation o
       (fn ((state, proof), thm) =>
         let
           val (state, thm) = profile name z3_rule_fn (state, thm, concl)
@@ -1991,9 +2005,10 @@ local
       (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
       (acc : Thm.thm list)
       : (state * proof) * Thm.thm =
-    thm_of_proofterm (state_proof, pt) (fn (state_proof, thm) =>
-      list_prems state_proof name z3_rule_fn (pts, concl) continuation
-        (thm :: acc))
+    thm_of_proofterm (state_proof, proof_bind_body pt)
+      (fn (state_proof, thm) =>
+        list_prems state_proof name z3_rule_fn (pts, concl) continuation
+          (thm :: acc))
 
   and thm_of_proofterm (state_proof, AND_ELIM x) continuation =
         one_prem state_proof "and_elim" z3_and_elim x continuation
@@ -2029,6 +2044,7 @@ local
         list_prems state_proof "nnf_pos" z3_nnf_pos x continuation []
     | thm_of_proofterm (state_proof, NOT_OR_ELIM x) continuation =
         one_prem state_proof "not_or_elim" z3_not_or_elim x continuation
+    | thm_of_proofterm (_, PROOF_BIND x) _ = z3_proof_bind_stub x
     | thm_of_proofterm (state_proof, QUANT_INST x) continuation =
         one_arg_zero_prems state_proof "quant_inst" z3_quant_inst x continuation
     | thm_of_proofterm (state_proof, QUANT_INTRO x) continuation =

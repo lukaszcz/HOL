@@ -68,6 +68,7 @@ struct
                      | NNF_NEG of proofterm list * Term.term
                      | NNF_POS of proofterm list * Term.term
                      | NOT_OR_ELIM of proofterm * Term.term
+                     | PROOF_BIND of Term.term list * proofterm
                      | QUANT_INST of Term.term list * Term.term
                      | QUANT_INTRO of proofterm * Term.term
                      | REFL of Term.term
@@ -166,6 +167,12 @@ struct
     mk_rule ("nnf-neg", [], ListPremises, "nnf_neg"),
     mk_rule ("nnf-pos", [], ListPremises, "nnf_pos"),
     mk_rule ("not-or-elim", [], OnePremise, "not_or_elim"),
+    (* The complete C1 corpus observes proof-bind in each tested Z3 series.
+       Keep the gate pinned to those measured dialects; version resolution
+       maps patch and untested releases to one of these anchors. *)
+    mk_rule_with_version (Z3VersionPrefixes
+      ["4.11.", "4.12.", "4.13.", "4.14.", "4.15."])
+      ("proof-bind", [], OnePremise, "proof_bind"),
     mk_rule ("quant-inst", [], TermArguments, "quant_inst"),
     mk_rule ("quant-intro", [], OnePremise, "quant_intro"),
     mk_rule ("refl", [], ZeroPremises, "refl"),

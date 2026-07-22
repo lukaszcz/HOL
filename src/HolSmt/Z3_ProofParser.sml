@@ -164,8 +164,8 @@ local
         | ListPremises => SOME (name, list_prems name)
         | TermArguments => SOME (name, list_args_zero_prems name)
     in
-      if #name rule = "rewrite" orelse String.isPrefix "th-lemma-" (#name rule)
-      then []
+      if #name rule = "proof-bind" orelse #name rule = "rewrite" orelse
+         String.isPrefix "th-lemma-" (#name rule) then []
       else List.mapPartial builtin names
     end
 
@@ -208,10 +208,12 @@ local
     ("str",             builtin_name "str"),
     ("string",          builtin_name "string"),
     ("strings",         builtin_name "strings"),
-    (* `proof-bind` doesn't seem to have semantic value, despite the Z3 v4.12.4
-       source code implying that it either introduces lambda abstractions or
-       `forall` quantifiers, depending on the interpretation *)
-    ("proof-bind",      SmtLib_Theories.K_zero_one Lib.I),
+    (* Keep the lambda operand intact until [proofterm_maker] separates its
+       bound variables from its proofterm body.  The marker is assigned the
+       result type :'pt so it can occur among an enclosing rule's premises. *)
+    ("proof-bind", SmtLib_Theories.K_zero_one (fn operand =>
+      Term.mk_comb (Term.mk_var ("proof-bind",
+        Type.--> (Term.type_of operand, pt_ty)), operand))),
     (* in `rewrite` proof rules, we currently ignore the indices (if they exist) *)
     ("rewrite",         (fn token => fn indices => fn prems =>
       zero_prems "rewrite" token [] prems)),
@@ -361,13 +363,24 @@ local
       in
         wordsSyntax.mk_word_mod (t, zero)
       end)),
-    (* array_extArray[m:n] t1 t2 *)
-    ("_", SmtLib_Theories.zero_two (fn token =>
-      if String.isPrefix "array_ext" token then
-        (fn (t1, t2) => Term.mk_comb (boolSyntax.mk_icomb
-          (Term.prim_mk_const {Thy="HolSmt", Name="array_ext"}, t1), t2))
-      else
-        raise ERR "<z3_builtin_dict._>" "not array_ext...")),
+    (* Z3 prints both legacy array_extArray[m:n] and indexed
+       `(_ array-ext 0)` spellings across the pinned proof corpus. *)
+    ("_", fn token => fn indices => fn args =>
+      let
+        val legacy = String.isPrefix "array_ext" token
+        val indexed = token = "array-ext" andalso
+          (case indices of
+             [index] => intSyntax.int_of_term index = Arbint.zero
+           | _ => false)
+          handle Feedback.HOL_ERR _ => false
+        val _ = if (legacy andalso List.null indices) orelse indexed then ()
+          else raise ERR "<z3_builtin_dict._>" "not array_ext..."
+      in
+        SmtLib_Theories.two_args (fn (t1, t2) =>
+          Term.mk_comb (boolSyntax.mk_icomb
+            (Term.prim_mk_const {Thy="HolSmt", Name="array_ext"}, t1), t2))
+          args
+      end),
     (* repeatn t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
       if String.isPrefix "repeat" token then
@@ -420,7 +433,9 @@ local
 
   val zero_prems_pt = SmtLib_Theories.one_arg
 
-  fun proofterm_of_term version t =
+  fun proofterm_of_term version = proofterm_of_term_for version "<root>"
+
+  and proofterm_of_term_for version consumer t =
   let
     val (hd, args) = boolSyntax.strip_comb t
     val name = Lib.fst (Term.dest_var hd)
@@ -428,10 +443,20 @@ local
         raise ERR "proofterm_of_term"
           ("local proof subterm <" ^ Library.term_to_string t ^
            "> does not encode a Z3 proofterm: " ^ Feedback.message_of holerr)
+    fun checked pt =
+      case pt of
+        PROOF_BIND _ =>
+          if consumer = "nnf_neg" orelse consumer = "nnf_pos" orelse
+             consumer = "quant_intro" then pt
+          else
+            raise ERR "proofterm_of_term"
+              ("unsupported proof-bind shape: expected a direct premise of " ^
+               "nnf-neg, nnf-pos, or quant-intro, found consumer " ^ consumer)
+      | _ => pt
   in
     case lookup_rule version name of
       SOME rule =>
-        (proofterm_maker version (#replay_handler rule) args
+        (checked (proofterm_maker version (#replay_handler rule) args)
           handle Feedback.HOL_ERR holerr =>
             raise ERR "proofterm_of_term"
               ("malformed Z3 proof rule '" ^ name ^ "' in local proof subterm <" ^
@@ -445,17 +470,37 @@ local
              " in local proof subterm <" ^ Library.term_to_string t ^ ">")
   end
 
-  and one_prem_pt version f =
-    SmtLib_Theories.two_args (f o Lib.apfst (proofterm_of_term version))
+  and one_prem_pt version consumer f =
+    SmtLib_Theories.two_args
+      (f o Lib.apfst (proofterm_of_term_for version consumer))
 
-  and two_prems_pt version f = SmtLib_Theories.three_args (fn (t1, t2, t3) =>
-    f (proofterm_of_term version t1, proofterm_of_term version t2, t3))
+  and two_prems_pt version consumer f =
+    SmtLib_Theories.three_args (fn (t1, t2, t3) =>
+      f (proofterm_of_term_for version consumer t1,
+         proofterm_of_term_for version consumer t2, t3))
 
-  and list_prems_pt version f =
+  and list_prems_pt version consumer f =
     SmtLib_Theories.two_args (f o Lib.apfst
-      (List.map (proofterm_of_term version) o Lib.fst o listSyntax.dest_list))
+      (List.map (proofterm_of_term_for version consumer) o Lib.fst o
+       listSyntax.dest_list))
 
   and list_args_zero_prems_pt f = f o Lib.front_last
+
+  and proof_bind_pt version = SmtLib_Theories.one_arg (fn operand =>
+    let
+      val (vars, body) = Term.strip_abs operand
+      val _ = if List.null vars then
+          raise ERR "proof_bind_pt"
+            ("unsupported proof-bind shape: expected a lambda " ^
+             "abstraction over a proofterm")
+        else ()
+      val _ = if Type.compare (Term.type_of body, pt_ty) = EQUAL then ()
+        else
+          raise ERR "proof_bind_pt"
+            "unsupported proof-bind shape: lambda body is not a proofterm"
+    in
+      PROOF_BIND (vars, proofterm_of_term version body)
+    end)
 
   and th_lemma_metadata_of_term metadata_tm =
     case List.map stringSyntax.fromHOLstring
@@ -468,57 +513,66 @@ local
         raise ERR "th_lemma_metadata_of_term"
           "malformed th-lemma metadata term"
 
-  and th_lemma_prems_pt version f =
+  and th_lemma_prems_pt version consumer f =
     SmtLib_Theories.three_args (fn (metadata_tm, pts_tm, concl) =>
       f (th_lemma_metadata_of_term metadata_tm,
-         List.map (proofterm_of_term version)
+         List.map (proofterm_of_term_for version consumer)
           (Lib.fst (listSyntax.dest_list pts_tm)),
          concl))
 
-  and proofterm_maker version "and_elim" = one_prem_pt version AND_ELIM
-    | proofterm_maker version "apply_def" = one_prem_pt version APPLY_DEF
+  and proofterm_maker version "and_elim" =
+        one_prem_pt version "and_elim" AND_ELIM
+    | proofterm_maker version "apply_def" =
+        one_prem_pt version "apply_def" APPLY_DEF
     | proofterm_maker version "asserted" = zero_prems_pt ASSERTED
     | proofterm_maker version "commutativity" = zero_prems_pt COMMUTATIVITY
     | proofterm_maker version "def_axiom" = zero_prems_pt DEF_AXIOM
     | proofterm_maker version "elim_unused" = zero_prems_pt ELIM_UNUSED
     | proofterm_maker version "hypothesis" = zero_prems_pt HYPOTHESIS
-    | proofterm_maker version "iff_false" = one_prem_pt version IFF_FALSE
-    | proofterm_maker version "iff_true" = one_prem_pt version IFF_TRUE
+    | proofterm_maker version "iff_false" =
+        one_prem_pt version "iff_false" IFF_FALSE
+    | proofterm_maker version "iff_true" =
+        one_prem_pt version "iff_true" IFF_TRUE
     | proofterm_maker version "intro_def" = zero_prems_pt INTRO_DEF
-    | proofterm_maker version "lemma" = one_prem_pt version LEMMA
+    | proofterm_maker version "lemma" =
+        one_prem_pt version "lemma" LEMMA
     | proofterm_maker version "monotonicity" =
-        list_prems_pt version MONOTONICITY
-    | proofterm_maker version "mp" = two_prems_pt version MP
-    | proofterm_maker version "mp_eq" = two_prems_pt version MP_EQ
-    | proofterm_maker version "nnf_neg" = list_prems_pt version NNF_NEG
-    | proofterm_maker version "nnf_pos" = list_prems_pt version NNF_POS
+        list_prems_pt version "monotonicity" MONOTONICITY
+    | proofterm_maker version "mp" = two_prems_pt version "mp" MP
+    | proofterm_maker version "mp_eq" = two_prems_pt version "mp_eq" MP_EQ
+    | proofterm_maker version "nnf_neg" =
+        list_prems_pt version "nnf_neg" NNF_NEG
+    | proofterm_maker version "nnf_pos" =
+        list_prems_pt version "nnf_pos" NNF_POS
     | proofterm_maker version "not_or_elim" =
-        one_prem_pt version NOT_OR_ELIM
+        one_prem_pt version "not_or_elim" NOT_OR_ELIM
+    | proofterm_maker version "proof_bind" = proof_bind_pt version
     | proofterm_maker version "quant_inst" =
         list_args_zero_prems_pt QUANT_INST
     | proofterm_maker version "quant_intro" =
-        one_prem_pt version QUANT_INTRO
+        one_prem_pt version "quant_intro" QUANT_INTRO
     | proofterm_maker version "refl" = zero_prems_pt REFL
     | proofterm_maker version "rewrite" = zero_prems_pt REWRITE
     | proofterm_maker version "skolem" = zero_prems_pt SKOLEM
-    | proofterm_maker version "symm" = one_prem_pt version SYMM
+    | proofterm_maker version "symm" = one_prem_pt version "symm" SYMM
     | proofterm_maker version "th_lemma[arith]" =
-        th_lemma_prems_pt version TH_LEMMA_ARITH
+        th_lemma_prems_pt version "th_lemma[arith]" TH_LEMMA_ARITH
     | proofterm_maker version "th_lemma[array]" =
-        th_lemma_prems_pt version TH_LEMMA_ARRAY
+        th_lemma_prems_pt version "th_lemma[array]" TH_LEMMA_ARRAY
     | proofterm_maker version "th_lemma[basic]" =
-        th_lemma_prems_pt version TH_LEMMA_BASIC
+        th_lemma_prems_pt version "th_lemma[basic]" TH_LEMMA_BASIC
     | proofterm_maker version "th_lemma[bv]" =
-        th_lemma_prems_pt version TH_LEMMA_BV
+        th_lemma_prems_pt version "th_lemma[bv]" TH_LEMMA_BV
     | proofterm_maker version "th_lemma[datatype]" =
-        th_lemma_prems_pt version TH_LEMMA_DATATYPE
+        th_lemma_prems_pt version "th_lemma[datatype]" TH_LEMMA_DATATYPE
     | proofterm_maker version "th_lemma[advanced]" =
-        th_lemma_prems_pt version TH_LEMMA_ADVANCED
-    | proofterm_maker version "trans" = two_prems_pt version TRANS
-    | proofterm_maker version "trans_star" = list_prems_pt version TRANS_STAR
+        th_lemma_prems_pt version "th_lemma[advanced]" TH_LEMMA_ADVANCED
+    | proofterm_maker version "trans" = two_prems_pt version "trans" TRANS
+    | proofterm_maker version "trans_star" =
+        list_prems_pt version "trans_star" TRANS_STAR
     | proofterm_maker version "true_axiom" = zero_prems_pt TRUE_AXIOM
     | proofterm_maker version "unit_resolution" =
-        list_prems_pt version UNIT_RESOLUTION
+        list_prems_pt version "unit_resolution" UNIT_RESOLUTION
     | proofterm_maker _ handler =
         raise ERR "proofterm_maker"
           ("Z3 proof rule registry has no parser wrapper for replay handler '" ^

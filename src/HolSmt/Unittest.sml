@@ -5583,15 +5583,86 @@ in
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
 end
 
-fun z3_proof_parser_erases_proof_bind_success () =
+fun z3_proof_parser_verbatim_lambda_binding_success () =
 let
-  val proof = parse_z3_proof_string "4.12.4"
-    "((proof (proof-bind (asserted false))))"
+  (* Pinned from the 4.11.2 lambda-equality proof family. *)
+  val proof = parse_z3_proof_string "4.11.2"
+    "((proof (let ((?x28 (lambda ((x Int)) \
+    \(! (+ x 1) :qid k!4)))) (asserted (= ?x28 ?x28)))))"
+  val expected = ``\x:int. x + 1``
 in
   case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
-    SOME (Z3_Proof.ASSERTED _) => ()
-  | SOME _ => die "FAIL: proof-bind parsed to unexpected constructor"
+    SOME (Z3_Proof.ASSERTED concl) =>
+      let val (lhs, rhs) = boolSyntax.dest_eq concl in
+        assert (lhs ~~ expected andalso rhs ~~ expected,
+          "verbatim proof lambda did not alpha-match its HOL abstraction");
+        assert (List.null (Term.free_vars lhs),
+          "verbatim proof lambda leaked its bound variable")
+      end
+  | SOME _ => die "FAIL: verbatim lambda parsed to unexpected constructor"
+  | NONE => die "FAIL: verbatim lambda proof did not define root proof step"
+end
+
+fun z3_proof_parser_structures_proof_bind_success () =
+let
+  (* Pinned from the 4.15.3 named-lambda-def proof family. *)
+  val proof = parse_z3_proof_string "4.15.3"
+    "((proof (let ((?x67 (lambda ((x Int)) \
+    \(refl (~ (= x x) (= x x)))))) \
+    \(let ((?x80 (lambda ((x Int)) \
+    \(rewrite (= (= x x) (= x x)))))) \
+    \(mp (nnf-pos (proof-bind ?x67) false) \
+    \(quant-intro (proof-bind ?x80) false) false)))))"
+  val pinned_versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1",
+    "4.15.3"]
+  val _ = List.app (fn version => assert (Option.isSome
+      (Z3_Proof.lookup_rule version "proof-bind"),
+    "proof-bind was not enabled for pinned Z3 " ^ version)) pinned_versions
+  val _ = assert (not (Option.isSome
+      (Z3_Proof.lookup_rule "4.10.2" "proof-bind")),
+    "proof-bind accepted an unpinned raw registry version")
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.MP
+      (Z3_Proof.NNF_POS
+         ([Z3_Proof.PROOF_BIND ([nnf_var], Z3_Proof.REFL nnf_body)],
+          nnf_concl),
+       Z3_Proof.QUANT_INTRO
+         (Z3_Proof.PROOF_BIND
+            ([quant_var], Z3_Proof.REWRITE quant_body), quant_concl),
+       root_concl)) =>
+        (assert (nnf_var ~~ ``x:int`` andalso quant_var ~~ ``x:int``,
+          "proof-bind did not preserve its bound variables");
+         assert (List.exists (fn free => free ~~ nnf_var)
+             (Term.free_vars nnf_body) andalso
+           List.exists (fn free => free ~~ quant_var)
+             (Term.free_vars quant_body),
+          "proof-bind bodies do not refer to their preserved variables");
+         assert (nnf_concl ~~ ``F`` andalso quant_concl ~~ ``F`` andalso
+             root_concl ~~ ``F``,
+          "proof-bind consumers parsed unexpected conclusions"))
+  | SOME _ => die "FAIL: proof-bind parsed to unexpected structure"
   | NONE => die "FAIL: proof-bind proof did not define root proof step"
+end
+
+fun z3_proof_parser_unpinned_proof_bind_shape_diagnostic () =
+  expect_hol_error_contains "unpinned proof-bind shape"
+    "expected a lambda abstraction over a proofterm"
+    (fn () => ignore (parse_z3_proof_string "4.15.3"
+      "((proof (nnf-pos (proof-bind (refl false)) false)))"))
+
+fun z3_proof_bind_replay_stub_diagnostic () =
+let
+  val var = ``x:int``
+  val body = Z3_Proof.REFL (boolSyntax.mk_eq (var, var))
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.PROOF_BIND ([var], body))
+  val proof = Z3_Proof.update_proof_steps initial steps
+in
+  expect_hol_error_contains "proof-bind replay stub"
+    "structured proof-bind replay is not yet implemented"
+    (fn () => ignore (Z3_ProofReplay.replay_root_for_test proof))
 end
 
 fun z3_proof_parser_th_lemma_metadata_success () =
@@ -7006,8 +7077,14 @@ let
       z3_proof_registry_metadata_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
-    ("z3_proof_parser_erases_proof_bind_success",
-      z3_proof_parser_erases_proof_bind_success),
+    ("z3_proof_parser_verbatim_lambda_binding_success",
+      z3_proof_parser_verbatim_lambda_binding_success),
+    ("z3_proof_parser_structures_proof_bind_success",
+      z3_proof_parser_structures_proof_bind_success),
+    ("z3_proof_parser_unpinned_proof_bind_shape_diagnostic",
+      z3_proof_parser_unpinned_proof_bind_shape_diagnostic),
+    ("z3_proof_bind_replay_stub_diagnostic",
+      z3_proof_bind_replay_stub_diagnostic),
     ("z3_proof_parser_th_lemma_metadata_success",
       z3_proof_parser_th_lemma_metadata_success),
     ("z3_proof_parser_advanced_th_lemma_metadata_success",
