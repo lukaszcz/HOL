@@ -9,6 +9,8 @@ type tymeta = clasetMeta.tymeta
 
 type cgoal = {params : term list, asl : term list, w : term}
 type replay_script = clasetReplay.script
+type exact_prefix_descriptor = clasetReplay.exact_prefix_descriptor
+type exact_prefix_rebuild = clasetReplay.exact_prefix_rebuild
 type binding_mark = {terms : meta list, types : tymeta list}
 type binding_marks = binding_mark list
 
@@ -287,6 +289,57 @@ fun children node {pos, premises, consumed} =
   children_from (avoids node)
     {parent = goal_at node pos, premises = premises,
      consumed = consumed, store = store node}
+
+fun exact_blast_children node {pos, premises, prefixes, consumed} =
+  let
+    val parent = goal_at node pos
+    val parent' =
+      case consumed of
+          NONE => parent
+        | SOME assumption => delete_assumption assumption parent
+    val normalized = map (norm_term (store node)) premises
+    val initial_avoids =
+      free_varsl (avoids node @ cgoal_terms parent @ normalized)
+
+    fun freshen_bound (bound, (avoids, fresh, current_store)) =
+      let
+        val (variable, next_store) =
+          register_fresh bound avoids current_store
+      in
+        (variable :: avoids, fresh @ [variable], next_store)
+      end
+
+    fun make_child
+          ((premise, descriptor),
+           (rev_children, rev_rebuilds, avoids, current_store)) =
+      let
+        val bounds =
+          clasetReplay.exact_prefix_bounds descriptor premise
+        val (avoids', fresh, next_store) =
+          List.foldl freshen_bound (avoids, [], current_store) bounds
+        val {assumptions, residual, rebuild} =
+          clasetReplay.split_exact_prefix
+            {descriptor = descriptor, premise = premise, fresh = fresh}
+        val base =
+          {params = #params parent' @ fresh,
+           asl = #asl parent', w = residual}
+        val child = cons_assumptions assumptions base
+      in
+        (child :: rev_children, rebuild :: rev_rebuilds,
+         avoids', next_store)
+      end
+
+    val _ =
+      if length normalized = length prefixes then ()
+      else
+        raise mk_HOL_ERR "clasetGoal" "exact_blast_children"
+          "premise and prefix-descriptor arities differ"
+    val (rev_children, rev_rebuilds, _, final_store) =
+      List.foldl make_child ([], [], initial_avoids, store node)
+        (ListPair.zip (normalized, prefixes))
+  in
+    (List.rev rev_children, final_store, List.rev rev_rebuilds)
+  end
 
 fun elim_children node {pos, premises} =
   let

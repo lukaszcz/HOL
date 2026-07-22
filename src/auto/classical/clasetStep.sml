@@ -516,6 +516,28 @@ fun rule_validation normalized_rule supplied children premises target =
     validate
   end
 
+fun exact_rule_validation normalized_rule supplied rebuilds target =
+  let
+    fun validate child_thms =
+      if length child_thms <> length rebuilds then
+        raise mk_HOL_ERR "clasetStep" "exact_rule_validation"
+          "rule validation arity"
+      else
+        let
+          val premise_thms =
+            ListPair.map
+              (fn (data, theorem) =>
+                clasetReplay.rebuild_exact_prefix data theorem)
+              (rebuilds, child_thms)
+          val result =
+            Drule.LIST_MP (supplied @ premise_thms) normalized_rule
+        in
+          EQ_MP (ALPHA (concl result) target) result
+        end
+  in
+    validate
+  end
+
 fun theorem_equal left right =
   aconv (concl left) (concl right) andalso
   ListPair.allEq (fn (left_tm, right_tm) => aconv left_tm right_tm)
@@ -551,11 +573,21 @@ fun rule_origin cs duplicated theorem =
       | [] => (theorem, if duplicated then Duplicate else Plain)
   end
 
-fun try_rule mode cs duplicated node pos
+datatype prefix_policy = LegacyPrefixes | ExactBlastPrefixes
+
+fun minor_prefixes policy is_elim premises =
+  case policy of
+      LegacyPrefixes => NONE
+    | ExactBlastPrefixes =>
+        let val minors = if is_elim then tl premises else premises
+        in SOME (map clasetReplay.exact_prefix_descriptor minors) end
+
+fun try_rule policy mode cs duplicated node pos
     (tag, (is_elim, theorem)) assumption =
   let
     val (asl, w) = clasetGoal.render node pos
     val fresh = freshen_rule node pos is_elim theorem
+    val prefixes = minor_prefixes policy is_elim (#premises fresh)
     val config = {mode = mode, rule_metas = #metas fresh}
     val store1 =
       case clasetUnify.unify (#store fresh) config
@@ -622,10 +654,26 @@ fun try_rule mode cs duplicated node pos
                  "an elimination rule has no major premise")
       else all_premises
     val working = clasetGoal.set_store final_store node
-    val (children, child_store) =
-      clasetGoal.children working
-        {pos = pos, premises = normalized_premises,
-         consumed = consumed}
+    val (children, child_store, rebuilds) =
+      case prefixes of
+          NONE =>
+            let
+              val (children, child_store) =
+                clasetGoal.children working
+                  {pos = pos, premises = normalized_premises,
+                   consumed = consumed}
+            in
+              (children, child_store, NONE)
+            end
+        | SOME descriptors =>
+            let
+              val (children, child_store, data) =
+                clasetGoal.exact_blast_children working
+                  {pos = pos, premises = normalized_premises,
+                   prefixes = descriptors, consumed = consumed}
+            in
+              (children, child_store, SOME data)
+            end
     val child_goals = map (cgoal_render child_store) children
     val supplied_thms =
       case (is_elim, assumption) of
@@ -634,8 +682,12 @@ fun try_rule mode cs duplicated node pos
         | _ => []
     val target = normalize_term child_store w
     val validation =
-      rule_validation normalized_rule supplied_thms children
-        normalized_premises target
+      case rebuilds of
+          NONE =>
+            rule_validation normalized_rule supplied_thms children
+              normalized_premises target
+        | SOME data =>
+            exact_rule_validation normalized_rule supplied_thms data target
     val old_params =
       map (fst o dest_var) (#params (clasetGoal.goal_at node pos))
     fun child_eigens ({params, ...} : clasetGoal.cgoal) =
@@ -646,18 +698,28 @@ fun try_rule mode cs duplicated node pos
     val created = #metas fresh
     val (original, variant) = rule_origin cs duplicated theorem
 
-    fun replay_instance store =
+    fun replay_theorem store =
       let
         val (type_substitution, term_substitution) =
           clasetMeta.collapse store
-        val replay_theorem =
-          Drule.INST_TY_TERM
-            (term_substitution, type_substitution) normalized_rule
       in
-        {theorem = replay_theorem, elim = is_elim,
-         consumed = consumed, parameters = old_params,
-         eigenvariables = new_eigens}
+        Drule.INST_TY_TERM
+          (term_substitution, type_substitution) normalized_rule
       end
+    fun replay_instance store =
+      {theorem = replay_theorem store, elim = is_elim,
+       consumed = consumed, parameters = old_params,
+       eigenvariables = new_eigens}
+    fun blast_replay_instance descriptors store =
+      {theorem = replay_theorem store, elim = is_elim,
+       consumed = consumed, parameters = old_params,
+       eigenvariables = new_eigens, prefixes = descriptors}
+    val action =
+      case prefixes of
+          NONE => clasetReplay.rule_action replay_instance
+        | SOME descriptors =>
+            clasetReplay.blast_rule_action
+              (blast_replay_instance descriptors)
   in
     Direct
       {kind =
@@ -667,7 +729,7 @@ fun try_rule mode cs duplicated node pos
        consumed = consumed, created = created,
        eigenvariables = new_eigens,
        result = (child_goals, validation), children = SOME children,
-       action = clasetReplay.rule_action replay_instance,
+       action = action,
        closed = map (fn _ => NONE) children, store = child_store}
   end
   handle Match => raise Match
@@ -686,7 +748,9 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
           seq.delay
             (fn () =>
               case total
-                (fn () => try_rule mode cs duplicated node pos entry NONE) ()
+                (fn () =>
+                  try_rule LegacyPrefixes mode cs duplicated node pos
+                    entry NONE) ()
               of
                   SOME result => seq.result result
                 | NONE => seq.empty)
@@ -697,7 +761,8 @@ fun rule_results mode cs duplicated part weight_filter (node, pos) =
                 (fn () =>
                   case total
                     (fn () =>
-                      try_rule mode cs duplicated node pos entry
+                      try_rule LegacyPrefixes mode cs duplicated node pos
+                        entry
                         (SOME (assumption_pos, major))) ()
                   of
                       SOME result =>
@@ -762,8 +827,8 @@ fun exact_rule_results_with selector cs {theorem, elim} (node, pos) =
         (fn () =>
           case total
             (fn () =>
-              try_rule clasetUnify.Unify cs false node pos entry
-                assumption) ()
+              try_rule ExactBlastPrefixes clasetUnify.Unify cs false
+                node pos entry assumption) ()
           of
               SOME direct => seq.result direct
             | NONE => seq.empty)
@@ -1034,7 +1099,7 @@ fun try_rule_measured monitor cs node pos
       measured_rule_bracket monitor (Option.map #1 assumption)
         AttemptSelection
         (fn () => clasetGoal.render node pos) ()
-    val (fresh, config) =
+    val (fresh, config, prefixes) =
       measured_rule_bracket monitor (Option.map #1 assumption)
         FresheningSetup
         (fn () =>
@@ -1042,8 +1107,12 @@ fun try_rule_measured monitor cs node pos
             val fresh = freshen_rule node pos is_elim theorem
             val config =
               {mode = clasetUnify.Unify, rule_metas = #metas fresh}
+            val prefixes =
+              valOf
+                (minor_prefixes ExactBlastPrefixes is_elim
+                  (#premises fresh))
           in
-            (fresh, config)
+            (fresh, config, prefixes)
           end) ()
     val store1 =
       case measured_rule_bracket monitor (Option.map #1 assumption)
@@ -1127,19 +1196,19 @@ fun try_rule_measured monitor cs node pos
             (store2, normalized_rule, all_premises,
              normalized_premises)
           end) ()
-    val (children, child_store, child_goals) =
+    val (children, child_store, child_goals, rebuilds) =
       measured_rule_bracket monitor (Option.map #1 assumption)
         ChildStoreConstruction
         (fn () =>
           let
             val working = clasetGoal.set_store final_store node
-            val (children, child_store) =
-              clasetGoal.children working
+            val (children, child_store, rebuilds) =
+              clasetGoal.exact_blast_children working
                 {pos = pos, premises = normalized_premises,
-                 consumed = consumed}
+                 prefixes = prefixes, consumed = consumed}
           in
             (children, child_store,
-             map (cgoal_render child_store) children)
+             map (cgoal_render child_store) children, rebuilds)
           end) ()
   in
     measured_rule_bracket monitor (Option.map #1 assumption)
@@ -1154,8 +1223,8 @@ fun try_rule_measured monitor cs node pos
               | _ => []
           val target = normalize_term child_store w
           val validation =
-            rule_validation normalized_rule supplied_thms children
-              normalized_premises target
+            exact_rule_validation normalized_rule supplied_thms
+              rebuilds target
           val old_params =
             map (fst o dest_var)
               (#params (clasetGoal.goal_at node pos))
@@ -1178,7 +1247,7 @@ fun try_rule_measured monitor cs node pos
             in
               {theorem = replay_theorem, elim = is_elim,
                consumed = consumed, parameters = old_params,
-               eigenvariables = new_eigens}
+               eigenvariables = new_eigens, prefixes = prefixes}
             end
         in
           Direct
@@ -1190,7 +1259,7 @@ fun try_rule_measured monitor cs node pos
              eigenvariables = new_eigens,
              result = (child_goals, validation),
              children = SOME children,
-             action = clasetReplay.rule_action replay_instance,
+             action = clasetReplay.blast_rule_action replay_instance,
              closed = map (fn _ => NONE) children,
              store = child_store}
         end) ()
@@ -2640,7 +2709,7 @@ fun try_rule_measured_v3 monitor cs node pos
     val (asl, w) =
       measured_rule_bracket_v3 monitor (Option.map #1 assumption)
         AttemptSelection (fn () => clasetGoal.render node pos) ()
-    val (fresh, config) =
+    val (fresh, config, prefixes) =
       measured_rule_bracket_v3 monitor (Option.map #1 assumption)
         FresheningSetup
         (fn () =>
@@ -2648,8 +2717,12 @@ fun try_rule_measured_v3 monitor cs node pos
             val fresh = freshen_rule node pos is_elim theorem
             val config =
               {mode = clasetUnify.Unify, rule_metas = #metas fresh}
+            val prefixes =
+              valOf
+                (minor_prefixes ExactBlastPrefixes is_elim
+                  (#premises fresh))
           in
-            (fresh, config)
+            (fresh, config, prefixes)
           end) ()
     val timing = #timing monitor
     val store1 =
@@ -2725,19 +2798,19 @@ fun try_rule_measured_v3 monitor cs node pos
             (store2, normalized_rule, all_premises,
              normalized_premises)
           end) ()
-    val (children, child_store, child_goals) =
+    val (children, child_store, child_goals, rebuilds) =
       measured_rule_bracket_v3 monitor (Option.map #1 assumption)
         ChildStoreConstruction
         (fn () =>
           let
             val working = clasetGoal.set_store final_store node
-            val (children, child_store) =
-              clasetGoal.children working
+            val (children, child_store, rebuilds) =
+              clasetGoal.exact_blast_children working
                 {pos = pos, premises = normalized_premises,
-                 consumed = consumed}
+                 prefixes = prefixes, consumed = consumed}
           in
             (children, child_store,
-             map (cgoal_render child_store) children)
+             map (cgoal_render child_store) children, rebuilds)
           end) ()
   in
     measured_rule_bracket_v3 monitor (Option.map #1 assumption)
@@ -2752,8 +2825,8 @@ fun try_rule_measured_v3 monitor cs node pos
               | _ => []
           val target = normalize_term child_store w
           val validation =
-            rule_validation normalized_rule supplied_thms children
-              normalized_premises target
+            exact_rule_validation normalized_rule supplied_thms
+              rebuilds target
           val old_params =
             map (fst o dest_var) (#params (clasetGoal.goal_at node pos))
           fun child_eigens ({params, ...} : clasetGoal.cgoal) =
@@ -2775,7 +2848,7 @@ fun try_rule_measured_v3 monitor cs node pos
             in
               {theorem = replay_theorem, elim = is_elim,
                consumed = consumed, parameters = old_params,
-               eigenvariables = new_eigens}
+               eigenvariables = new_eigens, prefixes = prefixes}
             end
         in
           Direct
@@ -2787,7 +2860,7 @@ fun try_rule_measured_v3 monitor cs node pos
              eigenvariables = new_eigens,
              result = (child_goals, validation),
              children = SOME children,
-             action = clasetReplay.rule_action replay_instance,
+             action = clasetReplay.blast_rule_action replay_instance,
              closed = map (fn _ => NONE) children,
              store = child_store}
         end) ()

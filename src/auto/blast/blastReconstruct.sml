@@ -29,9 +29,9 @@ fun move_children count node =
     move 1 node
   end
 
-(* Typed child construction strips implication/forall prefixes after rule
-   metavariables are instantiated.  The untyped tableau can therefore
-   record a pseudo-step that replay has already performed. *)
+(* Static stored-rule prefixes may already account for an explicit tableau
+   introduction.  Keep the zero-cost fallback for genuine tableau-only
+   pseudo-steps, without adding another stored-rule replay action. *)
 fun apply_pseudo step node =
   seq.append (apply step node) (seq.result node)
 

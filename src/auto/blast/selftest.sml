@@ -2689,6 +2689,192 @@ val _ =
 
 val _ =
   test
+    ("exact reverse duplicate elim preserves selected occurrence and order",
+     fn () =>
+       let
+         val major_atom = mk_var ("static_duplicate_major", bool)
+         val target = mk_var ("static_duplicate_target", bool)
+         val major_x = mk_disj (major_atom, major_atom)
+         val major_y = major_x
+         val theorem =
+           Drule.SPECL [target, major_atom, major_atom]
+             boolTheory.OR_ELIM_THM
+         val reversed = clasetRules.REV_DUP_ELIM_RULE theorem
+         val reversed_premises =
+           clasetRules.rule_premises_of clasetRules.Elim reversed
+         val goal = ([major_x, major_y, target], target)
+         val node = clasetGoal.from_goal goal
+         fun drain sequence =
+           case seq.cases sequence of
+               NONE => []
+             | SOME (value, rest) => value :: drain rest
+         val direct =
+           drain
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = reversed, elim = true, major = SOME 2}
+               (node, 1))
+         val enumerated =
+           drain
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               {theorem = reversed, elim = true} (node, 1))
+         val invalid_direct =
+           seq.null
+             (clasetStep.blast_rule_step_at clasetLib.empty_cs
+               {theorem = reversed, elim = true, major = SOME 4}
+               (node, 1))
+
+         fun move_children count initial =
+           let
+             fun move position current =
+               if position > count then current
+               else
+                 case seq.cases
+                   (clasetStep.blast_move_back_step 1
+                     (current, position))
+                 of
+                     SOME ((_, next), _) => move (position + 1) next
+                   | NONE => raise Fail "duplicate move-back"
+           in
+             move 1 initial
+           end
+
+         val cache = blastRule.newCache ()
+         val converted =
+           case blastRule.convertElim cache [] theorem of
+               SOME rule => rule
+             | NONE =>
+                 valOf
+                   (blastRule.convertElim cache []
+                     boolTheory.OR_ELIM_THM)
+         val tableau_rule : blastRule.tableau_rule =
+           {origin = blastRule.Stored {is_elim = true, theorem = theorem},
+            pattern = #pattern converted,
+            premises = #premises converted,
+            hidden_assumptions = #hidden_assumptions converted}
+         fun proof_at position : blastSearch.proof =
+           {script =
+              [blastSearch.UnsafeRule
+                 {rule = tableau_rule, updated = false,
+                  duplicate = true, major = SOME position},
+               blastSearch.CloseAssume {assumption = 3},
+               blastSearch.CloseAssume {assumption = 3}],
+            trace = [], depth = 1, branches_created = 2,
+            branches_closed = 2, choices_pruned = 0}
+         val proof = proof_at 2
+         val invalid_proof = proof_at 4
+         val report =
+           blastReconstruct.reconstructWithMeasuredDetailed
+             {observe = NONE, observe_stored_rule = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs goal proof
+         val invalid_report =
+           blastReconstruct.reconstructWithMeasuredDetailed
+             {observe = NONE, observe_stored_rule = NONE,
+              stop = fn () => false}
+             clasetLib.empty_cs goal invalid_proof
+
+         fun prefix_order premise =
+           let val (antecedents, residual) = strip_imp premise
+           in
+             length antecedents = 2 andalso
+             ListPair.allEq (fn (left, right) => Term.aconv left right)
+               (antecedents, [major_atom, major_x]) andalso
+             Term.aconv residual target
+           end
+
+         fun render_all current =
+           List.tabulate
+             (length (clasetGoal.goals current),
+              fn index => clasetGoal.render current (index + 1))
+
+         fun same_goal ((left_asl, left_w), (right_asl, right_w)) =
+           length left_asl = length right_asl andalso
+           ListPair.allEq (fn (left, right) => Term.aconv left right)
+             (left_asl, right_asl) andalso
+           Term.aconv left_w right_w
+
+         fun same_goal_list (left, right) =
+           length left = length right andalso
+           ListPair.allEq same_goal (left, right)
+
+         fun direct_shape (record, next) =
+           let
+             val before_goals = render_all next
+             val moved_goals = render_all (move_children 2 next)
+             val expected_before =
+               [([major_x, major_atom, major_x, target], target),
+                ([major_x, major_atom, major_x, target], target)]
+             val expected_moved =
+               [([major_atom, major_x, target, major_x], target),
+                ([major_atom, major_x, target, major_x], target)]
+           in
+             clasetStep.consumed_of record = SOME 2 andalso
+             clasetGoal.replay_length next = 1 andalso
+             same_goal_list (before_goals, expected_before) andalso
+             same_goal_list (moved_goals, expected_moved) andalso
+             let
+               val (validated, _) =
+                 Tactical.VALID
+                   (fn _ =>
+                     (before_goals, clasetStep.validation_of record))
+                   goal
+               val grounded =
+                 clasetReplay.ground (clasetGoal.store next)
+                   (clasetGoal.replay next)
+               val (replayed, _) =
+                 Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+             in
+               same_goal_list (validated, before_goals) andalso
+               same_goal_list (replayed, before_goals)
+             end
+           end
+       in
+         (if Term.aconv major_x major_y then ()
+          else raise Fail "duplicate equal majors") ;
+         (if
+         (case reversed_premises of
+              [major, first_minor, second_minor] =>
+                Term.aconv major major_x andalso
+                Term.aconv first_minor second_minor andalso
+                prefix_order first_minor andalso
+                prefix_order second_minor
+            | _ => false) then () else raise Fail "duplicate premises") ;
+         (if (case direct of [result] => direct_shape result | _ => false)
+          then ()
+          else raise Fail
+            ("duplicate direct " ^ Int.toString (length direct))) ;
+         (if map (clasetStep.consumed_of o #1) enumerated =
+               [SOME 1, SOME 2] andalso invalid_direct
+          then () else raise Fail "duplicate occurrence enumeration") ;
+         (if selector_view proof =
+           ["unsafe:2:true", "assume:3", "assume:3"]
+          then () else raise Fail "duplicate selector") ;
+         (if #completion report = blastReconstruct.Completed
+          then () else raise Fail "duplicate completion") ;
+         (if #unsafe_rule_steps (#statistics report) = 1
+          then () else raise Fail "duplicate unsafe") ;
+         (if #stored_rule_transitions (#statistics report) = 1
+          then () else raise Fail "duplicate transition") ;
+         (if #duplicate_child_moves (#statistics report) = 2
+          then () else raise Fail "duplicate moves") ;
+         (if #close_assume_steps (#statistics report) = 2
+          then () else raise Fail "duplicate closes") ;
+         (if #grounding_attempts (#statistics report) = 1
+          then () else raise Fail "duplicate grounding") ;
+         (if #kernel_replay_attempts (#statistics report) = 1
+          then () else raise Fail "duplicate kernel") ;
+         (if #completion invalid_report = blastReconstruct.Completed andalso
+             not (Option.isSome (#result invalid_report)) andalso
+             #kernel_replay_attempts (#statistics invalid_report) = 0
+          then () else raise Fail "duplicate selector recovery") ;
+         (case #result report of
+              SOME ([], validation) =>
+                Term.aconv (concl (validation [])) target
+            | _ => false)
+       end)
+
+val _ =
+  test
     ("literal polarity records exact negative and positive representatives",
      fn () =>
        let
@@ -3042,11 +3228,354 @@ val reconstruct_v4_using_kernel =
 val reconstruct_v3 =
   blastReconstruct.reconstructWithMeasuredTimedDetailedV3
 
+val reconstruct_v3_using_transition =
+  blastReconstruct.reconstructWithMeasuredTimedDetailedV3UsingTransition
+
 val reconstruct_v4 =
   blastReconstruct.reconstructWithMeasuredTimedDetailedV4
 
 val reconstruct_v4_using_transition =
   blastReconstruct.reconstructWithMeasuredTimedDetailedV4UsingTransition
+
+fun same_reconstruction_result (goal : Abbrev.goal) (left, right) =
+  case (left, right) of
+      (SOME ([], left_validation), SOME ([], right_validation)) =>
+        let
+          val left_theorem = left_validation []
+          val right_theorem = right_validation []
+        in
+          Term.aconv (concl left_theorem) (#2 goal) andalso
+          Term.aconv (concl right_theorem) (#2 goal) andalso
+          ListPair.allEq (fn (left, right) => Term.aconv left right)
+            (hyp left_theorem, hyp right_theorem)
+        end
+    | (NONE, NONE) => true
+    | _ => false
+
+fun same_measured_reconstruction goal
+      (left : blastReconstruct.measured_result,
+       right : blastReconstruct.measured_result) =
+  #completion left = #completion right andalso
+  #current_phase left = #current_phase right andalso
+  #statistics left = #statistics right andalso
+  same_reconstruction_result goal (#result left, #result right)
+
+fun same_outer_reconstruction_statistics
+      (left : blastReconstruct.statistics,
+       right : blastReconstruct.detailed_statistics) =
+  #cooperative_checkpoints right =
+    #cooperative_checkpoints left + #stored_rule_checkpoints right andalso
+  #phase_entries left = #phase_entries right andalso
+  #phase_exits left = #phase_exits right andalso
+  #replay_recursions left = #replay_recursions right andalso
+  #alternative_pulls left = #alternative_pulls right andalso
+  #typed_steps left = #typed_steps right andalso
+  #hyp_subst_steps left = #hyp_subst_steps right andalso
+  #close_assume_steps left = #close_assume_steps right andalso
+  #close_contradiction_steps left =
+    #close_contradiction_steps right andalso
+  #safe_rule_steps left = #safe_rule_steps right andalso
+  #defer_goal_steps left = #defer_goal_steps right andalso
+  #unsafe_rule_steps left = #unsafe_rule_steps right andalso
+  #stored_rule_setups left = #stored_rule_setups right andalso
+  #stored_rule_transitions left = #stored_rule_transitions right andalso
+  #duplicate_child_moves left = #duplicate_child_moves right andalso
+  #finish_open_goal_checks left = #finish_open_goal_checks right andalso
+  #grounding_attempts left = #grounding_attempts right andalso
+  #kernel_replay_attempts left = #kernel_replay_attempts right andalso
+  #finish_residual_goal_checks left =
+    #finish_residual_goal_checks right
+
+fun same_detailed_reconstruction goal
+      (left : blastReconstruct.detailed_measured_result,
+       right : blastReconstruct.detailed_measured_result) =
+  #completion left = #completion right andalso
+  #current_phase left = #current_phase right andalso
+  #current_stored_rule left = #current_stored_rule right andalso
+  #statistics left = #statistics right andalso
+  same_reconstruction_result goal (#result left, #result right)
+
+fun same_timed_reconstruction goal
+      (left : blastReconstruct.timed_detailed_measured_result,
+       right : blastReconstruct.timed_detailed_measured_result) =
+  #completion left = #completion right andalso
+  #current_phase left = #current_phase right andalso
+  #current_stored_rule left = #current_stored_rule right andalso
+  #statistics left = #statistics right andalso
+  #classical_times left = #classical_times right andalso
+  #attempt_wall_time left = #attempt_wall_time right andalso
+  same_reconstruction_result goal (#result left, #result right)
+
+fun same_v2_reconstruction goal
+      (left : blastReconstruct.timed_detailed_measured_result_v2,
+       right : blastReconstruct.timed_detailed_measured_result_v2) =
+  same_timed_reconstruction goal (#base left, #base right) andalso
+  #minor_unification_times left = #minor_unification_times right andalso
+  #outer_reconstruction_times left = #outer_reconstruction_times right
+
+fun same_v3_reconstruction goal
+      (left : blastReconstruct.timed_detailed_measured_result_v3,
+       right : blastReconstruct.timed_detailed_measured_result_v3) =
+  same_v2_reconstruction goal (#base left, #base right) andalso
+  #minor_unification_times left = #minor_unification_times right andalso
+  #alternative_pull_times left = #alternative_pull_times right
+
+fun same_v4_reconstruction goal
+      (left : blastReconstruct.timed_detailed_measured_result_v4,
+       right : blastReconstruct.timed_detailed_measured_result_v4) =
+  same_v2_reconstruction goal (#base left, #base right) andalso
+  #minor_unification_times left = #minor_unification_times right andalso
+  #alternative_pull_times left = #alternative_pull_times right
+
+fun exact_static_prefix_counts
+      (statistics : blastReconstruct.detailed_statistics) =
+  #typed_steps statistics = 3 andalso
+  #safe_rule_steps statistics = 1 andalso
+  #close_assume_steps statistics = 2 andalso
+  #stored_rule_setups statistics = 1 andalso
+  #stored_rule_transitions statistics = 1 andalso
+  #stored_rule_attempt_selections statistics = 1 andalso
+  #stored_rule_freshening_setups statistics = 1 andalso
+  #stored_rule_minor_unifications statistics = 1 andalso
+  #stored_rule_major_unifications statistics = 0 andalso
+  #stored_rule_instantiations statistics = 1 andalso
+  #stored_rule_child_store_constructions statistics = 1 andalso
+  #stored_rule_direct_result_constructions statistics = 1 andalso
+  #stored_rule_lazy_yields statistics = 1 andalso
+  #stored_rule_direct_child_replacements statistics = 1 andalso
+  #stored_rule_replay_record_constructions statistics = 1 andalso
+  #stored_rule_record_insertions statistics = 1 andalso
+  #stored_rule_intro_attempts statistics = 1 andalso
+  #stored_rule_elim_attempts statistics = 0 andalso
+  #stored_rule_safe_attempts statistics = 1 andalso
+  #stored_rule_unsafe_attempts statistics = 0 andalso
+  #grounding_attempts statistics = 1 andalso
+  #kernel_replay_attempts statistics = 1
+
+val _ =
+  test
+    ("static-prefix tableau has all reconstruction API parity",
+     fn () =>
+       let
+         val p = mk_var ("static_reconstruct_p", bool)
+         val x = mk_var ("static_reconstruct_x", bool)
+         val c = mk_var ("static_reconstruct_C", bool --> bool)
+         val g = mk_var ("static_reconstruct_G", bool --> bool)
+         val structured =
+           mk_forall
+             (x, mk_imp (mk_comb (c, x), mk_comb (g, x)))
+         val goal = ([p, structured], mk_conj (p, structured))
+         val search_cs = clasetLib.the_claset ()
+         val empty_cs = clasetLib.empty_cs
+         val proof =
+           case blastSearch.tryGoal search_cs 1 goal of
+               SOME value => value
+             | NONE => raise Fail "static-prefix tableau"
+         val controls = {observe = NONE, stop = fn () => false}
+         fun detailed_controls () =
+           {clock = reconstruction_ticking_clock (),
+            observe = NONE, observe_stored_rule = NONE,
+            stop = fn () => false}
+         fun kernel_replay grounded input =
+           Tactical.VALID (clasetReplay.REPLAY_TAC grounded) input
+         val v2_kernel_calls = ref 0
+         val v3_kernel_calls = ref 0
+         val v4_kernel_calls = ref 0
+         fun observed_kernel calls grounded input =
+           (calls := !calls + 1;
+            kernel_replay grounded input)
+         val v3_transition_calls = ref 0
+         val v4_transition_calls = ref 0
+         fun transition_v3 sequence =
+           (v3_transition_calls := !v3_transition_calls + 1;
+            clasetStep.timed_rule_cases_v3 sequence)
+         fun transition_v4 sequence =
+           (v4_transition_calls := !v4_transition_calls + 1;
+            clasetStep.timed_rule_cases_v4 sequence)
+         val r0_with =
+           blastReconstruct.reconstructWith empty_cs goal proof
+         val r0_empty = blastReconstruct.reconstruct goal proof
+         val r1_with =
+           blastReconstruct.reconstructWithMeasured controls
+             empty_cs goal proof
+         val r1_empty =
+           blastReconstruct.reconstructMeasured controls goal proof
+         val detailed =
+           {observe = NONE, observe_stored_rule = NONE,
+            stop = fn () => false}
+         val r2_with =
+           blastReconstruct.reconstructWithMeasuredDetailed detailed
+             empty_cs goal proof
+         val r2_empty =
+           blastReconstruct.reconstructMeasuredDetailed detailed goal proof
+         val r3_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailed
+             (detailed_controls ()) empty_cs goal proof
+         val r3_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailed
+             (detailed_controls ()) goal proof
+         val r4_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV2
+             (detailed_controls ()) empty_cs goal proof
+         val r4_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV2UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = observed_kernel v2_kernel_calls,
+              observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             empty_cs goal proof
+         val r4_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV2
+             (detailed_controls ()) goal proof
+         val r5_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV3
+             (detailed_controls ()) empty_cs goal proof
+         val r5_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV3UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = observed_kernel v3_kernel_calls,
+              observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             empty_cs goal proof
+         val r5_transition =
+           reconstruct_v3_using_transition
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel_replay,
+              transition = transition_v3, observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             empty_cs goal proof
+         val r5_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV3
+             (detailed_controls ()) goal proof
+         val r6_with =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV4
+             (detailed_controls ()) empty_cs goal proof
+         val r6_kernel =
+           blastReconstruct.reconstructWithMeasuredTimedDetailedV4UsingKernel
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = observed_kernel v4_kernel_calls,
+              observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             empty_cs goal proof
+         val r6_transition =
+           reconstruct_v4_using_transition
+             {clock = reconstruction_ticking_clock (),
+              kernel_replay = kernel_replay,
+              transition = transition_v4, observe = NONE,
+              observe_stored_rule = NONE, stop = fn () => false}
+             empty_cs goal proof
+         val r6_empty =
+           blastReconstruct.reconstructMeasuredTimedDetailedV4
+             (detailed_controls ()) goal proof
+
+         fun result_ok (SOME ([], validation)) =
+               (ignore (validation []); true)
+           | result_ok _ = false
+         fun timed_ok
+               (report :
+                  blastReconstruct.timed_detailed_measured_result) =
+           #completion report = blastReconstruct.Completed andalso
+           result_ok (#result report)
+         val timed_reports =
+           [r3_with, r3_empty,
+            #base r4_with, #base r4_kernel, #base r4_empty,
+            #base (#base r5_with), #base (#base r5_kernel),
+            #base (#base r5_transition), #base (#base r5_empty),
+            #base (#base r6_with), #base (#base r6_kernel),
+            #base (#base r6_transition), #base (#base r6_empty)]
+         val r3_times = #classical_times r3_with
+         val r5_pulls = #alternative_pull_times r5_with
+         val r6_pulls = #alternative_pull_times r6_with
+         fun phase_sum
+               (times : blastReconstruct.classical_phase_times) =
+           List.foldl Time.+ Time.zeroTime
+             [#attempt_selection_time times,
+              #freshening_setup_time times,
+              #minor_unification_time times,
+              #elimination_major_unification_time times,
+              #rule_instantiation_time times,
+              #child_store_construction_time times,
+              #direct_result_construction_time times,
+              #lazy_result_yield_time times,
+              #direct_child_replacement_time times,
+              #replay_record_construction_time times,
+              #record_insertion_time times]
+         fun check name condition =
+           if condition then true
+           else (print ("\nreconstruction parity: " ^ name ^ "\n"); false)
+       in
+         check "script" (length (#script proof) = 3) andalso
+         check "r0 results" (result_ok r0_with andalso result_ok r0_empty)
+         andalso check "r0 pair"
+           (same_reconstruction_result goal (r0_with, r0_empty)) andalso
+         check "r1 pair"
+           (same_measured_reconstruction goal (r1_with, r1_empty)) andalso
+         check "r2 pair"
+           (same_detailed_reconstruction goal (r2_with, r2_empty)) andalso
+         check "r3 pair"
+           (same_timed_reconstruction goal (r3_with, r3_empty)) andalso
+         check "r4 empty" (same_v2_reconstruction goal
+           (r4_with, r4_empty)) andalso
+         check "r4 kernel" (same_v2_reconstruction goal
+           (r4_with, r4_kernel)) andalso
+         check "r5 empty" (same_v3_reconstruction goal
+           (r5_with, r5_empty)) andalso
+         check "r5 kernel" (same_v3_reconstruction goal
+           (r5_with, r5_kernel)) andalso
+         check "r5 transition" (same_v3_reconstruction goal
+           (r5_with, r5_transition)) andalso
+         check "r6 empty" (same_v4_reconstruction goal
+           (r6_with, r6_empty)) andalso
+         check "r6 kernel" (same_v4_reconstruction goal
+           (r6_with, r6_kernel)) andalso
+         check "r6 transition" (same_v4_reconstruction goal
+           (r6_with, r6_transition)) andalso
+         check "outer current"
+           (#completion r1_with = blastReconstruct.Completed andalso
+            #current_phase r1_with = #current_phase r1_empty andalso
+            #current_phase r1_with = #current_phase r2_with) andalso
+         check "outer statistics"
+           (same_outer_reconstruction_statistics
+             (#statistics r1_with, #statistics r2_with)) andalso
+         check "detailed terminal"
+           (#current_stored_rule r2_with = #current_stored_rule r3_with
+            andalso #statistics r2_with = #statistics r3_with) andalso
+         check "exact owner counts"
+           (exact_static_prefix_counts (#statistics r2_with)) andalso
+         check "timed results" (List.all timed_ok timed_reports) andalso
+         check "timed owner counts"
+           (List.all (exact_static_prefix_counts o #statistics)
+             timed_reports) andalso
+         check "timed statistics"
+           (List.all
+             (fn report => #statistics report = #statistics r2_with)
+             timed_reports) andalso
+         check "timed terminal"
+           (List.all
+             (fn report =>
+               #current_phase report = #current_phase r2_with andalso
+               #current_stored_rule report = #current_stored_rule r2_with)
+             timed_reports) andalso
+         check "phase sum"
+           (phase_sum r3_times = #classical_time r3_times) andalso
+         check "v3 pulls"
+           (#classical_elapsed_snapshots r5_pulls =
+              2 * (#completed_pulls r5_pulls + #failed_pulls r5_pulls +
+                   #interrupted_pulls r5_pulls) andalso
+            #sequence_statistics_reads r5_pulls > 0) andalso
+         check "v4 pulls"
+           (#classical_elapsed_snapshots r6_pulls =
+              2 * (#completed_pulls r6_pulls + #failed_pulls r6_pulls +
+                   #interrupted_pulls r6_pulls) andalso
+            #sequence_statistics_reads r6_pulls = 0 andalso
+            #summary_statistics_reads r6_pulls = 1 andalso
+            #retained_trace_allocations r6_pulls = 0) andalso
+         check "kernel seams"
+           (!v2_kernel_calls = 1 andalso !v3_kernel_calls = 1 andalso
+            !v4_kernel_calls = 1) andalso
+         check "transition seams"
+           (!v3_transition_calls = 1 andalso !v4_transition_calls = 1)
+       end)
 
 fun same_fine_v3_v4
       (left : blastReconstruct.minor_unification_times_v3)

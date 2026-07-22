@@ -21,6 +21,9 @@ sig
 
   type created =
     {terms : clasetMeta.meta list, types : clasetMeta.tymeta list}
+  type exact_prefix_descriptor = {foralls : int, implications : int}
+  type exact_prefix_rebuild =
+    {fresh : term list, assumptions : term list, premise : term}
   type replay_action = clasetMeta.store -> tactic
   type step_record
   type script
@@ -74,6 +77,18 @@ sig
   val RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
      parameters : string list, eigenvariables : string list list} -> tactic
+  val BLAST_RULE_TAC :
+    {theorem : thm, elim : bool, consumed : int option,
+     parameters : string list, eigenvariables : string list list,
+     prefixes : exact_prefix_descriptor list} -> tactic
+  val exact_prefix_descriptor : term -> exact_prefix_descriptor
+  val exact_prefix_bounds : exact_prefix_descriptor -> term -> term list
+  val split_exact_prefix :
+    {descriptor : exact_prefix_descriptor, premise : term,
+     fresh : term list} ->
+    {assumptions : term list, residual : term,
+     rebuild : exact_prefix_rebuild}
+  val rebuild_exact_prefix : exact_prefix_rebuild -> thm -> thm
   val HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC_AT : int -> tactic
@@ -93,6 +108,11 @@ sig
       {theorem : thm, elim : bool, consumed : int option,
        parameters : string list,
        eigenvariables : string list list}) -> replay_action
+  val blast_rule_action :
+    (clasetMeta.store ->
+      {theorem : thm, elim : bool, consumed : int option,
+       parameters : string list, eigenvariables : string list list,
+       prefixes : exact_prefix_descriptor list}) -> replay_action
   val hyp_subst_action : replay_action
   val blast_hyp_subst_action : replay_action
   val blast_hyp_subst_action_at : int -> replay_action

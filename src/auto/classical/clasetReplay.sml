@@ -22,6 +22,9 @@ datatype step_kind =
 
 type created =
   {terms : clasetMeta.meta list, types : clasetMeta.tymeta list}
+type exact_prefix_descriptor = {foralls : int, implications : int}
+type exact_prefix_rebuild =
+  {fresh : term list, assumptions : term list, premise : term}
 type replay_action = clasetMeta.store -> tactic
 
 datatype step_record =
@@ -225,6 +228,90 @@ fun MP_TAC store {implication, antecedent} (asl, w) =
 fun cons_assumptions assumptions asl =
   List.foldl (fn (asm, current) => asm :: current) asl assumptions
 
+fun exact_prefix_descriptor premise =
+  let
+    val (bounds, body) = strip_forall premise
+    val (assumptions, _) = strip_imp_only body
+  in
+    {foralls = length bounds, implications = length assumptions}
+  end
+
+fun split_foralls function_name count premise =
+  let
+    fun split 0 rev_bounds body = (List.rev rev_bounds, body)
+      | split remaining rev_bounds body =
+          (case total dest_forall body of
+               SOME (bound, rest) =>
+                 split (remaining - 1) (bound :: rev_bounds) rest
+             | NONE =>
+                 raise mk_HOL_ERR "clasetReplay" function_name
+                   "the instantiated premise has too few foralls")
+  in
+    if count < 0 then
+      raise mk_HOL_ERR "clasetReplay" function_name
+        "negative forall-prefix arity"
+    else split count [] premise
+  end
+
+fun exact_prefix_bounds
+      ({foralls, implications} : exact_prefix_descriptor) premise =
+  let
+    val _ =
+      if implications < 0 then
+        raise mk_HOL_ERR "clasetReplay" "exact_prefix_bounds"
+          "negative implication-prefix arity"
+      else ()
+    val (bounds, _) =
+      split_foralls "exact_prefix_bounds" foralls premise
+  in
+    bounds
+  end
+
+fun split_exact_prefix
+      {descriptor = {foralls, implications}, premise, fresh} =
+  let
+    val (bounds, body) =
+      split_foralls "split_exact_prefix" foralls premise
+    val _ =
+      if implications < 0 then
+        raise mk_HOL_ERR "clasetReplay" "split_exact_prefix"
+          "negative implication-prefix arity"
+      else if length bounds <> length fresh then
+        raise mk_HOL_ERR "clasetReplay" "split_exact_prefix"
+          "fresh-parameter arity differs from the descriptor"
+      else if
+        ListPair.allEq
+          (fn (bound, variable) =>
+            is_var variable andalso type_of bound = type_of variable)
+          (bounds, fresh)
+      then ()
+      else
+        raise mk_HOL_ERR "clasetReplay" "split_exact_prefix"
+          "a fresh parameter has the wrong type"
+    val substitution =
+      ListPair.map
+        (fn (bound, variable) => {redex = bound, residue = variable})
+        (bounds, fresh)
+    val body' = Term.subst substitution body
+    val (assumptions, residual) =
+      split_imp_prefix "split_exact_prefix" implications body'
+    val rebuild =
+      {fresh = fresh, assumptions = assumptions, premise = premise}
+  in
+    {assumptions = assumptions, residual = residual, rebuild = rebuild}
+  end
+
+fun rebuild_exact_prefix
+      ({fresh, assumptions, premise} : exact_prefix_rebuild) child_thm =
+  let
+    val discharged =
+      List.foldr (fn (assumption, th) => DISCH assumption th)
+        child_thm assumptions
+    val generalized = GENL fresh discharged
+  in
+    EQ_MP (ALPHA (concl generalized) premise) generalized
+  end
+
 fun rule_child parent_asl premise names =
   let
     val (bounds, body) = strip_forall premise
@@ -245,7 +332,26 @@ fun rule_child parent_asl premise names =
     val (antecedents, conclusion) = strip_imp_only body'
   in
     ((cons_assumptions antecedents parent_asl, conclusion),
-     (fresh, antecedents, premise))
+     {fresh = fresh, assumptions = antecedents, premise = premise})
+  end
+
+fun blast_rule_child parent_asl premise names descriptor =
+  let
+    val bounds = exact_prefix_bounds descriptor premise
+    val _ =
+      if length bounds = length names then ()
+      else
+        raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
+          "recorded eigenvariable arity is corrupt"
+    val fresh =
+      ListPair.map
+        (fn (bound, name) => mk_var (name, type_of bound))
+        (bounds, names)
+    val {assumptions, residual, rebuild} =
+      split_exact_prefix
+        {descriptor = descriptor, premise = premise, fresh = fresh}
+  in
+    ((cons_assumptions assumptions parent_asl, residual), rebuild)
   end
 
 fun normalize_assumption asm =
@@ -261,7 +367,7 @@ fun theorem_hypothesis asl hypothesis =
         raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
           "a theorem hypothesis is absent from the goal"
 
-fun RULE_TAC
+fun rule_tac_with function_name make_children
     {theorem, elim, consumed, parameters, eigenvariables} (asl, w) =
   let
     val rule0 = normalize_rule_thm theorem
@@ -270,7 +376,7 @@ fun RULE_TAC
     val recorded_arity =
       length eigenvariables + (if elim then 1 else 0)
     val (_, initial_conclusion) =
-      split_imp_prefix "RULE_TAC" recorded_arity (concl rule0)
+      split_imp_prefix function_name recorded_arity (concl rule0)
     val (term_substitution, type_substitution) =
       Term.match_term initial_conclusion normalized_target
     fun allowed_parameter {redex, residue} =
@@ -279,7 +385,7 @@ fun RULE_TAC
     val _ =
       if List.all allowed_parameter term_substitution then ()
       else
-        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+        raise mk_HOL_ERR "clasetReplay" function_name
           "conclusion alignment would instantiate a rigid variable"
     val aligned_rule =
       Drule.INST_TY_TERM
@@ -290,11 +396,11 @@ fun RULE_TAC
           Drule.PROVE_HYP (theorem_hypothesis asl hypothesis) current)
         aligned_rule (hyp aligned_rule)
     val (premises0, conclusion) =
-      split_imp_prefix "RULE_TAC" recorded_arity (concl rule)
+      split_imp_prefix function_name recorded_arity (concl rule)
     val _ =
       if aconv conclusion normalized_target then ()
       else
-        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+        raise mk_HOL_ERR "clasetReplay" function_name
           ("the instantiated rule conclusion misses the goal: " ^
            Parse.term_to_string conclusion ^ " versus " ^
            Parse.term_to_string normalized_target)
@@ -305,16 +411,16 @@ fun RULE_TAC
             case consumed of
                 SOME pos => pos
               | NONE =>
-                  raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+                  raise mk_HOL_ERR "clasetReplay" function_name
                     "an elimination record has no consumed assumption"
-          val major = nth1 "RULE_TAC" asl major_pos
+          val major = nth1 function_name asl major_pos
           val rule_major = hd premises0
           val (normalized_major, major_thm) =
             normalize_assumption major
           val major_thm =
             if aconv normalized_major rule_major then major_thm
             else
-              raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+              raise mk_HOL_ERR "clasetReplay" function_name
                 "the selected assumption misses the major premise"
         in
           ([major_thm], tl premises0,
@@ -324,34 +430,23 @@ fun RULE_TAC
     val _ =
       if length premises = length eigenvariables then ()
       else
-        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+        raise mk_HOL_ERR "clasetReplay" function_name
           "recorded child arity is corrupt"
-    val child_data =
-      ListPair.map
-        (fn (premise, names) =>
-          rule_child parent_asl premise names)
-        (premises, eigenvariables)
+    val child_data = make_children parent_asl premises eigenvariables
     val child_goals = map #1 child_data
     val rebuild_data = map #2 child_data
 
-    fun rebuild ((fresh, antecedents, premise), child_thm) =
-      let
-        val discharged =
-          List.foldr (fn (antecedent, th) => DISCH antecedent th)
-            child_thm antecedents
-        val generalized = GENL fresh discharged
-      in
-        EQ_MP (ALPHA (concl generalized) premise) generalized
-      end
-
     fun validation child_thms =
       if length child_thms <> length premises then
-        raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+        raise mk_HOL_ERR "clasetReplay" function_name
           "validation received the wrong number of theorems"
       else
         let
           val premise_thms =
-            ListPair.map rebuild (rebuild_data, child_thms)
+            ListPair.map
+              (fn (data, theorem) =>
+                rebuild_exact_prefix data theorem)
+              (rebuild_data, child_thms)
           val result0 = Drule.LIST_MP (supplied @ premise_thms) rule
           val result =
             EQ_MP (ALPHA (concl result0) normalized_target) result0
@@ -362,8 +457,37 @@ fun RULE_TAC
     (child_goals, validation)
   end
   handle Empty =>
-    raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
+    raise mk_HOL_ERR "clasetReplay" function_name
       "an elimination rule has no major premise"
+
+fun RULE_TAC fields =
+  rule_tac_with "RULE_TAC"
+    (fn parent_asl =>
+      fn premises =>
+        fn eigenvariables =>
+          ListPair.map
+            (fn (premise, names) =>
+              rule_child parent_asl premise names)
+            (premises, eigenvariables))
+    fields
+
+fun BLAST_RULE_TAC
+    {theorem, elim, consumed, parameters, eigenvariables, prefixes} =
+  let
+    fun make_children parent_asl premises names =
+      if length premises = length prefixes then
+        ListPair.map
+          (fn ((premise, child_names), descriptor) =>
+            blast_rule_child parent_asl premise child_names descriptor)
+          (ListPair.zip (premises, names), prefixes)
+      else
+        raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
+          "recorded prefix-descriptor arity is corrupt"
+  in
+    rule_tac_with "BLAST_RULE_TAC" make_children
+      {theorem = theorem, elim = elim, consumed = consumed,
+       parameters = parameters, eigenvariables = eigenvariables}
+  end
 
 val HYP_SUBST_TAC =
   let
@@ -617,6 +741,7 @@ fun contradiction_action positions store =
   CONTRADICTION_TAC store positions
 fun mp_action positions store = MP_TAC store positions
 fun rule_action make store = RULE_TAC (make store)
+fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC
 fun blast_hyp_subst_action_at position _ =

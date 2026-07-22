@@ -8,6 +8,8 @@ sig
 
   type cgoal = {params : term list, asl : term list, w : term}
   type replay_script = clasetReplay.script
+  type exact_prefix_descriptor = clasetReplay.exact_prefix_descriptor
+  type exact_prefix_rebuild = clasetReplay.exact_prefix_rebuild
   type binding_mark = {terms : meta list, types : tymeta list}
   type binding_marks = binding_mark list
   type node
@@ -56,6 +58,11 @@ sig
   val children : node ->
       {pos : int, premises : term list, consumed : int option} ->
       cgoal list * store
+  val exact_blast_children : node ->
+      {pos : int, premises : term list,
+       prefixes : exact_prefix_descriptor list,
+       consumed : int option} ->
+      cgoal list * store * exact_prefix_rebuild list
   val elim_children : node -> {pos : int, premises : term list} ->
       {assumption : int, major : term, children : cgoal list,
        store : store} list
