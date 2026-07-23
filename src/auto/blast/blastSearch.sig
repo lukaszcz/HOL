@@ -142,11 +142,9 @@ sig
      coherent partial snapshot.  A completed exhaustion has completion =
      Completed and result = NONE.  If debug is false, fullTrace is empty.
      Exceptions raised by stop propagate unchanged; they are never interpreted
-     as search-control exceptions.  searchTermsMeasured treats its prototerms
-     as caller-owned: interruption and stop-predicate exceptions restore all
-     trailed assignments before returning or escaping.  In contrast,
-     searchGoalMeasured translates the HOL goal into fresh engine-owned
-     prototerms.  On the explicit Interrupted path only, it abandons those
+     as search-control exceptions.  searchGoalMeasured translates the HOL goal
+     into fresh engine-owned prototerms.  On the explicit Interrupted path
+     only, it abandons those
      engine-owned assignments instead of traversing their trail.  With debug
      enabled, fullTrace can expose those prototerms as part of the returned
      snapshot; their cutoff-time bindings are intentionally left intact, but
@@ -162,7 +160,7 @@ sig
      time spent in the arbitrary caller-supplied stop predicate, the arbitrary
      successful continuation and proof reconstruction it may invoke, one
      indivisible HOL kernel or other primitive operation between checkpoints,
-     and caller-owned emergency rollback cleanup.  Consequently none of those
+     and emergency rollback cleanup.  Consequently none of those
      intervals has a latency bound supplied by this API.  Goal-owned explicit
      interruption has no trail-cleanup interval, so once its checkpoint is
      reached the coherent snapshot is assembled without a trail traversal.
@@ -171,10 +169,6 @@ sig
   val searchGoalMeasured :
     {debug : bool, stop : unit -> bool} ->
     claset -> int -> goal -> (proof -> 'a) -> 'a measured_result
-  val searchTermsMeasured :
-    {debug : bool, stop : unit -> bool} ->
-    claset -> int -> pterm list ->
-    (proof -> 'a) -> 'a measured_result
   val tryGoal : claset -> int -> goal -> proof option
   val debugGoal : claset -> int -> goal -> debug_result
 

@@ -962,33 +962,6 @@ val _ =
 
 val _ =
   test
-    ("safe nonclosing bound rejection is not counted",
-     fn () =>
-       let
-         val q = mk_var ("instrument_safe_bound_q", bool)
-         val branch = ref NONE
-         val nonclosing = DISCH q boolTheory.TRUTH
-         val cs =
-           clasetLib.add_sintros [("nonclosing", nonclosing)]
-             clasetLib.empty_cs
-         val report =
-           blastSearch.searchTermsMeasured
-             {debug = false, stop = fn () => false} cs 0
-             [mkGoal (Var branch)] (fn proof => proof)
-         val statistics = #statistics report
-       in
-         #completion report = blastSearch.Completed andalso
-         not (Option.isSome (#result report)) andalso
-         #configured_depth statistics = 0 andalso
-         #maximum_resource_cost statistics = 0 andalso
-         #inferences_performed statistics = 0 andalso
-         #branches_created statistics = 1 andalso
-         #branches_closed statistics = 0 andalso
-         #choices_pruned statistics = 0
-       end)
-
-val _ =
-  test
     ("depth-0 unsafe nonclosing rule rejection is not counted",
      fn () =>
        let
@@ -1009,31 +982,6 @@ val _ =
          #inferences_performed statistics = 0 andalso
          #branches_created statistics = 1 andalso
          #branches_closed statistics = 0 andalso
-         #choices_pruned statistics = 0
-       end)
-
-val _ =
-  test
-    ("closing safe rule may exceed the configured resource bound",
-     fn () =>
-       let
-         val branch = ref NONE
-         val cs =
-           clasetLib.add_sintros [("truth", boolTheory.TRUTH)]
-             clasetLib.empty_cs
-         val report =
-           blastSearch.searchTermsMeasured
-             {debug = false, stop = fn () => false} cs 0
-             [mkGoal (Var branch)] (fn proof => proof)
-         val statistics = #statistics report
-       in
-         #completion report = blastSearch.Completed andalso
-         Option.isSome (#result report) andalso
-         #configured_depth statistics = 0 andalso
-         #maximum_resource_cost statistics = 1 andalso
-         #inferences_performed statistics = 1 andalso
-         #branches_created statistics = 1 andalso
-         #branches_closed statistics = 1 andalso
          #choices_pruned statistics = 0
        end)
 
@@ -1062,12 +1010,11 @@ fun zero_measured_work depth (statistics : blastSearch.statistics) =
 
 val _ =
   test
-    ("initial cooperative stop prevents goal and term search work",
+    ("initial cooperative stop prevents goal search work",
      fn () =>
        let
          val p = mk_var ("instrument_initial_stop_p", bool)
          val goal = ([], p)
-         val formulas = map #1 (blastRule.initialBranch goal)
 
          fun goal_run debug =
            let
@@ -1089,33 +1036,13 @@ val _ =
              zero_measured_work 3 (#statistics report)
            end
 
-         fun terms_run debug =
-           let
-             val polls = ref 0
-             val reconstructions = ref 0
-             fun stop () = (polls := !polls + 1; true)
-             val report =
-               blastSearch.searchTermsMeasured {debug = debug, stop = stop}
-                 clasetLib.empty_cs 3 formulas
-                 (fn proof =>
-                    (reconstructions := !reconstructions + 1; proof))
-           in
-             !polls > 0 andalso
-             #cooperative_checkpoints (#statistics report) = !polls andalso
-             !reconstructions = 0 andalso
-             #completion report = blastSearch.Interrupted andalso
-             not (Option.isSome (#result report)) andalso
-             #fullTrace report = [] andalso
-             zero_measured_work 3 (#statistics report)
-           end
        in
-         goal_run false andalso goal_run true andalso
-         terms_run false andalso terms_run true
+         goal_run false andalso goal_run true
        end)
 
 val _ =
   test
-    ("goal and term measured entry points have equivalent completion",
+    ("measured goal entry point has exact completion",
      fn () =>
        let
          val goal = ([], boolSyntax.T)
@@ -1167,22 +1094,8 @@ val _ =
              check debug report reconstructions
            end
 
-         fun terms_run debug =
-           let
-             val reconstructions = ref 0
-             val formulas = map #1 (blastRule.initialBranch goal)
-             val report =
-               blastSearch.searchTermsMeasured
-                 {debug = debug, stop = fn () => false}
-                 cs 0 formulas
-                 (fn proof =>
-                    (reconstructions := !reconstructions + 1; proof))
-           in
-             check debug report reconstructions
-           end
        in
-         goal_run false andalso goal_run true andalso
-         terms_run false andalso terms_run true
+         goal_run false andalso goal_run true
        end)
 
 val _ =
@@ -1980,14 +1893,14 @@ val _ =
            clasetLib.add_intros
              [("exists", EXISTS_INTRO_THM)] clasetLib.empty_cs
 
-         fun run cutoff cs depth terms =
+         fun run cutoff cs depth goal =
            let
              val polls = ref 0
              fun stop () =
                (polls := !polls + 1; !polls >= cutoff)
            in
-             blastSearch.searchTermsMeasured
-               {debug = false, stop = stop} cs depth terms
+             blastSearch.searchGoalMeasured
+               {debug = false, stop = stop} cs depth goal
                (fn proof => proof)
            end
 
@@ -1995,13 +1908,13 @@ val _ =
            if safe then #safe_rule_attempts statistics
            else #unsafe_rule_attempts statistics
 
-         fun boundary safe cs depth terms =
+         fun boundary safe cs depth goal =
            let
              fun seek cutoff =
                if cutoff > 1000 then NONE
                else
                  let
-                   val report = run cutoff cs depth terms
+                   val report = run cutoff cs depth goal
                  in
                    if attempts safe (#statistics report) > 0 then
                      SOME (cutoff, report)
@@ -2012,7 +1925,7 @@ val _ =
                  NONE => false
                | SOME (cutoff, after) =>
                    let
-                     val prior = run (cutoff - 1) cs depth terms
+                     val prior = run (cutoff - 1) cs depth goal
                      val prior_stats = #statistics prior
                      val after_stats = #statistics after
                    in
@@ -2026,70 +1939,10 @@ val _ =
                    end
            end
        in
-         boundary true truth_cs 0
-           [mkGoal (Const (const_name {Thy = "bool", Name = "T"}, []))]
-         andalso
+         boundary true truth_cs 0 ([], boolSyntax.T) andalso
          boundary false exists_cs 1
-           [mkGoal
-              (blastRule.fromGoalTerm
-                 (mk_exists
-                    (existential, mk_comb (predicate, existential))))]
-       end)
-
-val _ =
-  test
-    ("bounded inner interruption returns a coherent partial snapshot",
-     fn () =>
-       let
-         val polls = ref 0
-         val branch = ref NONE
-         val truth_cs =
-           clasetLib.add_sintros
-             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
-         val report =
-           blastSearch.searchTermsMeasured
-             {debug = true,
-              stop = fn () =>
-                (polls := !polls + 1; Option.isSome (!branch))}
-             truth_cs 0 [mkGoal (Var branch)] (fn proof => proof)
-         val statistics = #statistics report
-       in
-         #completion report = blastSearch.Interrupted andalso
-         not (Option.isSome (#result report)) andalso
-         not (Option.isSome (!branch)) andalso !polls > 0 andalso
-         #cooperative_checkpoints statistics = !polls andalso
-         #candidate_conversions_attempted statistics <=
-           #candidate_rules_enumerated statistics andalso
-         #rule_unification_successes statistics <=
-           #rule_unification_attempts statistics
-       end)
-
-val _ =
-  test
-    ("interrupted measured unification rolls back branch assignments",
-     fn () =>
-       let
-         val branch = ref NONE
-         val cs =
-           clasetLib.add_sintros
-             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
-         fun stop () = Option.isSome (!branch)
-         val report =
-           blastSearch.searchTermsMeasured {debug = true, stop = stop}
-             cs 0 [mkGoal (Var branch)] (fn proof => proof)
-         val statistics = #statistics report
-       in
-         #completion report = blastSearch.Interrupted andalso
-         not (Option.isSome (!branch)) andalso
-         #emergency_cleanup_assignments statistics = 1 andalso
-         #remaining_trail_assignments statistics = 0 andalso
-         not (null (#fullTrace report)) andalso
-         #cooperative_checkpoints statistics > 0 andalso
-         #safe_rule_attempts statistics = 1 andalso
-         #rule_unification_attempts statistics = 1 andalso
-         #rule_unification_successes statistics = 1 andalso
-         #inferences_performed statistics = 0 andalso
-         #branches_closed statistics = 0
+           ([], mk_exists
+             (existential, mk_comb (predicate, existential)))
        end)
 
 val _ =
@@ -2320,60 +2173,6 @@ val _ =
          handle GoalStop actual =>
                   actual = sentinel andalso !polls = cutoff andalso
                   !continuations = 0
-              | _ => false
-       end)
-
-val _ =
-  test
-    ("inner stop-predicate exceptions preserve identity",
-     fn () =>
-       let
-         exception InnerStop of int ref
-         val sentinel = ref 23
-         val branch = ref NONE
-         val seen_assignment = ref false
-         val cs =
-           clasetLib.add_sintros
-             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
-         fun stop () =
-           if Option.isSome (!branch) then
-             (seen_assignment := true; raise InnerStop sentinel)
-           else false
-       in
-         (ignore
-            (blastSearch.searchTermsMeasured {debug = false, stop = stop}
-               cs 0 [mkGoal (Var branch)] (fn proof => proof));
-          false)
-         handle InnerStop actual =>
-                  actual = sentinel andalso !seen_assignment andalso
-                  not (Option.isSome (!branch))
-              | _ => false
-       end)
-
-val _ =
-  test
-    ("continuation exceptions restore caller-owned assignments",
-     fn () =>
-       let
-         exception ReconstructionStop of int ref
-         val sentinel = ref 31
-         val branch = ref NONE
-         val entered = ref false
-         val cs =
-           clasetLib.add_sintros
-             [("truth", boolTheory.TRUTH)] clasetLib.empty_cs
-         fun reject _ =
-           (entered := Option.isSome (!branch);
-            raise ReconstructionStop sentinel)
-       in
-         (ignore
-            (blastSearch.searchTermsMeasured
-               {debug = false, stop = fn () => false}
-               cs 0 [mkGoal (Var branch)] reject);
-          false)
-         handle ReconstructionStop actual =>
-                  actual = sentinel andalso !entered andalso
-                  not (Option.isSome (!branch))
               | _ => false
        end)
 

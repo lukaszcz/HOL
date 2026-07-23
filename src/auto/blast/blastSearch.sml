@@ -2496,9 +2496,6 @@ fun searchTerms claset depth formulas cont =
   #result
     (runTerms Restore Off claset depth (FormulaTerms formulas) cont)
 
-fun searchTermsMeasured options claset depth formulas cont =
-  runTerms Restore (On options) claset depth (FormulaTerms formulas) cont
-
 fun goalTerms goal = map first (blastRule.initialBranch goal)
 
 fun searchGoalMeasured options claset depth goal cont =
