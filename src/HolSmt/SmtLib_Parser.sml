@@ -2765,28 +2765,30 @@ local
   fun sort_list_to_string tys =
     "[" ^ String.concatWith ", " (List.map type_to_string tys) ^ "]"
 
-  fun command_context surface_flags dictionary_metadata command =
-    let
-      val metadata_index =
-        List.foldl
-          (fn (metadata as {kind, name, ...}
-                 : SmtLib_Theories.symbol_metadata, index) =>
-            if kind = "term" then
-              Redblackmap.insert
-                (index, name,
-                 metadata ::
-                   Option.getOpt (Redblackmap.peek (index, name), []))
-            else
-              index)
-          (Redblackmap.mkDict String.compare)
-          dictionary_metadata
-    in
-      {
-        description = "command '" ^ command ^ "'",
-        surface_flags = surface_flags,
-        metadata_index = metadata_index
-      } : typecheck_context
-    end
+  (* Index the term-kind symbol metadata by name.  This depends only on the
+     logic's dictionary, so a caller handling one command builds it once and
+     reuses it across the several `command_context` values it needs (see the
+     memoized `context` in `typecheck_command`). *)
+  fun build_metadata_index dictionary_metadata =
+    List.foldl
+      (fn (metadata as {kind, name, ...}
+             : SmtLib_Theories.symbol_metadata, index) =>
+        if kind = "term" then
+          Redblackmap.insert
+            (index, name,
+             metadata ::
+               Option.getOpt (Redblackmap.peek (index, name), []))
+        else
+          index)
+      (Redblackmap.mkDict String.compare)
+      dictionary_metadata
+
+  fun command_context surface_flags metadata_index command =
+    {
+      description = "command '" ^ command ^ "'",
+      surface_flags = surface_flags,
+      metadata_index = metadata_index
+    } : typecheck_context
 
   fun metadata_has_term
       ({metadata_index, ...}: typecheck_context) predicate name =
@@ -2805,38 +2807,23 @@ local
     | SOME entries =>
         List.exists (fn {theory, ...} => theory = "HO-Core") entries
 
+  (* Each surface flag is a monotone (false -> true) marker.  OR the current
+     value with whether this event targets the flag, so the record is rebuilt
+     once with no field copied verbatim across branches. *)
   fun note_surface_event
       ({surface_flags, ...}: typecheck_context) event =
     let
       val {arrow_sort_used, lambda_used, apply_operator_used,
         partial_application_used} = !surface_flags
     in
-      surface_flags :=
-        (case event of
-           ArrowSortUsed => {
-             arrow_sort_used = true,
-             lambda_used = lambda_used,
-             apply_operator_used = apply_operator_used,
-             partial_application_used = partial_application_used
-           }
-         | LambdaUsed => {
-             arrow_sort_used = arrow_sort_used,
-             lambda_used = true,
-             apply_operator_used = apply_operator_used,
-             partial_application_used = partial_application_used
-           }
-         | ApplyOperatorUsed => {
-             arrow_sort_used = arrow_sort_used,
-             lambda_used = lambda_used,
-             apply_operator_used = true,
-             partial_application_used = partial_application_used
-           }
-         | PartialApplicationUsed => {
-             arrow_sort_used = arrow_sort_used,
-             lambda_used = lambda_used,
-             apply_operator_used = apply_operator_used,
-             partial_application_used = true
-           })
+      surface_flags := {
+        arrow_sort_used = arrow_sort_used orelse event = ArrowSortUsed,
+        lambda_used = lambda_used orelse event = LambdaUsed,
+        apply_operator_used =
+          apply_operator_used orelse event = ApplyOperatorUsed,
+        partial_application_used =
+          partial_application_used orelse event = PartialApplicationUsed
+      }
     end
 
   fun note_arrow_sort_used context =
@@ -4772,14 +4759,28 @@ local
     let
       fun dictionary_logic logic =
         case dict_logic of SOME broad_logic => broad_logic | NONE => logic
+      (* A command handler asks for several `context` values (one per phase
+         that reports errors), all sharing the same logic.  The metadata index
+         depends only on that logic, so derive it once and reuse it; only the
+         command description varies between the returned contexts. *)
+      val context_shared = ref NONE
       fun context command =
         let
-          val {logic, surface_flags, ...} =
-            dest_typecheck_state command state
-          val metadata = SmtLib_Logics.metadata_of_logic
-            (dictionary_logic (visible_logic logic))
+          val (surface_flags, metadata_index) =
+            case !context_shared of
+              SOME shared => shared
+            | NONE =>
+                let
+                  val {logic, surface_flags, ...} =
+                    dest_typecheck_state command state
+                  val metadata = SmtLib_Logics.metadata_of_logic
+                    (dictionary_logic (visible_logic logic))
+                  val shared = (surface_flags, build_metadata_index metadata)
+                in
+                  context_shared := SOME shared; shared
+                end
         in
-          command_context surface_flags metadata command
+          command_context surface_flags metadata_index command
         end
       fun finish state = SOME state
       fun parsedicts_for logic =

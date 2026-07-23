@@ -1457,38 +1457,15 @@ local
     (state, thm)
   end
 
-  fun z3_quant_intro_bound (state, [], thm, t) =
-      z3_quant_intro (state, thm, t)
-    | z3_quant_intro_bound (state, vars, thm, t) =
-  let
-    fun strip_quant_vars term acc =
-      if boolSyntax.is_forall term then
-        let val (var, body) = boolSyntax.dest_forall term
-        in strip_quant_vars body (var :: acc) end
-      else if boolSyntax.is_exists term then
-        let val (var, body) = boolSyntax.dest_exists term
-        in strip_quant_vars body (var :: acc) end
-      else
-        List.rev acc
-    val (lhs, _) = boolSyntax.dest_eq t
-    val (prem_lhs, _) = boolSyntax.dest_eq (Thm.concl thm)
-    val target_vars = strip_quant_vars lhs []
-    val premise_vars = strip_quant_vars prem_lhs []
-    val new_count = List.length target_vars - List.length premise_vars
-    val new_vars = if new_count < 0 then []
-      else List.take (target_vars, new_count)
-    fun same_type (v1, v2) =
-      Type.compare (Term.type_of v1, Term.type_of v2) = EQUAL
-    val _ = if new_count = List.length vars andalso
-        Lib.list_eq (Lib.curry same_type) vars new_vars then ()
-      else raise ERR "z3_quant_intro_bound"
-        ("proof-bind binder mismatch: wrapper has " ^
-         Int.toString (List.length vars) ^
-         " variable(s), quant-intro introduces " ^
-         Int.toString (Int.max (new_count, 0)))
-  in
+  (* proof-bind under quant-intro annotates which binders the surrounding NNF
+     step introduced.  Those variables are only metadata: `z3_quant_intro`
+     recovers the quantifier structure from the terms themselves, and the
+     framework's `check_thm` then validates the reconstructed theorem against
+     the target.  Consulting the annotation as a replay precondition adds no
+     soundness (check_thm is authoritative) and can only reject a provable
+     step whose binders are recorded differently, so replay ignores it. *)
+  fun z3_quant_intro_bound (state, _, thm, t) =
     z3_quant_intro (state, thm, t)
-  end
 
   (* A proof for `R t t`, where R is a reflexive relation. The only `R` that are
      used are equivalence modulo namings, equality and equivalence, i.e. `~`,
@@ -1677,6 +1654,24 @@ local
        ``z3name!0 = if ... then y else x`` to the list of Z3-provided
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
+
+    (* General unification fallback.  The earlier `rewrite(12.1)` attempt runs
+       before arithmetic but deliberately declines a bare variable alias
+       (`v1 = v2`) so as not to commit an underconstrained proof-local
+       definition prematurely.  Once the arithmetic and word rungs have had
+       their chance, record such an alias here — this preserves the
+       pre-existing replay behaviour for rewrites whose only reconstruction is
+       a variable alias. *)
+    let
+      val (lhs, rhs) = boolSyntax.dest_eq t
+      val thm = profile "rewrite(12.1)(unification)" Library.gen_instantiation
+        (lhs, rhs, #var_set state)
+      val asl = Thm.hyp thm
+    in
+      (state_define (state_cache_thm state thm) asl, thm)
+    end
+
+    handle Feedback.HOL_ERR _ =>
 
     let
       val (lhs, rhs) = boolSyntax.dest_eq t

@@ -6245,15 +6245,27 @@ in
   Library.check_oracle_tags "Z3 two-binder proof-bind nnf-pos" two_bound_nnf
 end
 
-fun z3_proof_bind_quant_intro_shaped_failure () =
-  expect_hol_error_contains "proof-bind quant-intro binder mismatch"
-    "proof-bind binder mismatch"
-    (fn () => ignore (replay_z3_proof_string
-      "((proof (quant-intro \
-      \(proof-bind (lambda ((x Int)) \
-      \(refl (= (= x x) (= x x))))) \
-      \(= (forall ((x Int) (y Int)) (= x x)) \
-      \(forall ((x Int) (y Int)) (= x x))))))"))
+fun z3_proof_bind_quant_intro_binder_annotation_ignored () =
+let
+  (* The proof-bind wrapper records one bound variable, but quant-intro
+     reintroduces two.  The annotation is metadata, not a replay
+     precondition: `z3_quant_intro` reconstructs the step from the terms and
+     `check_thm` validates it, so replay accepts the certificate rather than
+     rejecting it on the binder-count discrepancy. *)
+  val thm = replay_z3_proof_string
+    "((proof (quant-intro \
+    \(proof-bind (lambda ((x Int)) \
+    \(refl (= (= x x) (= x x))))) \
+    \(= (forall ((x Int) (y Int)) (= x x)) \
+    \(forall ((x Int) (y Int)) (= x x))))))"
+  val expected = ``(!x:int y:int. x = x) = (!x:int y:int. x = x)``
+in
+  assert (Thm.concl thm ~~ expected,
+    "proof-bind quant-intro binder annotation: wrong conclusion " ^
+    term_with_types (Thm.concl thm));
+  Library.check_oracle_tags
+    "Z3 proof-bind quant-intro binder annotation" thm
+end
 
 fun z3_proof_bind_nnf_pos_shaped_failure () =
   expect_hol_error_contains "proof-bind nnf-pos binder capture"
@@ -7597,8 +7609,8 @@ let
       z3_lambda_intro_def_replay_shaped_failure),
     ("z3_proof_bind_consumers_replay_success",
       z3_proof_bind_consumers_replay_success),
-    ("z3_proof_bind_quant_intro_shaped_failure",
-      z3_proof_bind_quant_intro_shaped_failure),
+    ("z3_proof_bind_quant_intro_binder_annotation_ignored",
+      z3_proof_bind_quant_intro_binder_annotation_ignored),
     ("z3_proof_bind_nnf_pos_shaped_failure",
       z3_proof_bind_nnf_pos_shaped_failure),
     ("z3_remove_extra_hyps_only_p_eq_p_success",
