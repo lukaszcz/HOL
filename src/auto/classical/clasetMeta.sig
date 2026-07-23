@@ -16,6 +16,9 @@ sig
   val bind_ty : tymeta * hol_type -> store -> store option
   val register_eigen : term -> store -> store option
   val walk : store -> term -> term
+  (* Capture-safe transitive store substitution, without beta/eta
+     normalization. *)
+  val instantiate : store -> term -> term
   val norm : store -> term -> term
   val norm_type : store -> hol_type -> hol_type
   val metas_of : store -> term -> meta list
@@ -25,9 +28,12 @@ sig
   val ground : store -> store
 
   (* Measured-only versions used by the timed-v3 unifier.  Each callback
-     announces the actual kind of store operation about to run.  Ordinary
+     announces the actual kind of store operation about to run.  Expansion
+     memo lookup is a store lookup; memo rebuild and substitution-list
+     construction are normalization setup; active-path cycle checks are
+     decisions; and dependency-list iteration is other traversal.  Ordinary
      unification continues to use the operations above and acquires no
-     callback dispatch. *)
+     diagnostic callback dispatch. *)
   datatype diagnostic_phase =
       DiagnosticNormalizationSetup
     | DiagnosticStoreLookupWalk
@@ -47,9 +53,9 @@ sig
   val register_eigen_diagnostic : diagnostic_switch -> term -> store ->
                                   store option
 
-  (* Raw persistent bindings support search-subtree diffs.  Unlike
-     [collapse], residues are not normalized, so dependency chains remain
-     visible to dynamic pruning. *)
+  (* Persistent bindings support search-subtree diffs.  Each residue is
+     semantically normalized when accepted; as-yet unbound dependencies
+     remain visible to dynamic pruning. *)
   val bindings : store ->
                  {terms : (meta * term) list,
                   types : (tymeta * hol_type) list}

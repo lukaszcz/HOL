@@ -27,9 +27,7 @@ datatype node =
 fun norm_term store tm =
   let
     fun recurse current =
-      let val current' = clasetMeta.walk store current
-      in
-        case dest_term current' of
+      case dest_term current of
           COMB (operator, operand) =>
             let
               val combination =
@@ -40,10 +38,9 @@ fun norm_term store tm =
               else combination
             end
         | LAMB (bvar, body) => mk_abs (bvar, recurse body)
-        | _ => current'
-      end
+        | _ => current
   in
-    recurse tm
+    recurse (clasetMeta.instantiate store tm)
   end
 
 fun term_size tm =

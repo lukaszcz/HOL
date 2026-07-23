@@ -1532,21 +1532,7 @@ fun plain_tactic_results kind action tactic (node, pos) =
    normalization.  Instantiate engine bindings structurally, but preserve
    those redexes so this transition agrees with blastSearch.equalSubst. *)
 fun instantiate_without_reduction store tm =
-  let
-    fun recurse current =
-      let val walked = clasetMeta.walk store current
-      in
-        if is_comb walked then
-          let val (operator, operand) = dest_comb walked
-          in mk_comb (recurse operator, recurse operand) end
-        else if is_abs walked then
-          let val (bound, body) = dest_abs walked
-          in mk_abs (bound, recurse body) end
-        else walked
-      end
-  in
-    recurse tm
-  end
+  clasetMeta.instantiate store tm
 
 type blast_hyp_subst_context =
   {store : clasetMeta.store,

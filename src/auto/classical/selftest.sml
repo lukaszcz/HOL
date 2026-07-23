@@ -75,6 +75,14 @@ val _ =
 val bool_ty = Type.bool
 val fixed = Term.mk_var ("fixed", bool_ty)
 
+fun beta_eta_term tm =
+  #2
+    (boolSyntax.dest_eq
+      (concl
+        (Conv.QCONV
+          (Conv.REDEPTH_CONV
+            (Conv.ORELSEC (BETA_CONV, Drule.ETA_CONV))) tm)))
+
 val _ =
   test
     ("metavariable create bind and walk round-trip",
@@ -256,39 +264,71 @@ val _ =
              (fn switch =>
                clasetMeta.bind_ty_diagnostic switch
                  (occurs_tymeta, occurs_tymeta) occurs_ty_store)
-
          val expected_nested_trace =
            "+D-D+N+D-D+N+D-D+L-L+D-D+N-N-N+D-D+N+D-D+N-N" ^
            "+D-D+L-L-N-N"
          val expected_lambda_trace =
-           "+L-L+N-N+D-D+L-L+N-N+D-D+L-L+N-N+D-D+L-L+N-N" ^
-           "+D-D+L-L+N-N+D-D+L-L+N-N+D-D+N-N+N-N+L-L+N-N" ^
-           "+D-D+N-N+N-N"
+           "+N-N+T-T+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T" ^
+           "+T-T+T-T+T-T+T-T+N-N+T-T+N-N+N-N+T-T+N-N+T-T" ^
+           "+N-N+N-N"
          val expected_bind_success_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
-           "+D-D+D+L-L+N-N+D-D+T-T+T-T+T+D-D-T+T-T-D+D-D" ^
-           "+N-N+D-D+N-N+D-D+T-T+D-D+T-T+B-B+L-L+D+L-L" ^
-           "+L-L+N-N+D-D+T-T+D+L-L-D-D"
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+D+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T+T-T+T" ^
+           "+D-D-T+T-T-D+D-D+N-N+D-D+N-N+D-D+T-T+D-D+T-T" ^
+           "+B-B+L-L+D+L-L+N-N+T-T+T-T+N-N+T-T+T+D-D-T" ^
+           "+N-N+N-N+T-T+T-T+D+L-L-D-D"
          val expected_bind_foreign_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
-           "+D-D+D-D+L-L+D+L-L+N-N+D-D+D-D+L-L+T-T+T-T" ^
-           "+T+D-D+D-D+L-L-T+T-T-D+D-D+N-N+D-D+N-N+D-D" ^
-           "+T-T+D-D+D-D+L-L"
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D+D-D+L-L-T+N-N+N-N+T-T+D" ^
+           "+N-N+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L-T+N-N+N-N" ^
+           "+T-T+T-T+T-T+T+D-D+D-D+L-L-T+T-T-D+D-D+N-N" ^
+           "+D-D+N-N+D-D+T-T+D-D+D-D+L-L"
          val expected_bind_occurs_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+D+L-L" ^
-           "+N-N+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L" ^
-           "+T-T+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D" ^
-           "+T-T-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N" ^
+           "+D-D+L-L-T+N-N+N-N+T-T+D+N-N+T-T+T-T+N-N+T-T" ^
+           "+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L-T+N-N" ^
+           "+N-N+T-T+T-T+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D" ^
+           "+N-N+D-D+T-T-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
          val expected_bind_type_mismatch_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+N-N" ^
-           "+D-D+D+L-L+N-N+D-D+T-T+T-T+T+D-D-T+T-T-D+D-D" ^
-           "+N-N+D-D+N-N+D-D"
+           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+D+N-N+T-T" ^
+           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T+T-T+T" ^
+           "+D-D-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
          val expected_bind_bound_trace =
            "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L"
          val expected_bind_ty_occurs_trace =
            "+D-D+D-D+L-L+L-L+D-D+L-L+D+T-T-D+T-T" ^
            "+D-D+D-D+L-L"
+         fun trace_eq name actual expected =
+           actual = expected orelse
+           (print
+              ("\n" ^ name ^ " actual trace:\n" ^ actual ^
+               "\nexpected trace:\n" ^ expected ^ "\n");
+            false)
+         val nested_trace_exact =
+           trace_eq "nested type" nested_trace expected_nested_trace
+         val lambda_trace_exact =
+           trace_eq "lambda" lambda_trace expected_lambda_trace
+         val bind_success_trace_exact =
+           trace_eq "bind success" bind_success_trace
+             expected_bind_success_trace
+         val bind_foreign_trace_exact =
+           trace_eq "bind foreign" bind_foreign_trace
+             expected_bind_foreign_trace
+         val bind_occurs_trace_exact =
+           trace_eq "bind occurs" bind_occurs_trace
+             expected_bind_occurs_trace
+         val bind_type_mismatch_trace_exact =
+           trace_eq "bind type mismatch" bind_type_mismatch_trace
+             expected_bind_type_mismatch_trace
+         val bind_bound_trace_exact =
+           trace_eq "bind bound" bind_bound_trace
+             expected_bind_bound_trace
+         val bind_ty_occurs_trace_exact =
+           trace_eq "bind type occurs" bind_ty_occurs_trace
+             expected_bind_ty_occurs_trace
        in
          nested_result = nested_ty andalso
          Term.aconv lambda_result f andalso
@@ -299,14 +339,19 @@ val _ =
          not (Option.isSome bind_bound) andalso
          not (Option.isSome ordinary_ty_occurs) andalso
          not (Option.isSome diagnostic_ty_occurs) andalso
-         nested_trace = expected_nested_trace andalso
-         lambda_trace = expected_lambda_trace andalso
-         bind_success_trace = expected_bind_success_trace andalso
-         bind_foreign_trace = expected_bind_foreign_trace andalso
-         bind_occurs_trace = expected_bind_occurs_trace andalso
-         bind_type_mismatch_trace = expected_bind_type_mismatch_trace
-         andalso bind_bound_trace = expected_bind_bound_trace andalso
-         bind_ty_occurs_trace = expected_bind_ty_occurs_trace
+         nested_trace_exact andalso lambda_trace_exact andalso
+         bind_success_trace_exact andalso bind_foreign_trace_exact andalso
+         bind_occurs_trace_exact andalso
+         bind_type_mismatch_trace_exact andalso
+         bind_bound_trace_exact andalso bind_ty_occurs_trace_exact andalso
+         String.isSubstring "+B-B" bind_success_trace andalso
+         Term.aconv lambda_result (clasetMeta.norm store0 lambda) andalso
+         (case bind_success of
+              SOME diagnostic_store =>
+                Term.aconv
+                  (clasetMeta.norm diagnostic_store m)
+                  (clasetMeta.norm store1 m)
+            | NONE => false)
        end)
 
 val _ =
@@ -321,6 +366,47 @@ val _ =
        in
          Term.aconv (clasetMeta.walk store0 m) m andalso
          Term.aconv (clasetMeta.walk store1 m) fixed
+       end)
+
+val _ =
+  test
+    ("diagnostic dependency traversal unwinds its exact enclosing scope",
+     fn () =>
+       let
+         exception ExpansionSwitch of int ref
+         val sentinel = ref 7331
+         val events = ref []
+         val enters = ref 0
+         fun event_code (boundary, phase) =
+           (case boundary of
+                clasetMeta.DiagnosticEnter => "+"
+              | clasetMeta.DiagnosticExit => "-") ^
+           (case phase of
+                clasetMeta.DiagnosticNormalizationSetup => "N"
+              | clasetMeta.DiagnosticStoreLookupWalk => "L"
+              | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
+              | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
+              | clasetMeta.DiagnosticTraversalOther => "T")
+         fun switch (event as (boundary, _)) =
+           (events := event :: !events;
+            case boundary of
+                clasetMeta.DiagnosticExit => ()
+              | clasetMeta.DiagnosticEnter =>
+                  (enters := !enters + 1;
+                   if !enters = 7 then raise ExpansionSwitch sentinel
+                   else ()))
+         val (m, store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val identity =
+           ((ignore (clasetMeta.norm_diagnostic switch store m); false)
+            handle ExpansionSwitch actual => actual = sentinel
+                 | _ => false)
+         val trace =
+           String.concat (map event_code (rev (!events)))
+       in
+         identity andalso
+         trace = "+N-N+T-T+T-T+N-N+T-T+T+D-T"
        end)
 
 val _ =
@@ -448,6 +534,25 @@ val _ =
                        Time.+
                          (#persistent_binding_update_time statistics,
                           #traversal_other_time statistics)))))
+         val operation_trace_exact =
+           operation_trace = "+D-D+N+D-D+N-N" orelse
+           (print ("\noperation unwind actual trace:\n" ^
+                   operation_trace ^ "\n");
+            false)
+         val clock_trace_exact =
+           clock_trace_code = "+S+D-D-S" orelse
+           (print ("\nclock unwind actual trace:\n" ^
+                   clock_trace_code ^ "\n");
+            false)
+         val expected_sink_trace =
+           "+S+D-D+N-N+D-D+N-N+D-D+N-N+T-T+T-T+N-N+T-T" ^
+           "+T-T+N-N+N-N+T-T+N-N+T-T+T-T+N-N+T-T+T-T+N-N" ^
+           "+N-N+T-T+D-D+D-D-S"
+         val sink_trace_exact =
+           sink_trace_code = expected_sink_trace orelse
+           (print ("\nsink unwind actual trace:\n" ^
+                   sink_trace_code ^ "\n");
+            false)
        in
          operation_identity andalso clock_identity andalso sink_identity
          andalso clock_recovered andalso sink_recovered andalso
@@ -457,11 +562,8 @@ val _ =
            #unification_time clock_recovery_statistics andalso
          partitions sink_recovery_statistics =
            #unification_time sink_recovery_statistics andalso
-         operation_trace = "+D-D+N+D-D+N-N" andalso
-         clock_trace_code = "+S+D-D-S" andalso
-         sink_trace_code =
-           "+S+D-D+N-N+D-D+N-N+D-D+L-L+N-N+D-D+L-L+N-N" ^
-           "+D-D+D-D+D-D-S"
+         operation_trace_exact andalso
+         clock_trace_exact andalso sink_trace_exact
        end)
 
 val _ =
@@ -557,6 +659,455 @@ val _ =
          andalso
          Term.aconv (concl instantiated)
            (boolSyntax.mk_eq (boolSyntax.T, boolSyntax.T))
+       end)
+
+val _ =
+  test
+    ("collapse normalizes a redex exposed by a late lambda binding",
+     fn () =>
+       let
+         val x = Term.mk_var ("late_lambda_x", bool_ty)
+         val identity = Term.mk_abs (x, x)
+         val function_ty = bool_ty --> bool_ty
+         val (dependency, store0) =
+           clasetMeta.new_meta {allow = [], ty = function_ty}
+             clasetMeta.empty
+         val (outer, store1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store0
+         val raw_outer = Term.mk_comb (dependency, boolSyntax.T)
+         val store2 =
+           the_store (clasetMeta.bind (outer, raw_outer) store1)
+         val store3 =
+           the_store (clasetMeta.bind (dependency, identity) store2)
+         val (type_substitution, term_substitution) =
+           clasetMeta.collapse store3
+         val kernel_result =
+           Drule.INST_TY_TERM
+             (term_substitution, type_substitution) (ASSUME outer)
+         fun residue redex =
+           Option.map #residue
+             (List.find
+               (fn substitution =>
+                 Term.aconv (#redex substitution) redex)
+               term_substitution)
+       in
+         null type_substitution andalso
+         length term_substitution = 2 andalso
+         Option.map (fn tm => Term.aconv tm identity)
+           (residue dependency) = SOME true andalso
+         Option.map (fn tm => Term.aconv tm boolSyntax.T)
+           (residue outer) = SOME true andalso
+         Term.aconv (concl kernel_result) boolSyntax.T andalso
+         Term.aconv (clasetMeta.norm store3 outer) boolSyntax.T andalso
+         Term.aconv
+           (clasetMeta.instantiate store3 outer)
+           (Term.mk_comb (identity, boolSyntax.T))
+       end)
+
+val _ =
+  test
+    ("bindings persist semantically normalized beta-dead residues",
+     fn () =>
+       let
+         fun dead argument =
+           let
+             val ignored =
+               Term.mk_var ("beta_dead_ignored", type_of argument)
+           in
+             Term.mk_comb
+               (Term.mk_abs (ignored, boolSyntax.T), argument)
+           end
+         fun switch _ = ()
+         fun collapsed store target =
+           let
+             val (type_substitution, term_substitution) =
+               clasetMeta.collapse store
+           in
+             concl
+               (Drule.INST_TY_TERM
+                 (term_substitution, type_substitution) (ASSUME target))
+           end
+         fun persistent_residue store target =
+           case #terms (clasetMeta.bindings store) of
+               [(redex, residue)] =>
+                 Term.aconv redex target andalso
+                 Term.aconv residue boolSyntax.T
+             | _ => false
+         fun accepts base target raw =
+           case
+             (clasetMeta.bind (target, raw) base,
+              clasetMeta.bind_diagnostic switch (target, raw) base)
+           of
+               (SOME ordinary, SOME diagnostic) =>
+                 persistent_residue ordinary target andalso
+                 persistent_residue diagnostic target andalso
+                 Term.aconv
+                   (clasetMeta.norm ordinary target) boolSyntax.T andalso
+                 Term.aconv
+                   (clasetMeta.norm_diagnostic switch diagnostic target)
+                   boolSyntax.T andalso
+                 Term.aconv (collapsed ordinary target) boolSyntax.T andalso
+                 Term.aconv (collapsed diagnostic target) boolSyntax.T
+             | _ => false
+
+         val (self, self_store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (foreign_target, foreign_store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (foreign, _) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val eigen = Term.mk_var ("beta_dead_eigen", bool_ty)
+         val (eigen_target, eigen_store0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val eigen_store =
+           the_store (clasetMeta.register_eigen eigen eigen_store0)
+         val (type_target, type_store) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (foreign_tymeta, _) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val typed_argument =
+           Term.mk_var ("beta_dead_typed", foreign_tymeta)
+         val cases =
+           [(self_store, self, dead self),
+            (foreign_store, foreign_target, dead foreign),
+            (eigen_store, eigen_target, dead eigen),
+            (type_store, type_target, dead typed_argument)]
+       in
+         List.all
+           (fn (store, target, raw) =>
+             not (Term.aconv raw boolSyntax.T) andalso
+             accepts store target raw)
+           cases
+       end)
+
+val _ =
+  test
+    ("three-meta term bindings expand in both orders without capture",
+     fn () =>
+       let
+         val parameter = Term.mk_var ("capture_x", Type.ind)
+         val bound = Term.mk_var ("capture_x", Type.ind)
+         val relation =
+           Term.mk_var
+             ("capture_R", Type.ind --> Type.ind --> bool_ty)
+         fun schema dependency =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [dependency, bound]))
+         val (leaf, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val (middle, store1) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind} store0
+         val (outer, store2) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = bool_ty} store1
+         val unresolved = schema middle
+         val expected =
+           Term.subst
+             [{redex = middle, residue = parameter}] unresolved
+         val normalized_expected = beta_eta_term expected
+         val dependency_first =
+           the_store (clasetMeta.bind (leaf, parameter) store2)
+         val dependency_first =
+           the_store
+             (clasetMeta.bind (middle, leaf) dependency_first)
+         val dependency_first =
+           the_store
+             (clasetMeta.bind (outer, unresolved) dependency_first)
+         val outer_first =
+           the_store (clasetMeta.bind (outer, unresolved) store2)
+         val outer_first =
+           the_store
+             (clasetMeta.bind (middle, leaf) outer_first)
+         val outer_first =
+           the_store (clasetMeta.bind (leaf, parameter) outer_first)
+         val (_, dependency_first_subst) =
+           clasetMeta.collapse dependency_first
+         val (_, outer_first_subst) = clasetMeta.collapse outer_first
+         val dependency_first_theorem =
+           Drule.INST_TY_TERM
+             (dependency_first_subst, []) (ASSUME outer)
+         val outer_first_theorem =
+           Drule.INST_TY_TERM
+             (outer_first_subst, []) (ASSUME outer)
+         val direct =
+           clasetMeta.norm outer_first unresolved
+         val captured =
+           boolSyntax.mk_forall
+              (bound,
+               Term.list_mk_comb (relation, [bound, bound]))
+         fun exact_substitution substitution =
+           let
+             fun residue redex =
+               Option.map #residue
+                 (List.find
+                   (fn entry => Term.aconv (#redex entry) redex)
+                   substitution)
+           in
+             length substitution = 3 andalso
+             Option.map (fn tm => Term.aconv tm parameter)
+               (residue leaf) = SOME true andalso
+             Option.map (fn tm => Term.aconv tm parameter)
+               (residue middle) = SOME true andalso
+             Option.map (fn tm => Term.aconv tm normalized_expected)
+               (residue outer) = SOME true
+           end
+       in
+         Term.aconv (clasetMeta.norm store2 outer) outer andalso
+         Term.aconv
+           (clasetMeta.norm dependency_first outer)
+           normalized_expected andalso
+         Term.aconv
+           (clasetMeta.norm outer_first outer) normalized_expected andalso
+         exact_substitution dependency_first_subst andalso
+         exact_substitution outer_first_subst andalso
+         Term.aconv
+           (concl dependency_first_theorem) normalized_expected andalso
+         Term.aconv
+           (concl outer_first_theorem) normalized_expected andalso
+         Term.aconv direct normalized_expected andalso
+         not (Term.aconv captured expected)
+       end)
+
+val _ =
+  test
+    ("term expansion preserves unrelated and unbound dependencies",
+     fn () =>
+       let
+         val parameter = Term.mk_var ("preserve_x", Type.ind)
+         val bound = Term.mk_var ("preserve_x", Type.ind)
+         val relation =
+           Term.mk_var
+             ("preserve_R", Type.ind --> Type.ind --> bool_ty)
+         val (dependency, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val (outer, store1) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = bool_ty} store0
+         val (unrelated, store2) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store1
+         val unresolved =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [dependency, bound]))
+         val store3 =
+           the_store (clasetMeta.bind (outer, unresolved) store2)
+         val store4 =
+           the_store
+             (clasetMeta.bind (unrelated, boolSyntax.T) store3)
+         val (_, substitution) = clasetMeta.collapse store4
+         val instantiated =
+           Drule.INST_TY_TERM (substitution, []) (ASSUME outer)
+         fun switch _ = ()
+       in
+         Term.aconv
+           (clasetMeta.norm store4 outer) (beta_eta_term unresolved)
+         andalso
+         Term.aconv (concl instantiated) (beta_eta_term unresolved)
+         andalso
+         Term.aconv
+           (clasetMeta.norm_diagnostic switch store4 outer)
+           (clasetMeta.norm store4 outer) andalso
+         Term.aconv
+           (clasetMeta.norm store4 boolSyntax.F) boolSyntax.F
+       end)
+
+val _ =
+  test
+    ("shared and duplicated dependencies expand to exact substitutions",
+     fn () =>
+       let
+         val (leaf, store0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (left, store1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store0
+         val (right, store2) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store1
+         val (outer, store3) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} store2
+         val raw =
+           boolSyntax.mk_conj
+             (left, boolSyntax.mk_conj (left, right))
+         val expected =
+           boolSyntax.mk_conj
+             (boolSyntax.T,
+              boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
+         val store4 = the_store (clasetMeta.bind (outer, raw) store3)
+         val store5 = the_store (clasetMeta.bind (left, leaf) store4)
+         val store6 = the_store (clasetMeta.bind (right, leaf) store5)
+         val store7 =
+           the_store (clasetMeta.bind (leaf, boolSyntax.T) store6)
+         val (type_substitution, term_substitution) =
+           clasetMeta.collapse store7
+         val theorem =
+           Drule.INST_TY_TERM
+             (term_substitution, type_substitution) (ASSUME outer)
+         fun residue redex =
+           Option.map #residue
+             (List.find
+               (fn entry => Term.aconv (#redex entry) redex)
+               term_substitution)
+         fun is_truth redex =
+           Option.map (fn tm => Term.aconv tm boolSyntax.T)
+             (residue redex) = SOME true
+         val events = ref []
+         fun phase_code phase =
+           case phase of
+               clasetMeta.DiagnosticNormalizationSetup => "N"
+             | clasetMeta.DiagnosticStoreLookupWalk => "L"
+             | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
+             | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
+             | clasetMeta.DiagnosticTraversalOther => "T"
+         fun event_code (boundary, phase) =
+           (case boundary of
+                clasetMeta.DiagnosticEnter => "+"
+              | clasetMeta.DiagnosticExit => "-") ^ phase_code phase
+         fun switch event = events := event :: !events
+         val diagnostic_result =
+           clasetMeta.norm_diagnostic switch store7 outer
+         val diagnostic_trace =
+           String.concat (map event_code (rev (!events)))
+         val expected_diagnostic_trace =
+           "+N-N+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N" ^
+           "+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L" ^
+           "+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N" ^
+           "+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L" ^
+           "+D-D+T-T+T-T+N-N+T-T+T-T+N-N+N-N+T-T+T-T+N-N+N-N" ^
+           "-T+N-N+N-N+T-T+T-T+N-N+N-N+D-D+D-D+L-L+D-D+N-N+D-D" ^
+           "+N-N+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N+T-T+T+D-D+D-D" ^
+           "+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L-T+N-N+N-N+T-T" ^
+           "+T-T+N-N+N-N-T+N-N+N-N+T-T+T-T+N-N+N-N-T+N-N+N-N" ^
+           "+T-T+T-T+T-T+T-T+N-N+T-T+T-T+T-T+T-T+T-T+N-N+T-T" ^
+           "+T-T+N-N+T-T+N-N+T-T"
+         val diagnostic_trace_exact =
+           diagnostic_trace = expected_diagnostic_trace orelse
+           (print
+              ("\nshared dependency actual trace:\n" ^
+               diagnostic_trace ^ "\n");
+            false)
+       in
+         null type_substitution andalso
+         length term_substitution = 4 andalso
+         is_truth leaf andalso is_truth left andalso is_truth right andalso
+         Option.map (fn tm => Term.aconv tm expected)
+           (residue outer) = SOME true andalso
+         Term.aconv (clasetMeta.norm store7 outer) expected andalso
+         Term.aconv diagnostic_result expected andalso
+         diagnostic_trace_exact andalso
+         Term.aconv (concl theorem) expected
+       end)
+
+val _ =
+  test
+    ("indirect store cycles are rejected persistently by both bind paths",
+     fn () =>
+       let
+         fun invariant store first second =
+           let
+             val bindings = clasetMeta.bindings store
+             val (_, substitution) = clasetMeta.collapse store
+           in
+             null (#types bindings) andalso
+             (case #terms bindings of
+                  [(redex, residue)] =>
+                    Term.aconv redex first andalso
+                    Term.aconv residue second
+                | _ => false) andalso
+             (case substitution of
+                  [{redex, residue}] =>
+                    Term.aconv redex first andalso
+                    Term.aconv residue second
+                | _ => false) andalso
+             Term.aconv (clasetMeta.norm store first) second andalso
+             Term.aconv (clasetMeta.norm store second) second
+           end
+         fun switch _ = ()
+         val (ordinary_a, ordinary0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (ordinary_b, ordinary1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} ordinary0
+         val ordinary2 =
+           the_store
+             (clasetMeta.bind (ordinary_a, ordinary_b) ordinary1)
+         val ordinary_rejected =
+           clasetMeta.bind (ordinary_b, ordinary_a) ordinary2
+         val (diagnostic_a, diagnostic0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (diagnostic_b, diagnostic1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} diagnostic0
+         val diagnostic2 =
+           the_store
+             (clasetMeta.bind_diagnostic switch
+               (diagnostic_a, diagnostic_b) diagnostic1)
+         val diagnostic_rejected =
+           clasetMeta.bind_diagnostic switch
+             (diagnostic_b, diagnostic_a) diagnostic2
+       in
+         not (Option.isSome ordinary_rejected) andalso
+         not (Option.isSome diagnostic_rejected) andalso
+         invariant ordinary2 ordinary_a ordinary_b andalso
+         invariant diagnostic2 diagnostic_a diagnostic_b
+       end)
+
+val _ =
+  test
+    ("term expansion instantiates dependency types capture-safely",
+     fn () =>
+       let
+         val (tymeta, store0) =
+           clasetMeta.new_tymeta clasetMeta.empty
+         val parameter = Term.mk_var ("typed_capture_x", Type.ind)
+         val bound = Term.mk_var ("typed_capture_x", tymeta)
+         val relation =
+           Term.mk_var
+             ("typed_capture_R", tymeta --> tymeta --> bool_ty)
+         val (dependency, store1) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = tymeta} store0
+         val (outer, store2) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = bool_ty} store1
+         val unresolved =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [dependency, bound]))
+         val store3 =
+           the_store (clasetMeta.bind (outer, unresolved) store2)
+         val store4 =
+           the_store
+             (clasetMeta.bind_ty (tymeta, Type.ind) store3)
+         val store5 =
+           the_store
+             (clasetMeta.bind (dependency, parameter) store4)
+         val typed_unresolved =
+           Term.inst [{redex = tymeta, residue = Type.ind}] unresolved
+         val typed_dependency =
+           Term.inst [{redex = tymeta, residue = Type.ind}] dependency
+         val expected =
+           Term.subst
+             [{redex = typed_dependency, residue = parameter}]
+             typed_unresolved
+         fun switch _ = ()
+       in
+         Term.aconv
+           (clasetMeta.norm store5 outer) (beta_eta_term expected)
+         andalso
+         Term.aconv
+           (clasetMeta.norm_diagnostic switch store5 outer)
+           (beta_eta_term expected)
        end)
 
 fun unify_with store mode rule_metas pair =
@@ -1175,71 +1726,72 @@ val _ =
             the complete unifying substitution through [succeeds]. *)
          val fixtures =
            [("type-constructor recursion and left type binding",
-             type_meta_terms, succeeds, [73, 28, 5, 112, 2, 10],
+             type_meta_terms, succeeds, [84, 24, 5, 109, 2, 35],
              NoNamedBranch),
             ("right type-meta binding", type_meta_right, succeeds,
-             [18, 17, 2, 42, 2, 9], NoNamedBranch),
+             [29, 13, 2, 39, 2, 34], NoNamedBranch),
             ("type occurs-check failure", type_occurs, fails,
              [4, 6, 1, 13, 0, 2], NoNamedBranch),
             ("rigid type-constructor mismatch",
              rigid_type_constructor_mismatch, fails, [2, 0, 2, 3, 0, 0],
              RigidTypeMismatch),
             ("Match rule-term binding", match_term true, succeeds,
-             [25, 22, 2, 55, 1, 8], NoNamedBranch),
+             [40, 17, 2, 55, 1, 33], NoNamedBranch),
             ("Match protected left variable", match_term false, fails,
-             [6, 4, 2, 15, 0, 0], NoNamedBranch),
+             [12, 2, 2, 14, 0, 10], NoNamedBranch),
             ("Match rule-type and term binding", match_type true, succeeds,
-             [18, 16, 2, 40, 2, 9], NoNamedBranch),
+             [29, 12, 2, 33, 2, 34], NoNamedBranch),
             ("Match protected type-variable failure",
              match_type false, fails, [1, 1, 1, 3, 0, 0], NoNamedBranch),
             ("left-pattern binding", pattern false, succeeds,
-             [39, 21, 1, 47, 1, 7], NoNamedBranch),
+             [48, 7, 1, 38, 1, 46], NoNamedBranch),
             ("right-pattern binding", pattern true, succeeds,
-             [39, 21, 1, 48, 1, 7], NoNamedBranch),
+             [48, 7, 1, 39, 1, 46], NoNamedBranch),
             ("left-pattern binding-failure fallback",
              pattern_fallback false, fallback_succeeds false,
-             [114, 60, 6, 162, 1, 13], NoNamedBranch),
+             [139, 31, 6, 156, 1, 98], NoNamedBranch),
             ("right-pattern binding-failure fallback",
              pattern_fallback true, fallback_succeeds true,
-             [114, 60, 6, 162, 1, 13], RightPatternFallback),
+             [139, 31, 6, 156, 1, 98], RightPatternFallback),
             ("structural lambda descent and binding", lambda true, succeeds,
-             [27, 19, 4, 51, 2, 7], LambdaDescent),
+             [48, 10, 4, 44, 2, 44], LambdaDescent),
             ("structural lambda descent failure", lambda false, fails,
-             [16, 8, 4, 28, 1, 0], LambdaDescent),
+             [28, 2, 4, 22, 1, 22], LambdaDescent),
             ("flexible-head approximation", approximation true, succeeds,
-             [49, 22, 6, 76, 1, 7], NoNamedBranch),
+             [72, 9, 6, 69, 1, 58], NoNamedBranch),
             ("approximation arity mismatch", approximation false, fails,
-             [19, 11, 2, 25, 0, 0], NoNamedBranch),
+             [19, 3, 2, 21, 0, 19], NoNamedBranch),
             ("protected applied-meta equal-head fallback",
-             match_approximation, succeeds, [37, 23, 5, 64, 1, 7],
+             match_approximation, succeeds, [54, 12, 5, 57, 1, 48],
              NoNamedBranch),
             ("protected applied-meta unequal-head fallback",
              match_unequal_head_approximation, fails,
-             [18, 10, 2, 27, 0, 0], ProtectedUnequalHead),
+             [20, 4, 2, 24, 0, 16], ProtectedUnequalHead),
             ("term occurs-check failure", occurs, fails,
-             [29, 21, 2, 49, 0, 5], NoNamedBranch),
+             [35, 11, 2, 43, 0, 34], NoNamedBranch),
             ("term allow-set failure", allow_failure, fails,
-             [16, 15, 2, 32, 1, 7], NoNamedBranch),
+             [31, 7, 2, 32, 1, 38], NoNamedBranch),
             ("stored normalization and beta equality",
-             normalized_store, succeeds, [18, 9, 1, 20, 0, 0],
+             normalized_store, succeeds, [25, 4, 1, 15, 0, 21],
              NoNamedBranch),
             ("eta-normalized equality", beta_eta, succeeds,
-             [13, 5, 1, 14, 0, 0], NoNamedBranch),
+             [17, 0, 1, 11, 0, 14], NoNamedBranch),
             ("structural rigid-constant mismatch", rigid_constants, fails,
-             [4, 2, 2, 10, 0, 0], NoNamedBranch),
+             [10, 0, 2, 8, 0, 10], NoNamedBranch),
             ("structural left rigid-variable failure",
-             rigid_variables, fails, [4, 2, 2, 11, 0, 0], NoNamedBranch),
+             rigid_variables, fails, [10, 0, 2, 11, 0, 10],
+             NoNamedBranch),
             ("structural right rigid-variable failure",
-             rigid_right_variable, fails, [4, 2, 2, 11, 0, 0],
+             rigid_right_variable, fails, [10, 0, 2, 10, 0, 10],
              NoNamedBranch),
             ("structural combination decomposition",
-             combination_decomposition, succeeds, [63, 35, 8, 95, 1, 7],
+             combination_decomposition, succeeds, [90, 10, 8, 73, 1, 90],
              NoNamedBranch),
             ("structural wildcard mismatch",
-             structural_wildcard_mismatch, fails, [10, 3, 2, 15, 0, 0],
+             structural_wildcard_mismatch, fails, [16, 0, 2, 12, 0, 11],
              StructuralWildcard)]
 
-         fun agrees (_, make, expected, expected_events,
+         fun agrees (name, make, expected, expected_events,
                expected_branch) =
            let
              val (store, config, pair) = make ()
@@ -1298,9 +1850,16 @@ val _ =
                if expected_branch = RigidTypeMismatch then
                  phase_trace = rigid_type_trace
                else true
+             val events_exact =
+               actual_events = expected_events orelse
+               (print
+                  ("\n" ^ name ^ " actual events: [" ^
+                   String.concatWith ","
+                     (map Int.toString actual_events) ^ "]\n");
+                false)
            in
              expected (store, config, pair, ordinary) andalso
-             actual_events = expected_events andalso
+             events_exact andalso
              length phase_trace = 2 * List.foldl op+ 0 actual_events andalso
              trace_is_scoped phase_trace andalso exact_trace andalso
              (case phase_trace of
@@ -3216,6 +3775,97 @@ fun ticking_clock () =
       end
   end
 
+fun exact_rule_api_variants cs plain selected input =
+  let
+    fun controls () =
+      {clock = ticking_clock (), observe = NONE,
+       stop = fn () => false}
+    fun v4_controls () =
+      {classical_elapsed = fn _ => (),
+       clock = ticking_clock (), observe = NONE,
+       stop = fn () => false}
+    fun summary () =
+      clasetStep.new_timed_rule_summary_v4
+        {clock = ticking_clock (), classical_elapsed = fn _ => ()}
+  in
+    [drain_exact
+       (clasetStep.blast_rule_step cs plain (input ())),
+     drain_measured_exact
+       (clasetStep.blast_rule_step_measured
+         {observe = NONE, stop = fn () => false}
+         cs plain (input ())),
+     drain_timed_exact
+       (clasetStep.blast_rule_step_timed (controls ())
+         cs plain (input ())),
+     drain_timed_exact_v2
+       (clasetStep.blast_rule_step_timed_v2 (controls ())
+         cs plain (input ())),
+     drain_timed_exact_v3
+       (clasetStep.blast_rule_step_timed_v3 (controls ())
+         cs plain (input ())),
+     drain_timed_exact_v3
+       (clasetStep.blast_rule_step_timed_v3_with_sink
+         {classical_elapsed = fn _ => (),
+          clock = ticking_clock (), observe = NONE,
+          stop = fn () => false}
+         cs plain (input ())),
+     drain_timed_exact_v4
+       (clasetStep.blast_rule_step_timed_v4 (v4_controls ())
+         cs plain (input ())),
+     drain_timed_exact_v4
+       (clasetStep.blast_rule_step_timed_v4_with_summary
+         {summary = summary (), observe = NONE,
+          stop = fn () => false}
+         cs plain (input ())),
+     drain_exact
+       (clasetStep.blast_rule_step_at cs selected (input ())),
+     drain_measured_exact
+       (clasetStep.blast_rule_step_measured_at
+         {observe = NONE, stop = fn () => false}
+         cs selected (input ())),
+     drain_timed_exact
+       (clasetStep.blast_rule_step_timed_at (controls ())
+         cs selected (input ())),
+     drain_timed_exact_v2
+       (clasetStep.blast_rule_step_timed_v2_at (controls ())
+         cs selected (input ())),
+     drain_timed_exact_v3
+       (clasetStep.blast_rule_step_timed_v3_at (controls ())
+         cs selected (input ())),
+     drain_timed_exact_v3
+       (clasetStep.blast_rule_step_timed_v3_with_sink_at
+         {classical_elapsed = fn _ => (),
+          clock = ticking_clock (), observe = NONE,
+          stop = fn () => false}
+         cs selected (input ())),
+     drain_timed_exact_v4
+       (clasetStep.blast_rule_step_timed_v4_at (v4_controls ())
+         cs selected (input ())),
+     drain_timed_exact_v4
+       (clasetStep.blast_rule_step_timed_v4_with_summary_at
+         {summary = summary (), observe = NONE,
+          stop = fn () => false}
+         cs selected (input ()))]
+  end
+
+fun exact_source_term store tm =
+  let
+    val (type_substitution, term_substitution) =
+      clasetMeta.collapse store
+  in
+    concl
+      (Drule.INST_TY_TERM
+        (term_substitution, type_substitution) (ASSUME tm))
+  end
+
+fun normalize_exact_term tm =
+  #2
+    (boolSyntax.dest_eq
+      (concl
+        (Conv.QCONV
+          (Conv.REDEPTH_CONV
+            (Conv.ORELSEC (BETA_CONV, Drule.ETA_CONV))) tm)))
+
 fun exact_transition_variants cs specification goal =
   let
     val ordinary =
@@ -3592,6 +4242,8 @@ val _ =
          val target = Term.mk_comb (marker, parameter)
          val major = boolSyntax.mk_conj (quantified, target)
          val normalized_major = clasetMeta.norm store major
+         val source_major =
+           Term.subst [{redex = meta, residue = parameter}] major
          val specification =
            {theorem = clasetSeedTheory.CONJ_ELIM_THM,
             elim = true, major = SOME 2}
@@ -3693,7 +4345,7 @@ val _ =
                  in
                    clasetStep.consumed_of record = SOME position andalso
                    Term.aconv (concl proof) target andalso
-                   aconv_list (hyp proof) [normalized_major]
+                   aconv_list (hyp proof) [source_major]
                  end
              | _ => false
          fun all_exact results =
@@ -3707,6 +4359,377 @@ val _ =
          Term.aconv (List.nth ([major, major], 1)) major andalso
          List.all all_exact all_variants andalso
          List.all (exact 2) selected_variants andalso null invalid
+       end)
+
+val _ =
+  test
+    ("exact elim replay avoids capture in its selected major",
+     fn () =>
+       let
+         val parameter =
+           Term.mk_var ("replay_collision_x", Type.ind)
+         val bound =
+           Term.mk_var ("replay_collision_x", Type.ind)
+         val predicate =
+           Term.mk_var
+             ("replay_collision_R",
+              Type.ind --> Type.ind --> bool_ty)
+         val marker =
+           Term.mk_var
+             ("replay_collision_S", Type.ind --> bool_ty)
+         val (meta, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val store =
+           valOf (clasetMeta.bind (meta, parameter) store0)
+         val quantified =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (predicate, [meta, bound]))
+         val target = Term.mk_comb (marker, parameter)
+         val engine_major = boolSyntax.mk_conj (quantified, target)
+         fun input () =
+           clasetGoal.create
+             {goals =
+                [{params = [parameter], asl = [engine_major],
+                  w = target}],
+              store = store, level = 0}
+         val specification =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true, major = SOME 1}
+         val plain =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true}
+         val variants =
+           exact_rule_api_variants clasetLib.empty_cs plain
+             specification (fn () => (input (), 1))
+         val source_major =
+           Term.subst
+             [{redex = meta, residue = parameter}] engine_major
+         val (source_quantified, source_target) =
+           boolSyntax.dest_conj source_major
+         val expected_quantified = beta_eta_term source_quantified
+         val captured_quantified =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (predicate, [bound, bound]))
+         fun exact result =
+           case result of
+               [(record, next)] =>
+                 let
+                   val script =
+                     clasetReplay.append (clasetReplay.empty 1) record
+                   val grounded =
+                     clasetReplay.ground (clasetGoal.store next) script
+                 in
+                   case clasetReplay.replay grounded
+                          ([source_major], target) of
+                       clasetReplay.Replayed
+                         (children as
+                            [([actual_target, actual_quantified],
+                              child_target)],
+                          validation) =>
+                         let
+                           val theorem = validation [ASSUME child_target]
+                         in
+                           same_goals children
+                             [([source_target, expected_quantified],
+                               source_target)] andalso
+                           Term.aconv actual_target source_target andalso
+                           Term.aconv actual_quantified
+                             expected_quantified andalso
+                           Term.aconv child_target source_target andalso
+                           Term.term_eq (concl theorem) source_target andalso
+                           HOLset.equal
+                             (Thm.hypset theorem,
+                              HOLset.fromList Term.compare [source_major])
+                         end
+                     | _ => false
+                 end
+             | _ => false
+       in
+         not (Term.aconv captured_quantified source_quantified) andalso
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact intro replay avoids capture in its conclusion",
+     fn () =>
+       let
+         val parameter =
+           Term.mk_var ("intro_collision_x", Type.ind)
+         val bound =
+           Term.mk_var ("intro_collision_x", Type.ind)
+         val relation =
+           Term.mk_var
+             ("intro_collision_R",
+              Type.ind --> Type.ind --> bool_ty)
+         val marker =
+           Term.mk_var
+             ("intro_collision_S", Type.ind --> bool_ty)
+         val (meta, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val store =
+           valOf (clasetMeta.bind (meta, parameter) store0)
+         val quantified =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [meta, bound]))
+         val raw_target =
+           boolSyntax.mk_conj
+             (quantified, Term.mk_comb (marker, parameter))
+         val source_target = exact_source_term store raw_target
+         val (source_left, source_right) =
+           boolSyntax.dest_conj source_target
+         val expected_left = normalize_exact_term source_left
+         val expected_right = normalize_exact_term source_right
+         val plain =
+           {theorem = boolTheory.AND_INTRO_THM, elim = false}
+         val selected =
+           {theorem = boolTheory.AND_INTRO_THM, elim = false,
+            major = NONE}
+         fun input () =
+           (clasetGoal.create
+              {goals =
+                 [{params = [parameter], asl = [], w = raw_target}],
+               store = store, level = 0},
+            1)
+         val variants =
+           exact_rule_api_variants clasetLib.empty_cs plain selected
+             input
+
+         fun exact result =
+           case result of
+               [(record, next)] =>
+                 let
+                   val script =
+                     clasetReplay.append (clasetReplay.empty 1) record
+                   val grounded =
+                     clasetReplay.ground (clasetGoal.store next) script
+                 in
+                   case clasetReplay.replay grounded
+                          ([], source_target) of
+                       clasetReplay.Replayed
+                         (children as
+                            [([], actual_left), ([], actual_right)],
+                          validation) =>
+                         let
+                           val theorem =
+                             validation
+                               [ASSUME actual_left,
+                                ASSUME actual_right]
+                           val children_ok =
+                             same_goals children
+                               [([], expected_left), ([], expected_right)]
+                           val conclusion_ok =
+                             Term.term_eq (concl theorem) source_target
+                           val hypotheses_ok =
+                             HOLset.equal
+                               (Thm.hypset theorem,
+                                HOLset.fromList Term.compare
+                                  [expected_left, expected_right])
+                         in
+                           children_ok andalso conclusion_ok andalso
+                           hypotheses_ok
+                         end
+                     | _ => false
+                 end
+             | _ => false
+       in
+         not (Term.aconv quantified source_left) andalso
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact elim replay repairs a conclusion with an exact major",
+     fn () =>
+       let
+         val parameter =
+           Term.mk_var ("elim_target_collision_x", Type.ind)
+         val bound =
+           Term.mk_var ("elim_target_collision_x", Type.ind)
+         val relation =
+           Term.mk_var
+             ("elim_target_collision_R",
+              Type.ind --> Type.ind --> bool_ty)
+         val left =
+           Term.mk_var ("elim_target_collision_p", bool_ty)
+         val right =
+           Term.mk_var ("elim_target_collision_q", bool_ty)
+         val major = boolSyntax.mk_conj (left, right)
+         val (meta, store0) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val store =
+           valOf (clasetMeta.bind (meta, parameter) store0)
+         val raw_target =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [meta, bound]))
+         val source_target = exact_source_term store raw_target
+         val expected_child_target =
+           normalize_exact_term source_target
+         val plain =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true}
+         val selected =
+           {theorem = clasetSeedTheory.CONJ_ELIM_THM,
+            elim = true, major = SOME 1}
+         fun input () =
+           (clasetGoal.create
+              {goals =
+                 [{params = [parameter], asl = [major],
+                   w = raw_target}],
+               store = store, level = 0},
+            1)
+         val variants =
+           exact_rule_api_variants clasetLib.empty_cs plain selected
+             input
+
+         fun exact result =
+           case result of
+               [(record, next)] =>
+                 let
+                   val script =
+                     clasetReplay.append (clasetReplay.empty 1) record
+                   val grounded =
+                     clasetReplay.ground (clasetGoal.store next) script
+                 in
+                   case clasetReplay.replay grounded
+                          ([major], source_target) of
+                       clasetReplay.Replayed
+                         (children as
+                            [([actual_right, actual_left],
+                              actual_target)],
+                          validation) =>
+                         let
+                           val theorem =
+                             validation [ASSUME actual_target]
+                         in
+                           same_goals children
+                             [([right, left], expected_child_target)]
+                           andalso Term.aconv actual_left left
+                           andalso Term.aconv actual_right right
+                           andalso
+                           Term.term_eq (concl theorem) source_target
+                           andalso
+                           HOLset.equal
+                              (Thm.hypset theorem,
+                               HOLset.fromList Term.compare
+                                [major, expected_child_target])
+                         end
+                     | _ => false
+                 end
+             | _ => false
+       in
+         not (Term.aconv raw_target source_target) andalso
+         List.all exact variants
+       end)
+
+val _ =
+  test
+    ("exact intro replay avoids capture confined to a minor",
+     fn () =>
+       let
+         val parameter =
+           Term.mk_var ("minor_collision_x", Type.ind)
+         val schema =
+           Term.mk_var ("minor_collision_schema", bool_ty)
+         val bound =
+           Term.mk_var ("minor_collision_x", Type.ind)
+         val theorem =
+           GEN schema (DISCH schema boolTheory.TRUTH)
+         val plain = {theorem = theorem, elim = false}
+         val selected =
+           {theorem = theorem, elim = false, major = NONE}
+         val relation =
+           Term.mk_var
+             ("minor_collision_R",
+              Type.ind --> Type.ind --> bool_ty)
+         val (dependency, initial_store) =
+           clasetMeta.new_meta
+             {allow = [parameter], ty = Type.ind}
+             clasetMeta.empty
+         val raw_minor =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [dependency, bound]))
+         val source_minor =
+           Term.subst
+             [{redex = dependency, residue = parameter}] raw_minor
+         val expected_minor = beta_eta_term source_minor
+         val captured_minor =
+           boolSyntax.mk_forall
+             (bound,
+              Term.list_mk_comb (relation, [bound, bound]))
+         fun input () =
+           (clasetGoal.create
+              {goals =
+                 [{params = [parameter], asl = [], w = boolSyntax.T}],
+               store = initial_store, level = 0},
+            1)
+         val variants =
+           exact_rule_api_variants clasetLib.empty_cs plain selected
+             input
+
+         fun exact result =
+           case result of
+               [(record, next)] =>
+                 (case #terms (clasetStep.created_of record) of
+                      [created] =>
+                        let
+                          val store_with_minor =
+                            the_store
+                              (clasetMeta.bind (created, raw_minor)
+                                (clasetGoal.store next))
+                          val replay_store =
+                            the_store
+                              (clasetMeta.bind
+                                (dependency, parameter) store_with_minor)
+                          val created_minor =
+                            #w (the_singleton (clasetGoal.goals next))
+                          val script =
+                            clasetReplay.append
+                              (clasetReplay.empty 1) record
+                          val grounded =
+                            clasetReplay.ground replay_store script
+                        in
+                          case clasetReplay.replay grounded
+                                 ([], boolSyntax.T) of
+                              clasetReplay.Replayed
+                                (children as
+                                   [([], actual_minor)],
+                                 validation) =>
+                                let
+                                  val result =
+                                    validation [ASSUME actual_minor]
+                                in
+                                  Term.aconv created_minor created andalso
+                                  same_goals children
+                                    [([], expected_minor)] andalso
+                                  Term.aconv actual_minor
+                                    expected_minor andalso
+                                  Term.term_eq (concl result)
+                                    boolSyntax.T andalso
+                                  HOLset.equal
+                                     (Thm.hypset result,
+                                      HOLset.fromList Term.compare
+                                       [expected_minor])
+                                end
+                            | _ => false
+                        end
+                    | _ => false)
+             | _ => false
+       in
+         not (Term.aconv raw_minor source_minor) andalso
+         not (Term.aconv captured_minor source_minor) andalso
+         List.all exact variants
        end)
 
 val _ =

@@ -182,34 +182,179 @@ fun walk_with store instantiate tm =
 
 fun walk store tm = walk_with store (inst_types store) tm
 
-fun norm store tm =
-  let
-    fun eta_reduce abs = Term.eta_conv abs handle HOL_ERR _ => abs
-    val walk_current = walk_with store (inst_types store)
+type normalization_operations =
+  {inspect : term -> lambda,
+   combination : term * term -> term,
+   abstraction : term * term -> term,
+   beta : term -> term,
+   eta : term -> term,
+   abstraction_operator : term -> bool}
 
+fun beta_eta_normalize
+      ({inspect, combination, abstraction, beta, eta,
+        abstraction_operator} : normalization_operations) tm =
+  let
     fun recurse current =
-      let
-        val current' = walk_current current
-      in
-        if is_meta current' then current'
-        else
-          case dest_term current' of
-            COMB (rator, rand) =>
-              let
-                val rator' = recurse rator
-                val rand' = recurse rand
-                val combination = mk_comb (rator', rand')
-              in
-                if is_abs rator' then recurse (beta_conv combination)
-                else combination
-              end
-          | LAMB (bvar, body) =>
-              eta_reduce (mk_abs (bvar, recurse body))
-          | _ => current'
-      end
+      case inspect current of
+          COMB (rator, rand) =>
+            let
+              val rator' = recurse rator
+              val rand' = recurse rand
+              val combined = combination (rator', rand')
+            in
+              if abstraction_operator rator' then recurse (beta combined)
+              else combined
+            end
+        | LAMB (bvar, body) =>
+            eta (abstraction (bvar, recurse body))
+        | _ => current
   in
     recurse tm
   end
+
+val ordinary_normalization : normalization_operations =
+  {inspect = dest_term,
+   combination = mk_comb,
+   abstraction = mk_abs,
+   beta = beta_conv,
+   eta = fn abs => Term.eta_conv abs handle HOL_ERR _ => abs,
+   abstraction_operator = is_abs}
+
+type expansion_operations =
+  {instantiate : term -> term,
+   binding : term -> (string * term * term) option,
+   variables : term -> term list,
+   new_memo :
+     unit -> (string, term * term) Redblackmap.dict ref,
+   memo_lookup :
+     (string, term * term) Redblackmap.dict ref * string ->
+     (term * term) option,
+   cycle_member : string * string list -> bool,
+   traverse_dependencies :
+     (term -> (term * term) option) -> term list -> (term * term) list,
+   make_substitution : (term * term) list -> (term, term) subst,
+   memo_update :
+     (string, term * term) Redblackmap.dict ref * string * (term * term) ->
+     unit,
+   substitute : (term, term) subst -> term -> term,
+   normalize : term -> term}
+
+(* Expand a binding only through bound metavariables that occur free in its
+   residue.  Substituting a dependency into the whole residue is essential:
+   [Term.subst] alpha-variants enclosing binders when necessary, whereas a
+   recursive walk that replaces a node below a binder can capture the
+   dependency's free variables. *)
+fun dependency_expander function_name
+      ({instantiate, binding, variables, new_memo, memo_lookup,
+        cycle_member, traverse_dependencies, make_substitution,
+        memo_update, substitute, normalize} :
+        expansion_operations) =
+  let
+    val memo = new_memo ()
+
+    fun cycle name =
+      raise mk_HOL_ERR "clasetMeta" function_name
+        ("cyclic persistent term binding for " ^ name)
+
+    fun expand active variable =
+      case binding variable of
+          NONE => NONE
+        | SOME (name, redex, raw_residue) =>
+            (case memo_lookup (memo, name) of
+                 SOME result => SOME result
+               | NONE =>
+                   if cycle_member (name, active)
+                   then cycle name
+                   else
+                     let
+                       val residue = instantiate raw_residue
+                       val dependencies =
+                         traverse_dependencies (expand (name :: active))
+                           (variables residue)
+                       val expanded =
+                         normalize (substitute
+                           (make_substitution dependencies)
+                           residue)
+                       val result = (instantiate redex, expanded)
+                       val _ = memo_update (memo, name, result)
+                     in
+                       SOME result
+                     end)
+
+    fun substitution tm =
+      let
+        val instantiated = instantiate tm
+        val expanded =
+          traverse_dependencies (expand []) (variables instantiated)
+      in
+        (instantiated, make_substitution expanded)
+      end
+  in
+    {expand = expand, substitution = substitution}
+  end
+
+fun ordinary_binding store variable =
+  case meta_name variable of
+      NONE => NONE
+    | SOME name =>
+        if not (owned_meta store variable) then NONE
+        else
+          case Redblackmap.peek (#tm_bindings store, name) of
+              NONE => NONE
+            | SOME residue =>
+                (case Redblackmap.peek (#metas store, name) of
+                     NONE =>
+                       raise mk_HOL_ERR "clasetMeta"
+                         "ordinary_binding"
+                         "a term binding has no registered metavariable"
+                   | SOME redex => SOME (name, redex, residue))
+
+fun ordinary_expansion normalize store =
+  {instantiate = inst_types store,
+   binding = ordinary_binding store,
+   variables = free_vars,
+   new_memo = fn () => ref (Redblackmap.mkDict string_compare),
+   memo_lookup = fn (memo, name) => Redblackmap.peek (!memo, name),
+   cycle_member =
+     fn (name, active) =>
+       List.exists (fn active_name => active_name = name) active,
+   traverse_dependencies = List.mapPartial,
+   make_substitution =
+     map
+       (fn (redex, residue) =>
+         {redex = redex, residue = residue}),
+   memo_update =
+     fn (memo, name, result) =>
+       memo := Redblackmap.insert (!memo, name, result),
+   substitute = Term.subst,
+   normalize = normalize}
+
+fun ordinary_expander function_name normalize store =
+  dependency_expander function_name (ordinary_expansion normalize store)
+
+fun instantiate store tm =
+  let
+    val {substitution, ...} =
+      ordinary_expander "instantiate" (fn tm => tm) store
+    val (instantiated, expanded) = substitution tm
+  in
+    Term.subst expanded instantiated
+  end
+
+fun normalize_with function_name expansion normalization tm =
+  let
+    val {substitution, ...} =
+      dependency_expander function_name expansion
+    val (instantiated, expanded) = substitution tm
+  in
+    beta_eta_normalize normalization
+      (#substitute expansion expanded instantiated)
+  end
+
+fun norm store tm =
+  normalize_with "norm"
+    (ordinary_expansion (fn tm => tm) store)
+    ordinary_normalization tm
 
 fun insert_meta store (m, metas) =
   case meta_name m of
@@ -355,22 +500,24 @@ fun bind_ty (tymeta, ty) store =
                    (#ty_bindings store, name, (tymeta, residue))}
         end
 
-(* These copies expose diagnostic phase boundaries without placing hooks in
-   the ordinary persistent-store path.  Dictionary inspection and binding
-   walks are StoreLookupWalk; term/type rebuilding is NormalizationSetup;
+(* These operations expose diagnostic phase boundaries without placing hooks
+   in the ordinary persistent-store path.  Persistent dictionary inspection
+   is StoreLookupWalk; term/type rebuilding and kernel substitution are
+   NormalizationSetup; syntax and free-variable traversal is TraversalOther;
    pattern, ownership, occurs and eigen-allow predicates are Decision; only
-   construction of a new persistent map/record is BindingUpdate.
+   construction of a new persistent map/record is BindingUpdate.  Ephemeral
+   expansion-memo creation/update and substitution-list construction are
+   NormalizationSetup; memo lookup is StoreLookupWalk; active-path cycle
+   tests are Decision; and dependency-list iteration is TraversalOther.
 
-   They are semantically equivalent to the ordinary path, but timed-v3
-   deliberately retains its historical operation sequence.  In particular,
-   it builds full-store type substitutions and scans every binding after a
-   bind, whereas production filters substitutions to the current term and
-   can skip the scan for an eigen-free binding.  This preserves the exact
-   events, counters, checkpoints and time ownership expected by timed-v3
-   tests.  Its timings and cost attribution may therefore amplify production
-   reconstruction cost and must not be used as estimates of it.  Mirroring
-   either optimization requires a versioned diagnostic contract and revised
-   expectations. *)
+   Ordinary and diagnostic term normalization both use [normalize_with]:
+   instantiate reachable types, discover reachable bound metavariables,
+   expand their residues capture-safely by whole-term substitution, then
+   beta/eta-normalize.  The diagnostic supplies instrumented versions of
+   every classifier, lookup, traversal and rebuilding operation.  Binding
+   diagnostics still scan every binding after a bind, whereas production can
+   skip that scan for an eigen-free binding.  This preserves acceptance
+   semantics while keeping callbacks out of the ordinary hot path. *)
 datatype diagnostic_phase =
     DiagnosticNormalizationSetup
   | DiagnosticStoreLookupWalk
@@ -454,90 +601,136 @@ fun owned_meta_diagnostic switch store tm =
                     (fn () => left = right)
                 end)
 
-fun type_substitution_diagnostic switch store =
-  let
-    val bindings =
-      diagnostic_scope switch DiagnosticStoreLookupWalk
-        (fn () => Redblackmap.listItems (#ty_bindings store))
-  in
-    map
-      (fn (_, (redex, residue)) =>
-        {redex = redex,
-         residue = norm_ty_diagnostic switch store residue})
-      bindings
-  end
-
 fun inst_types_diagnostic switch store tm =
   let
-    (* Keep the full-store substitution: selecting only [tm]'s type variables
-       would change timed-v3 lookup and normalization events and counters. *)
-    val substitution = type_substitution_diagnostic switch store
+    fun binding ty =
+      case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => tymeta_name ty)
+      of
+          NONE => NONE
+        | SOME name =>
+            (case diagnostic_scope switch DiagnosticStoreLookupWalk
+                    (fn () =>
+                      Redblackmap.peek (#ty_bindings store, name))
+             of
+                 NONE => NONE
+               | SOME (redex, residue) =>
+                   SOME
+                     {redex = redex,
+                      residue =
+                        norm_ty_diagnostic switch store residue})
+    val variables =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => type_vars_in_term tm)
+    val substitution =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => List.mapPartial binding variables)
   in
     diagnostic_scope switch DiagnosticNormalizationSetup
       (fn () => Term.inst substitution tm)
   end
 
-fun walk_with_diagnostic switch store instantiate tm =
-  let
-    fun recurse current =
-      let
-        val current' = instantiate current
-      in
-        case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
-          (fn () => meta_name current')
-        of
-            SOME name =>
-              if owned_meta_diagnostic switch store current' then
-                (case diagnostic_scope switch DiagnosticStoreLookupWalk
-                  (fn () => Redblackmap.peek (#tm_bindings store, name))
-                 of
-                     SOME residue => recurse residue
-                   | NONE => current')
-              else current'
-          | NONE => current'
-      end
-  in
-    recurse tm
-  end
-
 fun norm_diagnostic switch store tm =
   let
-    fun eta_reduce abs = Term.eta_conv abs handle HOL_ERR _ => abs
-    fun instantiate current = inst_types_diagnostic switch store current
-    val walk_current = walk_with_diagnostic switch store instantiate
+    fun binding variable =
+      case diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () => meta_name variable)
+      of
+          NONE => NONE
+        | SOME name =>
+            if not (owned_meta_diagnostic switch store variable) then NONE
+            else
+              case diagnostic_scope switch DiagnosticStoreLookupWalk
+                (fn () => Redblackmap.peek (#tm_bindings store, name))
+              of
+                  NONE => NONE
+                | SOME residue =>
+                    (case diagnostic_scope switch
+                            DiagnosticStoreLookupWalk
+                            (fn () =>
+                              Redblackmap.peek (#metas store, name))
+                     of
+                         NONE =>
+                           raise mk_HOL_ERR "clasetMeta"
+                             "norm_diagnostic"
+                             "a term binding has no registered metavariable"
+                       | SOME redex => SOME (name, redex, residue))
 
-    fun recurse current =
-      let
-        val current' = walk_current current
-      in
-        if is_meta current' then current'
-        else
-          case dest_term current' of
-              COMB (rator, rand) =>
-                let
-                  val rator' = recurse rator
-                  val rand' = recurse rand
-                  val combination =
-                    diagnostic_scope switch DiagnosticNormalizationSetup
-                      (fn () => mk_comb (rator', rand'))
-                in
-                  if is_abs rator' then
-                    recurse
-                      (diagnostic_scope switch DiagnosticNormalizationSetup
-                        (fn () => beta_conv combination))
-                  else combination
-                end
-            | LAMB (bvar, body) =>
-                let
-                  val body' = recurse body
-                in
-                  diagnostic_scope switch DiagnosticNormalizationSetup
-                    (fn () => eta_reduce (mk_abs (bvar, body')))
-                end
-            | _ => current'
-      end
+    fun variables tm =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => free_vars tm)
+
+    fun substitute substitution tm =
+      diagnostic_scope switch DiagnosticNormalizationSetup
+        (fn () => Term.subst substitution tm)
+
+    fun new_memo () =
+      diagnostic_scope switch DiagnosticNormalizationSetup
+        (fn () => ref (Redblackmap.mkDict string_compare))
+
+    fun memo_lookup (memo, name) =
+      diagnostic_scope switch DiagnosticStoreLookupWalk
+        (fn () => Redblackmap.peek (!memo, name))
+
+    fun cycle_member (name, active) =
+      diagnostic_scope switch DiagnosticPatternOccursAllowDecision
+        (fn () =>
+          List.exists (fn active_name => active_name = name) active)
+
+    fun traverse_dependencies expand dependencies =
+      diagnostic_scope switch DiagnosticTraversalOther
+        (fn () => List.mapPartial expand dependencies)
+
+    fun make_substitution dependencies =
+      diagnostic_scope switch DiagnosticNormalizationSetup
+        (fn () =>
+          map
+            (fn (redex, residue) =>
+              {redex = redex, residue = residue})
+            dependencies)
+
+    fun memo_update (memo, name, result) =
+      diagnostic_scope switch DiagnosticNormalizationSetup
+        (fn () => memo := Redblackmap.insert (!memo, name, result))
+
+    val expansion =
+      {instantiate = inst_types_diagnostic switch store,
+       binding = binding, variables = variables,
+       new_memo = new_memo, memo_lookup = memo_lookup,
+       cycle_member = cycle_member,
+       traverse_dependencies = traverse_dependencies,
+       make_substitution = make_substitution,
+       memo_update = memo_update,
+       substitute = substitute, normalize = fn tm => tm}
+    val normalization =
+      {inspect =
+         fn current =>
+           diagnostic_scope switch DiagnosticTraversalOther
+             (fn () => dest_term current),
+       combination =
+         fn pair =>
+           diagnostic_scope switch DiagnosticNormalizationSetup
+             (fn () => mk_comb pair),
+       abstraction =
+         fn pair =>
+           diagnostic_scope switch DiagnosticNormalizationSetup
+             (fn () => mk_abs pair),
+       beta =
+         fn combination =>
+           diagnostic_scope switch DiagnosticNormalizationSetup
+             (fn () => beta_conv combination),
+       eta =
+         fn abstraction =>
+           diagnostic_scope switch DiagnosticNormalizationSetup
+             (fn () =>
+               Term.eta_conv abstraction
+               handle HOL_ERR _ => abstraction),
+       abstraction_operator =
+         fn operator =>
+           diagnostic_scope switch DiagnosticTraversalOther
+             (fn () => is_abs operator)}
   in
-    recurse tm
+    normalize_with "norm_diagnostic" expansion normalization tm
   end
 
 fun metas_of_diagnostic switch store tm =
@@ -821,14 +1014,24 @@ fun bindings store =
 fun collapse store =
   let
     val ty_subst = type_substitution store
+    val {expand, ...} =
+      ordinary_expander "collapse"
+        (beta_eta_normalize ordinary_normalization) store
 
-    fun term_binding (name, residue) =
+    fun term_binding (name, _) =
       case Redblackmap.peek (#metas store, name) of
         SOME redex =>
-          SOME
-            {redex = Term.inst ty_subst redex,
-             residue = norm store residue}
-      | NONE => NONE
+          (case expand [] redex of
+               SOME (expanded_redex, expanded_residue) =>
+                 SOME
+                   {redex = expanded_redex,
+                    residue = expanded_residue}
+             | NONE =>
+                 raise mk_HOL_ERR "clasetMeta" "collapse"
+                   "a listed term binding cannot be expanded")
+      | NONE =>
+          raise mk_HOL_ERR "clasetMeta" "collapse"
+            "a term binding has no registered metavariable"
 
     val tm_subst = List.mapPartial term_binding
       (Redblackmap.listItems (#tm_bindings store))

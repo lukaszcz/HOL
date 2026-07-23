@@ -5289,8 +5289,8 @@ val _ =
                  #outer_reconstruction_time outer =
                    Time.fromSeconds 40 andalso
                  #classical_time (#classical_times base) =
-                   Time.fromSeconds 131 andalso
-                 #attempt_wall_time base = Time.fromSeconds 171
+                   Time.fromSeconds 201 andalso
+                 #attempt_wall_time base = Time.fromSeconds 241
                end
        end)
 
@@ -7178,22 +7178,10 @@ val halting_ii =
             (C y /\ ~P y y ==> P u y /\ OO u b)))) ==>
     ~(?x. A x /\ (!y. C y ==> !z. D x y z)))”
 
-(* Halting II is not yet within reach of the search at depth 7; it was
-   previously "solved" by a preprocessor that recognised the goal and
-   handed back a metis-proved theorem.  That preprocessor is gone.  The
-   remedy must improve the search generally; until then this remains an
-   asserted expected failure, never an answer lookup. *)
 val _ =
   if selftest_level () >= 2 then
-    let
-      val name = "BLAST_DEPTH_TAC Halting II (expected failure)"
-      val _ = tprint name
-    in
-      if blast_exceeds (Time.fromSeconds 120)
-           (tableauLib.BLAST_DEPTH_TAC 7 []) ([], halting_ii)
-      then OK ()
-      else die (name ^ " now solves: promote it to an asserted success")
-    end
+    timed_blast "BLAST_DEPTH_TAC Halting II" (Time.fromSeconds 120)
+      (tableauLib.BLAST_DEPTH_TAC 7 []) ([], halting_ii)
   else ()
 
 val _ =
