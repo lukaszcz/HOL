@@ -19,11 +19,11 @@
 - TASK_17 (D2 suite band + cvc5-oracle) — done
 - TASK_18 (D5 external benchmarks) — done
 - TASK_19 (E cvc5 CPC HO replay) — done
-- TASK_20 (phase closure) — unblocked (TASK_19 done)
+- TASK_20 (phase closure) — done
 
 # 2. Next unblocked task
 
-TASK_20_phase_closure.md
+Phase 3 is closed; no Phase-3 task remains.
 
 # 3. Completion log (one line per task as each task lands)
 
@@ -46,3 +46,4 @@ TASK_20_phase_closure.md
 - 2026-07-23 — TASK_16: wired per-driver HO dialects, added checked Z3 replay selftests, burned four of six HO z3-tac rows, and verified both supported-version endpoints with 0 unexpected regressions.
 - 2026-07-23 — TASK_18: added the pinned `ho/` external benchmark slice, importer support, cvc5 provisioning, honest mode statuses, and green focused parser/typecheck/cvc5/Z3_TAC gates.
 - 2026-07-23 — TASK_19: recorded and replayed the cvc5 1.3.4 CPC HO corpus, added checked HO rules and `thm_CVCp` coverage, integrated the validation assets, and verified 0 unexpected conformance regressions.
+- 2026-07-23 — TASK_20: closed Phase 3 with HO/TCB/release documentation, source-pinned cvc5 CI, reconstructed coverage, an eight-criterion exit audit, and green build, selftest, conformance, and version gates.

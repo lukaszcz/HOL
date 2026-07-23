@@ -25,6 +25,13 @@ New features
     reconstructs the proof, and checks the resulting theorem has no oracle
     tags.  cvc5 1.3.4 is covered by a 60-query checked replay matrix.
 
+-   `HolSmt` now supports the higher-order SMT-LIB 2.7 surface, including
+    function sorts, lambda abstractions, both application spellings,
+    application omission sugar, and strict partial application.  The
+    failure-triggered higher-order path emits standard HO-Core syntax for
+    cvc5 and a sound lambda-as-array lowering for Z3.  Both solver paths
+    reconstruct checked HOL proofs without oracle tags.
+
 -   `Theory` syntax now supports disabling the generation of documentation in `<thyname>Theory.sig` by following the theory name with the `[no_sig_docs]` annotation.
     Files that use this feature do not need to mention `Feedback.set_trace "TheoryPP.include_docs" 0` anymore.
     (Indeed, see below, that trace doesn’t exist with that name anymore.)

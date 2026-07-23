@@ -208,17 +208,17 @@ fun mk_Z3p_v4 expect_fun =
 val thm_Z3p_v4 = mk_Z3p_v4 (expect_thm true)
 val sat_Z3p_v4 = mk_Z3p_v4 expect_sat
 
-(* Z3 4.15 reports "proof is not available" on the proof-enabled command for
-   the genuine satisfiable HO witness below.  Older supported 4.x releases
-   return SAT, so retain that boundary check without treating 4.15's missing
-   proof response as a reconstruction failure. *)
-fun is_pre_z3_415 () =
+(* Z3 4.12--4.15 report "proof is not available" on the proof-enabled
+   command for the genuine satisfiable HO witness below.  Z3 4.11 returns
+   SAT, so retain that boundary check without treating later versions'
+   missing proof response as a reconstruction failure. *)
+fun is_z3_411 () =
   Z3.is_configured () andalso
-  not (String.isPrefix "4.15." Z3.Z3version)
+  String.isPrefix "4.11." Z3.Z3version
 
-val sat_Z3p_pre_v415 =
-  mk_test_fun (is_pre_z3_415 ()) expect_sat
-    "Z3 (proofs, pre-4.15)" HolSmtLib.Z3_TAC
+val sat_Z3p_v411 =
+  mk_test_fun (is_z3_411 ()) expect_sat
+    "Z3 (proofs, 4.11)" HolSmtLib.Z3_TAC
 
 fun mk_CVCp expect_fun =
   mk_test_fun (CVC.is_configured ()) expect_fun "cvc5 (proofs)" HolSmtLib.CVC_TAC
@@ -1199,7 +1199,7 @@ in
     (``(\x. x (\x. x)) = (\y. y (\x. x))``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(\x. x (\x. x)) = (\y. y x)``,
-      [sat_Z3p_pre_v415, sat_CVCp]),
+      [sat_Z3p_v411, sat_CVCp]),
     (``x = (\x. x) ==>
         ((\x. x (\x. x)) = (\y. y x))``,
       [thm_Z3p, thm_Z3p_v4, thm_CVCp]),

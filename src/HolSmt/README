@@ -20,6 +20,7 @@ SmtLib_Parser.sml       Parsing of SMT-LIB 2 benchmarks.
 SmtLib_Theories.sml     SMT-LIB 2 theories.
 SmtLib.sml              Translation of HOL terms into SMT-LIB 2 format.
 SolverSpec.sml          Definition of SMT solvers.
+TRUSTED_CODE_BASE.md    Higher-order trusted-translation note.
 Unittest.{sig,sml}      Unit tests for HolSmtLib.
 Yices.sml               Functions to invoke the Yices SMT solver.
 Z3.sml                  Functions to invoke the Z3 SMT solver.
@@ -146,6 +147,9 @@ SMT-LIB support matrix:
   Recursive/mutual/parametric
     datatypes                  yes    yes        native         yes
   Datatype match               yes    yes        native         yes
+  HO-Core function sorts       yes    yes        dual dialect   Z3/cvc5 paths
+  Lambda/application surface   yes    yes        dual dialect   Z3/cvc5 paths
+  Partial application          yes    yes        dual dialect   Z3/cvc5 paths
   Z3 Seq/Set/Bag extensions    yes    yes        no             no
 
 Logic coverage summary:
@@ -193,6 +197,12 @@ Logic coverage summary:
                               checked replay unless a listed replay path applies.
   QF_FP, QF_FPBV, QF_BVFP,    FloatingPoint parse/typecheck embeddings; checked
   QF_UFFP, QF_UFBVFP          replay for FP theory lemmas is unsupported.
+  HO_ALL, HO_UF, HO_QF_UF,    cvc5-convention extension logics for the SMT-LIB
+  HO_UFLIA, HO_QF_UFLIA,      2.7 HO-Core surface.  Parser/typechecker and
+  HO_UFLRA, HO_QF_UFLRA,      Standard27 cvc5-oracle modes are covered; checked
+  HO_AUFLIA, HO_AUFLIRA,      replay uses Z3LambdaArray for Z3 and CPC for
+                              cvc5.
+  HO_QF_AUFLIA                These are not official SMT-LIB logic names.
   ALL                         HolSmt's permissive aggregate parser dictionary,
                               not an official SMT-LIB logic and not a
                               soundness/completeness claim.
@@ -323,8 +333,18 @@ such as (P:'a -> bool) x remain supported there.  Shapes that path cannot
 preserve, including surviving lambdas and non-symbol operators, select
 HigherOrder.  Standard27 emits native SMT-LIB 2.7 HO-Core syntax, while
 Z3LambdaArray lowers maps and application to nested Array/select and
-eta-expands partially applied ranked constants.  Callers may override the
-selection; unsupported residual shapes still fail deterministically.
+eta-expands partially applied ranked constants.
+
+The Z3 lowering is part of the trusted translation surface.  SMT-LIB 2.7
+section 3.9 interprets map sorts as total maps, so a map `A -> B` and an
+extensional Z3 `Array A B` have the same application and equality behavior:
+map application becomes `select`, and nested maps become nested arrays.
+Eta-expansion is sound independently of Z3: HOL proves
+`f = (\x. f x)`, and the ranked-constant expansion used by the printer is
+therefore HOL-side-provable.  The lowering introduces no axiom or oracle;
+the solver proof must still replay to the original HOL goal and pass the
+oracle-tag check.  Callers may override regime selection, while unsupported
+residual shapes still fail deterministically.
 
 Z3 version diagnostics and CI hooks:
 
