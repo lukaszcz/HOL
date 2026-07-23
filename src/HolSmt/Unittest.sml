@@ -5651,7 +5651,7 @@ fun z3_proof_parser_unpinned_proof_bind_shape_diagnostic () =
     (fn () => ignore (parse_z3_proof_string "4.15.3"
       "((proof (nnf-pos (proof-bind (refl false)) false)))"))
 
-fun z3_proof_bind_replay_stub_diagnostic () =
+fun z3_proof_bind_replay_success () =
 let
   val var = ``x:int``
   val body = Z3_Proof.REFL (boolSyntax.mk_eq (var, var))
@@ -5659,9 +5659,23 @@ let
   val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
     Z3_Proof.PROOF_BIND ([var], body))
   val proof = Z3_Proof.update_proof_steps initial steps
+  val thm = Z3_ProofReplay.replay_root_for_test proof
 in
-  expect_hol_error_contains "proof-bind replay stub"
-    "structured proof-bind replay is not yet implemented"
+  assert (Thm.concl thm ~~ boolSyntax.mk_eq (var, var),
+    "structured proof-bind did not replay its body theorem");
+  Library.check_oracle_tags "Z3 structured proof-bind replay" thm
+end
+
+fun z3_proof_bind_replay_shaped_failure () =
+let
+  val body = Z3_Proof.REFL ``T = T``
+  val initial = Z3_Proof.empty_proof "4.15.3"
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
+    Z3_Proof.PROOF_BIND ([], body))
+  val proof = Z3_Proof.update_proof_steps initial steps
+in
+  expect_hol_error_contains "proof-bind without bound variables"
+    "structured proof-bind has no bound variables"
     (fn () => ignore (Z3_ProofReplay.replay_root_for_test proof))
 end
 
@@ -7321,8 +7335,10 @@ let
       z3_proof_parser_structures_proof_bind_success),
     ("z3_proof_parser_unpinned_proof_bind_shape_diagnostic",
       z3_proof_parser_unpinned_proof_bind_shape_diagnostic),
-    ("z3_proof_bind_replay_stub_diagnostic",
-      z3_proof_bind_replay_stub_diagnostic),
+    ("z3_proof_bind_replay_success",
+      z3_proof_bind_replay_success),
+    ("z3_proof_bind_replay_shaped_failure",
+      z3_proof_bind_replay_shaped_failure),
     ("z3_proof_parser_th_lemma_metadata_success",
       z3_proof_parser_th_lemma_metadata_success),
     ("z3_proof_parser_advanced_th_lemma_metadata_success",

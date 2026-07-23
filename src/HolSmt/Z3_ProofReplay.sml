@@ -2028,11 +2028,6 @@ local
   fun z3_unit_resolution (state, thms, t) =
     (state, unit_resolution (thms, t))
 
-  fun z3_proof_bind_stub (vars, _) =
-    raise ERR "proof_bind"
-      ("structured proof-bind replay is not yet implemented (" ^
-       Int.toString (List.length vars) ^ " bound variable(s))")
-
   (* end of inference rule implementations *)
 
   (***************************************************************************)
@@ -2430,7 +2425,14 @@ local
           continuation []
     | thm_of_proofterm (state_proof, NOT_OR_ELIM x) continuation =
         one_prem state_proof "not_or_elim" z3_not_or_elim x continuation
-    | thm_of_proofterm (_, PROOF_BIND x) _ = z3_proof_bind_stub x
+    | thm_of_proofterm (_, PROOF_BIND ([], _)) _ =
+        raise ERR "proof_bind"
+          "structured proof-bind has no bound variables"
+    | thm_of_proofterm (state_proof, PROOF_BIND (_, body)) continuation =
+        (* proof-bind is a binder annotation rather than a logical rule.  Its
+           consumers inspect the preserved variables before replaying [body];
+           direct traversal therefore has the same theorem as the body. *)
+        thm_of_proofterm (state_proof, body) continuation
     | thm_of_proofterm (state_proof, QUANT_INST x) continuation =
         one_arg_zero_prems state_proof "quant_inst" z3_quant_inst x continuation
     | thm_of_proofterm (state_proof, QUANT_INTRO x) continuation =
