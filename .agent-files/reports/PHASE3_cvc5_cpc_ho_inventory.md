@@ -95,6 +95,6 @@ a new dependency of the Standard27 or CPC paths.
   1,202 expected implementation gaps, and 4,071 matched cases.
 - The external benchmark manifest refresh succeeds with network access; its
   initial failure in the full run was limited to sandbox DNS.
-- The validation assets are committed as `7d813fc` in the isolated
-  `holsmt-validation` task worktree, pending integration into its default
-  branch.
+- The validation assets are integrated into the `holsmt-validation` default
+  branch as `28762e8`; a fresh capture was byte-identical and the checked CPC
+  gate replayed all 9/9 queries.

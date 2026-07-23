@@ -45,4 +45,4 @@ TASK_20_phase_closure.md
 - 2026-07-22 — TASK_17: added the ten-logic HO extension band, generic cvc5 result-oracle checking with explicit missing-tool skips, and enumerated standard-HO Z3 dialect rejections; the suite, selftest, and conformance gates pass with 0 unexpected regressions.
 - 2026-07-23 — TASK_16: wired per-driver HO dialects, added checked Z3 replay selftests, burned four of six HO z3-tac rows, and verified both supported-version endpoints with 0 unexpected regressions.
 - 2026-07-23 — TASK_18: added the pinned `ho/` external benchmark slice, importer support, cvc5 provisioning, honest mode statuses, and green focused parser/typecheck/cvc5/Z3_TAC gates.
-- 2026-07-23 — TASK_19: recorded and replayed the cvc5 1.3.4 CPC HO corpus, added checked HO rules and `thm_CVCp` coverage, and verified 0 unexpected conformance regressions.
+- 2026-07-23 — TASK_19: recorded and replayed the cvc5 1.3.4 CPC HO corpus, added checked HO rules and `thm_CVCp` coverage, integrated the validation assets, and verified 0 unexpected conformance regressions.
