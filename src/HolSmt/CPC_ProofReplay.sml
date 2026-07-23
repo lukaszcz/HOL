@@ -220,6 +220,47 @@ local
   fun replay_instantiate args prems =
     Drule.SPECL args (expect_one_premise "instantiate" prems)
 
+  fun conversion_equal name conv target =
+    let
+      val (left, right) = boolSyntax.dest_eq target
+      fun forward (source, expected) =
+        let
+          val theorem = conv source
+            handle Conv.UNCHANGED =>
+              raise ERR name "conversion made no change"
+          val (_, normalized) = boolSyntax.dest_eq (Thm.concl theorem)
+        in
+          Thm.TRANS theorem (Thm.ALPHA normalized expected)
+        end
+    in
+      forward (left, right)
+      handle Feedback.HOL_ERR _ => Thm.SYM (forward (right, left))
+    end
+
+  fun replay_beta_reduce args =
+    conversion_equal "beta-reduce"
+      (Conv.TOP_DEPTH_CONV Thm.BETA_CONV)
+      (expect_one_arg "beta-reduce" args)
+
+  fun replay_lambda_elim args =
+    conversion_equal "lambda-elim"
+      (Conv.TOP_DEPTH_CONV Drule.ETA_CONV)
+      (expect_one_arg "lambda-elim" args)
+
+  (* CPC's HO_CONG omits both :args and its conclusion.  Its two equality
+     premises are exactly the function and argument equalities consumed by
+     the HOL kernel's MK_COMB rule. *)
+  fun replay_ho_cong prems =
+    case prems of
+      [function_equality, argument_equality] =>
+        (Thm.MK_COMB (function_equality, argument_equality)
+         handle Feedback.HOL_ERR holerr =>
+           raise ERR "ho_cong"
+             ("MK_COMB rejected CPC premise types: " ^
+              Feedback.message_of holerr))
+    | _ => raise ERR "ho_cong"
+        "expected function and argument equality premises"
+
   (* A CPC congruence step supplies the source term in :args and equality
      premises for the subterms rewritten by cvc5.  Reconstruct its context as
      a HOL lambda and use AP_TERM; this is the kernel congruence rule, not a
@@ -804,6 +845,16 @@ local
         (Library.gen_contradiction (Thm.CONJ left right)
          handle Feedback.HOL_ERR _ =>
            let
+             fun eta_normalize theorem =
+               Conv.CONV_RULE
+                 (Conv.TOP_DEPTH_CONV Drule.ETA_CONV) theorem
+               handle Conv.UNCHANGED => theorem
+           in
+             Library.gen_contradiction
+               (Thm.CONJ (eta_normalize left) (eta_normalize right))
+           end
+         handle Feedback.HOL_ERR _ =>
+           let
              val rewrites = [integerTheory.INT_GE, realTheory.real_ge]
              val left' = Rewrite.PURE_REWRITE_RULE rewrites left
              val right' = Rewrite.PURE_REWRITE_RULE rewrites right
@@ -1071,6 +1122,33 @@ local
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)),
            boolSyntax.mk_eq (left, boolSyntax.mk_neg right)))
+    | ("bool-not-eq-elim1", [left, right]) =>
+        tautology name (boolSyntax.mk_eq
+          (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)),
+           boolSyntax.mk_eq (boolSyntax.mk_neg left, right)))
+    | ("distinct-elim", [target]) =>
+        Tactical.TAC_PROOF (([], target),
+          bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.ALL_DISTINCT_NIL,
+             HolSmtTheory.ALL_DISTINCT_CONS])
+    | ("distinct-false", [target]) =>
+        Tactical.TAC_PROOF (([], target),
+          bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.ALL_DISTINCT_NIL,
+             HolSmtTheory.ALL_DISTINCT_CONS])
+    | ("eq-ite-lift", [condition, then_term, else_term, right]) =>
+        let
+          val target = boolSyntax.mk_eq
+            (boolSyntax.mk_eq
+               (boolSyntax.mk_cond (condition, then_term, else_term), right),
+             boolSyntax.mk_cond
+               (condition, boolSyntax.mk_eq (then_term, right),
+                boolSyntax.mk_eq (else_term, right)))
+        in
+          Tactical.TAC_PROOF (([], target),
+            Tactical.THEN (Tactic.COND_CASES_TAC,
+              bossLib.SIMP_TAC boolSimps.bool_ss []))
+        end
     | ("bool-or-de-morgan", [left, right, _]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_disj (left, right)),
@@ -1411,7 +1489,30 @@ local
       replay boolSyntax.list_mk_forall boolSyntax.strip_forall
       handle Feedback.HOL_ERR _ =>
         replay boolSyntax.list_mk_exists boolSyntax.strip_exists
+      handle Feedback.HOL_ERR _ =>
+        replay Term.list_mk_abs Term.strip_abs
     end
+
+  (* If the branches of a Boolean conditional are complements, cvc5 rewrites
+     the conditional to equality between its condition and then-branch.  The
+     sole premise records that complement relation; propositional replay
+     checks the precise general shape. *)
+  fun replay_ite_neg_branch args prems =
+    case args of
+      [condition, then_term, else_term] =>
+        let
+          val premise = expect_one_premise "ite-neg-branch" prems
+          val target = boolSyntax.mk_eq
+            (boolSyntax.mk_cond (condition, then_term, else_term),
+             boolSyntax.mk_eq (condition, then_term))
+        in
+          tautological_consequence premise target
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "ite-neg-branch"
+              "premise does not establish complementary Boolean branches"
+        end
+    | _ => raise ERR "ite-neg-branch"
+        "expected condition, then-branch, and else-branch arguments"
 
   fun replay_bv_poly_norm_eq args =
     tautology "bv_poly_norm_eq" (expect_one_arg "bv_poly_norm_eq" args)
@@ -3320,6 +3421,9 @@ local
            | "symm" => replay_symm prems
            | "trans" => replay_trans prems
            | "cong" => replay_cong conclusion args prems
+           | "ho_cong" => replay_ho_cong prems
+           | "beta_reduce" => replay_beta_reduce args
+           | "lambda_elim" => replay_lambda_elim args
            | "eq_resolve" => replay_eq_resolve prems
            | "contra" => replay_contra prems
            | "false_intro" => replay_false_intro prems
@@ -3346,6 +3450,7 @@ local
            | "ite_not_cond" => replay_ite_not_cond args
            | "ite_true_cond" => replay_ite_true_cond args
            | "ite_false_cond" => replay_ite_false_cond args
+           | "ite_neg_branch" => replay_ite_neg_branch args prems
            | "trust" => replay_trust state args
            | "ite_eq" => replay_ite_eq args
            | "ite_elim1" => replay_ite_elim1 prems

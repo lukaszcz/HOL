@@ -1198,22 +1198,24 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(\x. x (\x. x)) = (\y. y (\x. x))``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
-    (``(\x. x (\x. x)) = (\y. y x)``, [sat_Z3p_pre_v415]),
+    (``(\x. x (\x. x)) = (\y. y x)``,
+      [sat_Z3p_pre_v415, sat_CVCp]),
     (``x = (\x. x) ==>
-        ((\x. x (\x. x)) = (\y. y x))``, [thm_Z3p, thm_Z3p_v4]),
+        ((\x. x (\x. x)) = (\y. y x))``,
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``f x = (\x. f x) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``f x = (\y. f y) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* higher-order logic *)
 
     (``(H:(int -> int) -> bool) (\x. x + 1) /\ p ==>
-        H (\y. y + 1)``, [thm_Z3p, thm_Z3p_v4]),
+        H (\y. y + 1)``, [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``(\x:int. f (g x)) = (\y. f (g y))``,
-      [thm_Z3p, thm_Z3p_v4]),
-    (``(\x:int. f x) = f``, [thm_Z3p, thm_Z3p_v4]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
+    (``(\x:int. f x) = f``, [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``(H:(bool -> int) -> bool) (smtlib_ho_rank2 x) ==>
         H (\p. smtlib_ho_rank2 x p)``,
-      [thm_Z3p, thm_Z3p_v4]),
+      [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
     (``(P (f x) ==> Q f) ==> P (f x) ==> Q f``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(Q f ==> P (f x)) ==> Q f ==> P (f x)``,

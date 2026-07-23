@@ -266,16 +266,52 @@ local
       if first <> "(" then ordinary [first]
       else
         let val head = get_token () in
-          if head = "forall" orelse head = "exists" then
-            let val binders = get_token () in
+          if head = "_" then
+            let
+              fun application_terms terms =
+                let val token = get_token () in
+                  if token = ")" then List.rev terms
+                  else application_terms
+                    (parse_term dicts_ref
+                       (Library.undo_look_ahead [token] get_token) :: terms)
+                end
+            in
+              case application_terms [] of
+                function :: arguments =>
+                  if List.null arguments then
+                    raise ERR "parse_term"
+                      "CPC `_` application expects an argument"
+                  else Term.list_mk_comb (function, arguments)
+              | [] => raise ERR "parse_term"
+                  "CPC `_` application expects a function"
+            end
+          else if head = "@var" then
+            let
+              val var_name = get_token ()
+              val var_type = SmtLib_Parser.parse_type get_token
+                (#1 (!dicts_ref))
+              val _ = Library.expect_token ")" (get_token ())
+            in
+              Term.mk_var (var_name, var_type)
+            end
+          else if head = "forall" orelse head = "exists" orelse
+                  head = "lambda" then
+            let
+              val binders = get_token ()
+              fun bind vars body =
+                if head = "forall" then
+                  boolSyntax.list_mk_forall (vars, body)
+                else if head = "exists" then
+                  boolSyntax.list_mk_exists (vars, body)
+                else Term.list_mk_abs (vars, body)
+            in
               case lookup_cpc_list binders of
                 SOME vars =>
                   let
                     val body = parse_term dicts_ref get_token
                     val _ = Library.expect_token ")" (get_token ())
                   in
-                    if head = "forall" then boolSyntax.list_mk_forall (vars, body)
-                    else boolSyntax.list_mk_exists (vars, body)
+                    bind vars body
                   end
               | NONE =>
                   if binders = "(" then
@@ -296,9 +332,7 @@ local
                           val body = parse_term dicts_ref get_token
                           val _ = Library.expect_token ")" (get_token ())
                         in
-                          if head = "forall" then
-                            boolSyntax.list_mk_forall (vars, body)
-                          else boolSyntax.list_mk_exists (vars, body)
+                          bind vars body
                         end
                       else ordinary ["(", head, binders, binder_head]
                     end
@@ -373,9 +407,18 @@ local
       val range = SmtLib_Parser.parse_type get_token tydict
       val _ = Library.expect_token ")" (get_token ())
       val tm = Term.mk_var (name, range)
+      fun parsefn _ indices args =
+        if not (List.null indices) then
+          raise ERR "parse_declare_const"
+            ("CPC constant " ^ name ^ " does not accept indices")
+        else
+          Term.list_mk_comb (tm, args)
+          handle Feedback.HOL_ERR holerr =>
+            raise ERR "parse_declare_const"
+              ("ill-typed CPC application of " ^ name ^ ": " ^
+               Feedback.message_of holerr)
     in
-      (tydict, Library.extend_dict ((name,
-        SmtLib_Theories.K_zero_zero tm), tmdict))
+      (tydict, Library.extend_dict ((name, parsefn), tmdict))
     end
 
   fun parse_declare_fun get_token (tydict, tmdict) =

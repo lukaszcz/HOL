@@ -195,13 +195,29 @@ structure CVC = struct
       val _ = Library.check_oracle_tags name thm
     in thm end
 
+  (* cvc5 1.3.4 treats a lambda binder as a quantifier for logic checking,
+     even though SMT-LIB's QF classification only excludes quantified terms.
+     Keep the compatibility widening at the cvc5 boundary: the shared logic
+     inference and every other solver continue to receive the precise
+     HO_QF_* logic. *)
+  fun cvc_logic_policy
+      ({features = SmtLib.LogicFeatures {higher_order, ...}, inferred_logic,
+        reason} : {features : SmtLib.logic_features,
+                   inferred_logic : string, reason : string}) =
+    if higher_order andalso String.isPrefix "HO_QF_" inferred_logic then
+      SOME {logic = "HO_" ^
+          String.extract (inferred_logic, String.size "HO_QF_", NONE),
+        reason = reason ^
+          "; cvc5 lambda/HO_QF compatibility widening"}
+    else NONE
+
   fun goal_to_SmtLib_translation goal =
-    SmtLib.goal_to_SmtLib_translation_with_dialect_and_apply_operator
-      SmtLib.Standard27 SmtLib.ApplyAt NONE goal
+    SmtLib.goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
+      cvc_logic_policy SmtLib.Standard27 SmtLib.ApplyAt goal
 
   fun goal_to_SmtLib_with_get_proof_translation goal =
-    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_dialect_and_apply_operator
-      SmtLib.Standard27 SmtLib.ApplyAt NONE goal
+    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
+      cvc_logic_policy SmtLib.Standard27 SmtLib.ApplyAt goal
 
   (* cvc5, SMT-LIB file format, no proofs *)
   val CVC_SMT_Oracle =

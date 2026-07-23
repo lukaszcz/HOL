@@ -5021,6 +5021,131 @@ in
   | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
 end
 
+(* Captured cvc5 1.3.4 CPC spelling: binders may be inline @var terms and
+   partial application is printed with CPC's `_` application constructor. *)
+fun cpc_proof_parser_lambda_inline_var_apply_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const cpc_fun (-> Int Bool Int)) \
+    \(declare-const cpc_arg Int) \
+    \(define @t1 () (@var \"b0\" Bool)) \
+    \(define @t2 () (lambda (@list (@var \"b0\" Bool)) \
+    \ (cpc_fun cpc_arg @t1))) \
+    \(define @t3 () (_ cpc_fun cpc_arg)) \
+    \(assume @p1 (= @t2 @t3)))"
+in
+  case CPC_Proof.proof_commands proof of
+    [CPC_Proof.ASSUME (_, equality)] =>
+      let val (lambda, partial) = boolSyntax.dest_eq equality in
+        assert (Term.is_abs lambda,
+          "CPC lambda definition did not preserve a HOL abstraction");
+        assert (Term.type_of partial =
+            boolSyntax.list_mk_fun ([Type.bool], intSyntax.int_ty),
+          "CPC `_` application did not preserve the residual function type");
+        assert (Term.aconv
+            (boolSyntax.rhs (Thm.concl (Drule.ETA_CONV lambda))) partial,
+          "captured lambda and partial application are not eta-equivalent")
+      end
+  | _ => die "FAIL: CPC lambda capture did not preserve its assumption"
+end
+
+fun cpc_proof_replay_ho_conversion_rules_success () =
+let
+  val beta = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((define @t1 () (@var \"x\" Int)) \
+      \(define @t2 () (_ (lambda (@list @t1) (+ @t1 1)) 2)) \
+      \(step @p1 :rule beta-reduce :args ((= @t2 (+ 2 1)))))")
+  val eta = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const f (-> Bool Int)) \
+      \(define @t1 () (@var \"x\" Bool)) \
+      \(define @t2 () (lambda (@list @t1) (f @t1))) \
+      \(step @p1 :rule lambda-elim :args ((= @t2 f))))")
+  val alpha = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((define @t1 () (@var \"x\" Int)) \
+      \(define @t2 () (lambda (@list @t1) @t1)) \
+      \(define @t3 () (@var \"y\" Int)) \
+      \(step @p1 :rule alpha_equiv :args (@t2 (@list @t1) @t3)))")
+in
+  assert (Thm.concl beta ~~ ``(\x:int. x + 1) 2 = 2 + 1``,
+    "CPC beta-reduce returned the wrong equality");
+  let
+    val (eta_left, eta_right) = boolSyntax.dest_eq (Thm.concl eta)
+    val eta_reduced =
+      boolSyntax.rhs (Thm.concl (Drule.ETA_CONV eta_left))
+  in
+    assert (Term.aconv eta_reduced eta_right,
+      "CPC lambda-elim returned the wrong eta equality")
+  end;
+  assert (Thm.concl alpha ~~ ``(\x:int. x) = (\y:int. y)``,
+    "CPC alpha_equiv did not replay abstraction renaming");
+  List.app (Library.check_oracle_tags "CPC HO conversion unit test")
+    [beta, eta, alpha]
+end
+
+fun cpc_proof_replay_ho_cong_and_ite_success () =
+let
+  val ho_proof = parse_cpc_proof_string
+      "((declare-const f (-> Int Int)) (declare-const g (-> Int Int)) \
+      \(declare-const x Int) (declare-const y Int) \
+      \(assume @p1 (= f g)) (assume @p2 (= x y)) \
+      \(step @p3 :rule ho_cong :premises (@p1 @p2)))"
+  val ho_cong = CPC_ProofReplay.replay_root_for_test ho_proof
+  val expected_ho_cong =
+    case CPC_Proof.proof_commands ho_proof of
+      [CPC_Proof.ASSUME (_, function_equality),
+       CPC_Proof.ASSUME (_, argument_equality), _] =>
+        let
+          val (left_function, right_function) =
+            boolSyntax.dest_eq function_equality
+          val (left_argument, right_argument) =
+            boolSyntax.dest_eq argument_equality
+        in
+          boolSyntax.mk_eq
+            (Term.mk_comb (left_function, left_argument),
+             Term.mk_comb (right_function, right_argument))
+        end
+    | _ => die "FAIL: CPC ho_cong capture lost its premise assumptions"
+  val ite = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((declare-const c Bool) (declare-const t Bool) \
+      \(declare-const e Bool) (assume @p1 (= (not e) t)) \
+      \(step @p2 :rule ite-neg-branch :premises (@p1) \
+      \:args (c t e)))")
+in
+  assert (Thm.concl ho_cong ~~ expected_ho_cong,
+    "CPC ho_cong did not apply MK_COMB to both premises");
+  assert (Thm.concl ite ~~ ``(if c then t else e) = (c = t)``,
+    "CPC ite-neg-branch returned the wrong equality");
+  List.app (Library.check_oracle_tags "CPC HO congruence unit test")
+    [ho_cong, ite]
+end
+
+fun cpc_proof_replay_ho_rare_rewrites_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const cpc_condition Bool) \
+    \(declare-const cpc_then Bool) (declare-const cpc_else Bool) \
+    \(declare-const cpc_rhs Bool) \
+    \(step @p1 :rule bool-not-eq-elim1 :args (true false)) \
+    \(step @p2 :rule eq-ite-lift \
+    \ :args (cpc_condition cpc_then cpc_else cpc_rhs)) \
+    \(step @p3 :rule distinct-false \
+    \ :args ((= (distinct true true) false))) \
+    \(step @p4 :rule distinct-elim \
+    \ :args ((= (distinct true false) (not (= true false))))))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (List.length (CPC_Proof.proof_commands proof) = 4,
+    "CPC HO RARE capture did not parse all inventoried rewrite steps");
+  assert (Thm.concl theorem ~~
+      ``ALL_DISTINCT [T; F] = ~(T = F)``,
+    "CPC distinct-elim returned the wrong equality");
+  Library.check_oracle_tags "CPC HO RARE rewrite unit test" theorem
+end
+
 fun cpc_proof_parser_declarations_success () =
 let
   val proof = parse_cpc_proof_string
@@ -7345,6 +7470,14 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_proof_parser_lambda_inline_var_apply_success",
+      cpc_proof_parser_lambda_inline_var_apply_success),
+    ("cpc_proof_replay_ho_conversion_rules_success",
+      cpc_proof_replay_ho_conversion_rules_success),
+    ("cpc_proof_replay_ho_cong_and_ite_success",
+      cpc_proof_replay_ho_cong_and_ite_success),
+    ("cpc_proof_replay_ho_rare_rewrites_success",
+      cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",
       cpc_proof_parser_declarations_success),
     ("cpc_proof_parser_totalized_arithmetic_success",
