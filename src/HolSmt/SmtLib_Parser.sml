@@ -2629,10 +2629,13 @@ local
     surface_flags: surface_flags ref
   }
 
+  type metadata_index =
+    (string, SmtLib_Theories.symbol_metadata list) Redblackmap.dict
+
   type typecheck_context = {
     description: string,
     surface_flags: surface_flags ref,
-    dictionary_metadata: SmtLib_Theories.symbol_metadata list
+    metadata_index: metadata_index
   }
 
   datatype surface_event =
@@ -2762,31 +2765,45 @@ local
   fun sort_list_to_string tys =
     "[" ^ String.concatWith ", " (List.map type_to_string tys) ^ "]"
 
-  fun command_context surface_flags dictionary_metadata command
-      : typecheck_context = {
-    description = "command '" ^ command ^ "'",
-    surface_flags = surface_flags,
-    dictionary_metadata = dictionary_metadata
-  }
+  fun command_context surface_flags dictionary_metadata command =
+    let
+      val metadata_index =
+        List.foldl
+          (fn (metadata as {kind, name, ...}
+                 : SmtLib_Theories.symbol_metadata, index) =>
+            if kind = "term" then
+              Redblackmap.insert
+                (index, name,
+                 metadata ::
+                   Option.getOpt (Redblackmap.peek (index, name), []))
+            else
+              index)
+          (Redblackmap.mkDict String.compare)
+          dictionary_metadata
+    in
+      {
+        description = "command '" ^ command ^ "'",
+        surface_flags = surface_flags,
+        metadata_index = metadata_index
+      } : typecheck_context
+    end
 
   fun metadata_has_term
-      ({dictionary_metadata, ...}: typecheck_context) predicate name =
-    List.exists
-      (fn ({kind, name = entry_name, attributes, ...}
-             : SmtLib_Theories.symbol_metadata) =>
-        kind = "term" andalso entry_name = name andalso
-        predicate attributes)
-      dictionary_metadata
+      ({metadata_index, ...}: typecheck_context) predicate name =
+    case Redblackmap.peek (metadata_index, name) of
+      NONE => false
+    | SOME entries =>
+        List.exists (fn {attributes, ...} => predicate attributes) entries
 
   fun indexed_term_family context name =
     metadata_has_term context (fn attributes => #indexed attributes) name
 
   fun apply_operator_available
-      ({dictionary_metadata, ...}: typecheck_context) operator =
-    List.exists
-      (fn ({theory, kind, name, ...}: SmtLib_Theories.symbol_metadata) =>
-        theory = "HO-Core" andalso kind = "term" andalso name = operator)
-      dictionary_metadata
+      ({metadata_index, ...}: typecheck_context) operator =
+    case Redblackmap.peek (metadata_index, operator) of
+      NONE => false
+    | SOME entries =>
+        List.exists (fn {theory, ...} => theory = "HO-Core") entries
 
   fun note_surface_event
       ({surface_flags, ...}: typecheck_context) event =
