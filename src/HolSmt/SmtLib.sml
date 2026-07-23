@@ -120,7 +120,7 @@ local
   (* (HOL term, a function that maps a pair (rator, rands) to an
      SMT-LIB symbol and a list of remaining (still-to-be-encoded)
      argument terms) *)
-  val builtin_symbols = List.foldl (Lib.uncurry Net.insert) Net.empty [
+  val builtin_symbol_encodings = [
     (* Core *)
     (boolSyntax.T, apfst_K "true"),
     (boolSyntax.F, apfst_K "false"),
@@ -402,6 +402,9 @@ local
     (wordsSyntax.word_gt_tm, apfst_fixed_width "bvsgt"),
     (wordsSyntax.word_ge_tm, apfst_fixed_width "bvsge")
   ]
+
+  val builtin_symbols =
+    List.foldl (Lib.uncurry Net.insert) Net.empty builtin_symbol_encodings
 
   (* SMT-LIB type and function names are uniformly generated as "tN"
      and "vN", respectively, where N is a number. Prefixes must be
@@ -1541,7 +1544,8 @@ local
      application/update use select/store.  HigherOrder preserves first-class
      functions, lambdas, and partial application.  Standard27 emits native
      HO-Core syntax; Z3LambdaArray lowers function sorts and applications to
-     nested Array/select and eta-expands partially applied ranked constants. *)
+     nested Array/select.  Both dialects eta-expand partially applied ranked
+     constants when omission would lose their built-in semantics. *)
 
   (* Recursive failures must bypass the recognizer exception cascade: once a
      term's shape is known, an error in its body is the real diagnostic. *)
@@ -1597,6 +1601,12 @@ local
       in
         List.length doms
       end
+    fun has_ranked_semantics c =
+      TypeBase.is_constructor c orelse
+      List.exists
+        (fn (builtin, _) =>
+          Term.is_const builtin andalso Term.same_const c builtin)
+        builtin_symbol_encodings
     fun translate_lambda acc =
       let
         val (v, body) = Term.dest_abs tm
@@ -2007,9 +2017,17 @@ local
         val (function, argument) = Term.dest_comb tm
         val _ = Type.dom_rng (Term.type_of function)
         val (head, head_rands) = boolSyntax.strip_comb tm
+        val semantically_ranked_partial =
+          Term.is_const head andalso
+          let val rank = declared_const_arity head
+          in
+            List.length head_rands < rank andalso
+            has_ranked_semantics head
+          end
         val symbol_head =
           (Term.is_const head orelse Term.is_var head) andalso
-          not (has_semantic_function_prefix head head_rands)
+          (semantically_ranked_partial orelse
+           not (has_semantic_function_prefix head head_rands))
         val _ =
           case regime of
             HigherOrder Standard27 =>
@@ -2061,7 +2079,9 @@ local
               if Term.is_const rator then declared_const_arity rator else 0
       in
         if declaration_arity > rands_count andalso
-           regime = HigherOrder Z3LambdaArray then
+           (regime = HigherOrder Z3LambdaArray orelse
+            regime = HigherOrder Standard27 andalso
+              has_ranked_semantics rator) then
           eta_expand_ranked_constant acc tm rator declaration_arity
             rands_count
         else

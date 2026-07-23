@@ -1216,6 +1216,8 @@ in
     (``(H:(bool -> int) -> bool) (smtlib_ho_rank2 x) ==>
         H (\p. smtlib_ho_rank2 x p)``,
       [thm_Z3p, thm_Z3p_v4, thm_CVCp]),
+    (``(H:(int -> int) -> bool) ($+ 1) ==> H (\x. 1 + x)``,
+      [thm_CVCp]),
     (``(P (f x) ==> Q f) ==> P (f x) ==> Q f``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(Q f ==> P (f x)) ==> Q f ==> P (f x)``,

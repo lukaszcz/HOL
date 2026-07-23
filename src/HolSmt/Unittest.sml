@@ -4240,6 +4240,12 @@ let
            smtlib_ho_rank2 x p = y``)
   val ranked_translation = Lib.fst ranked_result
   val ranked_text = text_of ranked_result
+  val builtin_eta_text = text_of (translate
+    ([], ``(H:(int -> int) -> bool) ($+ 1) ==>
+           H (\x. 1 + x)``))
+  val constructor_eta_text = text_of (translate
+    ([], ``(H:(int -> smt_tri) -> bool) SmtTriB ==>
+           H (\x. SmtTriB x)``))
   val lambda_text = text_of (translate
     ([], ``(H:((int -> int) -> int -> int) -> bool)
       (\f x. f x)``))
@@ -4302,6 +4308,16 @@ in
   assert_has "ranked full omission sugar" ranked_text "(v0 v1 v3)";
   assert (List.length rank2_declarations = 1,
     "Standard27 split one ranked symbol into multiple declarations");
+  assert_has "built-in eta expansion" builtin_eta_text
+    "(lambda ((b0 Int)) (+ 1 b0))";
+  assert_lacks "built-in eta expansion" builtin_eta_text
+    "(declare-fun v1 (Int Int) Int)";
+  assert_lacks "built-in eta expansion" builtin_eta_text
+    "(lambda ((b0 Int)) (lambda";
+  assert_has "constructor eta expansion" constructor_eta_text
+    "(lambda ((b0 Int)) (ctor_Smt_tri_SmtTriB b0))";
+  assert_lacks "constructor eta expansion" constructor_eta_text
+    "(declare-fun v1 (Int) Smt_tri)";
   assert_has "native lambda" lambda_text
     "(lambda ((b0 (-> Int Int))) (lambda ((b1 Int)) (b0 b1)))";
   assert_lacks "native lambda" lambda_text "(select ";
