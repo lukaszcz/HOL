@@ -186,176 +186,6 @@ val _ =
 
 val _ =
   test
-    ("diagnostic normalization and binding have exact ordered traces",
-     fn () =>
-       let
-         fun phase_code phase =
-           case phase of
-               clasetMeta.DiagnosticNormalizationSetup => "N"
-             | clasetMeta.DiagnosticStoreLookupWalk => "L"
-             | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
-             | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
-             | clasetMeta.DiagnosticTraversalOther => "T"
-         fun event_code (boundary, phase) =
-           (case boundary of
-                clasetMeta.DiagnosticEnter => "+"
-              | clasetMeta.DiagnosticExit => "-") ^ phase_code phase
-         fun capture operation =
-           let
-             val events = ref []
-             fun switch event = events := event :: !events
-             val result = operation switch
-             val encoded = String.concat (map event_code (rev (!events)))
-           in
-             (result, encoded)
-           end
-         val (tymeta, typed_store) =
-           clasetMeta.new_tymeta clasetMeta.empty
-         val nested_ty = (tymeta --> bool_ty) --> (bool_ty --> tymeta)
-         val x = Term.mk_var ("diagnostic_x", bool_ty)
-         val f = Term.mk_var ("diagnostic_f", bool_ty --> bool_ty)
-         val lambda =
-           Term.mk_abs
-             (x, Term.mk_comb
-                   (Term.mk_abs (x, Term.mk_comb (f, x)), x))
-         val (m, store0) =
-           clasetMeta.new_meta {allow = [], ty = bool_ty}
-             clasetMeta.empty
-         val (foreign, _) =
-           clasetMeta.new_meta {allow = [], ty = bool_ty}
-             clasetMeta.empty
-         val store1 = the_store (clasetMeta.bind (m, fixed) store0)
-         val (nested_result, nested_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.norm_type_diagnostic switch typed_store nested_ty)
-         val (lambda_result, lambda_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.norm_diagnostic switch store0 lambda)
-         val (bind_success, bind_success_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.bind_diagnostic switch (m, fixed) store0)
-         val (bind_foreign, bind_foreign_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.bind_diagnostic switch (m, foreign) store0)
-         val (bind_occurs, bind_occurs_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.bind_diagnostic switch (m, m) store0)
-         val (bind_type_mismatch, bind_type_mismatch_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.bind_diagnostic switch
-               (m, Term.genvar Type.ind) store0)
-         val (bind_bound, bind_bound_trace) =
-           capture
-           (fn switch =>
-             clasetMeta.bind_diagnostic switch (m, fixed) store1)
-         val (occurs_tymeta, occurs_ty_store) =
-           clasetMeta.new_tymeta clasetMeta.empty
-         val ordinary_ty_occurs =
-           clasetMeta.bind_ty
-             (occurs_tymeta, occurs_tymeta) occurs_ty_store
-         val (diagnostic_ty_occurs, bind_ty_occurs_trace) =
-           capture
-             (fn switch =>
-               clasetMeta.bind_ty_diagnostic switch
-                 (occurs_tymeta, occurs_tymeta) occurs_ty_store)
-         val expected_nested_trace =
-           "+D-D+N+D-D+N+D-D+L-L+D-D+N-N-N+D-D+N+D-D+N-N" ^
-           "+D-D+L-L-N-N"
-         val expected_lambda_trace =
-           "+N-N+T-T+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T" ^
-           "+T-T+T-T+T-T+T-T+N-N+T-T+N-N+N-N+T-T+N-N+T-T" ^
-           "+N-N+N-N"
-         val expected_bind_success_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+D+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T+T-T+T" ^
-           "+D-D-T+T-T-D+D-D+N-N+D-D+N-N+D-D+T-T+D-D+T-T" ^
-           "+B-B+L-L+D+L-L+N-N+T-T+T-T+N-N+T-T+T+D-D-T" ^
-           "+N-N+N-N+T-T+T-T+D+L-L-D-D"
-         val expected_bind_foreign_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D+D-D+L-L-T+N-N+N-N+T-T+D" ^
-           "+N-N+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L-T+N-N+N-N" ^
-           "+T-T+T-T+T-T+T+D-D+D-D+L-L-T+T-T-D+D-D+N-N" ^
-           "+D-D+N-N+D-D+T-T+D-D+D-D+L-L"
-         val expected_bind_occurs_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N" ^
-           "+D-D+L-L-T+N-N+N-N+T-T+D+N-N+T-T+T-T+N-N+T-T" ^
-           "+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L-T+N-N" ^
-           "+N-N+T-T+T-T+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D" ^
-           "+N-N+D-D+T-T-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
-         val expected_bind_type_mismatch_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+D+N-N+T-T" ^
-           "+T-T+N-N+T-T+T+D-D-T+N-N+N-N+T-T+T-T+T-T+T" ^
-           "+D-D-T+T-T-D+D-D+N-N+D-D+N-N+D-D"
-         val expected_bind_bound_trace =
-           "+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L"
-         val expected_bind_ty_occurs_trace =
-           "+D-D+D-D+L-L+L-L+D-D+L-L+D+T-T-D+T-T" ^
-           "+D-D+D-D+L-L"
-         fun trace_eq name actual expected =
-           actual = expected orelse
-           (print
-              ("\n" ^ name ^ " actual trace:\n" ^ actual ^
-               "\nexpected trace:\n" ^ expected ^ "\n");
-            false)
-         val nested_trace_exact =
-           trace_eq "nested type" nested_trace expected_nested_trace
-         val lambda_trace_exact =
-           trace_eq "lambda" lambda_trace expected_lambda_trace
-         val bind_success_trace_exact =
-           trace_eq "bind success" bind_success_trace
-             expected_bind_success_trace
-         val bind_foreign_trace_exact =
-           trace_eq "bind foreign" bind_foreign_trace
-             expected_bind_foreign_trace
-         val bind_occurs_trace_exact =
-           trace_eq "bind occurs" bind_occurs_trace
-             expected_bind_occurs_trace
-         val bind_type_mismatch_trace_exact =
-           trace_eq "bind type mismatch" bind_type_mismatch_trace
-             expected_bind_type_mismatch_trace
-         val bind_bound_trace_exact =
-           trace_eq "bind bound" bind_bound_trace
-             expected_bind_bound_trace
-         val bind_ty_occurs_trace_exact =
-           trace_eq "bind type occurs" bind_ty_occurs_trace
-             expected_bind_ty_occurs_trace
-       in
-         nested_result = nested_ty andalso
-         Term.aconv lambda_result f andalso
-         Option.isSome bind_success andalso
-         not (Option.isSome bind_foreign) andalso
-         not (Option.isSome bind_occurs) andalso
-         not (Option.isSome bind_type_mismatch) andalso
-         not (Option.isSome bind_bound) andalso
-         not (Option.isSome ordinary_ty_occurs) andalso
-         not (Option.isSome diagnostic_ty_occurs) andalso
-         nested_trace_exact andalso lambda_trace_exact andalso
-         bind_success_trace_exact andalso bind_foreign_trace_exact andalso
-         bind_occurs_trace_exact andalso
-         bind_type_mismatch_trace_exact andalso
-         bind_bound_trace_exact andalso bind_ty_occurs_trace_exact andalso
-         String.isSubstring "+B-B" bind_success_trace andalso
-         Term.aconv lambda_result (clasetMeta.norm store0 lambda) andalso
-         (case bind_success of
-              SOME diagnostic_store =>
-                Term.aconv
-                  (clasetMeta.norm diagnostic_store m)
-                  (clasetMeta.norm store1 m)
-            | NONE => false)
-       end)
-
-val _ =
-  test
     ("stores are persistent",
      fn () =>
        let
@@ -366,47 +196,6 @@ val _ =
        in
          Term.aconv (clasetMeta.walk store0 m) m andalso
          Term.aconv (clasetMeta.walk store1 m) fixed
-       end)
-
-val _ =
-  test
-    ("diagnostic dependency traversal unwinds its exact enclosing scope",
-     fn () =>
-       let
-         exception ExpansionSwitch of int ref
-         val sentinel = ref 7331
-         val events = ref []
-         val enters = ref 0
-         fun event_code (boundary, phase) =
-           (case boundary of
-                clasetMeta.DiagnosticEnter => "+"
-              | clasetMeta.DiagnosticExit => "-") ^
-           (case phase of
-                clasetMeta.DiagnosticNormalizationSetup => "N"
-              | clasetMeta.DiagnosticStoreLookupWalk => "L"
-              | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
-              | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
-              | clasetMeta.DiagnosticTraversalOther => "T")
-         fun switch (event as (boundary, _)) =
-           (events := event :: !events;
-            case boundary of
-                clasetMeta.DiagnosticExit => ()
-              | clasetMeta.DiagnosticEnter =>
-                  (enters := !enters + 1;
-                   if !enters = 7 then raise ExpansionSwitch sentinel
-                   else ()))
-         val (m, store) =
-           clasetMeta.new_meta {allow = [], ty = bool_ty}
-             clasetMeta.empty
-         val identity =
-           ((ignore (clasetMeta.norm_diagnostic switch store m); false)
-            handle ExpansionSwitch actual => actual = sentinel
-                 | _ => false)
-         val trace =
-           String.concat (map event_code (rev (!events)))
-       in
-         identity andalso
-         trace = "+N-N+T-T+T-T+N-N+T-T+T+D-T"
        end)
 
 val _ =
@@ -560,7 +349,6 @@ val _ =
              Term.mk_comb
                (Term.mk_abs (ignored, boolSyntax.T), argument)
            end
-         fun switch _ = ()
          fun collapsed store target =
            let
              val (type_substitution, term_substitution) =
@@ -577,20 +365,12 @@ val _ =
                  Term.aconv residue boolSyntax.T
              | _ => false
          fun accepts base target raw =
-           case
-             (clasetMeta.bind (target, raw) base,
-              clasetMeta.bind_diagnostic switch (target, raw) base)
-           of
-               (SOME ordinary, SOME diagnostic) =>
+           case clasetMeta.bind (target, raw) base of
+               SOME ordinary =>
                  persistent_residue ordinary target andalso
-                 persistent_residue diagnostic target andalso
                  Term.aconv
                    (clasetMeta.norm ordinary target) boolSyntax.T andalso
-                 Term.aconv
-                   (clasetMeta.norm_diagnostic switch diagnostic target)
-                   boolSyntax.T andalso
-                 Term.aconv (collapsed ordinary target) boolSyntax.T andalso
-                 Term.aconv (collapsed diagnostic target) boolSyntax.T
+                 Term.aconv (collapsed ordinary target) boolSyntax.T
              | _ => false
 
          val (self, self_store) =
@@ -751,16 +531,12 @@ val _ =
          val (_, substitution) = clasetMeta.collapse store4
          val instantiated =
            Drule.INST_TY_TERM (substitution, []) (ASSUME outer)
-         fun switch _ = ()
        in
          Term.aconv
            (clasetMeta.norm store4 outer) (beta_eta_term unresolved)
          andalso
          Term.aconv (concl instantiated) (beta_eta_term unresolved)
          andalso
-         Term.aconv
-           (clasetMeta.norm_diagnostic switch store4 outer)
-           (clasetMeta.norm store4 outer) andalso
          Term.aconv
            (clasetMeta.norm store4 boolSyntax.F) boolSyntax.F
        end)
@@ -804,41 +580,6 @@ val _ =
          fun is_truth redex =
            Option.map (fn tm => Term.aconv tm boolSyntax.T)
              (residue redex) = SOME true
-         val events = ref []
-         fun phase_code phase =
-           case phase of
-               clasetMeta.DiagnosticNormalizationSetup => "N"
-             | clasetMeta.DiagnosticStoreLookupWalk => "L"
-             | clasetMeta.DiagnosticPatternOccursAllowDecision => "D"
-             | clasetMeta.DiagnosticPersistentBindingUpdate => "B"
-             | clasetMeta.DiagnosticTraversalOther => "T"
-         fun event_code (boundary, phase) =
-           (case boundary of
-                clasetMeta.DiagnosticEnter => "+"
-              | clasetMeta.DiagnosticExit => "-") ^ phase_code phase
-         fun switch event = events := event :: !events
-         val diagnostic_result =
-           clasetMeta.norm_diagnostic switch store7 outer
-         val diagnostic_trace =
-           String.concat (map event_code (rev (!events)))
-         val expected_diagnostic_trace =
-           "+N-N+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N" ^
-           "+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N+T-T+T+D-D+D-D+L-L" ^
-           "+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N" ^
-           "+T-T+T+D-D+D-D+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L" ^
-           "+D-D+T-T+T-T+N-N+T-T+T-T+N-N+N-N+T-T+T-T+N-N+N-N" ^
-           "-T+N-N+N-N+T-T+T-T+N-N+N-N+D-D+D-D+L-L+D-D+N-N+D-D" ^
-           "+N-N+D-D+L-L+L-L+L-L+D-D+T-T+T-T+N-N+T-T+T+D-D+D-D" ^
-           "+L-L+D-D+N-N+D-D+N-N+D-D+L-L+L-L+L-L-T+N-N+N-N+T-T" ^
-           "+T-T+N-N+N-N-T+N-N+N-N+T-T+T-T+N-N+N-N-T+N-N+N-N" ^
-           "+T-T+T-T+T-T+T-T+N-N+T-T+T-T+T-T+T-T+T-T+N-N+T-T" ^
-           "+T-T+N-N+T-T+N-N+T-T"
-         val diagnostic_trace_exact =
-           diagnostic_trace = expected_diagnostic_trace orelse
-           (print
-              ("\nshared dependency actual trace:\n" ^
-               diagnostic_trace ^ "\n");
-            false)
        in
          null type_substitution andalso
          length term_substitution = 4 andalso
@@ -846,8 +587,6 @@ val _ =
          Option.map (fn tm => Term.aconv tm expected)
            (residue outer) = SOME true andalso
          Term.aconv (clasetMeta.norm store7 outer) expected andalso
-         Term.aconv diagnostic_result expected andalso
-         diagnostic_trace_exact andalso
          Term.aconv (concl theorem) expected
        end)
 
@@ -875,7 +614,6 @@ val _ =
              Term.aconv (clasetMeta.norm store first) second andalso
              Term.aconv (clasetMeta.norm store second) second
            end
-         fun switch _ = ()
          val (ordinary_a, ordinary0) =
            clasetMeta.new_meta {allow = [], ty = bool_ty}
              clasetMeta.empty
@@ -886,23 +624,9 @@ val _ =
              (clasetMeta.bind (ordinary_a, ordinary_b) ordinary1)
          val ordinary_rejected =
            clasetMeta.bind (ordinary_b, ordinary_a) ordinary2
-         val (diagnostic_a, diagnostic0) =
-           clasetMeta.new_meta {allow = [], ty = bool_ty}
-             clasetMeta.empty
-         val (diagnostic_b, diagnostic1) =
-           clasetMeta.new_meta {allow = [], ty = bool_ty} diagnostic0
-         val diagnostic2 =
-           the_store
-             (clasetMeta.bind_diagnostic switch
-               (diagnostic_a, diagnostic_b) diagnostic1)
-         val diagnostic_rejected =
-           clasetMeta.bind_diagnostic switch
-             (diagnostic_b, diagnostic_a) diagnostic2
        in
          not (Option.isSome ordinary_rejected) andalso
-         not (Option.isSome diagnostic_rejected) andalso
-         invariant ordinary2 ordinary_a ordinary_b andalso
-         invariant diagnostic2 diagnostic_a diagnostic_b
+         invariant ordinary2 ordinary_a ordinary_b
        end)
 
 val _ =
@@ -943,14 +667,9 @@ val _ =
            Term.subst
              [{redex = typed_dependency, residue = parameter}]
              typed_unresolved
-         fun switch _ = ()
        in
          Term.aconv
            (clasetMeta.norm store5 outer) (beta_eta_term expected)
-         andalso
-         Term.aconv
-           (clasetMeta.norm_diagnostic switch store5 outer)
-           (beta_eta_term expected)
        end)
 
 fun unify_with store mode rule_metas pair =

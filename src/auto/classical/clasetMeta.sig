@@ -27,32 +27,6 @@ sig
   val is_eigen : store -> term -> bool
   val ground : store -> store
 
-  (* Measured-only versions used by the timed-v3 unifier.  Each callback
-     announces the actual kind of store operation about to run.  Expansion
-     memo lookup is a store lookup; memo rebuild and substitution-list
-     construction are normalization setup; active-path cycle checks are
-     decisions; and dependency-list iteration is other traversal.  Ordinary
-     unification continues to use the operations above and acquires no
-     diagnostic callback dispatch. *)
-  datatype diagnostic_phase =
-      DiagnosticNormalizationSetup
-    | DiagnosticStoreLookupWalk
-    | DiagnosticPatternOccursAllowDecision
-    | DiagnosticPersistentBindingUpdate
-    | DiagnosticTraversalOther
-  datatype diagnostic_boundary = DiagnosticEnter | DiagnosticExit
-  type diagnostic_switch = diagnostic_boundary * diagnostic_phase -> unit
-  val norm_type_diagnostic : diagnostic_switch -> store -> hol_type ->
-                             hol_type
-  val norm_diagnostic : diagnostic_switch -> store -> term -> term
-  val is_eigen_diagnostic : diagnostic_switch -> store -> term -> bool
-  val bind_diagnostic : diagnostic_switch -> meta * term -> store ->
-                        store option
-  val bind_ty_diagnostic : diagnostic_switch -> tymeta * hol_type -> store ->
-                           store option
-  val register_eigen_diagnostic : diagnostic_switch -> term -> store ->
-                                  store option
-
   (* Persistent bindings support search-subtree diffs.  Each residue is
      semantically normalized when accepted; as-yet unbound dependencies
      remain visible to dynamic pruning. *)
