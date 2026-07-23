@@ -867,6 +867,8 @@ fun is_passthrough_marker theorem =
   Option.isSome (markerLib.destExcl theorem) orelse
   Option.isSome (markerLib.destExclSF theorem) orelse
   Option.isSome (markerLib.destFRAG theorem) orelse
+  Option.isSome (markerLib.dest_Req0 theorem) orelse
+  Option.isSome (markerLib.dest_ReqD theorem) orelse
   is_bounded theorem
 
 fun rule_name_exists name cs =
@@ -880,8 +882,8 @@ fun next_extra_name prefix cs index =
   end
 
 (* process_claset_tags consumes the classical marker vocabulary.  Plain
-   leftovers become unsafe intros; Cong, Excl, SF, and related generic
-   markers deliberately pass through without becoming rules. *)
+   leftovers become unsafe intros; Cong, Excl, SF, requirement, and related
+   generic markers deliberately pass through without becoming rules. *)
 fun add_plain_theorems prefix theorems cs =
   let
     fun add (theorem, (current, index)) =

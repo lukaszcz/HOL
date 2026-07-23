@@ -1976,3 +1976,19 @@ val _ =
          ListPair.allEq (fn (th1, th2) => same_thm th1 th2)
            (rest, [plain1, cong, plain2])
        end)
+
+val _ =
+  test
+    ("claset invocation skips simplifier requirement markers",
+     fn () =>
+       let
+         val plain = boolTheory.TRUTH
+         val req0 = markerLib.mk_Req0 boolTheory.AND_CLAUSES
+         val reqD = markerLib.mk_ReqD boolTheory.OR_CLAUSES
+         val cs =
+           invocation_claset {prefix = "__claset_req_"} empty_cs
+             [req0, plain, reqD]
+       in
+         length (rules_of cs) = 1 andalso
+         has_marker_rule marker_intro_spec plain cs
+       end)
