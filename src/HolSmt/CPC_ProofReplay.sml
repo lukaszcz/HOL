@@ -221,21 +221,7 @@ local
     Drule.SPECL args (expect_one_premise "instantiate" prems)
 
   fun conversion_equal name conv target =
-    let
-      val (left, right) = boolSyntax.dest_eq target
-      fun forward (source, expected) =
-        let
-          val theorem = conv source
-            handle Conv.UNCHANGED =>
-              raise ERR name "conversion made no change"
-          val (_, normalized) = boolSyntax.dest_eq (Thm.concl theorem)
-        in
-          Thm.TRANS theorem (Thm.ALPHA normalized expected)
-        end
-    in
-      forward (left, right)
-      handle Feedback.HOL_ERR _ => Thm.SYM (forward (right, left))
-    end
+    Library.conversion_equal name conv (boolSyntax.dest_eq target)
 
   fun replay_beta_reduce args =
     conversion_equal "beta-reduce"
@@ -1047,6 +1033,11 @@ local
       fun guard_thm guard =
         Tactical.TAC_PROOF (([], guard), intLib.ARITH_TAC)
         handle Feedback.HOL_ERR _ => Thm.ASSUME guard
+      fun distinct_lemma target =
+        Tactical.TAC_PROOF (([], target),
+          bossLib.SIMP_TAC (bossLib.srw_ss())
+            [HolSmtTheory.ALL_DISTINCT_NIL,
+             HolSmtTheory.ALL_DISTINCT_CONS])
       fun total_eq_ediv a b =
         Drule.SPECL [a, b] HolSmtTheory.smt_ediv_total_eq_ediv
       fun total_eq_emod a b =
@@ -1126,16 +1117,8 @@ local
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)),
            boolSyntax.mk_eq (boolSyntax.mk_neg left, right)))
-    | ("distinct-elim", [target]) =>
-        Tactical.TAC_PROOF (([], target),
-          bossLib.SIMP_TAC (bossLib.srw_ss())
-            [HolSmtTheory.ALL_DISTINCT_NIL,
-             HolSmtTheory.ALL_DISTINCT_CONS])
-    | ("distinct-false", [target]) =>
-        Tactical.TAC_PROOF (([], target),
-          bossLib.SIMP_TAC (bossLib.srw_ss())
-            [HolSmtTheory.ALL_DISTINCT_NIL,
-             HolSmtTheory.ALL_DISTINCT_CONS])
+    | ("distinct-elim", [target]) => distinct_lemma target
+    | ("distinct-false", [target]) => distinct_lemma target
     | ("eq-ite-lift", [condition, then_term, else_term, right]) =>
         let
           val target = boolSyntax.mk_eq

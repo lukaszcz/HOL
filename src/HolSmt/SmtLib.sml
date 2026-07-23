@@ -406,6 +406,19 @@ local
   val builtin_symbols =
     List.foldl (Lib.uncurry Net.insert) Net.empty builtin_symbol_encodings
 
+  (* The (theory, name) pairs of the constant-headed builtin symbols, so that
+     `has_ranked_semantics` can test membership in O(log n) rather than
+     scanning `builtin_symbol_encodings` with `Term.same_const` per node. *)
+  val builtin_const_names =
+    List.foldl
+      (fn ((builtin, _), acc) =>
+        if Term.is_const builtin then
+          let val {Thy, Name, ...} = Term.dest_thy_const builtin
+          in Redblackset.add (acc, (Thy, Name)) end
+        else acc)
+      (Redblackset.empty (Lib.pair_compare (String.compare, String.compare)))
+      builtin_symbol_encodings
+
   (* SMT-LIB type and function names are uniformly generated as "tN"
      and "vN", respectively, where N is a number. Prefixes must be
      distinct. *)
@@ -1389,12 +1402,19 @@ local
         (Redblackmap.mkDict String.compare) tydict
       val tm_dict = Redblackmap.foldl (fn ((tm, n), s, dict) =>
         let
-          val full_arity =
-            List.length (Lib.fst (boolSyntax.strip_fun (Term.type_of tm)))
-          fun accepted_arity args =
+          (* `full_arity` is only consulted in the HigherOrder regime, so it is
+             computed lazily there rather than for every FirstOrder entry. *)
+          val accepted_arity =
             case regime of
-              FirstOrder => List.length args = n
-            | HigherOrder _ => List.length args <= full_arity
+              FirstOrder => (fn args => List.length args = n)
+            | HigherOrder _ =>
+                let
+                  val full_arity =
+                    List.length (Lib.fst (boolSyntax.strip_fun
+                      (Term.type_of tm)))
+                in
+                  fn args => List.length args <= full_arity
+                end
         in
           Redblackmap.insert (dict, s, [Lib.K (SmtLib_Theories.zero_args
             (fn args =>
@@ -1603,10 +1623,9 @@ local
       end
     fun has_ranked_semantics c =
       TypeBase.is_constructor c orelse
-      List.exists
-        (fn (builtin, _) =>
-          Term.is_const builtin andalso Term.same_const c builtin)
-        builtin_symbol_encodings
+      (Term.is_const c andalso
+        let val {Thy, Name, ...} = Term.dest_thy_const c
+        in Redblackset.member (builtin_const_names, (Thy, Name)) end)
     fun translate_lambda acc =
       let
         val (v, body) = Term.dest_abs tm
@@ -2807,167 +2826,113 @@ in
     | SOME selected_logic =>
         SOME {logic = selected_logic, reason = "caller override"}
 
-  fun goal_to_SmtLib_translation_with_policy_and_regime_and_apply_operator
-      policy regime apply_operator =
-    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o
-      goal_to_SmtLib_aux (RegimeOverride regime) apply_operator policy
+  type smtlib_emit_options = {
+    request : regime_request,
+    apply_operator : standard27_apply_operator,
+    policy : logic_selection_policy,
+    get_proof : bool
+  }
+
+  fun goal_to_SmtLib_translation_gen
+      ({request, apply_operator, policy, get_proof} : smtlib_emit_options)
+      goal =
+    let
+      val tail =
+        if get_proof then ["(get-proof)\n", "(exit)\n"] else ["(exit)\n"]
+    in
+      Lib.apsnd (fn xs => xs @ tail)
+        (goal_to_SmtLib_aux request apply_operator policy goal)
+    end
+
+  fun goal_to_SmtLib_gen opts goal =
+    Lib.apfst translation_dicts
+      (goal_to_SmtLib_translation_gen opts goal)
 
   fun goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
       policy dialect apply_operator =
-    Lib.apsnd (fn xs => xs @ ["(exit)\n"]) o
-      goal_to_SmtLib_aux (AutomaticRegime dialect) apply_operator policy
-
-  fun goal_to_SmtLib_translation_with_policy_and_regime policy regime =
-    goal_to_SmtLib_translation_with_policy_and_regime_and_apply_operator
-      policy regime ApplyUnderscore
-
-  fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
-    goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
-      policy dialect ApplyUnderscore
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime dialect,
+      apply_operator = apply_operator,
+      policy = policy,
+      get_proof = false
+    }
 
   (* Generic callers default to the standard `_` apply spelling used by our
      parser and corpus.  A cvc5 boundary selects ApplyAt explicitly. *)
-  fun goal_to_SmtLib_translation_with_policy policy =
-    goal_to_SmtLib_translation_with_policy_and_dialect
-      policy Standard27
+  fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime dialect,
+      apply_operator = ApplyUnderscore,
+      policy = policy,
+      get_proof = false
+    }
 
   fun goal_to_SmtLib_translation_with_regime_and_apply_operator
       regime apply_operator logic =
-    goal_to_SmtLib_translation_with_policy_and_regime_and_apply_operator
-      (option_logic_policy logic) regime apply_operator
-
-  fun goal_to_SmtLib_translation_with_dialect_and_apply_operator
-      dialect apply_operator logic =
-    goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
-      (option_logic_policy logic) dialect apply_operator
+    goal_to_SmtLib_translation_gen {
+      request = RegimeOverride regime,
+      apply_operator = apply_operator,
+      policy = option_logic_policy logic,
+      get_proof = false
+    }
 
   fun goal_to_SmtLib_translation_with_regime regime logic =
-    goal_to_SmtLib_translation_with_regime_and_apply_operator
-      regime ApplyUnderscore logic
+    goal_to_SmtLib_translation_gen {
+      request = RegimeOverride regime,
+      apply_operator = ApplyUnderscore,
+      policy = option_logic_policy logic,
+      get_proof = false
+    }
 
   fun goal_to_SmtLib_translation_with_dialect dialect logic =
-    goal_to_SmtLib_translation_with_dialect_and_apply_operator
-      dialect ApplyUnderscore logic
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime dialect,
+      apply_operator = ApplyUnderscore,
+      policy = option_logic_policy logic,
+      get_proof = false
+    }
 
   fun goal_to_SmtLib_translation logic =
-    goal_to_SmtLib_translation_with_policy (option_logic_policy logic)
-
-  fun goal_to_SmtLib_with_regime_and_apply_operator
-      regime apply_operator logic goal =
-    let
-      val (translation, strings) =
-        goal_to_SmtLib_translation_with_regime_and_apply_operator
-          regime apply_operator logic goal
-    in
-      (translation_dicts translation, strings)
-    end
-
-  fun goal_to_SmtLib_with_regime regime logic goal =
-    goal_to_SmtLib_with_regime_and_apply_operator
-      regime ApplyUnderscore logic goal
-
-  fun goal_to_SmtLib_with_dialect_and_apply_operator
-      dialect apply_operator logic goal =
-    let
-      val (translation, strings) =
-        goal_to_SmtLib_translation_with_dialect_and_apply_operator
-          dialect apply_operator logic goal
-    in
-      (translation_dicts translation, strings)
-    end
-
-  fun goal_to_SmtLib_with_dialect dialect logic goal =
-    goal_to_SmtLib_with_dialect_and_apply_operator
-      dialect ApplyUnderscore logic goal
-
-  fun goal_to_SmtLib logic goal =
-    let
-      val (translation, strings) = goal_to_SmtLib_translation logic goal
-    in
-      (translation_dicts translation, strings)
-    end
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime_and_apply_operator
-      policy regime apply_operator =
-    Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
-      goal_to_SmtLib_aux (RegimeOverride regime) apply_operator policy
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime Standard27,
+      apply_operator = ApplyUnderscore,
+      policy = option_logic_policy logic,
+      get_proof = false
+    }
 
   fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
       policy dialect apply_operator =
-    Lib.apsnd (fn xs => xs @ ["(get-proof)\n", "(exit)\n"]) o
-      goal_to_SmtLib_aux (AutomaticRegime dialect) apply_operator policy
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime
-      policy regime =
-    goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime_and_apply_operator
-      policy regime ApplyUnderscore
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime dialect,
+      apply_operator = apply_operator,
+      policy = policy,
+      get_proof = true
+    }
 
   fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
       policy dialect =
-    goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
-      policy dialect ApplyUnderscore
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy policy =
-    goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
-      policy Standard27
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_regime_and_apply_operator
-      regime apply_operator logic =
-    goal_to_SmtLib_with_get_proof_translation_with_policy_and_regime_and_apply_operator
-      (option_logic_policy logic) regime apply_operator
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_dialect_and_apply_operator
-      dialect apply_operator logic =
-    goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
-      (option_logic_policy logic) dialect apply_operator
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_regime regime logic =
-    goal_to_SmtLib_with_get_proof_translation_with_regime_and_apply_operator
-      regime ApplyUnderscore logic
-
-  fun goal_to_SmtLib_with_get_proof_translation_with_dialect dialect logic =
-    goal_to_SmtLib_with_get_proof_translation_with_dialect_and_apply_operator
-      dialect ApplyUnderscore logic
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime dialect,
+      apply_operator = ApplyUnderscore,
+      policy = policy,
+      get_proof = true
+    }
 
   fun goal_to_SmtLib_with_get_proof_translation logic =
-    goal_to_SmtLib_with_get_proof_translation_with_policy
-      (option_logic_policy logic)
+    goal_to_SmtLib_translation_gen {
+      request = AutomaticRegime Standard27,
+      apply_operator = ApplyUnderscore,
+      policy = option_logic_policy logic,
+      get_proof = true
+    }
 
-  fun goal_to_SmtLib_with_get_proof_with_regime_and_apply_operator
-      regime apply_operator logic goal =
-    let
-      val (translation, strings) =
-        goal_to_SmtLib_with_get_proof_translation_with_regime_and_apply_operator
-          regime apply_operator logic goal
-    in
-      (translation_dicts translation, strings)
-    end
-
-  fun goal_to_SmtLib_with_get_proof_with_regime regime logic goal =
-    goal_to_SmtLib_with_get_proof_with_regime_and_apply_operator
-      regime ApplyUnderscore logic goal
-
-  fun goal_to_SmtLib_with_get_proof_with_dialect_and_apply_operator
-      dialect apply_operator logic goal =
-    let
-      val (translation, strings) =
-        goal_to_SmtLib_with_get_proof_translation_with_dialect_and_apply_operator
-          dialect apply_operator logic goal
-    in
-      (translation_dicts translation, strings)
-    end
-
-  fun goal_to_SmtLib_with_get_proof_with_dialect dialect logic goal =
-    goal_to_SmtLib_with_get_proof_with_dialect_and_apply_operator
-      dialect ApplyUnderscore logic goal
-
-  fun goal_to_SmtLib_with_get_proof logic goal =
-    let
-      val (translation, strings) =
-        goal_to_SmtLib_with_get_proof_translation logic goal
-    in
-      (translation_dicts translation, strings)
-    end
+  fun goal_to_SmtLib logic =
+    goal_to_SmtLib_gen {
+      request = AutomaticRegime Standard27,
+      apply_operator = ApplyUnderscore,
+      policy = option_logic_policy logic,
+      get_proof = false
+    }
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV

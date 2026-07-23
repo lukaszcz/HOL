@@ -524,6 +524,28 @@ struct
       Tactic.REFL_TAC))
   end
 
+  (* Prove ``left = right`` where the two sides are related by `conv` (up to
+     alpha-equivalence).  `conv` is applied to whichever side changes; the
+     result is aligned to the other side with `Thm.ALPHA`, retrying in the
+     reverse direction (via `Thm.SYM`) if the forward one fails.  `name`
+     labels the error raised when `conv` leaves its input unchanged. *)
+  fun conversion_equal name conv (left, right) =
+  let
+    fun forward (source, expected) =
+      let
+        val theorem = conv source
+          handle Conv.UNCHANGED =>
+            raise Feedback.mk_HOL_ERR "Library" name
+              "conversion made no change"
+        val normalized = Lib.snd (boolSyntax.dest_eq (Thm.concl theorem))
+      in
+        Thm.TRANS theorem (Thm.ALPHA normalized expected)
+      end
+  in
+    forward (left, right)
+    handle Feedback.HOL_ERR _ => Thm.SYM (forward (right, left))
+  end
+
   (***************************************************************************)
   (* Tactics                                                                 *)
   (***************************************************************************)

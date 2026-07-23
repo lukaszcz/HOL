@@ -3256,6 +3256,19 @@ local
       SortedVar (name, sort) =>
         (located_string_node name, typecheck_sort context tydict sort)
 
+  (* Typecheck a `SortedVar` into its bound HOL variable together with the
+     surface sort of its declared type; used by binders, lambdas, and the
+     define-fun family. *)
+  and checked_sorted_var context tydict sorted_var =
+    let
+      val (name, ty) = typecheck_sorted_var context tydict sorted_var
+      val surface_sort =
+        case node_of sorted_var of
+          SortedVar (_, sort) => surface_sort_of_ast context tydict sort
+    in
+      (name, Term.mk_var (name, ty), surface_sort)
+    end
+
   and instantiate_signature arg_sorts arg_surface
       ({tm, domain, domain_surface, range, range_surface}
          : function_signature) =
@@ -4043,16 +4056,7 @@ local
   and typecheck_binder_with_options elaborate_datatypes context
       (tydict, tmdict, sigdict) term_ast vars body mk_binder =
     let
-      fun check_var sorted_var =
-        let
-          val (name, ty) = typecheck_sorted_var context tydict sorted_var
-          val surface_sort =
-            case node_of sorted_var of
-              SortedVar (_, sort) => surface_sort_of_ast context tydict sort
-        in
-          (name, Term.mk_var (name, ty), surface_sort)
-        end
-      val vars = List.map check_var vars
+      val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =
         List.foldl
           (fn ((name, var, surface_sort), (tmdict, sigdict)) =>
@@ -4085,16 +4089,7 @@ local
                    else reject_duplicates (name_text :: seen) rest
                  end)
       val _ = reject_duplicates [] vars
-      fun check_var sorted_var =
-        let
-          val (name, ty) = typecheck_sorted_var context tydict sorted_var
-          val surface_sort =
-            case node_of sorted_var of
-              SortedVar (_, sort) => surface_sort_of_ast context tydict sort
-        in
-          (name, Term.mk_var (name, ty), surface_sort)
-        end
-      val vars = List.map check_var vars
+      val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =
         List.foldl
           (fn ((name, var, surface_sort), (tmdict, sigdict)) =>
@@ -4655,17 +4650,7 @@ local
         else ()
       val range_type = typecheck_sort context tydict range
       val range_surface = surface_sort_of_ast context tydict range
-      fun check_var (sorted_var, (name, ty)) =
-        let
-          val surface_sort =
-            case node_of sorted_var of
-              SortedVar (_, sort) => surface_sort_of_ast context tydict sort
-        in
-          (name, Term.mk_var (name, ty), surface_sort)
-        end
-      val vars = ListPair.map check_var
-        (sorted_vars,
-         List.map (typecheck_sorted_var context tydict) sorted_vars)
+      val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val body_term =
         typecheck_definition_body elaborate_datatypes context (loc_of body)
           body (tydict, tmdict, sigdict) vars range_type range_surface
@@ -4686,17 +4671,7 @@ local
       val _ = reject_duplicate_definition context name_loc name sigdict
       val range_type = typecheck_sort context tydict range
       val range_surface = surface_sort_of_ast context tydict range
-      fun check_var (sorted_var, (vname, ty)) =
-        let
-          val surface_sort =
-            case node_of sorted_var of
-              SortedVar (_, sort) => surface_sort_of_ast context tydict sort
-        in
-          (vname, Term.mk_var (vname, ty), surface_sort)
-        end
-      val vars = ListPair.map check_var
-        (sorted_vars,
-         List.map (typecheck_sorted_var context tydict) sorted_vars)
+      val vars = List.map (checked_sorted_var context tydict) sorted_vars
       val domain_types = List.map (Term.type_of o #2) vars
       val domain_surface = List.map #3 vars
       val (tm, tmdict, sigdict) =
@@ -4727,18 +4702,8 @@ local
               val _ = reject_duplicate_definition context name_loc name sigdict
               val range_type = typecheck_sort context tydict range
               val range_surface = surface_sort_of_ast context tydict range
-              fun check_var (sorted_var, (vname, ty)) =
-                let
-                  val surface_sort =
-                    case node_of sorted_var of
-                      SortedVar (_, sort) =>
-                        surface_sort_of_ast context tydict sort
-                in
-                  (vname, Term.mk_var (vname, ty), surface_sort)
-                end
-              val vars = ListPair.map check_var
-                (sorted_vars,
-                 List.map (typecheck_sorted_var context tydict) sorted_vars)
+              val vars =
+                List.map (checked_sorted_var context tydict) sorted_vars
               val domain_types = List.map (Term.type_of o #2) vars
               val domain_surface = List.map #3 vars
               val (tm, tmdict, sigdict) =

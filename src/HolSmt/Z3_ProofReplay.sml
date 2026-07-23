@@ -49,6 +49,11 @@ local
 
   val SIMP_PROVE_UPDATE = SmtArrayProve.simp_prove_update
 
+  (* Instantiate `thm` (types and free variables) so its conclusion becomes
+     `t`.  Fails if no such instantiation exists. *)
+  fun exact_inst thm t =
+    Drule.INST_TY_TERM (Term.match_term (Thm.concl thm) t) thm
+
   (***************************************************************************)
   (* functions that manipulate/access "global" state                         *)
   (***************************************************************************)
@@ -98,7 +103,7 @@ local
 
   fun state_inst_cached_thm (s : state) (t : Term.term) : Thm.thm =
     Lib.tryfind  (* may fail *)
-      (fn thm => Drule.INST_TY_TERM (Term.match_term (Thm.concl thm) t) thm)
+      (fn thm => exact_inst thm t)
       (Net.match t (#thm_cache s))
 
   (***************************************************************************)
@@ -733,8 +738,10 @@ local
     Lib.tryfind prove_from_lit lits
   end
 
-  val EDIV_ZERO_SIGN_CLAUSE = Tactical.prove(
-    ``!j:int. j >= 0 \/ ediv 0 j <= 0``,
+  (* `ediv 0 j` sign facts.  The `0i < j` split proves the two `j >= 0`
+     clauses; the `j <= 0i` split with the positive-`j` subgoal proves the
+     two `j <= 0` clauses. *)
+  val ediv_pos_split_tac =
     GEN_TAC THEN Tactic.ASM_CASES_TAC ``0i < j`` THENL [
       intLib.ARITH_TAC,
       Tactic.ASM_CASES_TAC ``j = 0i`` THENL [
@@ -742,66 +749,48 @@ local
         bossLib.ASM_SIMP_TAC intLib.int_ss
           [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
       ]
-    ])
+    ]
+
+  val ediv_nonpos_split_tac =
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
+      ]
+    ]
+
+  (* `emod 0 j` sign facts; both clauses share the same case split. *)
+  val emod_split_tac =
+    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
+      intLib.ARITH_TAC,
+      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
+        STRIP_ASSUME_TAC THENL [
+        intLib.ARITH_TAC,
+        bossLib.ASM_SIMP_TAC intLib.int_ss
+          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
+           integerTheory.INT_MOD0]
+      ]
+    ]
+
+  val EDIV_ZERO_SIGN_CLAUSE = Tactical.prove(
+    ``!j:int. j >= 0 \/ ediv 0 j <= 0``, ediv_pos_split_tac)
 
   val EDIV_ZERO_GE_CLAUSE = Tactical.prove(
-    ``!j:int. j >= 0 \/ ediv 0 j >= 0``,
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``0i < j`` THENL [
-      intLib.ARITH_TAC,
-      Tactic.ASM_CASES_TAC ``j = 0i`` THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
-      ]
-    ])
+    ``!j:int. j >= 0 \/ ediv 0 j >= 0``, ediv_pos_split_tac)
 
   val EDIV_ZERO_NONPOS_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ ediv 0 j <= 0``,
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
-      ]
-    ])
+    ``!j:int. j <= 0 \/ ediv 0 j <= 0``, ediv_nonpos_split_tac)
 
   val EDIV_ZERO_NONNEG_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ ediv 0 j >= 0``,
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ j <> 0i`` STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EDIV_DEF, integerTheory.INT_DIV_0]
-      ]
-    ])
+    ``!j:int. j <= 0 \/ ediv 0 j >= 0``, ediv_nonpos_split_tac)
 
   val EMOD_ZERO_SIGN_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ emod 0 j >= 0``,
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
-        STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
-           integerTheory.INT_MOD0]
-      ]
-    ])
+    ``!j:int. j <= 0 \/ emod 0 j >= 0``, emod_split_tac)
 
   val EMOD_ZERO_NONPOS_CLAUSE = Tactical.prove(
-    ``!j:int. j <= 0 \/ emod 0 j <= 0``,
-    GEN_TAC THEN Tactic.ASM_CASES_TAC ``j <= 0i`` THENL [
-      intLib.ARITH_TAC,
-      SUBGOAL_THEN ``0i < j /\ ~(j < 0i) /\ j <> 0i``
-        STRIP_ASSUME_TAC THENL [
-        intLib.ARITH_TAC,
-        bossLib.ASM_SIMP_TAC intLib.int_ss
-          [integerTheory.EMOD_DEF, integerTheory.INT_ABS,
-           integerTheory.INT_MOD0]
-      ]
-    ])
+    ``!j:int. j <= 0 \/ emod 0 j <= 0``, emod_split_tac)
 
   val SMT_RDIV_CANCEL_CLAUSE = Tactical.prove(
     ``(y:real) = 0 \/ x = y * HolSmt$smt_rdiv x y``,
@@ -815,9 +804,6 @@ local
     ``HolSmt$smt_rdiv (x:real) y = k ==>
       y = 0 \/ y * k = x``,
     bossLib.METIS_TAC [SMT_RDIV_CANCEL_CLAUSE])
-
-  fun exact_inst thm t =
-    Drule.INST_TY_TERM (Term.match_term (Thm.concl thm) t) thm
 
   (* Returns a proof of `t` using arithmetic decision procedures. This function
      is used by both `z3_th_lemma_arith` and `z3_rewrite`. *)
@@ -1148,16 +1134,13 @@ local
       else raise ERR "z3_intro_def_lambda"
         "unsupported :lambda-def binder count"
     val (lhs, rhs) = boolSyntax.dest_eq body
-    fun same_terms ([], []) = true
-      | same_terms (x :: xs, y :: ys) = x ~~ y andalso same_terms (xs, ys)
-      | same_terms _ = false
     fun named_application side =
       let
         val (name, args) = strip_comb side
       in
         if Term.is_var name andalso
            HOLset.member (#var_set state, name) andalso
-           same_terms (args, vars)
+           Lib.list_eq Term.aconv args vars
         then SOME name
         else NONE
       end
@@ -1244,21 +1227,7 @@ local
     (state, prove (thm, t))
   end
 
-  fun conversion_equal conv (l, r) =
-  let
-    fun forward (from, dest) =
-      let
-        val thm = conv from
-          handle Conv.UNCHANGED =>
-            raise ERR "conversion_equal" "conversion made no change"
-        val normalized = Lib.snd (boolSyntax.dest_eq (Thm.concl thm))
-      in
-        Thm.TRANS thm (Thm.ALPHA normalized dest)
-      end
-  in
-    forward (l, r)
-    handle Feedback.HOL_ERR _ => Thm.SYM (forward (r, l))
-  end
+  val conversion_equal = Library.conversion_equal "conversion_equal"
 
   val beta_equal = conversion_equal Thm.BETA_CONV
   val eta_equal = conversion_equal Drule.ETA_CONV
@@ -1270,6 +1239,36 @@ local
      C1 also exercises this rule below abstractions.  The ABS branch keeps the
      binder explicit, while beta and eta are closing rungs after structural
      application congruence has failed. *)
+  (* Congruence below a lambda: `|- (\x. lbody) = (\x. rbody)` from a proof of
+     `|- lbody = rbody`.  Both binders are alpha-converted to a fresh variable
+     first, so a free variable on either side cannot be captured.  `prove_body`
+     supplies the body equality. *)
+  fun abs_congruence prove_body (l, r) =
+  let
+    val (lvar, _) = Term.dest_abs l
+    val (rvar, _) = Term.dest_abs r
+    val _ = if Term.type_of lvar = Term.type_of rvar then ()
+      else raise ERR "abs_congruence" "lambda binder type mismatch"
+    val var =
+      if not (List.exists (Term.term_eq lvar) (Term.free_vars r)) then
+        lvar
+      else if not (List.exists (Term.term_eq rvar) (Term.free_vars l)) then
+        rvar
+      else
+        Term.genvar (Term.type_of lvar)
+    val lalpha = if Term.term_eq lvar var then Thm.REFL l
+      else Drule.ALPHA_CONV var l
+    val ralpha = if Term.term_eq rvar var then Thm.REFL r
+      else Drule.ALPHA_CONV var r
+    val (_, lbody) = Term.dest_abs
+      (Lib.snd (boolSyntax.dest_eq (Thm.concl lalpha)))
+    val (_, rbody) = Term.dest_abs
+      (Lib.snd (boolSyntax.dest_eq (Thm.concl ralpha)))
+    val body_thm = prove_body (lbody, rbody)
+  in
+    Thm.TRANS lalpha (Thm.TRANS (Thm.ABS var body_thm) (Thm.SYM ralpha))
+  end
+
   fun monotonicity_prove (thms, t) =
   let
     val l_r_thms = List.map
@@ -1280,32 +1279,7 @@ local
           handle Feedback.HOL_ERR _ =>
             Thm.TRANS (Thm.ALPHA l r')
               (Thm.TRANS (Thm.SYM thm) (Thm.ALPHA l' r))) l_r_thms
-    fun abs_equal (l, r) =
-      let
-        val (lvar, _) = Term.dest_abs l
-        val (rvar, _) = Term.dest_abs r
-        val _ = if Term.type_of lvar = Term.type_of rvar then ()
-          else raise ERR "abs_equal" "binder type mismatch"
-        val var =
-          if not (List.exists (Term.term_eq lvar) (Term.free_vars r)) then
-            lvar
-          else if not (List.exists (Term.term_eq rvar) (Term.free_vars l)) then
-            rvar
-          else
-            Term.genvar (Term.type_of lvar)
-        val lalpha = if Term.term_eq lvar var then Thm.REFL l
-          else Drule.ALPHA_CONV var l
-        val ralpha = if Term.term_eq rvar var then Thm.REFL r
-          else Drule.ALPHA_CONV var r
-        val (_, lbody) = Term.dest_abs
-          (Lib.snd (boolSyntax.dest_eq (Thm.concl lalpha)))
-        val (_, rbody) = Term.dest_abs
-          (Lib.snd (boolSyntax.dest_eq (Thm.concl ralpha)))
-        val body_thm = make_equal (lbody, rbody)
-      in
-        Thm.TRANS lalpha
-          (Thm.TRANS (Thm.ABS var body_thm) (Thm.SYM ralpha))
-      end
+    fun abs_equal (l, r) = abs_congruence make_equal (l, r)
     and comb_equal (l, r) =
       let
         val (l_op, l_arg) = Term.dest_comb l
@@ -1503,13 +1477,10 @@ local
     val new_count = List.length target_vars - List.length premise_vars
     val new_vars = if new_count < 0 then []
       else List.take (target_vars, new_count)
-    fun same_types ([], []) = true
-      | same_types (v1 :: vs1, v2 :: vs2) =
-          Type.compare (Term.type_of v1, Term.type_of v2) = EQUAL andalso
-          same_types (vs1, vs2)
-      | same_types _ = false
+    fun same_type (v1, v2) =
+      Type.compare (Term.type_of v1, Term.type_of v2) = EQUAL
     val _ = if new_count = List.length vars andalso
-        same_types (vars, new_vars) then ()
+        Lib.list_eq (Lib.curry same_type) vars new_vars then ()
       else raise ERR "z3_quant_intro_bound"
         ("proof-bind binder mismatch: wrapper has " ^
          Int.toString (List.length vars) ^
@@ -1658,36 +1629,21 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
-    (* Congruence below a lambda.  Alpha-convert both binders to a fresh
-       variable before replaying the body, so a free variable on either side
-       cannot be captured. *)
+    (* Congruence below a lambda; the shared `abs_congruence` handles the
+       capture-avoiding binder alignment, while the body is replayed through
+       `z3_rewrite` (threading the state via `state_ref`). *)
     profile "rewrite(11.2)(abs-congruence)" (fn () =>
       let
-        val (lvar, _) = Term.dest_abs l
-        val (rvar, _) = Term.dest_abs r
-        val _ = if Term.type_of lvar = Term.type_of rvar then ()
-          else raise ERR "z3_rewrite" "lambda binder type mismatch"
-        val var =
-          if not (List.exists (Term.term_eq lvar) (Term.free_vars r)) then
-            lvar
-          else if not (List.exists (Term.term_eq rvar) (Term.free_vars l)) then
-            rvar
-          else
-            Term.genvar (Term.type_of lvar)
-        val lalpha = if Term.term_eq lvar var then Thm.REFL l
-          else Drule.ALPHA_CONV var l
-        val ralpha = if Term.term_eq rvar var then Thm.REFL r
-          else Drule.ALPHA_CONV var r
-        val (_, lbody) = Term.dest_abs
-          (Lib.snd (boolSyntax.dest_eq (Thm.concl lalpha)))
-        val (_, rbody) = Term.dest_abs
-          (Lib.snd (boolSyntax.dest_eq (Thm.concl ralpha)))
-        val (state, body_thm) = z3_rewrite
-          (state, boolSyntax.mk_eq (lbody, rbody))
-        val thm = Thm.TRANS lalpha
-          (Thm.TRANS (Thm.ABS var body_thm) (Thm.SYM ralpha))
+        val state_ref = ref state
+        val thm = abs_congruence (fn (lbody, rbody) =>
+          let
+            val (state', body_thm) = z3_rewrite
+              (!state_ref, boolSyntax.mk_eq (lbody, rbody))
+          in
+            state_ref := state'; body_thm
+          end) (l, r)
       in
-        (state, thm)
+        (!state_ref, thm)
       end) ()
     handle Feedback.HOL_ERR _ =>
 
