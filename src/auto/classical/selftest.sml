@@ -3708,145 +3708,12 @@ fun drain_exact sequence =
       NONE => []
     | SOME (value, rest) => value :: drain_exact rest
 
-fun drain_measured_exact sequence =
-  case clasetStep.measured_rule_cases sequence of
-      clasetStep.MeasuredRuleEmpty => []
-    | clasetStep.MeasuredRuleYield (value, rest) =>
-        value :: drain_measured_exact rest
-    | clasetStep.MeasuredRuleInterrupted =>
-        raise Fail "unexpected measured exact-rule interruption"
-
-fun drain_timed_exact sequence =
-  case clasetStep.timed_rule_cases sequence of
-      clasetStep.TimedRuleEmpty => []
-    | clasetStep.TimedRuleYield (value, rest) =>
-        value :: drain_timed_exact rest
-    | clasetStep.TimedRuleInterrupted =>
-        raise Fail "unexpected timed exact-rule interruption"
-
-fun drain_timed_exact_v2 sequence =
-  case clasetStep.timed_rule_cases_v2 sequence of
-      clasetStep.TimedRuleEmptyV2 => []
-    | clasetStep.TimedRuleYieldV2 (value, rest) =>
-        value :: drain_timed_exact_v2 rest
-    | clasetStep.TimedRuleInterruptedV2 =>
-        raise Fail "unexpected timed-v2 exact-rule interruption"
-
-fun drain_timed_exact_v3 sequence =
-  case clasetStep.timed_rule_cases_v3 sequence of
-      clasetStep.TimedRuleEmptyV3 => []
-    | clasetStep.TimedRuleYieldV3 (value, rest) =>
-        value :: drain_timed_exact_v3 rest
-    | clasetStep.TimedRuleInterruptedV3 =>
-        raise Fail "unexpected timed-v3 exact-rule interruption"
-
-fun drain_timed_exact_v4 sequence =
-  case clasetStep.timed_rule_cases_v4 sequence of
-      clasetStep.TimedRuleEmptyV4 => []
-    | clasetStep.TimedRuleYieldV4 (value, rest) =>
-        value :: drain_timed_exact_v4 rest
-    | clasetStep.TimedRuleInterruptedV4 =>
-        raise Fail "unexpected timed-v4 exact-rule interruption"
-
-val timed_cases_api :
-    clasetStep.timed_rule_sequence -> clasetStep.timed_rule_pull =
-  clasetStep.timed_rule_cases
-
-val timed_current_api :
-    clasetStep.timed_rule_sequence ->
-      clasetStep.measured_rule_observation option =
-  clasetStep.timed_rule_current
-
-val timed_statistics_api :
-    clasetStep.timed_rule_sequence ->
-      clasetStep.timed_rule_statistics =
-  clasetStep.timed_rule_statistics
-
-fun ticking_clock () =
-  let
-    val tick = ref 0
-  in
-    fn () =>
-      let
-        val current = !tick
-        val _ = tick := current + 1
-      in
-        Time.fromSeconds (Int.toLarge current)
-      end
-  end
-
 fun exact_rule_api_variants cs plain selected input =
-  let
-    fun controls () =
-      {clock = ticking_clock (), observe = NONE,
-       stop = fn () => false}
-    fun v4_controls () =
-      {classical_elapsed = fn _ => (),
-       clock = ticking_clock (), observe = NONE,
-       stop = fn () => false}
-    fun summary () =
-      clasetStep.new_timed_rule_summary_v4
-        {clock = ticking_clock (), classical_elapsed = fn _ => ()}
-  in
-    [drain_exact
-       (clasetStep.blast_rule_step cs plain (input ())),
-     drain_measured_exact
-       (clasetStep.blast_rule_step_measured
-         {observe = NONE, stop = fn () => false}
-         cs plain (input ())),
-     drain_timed_exact
-       (clasetStep.blast_rule_step_timed (controls ())
-         cs plain (input ())),
-     drain_timed_exact_v2
-       (clasetStep.blast_rule_step_timed_v2 (controls ())
-         cs plain (input ())),
-     drain_timed_exact_v3
-       (clasetStep.blast_rule_step_timed_v3 (controls ())
-         cs plain (input ())),
-     drain_timed_exact_v3
-       (clasetStep.blast_rule_step_timed_v3_with_sink
-         {classical_elapsed = fn _ => (),
-          clock = ticking_clock (), observe = NONE,
-          stop = fn () => false}
-         cs plain (input ())),
-     drain_timed_exact_v4
-       (clasetStep.blast_rule_step_timed_v4 (v4_controls ())
-         cs plain (input ())),
-     drain_timed_exact_v4
-       (clasetStep.blast_rule_step_timed_v4_with_summary
-         {summary = summary (), observe = NONE,
-          stop = fn () => false}
-         cs plain (input ())),
-     drain_exact
-       (clasetStep.blast_rule_step_at cs selected (input ())),
-     drain_measured_exact
-       (clasetStep.blast_rule_step_measured_at
-         {observe = NONE, stop = fn () => false}
-         cs selected (input ())),
-     drain_timed_exact
-       (clasetStep.blast_rule_step_timed_at (controls ())
-         cs selected (input ())),
-     drain_timed_exact_v2
-       (clasetStep.blast_rule_step_timed_v2_at (controls ())
-         cs selected (input ())),
-     drain_timed_exact_v3
-       (clasetStep.blast_rule_step_timed_v3_at (controls ())
-         cs selected (input ())),
-     drain_timed_exact_v3
-       (clasetStep.blast_rule_step_timed_v3_with_sink_at
-         {classical_elapsed = fn _ => (),
-          clock = ticking_clock (), observe = NONE,
-          stop = fn () => false}
-         cs selected (input ())),
-     drain_timed_exact_v4
-       (clasetStep.blast_rule_step_timed_v4_at (v4_controls ())
-         cs selected (input ())),
-     drain_timed_exact_v4
-       (clasetStep.blast_rule_step_timed_v4_with_summary_at
-         {summary = summary (), observe = NONE,
-          stop = fn () => false}
-         cs selected (input ()))]
-  end
+  [drain_exact
+     (clasetStep.blast_rule_step cs plain (input ())),
+   drain_exact
+     (clasetStep.blast_rule_step_at cs selected (input ()))]
+
 
 fun exact_source_term store tm =
   let
@@ -3867,25 +3734,9 @@ fun normalize_exact_term tm =
             (Conv.ORELSEC (BETA_CONV, Drule.ETA_CONV))) tm)))
 
 fun exact_transition_variants cs specification goal =
-  let
-    val ordinary =
-      drain_exact
-        (clasetStep.blast_rule_step cs specification
-          (clasetGoal.from_goal goal, 1))
-    val measured =
-      drain_measured_exact
-        (clasetStep.blast_rule_step_measured
-          {observe = NONE, stop = fn () => false}
-          cs specification (clasetGoal.from_goal goal, 1))
-    val timed_v3 =
-      drain_timed_exact_v3
-        (clasetStep.blast_rule_step_timed_v3
-          {clock = ticking_clock (), observe = NONE,
-           stop = fn () => false}
-          cs specification (clasetGoal.from_goal goal, 1))
-  in
-    [ordinary, measured, timed_v3]
-  end
+  [drain_exact
+     (clasetStep.blast_rule_step cs specification
+       (clasetGoal.from_goal goal, 1))]
 
 fun valid_open_replay goal (record, node) =
   let
@@ -3915,77 +3766,8 @@ val _ =
          val selected =
            {theorem = theorem, elim = false, major = NONE}
          fun input () = (clasetGoal.from_goal goal, 1)
-         fun controls () =
-           {clock = ticking_clock (), observe = NONE,
-            stop = fn () => false}
-         val summary =
-           clasetStep.new_timed_rule_summary_v4
-             {clock = ticking_clock (), classical_elapsed = fn _ => ()}
          val variants =
-           [drain_exact
-              (clasetStep.blast_rule_step cs specification (input ())),
-            drain_exact
-              (clasetStep.blast_rule_step_at cs selected (input ())),
-            drain_measured_exact
-              (clasetStep.blast_rule_step_measured
-                {observe = NONE, stop = fn () => false}
-                cs specification (input ())),
-            drain_measured_exact
-              (clasetStep.blast_rule_step_measured_at
-                {observe = NONE, stop = fn () => false}
-                cs selected (input ())),
-            drain_timed_exact
-              (clasetStep.blast_rule_step_timed (controls ())
-                cs specification (input ())),
-            drain_timed_exact
-              (clasetStep.blast_rule_step_timed_at (controls ())
-                cs selected (input ())),
-            drain_timed_exact_v2
-              (clasetStep.blast_rule_step_timed_v2 (controls ())
-                cs specification (input ())),
-            drain_timed_exact_v2
-              (clasetStep.blast_rule_step_timed_v2_at (controls ())
-                cs selected (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3 (controls ())
-                cs specification (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_at (controls ())
-                cs selected (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_with_sink
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                cs specification (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_with_sink_at
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                cs selected (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                cs specification (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_at
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                cs selected (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_with_summary
-                {summary = summary, observe = NONE,
-                 stop = fn () => false}
-                cs specification (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_with_summary_at
-                {summary = summary, observe = NONE,
-                 stop = fn () => false}
-                cs selected (input ()))]
+           exact_rule_api_variants cs specification selected input
          val (ordinary_children, ordinary_validation) =
            clasetReplay.RULE_TAC
              {theorem = SPEC target theorem, elim = false,
@@ -4159,17 +3941,6 @@ val _ =
            drain_exact
              (clasetStep.blast_rule_step clasetLib.empty_cs
                specification (node, 1))
-         val measured =
-           drain_measured_exact
-             (clasetStep.blast_rule_step_measured
-               {observe = NONE, stop = fn () => false}
-               clasetLib.empty_cs specification (node, 1))
-         val timed_v3 =
-           drain_timed_exact_v3
-             (clasetStep.blast_rule_step_timed_v3
-               {clock = ticking_clock (), observe = NONE,
-                stop = fn () => false}
-               clasetLib.empty_cs specification (node, 1))
          val selected =
            drain_exact
              (clasetStep.blast_rule_step_at clasetLib.empty_cs
@@ -4210,7 +3981,7 @@ val _ =
                  end
              | _ => false
        in
-         List.all exact [ordinary, measured, timed_v3, selected]
+         List.all exact [ordinary, selected]
        end)
 
 val _ =
@@ -4254,82 +4025,17 @@ val _ =
                    w = target}],
                store = store, level = 0},
             1)
-         fun controls () =
-           {clock = ticking_clock (), observe = NONE,
-            stop = fn () => false}
-         fun v4_controls () =
-           {classical_elapsed = fn _ => (),
-            clock = ticking_clock (), observe = NONE,
-            stop = fn () => false}
-         fun summary () =
-           clasetStep.new_timed_rule_summary_v4
-             {clock = ticking_clock (),
-              classical_elapsed = fn _ => ()}
          val plain =
            {theorem = clasetSeedTheory.CONJ_ELIM_THM,
             elim = true}
          val all_variants =
            [drain_exact
               (clasetStep.blast_rule_step clasetLib.empty_cs
-                plain (input ())),
-            drain_measured_exact
-              (clasetStep.blast_rule_step_measured
-                {observe = NONE, stop = fn () => false}
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact
-              (clasetStep.blast_rule_step_timed (controls ())
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact_v2
-              (clasetStep.blast_rule_step_timed_v2 (controls ())
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3 (controls ())
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_with_sink
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4 (v4_controls ())
-                clasetLib.empty_cs plain (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_with_summary
-                {summary = summary (), observe = NONE,
-                 stop = fn () => false}
-                clasetLib.empty_cs plain (input ()))]
+                plain (input ()))]
          val selected_variants =
            [drain_exact
               (clasetStep.blast_rule_step_at clasetLib.empty_cs
-                specification (input ())),
-            drain_measured_exact
-              (clasetStep.blast_rule_step_measured_at
-                {observe = NONE, stop = fn () => false}
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact
-              (clasetStep.blast_rule_step_timed_at (controls ())
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact_v2
-              (clasetStep.blast_rule_step_timed_v2_at (controls ())
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_at (controls ())
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact_v3
-              (clasetStep.blast_rule_step_timed_v3_with_sink_at
-                {classical_elapsed = fn _ => (),
-                 clock = ticking_clock (), observe = NONE,
-                 stop = fn () => false}
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_at (v4_controls ())
-                clasetLib.empty_cs specification (input ())),
-            drain_timed_exact_v4
-              (clasetStep.blast_rule_step_timed_v4_with_summary_at
-                {summary = summary (), observe = NONE,
-                 stop = fn () => false}
-                clasetLib.empty_cs specification (input ()))]
+                specification (input ()))]
          val invalid =
            drain_exact
              (clasetStep.blast_rule_step_at clasetLib.empty_cs
@@ -4774,34 +4480,6 @@ val _ =
          List.all exact variants
        end)
 
-fun phase_time_sum
-      (statistics : clasetStep.timed_rule_statistics) =
-  List.foldl Time.+ Time.zeroTime
-    [#attempt_selection_time statistics,
-     #freshening_setup_time statistics,
-     #minor_unification_time statistics,
-     #elimination_major_unification_time statistics,
-     #rule_instantiation_time statistics,
-     #child_store_construction_time statistics,
-     #direct_result_construction_time statistics,
-     #lazy_result_yield_time statistics,
-     #direct_child_replacement_time statistics,
-     #replay_record_construction_time statistics,
-     #record_insertion_time statistics]
-
-fun same_exact_transition goal ((left_record, left_node),
-      (right_record, right_node)) =
-  clasetStep.consumed_of left_record =
-    clasetStep.consumed_of right_record andalso
-  same_goals (rendered_goals left_node) (rendered_goals right_node)
-  andalso
-  clasetGoal.replay_length left_node =
-    clasetGoal.replay_length right_node andalso
-  clasetReplay.to_string (clasetGoal.replay left_node) =
-    clasetReplay.to_string (clasetGoal.replay right_node) andalso
-  valid_step goal (left_record, left_node) andalso
-  valid_step goal (right_record, right_node)
-
 val _ =
   test
     ("measured exact rules preserve intro and elim sequence order",
@@ -4819,53 +4497,24 @@ val _ =
                clasetSeedTheory.CONJ_ELIM_THM)]
              clasetLib.empty_cs
 
-         fun compare specification goal =
-           let
-             val ordinary =
-               drain_exact
-                 (clasetStep.blast_rule_step cs specification
-                   (clasetGoal.from_goal goal, 1))
-             val measured_sequence =
-               clasetStep.blast_rule_step_measured
-                 {observe = NONE, stop = fn () => false}
-                 cs specification (clasetGoal.from_goal goal, 1)
-             val measured = drain_measured_exact measured_sequence
-           in
-             length ordinary = length measured andalso
-             ListPair.allEq (same_exact_transition goal)
-               (ordinary, measured)
-           end
-
-         val intro_ok =
-           compare {theorem = boolTheory.AND_INTRO_THM, elim = false}
-             intro_goal
+         val intro_results =
+           drain_exact
+             (clasetStep.blast_rule_step cs
+               {theorem = boolTheory.AND_INTRO_THM, elim = false}
+               (clasetGoal.from_goal intro_goal, 1))
          val elim_specification =
            {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
          val ordinary_elims =
            drain_exact
              (clasetStep.blast_rule_step cs elim_specification
                (clasetGoal.from_goal elim_goal, 1))
-         val measured_sequence =
-           clasetStep.blast_rule_step_measured
-             {observe = NONE, stop = fn () => false}
-             cs elim_specification (clasetGoal.from_goal elim_goal, 1)
-         val measured_elims = drain_measured_exact measured_sequence
-         val statistics =
-           clasetStep.measured_rule_statistics measured_sequence
        in
-         intro_ok andalso length ordinary_elims = 2 andalso
+         length intro_results = 1 andalso
+         List.all (valid_open_replay intro_goal) intro_results andalso
+         length ordinary_elims = 2 andalso
          map (clasetStep.consumed_of o #1) ordinary_elims =
            [SOME 2, SOME 3] andalso
-         ListPair.allEq (same_exact_transition elim_goal)
-           (ordinary_elims, measured_elims) andalso
-         #attempt_selections statistics = 3 andalso
-         #elim_attempts statistics = 3 andalso
-         #minor_unifications statistics = 3 andalso
-         #elimination_major_unifications statistics = 3 andalso
-         #lazy_result_yields statistics = 2 andalso
-         #direct_child_replacements statistics = 2 andalso
-         #replay_record_constructions statistics = 2 andalso
-         #record_insertions statistics = 2
+         List.all (valid_open_replay elim_goal) ordinary_elims
        end)
 
 val _ =
@@ -4977,575 +4626,6 @@ val _ =
 
 val _ =
   test
-    ("timed exact rules account successful and failed attempts exactly",
-     fn () =>
-       let
-         val p = Term.mk_var ("timed_exact_p", bool_ty)
-         val q = Term.mk_var ("timed_exact_q", bool_ty)
-         val r = Term.mk_var ("timed_exact_r", bool_ty)
-         val conjunction = boolSyntax.mk_conj (p, q)
-         val goal = ([r, conjunction, conjunction], p)
-         val cs =
-           clasetLib.add_selims
-             [("timed-exact-and-elim",
-               clasetSeedTheory.CONJ_ELIM_THM)]
-             clasetLib.empty_cs
-         val specification =
-           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
-         val untimed =
-           clasetStep.blast_rule_step_measured
-             {observe = NONE, stop = fn () => false}
-             cs specification (clasetGoal.from_goal goal, 1)
-         val timed =
-           clasetStep.blast_rule_step_timed
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             cs specification (clasetGoal.from_goal goal, 1)
-         val untimed_results = drain_measured_exact untimed
-         val timed_results = drain_timed_exact timed
-         val ordinary_statistics =
-           clasetStep.measured_rule_statistics untimed
-         val statistics = clasetStep.timed_rule_statistics timed
-         val second = Time.fromSeconds 1
-       in
-         length untimed_results = 2 andalso
-         length timed_results = 2 andalso
-         ListPair.allEq (same_exact_transition goal)
-           (untimed_results, timed_results) andalso
-         #phase_entries statistics =
-           #phase_entries ordinary_statistics andalso
-         #phase_exits statistics =
-           #phase_exits ordinary_statistics andalso
-         #attempt_selections statistics = 3 andalso
-         #elimination_major_unifications statistics = 3 andalso
-         #lazy_result_yields statistics = 2 andalso
-         #attempt_selection_time statistics =
-           Time.+ (second, Time.+ (second, second)) andalso
-         #elimination_major_unification_time statistics =
-           Time.+ (second, Time.+ (second, second)) andalso
-         #lazy_result_yield_time statistics =
-           Time.+ (second, second) andalso
-         #classical_time statistics = Time.fromSeconds 26 andalso
-         phase_time_sum statistics = #classical_time statistics
-       end)
-
-val _ =
-  test
-    ("timed fake-clock observations results and totals repeat exactly",
-     fn () =>
-       let
-         val p = Term.mk_var ("timed_repeat_p", bool_ty)
-         val q = Term.mk_var ("timed_repeat_q", bool_ty)
-         val r = Term.mk_var ("timed_repeat_r", bool_ty)
-         val goal = ([r, boolSyntax.mk_conj (p, q)], p)
-         val cs =
-           clasetLib.add_selims
-             [("timed-repeat-and-elim",
-               clasetSeedTheory.CONJ_ELIM_THM)]
-             clasetLib.empty_cs
-         val specification =
-           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
-
-         fun run () =
-           let
-             val observations =
-               ref ([] : clasetStep.measured_rule_observation list)
-             val sequence =
-               clasetStep.blast_rule_step_timed
-                 {clock = ticking_clock (),
-                  observe =
-                    SOME
-                      (fn event =>
-                        observations := event :: !observations),
-                  stop = fn () => false}
-                 cs specification (clasetGoal.from_goal goal, 1)
-             val results = drain_timed_exact sequence
-             val views =
-               map
-                 (fn (record, node) =>
-                   (clasetStep.consumed_of record,
-                    rendered_goals node,
-                    clasetReplay.to_string (clasetGoal.replay node)))
-                 results
-           in
-             (rev (!observations), views,
-              clasetStep.timed_rule_statistics sequence)
-           end
-         val (observations1, views1, statistics1) = run ()
-         val (observations2, views2, statistics2) = run ()
-         fun same_view ((consumed1, goals1, replay1),
-                        (consumed2, goals2, replay2)) =
-           consumed1 = consumed2 andalso
-           same_goals goals1 goals2 andalso replay1 = replay2
-       in
-         observations1 = observations2 andalso
-         length views1 = length views2 andalso
-         ListPair.allEq same_view (views1, views2) andalso
-         statistics1 = statistics2 andalso
-         #classical_time statistics1 = Time.fromSeconds 15 andalso
-         phase_time_sum statistics1 = #classical_time statistics1
-       end)
-
-val _ =
-  test
-    ("timed exact-rule Enter and Exit cutoffs have exact accounting",
-     fn () =>
-       let
-         val p = Term.mk_var ("timed_cutoff_p", bool_ty)
-         val q = Term.mk_var ("timed_cutoff_q", bool_ty)
-         val goal = ([p, q], boolSyntax.mk_conj (p, q))
-
-         fun run cutoff_boundary =
-           let
-             val stop_now = ref false
-             val observations =
-               ref ([] : clasetStep.measured_rule_observation list)
-             fun observe event =
-               (observations := event :: !observations;
-                if #boundary event = cutoff_boundary andalso
-                   #phase event =
-                     clasetStep.ChildStoreConstruction then
-                  stop_now := true
-                else ())
-             val sequence =
-               clasetStep.blast_rule_step_timed
-                 {clock = ticking_clock (), observe = SOME observe,
-                  stop = fn () => !stop_now}
-                 clasetLib.empty_cs
-                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
-                 (clasetGoal.from_goal goal, 1)
-             val pull = clasetStep.timed_rule_cases sequence
-           in
-             (pull, rev (!observations),
-              clasetStep.timed_rule_statistics sequence)
-           end
-         val (enter_pull, enter_observations, enter_statistics) =
-           run clasetStep.RuleEnter
-         val (exit_pull, exit_observations, exit_statistics) =
-           run clasetStep.RuleExit
-         fun interrupted pull =
-           case pull of clasetStep.TimedRuleInterrupted => true
-             | _ => false
-       in
-         interrupted enter_pull andalso interrupted exit_pull andalso
-         #classical_time enter_statistics = Time.fromSeconds 4 andalso
-         #child_store_construction_time enter_statistics =
-           Time.zeroTime andalso
-         #phase_entries enter_statistics = 5 andalso
-         #phase_exits enter_statistics = 4 andalso
-         #classical_time exit_statistics = Time.fromSeconds 5 andalso
-         #child_store_construction_time exit_statistics =
-           Time.fromSeconds 1 andalso
-         #phase_entries exit_statistics = 5 andalso
-         #phase_exits exit_statistics = 5 andalso
-         length enter_observations = 9 andalso
-         length exit_observations = 10
-       end)
-
-val _ =
-  test
-    ("timed exact-rule clock failures propagate without fabricated Exit",
-     fn () =>
-       let
-         exception ClockFailure of int ref
-         val sentinel = ref 83
-         val p = Term.mk_var ("timed_clock_p", bool_ty)
-         val q = Term.mk_var ("timed_clock_q", bool_ty)
-         val input =
-           (clasetGoal.from_goal
-              ([p, q], boolSyntax.mk_conj (p, q)), 1)
-
-         fun run clock observations =
-           let
-             val sequence =
-               clasetStep.blast_rule_step_timed
-                 {clock = clock,
-                  observe = SOME
-                    (fn event => observations := event :: !observations),
-                  stop = fn () => false}
-                 clasetLib.empty_cs
-                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
-                 input
-           in
-             ignore (clasetStep.timed_rule_cases sequence)
-           end
-         val custom_observations = ref []
-         val custom_ok =
-           ((run (fn () => raise ClockFailure sentinel)
-               custom_observations;
-             false)
-            handle ClockFailure actual => actual = sentinel
-                 | _ => false)
-         val backwards_observations = ref []
-         val readings =
-           ref [Time.fromSeconds 2, Time.fromSeconds 1]
-         fun backwards () =
-           case !readings of
-               [] => raise Fail "backwards clock exhausted"
-             | value :: rest => (readings := rest; value)
-         val backwards_ok =
-           ((run backwards backwards_observations; false)
-            handle HOL_ERR error =>
-                     Feedback.top_structure_of error = "clasetStep"
-                 | _ => false)
-       in
-         custom_ok andalso backwards_ok andalso
-         length (!custom_observations) = 1 andalso
-         length (!backwards_observations) = 1 andalso
-         #boundary (hd (!custom_observations)) =
-           clasetStep.RuleEnter andalso
-         #boundary (hd (!backwards_observations)) =
-           clasetStep.RuleEnter
-       end)
-
-val _ =
-  test
-    ("timed-v2 minor split is exact bounded and replay-equivalent",
-     fn () =>
-       let
-         val p = Term.mk_var ("timed_v2_p", bool_ty)
-         val q = Term.mk_var ("timed_v2_q", bool_ty)
-         val r = Term.mk_var ("timed_v2_r", bool_ty)
-         val conjunction = boolSyntax.mk_conj (p, q)
-         val goal = ([r, conjunction, conjunction], p)
-         val specification =
-           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
-         val ordinary =
-           drain_exact
-             (clasetStep.blast_rule_step clasetLib.empty_cs
-               specification (clasetGoal.from_goal goal, 1))
-         val sequence =
-           clasetStep.blast_rule_step_timed_v2
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification
-             (clasetGoal.from_goal goal, 1)
-         val timed = drain_timed_exact_v2 sequence
-         val report = clasetStep.timed_rule_statistics_v2 sequence
-         val base = #base report
-         val minor = #minor_unification_times report
-         val subtotal =
-           Time.+
-             (#normalization_setup_time minor,
-              Time.+
-                (#traversal_decomposition_binding_time minor,
-                 #failure_cleanup_time minor))
-       in
-         length ordinary = 2 andalso length timed = 2 andalso
-         ListPair.allEq (same_exact_transition goal) (ordinary, timed)
-         andalso
-         #attempt_selections base = 3 andalso
-         #minor_unifications base = 3 andalso #calls minor = 3 andalso
-         #failures minor = 0 andalso
-         #failure_cleanup_time minor = Time.zeroTime andalso
-         #max_failure_cleanup_time minor = Time.zeroTime andalso
-         subtotal = #minor_unification_time minor andalso
-         #minor_unification_time base = #minor_unification_time minor
-         andalso phase_time_sum base = #classical_time base andalso
-         not
-           (Time.< (#normalization_setup_time minor,
-                    #max_normalization_setup_time minor)) andalso
-         not
-           (Time.<
-             (#traversal_decomposition_binding_time minor,
-              #max_traversal_decomposition_binding_time minor)) andalso
-         not
-           (Time.< (#minor_unification_time minor,
-                    #max_minor_unification_time minor))
-       end)
-
-val _ =
-  test
-    ("timed-v2 failure interruption and clock errors tunnel exactly",
-     fn () =>
-       let
-         exception V2Clock of int ref
-         val sentinel = ref 131
-         val p = Term.mk_var ("timed_v2_failure_p", bool_ty)
-         val input = (clasetGoal.from_goal ([], p), 1)
-
-         fun make clock observe stop =
-           clasetStep.blast_rule_step_timed_v2
-             {clock = clock, observe = observe, stop = stop}
-             clasetLib.empty_cs
-             {theorem = boolTheory.TRUTH, elim = false} input
-
-         val failed = make (ticking_clock ()) NONE (fn () => false)
-         val failed_results = drain_timed_exact_v2 failed
-         val failed_report = clasetStep.timed_rule_statistics_v2 failed
-         val failed_minor = #minor_unification_times failed_report
-         val stop_now = ref false
-         fun observe event =
-           if #boundary event = clasetStep.RuleEnter andalso
-              #phase event = clasetStep.MinorUnification then
-             stop_now := true
-           else ()
-         val interrupted =
-           make (ticking_clock ()) (SOME observe) (fn () => !stop_now)
-         val interrupted_pull =
-           clasetStep.timed_rule_cases_v2 interrupted
-         val interrupted_report =
-           clasetStep.timed_rule_statistics_v2 interrupted
-         val interrupted_minor =
-           #minor_unification_times interrupted_report
-         fun arm armed event =
-           if #boundary event = clasetStep.RuleEnter andalso
-              #phase event = clasetStep.MinorUnification then
-             armed := true
-           else ()
-         val clock_ok =
-           let
-             val armed = ref false
-             val sequence =
-               make
-                 (fn () =>
-                   if !armed then raise V2Clock sentinel
-                   else Time.zeroTime)
-                 (SOME (arm armed))
-                 (fn () => false)
-           in
-             (ignore (clasetStep.timed_rule_cases_v2 sequence); false)
-             handle V2Clock actual => actual = sentinel | _ => false
-           end
-         val backwards_ok =
-           let
-             val armed = ref false
-             val readings =
-               ref [Time.fromSeconds 2, Time.fromSeconds 1]
-             fun backwards () =
-               if not (!armed) then Time.zeroTime
-               else
-                 case !readings of
-                     [] =>
-                       raise Fail "timed-v2 backwards clock exhausted"
-                   | value :: rest => (readings := rest; value)
-             val sequence =
-               make backwards (SOME (arm armed)) (fn () => false)
-           in
-             (ignore (clasetStep.timed_rule_cases_v2 sequence); false)
-             handle HOL_ERR error =>
-                      (Feedback.top_structure_of error = "clasetStep" orelse
-                       Feedback.top_structure_of error = "clasetUnify")
-                  | _ => false
-           end
-       in
-         null failed_results andalso #calls failed_minor = 1 andalso
-         #failures failed_minor = 1 andalso
-         #failure_cleanup_time failed_minor = Time.zeroTime andalso
-         #normalization_setup_time failed_minor =
-           #max_normalization_setup_time failed_minor andalso
-         #traversal_decomposition_binding_time failed_minor =
-           #max_traversal_decomposition_binding_time failed_minor
-         andalso
-         #minor_unification_time failed_minor =
-           #max_minor_unification_time failed_minor andalso
-         (case interrupted_pull of
-              clasetStep.TimedRuleInterruptedV2 => true
-            | _ => false) andalso
-         #calls interrupted_minor = 0 andalso
-         #minor_unification_time interrupted_minor = Time.zeroTime
-         andalso clock_ok andalso backwards_ok
-       end)
-
-val _ =
-  test
-    ("timed-v3 minor components partition traversal and preserve replay",
-     fn () =>
-       let
-         val p = Term.mk_var ("timed_v3_p", bool_ty)
-         val q = Term.mk_var ("timed_v3_q", bool_ty)
-         val conjunction = boolSyntax.mk_conj (p, q)
-         val goal = ([conjunction, conjunction], p)
-         val specification =
-           {theorem = clasetSeedTheory.CONJ_ELIM_THM, elim = true}
-         val ordinary =
-           drain_exact
-             (clasetStep.blast_rule_step clasetLib.empty_cs
-               specification (clasetGoal.from_goal goal, 1))
-         val v2_sequence =
-           clasetStep.blast_rule_step_timed_v2
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification
-             (clasetGoal.from_goal goal, 1)
-         val v2 = drain_timed_exact_v2 v2_sequence
-         val v3_sequence =
-           clasetStep.blast_rule_step_timed_v3
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification
-             (clasetGoal.from_goal goal, 1)
-         val v3 = drain_timed_exact_v3 v3_sequence
-         val report = clasetStep.timed_rule_statistics_v3 v3_sequence
-         val base_v2 = #base report
-         val base = #base base_v2
-         val coarse = #minor_unification_times base_v2
-         val minor = #minor_unification_times report
-         val traversal =
-           Time.+
-             (#persistent_store_lookup_walk_time minor,
-              Time.+
-                (#structural_decomposition_recursion_time minor,
-                 Time.+
-                   (#pattern_occurs_allow_decision_time minor,
-                    Time.+
-                      (#persistent_binding_update_time minor,
-                       #traversal_other_time minor))))
-         val total =
-           Time.+
-             (#normalization_setup_time minor,
-              Time.+
-                (#traversal_decomposition_binding_time minor,
-                 #failure_cleanup_time minor))
-         fun bounded (value, maximum) = not (Time.< (value, maximum))
-       in
-         length ordinary = 2 andalso length v2 = 2 andalso length v3 = 2
-         andalso ListPair.allEq (same_exact_transition goal) (ordinary, v2)
-         andalso ListPair.allEq (same_exact_transition goal) (ordinary, v3)
-         andalso #calls minor = #minor_unifications base andalso
-         #calls minor = #calls coarse andalso
-         #failures minor = #failures coarse andalso
-         traversal = #traversal_decomposition_binding_time minor andalso
-         traversal = #traversal_decomposition_binding_time coarse andalso
-         total = #minor_unification_time minor andalso
-         total = #minor_unification_time coarse andalso
-         #minor_unification_time minor = #minor_unification_time base andalso
-         #failure_cleanup_time minor = Time.zeroTime andalso
-         #max_failure_cleanup_time minor = Time.zeroTime andalso
-         #normalization_setup_events minor > 0 andalso
-         #persistent_store_lookup_walk_events minor > 0 andalso
-         #structural_decomposition_recursion_events minor > 0 andalso
-         #pattern_occurs_allow_decision_events minor > 0 andalso
-         #persistent_binding_update_events minor > 0 andalso
-         #traversal_other_events minor > 0 andalso
-         bounded
-           (#normalization_setup_time minor,
-            #max_normalization_setup_time minor) andalso
-         bounded
-           (#persistent_store_lookup_walk_time minor,
-            #max_persistent_store_lookup_walk_time minor) andalso
-         bounded
-           (#structural_decomposition_recursion_time minor,
-            #max_structural_decomposition_recursion_time minor) andalso
-         bounded
-           (#pattern_occurs_allow_decision_time minor,
-            #max_pattern_occurs_allow_decision_time minor) andalso
-         bounded
-           (#persistent_binding_update_time minor,
-            #max_persistent_binding_update_time minor) andalso
-         bounded
-           (#traversal_other_time minor,
-            #max_traversal_other_time minor) andalso
-         bounded
-           (#traversal_decomposition_binding_time minor,
-            #max_traversal_decomposition_binding_time minor) andalso
-         bounded
-           (#minor_unification_time minor,
-            #max_minor_unification_time minor)
-       end)
-
-val _ =
-  test
-    ("measured exact-rule cutoff reports the precise deep boundary",
-     fn () =>
-       let
-         val p = Term.mk_var ("measured_cutoff_p", bool_ty)
-         val q = Term.mk_var ("measured_cutoff_q", bool_ty)
-         val stop_now = ref false
-         fun observe
-               ({boundary, phase, ...} :
-                  clasetStep.measured_rule_observation) =
-           case (boundary, phase) of
-               (clasetStep.RuleEnter,
-                clasetStep.ChildStoreConstruction) =>
-                  stop_now := true
-             | _ => ()
-         val sequence =
-           clasetStep.blast_rule_step_measured
-             {observe = SOME observe, stop = fn () => !stop_now}
-             clasetLib.empty_cs
-             {theorem = boolTheory.AND_INTRO_THM, elim = false}
-             (clasetGoal.from_goal
-                ([p, q], boolSyntax.mk_conj (p, q)), 1)
-         val pull = clasetStep.measured_rule_cases sequence
-         val statistics = clasetStep.measured_rule_statistics sequence
-       in
-         (case pull of
-              clasetStep.MeasuredRuleInterrupted => true
-            | _ => false) andalso
-         clasetStep.measured_rule_current sequence =
-           SOME
-             {boundary = clasetStep.RuleEnter,
-              phase = clasetStep.ChildStoreConstruction,
-              goal_position = 1,
-              rule_kind = clasetStep.IntroRule,
-              assumption_position = NONE} andalso
-         #cooperative_checkpoints statistics = 9 andalso
-         #phase_entries statistics = 5 andalso
-         #phase_exits statistics = 4 andalso
-         #child_store_constructions statistics = 1 andalso
-         #direct_result_constructions statistics = 0
-       end)
-
-val _ =
-  test
-    ("measured exact-rule callbacks preserve exception identity",
-     fn () =>
-       let
-         exception ExactObserver of int ref
-         val sentinel = ref 59
-         val p = Term.mk_var ("measured_callback_p", bool_ty)
-         val q = Term.mk_var ("measured_callback_q", bool_ty)
-         val input =
-           (clasetGoal.from_goal
-              ([p, q], boolSyntax.mk_conj (p, q)), 1)
-
-         fun at_instantiation action
-               ({boundary, phase, ...} :
-                  clasetStep.measured_rule_observation) =
-           case (boundary, phase) of
-               (clasetStep.RuleEnter,
-                clasetStep.RuleInstantiation) => action ()
-             | _ => ()
-
-         fun run observer =
-           let
-             val sequence =
-               clasetStep.blast_rule_step_measured
-                 {observe = SOME observer, stop = fn () => false}
-                 clasetLib.empty_cs
-                 {theorem = boolTheory.AND_INTRO_THM, elim = false}
-                 input
-           in
-             ignore (clasetStep.measured_rule_cases sequence)
-           end
-         val hol_ok =
-           ((run
-               (at_instantiation
-                 (fn () =>
-                   raise mk_HOL_ERR "measured-exact-hol"
-                     "observe" "propagate"));
-             false)
-            handle HOL_ERR error =>
-                     Feedback.top_structure_of error =
-                       "measured-exact-hol"
-                 | _ => false)
-         val custom_ok =
-           ((run
-               (at_instantiation
-                 (fn () => raise ExactObserver sentinel));
-             false)
-            handle ExactObserver actual => actual = sentinel
-                 | _ => false)
-         val interrupt_ok =
-           ((run (at_instantiation (fn () => raise Interrupt)); false)
-            handle Interrupt => true | _ => false)
-       in
-         hol_ok andalso custom_ok andalso interrupt_ok
-       end)
-
-val _ =
-  test
     ("measured exact-rule observations and outputs are deterministic",
      fn () =>
        let
@@ -5553,40 +4633,25 @@ val _ =
          val q = Term.mk_var ("measured_deterministic_q", bool_ty)
          val goal = ([p, q], boolSyntax.mk_conj (p, q))
          fun run () =
-           let
-             val observations =
-               ref ([] : clasetStep.measured_rule_observation list)
-             fun observe event =
-               observations := event :: !observations
-             val sequence =
-               clasetStep.blast_rule_step_measured
-                 {observe = SOME observe, stop = fn () => false}
+           map
+             (fn (record, node) =>
+               (clasetStep.consumed_of record,
+                rendered_goals node,
+                clasetReplay.to_string (clasetGoal.replay node)))
+             (drain_exact
+               (clasetStep.blast_rule_step
                  clasetLib.empty_cs
                  {theorem = boolTheory.AND_INTRO_THM, elim = false}
-                 (clasetGoal.from_goal goal, 1)
-             val results = drain_measured_exact sequence
-             val views =
-               map
-                 (fn (record, node) =>
-                   (clasetStep.consumed_of record,
-                    rendered_goals node,
-                    clasetReplay.to_string (clasetGoal.replay node)))
-                 results
-           in
-             (rev (!observations), views,
-              clasetStep.measured_rule_statistics sequence)
-           end
-         val (observations1, views1, statistics1) = run ()
-         val (observations2, views2, statistics2) = run ()
+                 (clasetGoal.from_goal goal, 1)))
+         val views1 = run ()
+         val views2 = run ()
          fun same_view ((consumed1, goals1, replay1),
                         (consumed2, goals2, replay2)) =
            consumed1 = consumed2 andalso
            same_goals goals1 goals2 andalso replay1 = replay2
        in
-         observations1 = observations2 andalso
          length views1 = length views2 andalso
-         ListPair.allEq same_view (views1, views2) andalso
-         statistics1 = statistics2
+         ListPair.allEq same_view (views1, views2)
        end)
 
 val _ =
@@ -6963,51 +6028,14 @@ val _ =
          val theorem = Thm.ASSUME p
          val input = (clasetGoal.from_goal ([], p), 2)
          val specification = {theorem = theorem, elim = false}
-         val controls =
-           {clock = ticking_clock (), observe = NONE,
-            stop = fn () => false}
          val ordinary =
            clasetStep.blast_rule_step clasetLib.empty_cs
              specification input
          val selected =
            clasetStep.blast_rule_step_at clasetLib.empty_cs
              {theorem = theorem, elim = false, major = NONE} input
-         val measured =
-           clasetStep.blast_rule_step_measured
-             {observe = NONE, stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed =
-           clasetStep.blast_rule_step_timed controls
-             clasetLib.empty_cs specification input
-         val timed_v2 =
-           clasetStep.blast_rule_step_timed_v2 controls
-             clasetLib.empty_cs specification input
-         val timed_v3 =
-           clasetStep.blast_rule_step_timed_v3 controls
-             clasetLib.empty_cs specification input
-         val timed_v4 =
-           clasetStep.blast_rule_step_timed_v4
-             {classical_elapsed = fn _ => (),
-              clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
        in
-         seq.null ordinary andalso seq.null selected andalso
-         (case clasetStep.measured_rule_cases measured of
-              clasetStep.MeasuredRuleEmpty => true
-            | _ => false) andalso
-         (case clasetStep.timed_rule_cases timed of
-              clasetStep.TimedRuleEmpty => true
-            | _ => false) andalso
-         (case clasetStep.timed_rule_cases_v2 timed_v2 of
-              clasetStep.TimedRuleEmptyV2 => true
-            | _ => false) andalso
-         (case clasetStep.timed_rule_cases_v3 timed_v3 of
-              clasetStep.TimedRuleEmptyV3 => true
-            | _ => false) andalso
-         (case clasetStep.timed_rule_cases_v4 timed_v4 of
-              clasetStep.TimedRuleEmptyV4 => true
-            | _ => false)
+         seq.null ordinary andalso seq.null selected
        end)
 
 val _ =
@@ -7115,21 +6143,6 @@ val _ =
            seq.null
              (clasetStep.blast_rule_step_at clasetLib.empty_cs
                specification (node, 1))
-         val observed = ref 0
-         val measured =
-           clasetStep.blast_rule_step_measured_at
-             {observe =
-                SOME
-                  (fn {boundary = clasetStep.RuleEnter,
-                       phase = clasetStep.AttemptSelection, ...} =>
-                        observed := !observed + 1
-                    | _ => ()),
-              stop = fn () => false}
-             clasetLib.empty_cs
-             {theorem = theorem, elim = true, major = SOME 1}
-             (node, 1)
-         val no_result = List.null (drain_measured_exact measured)
-         val statistics = clasetStep.measured_rule_statistics measured
        in
          empty {theorem = theorem, elim = false, major = SOME 1}
          andalso empty {theorem = theorem, elim = true, major = NONE}
@@ -7137,53 +6150,9 @@ val _ =
          empty {theorem = theorem, elim = true, major = SOME 0}
          andalso
          empty {theorem = theorem, elim = true, major = SOME 3}
-         andalso no_result andalso !observed = 1 andalso
-         #attempt_selections statistics = 1
+         andalso
+         empty {theorem = theorem, elim = true, major = SOME 1}
        end)
-
-fun same_measured_timed_rule_counts
-      (left : clasetStep.measured_rule_statistics,
-       right : clasetStep.timed_rule_statistics) =
-  #cooperative_checkpoints left = #cooperative_checkpoints right andalso
-  #phase_entries left = #phase_entries right andalso
-  #phase_exits left = #phase_exits right andalso
-  #attempt_selections left = #attempt_selections right andalso
-  #freshening_setups left = #freshening_setups right andalso
-  #minor_unifications left = #minor_unifications right andalso
-  #elimination_major_unifications left =
-    #elimination_major_unifications right andalso
-  #rule_instantiations left = #rule_instantiations right andalso
-  #child_store_constructions left =
-    #child_store_constructions right andalso
-  #direct_result_constructions left =
-    #direct_result_constructions right andalso
-  #lazy_result_yields left = #lazy_result_yields right andalso
-  #direct_child_replacements left =
-    #direct_child_replacements right andalso
-  #replay_record_constructions left =
-    #replay_record_constructions right andalso
-  #record_insertions left = #record_insertions right andalso
-  #intro_attempts left = #intro_attempts right andalso
-  #elim_attempts left = #elim_attempts right
-
-fun one_selected_elim_contract
-      (statistics : clasetStep.timed_rule_statistics) =
-  #phase_entries statistics = 11 andalso
-  #phase_exits statistics = 11 andalso
-  #attempt_selections statistics = 1 andalso
-  #freshening_setups statistics = 1 andalso
-  #minor_unifications statistics = 1 andalso
-  #elimination_major_unifications statistics = 1 andalso
-  #rule_instantiations statistics = 1 andalso
-  #child_store_constructions statistics = 1 andalso
-  #direct_result_constructions statistics = 1 andalso
-  #lazy_result_yields statistics = 1 andalso
-  #direct_child_replacements statistics = 1 andalso
-  #replay_record_constructions statistics = 1 andalso
-  #record_insertions statistics = 1 andalso
-  #intro_attempts statistics = 0 andalso
-  #elim_attempts statistics = 1 andalso
-  phase_time_sum statistics = #classical_time statistics
 
 val _ =
   test
@@ -7198,185 +6167,20 @@ val _ =
            boolSyntax.mk_exists
              (bound, Term.mk_comb (predicate, bound))
          val goal = ([major, major], p)
-         val input = (clasetGoal.from_goal goal, 1)
-         val specification =
-           {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
-            elim = true, major = SOME 2}
-         val controls =
-           {clock = ticking_clock (), observe = NONE,
-            stop = fn () => false}
-         val ordinary =
+         val result =
            drain_exact
              (clasetStep.blast_rule_step_at clasetLib.empty_cs
-               specification input)
-         val measured_sequence =
-           clasetStep.blast_rule_step_measured_at
-             {observe = NONE, stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val measured = drain_measured_exact measured_sequence
-         val timed_sequence =
-           clasetStep.blast_rule_step_timed_at controls
-             clasetLib.empty_cs specification input
-         val timed = drain_timed_exact timed_sequence
-         val timed_v2_sequence =
-           clasetStep.blast_rule_step_timed_v2_at
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed_v2 = drain_timed_exact_v2 timed_v2_sequence
-         val timed_v3_sequence =
-           clasetStep.blast_rule_step_timed_v3_at
-             {clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed_v3 = drain_timed_exact_v3 timed_v3_sequence
-         val timed_v3_sink_elapsed = ref Time.zeroTime
-         fun add_v3_sink_elapsed elapsed =
-           timed_v3_sink_elapsed :=
-             Time.+ (!timed_v3_sink_elapsed, elapsed)
-         val timed_v3_sink_sequence =
-           clasetStep.blast_rule_step_timed_v3_with_sink_at
-             {classical_elapsed = add_v3_sink_elapsed,
-              clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed_v3_sink =
-           drain_timed_exact_v3 timed_v3_sink_sequence
-         val timed_v4_sequence =
-           clasetStep.blast_rule_step_timed_v4_at
-             {classical_elapsed = fn _ => (),
-              clock = ticking_clock (), observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed_v4 = drain_timed_exact_v4 timed_v4_sequence
-         val shared_summary =
-           clasetStep.new_timed_rule_summary_v4
-             {clock = ticking_clock (), classical_elapsed = fn _ => ()}
-         fun shared_v4_sequence () =
-           clasetStep.blast_rule_step_timed_v4_with_summary_at
-             {summary = shared_summary, observe = NONE,
-              stop = fn () => false}
-             clasetLib.empty_cs specification input
-         val timed_v4_shared_sequence1 = shared_v4_sequence ()
-         val timed_v4_shared1 =
-           drain_timed_exact_v4 timed_v4_shared_sequence1
-         val timed_v4_shared_report1 =
-           clasetStep.timed_rule_statistics_v4 shared_summary
-         val timed_v4_shared_statistics1 =
-           #base (#base timed_v4_shared_report1)
-         val timed_v4_shared_sequence2 = shared_v4_sequence ()
-         val timed_v4_shared2 =
-           drain_timed_exact_v4 timed_v4_shared_sequence2
-         val measured_statistics =
-           clasetStep.measured_rule_statistics measured_sequence
-         val timed_statistics =
-           clasetStep.timed_rule_statistics timed_sequence
-         val timed_v2_statistics =
-           #base (clasetStep.timed_rule_statistics_v2 timed_v2_sequence)
-         val timed_v3_statistics =
-           #base (#base
-             (clasetStep.timed_rule_statistics_v3 timed_v3_sequence))
-         val timed_v3_sink_statistics =
-           #base (#base
-             (clasetStep.timed_rule_statistics_v3
-               timed_v3_sink_sequence))
-         val timed_v4_summary =
-           clasetStep.timed_rule_summary_of_v4 timed_v4_sequence
-         val timed_v4_statistics =
-           #base (#base
-             (clasetStep.timed_rule_statistics_v4 timed_v4_summary))
-         val timed_v4_shared_statistics2 =
-           #base (#base
-             (clasetStep.timed_rule_statistics_v4 shared_summary))
-         val timed_v2_report =
-           clasetStep.timed_rule_statistics_v2 timed_v2_sequence
-         val timed_v3_report =
-           clasetStep.timed_rule_statistics_v3 timed_v3_sequence
-         val timed_v3_sink_report =
-           clasetStep.timed_rule_statistics_v3
-             timed_v3_sink_sequence
-         val timed_v4_report =
-           clasetStep.timed_rule_statistics_v4 timed_v4_summary
-         val measured_current =
-           clasetStep.measured_rule_current measured_sequence
-         val timed_current = clasetStep.timed_rule_current timed_sequence
-         val timed_v2_current =
-           clasetStep.timed_rule_current_v2 timed_v2_sequence
-         val timed_v3_current =
-           clasetStep.timed_rule_current_v3 timed_v3_sequence
-         val timed_v3_sink_current =
-           clasetStep.timed_rule_current_v3 timed_v3_sink_sequence
-         val timed_v4_current =
-           clasetStep.timed_rule_current_v4 timed_v4_sequence
-         val timed_v4_shared_current =
-           clasetStep.timed_rule_current_v4
-             timed_v4_shared_sequence1
-         val variants =
-           [ordinary, measured, timed, timed_v2, timed_v3,
-            timed_v3_sink, timed_v4, timed_v4_shared1,
-            timed_v4_shared2]
-         fun selected result =
-           case result of
-               [(record, node)] =>
-                 clasetStep.consumed_of record = SOME 2 andalso
-                 valid_open_replay goal (record, node)
-             | _ => false
+               {theorem = clasetSeedTheory.EXISTS_ELIM_THM,
+                elim = true, major = SOME 2}
+               (clasetGoal.from_goal goal, 1))
        in
-         List.all selected variants andalso
-         List.all
-           (fn result =>
-             length ordinary = length result andalso
-             ListPair.allEq (same_exact_transition goal)
-               (ordinary, result))
-           (tl variants) andalso
-         measured_current = timed_current andalso
-         measured_current = timed_v2_current andalso
-         measured_current = timed_v3_current andalso
-         measured_current = timed_v3_sink_current andalso
-         measured_current = timed_v4_current andalso
-         measured_current = timed_v4_shared_current andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_statistics) andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_v2_statistics) andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_v3_statistics) andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_v3_sink_statistics) andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_v4_statistics) andalso
-         same_measured_timed_rule_counts
-           (measured_statistics, timed_v4_shared_statistics1) andalso
-         one_selected_elim_contract timed_statistics andalso
-         one_selected_elim_contract timed_v2_statistics andalso
-         one_selected_elim_contract timed_v3_statistics andalso
-         one_selected_elim_contract timed_v3_sink_statistics andalso
-         !timed_v3_sink_elapsed =
-           #classical_time timed_v3_sink_statistics andalso
-         timed_v3_report = timed_v3_sink_report andalso
-         clasetStep.timed_rule_statistics_reads_v3 timed_v3_sequence =
-           clasetStep.timed_rule_statistics_reads_v3
-             timed_v3_sink_sequence andalso
-         #base timed_v2_report = timed_v2_statistics andalso
-         #base (#base timed_v3_report) = timed_v3_statistics andalso
-         one_selected_elim_contract timed_v4_statistics andalso
-         one_selected_elim_contract timed_v4_shared_statistics1 andalso
-         timed_v4_report =
-           clasetStep.timed_rule_statistics_v4
-             (clasetStep.timed_rule_summary_of_v4 timed_v4_sequence)
-         andalso
-         timed_v4_report = timed_v4_shared_report1 andalso
-         clasetStep.timed_rule_trace_allocations_v4 timed_v4_summary = 0
-         andalso clasetStep.timed_rule_trace_allocations_v4
-           shared_summary = 0 andalso
-         clasetStep.timed_rule_statistics_reads_v4 timed_v4_summary > 0
-         andalso clasetStep.timed_rule_statistics_reads_v4
-           shared_summary > 0 andalso
-         #attempt_selections timed_v4_shared_statistics2 =
-           #attempt_selections timed_v4_shared_statistics1 + 1 andalso
-         #elim_attempts timed_v4_shared_statistics2 =
-           #elim_attempts timed_v4_shared_statistics1 + 1
+         case result of
+             [(record, node)] =>
+               clasetStep.consumed_of record = SOME 2 andalso
+               valid_open_replay goal (record, node)
+           | _ => false
        end)
+
 
 val _ =
   test
