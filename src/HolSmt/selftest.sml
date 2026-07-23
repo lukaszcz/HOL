@@ -208,6 +208,18 @@ fun mk_Z3p_v4 expect_fun =
 val thm_Z3p_v4 = mk_Z3p_v4 (expect_thm true)
 val sat_Z3p_v4 = mk_Z3p_v4 expect_sat
 
+(* Z3 4.15 reports "proof is not available" on the proof-enabled command for
+   the genuine satisfiable HO witness below.  Older supported 4.x releases
+   return SAT, so retain that boundary check without treating 4.15's missing
+   proof response as a reconstruction failure. *)
+fun is_pre_z3_415 () =
+  Z3.is_configured () andalso
+  not (String.isPrefix "4.15." Z3.Z3version)
+
+val sat_Z3p_pre_v415 =
+  mk_test_fun (is_pre_z3_415 ()) expect_sat
+    "Z3 (proofs, pre-4.15)" HolSmtLib.Z3_TAC
+
 fun mk_CVCp expect_fun =
   mk_test_fun (CVC.is_configured ()) expect_fun "cvc5 (proofs)" HolSmtLib.CVC_TAC
 
@@ -1186,13 +1198,22 @@ in
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(\x. x (\x. x)) = (\y. y (\x. x))``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
-    (* Higher-order rator expression unsupported by the SMT-LIB translator. *)
-    (``(\x. x (\x. x)) = (\y. y x)``, [(*sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp*)]),
+    (``(\x. x (\x. x)) = (\y. y x)``, [sat_Z3p_pre_v415]),
+    (``x = (\x. x) ==>
+        ((\x. x (\x. x)) = (\y. y x))``, [thm_Z3p, thm_Z3p_v4]),
     (``f x = (\x. f x) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``f x = (\y. f y) x``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
     (* higher-order logic *)
 
+    (``(H:(int -> int) -> bool) (\x. x + 1) /\ p ==>
+        H (\y. y + 1)``, [thm_Z3p, thm_Z3p_v4]),
+    (``(\x:int. f (g x)) = (\y. f (g y))``,
+      [thm_Z3p, thm_Z3p_v4]),
+    (``(\x:int. f x) = f``, [thm_Z3p, thm_Z3p_v4]),
+    (``(H:(bool -> int) -> bool) (smtlib_ho_rank2 x) ==>
+        H (\p. smtlib_ho_rank2 x p)``,
+      [thm_Z3p, thm_Z3p_v4]),
     (``(P (f x) ==> Q f) ==> P (f x) ==> Q f``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``(Q f ==> P (f x)) ==> Q f ==> P (f x)``,
@@ -1227,7 +1248,7 @@ in
     (``(FST p = SND p) = (p = (SND p, FST p))``,
       [(*thm_AUTO, thm_CVC,*) thm_YO(*, thm_Z3, thm_Z3p*)]),
     (``((\p. FST p) (x, y) = (\p. SND p) (x, y)) = (x = y)``,
-      [thm_AUTO, (*thm_CVC,*) thm_YO(*, thm_Z3, thm_Z3p*)]),
+      [thm_AUTO, (*thm_CVC,*) thm_YO, thm_Z3p, thm_Z3p_v4]),
 
     (* words (i.e., bit vectors) *)
 

@@ -195,13 +195,21 @@ structure CVC = struct
       val _ = Library.check_oracle_tags name thm
     in thm end
 
+  fun goal_to_SmtLib_translation goal =
+    SmtLib.goal_to_SmtLib_translation_with_dialect_and_apply_operator
+      SmtLib.Standard27 SmtLib.ApplyAt NONE goal
+
+  fun goal_to_SmtLib_with_get_proof_translation goal =
+    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_dialect_and_apply_operator
+      SmtLib.Standard27 SmtLib.ApplyAt NONE goal
+
   (* cvc5, SMT-LIB file format, no proofs *)
   val CVC_SMT_Oracle =
     mk_CVC_fun "CVC_SMT_Oracle"
       (fn goal =>
         let
           val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC false) goal
-          val (_, strings) = SmtLib.goal_to_SmtLib NONE goal
+          val (_, strings) = goal_to_SmtLib_translation goal
         in
           ((), strings)
         end)
@@ -215,7 +223,7 @@ structure CVC = struct
       val original_goal = goal
       val (goal, validation) = SolverSpec.simplify (SmtLib.SIMP_TAC true) goal
       val (translation, strings) =
-        SmtLib.goal_to_SmtLib_with_get_proof_translation NONE goal
+        goal_to_SmtLib_with_get_proof_translation goal
     in
       (((original_goal, goal, validation), translation), strings)
     end

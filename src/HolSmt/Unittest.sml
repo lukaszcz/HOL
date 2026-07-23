@@ -4146,6 +4146,45 @@ in
     "explicit override" forced_z3
 end
 
+fun smtlib_driver_regime_selection_success () =
+let
+  val goal = ([], ``(H:(int -> int) -> bool) (\x. x + 1)``)
+  fun selection translation =
+    case List.find
+      (fn SmtLib.RegimeSelection _ => true | _ => false)
+      (SmtLib.translation_records translation) of
+      SOME (SmtLib.RegimeSelection selected) => selected
+    | _ => die "FAIL: driver-shaped translation lacked RegimeSelection"
+  fun expect label expected translation =
+    let
+      val {regime, reason} = selection translation
+    in
+      assert (SmtLib.translation_regime translation = expected,
+        label ^ " translation accessor recorded the wrong regime");
+      assert (regime = expected,
+        label ^ " RegimeSelection recorded the wrong regime");
+      assert (reason = "automatic:surviving-abstraction",
+        label ^ " RegimeSelection recorded reason '" ^ reason ^ "'")
+    end
+  val z3_plain = Lib.fst
+    (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal)
+  val z3_proof = Lib.fst
+    (Z3.goal_to_SmtLib_with_get_proof_translation_for_version
+      (SOME "4.15.3") goal)
+  val cvc_plain = Lib.fst (CVC.goal_to_SmtLib_translation goal)
+  val cvc_proof = Lib.fst
+    (CVC.goal_to_SmtLib_with_get_proof_translation goal)
+in
+  expect "Z3 oracle driver" (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
+    z3_plain;
+  expect "Z3 proof driver" (SmtLib.HigherOrder SmtLib.Z3LambdaArray)
+    z3_proof;
+  expect "cvc5 oracle driver" (SmtLib.HigherOrder SmtLib.Standard27)
+    cvc_plain;
+  expect "cvc5 proof driver" (SmtLib.HigherOrder SmtLib.Standard27)
+    cvc_proof
+end
+
 fun smtlib_standard27_translation_success () =
 let
   val standard_regime = SmtLib.HigherOrder SmtLib.Standard27
@@ -6839,6 +6878,42 @@ fun z3_direct_if_configured f =
   else
     ()
 
+fun z3_direct_higher_order_replay_success () =
+  z3_direct_if_configured (fn () =>
+  let
+    val goals = [
+      ("first-class lambda argument",
+        ``(H:(int -> int) -> bool) (\x. x + 1) /\ p ==>
+          H (\y. y + 1)``),
+      ("lambda equality",
+        ``(\x:int. f (g x)) = (\y. f (g y))``),
+      ("eta instance", ``(\x:int. f x) = f``),
+      ("partial application",
+        ``(H:(bool -> int) -> bool) (smtlib_ho_rank2 x) ==>
+          H (\p. smtlib_ho_rank2 x p)``)
+    ]
+    fun check (label, goal) =
+      let
+        val thm =
+          case Z3.Z3_SMT_Prover ([], goal) of
+            SolverSpec.UNSAT (SOME thm) => thm
+          | SolverSpec.UNSAT NONE =>
+              die ("FAIL: " ^ label ^ " returned UNSAT without a theorem")
+          | SolverSpec.SAT _ =>
+              die ("FAIL: " ^ label ^ " was wrongly reported SAT")
+          | SolverSpec.UNKNOWN _ =>
+              die ("FAIL: " ^ label ^ " was not proved")
+      in
+        assert (List.null (Thm.hyp thm),
+          label ^ " theorem has unexpected hypotheses");
+        assert (Term.aconv (Thm.concl thm) goal,
+          label ^ " theorem conclusion does not match its goal");
+        Library.check_oracle_tags ("Z3 " ^ label) thm
+      end
+  in
+    List.app check goals
+  end)
+
 fun conjunction [] = boolSyntax.T
   | conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
@@ -7246,6 +7321,8 @@ let
       smtlib_ho_parser_dict_currying_success),
     ("smtlib_regime_trigger_success",
       smtlib_regime_trigger_success),
+    ("smtlib_driver_regime_selection_success",
+      smtlib_driver_regime_selection_success),
     ("smtlib_standard27_translation_success",
       smtlib_standard27_translation_success),
     ("smtlib_z3_lambda_array_translation_success",
@@ -7415,6 +7492,8 @@ let
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",
       z3_reconstructed_theorem_contract_rejects_bad_shape),
+    ("z3_direct_higher_order_replay_success",
+      z3_direct_higher_order_replay_success),
     ("z3_direct_bitvector_contradiction_success",
       z3_direct_bitvector_contradiction_success),
     ("z3_direct_bitvector_overflow_tautology_sat_success",

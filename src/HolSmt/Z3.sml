@@ -139,12 +139,12 @@ structure Z3 = struct
       NONE
 
   fun goal_to_SmtLib_translation_for_version version =
-    SmtLib.goal_to_SmtLib_translation_with_policy
-      (z3_414_logic_policy version)
+    SmtLib.goal_to_SmtLib_translation_with_policy_and_dialect
+      (z3_414_logic_policy version) SmtLib.Z3LambdaArray
 
   fun goal_to_SmtLib_with_get_proof_translation_for_version version =
-    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy
-      (z3_414_logic_policy version)
+    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
+      (z3_414_logic_policy version) SmtLib.Z3LambdaArray
 
   (* Z3 (Linux/Unix), SMT-LIB file format, no proofs *)
   val Z3_SMT_Oracle =
