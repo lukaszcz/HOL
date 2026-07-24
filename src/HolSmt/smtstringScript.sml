@@ -3,7 +3,7 @@
 (* SMT-LIB Unicode strings represented as lists of Unicode code points. *)
 Theory smtstring
 Ancestors[qualified]
-  integer rich_list
+  ASCIInumbers integer rich_list
 
 Definition wfstr_def:
   wfstr (s : num list) <=> EVERY (\c. c <= 196607) s
@@ -572,6 +572,418 @@ Proof
   simp [re_nullable_correct, re_deriv_correct]
 QED
 
+(* Leftmost string and regular-language replacement. *)
+
+Definition smtstr_replace_def:
+  smtstr_replace (s : num list) t u =
+    case smtstr_indexof_aux t 0 s of
+      NONE => s
+    | SOME n =>
+        TAKE n s ++ u ++ DROP (n + LENGTH t) s
+End
+
+Definition smtstr_replace_all_aux_def:
+  (smtstr_replace_all_aux 0 (s : num list) t u = s) /\
+  (smtstr_replace_all_aux (SUC fuel) [] t u = []) /\
+  (smtstr_replace_all_aux (SUC fuel) (h::s) t u =
+     if IS_PREFIX (h::s) t then
+       u ++ smtstr_replace_all_aux fuel
+         (DROP (LENGTH t) (h::s)) t u
+     else h::smtstr_replace_all_aux fuel s t u)
+End
+
+Definition smtstr_replace_all_def:
+  smtstr_replace_all (s : num list) t u =
+    if t = [] then s
+    else smtstr_replace_all_aux (LENGTH s) s t u
+End
+
+Definition smtstr_shortest_re_aux_def:
+  (smtstr_shortest_re_aux r s n 0 =
+     if smt_in_re (TAKE n s) r then SOME n else NONE) /\
+  (smtstr_shortest_re_aux r s n (SUC k) =
+     if smt_in_re (TAKE n s) r then SOME n
+     else smtstr_shortest_re_aux r s (SUC n) k)
+End
+
+Definition smtstr_shortest_re_def:
+  smtstr_shortest_re allow_empty r (s : num list) =
+    if allow_empty then
+      smtstr_shortest_re_aux r s 0 (LENGTH s)
+    else
+      case s of
+        [] => NONE
+      | h::t => smtstr_shortest_re_aux r s 1 (LENGTH t)
+End
+
+Definition smtstr_find_re_aux_def:
+  (smtstr_find_re_aux allow_empty r n ([] : num list) =
+     case smtstr_shortest_re allow_empty r [] of
+       NONE => NONE
+     | SOME m => SOME (n, m)) /\
+  (smtstr_find_re_aux allow_empty r n (h::s) =
+     case smtstr_shortest_re allow_empty r (h::s) of
+       NONE => smtstr_find_re_aux allow_empty r (SUC n) s
+     | SOME m => SOME (n, m))
+End
+
+Definition smtstr_find_re_def:
+  smtstr_find_re allow_empty r s =
+    smtstr_find_re_aux allow_empty r 0 s
+End
+
+Definition smtstr_replace_re_def:
+  smtstr_replace_re (s : num list) r u =
+    case smtstr_find_re T r s of
+      NONE => s
+    | SOME (i, n) => TAKE i s ++ u ++ DROP (i + n) s
+End
+
+Theorem smtstr_shortest_re_aux_lower:
+  smtstr_shortest_re_aux r s n k = SOME m ==> n <= m
+Proof
+  qid_spec_tac `n` >>
+  Induct_on `k` >>
+  simp [smtstr_shortest_re_aux_def] >>
+  rw [] >>
+  res_tac >>
+  decide_tac
+QED
+
+Theorem smtstr_shortest_re_nonempty:
+  smtstr_shortest_re F r s = SOME n ==> 0 < n
+Proof
+  Cases_on `s` >>
+  simp [smtstr_shortest_re_def] >>
+  strip_tac >>
+  drule smtstr_shortest_re_aux_lower >>
+  decide_tac
+QED
+
+Theorem smtstr_find_re_aux_nonempty:
+  smtstr_find_re_aux F r i s = SOME (j, n) ==> 0 < n
+Proof
+  qid_spec_tac `i` >>
+  Induct_on `s` >>
+  rw [smtstr_find_re_aux_def] >>
+  BasicProvers.every_case_tac >>
+  fs [] >>
+  metis_tac [smtstr_shortest_re_nonempty]
+QED
+
+Theorem smtstr_find_re_nonempty:
+  smtstr_find_re F r s = SOME (i, n) ==> 0 < n
+Proof
+  metis_tac [smtstr_find_re_def, smtstr_find_re_aux_nonempty]
+QED
+
+Definition smtstr_replace_re_all_aux_def:
+  (smtstr_replace_re_all_aux 0 (s : num list) r u = s) /\
+  (smtstr_replace_re_all_aux (SUC fuel) s r u =
+    case smtstr_find_re F r s of
+      NONE => s
+    | SOME (i, n) =>
+        TAKE i s ++ u ++
+        smtstr_replace_re_all_aux fuel (DROP (i + n) s) r u)
+End
+
+Definition smtstr_replace_re_all_def:
+  smtstr_replace_re_all (s : num list) r u =
+    smtstr_replace_re_all_aux (LENGTH s) s r u
+End
+
+(* SMT-LIB character and decimal conversions. *)
+
+Definition smtstr_is_digit_def:
+  smtstr_is_digit (s : num list) <=>
+    ?c. s = [c] /\ 48 <= c /\ c <= 57
+End
+
+Definition smtstr_to_code_def:
+  smtstr_to_code (s : num list) =
+    case s of
+      [c] => &c
+    | _ => -1
+End
+
+Definition smtstr_from_code_def:
+  smtstr_from_code (n : int) =
+    if n < 0 \/ 196607 < Num n then [] else [Num n]
+End
+
+Definition smtstr_digits_def:
+  smtstr_digits (s : num list) <=>
+    EVERY (\c. 48 <= c /\ c <= 57) s
+End
+
+Definition smtstr_to_int_def:
+  smtstr_to_int (s : num list) =
+    if s = [] \/ ~smtstr_digits s then -1
+    else
+      &ASCIInumbers$num_from_dec_string (MAP CHR s)
+End
+
+Definition smtstr_from_int_def:
+  smtstr_from_int (n : int) =
+    if n < 0 then []
+    else MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
+End
+
+val _ = computeLib.add_funs
+  [smtstr_replace_def, smtstr_replace_all_aux_def,
+   smtstr_replace_all_def,
+   smtstr_shortest_re_aux_def, smtstr_shortest_re_def,
+   smtstr_find_re_aux_def, smtstr_find_re_def,
+   smtstr_replace_re_def, smtstr_replace_re_all_aux_def,
+   smtstr_replace_re_all_def,
+   smtstr_is_digit_def, smtstr_to_code_def,
+   smtstr_from_code_def, smtstr_digits_def,
+   smtstr_to_int_def, smtstr_from_int_def];
+
+(* Public computation equations. *)
+
+Theorem smtstr_replace_compute[compute]:
+  smtstr_replace s t u =
+    case smtstr_indexof_aux t 0 s of
+      NONE => s
+    | SOME n =>
+        TAKE n s ++ u ++ DROP (n + LENGTH t) s
+Proof
+  simp [smtstr_replace_def]
+QED
+
+Theorem smtstr_replace_all_compute[compute]:
+  smtstr_replace_all s t u =
+    if t = [] then s
+    else smtstr_replace_all_aux (LENGTH s) s t u
+Proof
+  simp [smtstr_replace_all_def]
+QED
+
+Theorem smtstr_replace_re_compute[compute]:
+  smtstr_replace_re s r u =
+    case smtstr_find_re T r s of
+      NONE => s
+    | SOME (i, n) => TAKE i s ++ u ++ DROP (i + n) s
+Proof
+  simp [smtstr_replace_re_def]
+QED
+
+Theorem smtstr_replace_re_all_compute[compute]:
+  smtstr_replace_re_all s r u =
+    smtstr_replace_re_all_aux (LENGTH s) s r u
+Proof
+  simp [smtstr_replace_re_all_def]
+QED
+
+Theorem smtstr_is_digit_compute[compute]:
+  (~smtstr_is_digit []) /\
+  (smtstr_is_digit [c] <=> 48 <= c /\ c <= 57) /\
+  (~smtstr_is_digit (c1::c2::s))
+Proof
+  simp [smtstr_is_digit_def]
+QED
+
+Theorem smtstr_to_code_compute[compute]:
+  (smtstr_to_code [] = -1) /\
+  (smtstr_to_code [c] = &c) /\
+  (smtstr_to_code (c1::c2::s) = -1)
+Proof
+  simp [smtstr_to_code_def]
+QED
+
+Theorem smtstr_from_code_compute[compute]:
+  smtstr_from_code n =
+    if n < 0 \/ 196607 < Num n then [] else [Num n]
+Proof
+  simp [smtstr_from_code_def]
+QED
+
+Theorem smtstr_digits_compute[compute]:
+  (smtstr_digits [] <=> T) /\
+  (smtstr_digits (c::s) <=>
+     48 <= c /\ c <= 57 /\ smtstr_digits s)
+Proof
+  simp [smtstr_digits_def, CONJ_ASSOC]
+QED
+
+Theorem smtstr_to_int_compute[compute]:
+  smtstr_to_int s =
+    if s = [] \/ ~smtstr_digits s then -1
+    else &ASCIInumbers$num_from_dec_string (MAP CHR s)
+Proof
+  simp [smtstr_to_int_def]
+QED
+
+Theorem smtstr_from_int_compute[compute]:
+  smtstr_from_int n =
+    if n < 0 then []
+    else MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
+Proof
+  simp [smtstr_from_int_def]
+QED
+
+(* The ASCIInumbers bridge and SMT-LIB's divergent error cases. *)
+
+Theorem smtstr_to_int_ascii:
+  s <> [] /\ smtstr_digits s ==>
+  smtstr_to_int s =
+    &ASCIInumbers$num_from_dec_string (MAP CHR s)
+Proof
+  simp [smtstr_to_int_def]
+QED
+
+Theorem smtstr_to_int_empty:
+  smtstr_to_int [] = -1
+Proof
+  simp [smtstr_to_int_def]
+QED
+
+Theorem smtstr_to_int_nondigit:
+  ~smtstr_digits s ==> smtstr_to_int s = -1
+Proof
+  simp [smtstr_to_int_def]
+QED
+
+Theorem smtstr_from_int_ascii:
+  0 <= n ==>
+  smtstr_from_int n =
+    MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
+Proof
+  strip_tac >>
+  Cases_on `n < 0` >>
+  simp [smtstr_from_int_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_from_int_negative:
+  n < 0 ==> smtstr_from_int n = []
+Proof
+  simp [smtstr_from_int_def]
+QED
+
+Theorem smtstr_digits_num_to_dec_string:
+  smtstr_digits
+    (MAP ORD (ASCIInumbers$num_to_dec_string n))
+Proof
+  rw [smtstr_digits_def, listTheory.EVERY_MAP] >>
+  mp_tac
+    (ASCIInumbersTheory.EVERY_isDigit_num_to_dec_string
+       |> Q.SPEC `n`) >>
+  simp [listTheory.EVERY_MEM, stringTheory.isDigit_def]
+QED
+
+Theorem smtstr_from_int_nonempty:
+  0 <= n ==> smtstr_from_int n <> []
+Proof
+  strip_tac >>
+  Cases_on `n < 0` >>
+  fs [smtstr_from_int_def,
+      ASCIInumbersTheory.num_to_dec_string_nil] >>
+  intLib.COOPER_TAC
+QED
+
+Theorem smtstr_to_int_from_int:
+  0 <= n ==> smtstr_to_int (smtstr_from_int n) = n
+Proof
+  strip_tac >>
+  `smtstr_from_int n =
+     MAP ORD (ASCIInumbers$num_to_dec_string (Num n))` by
+    metis_tac [smtstr_from_int_ascii] >>
+  `smtstr_digits (smtstr_from_int n)` by
+    simp [smtstr_digits_num_to_dec_string] >>
+  `smtstr_from_int n <> []` by
+    metis_tac [smtstr_from_int_nonempty] >>
+  simp [smtstr_to_int_def, listTheory.MAP_MAP_o,
+        combinTheory.o_DEF, ASCIInumbersTheory.toNum_toString,
+        integerTheory.INT_OF_NUM]
+QED
+
+(* Wellformedness closure for every new string-valued operator. *)
+
+Theorem wfstr_replace:
+  wfstr s /\ wfstr u ==> wfstr (smtstr_replace s t u)
+Proof
+  rw [smtstr_replace_def] >>
+  BasicProvers.every_case_tac >>
+  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  metis_tac [rich_listTheory.EVERY_TAKE,
+             rich_listTheory.EVERY_DROP]
+QED
+
+Theorem wfstr_replace_all_aux:
+  wfstr s /\ wfstr u ==>
+  wfstr (smtstr_replace_all_aux fuel s t u)
+Proof
+  qid_spec_tac `u` >>
+  qid_spec_tac `t` >>
+  qid_spec_tac `s` >>
+  qid_spec_tac `fuel` >>
+  recInduct smtstr_replace_all_aux_ind >>
+  rw [smtstr_replace_all_aux_def]
+  >- (fs [wfstr_def] >>
+      first_x_assum irule >>
+      irule rich_listTheory.EVERY_DROP >>
+      simp [])
+  >- fs [wfstr_def]
+QED
+
+Theorem wfstr_replace_all:
+  wfstr s /\ wfstr u ==> wfstr (smtstr_replace_all s t u)
+Proof
+  rw [smtstr_replace_all_def] >>
+  metis_tac [wfstr_replace_all_aux]
+QED
+
+Theorem wfstr_replace_re:
+  wfstr s /\ wfstr u ==> wfstr (smtstr_replace_re s r u)
+Proof
+  rw [smtstr_replace_re_def] >>
+  BasicProvers.every_case_tac >>
+  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  metis_tac [rich_listTheory.EVERY_TAKE,
+             rich_listTheory.EVERY_DROP]
+QED
+
+Theorem wfstr_replace_re_all_aux:
+  wfstr s /\ wfstr u ==>
+  wfstr (smtstr_replace_re_all_aux fuel s r u)
+Proof
+  qid_spec_tac `s` >>
+  Induct_on `fuel` >>
+  simp [smtstr_replace_re_all_aux_def] >>
+  rpt gen_tac >>
+  BasicProvers.every_case_tac >>
+  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  metis_tac [rich_listTheory.EVERY_TAKE,
+             rich_listTheory.EVERY_DROP]
+QED
+
+Theorem wfstr_replace_re_all:
+  wfstr s /\ wfstr u ==> wfstr (smtstr_replace_re_all s r u)
+Proof
+  rw [smtstr_replace_re_all_def] >>
+  metis_tac [wfstr_replace_re_all_aux]
+QED
+
+Theorem wfstr_from_code:
+  wfstr (smtstr_from_code n)
+Proof
+  rw [smtstr_from_code_def, wfstr_def] >>
+  fs []
+QED
+
+Theorem wfstr_from_int:
+  wfstr (smtstr_from_int n)
+Proof
+  rw [smtstr_from_int_def, wfstr_def,
+      listTheory.EVERY_MAP, listTheory.EVERY_MEM] >>
+  fs [listTheory.MEM_MAP] >>
+  metis_tac
+    [stringTheory.ORD_BOUND,
+     DECIDE ``!x:num. x < 256 ==> x <= 196607``]
+QED
+
 (* Symbolic one-step rules used by the string theory prover. *)
 
 Theorem smt_in_re_concat:
@@ -621,6 +1033,55 @@ Theorem smtstr_core_eval:
   smtstr_char 196607 = [196607] /\
   wfstr [196607] /\
   ~wfstr [196608]
+Proof
+  EVAL_TAC
+QED
+
+Theorem smtstr_a2_eval:
+  smtstr_replace [97; 98; 99; 97; 98; 99] [98; 99] [88] =
+    [97; 88; 97; 98; 99] /\
+  smtstr_replace [97; 98] [] [88] = [88; 97; 98] /\
+  smtstr_replace [97; 98] [99] [88] = [97; 98] /\
+  smtstr_replace_all [97; 98; 97] [97] [99] = [99; 98; 99] /\
+  smtstr_replace_all [97; 98] [] [99] = [97; 98] /\
+  smtstr_replace_all [97; 97; 97] [97; 97] [98] = [98; 97] /\
+  smtstr_replace_re [97; 98]
+    (reglan_union (reglan_to_re [97])
+                  (reglan_to_re [97; 98])) [120] =
+    [120; 98] /\
+  smtstr_replace_re [97; 98]
+    (reglan_union (reglan_to_re [98])
+                  (reglan_to_re [97; 98])) [120] =
+    [120] /\
+  smtstr_replace_re [97; 98] (reglan_to_re []) [120] =
+    [120; 97; 98] /\
+  smtstr_replace_re_all [97; 98; 97]
+    (reglan_union (reglan_to_re [])
+                  (reglan_to_re [97])) [120] =
+    [120; 98; 120] /\
+  smtstr_replace_re_all [97; 98] (reglan_to_re []) [120] =
+    [97; 98] /\
+  smtstr_replace_re_all [97; 98] reglan_allchar [120] =
+    [120; 120] /\
+  smtstr_is_digit [48] /\
+  smtstr_is_digit [57] /\
+  ~smtstr_is_digit [] /\
+  ~smtstr_is_digit [48; 49] /\
+  ~smtstr_is_digit [47] /\
+  smtstr_to_code [196607] = 196607 /\
+  smtstr_to_code [] = -1 /\
+  smtstr_to_code [1; 2] = -1 /\
+  smtstr_from_code 0 = [0] /\
+  smtstr_from_code 196607 = [196607] /\
+  smtstr_from_code (-1) = [] /\
+  smtstr_from_code 196608 = [] /\
+  smtstr_to_int [48; 48; 49; 50; 51] = 123 /\
+  smtstr_to_int [] = -1 /\
+  smtstr_to_int [45; 49] = -1 /\
+  smtstr_from_int 0 = [48] /\
+  smtstr_from_int 123 = [49; 50; 51] /\
+  smtstr_from_int (-123) = [] /\
+  smtstr_to_int (smtstr_from_int 9876) = 9876
 Proof
   EVAL_TAC
 QED
