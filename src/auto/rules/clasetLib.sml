@@ -764,6 +764,9 @@ val _ = List.app register_rule_attribute
    ("elim", elim_spec), ("selim", selim_spec),
    ("dest", dest_spec), ("sdest", sdest_spec)]
 
+(* Structural node count used only to weight rules: each leaf counts 1, an
+   application sums its parts, an abstraction adds 1 for the binder.  This is
+   a deliberate local metric, not the kernel's Term.term_size. *)
 fun default_term_size tm =
   case dest_term tm of
       COMB (rator, rand) =>

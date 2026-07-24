@@ -200,11 +200,13 @@ fun assumption_results (node, pos) =
       let
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
-        fun closes (asm_pos, asm) = closing_equal store asm w
+        val normalized_w = normalize_term store w
+        fun closes (asm_pos, asm) =
+          aconv (normalize_term store asm) normalized_w
         fun result (asm_pos, asm) =
           let
             fun validation [] =
-                  assumption_thm asm (normalize_term store w)
+                  assumption_thm asm normalized_w
               | validation _ =
                   raise mk_HOL_ERR "clasetStep" "assumption_results"
                     "assumption validation received child theorems"
@@ -227,15 +229,20 @@ fun contradiction_results (node, pos) =
       let
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
+        val normalized_w = normalize_term store w
         val positioned = position_map (fn x => x) asl
 
         fun negatives [] = []
           | negatives ((neg_pos, neg_tm) :: rest) =
-              if is_neg (normalize_term store neg_tm) then
+            let
+              val normalized_neg = normalize_term store neg_tm
+            in
+              if is_neg normalized_neg then
                 let
-                  val normalized_neg = normalize_term store neg_tm
                   val positive = dest_neg normalized_neg
-                  fun matches (_, tm) = closing_equal store tm positive
+                  val normalized_positive = normalize_term store positive
+                  fun matches (_, tm) =
+                    aconv (normalize_term store tm) normalized_positive
                   fun make (pos_pos, pos_tm) =
                     let
                       fun validation [] =
@@ -244,8 +251,7 @@ fun contradiction_results (node, pos) =
                               val pthm = assumption_thm pos_tm positive
                               val false_thm = MP (NOT_ELIM nthm) pthm
                             in
-                              Drule.CONTR
-                                (normalize_term store w) false_thm
+                              Drule.CONTR normalized_w false_thm
                             end
                         | validation _ =
                             raise mk_HOL_ERR "clasetStep"
@@ -266,6 +272,7 @@ fun contradiction_results (node, pos) =
                   map make (List.filter matches positioned) @ negatives rest
                 end
               else negatives rest
+            end
       in
         negatives positioned
       end)
@@ -279,6 +286,7 @@ fun mp_results (node, pos) =
       let
         val (asl, w) = clasetGoal.render node pos
         val store = clasetGoal.store node
+        val normalized_w = normalize_term store w
         val positioned = position_map (fn x => x) asl
         val {params, ...} = clasetGoal.goal_at node pos
 
@@ -291,13 +299,16 @@ fun mp_results (node, pos) =
                     NONE => implications rest
                   | SOME (antecedent, consequent) =>
                       let
+                        val normalized_antecedent =
+                          normalize_term store antecedent
                         fun matches (_, tm) =
-                          closing_equal store tm antecedent
+                          aconv (normalize_term store tm)
+                            normalized_antecedent
                         fun make (ante_pos, ante_tm) =
                           let
                             val child_asl =
                               consequent :: delete_nth asl imp_pos
-                            val child_w = normalize_term store w
+                            val child_w = normalized_w
                             val child = (child_asl, child_w)
                             val child_cgoal =
                               {params = params, asl = child_asl, w = child_w}
@@ -313,8 +324,7 @@ fun mp_results (node, pos) =
                                         consequent_thm child_thm
                                   in
                                     EQ_MP
-                                      (ALPHA (concl result)
-                                        (normalize_term store w))
+                                      (ALPHA (concl result) normalized_w)
                                       result
                                   end
                               | validation _ =

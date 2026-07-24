@@ -358,9 +358,9 @@ fun normalize_assumption asm =
   let val equality = normalize_conv asm
   in (rhs (concl equality), EQ_MP equality (ASSUME asm)) end
 
-fun theorem_hypothesis asl hypothesis =
+fun theorem_hypothesis normalized_asl hypothesis =
   case List.find (fn (normalized, _) => aconv normalized hypothesis)
-    (map normalize_assumption asl)
+    normalized_asl
   of
       SOME (_, theorem) => theorem
     | NONE =>
@@ -390,10 +390,12 @@ fun rule_tac_with function_name make_children
     val aligned_rule =
       Drule.INST_TY_TERM
         (term_substitution, type_substitution) rule0
+    val normalized_asl = map normalize_assumption asl
     val rule =
       List.foldl
         (fn (hypothesis, current) =>
-          Drule.PROVE_HYP (theorem_hypothesis asl hypothesis) current)
+          Drule.PROVE_HYP
+            (theorem_hypothesis normalized_asl hypothesis) current)
         aligned_rule (hyp aligned_rule)
     val (premises0, conclusion) =
       split_imp_prefix function_name recorded_arity (concl rule)

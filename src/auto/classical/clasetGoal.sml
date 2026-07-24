@@ -184,9 +184,6 @@ fun splice1 function_name values pos replacements =
     handle Subscript =>
       raise mk_HOL_ERR "clasetGoal" function_name "position out of range"
 
-fun replicate 0 _ = []
-  | replicate n value = value :: replicate (n - 1) value
-
 fun child_paths parent count =
   if count = 1 then [parent]
   else
@@ -209,7 +206,7 @@ fun replace_goal node {pos, children, store = store'} =
     val paths' = splice1 "replace_goal" old_paths pos
       (child_paths inherited_path (length children))
     val marks' = splice1 "replace_goal" old_marks pos
-      (replicate (length children) inherited_mark)
+      (List.tabulate (length children, fn _ => inherited_mark))
   in
     make_node goals' store' (replay node) (level node) paths' marks'
       (avoids node)

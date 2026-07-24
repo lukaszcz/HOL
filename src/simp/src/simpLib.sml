@@ -1214,10 +1214,8 @@ fun clear_rules (SS s) =
      (traversedata_for_ss_prepared ss prepared)
      {reducer_context=reducer_context,solver_context=solver_context};
 
- fun SIMP_QCONV_WITH_CONTEXT ss reducer_context solver_context =
-   SIMP_QCONV_WITH_PREPARED_CONTEXT ss [] reducer_context solver_context;
-
- fun SIMP_QCONV ss thms = SIMP_QCONV_WITH_CONTEXT ss thms [];
+ fun SIMP_QCONV ss thms =
+   SIMP_QCONV_WITH_PREPARED_CONTEXT ss [] thms [];
 
 val Cong   = markerLib.Cong
 val Split  = markerLib.Split
