@@ -7,7 +7,7 @@ struct
 
 local
 
-  local open HolSmtTheory in end
+  local open HolSmtTheory smtstringTheory in end
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Theories"
 
@@ -537,7 +537,32 @@ in
           "FloatingPoint forms expect exponent and significand indices"
 
   val rounding_mode_ty = abstract_type "RoundingMode"
-  val reglan_ty = abstract_type "RegLan"
+  val reglan_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
+
+  fun smtstring_const name =
+    Term.prim_mk_const {Thy = "smtstring", Name = name}
+
+  fun smtstring_app name args =
+    Term.list_mk_comb (smtstring_const name, args)
+
+  fun natural_or_word_index index =
+    Arbint.toNat (intSyntax.int_of_term index)
+    handle Feedback.HOL_ERR _ =>
+      (wordsSyntax.dest_word_literal index
+       handle Feedback.HOL_ERR _ =>
+         let
+           val (token, _) = Term.dest_var index
+         in
+           if String.isPrefix "#x" token then
+             Arbnum.fromHexString (String.extract (token, 2, NONE))
+           else
+             raise ERR "natural_or_word_index"
+               "expected a natural or hexadecimal index"
+         end)
+
+  fun smtstring_index index =
+    numSyntax.mk_numeral (natural_or_word_index index)
 
   fun sequence_ty elem_ty =
     Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [elem_ty]}
@@ -774,8 +799,6 @@ in
   structure UnicodeStrings =
   struct
 
-    (* String literals use the Phase-4 num-list representation.  TASK_13
-       replaces these abstract operator placeholders with theory constants. *)
     val string_ty = listSyntax.mk_list_type numSyntax.num
 
     val tyentries = [
@@ -786,117 +809,129 @@ in
         (K_zero_one (fn _ => reglan_ty))
     ]
 
-    fun str_unary name ret_ty =
-      official_entry name no_attributes [unary_decl name "String" "String"]
-        (K_zero_one (fn x => abstract_const name ret_ty [x]))
+    fun str_predicate smt_name hol_name =
+      official_entry smt_name no_attributes
+        ["(" ^ smt_name ^ " String String Bool)"]
+        (K_zero_two (fn (x, y) => smtstring_app hol_name [x, y]))
 
-    fun str_binary name ret_ty =
-      official_entry name no_attributes
-        ["(" ^ name ^ " String String " ^
-         (if ret_ty = Type.bool then "Bool" else "String") ^ ")"]
-        (K_zero_two (fn (x, y) => abstract_const name ret_ty [x, y]))
+    fun str_int_binary smt_name hol_name =
+      official_entry smt_name no_attributes
+        ["(" ^ smt_name ^ " String Int String)"]
+        (K_zero_two (fn (x, i) => smtstring_app hol_name [x, i]))
 
-    fun str_int_binary name =
-      official_entry name no_attributes ["(" ^ name ^ " String Int String)"]
-        (K_zero_two (fn (x, i) =>
-          abstract_const name string_ty [x, i]))
-
-    fun re_binary name =
-      official_entry name no_attributes
-        ["(" ^ name ^ " (RegLan String) (RegLan String) (RegLan String))"]
-        (K_zero_two (fn (x, y) => abstract_const name reglan_ty [x, y]))
+    fun re_binary smt_name hol_name =
+      official_entry smt_name no_attributes
+        ["(" ^ smt_name ^
+         " (RegLan String) (RegLan String) (RegLan String))"]
+        (K_zero_two (fn (x, y) => smtstring_app hol_name [x, y]))
 
     val tmentries = [
       official_entry "str.++" left_assoc_attributes
         ["(str.++ String String String :left-assoc)"]
         (leftassoc
-          (fn (x, y) => abstract_const "str.++" string_ty [x, y])),
+          (fn (x, y) => smtstring_app "smtstr_concat" [x, y])),
       official_entry "str.len" no_attributes ["(str.len String Int)"]
         (K_zero_one
-          (fn s => abstract_const "str.len" intSyntax.int_ty [s])),
+          (intSyntax.mk_injected o
+           (fn s => smtstring_app "smtstr_len" [s]))),
       official_entry "str.<" chainable_attributes
         ["(str.< String String Bool :chainable)"]
-        (chainable (fn (x, y) => abstract_bool "str.<" [x, y])),
+        (chainable (fn (x, y) => smtstring_app "smtstr_lt" [x, y])),
       official_entry "str.<=" chainable_attributes
         ["(str.<= String String Bool :chainable)"]
-        (chainable (fn (x, y) => abstract_bool "str.<=" [x, y])),
-      str_int_binary "str.at",
+        (chainable (fn (x, y) => smtstring_app "smtstr_le" [x, y])),
+      str_int_binary "str.at" "smtstr_at",
       official_entry "str.substr" no_attributes
         ["(str.substr String Int Int String)"]
         (K_zero_three (fn (s, i, n) =>
-          abstract_const "str.substr" string_ty [s, i, n])),
-      official_entry "str.prefixof" no_attributes ["(str.prefixof String String Bool)"]
-        (K_zero_two (fn (x, y) => abstract_bool "str.prefixof" [x, y])),
-      str_binary "str.suffixof" Type.bool,
-      str_binary "str.contains" Type.bool,
-      official_entry "str.indexof" no_attributes ["(str.indexof String String Int Int)"]
+          smtstring_app "smtstr_substr" [s, i, n])),
+      str_predicate "str.prefixof" "smtstr_prefixof",
+      str_predicate "str.suffixof" "smtstr_suffixof",
+      str_predicate "str.contains" "smtstr_contains",
+      official_entry "str.indexof" no_attributes
+        ["(str.indexof String String Int Int)"]
         (K_zero_three (fn (s, sub, offset) =>
-          abstract_const "str.indexof" intSyntax.int_ty [s, sub, offset])),
+          smtstring_app "smtstr_indexof" [s, sub, offset])),
       official_entry "str.replace" no_attributes
         ["(str.replace String String String String)"]
         (K_zero_three (fn (s, src, dst) =>
-          abstract_const "str.replace" string_ty [s, src, dst])),
+          smtstring_app "smtstr_replace" [s, src, dst])),
       official_entry "str.replace_all" no_attributes
         ["(str.replace_all String String String String)"]
         (K_zero_three (fn (s, src, dst) =>
-          abstract_const "str.replace_all" string_ty [s, src, dst])),
+          smtstring_app "smtstr_replace_all" [s, src, dst])),
       official_entry "str.is_digit" no_attributes ["(str.is_digit String Bool)"]
-        (K_zero_one (fn s => abstract_bool "str.is_digit" [s])),
+        (K_zero_one (fn s => smtstring_app "smtstr_is_digit" [s])),
       official_entry "str.to_code" no_attributes ["(str.to_code String Int)"]
-        (K_zero_one (fn s => abstract_const "str.to_code" intSyntax.int_ty [s])),
-      official_entry "str.from_code" no_attributes ["(str.from_code Int String)"]
-        (K_zero_one (fn i =>
-          abstract_const "str.from_code" string_ty [i])),
+        (K_zero_one (fn s => smtstring_app "smtstr_to_code" [s])),
+      official_entry "str.from_code" no_attributes
+        ["(str.from_code Int String)"]
+        (K_zero_one (fn i => smtstring_app "smtstr_from_code" [i])),
       official_entry "str.to_int" no_attributes ["(str.to_int String Int)"]
-        (K_zero_one (fn s => abstract_const "str.to_int" intSyntax.int_ty [s])),
+        (K_zero_one (fn s => smtstring_app "smtstr_to_int" [s])),
       official_entry "str.from_int" no_attributes ["(str.from_int Int String)"]
-        (K_zero_one (fn i =>
-          abstract_const "str.from_int" string_ty [i])),
-      official_entry "str.to_re" no_attributes ["(str.to_re String (RegLan String))"]
-        (K_zero_one (fn s => abstract_const "str.to_re" reglan_ty [s])),
-      official_entry "str.in_re" no_attributes ["(str.in_re String (RegLan String) Bool)"]
-        (K_zero_two (fn (s, re) => abstract_bool "str.in_re" [s, re])),
+        (K_zero_one (fn i => smtstring_app "smtstr_from_int" [i])),
+      official_entry "str.to_re" no_attributes
+        ["(str.to_re String (RegLan String))"]
+        (K_zero_one (fn s => smtstring_app "reglan_to_re" [s])),
+      official_entry "str.in_re" no_attributes
+        ["(str.in_re String (RegLan String) Bool)"]
+        (K_zero_two (fn (s, re) => smtstring_app "smt_in_re" [s, re])),
       official_entry "str.replace_re" no_attributes
         ["(str.replace_re String (RegLan String) String String)"]
         (K_zero_three (fn (s, re, dst) =>
-          abstract_const "str.replace_re" string_ty [s, re, dst])),
+          smtstring_app "smtstr_replace_re" [s, re, dst])),
       official_entry "str.replace_re_all" no_attributes
         ["(str.replace_re_all String (RegLan String) String String)"]
         (K_zero_three (fn (s, re, dst) =>
-          abstract_const "str.replace_re_all" string_ty
-            [s, re, dst])),
+          smtstring_app "smtstr_replace_re_all" [s, re, dst])),
+      official_entry "char" (indexed_attributes ["H"])
+        ["((_ char H) String)"]
+        (K_one_zero
+          (fn h => smtstring_app "smtstr_char" [smtstring_index h])),
       official_entry "re.none" no_attributes ["(re.none (RegLan String))"]
-        (K_zero_zero (Term.mk_var ("smtlib_re_none", reglan_ty))),
+        (K_zero_zero (smtstring_const "reglan_none")),
       official_entry "re.all" no_attributes ["(re.all (RegLan String))"]
-        (K_zero_zero (Term.mk_var ("smtlib_re_all", reglan_ty))),
+        (K_zero_zero (smtstring_const "reglan_all")),
       official_entry "re.allchar" no_attributes ["(re.allchar (RegLan String))"]
-        (K_zero_zero (Term.mk_var ("smtlib_re_allchar", reglan_ty))),
-      re_binary "re.++",
+        (K_zero_zero (smtstring_const "reglan_allchar")),
+      re_binary "re.++" "reglan_concat",
       official_entry "re.union" left_assoc_attributes
-        ["(re.union (RegLan String) (RegLan String) (RegLan String) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "re.union" reglan_ty [x, y])),
+        ["(re.union (RegLan String) (RegLan String) " ^
+         "(RegLan String) :left-assoc)"]
+        (leftassoc (fn (x, y) => smtstring_app "reglan_union" [x, y])),
       official_entry "re.inter" left_assoc_attributes
-        ["(re.inter (RegLan String) (RegLan String) (RegLan String) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "re.inter" reglan_ty [x, y])),
-      re_binary "re.diff",
-      official_entry "re.*" no_attributes ["(re.* (RegLan String) (RegLan String))"]
-        (K_zero_one (fn re => abstract_const "re.*" reglan_ty [re])),
-      official_entry "re.+" no_attributes ["(re.+ (RegLan String) (RegLan String))"]
-        (K_zero_one (fn re => abstract_const "re.+" reglan_ty [re])),
-      official_entry "re.opt" no_attributes ["(re.opt (RegLan String) (RegLan String))"]
-        (K_zero_one (fn re => abstract_const "re.opt" reglan_ty [re])),
-      official_entry "re.range" no_attributes ["(re.range String String (RegLan String))"]
-        (K_zero_two (fn (lo, hi) => abstract_const "re.range" reglan_ty [lo, hi])),
+        ["(re.inter (RegLan String) (RegLan String) " ^
+         "(RegLan String) :left-assoc)"]
+        (leftassoc (fn (x, y) => smtstring_app "reglan_inter" [x, y])),
+      re_binary "re.diff" "reglan_diff",
+      official_entry "re.comp" no_attributes
+        ["(re.comp (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => smtstring_app "reglan_comp" [re])),
+      official_entry "re.*" no_attributes
+        ["(re.* (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => smtstring_app "reglan_star" [re])),
+      official_entry "re.+" no_attributes
+        ["(re.+ (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => smtstring_app "reglan_plus" [re])),
+      official_entry "re.opt" no_attributes
+        ["(re.opt (RegLan String) (RegLan String))"]
+        (K_zero_one (fn re => smtstring_app "reglan_opt" [re])),
+      official_entry "re.range" no_attributes
+        ["(re.range String String (RegLan String))"]
+        (K_zero_two (fn (lo, hi) =>
+          smtstring_app "reglan_range" [lo, hi])),
       official_entry "re.^" (indexed_attributes ["n"])
         ["((_ re.^ n) (RegLan String) (RegLan String))"]
         (K_one_one (fn n => fn re =>
-          abstract_indexed_const "re.^" [n] reglan_ty [re])),
+          smtstring_app "reglan_power" [re, smtstring_index n])),
       official_entry "re.loop" (indexed_attributes ["lo", "hi"])
         ["((_ re.loop lo hi) (RegLan String) (RegLan String))"]
         (fn _ => fn indices => fn args =>
           case (indices, args) of
-            ([lo, hi], [re]) => abstract_indexed_const "re.loop" [lo, hi]
-              reglan_ty [re]
+            ([lo, hi], [re]) =>
+              smtstring_app "reglan_loop"
+                [re, smtstring_index lo, smtstring_index hi]
           | _ => raise ERR "<re.loop>"
               "two indices and one argument expected")
     ]

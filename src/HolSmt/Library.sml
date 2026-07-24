@@ -632,9 +632,20 @@ struct
   fun type_contains_word ty =
     type_contains (Lib.can wordsSyntax.dest_word_type) ty
 
-  fun type_contains_string ty =
+  (* Outbound HOL strings retain their native char-list representation. *)
+  fun type_contains_native_string ty =
     type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
       ty
+
+  (* Inbound SMT-LIB String is the smtstringTheory num-list representation. *)
+  fun type_contains_string ty =
+    let val smt_string_ty = listSyntax.mk_list_type numSyntax.num
+    in
+      type_contains
+        (fn candidate =>
+          Type.compare (candidate, smt_string_ty) = EQUAL)
+        ty
+    end
 
   (* 'tm' is exactly the constant 'c' (same name and theory) *)
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c

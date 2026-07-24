@@ -2718,6 +2718,12 @@ fun smtlib_logic_fragment_diagnostics () =
           assert (contains expected msg,
             label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
       | NONE => die (label ^ " fragment violation was not detected")
+    fun expect_no_term_fragment label logic term =
+      case SmtLib_Logics.fragment_violation_diagnostic logic
+          SmtLib_Logics.empty_surface_flags [term] of
+        SOME msg =>
+          die (label ^ " reported a spurious fragment violation: " ^ msg)
+      | NONE => ()
     fun script logic body =
       "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
     fun script_for_checker parse_logic body =
@@ -2878,6 +2884,15 @@ fun smtlib_logic_fragment_diagnostics () =
       (script "QF_S"
        "(declare-const s String)\n" ^
        "(assert (= s s))\n");
+    expect_fragment "RegLan operator unavailable" "QF_UF"
+      (script_for_checker "ALL"
+       "(declare-const s String)\n" ^
+       "(assert (str.in_re s (re.comp (str.to_re s))))\n")
+      "string term sort";
+    expect_no_fragment "RegLan operator available" "QF_S"
+      (script "QF_S"
+       "(declare-const s String)\n" ^
+       "(assert (str.in_re s (re.comp (str.to_re s))))\n");
     expect_fragment "free sort unavailable" "LIA"
       (script_for_checker "ALL"
        "(declare-sort U 0)\n" ^
@@ -2912,6 +2927,8 @@ fun smtlib_logic_fragment_diagnostics () =
     expect_term_fragment "native unit datatype sort unavailable" "QF_UFLIA"
       ``(():unit) = ()``
       "datatype sort is outside logic fragment QF_UFLIA";
+    expect_no_term_fragment "native HOL string is not a datatype sort"
+      "QF_UF" ``("" : string) = ""``;
     expect_no_fragment "Core distinct internal list wrapper" "QF_LIA"
       (script "QF_LIA"
        "(assert (distinct 0 1 2))\n");
@@ -3152,8 +3169,32 @@ let
     string_metadata
   val concat_symbol = find_symbol_metadata "UnicodeStrings" "term" "str.++"
     string_metadata
+  val str_lt = find_symbol_metadata "UnicodeStrings" "term" "str.<"
+    string_metadata
+  val str_le = find_symbol_metadata "UnicodeStrings" "term" "str.<="
+    string_metadata
+  val char_symbol = find_symbol_metadata "UnicodeStrings" "term" "char"
+    string_metadata
+  val re_union = find_symbol_metadata "UnicodeStrings" "term" "re.union"
+    string_metadata
+  val re_inter = find_symbol_metadata "UnicodeStrings" "term" "re.inter"
+    string_metadata
+  val re_comp = find_symbol_metadata "UnicodeStrings" "term" "re.comp"
+    string_metadata
+  val re_power = find_symbol_metadata "UnicodeStrings" "term" "re.^"
+    string_metadata
   val re_loop = find_symbol_metadata "UnicodeStrings" "term" "re.loop"
     string_metadata
+  val string_term_names = [
+    "str.++", "str.len", "str.<", "str.<=", "str.at", "str.substr",
+    "str.prefixof", "str.suffixof", "str.contains", "str.indexof",
+    "str.replace", "str.replace_all", "str.is_digit", "str.to_code",
+    "str.from_code", "str.to_int", "str.from_int", "str.to_re",
+    "str.in_re", "str.replace_re", "str.replace_re_all", "char",
+    "re.none", "re.all", "re.allchar", "re.++", "re.union", "re.inter",
+    "re.diff", "re.comp", "re.*", "re.+", "re.opt", "re.range",
+    "re.^", "re.loop"
+  ]
   val seq_sort = find_symbol_metadata "Z3_Extensions" "sort" "Seq"
     all_metadata
   val set_member = find_symbol_metadata "Z3_Extensions" "term" "set.member"
@@ -3173,8 +3214,25 @@ in
     "RegLan metadata did not preserve its parameter");
   assert (#left_associative (#attributes concat_symbol),
     "str.++ metadata did not record left associativity");
-  assert (#indexed (#attributes re_loop),
-    "regex loop metadata did not preserve indexed attributes");
+  assert (#chainable (#attributes str_lt) andalso
+      #chainable (#attributes str_le),
+    "string ordering metadata did not preserve chainability");
+  assert (#indexed (#attributes char_symbol),
+    "indexed Unicode character metadata was not preserved");
+  assert (#left_associative (#attributes re_union) andalso
+      #left_associative (#attributes re_inter),
+    "regex union/intersection metadata did not preserve left associativity");
+  assert (metadata_is_official re_comp,
+    "re.comp metadata is not marked official");
+  assert (#indexed (#attributes re_power) andalso
+      #indexed (#attributes re_loop),
+    "regex power/loop metadata did not preserve indexed attributes");
+  List.app
+    (fn name =>
+      assert (metadata_is_official
+        (find_symbol_metadata "UnicodeStrings" "term" name string_metadata),
+        "missing official UnicodeStrings metadata for " ^ name))
+    string_term_names;
   assert (metadata_is_extension seq_sort andalso
     metadata_is_extension set_member andalso metadata_is_extension bag_count,
     "Z3 sequence/set/bag metadata was not marked as extension")
@@ -3271,6 +3329,7 @@ let
       ("(set-logic QF_SLIA)\n" ^
        "(declare-const s String)\n" ^
        "(declare-const t String)\n" ^
+       "(declare-const u String)\n" ^
        "(assert (and " ^
        "(= (str.++ s t) s) " ^
        "(= (str.len s) 0) " ^
@@ -3279,15 +3338,76 @@ let
        "(= (str.substr s 0 1) t) " ^
        "(str.prefixof s t) (str.suffixof s t) (str.contains s t) " ^
        "(= (str.indexof s t 0) 0) " ^
-       "(= (str.replace s t (str.from_code 65)) s) " ^
+       "(= (str.replace s t u) s) " ^
+       "(= (str.replace_all s t u) s) " ^
+       "(str.is_digit s) " ^
+       "(= (str.to_code s) 0) " ^
+       "(= (str.from_code 65) s) " ^
+       "(= (str.to_int s) 0) " ^
+       "(= (str.from_int 65) s) " ^
+       "(= (str.replace_re s (str.to_re t) u) s) " ^
+       "(= (str.replace_re_all s (str.to_re t) u) s) " ^
+       "(= (_ char #x41) s) " ^
+       "(str.in_re s re.none) " ^
+       "(str.in_re s re.all) " ^
+       "(str.in_re s re.allchar) " ^
+       "(str.in_re s (re.++ (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.union (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.inter (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.diff (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.comp (str.to_re t))) " ^
        "(str.in_re s (re.* (str.to_re t))) " ^
-       "(str.in_re s ((_ re.loop 1 3) (re.union (str.to_re s) re.allchar)))))\n" ^
+       "(str.in_re s (re.+ (str.to_re t))) " ^
+       "(str.in_re s (re.opt (str.to_re t))) " ^
+       "(str.in_re s (re.range s t)) " ^
+       "(str.in_re s ((_ re.^ 2) (str.to_re t))) " ^
+       "(str.in_re s ((_ re.loop 1 3) (str.to_re t)))))\n" ^
        "(exit)\n")
+  val expected_constants = [
+    "smtstr_concat", "smtstr_len", "smtstr_lt", "smtstr_le",
+    "smtstr_at", "smtstr_substr", "smtstr_prefixof",
+    "smtstr_suffixof", "smtstr_contains", "smtstr_indexof",
+    "smtstr_replace", "smtstr_replace_all", "smtstr_is_digit",
+    "smtstr_to_code", "smtstr_from_code", "smtstr_to_int",
+    "smtstr_from_int", "smtstr_char", "reglan_to_re", "smt_in_re",
+    "smtstr_replace_re", "smtstr_replace_re_all", "reglan_none",
+    "reglan_all", "reglan_allchar", "reglan_concat", "reglan_union",
+    "reglan_inter", "reglan_diff", "reglan_comp", "reglan_star",
+    "reglan_plus", "reglan_opt", "reglan_range", "reglan_power",
+    "reglan_loop"
+  ]
+  fun is_smtstring_const name tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Thy = "smtstring" andalso Name = name end
+  fun has_smtstring_const name =
+    List.exists (term_has_subterm (is_smtstring_const name)) assertions
+  fun is_placeholder tm =
+    Term.is_var tm andalso
+    String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))
+  fun has_old_reglan_type tm =
+    Library.type_contains
+      (fn ty =>
+        Type.is_vartype ty andalso
+        String.isPrefix "'smtlib_RegLan" (Type.dest_vartype ty))
+      (Term.type_of tm)
 in
   assert (List.length assertions = 1,
     "string/regex signature script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
-    "string/regex signature assertion did not parse as Bool")
+    "string/regex signature assertion did not parse as Bool");
+  List.app
+    (fn name =>
+      assert (has_smtstring_const name,
+        "string/regex surface did not produce smtstringTheory." ^ name))
+    expected_constants;
+  assert (not (List.exists (term_has_subterm is_placeholder) assertions),
+    "string/regex surface retained an smtlib_* placeholder");
+  assert (not (List.exists
+      (fn assertion =>
+        List.exists has_old_reglan_type (Library.subterms assertion))
+      assertions),
+    "string/regex surface retained the 'smtlib_RegLan type")
 end
 
 fun smtlib_z3_extension_parse_signatures_success () =

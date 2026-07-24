@@ -466,7 +466,7 @@ local
   val type_contains_word = Library.type_contains_word
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
-  val type_contains_string = Library.type_contains_string
+  val type_contains_string = Library.type_contains_native_string
 
   fun type_contains_function ty =
     type_contains is_function_type ty
