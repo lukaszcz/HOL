@@ -3640,6 +3640,59 @@ val _ =
 
 val _ =
   test
+    ("CS_BLAST_DEPTH_TAC searches exactly the supplied bound",
+     fn () =>
+       let
+         val x = mk_var ("raw_depth_x", bool)
+         val y = mk_var ("raw_depth_y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val goal = ([], mk_exists (x, mk_exists (y, body)))
+         val cs = clasetLib.the_claset ()
+       in
+         blast_fails (tableauLib.CS_BLAST_DEPTH_TAC cs 1) goal andalso
+         Lib.with_flag (tableauLib.depth_limit, ~1)
+           (fn () =>
+              blast_solves
+                (tableauLib.CS_BLAST_DEPTH_TAC cs 2) goal) ()
+       end)
+
+val _ =
+  test
+    ("CS_BLAST_DEPTH_TAC translation errors are ordinary failures",
+     fn () =>
+       let
+         val malformed = Term.read_raw (Vector.fromList []) "$0"
+         val tactic =
+           tableauLib.CS_BLAST_DEPTH_TAC clasetLib.empty_cs 0
+       in
+         (ignore (tactic ([], malformed)); false)
+         handle HOL_ERR _ => true
+       end)
+
+val _ =
+  test
+    ("CS_BLAST_DEPTH_TAC requires inserted facts and ignores markers",
+     fn () =>
+       let
+         val x = mk_var ("raw_marker_x", bool)
+         val y = mk_var ("raw_marker_y", bool)
+         val body = mk_conj (mk_eq (x, x), mk_eq (y, y))
+         val conclusion = mk_exists (x, mk_exists (y, body))
+         val goal = ([], conclusion)
+         val theorem =
+           Tactical.TAC_PROOF
+             (goal, tableauLib.BLAST_DEPTH_TAC 2 [])
+         val wrapped = clasetLib.SIntro theorem
+         val raw =
+           tableauLib.CS_BLAST_DEPTH_TAC clasetLib.empty_cs 0
+       in
+         blast_fails raw goal andalso
+         blast_solves raw ([concl theorem], conclusion) andalso
+         blast_fails raw ([concl wrapped], conclusion)
+       end)
+
+val _ =
+  test
     ("kernel replay preserves transition-established rule instances",
      fn () =>
        blast_solves (tableauLib.BLAST_DEPTH_TAC 4 [])

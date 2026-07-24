@@ -183,6 +183,9 @@ fun run_depths cs initial_depth next_depth goal =
             "blast search found no reconstructible proof"
   end
 
+fun CS_BLAST_DEPTH_TAC cs depth =
+  run_depths cs (SOME depth) (fn _ => NONE)
+
 fun next_through limit depth =
   if depth >= limit then NONE else SOME (depth + 1)
 

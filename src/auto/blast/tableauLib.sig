@@ -10,6 +10,7 @@ sig
 
   val BLAST_TAC : thm list -> tactic
   val BLAST_DEPTH_TAC : int -> thm list -> tactic
+  val CS_BLAST_DEPTH_TAC : clasetLib.claset -> int -> tactic
   val depth_limit : int ref
 
   (* Run tableau search only.  The result contains the recorded script and
