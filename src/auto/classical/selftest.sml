@@ -2066,13 +2066,17 @@ val _ =
 
 val _ =
   test
-    ("an unmarked extra theorem is unsafe, not a SAFE_TAC rule",
+    ("an unmarked theorem is visible in non-closing tactic residues",
      fn () =>
        let
-         val theorem = DISCH goal_q (ASSUME goal_q)
-         val goal = ([], goal_q)
+         val residue_fact = concl boolTheory.TRUTH
+         val theorem = boolTheory.TRUTH
+         val goal = ([], boolSyntax.mk_conj (goal_p, goal_q))
+         val (residues, _) =
+           Tactical.VALID (classicalLib.SAFE_TAC [theorem]) goal
        in
-         tactic_fails (classicalLib.SAFE_TAC [theorem]) goal
+         same_goals residues
+           [([residue_fact], goal_p), ([residue_fact], goal_q)]
        end)
 
 val _ =
@@ -2507,7 +2511,7 @@ val _ =
 
 val _ =
   test
-    ("FAST_TAC retains a Once-wrapped theorem",
+    ("FAST_TAC unwraps and inserts a Once-wrapped theorem",
      fn () =>
        let
          val theorem = combinTheory.I_THM

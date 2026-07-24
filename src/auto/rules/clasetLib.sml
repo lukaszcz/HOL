@@ -858,43 +858,29 @@ fun process_claset_tags thms cs =
     process (cs, []) thms
   end
 
-fun rule_name_exists name cs =
-  List.exists (fn (_, (old_name, _)) => name = old_name) (rules_of cs)
-
-fun next_extra_name prefix cs index =
-  let val name = prefix ^ Int.toString index
-  in
-    if rule_name_exists name cs then next_extra_name prefix cs (index + 1)
-    else (name, index + 1)
-  end
-
 (* process_claset_tags consumes the classical marker vocabulary.  Plain
-   leftovers become unsafe intros; Cong, Excl, SF, requirement, and related
-   generic markers deliberately pass through without becoming rules. *)
-fun add_plain_theorems prefix theorems cs =
+   leftovers become inserted facts; generic simplifier controls are either
+   unwrapped to their theorem payload or discarded as inert here. *)
+fun invocation_facts theorems =
   let
-    fun add (theorem, (current, index)) =
+    fun fact theorem =
       let
         val theorem =
           case markerLib.dest_generic_simp_wrapper theorem of
               NONE => theorem
             | SOME payload => payload
       in
-      if markerLib.is_generic_simp_marker theorem then (current, index)
-      else
-        let val (name, next) = next_extra_name prefix current index
-        in
-          (add_intros [(name, theorem)] current, next)
-        end
+        if markerLib.is_generic_simp_marker theorem then NONE
+        else SOME theorem
       end
   in
-    #1 (List.foldl add (cs, 0) theorems)
+    List.mapPartial fact theorems
   end
 
-fun invocation_claset {prefix} base theorems =
+fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base
   in
-    add_plain_theorems prefix leftovers tagged
+    (tagged, invocation_facts leftovers)
   end
 
 end

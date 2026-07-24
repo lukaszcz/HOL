@@ -85,11 +85,13 @@ sig
 
   val process_claset_tags : thm list -> claset -> claset * thm list
 
-  (* Assemble the claset for one tactic invocation: consume the classical
-     marker vocabulary, then add the plain leftovers as unsafe intros under
-     generated names formed from prefix.  Engines differ only in that prefix
-     and in the base claset they start from. *)
-  val invocation_claset : {prefix : string} -> claset -> thm list -> claset
+  (* Remove inert generic simplifier controls and unwrap controls that carry
+     theorem content. *)
+  val invocation_facts : thm list -> thm list
+
+  (* Assemble the classical rules and inserted facts for one tactic
+     invocation. *)
+  val invocation_claset : claset -> thm list -> claset * thm list
 
   (* A contribution must be pure and deterministic.  Its result for a given
      tyinfo may be evaluated more than once; invocation count and timing are

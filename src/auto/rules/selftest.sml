@@ -1996,7 +1996,7 @@ val _ =
 
 val _ =
   test
-    ("inert generic simp markers do not change invocation claset rules",
+    ("inert generic simp markers do not change invocation facts",
      fn () =>
        let
          val plain = boolTheory.TRUTH
@@ -2010,34 +2010,36 @@ val _ =
             markerLib.NoAsms,
             markerLib.IgnAsm [QUOTE "claset_ignored"],
             markerLib.Abbr [QUOTE "claset_abbreviation"]]
-         val baseline =
-           invocation_claset {prefix = "__claset_req_"} empty_cs
-             [plain]
-         val with_markers =
-           invocation_claset {prefix = "__claset_req_"} empty_cs
-             (List.take (markers, 4) @ [plain] @ List.drop (markers, 4))
+         val (baseline_cs, baseline_facts) =
+           invocation_claset empty_cs [plain]
+         val (with_markers_cs, with_markers_facts) =
+           invocation_claset empty_cs
+             (List.take (markers, 4) @ [plain] @
+              List.drop (markers, 4))
        in
          List.all markerLib.is_generic_simp_marker markers andalso
-         same_rules (rules_of baseline) (rules_of with_markers) andalso
-         length (rules_of with_markers) = 1 andalso
-         named_marker_is "__claset_req_0" plain with_markers andalso
-         has_marker_rule marker_intro_spec plain with_markers
+         same_rules (rules_of baseline_cs) (rules_of with_markers_cs)
+           andalso
+         null (rules_of with_markers_cs) andalso
+         ListPair.allEq (fn (left, right) => same_thm left right)
+           (baseline_facts, with_markers_facts) andalso
+         ListPair.allEq (fn (left, right) => same_thm left right)
+           (with_markers_facts, [plain])
        end)
 
 val _ =
   test
-    ("content-bearing simp wrappers retain their classical payload",
+    ("content-bearing simp wrappers become invocation facts",
      fn () =>
        let
          val payload = boolTheory.IMP_CLAUSES
          val wrapped =
            markerLib.mk_Req0
              (markerLib.mk_ReqD (BoundedRewrites.Once payload))
-         val cs =
-           invocation_claset {prefix = "__claset_req_"} empty_cs
-             [wrapped]
+         val (cs, facts) = invocation_claset empty_cs [wrapped]
        in
          markerLib.is_generic_simp_marker wrapped andalso
-         length (rules_of cs) = 1 andalso
-         named_marker_is "__claset_req_0" payload cs
+         null (rules_of cs) andalso
+         ListPair.allEq (fn (left, right) => same_thm left right)
+           (facts, [payload])
        end)

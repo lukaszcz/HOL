@@ -3711,7 +3711,7 @@ val _ =
 
 val _ =
   test
-    ("plain extra lemmas are unsafe intros and markers are processed",
+    ("plain extra lemmas are inserted and markers are processed",
      fn () =>
        let
          val x = mk_var ("extra_x", bool)
@@ -3748,7 +3748,8 @@ val _ =
          val bad = Drule.ADD_ASSUM r boolTheory.OR_INTRO_THM1
          val goal = ([p], mk_disj (p, q))
          val rules =
-           [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM", bad]
+           [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM",
+            clasetLib.Intro bad]
          val debug = tableauLib.tryIt 1 rules goal
        in
          not (null (#fullTrace debug)) andalso
@@ -3784,7 +3785,8 @@ val _ =
          val goal = ([p, q], mk_disj (p, q))
          val rules =
            [clasetLib.Del "clasetSeed$DISJ_CINTRO_THM",
-            boolTheory.OR_INTRO_THM2, bad]
+            clasetLib.Intro boolTheory.OR_INTRO_THM2,
+            clasetLib.Intro bad]
          val (level1_ok, level1) =
            blast_trace_messages 1
              (tableauLib.BLAST_DEPTH_TAC 1 rules) goal

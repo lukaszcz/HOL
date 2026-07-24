@@ -256,11 +256,18 @@ val CS_DEPTH_SOLVE_TAC = depth_solve_tac
 val CS_DEEPEN_TAC = deepen_tac
 
 fun invocation_claset theorems =
-  clasetLib.invocation_claset {prefix = "__classical_extra_"}
-    (clasetLib.the_claset ()) theorems
+  clasetLib.invocation_claset (clasetLib.the_claset ()) theorems
 
 fun public_raw tactic theorems goal =
-  NTactical.DETERM (tactic (invocation_claset theorems)) goal
+  let
+    val (cs, facts) = invocation_claset theorems
+    val insert =
+      NTactical.LIFT
+        (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts)
+  in
+    NTactical.DETERM
+      (NTactical.NTHEN (insert, tactic cs)) goal
+  end
 
 fun public tactic = markerLib.ABBRS_THEN (public_raw tactic)
 
