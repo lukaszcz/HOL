@@ -1225,12 +1225,12 @@ val ExclSF = markerLib.ExclSF
 val Req0   = markerLib.mk_Req0
 val ReqD   = markerLib.mk_ReqD
 
-local open markerSyntax markerLib
-in
-fun is_AC thm = same_const(fst(strip_comb(concl thm))) AC_tm
-fun is_Cong thm = same_const(fst(strip_comb(concl thm))) Cong_tm
-fun is_Split thm = same_const(fst(strip_comb(concl thm))) Split_tm
+val is_AC = markerLib.is_AC
+val is_Cong = markerLib.is_Cong
+val is_Split = markerLib.is_Split
 
+local open markerLib
+in
 fun extract_excls (excls, exfrags, rest) l =
     case l of
         [] => (List.rev excls, List.rev exfrags, List.rev rest)

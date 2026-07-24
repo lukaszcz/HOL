@@ -127,6 +127,28 @@ fun dest_ReqD th =
     if HOLset.member(hypset th, ReqD_t) then SOME (PROVE_HYP ReqD_th th)
     else NONE
 
+fun has_marker_head marker th =
+    same_const marker (#1 (strip_comb (concl th)))
+    handle HOL_ERR _ => false
+
+val is_AC = has_marker_head markerSyntax.AC_tm
+val is_Cong = has_marker_head markerSyntax.Cong_tm
+val is_Split = has_marker_head markerSyntax.Split_tm
+
+(* Generic simplifier-control markers belong to simpset invocations, not
+   logical-rule declarations.  Keep the complete vocabulary here so that
+   consumers do not need to duplicate it. *)
+fun is_generic_simp_marker th =
+    is_AC th orelse
+    is_Cong th orelse
+    is_Split th orelse
+    Option.isSome (destExcl th) orelse
+    Option.isSome (destExclSF th) orelse
+    Option.isSome (destFRAG th) orelse
+    Option.isSome (dest_Req0 th) orelse
+    Option.isSome (dest_ReqD th) orelse
+    Option.isSome (total BoundedRewrites.DEST_BOUNDED th)
+
 fun req0_modify tac th =
     case dest_Req0 th of
         NONE => (tac,th)

@@ -45,6 +45,14 @@ sig
   val dest_ReqD : thm -> thm option
   val mk_require_tac : (thm list -> tactic) -> (thm list -> tactic)
 
+  val is_AC : thm -> bool
+  val is_Cong : thm -> bool
+  val is_Split : thm -> bool
+
+  (* True iff the theorem carries a generic simplifier-control marker.
+     Owners of new such markers must extend this predicate here. *)
+  val is_generic_simp_marker : thm -> bool
+
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic
   val ABBREV_TAC          : term -> tactic

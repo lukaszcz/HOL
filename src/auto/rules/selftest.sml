@@ -1841,6 +1841,15 @@ val marker_cases =
    ("SDest", SDest, destSDest, marker_sdest_spec, boolTheory.OR_ELIM_THM),
    ("Dest", Dest, destDest, marker_dest_spec, boolTheory.OR_ELIM_THM)]
 
+val classical_marker_theorems =
+  [SIntro boolTheory.AND_INTRO_THM,
+   Intro boolTheory.AND_INTRO_THM,
+   SElim boolTheory.OR_ELIM_THM,
+   Elim boolTheory.OR_ELIM_THM,
+   SDest boolTheory.OR_ELIM_THM,
+   Dest boolTheory.OR_ELIM_THM,
+   Del "claset-selftest"]
+
 val marker_prefix = "__claset_marker_"
 
 fun named_marker_is name th cs =
@@ -1864,6 +1873,14 @@ val _ =
               List.null rest andalso has_marker_rule spec th cs
             end)
          marker_cases)
+
+val _ =
+  test
+    ("generic simp-marker recognition excludes every claset marker",
+     fn () =>
+       List.all
+         (not o markerLib.is_generic_simp_marker)
+         classical_marker_theorems)
 
 val _ =
   test
@@ -1979,16 +1996,29 @@ val _ =
 
 val _ =
   test
-    ("claset invocation skips simplifier requirement markers",
+    ("generic simp markers do not change invocation claset rules",
      fn () =>
        let
          val plain = boolTheory.TRUTH
-         val req0 = markerLib.mk_Req0 boolTheory.AND_CLAUSES
-         val reqD = markerLib.mk_ReqD boolTheory.OR_CLAUSES
-         val cs =
+         val markers =
+           [markerLib.AC boolTheory.AND_CLAUSES boolTheory.OR_CLAUSES,
+            markerLib.Cong boolTheory.AND_CLAUSES,
+            markerLib.Split boolTheory.OR_CLAUSES,
+            markerLib.Excl "claset-selftest",
+            markerLib.ExclSF "claset-selftest",
+            markerLib.FRAG "claset-selftest",
+            markerLib.mk_Req0 boolTheory.AND_CLAUSES,
+            markerLib.mk_ReqD boolTheory.OR_CLAUSES,
+            BoundedRewrites.Once boolTheory.IMP_CLAUSES]
+         val baseline =
            invocation_claset {prefix = "__claset_req_"} empty_cs
-             [req0, plain, reqD]
+             [plain]
+         val with_markers =
+           invocation_claset {prefix = "__claset_req_"} empty_cs
+             (List.take (markers, 4) @ [plain] @ List.drop (markers, 4))
        in
-         length (rules_of cs) = 1 andalso
-         has_marker_rule marker_intro_spec plain cs
+         List.all markerLib.is_generic_simp_marker markers andalso
+         same_rules (rules_of baseline) (rules_of with_markers) andalso
+         length (rules_of with_markers) = 1 andalso
+         has_marker_rule marker_intro_spec plain with_markers
        end)

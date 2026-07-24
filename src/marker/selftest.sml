@@ -2,6 +2,29 @@ open HolKernel Parse boolLib testutils markerLib
 
 val _ = set_trace "Unicode" 0
 
+fun marker_test (name, th) =
+    (tprint ("is_generic_simp_marker: " ^ name);
+     if is_generic_simp_marker th then OK ()
+     else die "generic simplifier marker was not recognised")
+
+val generic_simp_markers =
+    [("AC", AC TRUTH TRUTH),
+     ("Cong", Cong TRUTH),
+     ("Split", Split TRUTH),
+     ("Excl", Excl "marker-selftest"),
+     ("ExclSF", ExclSF "marker-selftest"),
+     ("FRAG", FRAG "marker-selftest"),
+     ("Req0", mk_Req0 TRUTH),
+     ("ReqD", mk_ReqD TRUTH),
+     ("bounded", BoundedRewrites.Once TRUTH)]
+
+val _ = List.app marker_test generic_simp_markers
+
+val _ = tprint "is_generic_simp_marker: plain theorem"
+val _ =
+    if not (is_generic_simp_marker TRUTH) then OK ()
+    else die "plain theorem was recognised as a generic simplifier marker"
+
 fun testtac tac = #1 o VALID tac
 val goal_print = HOLPP.pp_to_string 75 goalStack.pp_goal
 
