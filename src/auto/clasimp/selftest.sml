@@ -5,6 +5,11 @@ fun test (name, check) =
   (tprint name;
    if check () then OK () else die "failed")
 
+(* clasimpLib is loaded before this selftest unit, so this datatype exercises
+   the live TypeBase hook rather than the registration catch-up sweep. *)
+val _ = Datatype.Datatype
+  `clasimp_hook_after_load = ClasimpHookAfter bool bool`
+
 fun residual tactic goal =
   #1 (Tactical.VALID tactic goal)
 
@@ -316,6 +321,111 @@ val _ =
          not
            (has_iff_fragment persistent_name (clasimpLib.clasimp_ss ()))
        end)
+
+fun tyinfo_named tyop =
+  case List.filter
+    (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)
+    (TypeBase.elts ()) of
+      [tyi] => tyi
+    | _ => raise Fail ("missing or ambiguous TypeBase entry for " ^ tyop)
+
+fun tyinfo_rule_stem tyi =
+  let val (thy, tyop) = TypeBasePure.ty_name_of tyi
+  in "__claset_tyinfo_" ^ thy ^ "_" ^ tyop end
+
+fun rules_named name =
+  List.filter
+    (fn (_, (name', _)) => name = name')
+    (clasetLib.rules_of (clasetLib.the_claset ()))
+
+val constructor_sintro_spec =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+
+fun constructor_rule_names tyi index =
+  let
+    val base =
+      tyinfo_rule_stem tyi ^ "_inject_" ^ Int.toString index
+  in
+    {dest = base, intro = base ^ "_intro"}
+  end
+
+fun has_constructor_intro tyi index =
+  let
+    val {intro, ...} = constructor_rule_names tyi index
+  in
+    case rules_named intro of
+        [(spec, _)] => same_spec spec constructor_sintro_spec
+      | _ => false
+  end
+
+val hook_tyinfo = tyinfo_named "clasimp_hook_after_load"
+val list_tyinfo = tyinfo_named "list"
+
+val _ =
+  test
+    ("constructor intro arrives through the post-load TypeBase hook",
+     fn () => has_constructor_intro hook_tyinfo 0)
+
+val _ =
+  test
+    ("constructor intro arrives through the TypeBase catch-up sweep",
+     fn () => has_constructor_intro list_tyinfo 0)
+
+val _ =
+  test
+    ("constructor intros do not duplicate Phase 0 injectivity seeds",
+     fn () =>
+       let
+         val {dest, intro} = constructor_rule_names hook_tyinfo 0
+       in
+         length (rules_named dest) = 1 andalso
+         length (rules_named intro) = 1
+       end)
+
+val {intro = hook_intro_name, ...} =
+  constructor_rule_names hook_tyinfo 0
+
+val (hook_intro_spec, (_, hook_intro_theorem)) =
+  case rules_named hook_intro_name of
+      [rule] => rule
+    | _ => raise Fail "missing constructor intro"
+
+val component_equality =
+  CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)
+
+val component_equality_cs =
+  clasetLib.add_sintros
+    [("clasimp-component-equality", component_equality),
+     ("clasimp-component-reflexivity", boolTheory.EQ_REFL)]
+    clasetLib.empty_cs
+
+val constructor_intro_cs =
+  clasetLib.add_rule hook_intro_spec
+    (hook_intro_name, hook_intro_theorem) component_equality_cs
+
+val constructor_intro_goal : Abbrev.goal =
+  ([],
+   ``ClasimpHookAfter (~F) clasimp_hook_b =
+     ClasimpHookAfter T clasimp_hook_b``)
+
+fun constructor_safe cs =
+  NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
+
+val _ =
+  test
+    ("classical search cannot prove constructor equality without the intro",
+     fn () =>
+       tactic_fails
+         (constructor_safe component_equality_cs)
+         constructor_intro_goal)
+
+val _ =
+  test
+    ("classical search proves constructor equality with the new intro",
+     fn () =>
+       solves
+         (constructor_safe constructor_intro_cs)
+         constructor_intro_goal)
 
 val marker_rule_cases :
     (string * thm * clasetRules.rulespec) list =

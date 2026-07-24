@@ -144,6 +144,43 @@ fun iff_declaration name theorem =
     {rules = rules, rewrite = th}
   end
 
+fun tyinfo_stem tyi =
+  case Lib.total TypeBasePure.ty_name_of tyi of
+      SOME (thy, tyop) => "__claset_tyinfo_" ^ thy ^ "_" ^ tyop
+    | NONE => "__claset_tyinfo_unknown"
+
+fun constructor_intro_contribution tyi =
+  case Lib.total TypeBasePure.one_one_of tyi of
+      SOME (SOME theorem) =>
+        let
+          val stem = tyinfo_stem tyi ^ "_inject_"
+
+          fun intro_rule (index, injectivity) =
+            let
+              val {rules, ...} =
+                iff_declaration
+                  (stem ^ Int.toString index) injectivity
+            in
+              List.filter
+                (fn ({kind = clasetRules.Intro, ...}, _) => true
+                  | _ => false)
+                rules
+            end
+        in
+          List.concat
+            (map intro_rule
+              (Lib.enumerate 0 (Drule.CONJUNCTS theorem)))
+        end
+    | _ => []
+
+(* Phase 0 already contributes the dest half of each injectivity theorem.
+   Register only the matching safe intro half here.  Registration catches up
+   existing TypeBase entries and the rules-layer listener handles later
+   datatype definitions. *)
+val _ =
+  clasetLib.register_tyinfo_contribution
+    ("clasimp-constructor-intros", constructor_intro_contribution)
+
 fun add_iff_declaration name theorem (cs, ss) =
   let
     val {rules, rewrite} = iff_declaration name theorem
