@@ -1073,13 +1073,328 @@ Proof
      DECIDE ``!x:num. x < 256 ==> x <= 196607``]
 QED
 
-(* Symbolic one-step rules used by the string theory prover. *)
+(* Replay algebra.  The TASK_02 draft_length recording rewrites "abc" to a
+   seq.unit/Char chain and uses concat unit, associativity, and length. *)
+
+Theorem smtstr_concat_assoc:
+  smtstr_concat (smtstr_concat s t) u =
+    smtstr_concat s (smtstr_concat t u)
+Proof
+  simp [smtstr_concat_def, listTheory.APPEND_ASSOC]
+QED
+
+Theorem smtstr_concat_nil_left:
+  smtstr_concat [] s = s
+Proof
+  simp [smtstr_concat_def]
+QED
+
+Theorem smtstr_concat_nil_right:
+  smtstr_concat s [] = s
+Proof
+  simp [smtstr_concat_def]
+QED
+
+Theorem smtstr_len_concat:
+  smtstr_len (smtstr_concat s t) =
+    smtstr_len s + smtstr_len t
+Proof
+  simp [smtstr_concat_def, smtstr_len_def]
+QED
+
+Theorem smtstr_len_concat_int:
+  &(smtstr_len (smtstr_concat s t)) =
+    &(smtstr_len s) + &(smtstr_len t)
+Proof
+  simp [smtstr_len_concat, integerTheory.INT_OF_NUM_ADD]
+QED
+
+Theorem smtstr_len_nonnegative:
+  0 <= &(smtstr_len s)
+Proof
+  simp []
+QED
+
+Theorem smtstr_len_char:
+  smtstr_len (smtstr_char c) = 1
+Proof
+  simp [smtstr_len_def, smtstr_char_def]
+QED
+
+Theorem smtstr_unit_concat:
+  smtstr_concat (smtstr_char c) s = c::s
+Proof
+  simp [smtstr_concat_def, smtstr_char_def]
+QED
+
+Theorem smtstr_literal3_units:
+  smtstr_concat (smtstr_char a)
+    (smtstr_concat (smtstr_char b) (smtstr_char c)) = [a; b; c]
+Proof
+  simp [smtstr_concat_def, smtstr_char_def]
+QED
+
+(* TASK_02 draft_regex_membership uses prefix witnesses; the contains and
+   suffix operator recordings use the same append decompositions. *)
+
+Theorem smtstr_prefixof_decompose:
+  smtstr_prefixof s t <=>
+    ?u. t = smtstr_concat s u
+Proof
+  simp [smtstr_prefixof_def, smtstr_concat_def,
+        rich_listTheory.IS_PREFIX_APPEND]
+QED
+
+Theorem smtstr_suffixof_decompose:
+  smtstr_suffixof s t <=>
+    ?u. t = smtstr_concat u s
+Proof
+  simp [smtstr_suffixof_def, smtstr_concat_def,
+        rich_listTheory.IS_SUFFIX_APPEND]
+QED
+
+Theorem smtstr_contains_decompose:
+  smtstr_contains s t <=>
+    ?u v. s = smtstr_concat u (smtstr_concat t v)
+Proof
+  simp [smtstr_contains_def, smtstr_concat_def,
+        rich_listTheory.IS_SUBLIST_APPEND]
+QED
+
+Theorem smtstr_prefixof_trans:
+  smtstr_prefixof s t /\ smtstr_prefixof t u ==>
+    smtstr_prefixof s u
+Proof
+  simp [smtstr_prefixof_decompose] >>
+  metis_tac [smtstr_concat_assoc]
+QED
+
+Theorem smtstr_suffixof_trans:
+  smtstr_suffixof s t /\ smtstr_suffixof t u ==>
+    smtstr_suffixof s u
+Proof
+  simp [smtstr_suffixof_decompose] >>
+  metis_tac [smtstr_concat_assoc]
+QED
+
+Theorem smtstr_contains_trans:
+  smtstr_contains s t /\ smtstr_contains t u ==>
+    smtstr_contains s u
+Proof
+  simp [smtstr_contains_decompose] >>
+  metis_tac [smtstr_concat_assoc]
+QED
+
+(* TASK_02 draft_str_lt records irreflexivity and the two-direction
+   comparison clause.  These facts give the strict/non-strict order kit. *)
+
+Theorem smtstr_lt_irrefl:
+  ~smtstr_lt s s
+Proof
+  Induct_on `s` >>
+  simp [smtstr_lt_compute]
+QED
+
+Theorem smtstr_lt_trans:
+  smtstr_lt s t /\ smtstr_lt t u ==> smtstr_lt s u
+Proof
+  `transitive (LLEX ($< : num -> num -> bool))` by
+    (irule listTheory.LLEX_transitive >>
+     simp [relationTheory.transitive_def] >>
+     decide_tac) >>
+  fs [smtstr_lt_def] >>
+  metis_tac [relationTheory.transitive_def]
+QED
+
+Theorem smtstr_lt_trichotomy:
+  smtstr_lt s t \/ s = t \/ smtstr_lt t s
+Proof
+  qid_spec_tac `t` >>
+  Induct_on `s` >>
+  Cases_on `t` >>
+  simp [smtstr_lt_compute] >>
+  metis_tac [arithmeticTheory.LT_CASES]
+QED
+
+Theorem smtstr_le_refl:
+  smtstr_le s s
+Proof
+  simp [smtstr_le_def]
+QED
+
+Theorem smtstr_lt_imp_le:
+  smtstr_lt s t ==> smtstr_le s t
+Proof
+  simp [smtstr_le_def]
+QED
+
+Theorem smtstr_le_trans:
+  smtstr_le s t /\ smtstr_le t u ==> smtstr_le s u
+Proof
+  rw [smtstr_le_def] >>
+  metis_tac [smtstr_lt_trans]
+QED
+
+Theorem smtstr_le_total:
+  smtstr_le s t \/ smtstr_le t s
+Proof
+  metis_tac [smtstr_lt_trichotomy, smtstr_le_def]
+QED
+
+(* TASK_02 draft_substr couples str.at/substr with concat lengths and
+   nonnegative tail lengths.  The following boundary lemmas expose all
+   totalization branches without unfolding smtstr_substr in consumers. *)
+
+Theorem smtstr_len_substr:
+  smtstr_len (smtstr_substr s i n) =
+    if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then 0
+    else MIN (Num n) (LENGTH s - Num i)
+Proof
+  rw [smtstr_len_def, smtstr_substr_def,
+      listTheory.LENGTH_TAKE_EQ] >>
+  simp [arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_len_substr_source_bound:
+  smtstr_len (smtstr_substr s i n) <= smtstr_len s
+Proof
+  rw [smtstr_len_substr, smtstr_len_def] >>
+  simp [arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_len_substr_count_bound:
+  smtstr_len (smtstr_substr s i n) <= Num n
+Proof
+  rw [smtstr_len_substr] >>
+  simp [arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_at_in_range:
+  0 <= i /\ Num i < LENGTH s ==>
+    smtstr_at s i = [EL (Num i) s]
+Proof
+  strip_tac >>
+  `~(i < 0)` by intLib.ARITH_TAC >>
+  fs [smtstr_at_def, smtstr_substr_def,
+      listTheory.TAKE1_DROP]
+QED
+
+Theorem smtstr_len_at:
+  smtstr_len (smtstr_at s i) =
+    if i < 0 \/ LENGTH s <= Num i then 0 else 1
+Proof
+  Cases_on `i < 0 \/ LENGTH s <= Num i`
+  >- simp [smtstr_at_def, smtstr_len_substr]
+  >> fs [] >>
+  `0 < LENGTH s - Num i` by decide_tac >>
+  simp [smtstr_at_def, smtstr_len_substr,
+        arithmeticTheory.MIN_DEF]
+QED
+
+Theorem smtstr_len_at_bound:
+  smtstr_len (smtstr_at s i) <= 1
+Proof
+  rw [smtstr_len_at]
+QED
+
+Theorem smtstr_at_zero:
+  s = [] \/ smtstr_at s 0 = [EL 0 s]
+Proof
+  Cases_on `s` >>
+  simp [smtstr_at_in_range]
+QED
+
+Theorem smtstr_substr_zero_one:
+  smtstr_substr s 0 1 = smtstr_at s 0
+Proof
+  simp [smtstr_at_def]
+QED
+
+Theorem smtstr_indexof_aux_bounds:
+  smtstr_indexof_aux t n s = SOME k ==>
+    n <= k /\ k <= n + LENGTH s
+Proof
+  qid_spec_tac `n` >>
+  Induct_on `s` >>
+  rw [smtstr_indexof_aux_def] >>
+  res_tac >>
+  decide_tac
+QED
+
+Theorem smtstr_indexof_lower_bound:
+  0 <= smtstr_indexof s t i ==> i <= smtstr_indexof s t i
+Proof
+  rw [smtstr_indexof_def] >>
+  BasicProvers.every_case_tac >>
+  fs [] >>
+  drule smtstr_indexof_aux_bounds >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_indexof_upper_bound:
+  0 <= smtstr_indexof s t i ==>
+    smtstr_indexof s t i <= &(smtstr_len s)
+Proof
+  rw [smtstr_indexof_def, smtstr_len_def] >>
+  BasicProvers.every_case_tac >>
+  fs [] >>
+  drule smtstr_indexof_aux_bounds >>
+  simp [] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtstr_indexof_negative:
+  smtstr_indexof s t i < 0 <=> smtstr_indexof s t i = -1
+Proof
+  rw [smtstr_indexof_def] >>
+  BasicProvers.every_case_tac >>
+  simp []
+QED
+
+(* TASK_02 draft_str_to_int records digit2int values 0--9.  These official
+   conversion facts expose the corresponding code-point and digit bounds. *)
+
+Theorem smtstr_is_digit_wfstr:
+  smtstr_is_digit s ==> wfstr s
+Proof
+  strip_tac >>
+  fs [smtstr_is_digit_def, wfstr_def]
+QED
+
+Theorem smtstr_is_digit_to_code_bounds:
+  smtstr_is_digit s ==>
+    48 <= smtstr_to_code s /\ smtstr_to_code s <= 57
+Proof
+  strip_tac >>
+  fs [smtstr_is_digit_def, smtstr_to_code_def]
+QED
+
+Theorem smtstr_from_code_to_code:
+  0 <= n /\ Num n <= 196607 ==>
+    smtstr_to_code (smtstr_from_code n) = n
+Proof
+  rw [smtstr_from_code_def, smtstr_to_code_def] >>
+  intLib.ARITH_TAC
+QED
+
+(* TASK_02 draft_re_comp/draft_re_loop aut.accept clauses unfold one
+   character at a time.  Package the concat and star derivative equations
+   at the semantic boundary used by the replay prover. *)
 
 Theorem smt_in_re_concat:
   smt_in_re s (reglan_concat r1 r2) <=>
     ?u v. smt_in_re u r1 /\ smt_in_re v r2 /\ s = u ++ v
 Proof
   simp [smt_in_re_def, reglan_dot_def]
+QED
+
+Theorem smt_in_re_concat_cons:
+  smt_in_re (c::s) (reglan_concat r1 r2) <=>
+    smt_in_re s (reglan_concat (re_deriv c r1) r2) \/
+    re_nullable r1 /\ smt_in_re s (re_deriv c r2)
+Proof
+  Cases_on `re_nullable r1` >>
+  simp [re_deriv_correct, re_deriv_def, smt_in_re_def]
 QED
 
 Theorem smt_in_re_star_cons:

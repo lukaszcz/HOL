@@ -280,6 +280,125 @@ Proof
   simp [aut_derivatives_def, aut_enumerate_distinct]
 QED
 
+(* TASK_02 draft_substr and draft_re_comp record the length, at/nth_i,
+   and head/tail decomposition clauses below. *)
+
+Theorem seq_unit_length:
+  smtstr_len (seq_unit c) = 1
+Proof
+  simp [seq_unit_def, smtstringTheory.smtstr_len_def]
+QED
+
+Theorem seq_split_at:
+  i < LENGTH s ==>
+    s =
+      TAKE i s ++
+      smtstr_concat (seq_unit (seq_nth_i s i)) (seq_tail s i)
+Proof
+  strip_tac >>
+  simp [seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def,
+        seq_nth_i_def] >>
+  metis_tac [rich_listTheory.TAKE_DROP_SUC]
+QED
+
+Theorem seq_head_tail:
+  s = [] \/
+  seq_eq s
+    (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
+Proof
+  Cases_on `s` >>
+  simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def, seq_nth_i_def]
+QED
+
+Theorem seq_tail_step:
+  SUC i < LENGTH s ==>
+    seq_tail s i =
+      smtstr_concat
+        (seq_unit (seq_nth_i s (SUC i))) (seq_tail s (SUC i))
+Proof
+  strip_tac >>
+  simp [seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def,
+        seq_nth_i_def, rich_listTheory.DROP_EL_CONS,
+        arithmeticTheory.ADD1]
+QED
+
+Theorem seq_tail_length:
+  smtstr_len (seq_tail s i) = LENGTH s - SUC i
+Proof
+  simp [seq_tail_def, smtstringTheory.smtstr_len_def]
+QED
+
+Theorem seq_at_nth:
+  i < LENGTH s ==>
+    smtstr_at s (&i) = seq_unit (seq_nth_i s i)
+Proof
+  simp [smtstringTheory.smtstr_at_in_range, seq_unit_def,
+        seq_nth_i_def]
+QED
+
+Theorem seq_at_zero:
+  s = [] \/ seq_eq (smtstr_at s 0) (seq_unit (seq_nth_i s 0))
+Proof
+  Cases_on `s` >>
+  simp [seq_eq_def, seq_at_nth]
+QED
+
+(* TASK_02 draft_str_to_int records char.is_digit, digit2int values 0--9,
+   and char.bit indices 0--17.  Unicode code points fit in 18 bits. *)
+
+Theorem char_is_digit_unicode:
+  char_is_digit c ==> c <= 196607
+Proof
+  simp [char_is_digit_def] >>
+  decide_tac
+QED
+
+Theorem seq_digit2int_digit_bounds:
+  char_is_digit c ==>
+    0 <= seq_digit2int c /\ seq_digit2int c <= 9
+Proof
+  simp [char_is_digit_def, seq_digit2int_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem seq_digit2int_digit:
+  char_is_digit c ==> seq_digit2int c = &(c - 48)
+Proof
+  simp [char_is_digit_def, seq_digit2int_def] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem unicode_max_lt_2exp18:
+  (196607 : num) < 2 ** 18
+Proof
+  CONV_TAC (RAND_CONV reduceLib.EXP_CONV) >>
+  numLib.REDUCE_TAC
+QED
+
+Theorem unicode_lt_2exp18:
+  (c : num) <= 196607 ==> c < 2 ** 18
+Proof
+  strip_tac >>
+  MATCH_MP_TAC
+    (Q.SPECL [`c`, `(196607 : num)`, `(2 : num) ** 18`]
+       arithmeticTheory.LESS_EQ_LESS_TRANS) >>
+  simp [unicode_max_lt_2exp18]
+QED
+
+Theorem char_bit_above_unicode:
+  c <= 196607 /\ 18 <= k ==> ~char_bit k c
+Proof
+  strip_tac >>
+  simp [char_bit_def] >>
+  irule bitTheory.NOT_BIT_GT_TWOEXP >>
+  drule unicode_lt_2exp18 >>
+  drule bitTheory.TWOEXP_MONO2 >>
+  decide_tac
+QED
+
 (* Ground EVAL checks for TASK_03's range and complement catalogs. *)
 Theorem aut_accept_catalog_eval:
   aut_state 0 (reglan_range [97] [122]) =

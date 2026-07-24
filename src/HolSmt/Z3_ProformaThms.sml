@@ -50,6 +50,52 @@ struct
   val datatype_thm_list = []
   val datatype_thms = thm_net_from_list datatype_thm_list
 
+  (* TASK_11 seed candidates.  TASK_18 constructs the string net and appends
+     it to th_lemma_thms when the string replay handler is wired. *)
+  local
+    open smtstringTheory smtstringz3Theory
+  in
+    val string_thm_list = [
+      smtstr_concat_assoc,
+      smtstr_concat_nil_left,
+      smtstr_concat_nil_right,
+      smtstr_len_concat_int,
+      smtstr_len_nonnegative,
+      smtstr_len_char,
+      smtstr_unit_concat,
+      smtstr_literal3_units,
+      smtstr_prefixof_decompose,
+      smtstr_suffixof_decompose,
+      smtstr_contains_decompose,
+      smtstr_lt_irrefl,
+      smtstr_lt_trans,
+      smtstr_lt_trichotomy,
+      smtstr_le_trans,
+      smtstr_le_total,
+      smtstr_len_substr,
+      smtstr_len_substr_source_bound,
+      smtstr_len_substr_count_bound,
+      smtstr_at_in_range,
+      smtstr_len_at,
+      smtstr_indexof_lower_bound,
+      smtstr_indexof_upper_bound,
+      smtstr_is_digit_to_code_bounds,
+      smtstr_from_code_to_code,
+      smt_in_re_concat_cons,
+      smt_in_re_star_cons,
+      seq_unit_length,
+      seq_head_tail,
+      seq_tail_step,
+      seq_tail_length,
+      seq_at_nth,
+      char_is_digit_unicode,
+      seq_digit2int_digit_bounds,
+      seq_digit2int_digit,
+      unicode_lt_2exp18,
+      char_bit_above_unicode
+    ]
+  end
+
 local
   open HolSmtTheory
 in
