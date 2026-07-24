@@ -10,9 +10,9 @@ task, no more.
 - TASK_01 (D1 kickoff baseline verification; rescoped
   2026-07-23) — complete (2026-07-23)
 - TASK_02 (E1 proof corpus + inventory) — complete (2026-07-24)
-- TASK_03 (aut.accept catalog + provability) — unblocked (not started)
+- TASK_03 (aut.accept catalog + provability) — complete (2026-07-24)
 - TASK_04 (red-first rows + needles + pin) — unblocked (not started)
-- TASK_05 (rework unsat-proof scripts) — blocked (03)
+- TASK_05 (rework unsat-proof scripts) — unblocked (not started)
 - TASK_06 (A1+A2 core theory) — unblocked (not started)
 - TASK_07 (A3 RegLan + derivatives) — blocked (06)
 - TASK_08 (A2 replace + conversions) — blocked (06, 07)
@@ -39,7 +39,7 @@ task, no more.
 
 ## 2. Next unblocked task
 
-TASK_03 — aut.accept catalog + provability.  (TASK_04 and TASK_06 are
+TASK_04 — red-first rows + needles + pin.  (TASK_05 and TASK_06 are
 also unblocked and parallelizable.)
 
 ## 3. Completion log
@@ -48,3 +48,4 @@ also unblocked and parallelizable.)
 
 - 2026-07-23 — TASK_01 complete: baseline green; strings ledger recorded.
 - 2026-07-24 — TASK_02 complete: five-version string corpus recorded.
+- 2026-07-24 — TASK_03 complete: aut.accept refuted P4.1; 2 operators escalated.
