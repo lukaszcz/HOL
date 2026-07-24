@@ -17,9 +17,10 @@ attempted, so a returned proof is a search artifact rather than a HOL
 theorem.
 
 The theorem list locally processes `SIntro`, `Intro`, `SElim`, `Elim`,
-`SDest`, `Dest` and `Del` markers. Unmarked theorems become unsafe
-introduction rules. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` are ignored. Classical wrappers are not used.
+`SDest`, `Dest` and `Del` markers. Every unmarked theorem is inserted as an
+assumption before tableau translation. Content-bearing generic simplifier
+wrappers are unwrapped and inserted; inert generic controls are ignored.
+Classical wrappers are not used.
 
 Unlike `BLAST_DEPTH_TAC`, this function performs neither the public
 tactic's preprocessing nor reconstruction.

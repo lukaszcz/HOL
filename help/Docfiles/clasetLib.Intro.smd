@@ -14,10 +14,11 @@ in a classical tactic's theorem list. The theorem is added to that call's
 temporary rule set as an unsafe introduction rule. Introduction rules match
 their conclusion against a goal and turn their premises into subgoals.
 
-An unmarked theorem in the theorem list has the same unsafe-introduction
-classification. The safe classical tactics accept this classification but
-do not apply unsafe rules. Use `SIntro th` when `SAFE_TAC`, `CLARIFY_TAC`, or a
-safe step tactic should use the rule.
+An unmarked theorem has different semantics: it is inserted into the goal
+as an assumption. Use `Intro th` only to request unsafe-introduction rule
+classification explicitly. The safe classical tactics accept the marker
+but do not apply unsafe rules. Use `SIntro th` when `SAFE_TAC`,
+`CLARIFY_TAC`, or a safe step tactic should use the rule.
 
 The corresponding persistent attribute is argument-free `[intro]`. Despite
 its plain spelling it is unsafe; `[sintro]` denotes the safe classification.
@@ -29,14 +30,16 @@ the marker may fail if `th` cannot be converted to introduction-rule form.
 
 ### Example
 
-The following two theorem lists classify `my_rule` identically:
+The marker is required when `my_rule` should be an unsafe introduction
+rule:
 
 ``` hol4
 classicalLib.SAFE_TAC [clasetLib.Intro my_rule]
-classicalLib.SAFE_TAC [my_rule]
 ```
 
-Neither call applies `my_rule`, because `SAFE_TAC` uses only safe rules.
+This call does not apply `my_rule`, because `SAFE_TAC` uses only safe
+rules. By contrast, `SAFE_TAC [my_rule]` inserts `my_rule` as an
+assumption.
 
 ### See also
 

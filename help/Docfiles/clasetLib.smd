@@ -56,10 +56,16 @@ for a classical tactic call. `SIntro`, `Intro`, `SElim`, `Elim`, `SDest` and
 `Del` removes a named rule. The original theorem and global rule set are
 unchanged.
 
-An unmarked theorem supplied to a classical tactic is treated as an unsafe
-introduction rule. Consequently it is accepted but not applied by
-`SAFE_TAC`, `CLARIFY_TAC`, or their safe step variants. Generic simplifier
-markers such as `Cong`, `Excl` and `SF` are not classical rule markers.
+An unmarked theorem supplied to a classical or tableau tactic is inserted
+into the goal as an assumption. Content-bearing generic simplifier wrappers
+such as `Once th` are unwrapped and inserted, while inert generic controls
+such as `Cong`, `Excl` and `SF` are ignored. Explicit rule roles therefore
+always require one of the six rule markers.
+
+Clasimp theorem lists additionally recognize `Simp th`, which adds only a
+temporary rewrite, and `Iff th`, which adds temporary rewrite and classical
+views. Classical-only and tableau tactics reject those two markers because
+they have no simpset.
 
 ### Failure
 
@@ -89,4 +95,6 @@ The deletion does not affect later tactic calls.
 [`clasetLib.Elim`](#clasetLib.Elim),
 [`clasetLib.SDest`](#clasetLib.SDest),
 [`clasetLib.Dest`](#clasetLib.Dest),
+[`clasetLib.Simp`](#clasetLib.Simp),
+[`clasetLib.Iff`](#clasetLib.Iff),
 [`clasetLib.Del`](#clasetLib.Del)

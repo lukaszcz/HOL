@@ -19,8 +19,9 @@ disables that limit.
 
 The theorem list locally modifies the current classical rule set. The
 markers `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del` add
-or remove rules. Unmarked theorems become unsafe introduction rules.
-Generic simplifier markers such as `Cong`, `Excl` and `SF` are ignored.
+or remove rules. Every unmarked theorem is inserted as an assumption before
+search starts. Content-bearing generic simplifier wrappers are unwrapped
+and inserted; inert generic controls are ignored.
 
 This tactic succeeds only after all goals have been solved and the proof
 has been replayed.

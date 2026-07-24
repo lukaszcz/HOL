@@ -18,9 +18,10 @@ goals, and has no numeric search bound.
 
 The theorem list modifies the current classical rule set for this call.
 The markers `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del`
-add or remove rules. Unmarked theorems become unsafe introduction rules,
-so they are not used by this safe-rule-only step. Generic simplifier
-markers such as `Cong`, `Excl` and `SF` are ignored.
+add or remove rules. Every unmarked theorem is inserted as an assumption
+before the step is attempted, making it available to the unifying
+assumption and contradiction steps. Content-bearing generic simplifier
+wrappers are unwrapped and inserted; inert generic controls are ignored.
 
 ### Failure
 

@@ -18,9 +18,9 @@ slow search drivers. Safe and unsafe wrappers participate. A call can
 solve the goal or leave residual goals, and has no numeric search bound.
 
 The theorem list locally accepts `SIntro`, `Intro`, `SElim`, `Elim`,
-`SDest`, `Dest` and `Del` markers. Unmarked theorems become unsafe
-introduction rules. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` do not become classical rules.
+`SDest`, `Dest` and `Del` markers. Every unmarked theorem is inserted as an
+assumption before reasoning starts. Content-bearing generic simplifier
+wrappers are unwrapped and inserted; inert generic controls are ignored.
 
 ### Failure
 

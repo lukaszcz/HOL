@@ -16,10 +16,10 @@ universal introduction, and safe wrappers. A step may solve the goal or
 replace it by one or more residual goals. Rule-premise order is preserved.
 
 The theorem list accepts `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest`
-and `Del` markers. Its changes are local to this invocation. An unmarked
-theorem defaults to an unsafe introduction rule and therefore is not used
-by this safe-only step tactic. Generic simplifier markers are not treated as
-classical rules.
+and `Del` markers. Its changes are local to this invocation. Every unmarked
+theorem is inserted as an assumption before the step is attempted.
+Content-bearing generic simplifier wrappers are unwrapped and inserted;
+inert generic controls are ignored.
 
 Unlike `SAFE_TAC`, this tactic does not repeat the cascade.
 

@@ -18,9 +18,10 @@ Registered safe wrappers also participate. The tactic may solve the goal or
 return one residual goal.
 
 The theorem list accepts `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest`
-and `Del` markers, locally for this invocation. Unmarked theorems become
-unsafe introduction rules and are not used by this safe-only tactic.
-Generic simplifier markers are not interpreted as classical rules.
+and `Del` markers, locally for this invocation. Every unmarked theorem is
+inserted as an assumption before the step is attempted. Content-bearing
+generic simplifier wrappers are unwrapped and inserted; inert generic
+controls are ignored.
 
 Unlike `CLARIFY_TAC`, this tactic does not repeat the cascade.
 

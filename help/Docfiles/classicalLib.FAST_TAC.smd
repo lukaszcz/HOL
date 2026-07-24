@@ -18,9 +18,10 @@ bound and can therefore diverge.
 
 The theorem list modifies the current classical rule set for this call.
 The markers `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del`
-add or remove rules. An unmarked theorem is a temporary unsafe
-introduction rule. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` are not interpreted as classical rules. No change survives the call.
+add or remove rules. Every unmarked theorem is inserted as an assumption
+before search starts. Content-bearing generic simplifier wrappers such as
+`Once th` are unwrapped and inserted; inert controls such as `Cong`, `Excl`
+and `SF` are ignored. No change survives the call.
 
 Unlike `SAFE_TAC`, this is a solve-completely tactic: a successful result
 has no residual goals.

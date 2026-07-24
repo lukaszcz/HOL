@@ -18,9 +18,10 @@ bound, so search can diverge.
 
 The theorem list modifies the current classical rule set for this call.
 The markers `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del`
-add or remove rules. Unmarked theorems become temporary unsafe
-introduction rules. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` are ignored by the classical reasoner. Changes are local to the call.
+add or remove rules. Every unmarked theorem is inserted as an assumption
+before search starts. Content-bearing generic simplifier wrappers are
+unwrapped and inserted; inert generic controls are ignored. Changes are
+local to the call.
 
 This tactic succeeds only with a complete proof; it never returns residual
 goals.

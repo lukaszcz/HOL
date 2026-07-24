@@ -19,9 +19,9 @@ enumerated eagerly, without dynamic per-goal pruning.
 non-positive value disables the limit.
 
 The theorem list locally accepts `SIntro`, `Intro`, `SElim`, `Elim`,
-`SDest`, `Dest` and `Del` markers. Unmarked theorems become unsafe
-introduction rules. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` are ignored by the classical reasoner.
+`SDest`, `Dest` and `Del` markers. Every unmarked theorem is inserted as an
+assumption before search starts. Content-bearing generic simplifier
+wrappers are unwrapped and inserted; inert generic controls are ignored.
 
 The tactic succeeds only when search and replay close every goal.
 

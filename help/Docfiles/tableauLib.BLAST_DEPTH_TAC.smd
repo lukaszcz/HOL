@@ -18,9 +18,9 @@ penalty. A negative limit disables tableau search, although preprocessing
 can still solve a goal. There is no timeout.
 
 The theorem list locally processes `SIntro`, `Intro`, `SElim`, `Elim`,
-`SDest`, `Dest` and `Del` markers. Unmarked theorems become unsafe
-introduction rules. Generic simplifier markers such as `Cong`, `Excl` and
-`SF` are ignored.
+`SDest`, `Dest` and `Del` markers. Every unmarked theorem is inserted as an
+assumption before tableau translation. Content-bearing generic simplifier
+wrappers are unwrapped and inserted; inert generic controls are ignored.
 
 Found tableaux are replayed through typed HOL inference. A replay failure
 causes internal backtracking. Trace family `"blast"` reports such failures
@@ -57,6 +57,7 @@ QED
 ### See also
 
 [`tableauLib.BLAST_TAC`](#tableauLib.BLAST_TAC),
+[`tableauLib.CS_BLAST_DEPTH_TAC`](#tableauLib.CS_BLAST_DEPTH_TAC),
 [`blastLib.BBLAST_TAC`](#blastLib.BBLAST_TAC),
 [`classicalLib.DEEPEN_TAC`](#classicalLib.DEEPEN_TAC),
 [`classicalLib.FAST_TAC`](#classicalLib.FAST_TAC),

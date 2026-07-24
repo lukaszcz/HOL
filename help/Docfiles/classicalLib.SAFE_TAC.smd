@@ -19,10 +19,12 @@ left, and rule-premise order is preserved.
 
 The theorem list can modify the rule set for this invocation. The markers
 `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del` respectively
-add or remove rules. An unmarked theorem is added as an *unsafe*
-introduction rule, so it is not used by `SAFE_TAC`. Generic simplifier
-markers such as `Cong`, `Excl` and `SF` are not interpreted as classical
-rules. No modification survives the tactic invocation.
+add or remove rules. Every unmarked theorem is inserted into the goal as an
+assumption before safe reasoning starts, so `SAFE_TAC` can use it through
+the ordinary assumption channel. Content-bearing generic simplifier
+wrappers such as `Once th` are unwrapped and inserted; inert controls such
+as `Cong`, `Excl` and `SF` are ignored. No modification survives the tactic
+invocation.
 
 The tactic need not solve the goal: successful safe steps may leave
 residual goals.
