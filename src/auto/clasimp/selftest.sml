@@ -150,6 +150,129 @@ fun same_spec
         clasetRules.rulespec) =
   kind1 = kind2 andalso safe1 = safe2 andalso prio1 = prio2
 
+datatype iff_test_shape = IffShape | NegShape | PlainShape
+
+val iff_test_x = mk_var ("clasimp_iff_x", Type.ind)
+val iff_test_pred =
+  mk_var ("clasimp_iff_pred", Type.ind --> Type.bool)
+val iff_test_left = mk_comb (iff_test_pred, iff_test_x)
+val iff_test_right = mk_var ("clasimp_iff_right", Type.bool)
+val iff_test_condition =
+  boolSyntax.mk_eq (iff_test_x, iff_test_x)
+
+fun iff_test_theorem conditional proposition =
+  if conditional then
+    DISCH iff_test_condition
+      (Drule.ADD_ASSUM iff_test_condition (ASSUME proposition))
+  else ASSUME proposition
+
+fun install_iff name theorem =
+  let
+    val {rules, rewrite} =
+      clasimpLib.iff_declaration name theorem
+    val cs =
+      List.foldl
+        (fn ((spec, named_rule), current) =>
+          clasetLib.add_rule spec named_rule current)
+        clasetLib.empty_cs rules
+    val ss =
+      simpLib.++
+        (BasicProvers.bool_ss, simpLib.rewrites [rewrite])
+  in
+    (rules, cs, ss)
+  end
+
+fun simp_rewrites_to ss source target =
+  let
+    val theorem =
+      Conv.QCONV (simpLib.SIMP_CONV ss []) source
+  in
+    Term.aconv
+      (snd (boolSyntax.dest_eq (concl theorem))) target
+  end
+
+fun rule_body theorem =
+  snd (boolSyntax.strip_forall (concl theorem))
+
+fun rule_has_shape expected_prems expected_conclusion (_, (_, theorem)) =
+  let
+    val (prems, conclusion) =
+      boolSyntax.strip_imp_only (rule_body theorem)
+  in
+    ListPair.allEq
+      (fn (left, right) => Term.aconv left right)
+      (prems, expected_prems) andalso
+    Term.aconv conclusion expected_conclusion
+  end
+
+fun iff_derivation_case
+      (name, shape, conditional, proposition, rewrite_target) =
+  let
+    val theorem = iff_test_theorem conditional proposition
+    val (rules, cs, ss) = install_iff name theorem
+    val safe = not conditional
+    val condition_tail =
+      if conditional then [iff_test_condition] else []
+    val installed = clasetLib.rules_of cs
+
+    fun has_spec kind (spec, _) =
+      same_spec spec {kind = kind, safe = safe, prio = NONE}
+
+    val rules_ok =
+      case (shape, rules) of
+          (IffShape, [intro, dest]) =>
+            has_spec clasetRules.Intro intro andalso
+            has_spec clasetRules.Dest dest andalso
+            rule_has_shape
+              (iff_test_right :: condition_tail)
+              iff_test_left intro andalso
+            rule_has_shape
+              (iff_test_left :: condition_tail)
+              iff_test_right dest
+        | (NegShape, [elim as (_, (_, theorem))]) =>
+            let
+              val (prems, conclusion) =
+                boolSyntax.strip_imp_only (rule_body theorem)
+            in
+              has_spec clasetRules.Elim elim andalso
+              ListPair.allEq
+                (fn (left, right) => Term.aconv left right)
+                (prems, iff_test_left :: condition_tail) andalso
+              is_var conclusion andalso type_of conclusion = Type.bool
+            end
+        | (PlainShape, [intro]) =>
+            has_spec clasetRules.Intro intro andalso
+            rule_has_shape condition_tail iff_test_left intro
+        | _ => false
+  in
+    rules_ok andalso length installed = length rules andalso
+    simp_rewrites_to ss iff_test_left rewrite_target
+  end
+
+val iff_derivation_cases =
+  [("iff-unconditional", IffShape, false,
+    boolSyntax.mk_eq (iff_test_left, iff_test_right),
+    iff_test_right),
+   ("iff-conditional", IffShape, true,
+    boolSyntax.mk_eq (iff_test_left, iff_test_right),
+    iff_test_right),
+   ("neg-unconditional", NegShape, false,
+    boolSyntax.mk_neg iff_test_left, boolSyntax.F),
+   ("neg-conditional", NegShape, true,
+    boolSyntax.mk_neg iff_test_left, boolSyntax.F),
+   ("plain-unconditional", PlainShape, false,
+    iff_test_left, boolSyntax.T),
+   ("plain-conditional", PlainShape, true,
+    iff_test_left, boolSyntax.T)]
+
+val _ =
+  List.app
+    (fn case_info as (name, _, _, _, _) =>
+      test
+        ("iff decision tree: " ^ name,
+         fn () => iff_derivation_case case_info))
+    iff_derivation_cases
+
 val marker_rule_cases :
     (string * thm * clasetRules.rulespec) list =
   [("SIntro", clasetLib.SIntro boolTheory.AND_INTRO_THM,
@@ -296,20 +419,42 @@ val _ =
 
 val _ =
   test
-    ("Iff marker reports its explicit task-ten hook",
+    ("Iff marker is temporary and solves through a clasimp tactic",
      fn () =>
        let
-         fun leave_residue _ _ _ = Tactical.ALL_TAC
+         val equivalence =
+           CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)
+         val (left, right) =
+           boolSyntax.dest_eq (concl equivalence)
+         val goal = ([right], left)
+         fun search cs ss _ =
+           clasimpLib.CS_FASTFORCE_TAC cs ss
+         fun local_clasimp controls =
+           clasimpLib.process_clasimp_args search
+             clasetLib.empty_cs simpLib.empty_ss controls
+         val rules_before =
+           length (clasetLib.rules_of (clasetLib.the_claset ()))
+         val rewrite_before =
+           Conv.QCONV
+             (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
+             iff_test_left
+         val unavailable_before =
+           tactic_fails (local_clasimp []) goal
+         val available =
+           solves
+             (local_clasimp
+               [clasetLib.Iff equivalence]) goal
+         val rules_after =
+           length (clasetLib.rules_of (clasetLib.the_claset ()))
+         val rewrite_after =
+           Conv.QCONV
+             (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
+             iff_test_left
        in
-         (ignore
-            (clasimpLib.process_clasimp_args leave_residue
-              clasetLib.empty_cs simpLib.empty_ss
-              [clasetLib.Iff boolTheory.IMP_CLAUSES]
-              ([], ``clasimp_iff_goal:bool``));
-          false)
-         handle HOL_ERR error =>
-           Feedback.message_of error =
-             "Iff marker is not yet implemented"
+         unavailable_before andalso available andalso
+         tactic_fails (local_clasimp []) goal andalso
+         rules_before = rules_after andalso
+         Term.aconv (concl rewrite_before) (concl rewrite_after)
        end)
 
 val _ =

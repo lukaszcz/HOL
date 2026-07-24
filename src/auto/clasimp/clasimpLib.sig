@@ -11,6 +11,14 @@ sig
   val add_safe_simp_wrapper :
     simpLib.simpset -> clasetLib.claset -> clasetLib.claset
 
+  (* Pure [iff] decision tree.  Callers choose where to install the
+     derived claset rules and the normalized simpset rewrite. *)
+  val iff_declaration :
+    string -> thm ->
+    {rules :
+       (clasetRules.rulespec * (string * thm)) list,
+     rewrite : thm}
+
   (* Shared packaging for theorem-list clasimp tactics.  The body receives
      the temporary claset, temporary simpset, and generic simp controls. *)
   val process_clasimp_args :

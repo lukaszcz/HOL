@@ -78,34 +78,122 @@ fun add_simp_wrapper ss = add_simp_wrapper_with ss []
 
 fun add_safe_simp_wrapper ss = add_safe_simp_wrapper_with ss []
 
+fun iff_declaration name theorem =
+  let
+    val th = Drule.SPEC_ALL theorem
+    val (prems, final) = boolSyntax.strip_imp_only (concl th)
+    val safe = null prems
+    fun spec kind =
+      {kind = kind, safe = safe, prio = NONE}
+
+    fun undisch [] result = result
+      | undisch (prem :: rest) result =
+          undisch rest (MP result (ASSUME prem))
+
+    (* The derived iff/not rule initially has the source antecedents as
+       hypotheses and its new major premise last.  Discharge the source
+       antecedents first, then the major, to put the major premise at the
+       front as Isabelle's rotate_prems n does. *)
+    fun rotate_major major result =
+      Drule.GEN_ALL
+        (DISCH major
+          (List.foldr
+            (fn (prem, current) => DISCH prem current)
+            result prems))
+
+    fun iff_rules () =
+      let
+        val core = undisch prems th
+        val (left, right) = boolSyntax.dest_eq final
+        val (forward, backward) = EQ_IMP_RULE core
+        val intro =
+          rotate_major right (MP backward (ASSUME right))
+        val dest =
+          rotate_major left (MP forward (ASSUME left))
+      in
+        [(spec clasetRules.Intro, (name ^ "_intro", intro)),
+         (spec clasetRules.Dest, (name ^ "_dest", dest))]
+      end
+
+    fun not_rule () =
+      let
+        val core = undisch prems th
+        val major = boolSyntax.dest_neg final
+        val false_th = MP (NOT_ELIM core) (ASSUME major)
+        val result_var =
+          variant (free_varsl (concl core :: hyp core))
+            (mk_var ("iff_result", Type.bool))
+        val result =
+          MP (SPEC result_var boolTheory.FALSITY) false_th
+        val elim = rotate_major major result
+      in
+        [(spec clasetRules.Elim, (name ^ "_elim", elim))]
+      end
+
+    val rules =
+      if boolSyntax.is_eq final andalso
+         type_of (fst (boolSyntax.dest_eq final)) = Type.bool
+      then iff_rules ()
+      else if boolSyntax.is_neg final then not_rule ()
+      else
+        [(spec clasetRules.Intro,
+          (name ^ "_intro", Drule.GEN_ALL th))]
+  in
+    {rules = rules, rewrite = th}
+  end
+
+fun add_iff_declaration name theorem (cs, ss) =
+  let
+    val {rules, rewrite} = iff_declaration name theorem
+    val cs' =
+      List.foldl
+        (fn ((rule_spec, named_rule), current) =>
+          clasetLib.add_rule rule_spec named_rule current)
+        cs rules
+    val ss' =
+      simpLib.++ (ss, simpLib.rewrites [rewrite])
+  in
+    (cs', ss')
+  end
+
 fun process_clasimp_args body base_cs base_ss =
   markerLib.ABBRS_THEN
     (fn theorems =>
       let
-        fun partition (simp_rules, rest) [] =
-              (List.rev simp_rules, List.rev rest)
-          | partition (simp_rules, rest) (theorem :: tail) =
+        fun partition (simp_rules, iff_rules, rest) [] =
+              (List.rev simp_rules, List.rev iff_rules, List.rev rest)
+          | partition (simp_rules, iff_rules, rest)
+              (theorem :: tail) =
               (case clasetLib.destSimp theorem of
                    SOME rule =>
-                     partition (rule :: simp_rules, rest) tail
+                     partition
+                       (rule :: simp_rules, iff_rules, rest) tail
                  | NONE =>
                      (case clasetLib.destIff theorem of
-                          SOME _ =>
-                            raise mk_HOL_ERR
-                              "clasimpLib" "process_clasimp_args"
-                              "Iff marker is not yet implemented"
+                          SOME rule =>
+                            partition
+                              (simp_rules, rule :: iff_rules, rest)
+                              tail
                         | NONE =>
                             partition
-                              (simp_rules, theorem :: rest) tail))
+                              (simp_rules, iff_rules,
+                               theorem :: rest) tail))
 
-        val (simp_rules, classical_args) =
-          partition ([], []) theorems
-        val invocation_ss =
+        val (simp_rules, iff_rules, classical_args) =
+          partition ([], [], []) theorems
+        val simp_ss =
           List.foldl
             (fn (rule, ss) => simpLib.++ (ss, simpLib.rewrites [rule]))
             base_ss simp_rules
+        val (iff_cs, invocation_ss) =
+          List.foldl
+            (fn ((index, rule), pair) =>
+              add_iff_declaration
+                ("__clasimp_iff_arg_" ^ Int.toString index)
+                rule pair)
+            (base_cs, simp_ss) (Lib.enumerate 0 iff_rules)
         val (invocation_cs, leftovers) =
-          clasetLib.process_claset_tags classical_args base_cs
+          clasetLib.process_claset_tags classical_args iff_cs
         val (simp_args, facts) =
           List.partition markerLib.is_generic_simp_marker leftovers
         val insert = Tactical.MAP_EVERY Tactic.ASSUME_TAC facts
