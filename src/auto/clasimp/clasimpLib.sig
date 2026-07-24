@@ -19,6 +19,8 @@ sig
        (clasetRules.rulespec * (string * thm)) list,
      rewrite : thm}
 
+  val remove_iff : string -> unit
+
   (* Shared packaging for theorem-list clasimp tactics.  The body receives
      the temporary claset, temporary simpset, and generic simp controls. *)
   val process_clasimp_args :

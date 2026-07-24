@@ -273,6 +273,50 @@ val _ =
          fn () => iff_derivation_case case_info))
     iff_derivation_cases
 
+fun has_named_claset_rule name =
+  List.exists
+    (fn (_, (name', _)) => name = name')
+    (clasetLib.rules_of (clasetLib.the_claset ()))
+
+fun has_iff_fragment name ss =
+  List.exists
+    (fn fragment => fragment = "__clasimp_iff_" ^ name)
+    (simpLib.ssfrag_names_of ss)
+
+val _ =
+  test
+    ("iff settype and attribute are registered without collision",
+     fn () =>
+       List.exists (equal "iff") (ThmSetData.all_set_types ()) andalso
+       ThmAttribute.is_attribute "iff")
+
+val _ =
+  test
+    ("Theorem [iff] immediately updates and remove_iff retracts both stores",
+     fn () =>
+       let
+         val local_name = "clasimp_iff_attribute_test"
+         val persistent_name =
+           KernelSig.name_toString (ThmSetData.toKName local_name)
+         val theorem =
+           CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)
+         val _ = boolLib.save_thm (local_name ^ "[iff]", theorem)
+         val added =
+           has_named_claset_rule (persistent_name ^ "_intro") andalso
+           has_named_claset_rule (persistent_name ^ "_dest") andalso
+           has_iff_fragment persistent_name (BasicProvers.srw_ss ()) andalso
+           has_iff_fragment persistent_name (clasimpLib.clasimp_ss ())
+         val _ = clasimpLib.remove_iff local_name
+       in
+         added andalso
+         not (has_named_claset_rule (persistent_name ^ "_intro")) andalso
+         not (has_named_claset_rule (persistent_name ^ "_dest")) andalso
+         not
+           (has_iff_fragment persistent_name (BasicProvers.srw_ss ())) andalso
+         not
+           (has_iff_fragment persistent_name (clasimpLib.clasimp_ss ()))
+       end)
+
 val marker_rule_cases :
     (string * thm * clasetRules.rulespec) list =
   [("SIntro", clasetLib.SIntro boolTheory.AND_INTRO_THM,

@@ -3,6 +3,8 @@ struct
 
 open Abbrev HolKernel
 
+val ERR = mk_HOL_ERR "clasimpLib"
+
 val safe_solver =
   simpLib.mk_tactic_solver
     ("clasimp safe",
@@ -154,6 +156,100 @@ fun add_iff_declaration name theorem (cs, ss) =
       simpLib.++ (ss, simpLib.rewrites [rewrite])
   in
     (cs', ss')
+  end
+
+fun persistent_iff_name name = KernelSig.name_toString name
+
+fun normalise_iff_name name =
+  if String.isSubstring "$" name then name
+  else
+    (persistent_iff_name (ThmSetData.toKName name)
+     handle HOL_ERR _ => name)
+
+fun iff_fragment_name name = "__clasimp_iff_" ^ name
+
+fun remove_iff_rules name =
+  clasetLib.remove_rule (name ^ "_intro") o
+  clasetLib.remove_rule (name ^ "_dest") o
+  clasetLib.remove_rule (name ^ "_elim")
+
+fun retract_iff_declaration name =
+  let
+    val _ = clasetLib.augment_claset (remove_iff_rules name)
+    val _ =
+      (BasicProvers.diminish_srw_ss [iff_fragment_name name]
+       handle Conv.UNCHANGED => ())
+  in
+    ()
+  end
+
+fun install_persistent_iff name theorem =
+  let
+    val {rules, rewrite} = iff_declaration name theorem
+    fun add_rules cs =
+      List.foldl
+        (fn ((spec, named_rule), current) =>
+          clasetLib.add_rule spec named_rule current)
+        cs rules
+    val fragment =
+      simpLib.named_rewrites (iff_fragment_name name) [rewrite]
+    val _ = retract_iff_declaration name
+    val _ = clasetLib.augment_claset add_rules
+  in
+    BasicProvers.augment_srw_ss [fragment]
+  end
+
+fun apply_iff_delta delta db =
+  case delta of
+      ThmSetData.ADD (name, theorem) =>
+        Symtab.update (persistent_iff_name name, theorem) db
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (normalise_iff_name name) db
+
+fun apply_iff_to_global delta db =
+  let
+    val _ =
+      case delta of
+          ThmSetData.ADD (name, theorem) =>
+            install_persistent_iff
+              (persistent_iff_name name) theorem
+        | ThmSetData.REMOVE name =>
+            retract_iff_declaration (normalise_iff_name name)
+  in
+    apply_iff_delta delta db
+  end
+
+val _ =
+  if List.exists (equal "iff") (ThmSetData.all_set_types ()) orelse
+     ThmAttribute.is_attribute "iff"
+  then raise ERR "registration" "settype or attribute iff already exists"
+  else ()
+
+(* The source theorem is the only persistent declaration.  Its claset and
+   simpset views are recomputed by this hook whenever the iff stream is
+   replayed.  The views deliberately use the public augmentation APIs, so
+   neither the claset cdelta schema nor the simp declaration stream changes.
+
+   Claset candidate order uses declaration recency as a tie-break.  Since
+   [intro] and [iff] inhabit different delta streams, their relative recency
+   in one theory may be permuted on reload.  This affects ties only; a shared
+   declaration counter can be introduced if later benchmarks need one. *)
+val iff_data =
+  ThmSetData.export_with_ancestry
+    {settype = "iff",
+     delta_ops =
+       {apply_to_global = apply_iff_to_global,
+        thy_finaliser = NONE,
+        uptodate_delta = K true,
+        initial_value = Symtab.empty,
+        apply_delta = apply_iff_delta}}
+
+fun remove_iff name =
+  let
+    val delta = ThmSetData.REMOVE (normalise_iff_name name)
+  in
+    #record_delta iff_data delta;
+    #update_global_value iff_data (apply_iff_to_global delta)
   end
 
 fun process_clasimp_args body base_cs base_ss =
