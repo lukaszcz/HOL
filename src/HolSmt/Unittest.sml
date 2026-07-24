@@ -581,6 +581,19 @@ let
   val canonical_literals =
     ["", "ASCII", "\\", "\\u{0}", "\\u{22}", "\\u{7f}",
      "\\u{1f642}", "\\u{2ffff}"]
+  val literal_escape_sequences = [
+    ("literal fixed escape", [92, 117, 48, 48, 52, 49],
+      "\\u{5c}u0041"),
+    ("literal braced escape", [92, 117, 123, 49, 102, 54, 52, 50, 125],
+      "\\u{5c}u{1f642}"),
+    ("literal out-of-range escape",
+      [92, 117, 123, 51, 48, 48, 48, 48, 125],
+      "\\u{5c}u{30000}"),
+    ("repeated backslash before escape",
+      [92, 92, 117, 48, 48, 52, 49],
+      "\\\\u{5c}u0041"),
+    ("verbatim unknown escape", [92, 110], "\\n")
+  ]
   val z3_pinned = [
     ("\"", [34]),
     ("A\\u{1f642}", [65, 128578]),
@@ -600,6 +613,14 @@ let
       (encode_string_literal (decode_string_literal literal) = literal,
        "canonical string literal encode/decode round-trip mismatch for '" ^
        literal ^ "'")
+  fun check_literal_escape_sequence (label, values, expected) =
+    let val encoded = encode_string_literal values
+    in
+      assert (encoded = expected,
+        "string literal encoder mismatch for " ^ label);
+      assert (decode_string_literal encoded = values,
+        "string literal round-trip mismatch for " ^ label)
+    end
   fun check_pinned (literal, expected) =
     assert (decode_string_literal literal = expected,
       "string literal decoder rejected pinned Z3 spelling '" ^
@@ -609,6 +630,7 @@ in
   assert (encode_string_literal canonical_values = canonical,
     "string literal encoder did not produce canonical escapes");
   List.app check_canonical_roundtrip canonical_literals;
+  List.app check_literal_escape_sequence literal_escape_sequences;
   check_roundtrip [];
   check_roundtrip [65, 34, 92, 0, 196607];
   List.app check_pinned z3_pinned

@@ -113,7 +113,48 @@ struct
     else
       "\\u{" ^ hex_string value ^ "}"
 
+  fun is_hex_code_point value =
+    (Char.ord #"0" <= value andalso value <= Char.ord #"9") orelse
+    (Char.ord #"a" <= value andalso value <= Char.ord #"f") orelse
+    (Char.ord #"A" <= value andalso value <= Char.ord #"F")
+
+  fun starts_unicode_escape code_points =
+    case code_points of
+      u :: left :: rest =>
+        u = Char.ord #"u" andalso
+        if left = Char.ord #"{" then
+          let
+            fun braced digits [] = false
+              | braced digits (value :: tail) =
+                  if value = Char.ord #"}" then
+                    1 <= digits
+                  else
+                    digits < 5 andalso is_hex_code_point value andalso
+                    braced (digits + 1) tail
+          in
+            braced 0 rest
+          end
+        else
+          (case rest of
+             h2 :: h3 :: h4 :: _ =>
+               is_hex_code_point left andalso
+               is_hex_code_point h2 andalso
+               is_hex_code_point h3 andalso
+               is_hex_code_point h4
+           | _ => false)
+    | _ => false
+
   fun encode_string_literal code_points =
-    String.concat (List.map encode_code_point code_points)
+  let
+    fun loop [] = []
+      | loop (value :: rest) =
+          (if value = Char.ord #"\\" andalso
+              starts_unicode_escape rest then
+             "\\u{5c}"
+           else
+             encode_code_point value) :: loop rest
+  in
+    String.concat (loop code_points)
+  end
 
 end
