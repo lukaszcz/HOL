@@ -1884,8 +1884,10 @@ end
 val _ = let
   val base_cfg =
     {droptrues=true,elimvars=false,strip=false,oldestfirst=true}
-  fun xcfg concl rebuild =
-    {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild}
+  fun mode_xcfg mode concl rebuild =
+    GEN_GLOBAL_SIMP_TAC mode
+      {base=base_cfg,concl_in_fixpoint=concl,imp_rebuild=rebuild}
+  val xcfg = mode_xcfg {safe=false}
   fun result tac goal = #1 (VALID tac goal)
   fun check msg expected tac goal =
     let val _ = tprint msg
@@ -1904,7 +1906,7 @@ val _ = let
   val _ =
     check "GEN_GLOBAL_SIMP_TAC uses later assumptions mutually"
       mutual_expected
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss []) mutual_goal
+      (xcfg false false bool_ss []) mutual_goal
 
   val chain_goal =
     ([``(f:'a -> 'b) x = g x``, ``(g:'a -> 'b) x = z``,
@@ -1915,7 +1917,62 @@ val _ = let
   val _ =
     check "GEN_GLOBAL_SIMP_TAC closes a three-assumption mutual chain"
       chain_expected
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss []) chain_goal
+      (xcfg false false bool_ss []) chain_goal
+
+  val mode_goal =
+    ([``global_mode_assumption:bool``],``?b:bool. b``)
+  val mode_ss =
+    add_unsafe_solver
+      (mk_tactic_solver
+         ("global unsafe instantiation",
+          Q.EXISTS_TAC `T` THEN ACCEPT_TAC TRUTH))
+      empty_ss
+  val safe_mode_result =
+    result (mode_xcfg {safe=true} true false mode_ss []) mode_goal
+  val unsafe_mode_result =
+    result (xcfg true false mode_ss []) mode_goal
+  val _ =
+    tprint "safe global simp does not use unsafe final instantiation"
+  val _ =
+    if list_eq goal_eq [mode_goal] safe_mode_result andalso
+       null unsafe_mode_result
+    then OK()
+    else die "global simp mode selected the wrong final-solver list"
+
+  val side_condition =
+    ``global_safe_side_p \/ ~global_safe_side_p``
+  val side_condition_th =
+    SPEC ``global_safe_side_p:bool`` boolTheory.EXCLUDED_MIDDLE
+  val side_lhs =
+    ``if global_safe_side_p \/ ~global_safe_side_p
+      then global_safe_side_x:'a
+      else global_safe_side_y``
+  val side_rhs = ``global_safe_side_x:'a``
+  val side_rule =
+    DISCH side_condition
+      (REWRITE_CONV [ASSUME side_condition] side_lhs)
+  val side_solver_calls = ref 0
+  fun side_solver _ tm =
+    (side_solver_calls := !side_solver_calls + 1;
+     if aconv tm side_condition then side_condition_th
+     else
+       raise mk_HOL_ERR "selftest" "side_solver"
+                         "not the global safe side condition")
+  val side_ss =
+    empty_ss ++ rewrites [side_rule]
+    |> add_unsafe_solver
+         {name="global safe traversal side condition",solve=side_solver}
+  val side_goal = ([],mk_comb(``global_safe_side_Q:'a -> bool``,side_lhs))
+  val side_expected =
+    [([],mk_comb(``global_safe_side_Q:'a -> bool``,side_rhs))]
+  val _ =
+    check "safe global simp uses unsafe traversal side-condition solvers"
+      side_expected
+      (mode_xcfg {safe=true} false false side_ss [])
+      side_goal
+  val _ =
+    if !side_solver_calls > 0 then ()
+    else die "safe global simp skipped the traversal side-condition solver"
 
   val schedule_a = ``schedule_a:bool``
   val schedule_b0 = ``schedule_b /\ T``
@@ -1940,8 +1997,7 @@ val _ = let
   val schedule_expected =
     [([schedule_a,schedule_b1,schedule_c], ``schedule_goal:bool``)]
   val schedule_result =
-    result (GEN_GLOBAL_SIMP_TAC (xcfg false false) schedule_ss [])
-           schedule_goal
+    result (xcfg false false schedule_ss []) schedule_goal
   val _ = tprint "global change counting skips the provably-fixed tail"
   val _ =
     if list_eq goal_eq schedule_expected schedule_result andalso
@@ -1959,8 +2015,7 @@ val _ = let
     conv_ss {name="global conclusion pass probe",key=NONE,trace=0,
              conv=conclusion_probe}
   val _ =
-    result (GEN_GLOBAL_SIMP_TAC (xcfg true false) per_pass_ss [])
-           schedule_goal
+    result (xcfg true false per_pass_ss []) schedule_goal
   val _ = tprint "concl_in_fixpoint simplifies the conclusion each pass"
   val _ =
     if !conclusion_calls = 2 then OK()
@@ -1991,6 +2046,7 @@ val _ = let
     check "global structural net-noop pass terminates"
       [([noop_a],``global_noop_goal:bool``)]
       (GEN_GLOBAL_SIMP_TAC
+         {safe=false}
          {base=noop_cfg,concl_in_fixpoint=false,imp_rebuild=false}
          noop_ss [])
       ([noop_a],``global_noop_goal:bool``)
@@ -2015,12 +2071,12 @@ val _ = let
   val _ =
     check "default global simplification keeps conclusion outside fixpoint"
       [([fix_asm0],fix_concl1)]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) gate_ss []) gate_goal
+      (xcfg false false gate_ss []) gate_goal
   val _ = unlocked := false
   val _ =
     check "concl_in_fixpoint restarts changed assumptions"
       [([fix_asm1],fix_concl1)]
-      (GEN_GLOBAL_SIMP_TAC (xcfg true false) gate_ss []) gate_goal
+      (xcfg true false gate_ss []) gate_goal
 
   val once_p = ``global_once_p:bool``
   val once_rule = CONJUNCT1 (SPEC once_p boolTheory.AND_CLAUSES)
@@ -2028,7 +2084,7 @@ val _ = let
   val _ =
     check "global supplied Once rewrite is installed exactly once"
       [([],mk_conj(boolSyntax.T,once_p))]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) empty_ss [Once once_rule])
+      (xcfg false false empty_ss [Once once_rule])
       once_goal
 
   val once_asm_p = ``global_once_asm_p:bool``
@@ -2039,7 +2095,7 @@ val _ = let
   val _ =
     check "global supplied Once lifetime spans assumptions and conclusion"
       [([once_asm_p],mk_conj(boolSyntax.T,once_concl_p))]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) empty_ss [Once once_rule])
+      (xcfg false false empty_ss [Once once_rule])
       once_across_goal
 
   val local_exclsf = concl (ExclSF "BOOL")
@@ -2050,7 +2106,7 @@ val _ = let
   val _ =
     check "global remaining ExclSF applies while simplifying assumptions"
       [local_exclsf_goal]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss [])
+      (xcfg false false bool_ss [])
       local_exclsf_goal
 
   val once_exclsf_asm = ``T /\ global_once_exclsf_asm_p``
@@ -2061,7 +2117,7 @@ val _ = let
     check "global ExclSF rebuild preserves supplied Once lifetime"
       [([local_exclsf,``global_once_exclsf_asm_p:bool``],
          once_exclsf_concl)]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) bool_ss [Once once_rule])
+      (xcfg false false bool_ss [Once once_rule])
       once_exclsf_goal
 
   val supplied_sentinel = REFL ``global_supplied_sentinel:'a``
@@ -2100,8 +2156,7 @@ val _ = let
   val _ =
     check "global traversals see supplied source theorem without bound tag"
       []
-      (GEN_GLOBAL_SIMP_TAC (xcfg false false) supplied_ss
-                           [Once supplied_sentinel])
+      (xcfg false false supplied_ss [Once supplied_sentinel])
       ([supplied_tm],supplied_tm)
   val _ =
     if !supplied_solver_calls >= 2 then ()
@@ -2126,7 +2181,7 @@ val _ = let
   val _ =
     check "imp_rebuild rewrites a discharged assumption at the root"
       [([``~imp_q``],``~imp_p``)]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false true) imp_ss []) imp_goal
+      (xcfg false true imp_ss []) imp_goal
 
   val excluded_imp_name = "global excluded implication rebuild"
   val excluded_imp_marker = concl (ExclSF excluded_imp_name)
@@ -2147,7 +2202,7 @@ val _ = let
   val _ =
     check "imp_rebuild applies remaining ExclSF before root rewriting"
       [excluded_imp_goal]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false true) excluded_imp_ss [])
+      (xcfg false true excluded_imp_ss [])
       excluded_imp_goal
 
   val supplied_imp_target =
@@ -2185,8 +2240,7 @@ val _ = let
     check "imp_rebuild sees supplied theorems in its traversal context"
       [([``~global_supplied_imp_b``],
          ``~global_supplied_imp_a``)]
-      (GEN_GLOBAL_SIMP_TAC (xcfg false true) supplied_imp_ss
-                           [Once supplied_sentinel])
+      (xcfg false true supplied_imp_ss [Once supplied_sentinel])
       ([``global_supplied_imp_a:bool``],
        ``global_supplied_imp_b:bool``)
 in

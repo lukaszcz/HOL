@@ -3,7 +3,7 @@
 
 ``` hol4
 simpLib.GEN_GLOBAL_SIMP_TAC :
-  xsimptac_config -> simpset -> thm list -> tactic
+  simp_mode -> xsimptac_config -> simpset -> thm list -> tactic
 ```
 
 ------------------------------------------------------------------------
@@ -29,12 +29,12 @@ type simptac_config =
    oldestfirst : bool}
 ```
 
-`GEN_GLOBAL_SIMP_TAC cfg ss ths` repeatedly simplifies every assumption
-using all of the other assumptions, `ths`, and `ss`.  This reaches a
-mutual fixpoint, so a rule exposed by a later assumption can cause an
-earlier one to be revisited.  Change counting avoids reprocessing a
-tail already known to be fixed; this scheduling optimization does not
-change the normal result.
+`GEN_GLOBAL_SIMP_TAC mode cfg ss ths` repeatedly simplifies every
+assumption using all of the other assumptions, `ths`, and `ss`.  This
+reaches a mutual fixpoint, so a rule exposed by a later assumption can
+cause an earlier one to be revisited.  Change counting avoids
+reprocessing a tail already known to be fixed; this scheduling
+optimization does not change the normal result.
 
 The fields of `#base cfg` control processing of each simplified
 assumption.  `strip` applies `STRIP_ALL_THEN` when putting it back;
@@ -57,17 +57,20 @@ The extra fields control the extent of the fixpoint:
   structure.  If the field is `false`, this extra root-rewrite search
   is omitted.
 
-The final conclusion step uses `GEN_SIMP_TAC {safe=false}`.  It therefore
-honours the simpset's loopers and unsafe final solvers.  Simplification
-of each individual assumption is conversion-only: loopers and final
-solvers are not run during those passes.  Rewrite markers in `ths` are
-processed, and the remaining theorems are available throughout both the
-assumption and conclusion phases.
+The `safe` field of `mode` selects the safe or unsafe final-solver list
+for each tactic-level conclusion simplification, both after assumption
+passes when `concl_in_fixpoint` is enabled and in the final conclusion
+pass.  It does not change rewriting: traversal side conditions continue
+to use unsafe solvers, and loopers continue to run.  Simplification of
+each individual assumption is conversion-only.  Rewrite markers in
+`ths` are processed, and the remaining theorems are available
+throughout both the assumption and conclusion phases.
 
 The existing `global_simp_tac base` is equivalent to
 
 ``` hol4
 simpLib.GEN_GLOBAL_SIMP_TAC
+  {safe = false}
   {base = base, concl_in_fixpoint = false, imp_rebuild = false}
 ```
 
@@ -92,6 +95,7 @@ val base_cfg =
 
 val extended_global =
   simpLib.GEN_GLOBAL_SIMP_TAC
+    {safe = false}
     {base = base_cfg,
      concl_in_fixpoint = true,
      imp_rebuild = true}

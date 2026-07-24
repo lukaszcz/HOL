@@ -1670,7 +1670,7 @@ fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
       loop initial g
     end
 
-fun GEN_GLOBAL_SIMP_TAC
+fun GEN_GLOBAL_SIMP_TAC mode
       ({base,concl_in_fixpoint,imp_rebuild} : xsimptac_config) ss0 =
     markerLib.mk_require_tac (
       markerLib.ABBRS_THEN (
@@ -1685,7 +1685,7 @@ fun GEN_GLOBAL_SIMP_TAC
                val ss = ss1
                val conclusion_tac =
                  gen_simp_tac_with_prepared
-                   prepared solver_context {safe=false} ss []
+                   prepared solver_context mode ss []
 
                fun strip_implications (g as (_,w)) =
                  if can boolSyntax.dest_imp_only w then
@@ -1784,7 +1784,7 @@ fun GEN_GLOBAL_SIMP_TAC
     )
 
 fun global_simp_tac cfg =
-    GEN_GLOBAL_SIMP_TAC
+    GEN_GLOBAL_SIMP_TAC {safe=false}
       {base=cfg,concl_in_fixpoint=false,imp_rebuild=false}
 
 

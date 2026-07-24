@@ -241,7 +241,8 @@ sig
    type xsimptac_config =
         {base : simptac_config, concl_in_fixpoint : bool,
          imp_rebuild : bool}
-   val GEN_GLOBAL_SIMP_TAC : xsimptac_config -> simpset -> thm list -> tactic
+   val GEN_GLOBAL_SIMP_TAC :
+     simp_mode -> xsimptac_config -> simpset -> thm list -> tactic
    val global_simp_tac : simptac_config -> simpset -> thm list -> tactic
      (* do allasms until quiescence, then simp in the goal as well *)
 
