@@ -34,6 +34,8 @@ sig
   val CS_FIRST_BEST_TAC : clasetLib.claset -> NTactical.ntactic
   val CS_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
   val CS_SLOW_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_DEPTH_SOLVE_TAC :
+    {dup : bool} -> int -> clasetLib.claset -> NTactical.ntactic
   val CS_DEEPEN_TAC : clasetLib.claset ->
                       {start : int} -> NTactical.ntactic
 end

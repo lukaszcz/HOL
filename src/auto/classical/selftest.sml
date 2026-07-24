@@ -4777,6 +4777,59 @@ val _ =
          tactic_solves tactic goal
        end)
 
+fun depth_duplication_fixture () =
+  let
+    val bound = Term.mk_var ("depth_duplication_bound", Type.ind)
+    val left = Term.mk_var ("depth_duplication_left", Type.ind)
+    val right = Term.mk_var ("depth_duplication_right", Type.ind)
+    val predicate =
+      Term.mk_var
+        ("depth_duplication_predicate", Type.ind --> Type.bool)
+    val pbound = mk_comb (predicate, bound)
+    val pleft = mk_comb (predicate, left)
+    val pright = mk_comb (predicate, right)
+    val target = boolSyntax.mk_eq (pleft, pright)
+    val equality =
+      TRANS (Drule.EQT_INTRO (ASSUME pleft))
+        (SYM (Drule.EQT_INTRO (ASSUME pright)))
+    val bridge = DISCH pleft (DISCH pright equality)
+    val cs =
+      clasetLib.add_elims
+        [("depth-duplication-forall",
+          clasetSeedTheory.FORALL_ELIM_THM),
+         ("depth-duplication-bridge", bridge)]
+        clasetLib.empty_cs
+  in
+    (cs, ([boolSyntax.mk_forall (bound, pbound)], target))
+  end
+
+val _ =
+  test
+    ("CS_DEPTH_SOLVE_TAC distinguishes duplication at one bound",
+     fn () =>
+       let
+         val (cs, goal) = depth_duplication_fixture ()
+         fun depth dup =
+           NTactical.DETERM
+             (classicalLib.CS_DEPTH_SOLVE_TAC {dup = dup} 3 cs)
+       in
+         tactic_solves (depth true) goal andalso
+         tactic_fails (depth false) goal
+       end)
+
+val _ =
+  test
+    ("CS_DEEPEN_TAC retains duplicating bounded-search behavior",
+     fn () =>
+       let
+         val (cs, goal) = depth_duplication_fixture ()
+         val tactic =
+           NTactical.DETERM
+             (classicalLib.CS_DEEPEN_TAC cs {start = 3})
+       in
+         tactic_solves tactic goal
+       end)
+
 val _ =
   test
     ("all solve-completely drivers fail cleanly on a non-theorem",

@@ -216,21 +216,27 @@ fun first_best_tac cs =
 fun astar_tac cs = solve (astar_driver clasetStep.step cs)
 fun slow_astar_tac cs = solve (astar_driver clasetStep.slow_step cs)
 
-fun bounded_depth cs bound initial =
+fun bounded_depth {dup} cs bound initial =
   let
+    val part =
+      if dup then clasetLib.dup_part cs else clasetLib.unsafe_part cs
     val saturated = safe_saturate_node cs initial
     val search =
       clasetSearch.DEPTH_SOLVE
         (fn node =>
           project_steps
-            (clasetStep.depth_step cs (clasetLib.dup_part cs) bound
-              (node, 1)))
+            (clasetStep.depth_step cs part bound (node, 1)))
   in
     search saturated
   end
 
+fun depth_solve_tac config bound cs =
+  solve (bounded_depth config cs bound)
+
 fun deepen_tac cs {start} =
-  solve (clasetSearch.DEEPEN (2, 10) (bounded_depth cs) start)
+  solve
+    (clasetSearch.DEEPEN (2, 10)
+      (bounded_depth {dup = true} cs) start)
 
 val CS_SAFE_TAC = safe_tac
 val CS_CLARIFY_TAC = clarify_tac
@@ -246,6 +252,7 @@ val CS_SLOW_BEST_TAC = slow_best_tac
 val CS_FIRST_BEST_TAC = first_best_tac
 val CS_ASTAR_TAC = astar_tac
 val CS_SLOW_ASTAR_TAC = slow_astar_tac
+val CS_DEPTH_SOLVE_TAC = depth_solve_tac
 val CS_DEEPEN_TAC = deepen_tac
 
 fun invocation_claset theorems =
