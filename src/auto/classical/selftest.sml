@@ -4059,6 +4059,48 @@ val _ =
 
 val _ =
   test
+    ("wrapper-selected direct alternative keeps its store and action",
+     fn () =>
+       let
+         val (meta, store) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val node =
+           clasetGoal.create
+             {goals =
+                [{params = [], asl = [boolSyntax.T, boolSyntax.F],
+                  w = meta},
+                 {params = [], asl = [], w = meta}],
+              store = store, level = 0}
+
+         fun second base goal =
+           seq.delay
+             (fn () =>
+               case seq.cases (base goal) of
+                   NONE => seq.empty
+                 | SOME (_, rest) =>
+                     case seq.cases rest of
+                         NONE => seq.empty
+                       | SOME (result, _) => seq.result result)
+
+         val cs =
+           clasetLib.add_unsafe_wrapper ("second", second)
+             clasetLib.empty_cs
+       in
+         case seq.cases (clasetStep.step cs (node, 1)) of
+             NONE => false
+           | SOME ((record, next), _) =>
+               (case clasetStep.kind_of record of
+                    clasetStep.Assumption 2 => true
+                  | _ => false) andalso
+               Term.aconv
+                 (clasetMeta.norm (clasetGoal.store next) meta)
+                 boolSyntax.F andalso
+               same_goals (rendered_goals next) [([], boolSyntax.F)]
+       end)
+
+val _ =
+  test
     ("wrapper cannot introduce a marked free it did not receive",
      fn () =>
        let

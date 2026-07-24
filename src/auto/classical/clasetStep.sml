@@ -1599,16 +1599,15 @@ fun depth_cascade part cs input =
   append_results (instp_cascade cs)
     (rule_results clasetUnify.Unify cs false part all_weights) input
 
-fun take_direct goals directs =
-  let
-    fun recurse _ [] = NONE
-      | recurse previous (direct :: rest) =
-          if goals_equal (#1 (direct_result direct), goals) then
-            SOME (direct, List.rev previous @ rest)
-          else recurse (direct :: previous) rest
-  in
-    recurse [] directs
-  end
+fun selected_direct goals validation available =
+  case List.find
+    (fn (identity, _) => Portable.pointer_eq (identity, validation))
+    available
+  of
+      NONE => NONE
+    | SOME (_, direct) =>
+        if goals_equal (#1 (direct_result direct), goals) then SOME direct
+        else NONE
 
 fun make_record target validation direct =
   let
@@ -1692,10 +1691,19 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
     (fn () =>
       let
         val rendered = clasetGoal.render node pos
-        val available = ref ([] : direct list)
+        val available = ref ([] : (validation * direct) list)
 
+        (* A wrapper may reorder equal rendered results.  Give each direct
+           result an opaque closure identity so its engine store and replay
+           action follow the result selected by the wrapper. *)
         fun remember direct =
-          (available := !available @ [direct]; direct_result direct)
+          let
+            val (goals, validation) = direct_result direct
+            fun identity theorems = validation theorems
+          in
+            available := (identity, direct) :: !available;
+            (goals, identity)
+          end
 
         fun base goal =
           if goal_equal (goal, rendered) then
@@ -1717,9 +1725,8 @@ fun wrapped_step apply_wrappers cascade cs (node, pos) =
                 | SOME (result as (goals, validation), rest) =>
                     let
                       val (direct, exact) =
-                        case take_direct goals (!available) of
-                            SOME (found, remaining) =>
-                              (available := remaining; (found, true))
+                        case selected_direct goals validation (!available) of
+                            SOME found => (found, true)
                           | NONE =>
                               (wrapper_direct rendered goals validation
                                  (clasetGoal.store node), false)
