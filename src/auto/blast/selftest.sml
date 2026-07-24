@@ -242,6 +242,47 @@ val _ =
 
 val _ =
   test
+    ("hot blastTerm twins have differential traversal parity",
+     fn () =>
+       let
+         val checkpoint = fn () => ()
+         val first = ref NONE
+         val second = ref NONE
+         val assigned = ref (SOME (Var second))
+         val body =
+           Abs
+             ("hot_x",
+              Const ("hot_f", []) $ Bound 0 $ Var first $ Var assigned)
+         val argument = Const ("hot_a", [])
+         fun same_vars (left, right) =
+           ListPair.allEq (fn (x, y) => x = y) (left, right)
+       in
+         aconvMeasured checkpoint (body, body) =
+           aconv (body, body) andalso
+         same_vars
+           (add_term_vars (body, []),
+            add_term_vars_measured checkpoint (body, [])) andalso
+         same_vars
+           (add_terms_vars ([body, argument], []),
+            add_terms_vars_measured checkpoint ([body, argument], []))
+           andalso
+         same_vars
+           (vars_in_vars [assigned],
+            vars_in_vars_measured checkpoint [assigned]) andalso
+         aconv
+           (incr_boundvars 1 body,
+            incr_boundvars_measured checkpoint 1 body) andalso
+         loose_bnos body = loose_bnos_measured checkpoint body andalso
+         aconv
+           (subst_bound (argument, body),
+            subst_bound_measured checkpoint (argument, body)) andalso
+         aconv (norm body, normMeasured checkpoint body) andalso
+         varOccur second body =
+           varOccurMeasured checkpoint second body
+       end)
+
+val _ =
+  test
     ("rule-local variables are assigned off-trail in preference",
      fn () =>
        let
@@ -1374,10 +1415,12 @@ fun script_view (proof : blastSearch.proof) =
       | origin blastRule.AllIntro = "all"
     fun option NONE = "-"
       | option (SOME position) = Int.toString position
+    fun mask changed =
+      String.concat (map Bool.toString changed)
     fun hidden rule =
       String.concatWith "," (map option (#hidden_assumptions rule))
-    fun step (blastSearch.HypSubst {equality}) =
-          "subst:" ^ Int.toString equality
+    fun step (blastSearch.HypSubst {equality, changed}) =
+          "subst:" ^ Int.toString equality ^ ":" ^ mask changed
       | step (blastSearch.CloseAssume {assumption}) =
           "assume:" ^ Int.toString assumption
       | step (blastSearch.CloseContradiction {negative, positive}) =
@@ -1401,8 +1444,10 @@ fun selector_view ({script, ...} : blastSearch.proof) =
   let
     fun option NONE = "-"
       | option (SOME position) = Int.toString position
-    fun step (blastSearch.HypSubst {equality}) =
-          "subst:" ^ Int.toString equality
+    fun mask changed =
+      String.concat (map Bool.toString changed)
+    fun step (blastSearch.HypSubst {equality, changed}) =
+          "subst:" ^ Int.toString equality ^ ":" ^ mask changed
       | step (blastSearch.CloseAssume {assumption}) =
           "assume:" ^ Int.toString assumption
       | step (blastSearch.CloseContradiction {negative, positive}) =
@@ -3403,11 +3448,13 @@ val _ =
          case blastReconstruct.searchGoal cs 0 goal of
              SOME (proof, ([], validation)) =>
                has_step
-                 (fn blastSearch.HypSubst {equality = 1} => true
+                 (fn blastSearch.HypSubst
+                       {equality = 1, changed = [false, true]} => true
                    | _ => false)
                  proof andalso
                (case #script proof of
-                    blastSearch.HypSubst {equality = 1} :: _ => true
+                    blastSearch.HypSubst
+                      {equality = 1, changed = [false, true]} :: _ => true
                   | _ => false) andalso
                (ignore (validation []); true)
            | _ => false
@@ -3627,6 +3674,23 @@ val _ =
              (fn () => blast_solves delayed_fixed goal) ()
        in
          depth_is_late andalso claset_is_late
+       end)
+
+val _ =
+  test
+    ("negative depth fails outright while zero runs depth zero",
+     fn () =>
+       let
+         val p = mk_var ("depth_limit_p", bool)
+         val goal = ([], mk_imp (p, p))
+         val negative =
+           Lib.with_flag (tableauLib.depth_limit, ~1)
+             (fn () => blast_fails (tableauLib.BLAST_TAC []) goal) ()
+         val zero =
+           Lib.with_flag (tableauLib.depth_limit, 0)
+             (fn () => blast_solves (tableauLib.BLAST_TAC []) goal) ()
+       in
+         negative andalso zero
        end)
 
 val _ =
@@ -4100,6 +4164,34 @@ val _ =
        !table1_solved =
          length table1_depths - length table1_expected_failures
        andalso !table1_solved = 9)
+
+val _ =
+  test
+    ("Table-1 corpus has ordinary and measured proof drift parity",
+     fn () =>
+       let
+         val cs =
+           clasetLib.add_selims
+             [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
+              ("blast_not_forall",
+               clasetSeedTheory.NOT_FORALL_CELIM_THM)]
+             (clasetLib.the_claset ())
+         fun same (number, depth) =
+           let
+             val goal = ([], pelletier_problem number)
+             val ordinary =
+               blastSearch.searchGoal cs depth goal (fn proof => proof)
+             val measured =
+               blastSearch.searchGoalMeasured
+                 {debug = false, stop = fn () => false}
+                 cs depth goal (fn proof => proof)
+           in
+             #completion measured = blastSearch.Completed andalso
+             same_proof_options (ordinary, #result measured)
+           end
+       in
+         List.all same table1_depths
+       end)
 
 val _ =
   test

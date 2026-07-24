@@ -91,7 +91,10 @@ sig
   val rebuild_exact_prefix : exact_prefix_rebuild -> thm -> thm
   val HYP_SUBST_TAC : tactic
   val BLAST_HYP_SUBST_TAC : tactic
-  val BLAST_HYP_SUBST_TAC_AT : int -> tactic
+  val BLAST_HYP_SUBST_TAC_AT :
+    {position : int, changed : bool list} -> tactic
+  val COMPUTE_BLAST_HYP_SUBST_TAC_AT :
+    int -> goal -> bool list * (goal list * validation)
   val GEN_NAMED_TAC : string -> tactic
   val GOAL_NEGATION_TAC : tactic
   val SWAPPED_BUILTIN_TAC : clasetMeta.store -> int -> tactic
@@ -115,7 +118,8 @@ sig
        prefixes : exact_prefix_descriptor list}) -> replay_action
   val hyp_subst_action : replay_action
   val blast_hyp_subst_action : replay_action
-  val blast_hyp_subst_action_at : int -> replay_action
+  val blast_hyp_subst_action_at :
+    {position : int, changed : bool list} -> replay_action
   val disch_action : replay_action
   val gen_action : string -> replay_action
   val goal_negation_action : replay_action

@@ -1,15 +1,15 @@
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
-## `step_tac`
+## `CS_STEP_TAC`
 
 ``` hol4
-classicalLib.step_tac : clasetLib.claset -> NTactical.ntactic
+classicalLib.CS_STEP_TAC : clasetLib.claset -> NTactical.ntactic
 ```
 
 ------------------------------------------------------------------------
 
 Constructs the claset-explicit form of `STEP_TAC`.
 
-`step_tac cs` safely saturates the state. If no safe step applies, it tries
+`CS_STEP_TAC cs` safely saturates the state. If no safe step applies, it tries
 the instantiating cascade on the first goal and considers unsafe rules only
 when that cascade is empty. Safe and unsafe wrappers participate. Results
 are replayed and may contain residual goals.
@@ -25,13 +25,13 @@ Replay failure is reported as an error.
 ### Example
 
 ``` hol4
-val step = classicalLib.step_tac (clasetLib.the_claset ());
+val step = classicalLib.CS_STEP_TAC (clasetLib.the_claset ());
 ```
 
 ### See also
 
 [`classicalLib.STEP_TAC`](#classicalLib.STEP_TAC),
-[`classicalLib.slow_step_tac`](#classicalLib.slow_step_tac),
-[`classicalLib.inst_step_tac`](#classicalLib.inst_step_tac),
-[`classicalLib.fast_tac`](#classicalLib.fast_tac),
+[`classicalLib.CS_SLOW_STEP_TAC`](#classicalLib.CS_SLOW_STEP_TAC),
+[`classicalLib.CS_INST_STEP_TAC`](#classicalLib.CS_INST_STEP_TAC),
+[`classicalLib.CS_FAST_TAC`](#classicalLib.CS_FAST_TAC),
 [`clasetLib`](#clasetLib)

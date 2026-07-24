@@ -22,7 +22,8 @@ datatype node =
            level : int,
            paths : int list list,
            marks : binding_marks,
-           avoids : term list}
+           avoids : term list,
+           rendering : term option ref}
 
 fun norm_term store tm =
   let
@@ -43,11 +44,7 @@ fun norm_term store tm =
     recurse (clasetMeta.instantiate store tm)
   end
 
-fun term_size tm =
-  case dest_term tm of
-    COMB (rator, rand) => term_size rator + term_size rand
-  | LAMB (_, body) => 1 + term_size body
-  | _ => 1
+val term_size = clasetNorm.term_size
 
 fun cgoal_size store ({asl, w, ...} : cgoal) =
   List.foldl
@@ -99,7 +96,7 @@ fun make_node goals store replay level paths marks avoids =
     in
       Node {goals = goals, store = store', replay = replay,
             size = goals_size store' goals, level = level, paths = paths,
-            marks = marks, avoids = avoids'}
+            marks = marks, avoids = avoids', rendering = ref NONE}
     end
 
 fun root_paths goals =
@@ -147,26 +144,32 @@ fun set_store store'
   make_node goals store' replay level paths marks avoids
 
 fun set_level level'
-  (Node {goals, store, replay, paths, marks, avoids, ...}) =
-  make_node goals store replay level' paths marks avoids
+  (Node {goals, store, replay, size, paths, marks, avoids,
+         rendering, ...}) =
+  (* Goals and store are unchanged, so their cached derivatives remain
+     valid. *)
+  Node {goals = goals, store = store, replay = replay, size = size,
+        level = level', paths = paths, marks = marks, avoids = avoids,
+        rendering = rendering}
 
 fun set_binding_marks marks'
-  (Node {goals, store, replay, level, paths, avoids, ...}) =
-  make_node goals store replay level paths marks' avoids
+  (Node {goals, store, replay, size, level, paths, avoids,
+         rendering, ...}) =
+  Node {goals = goals, store = store, replay = replay, size = size,
+        level = level, paths = paths, marks = marks', avoids = avoids,
+        rendering = rendering}
 
 fun record_step record
-  (Node {goals, store, replay, level, paths, marks, avoids, ...}) =
-  make_node goals store (clasetReplay.append replay record) level paths
-    marks avoids
+  (Node {goals, store, replay, size, level, paths, marks, avoids,
+         rendering}) =
+  Node
+    {goals = goals, store = store,
+     replay = clasetReplay.append replay record, size = size,
+     level = level, paths = paths, marks = marks, avoids = avoids,
+     rendering = rendering}
 
-fun nth1 function_name values pos =
-  if pos < 1 then
-    raise mk_HOL_ERR "clasetGoal" function_name
-      "positions are one-based"
-  else
-    List.nth (values, pos - 1)
-    handle Subscript =>
-      raise mk_HOL_ERR "clasetGoal" function_name "position out of range"
+fun nth1 function_name =
+  clasetNorm.nth1 ("clasetGoal", function_name)
 
 fun goal_at node pos = nth1 "goal_at" (goals node) pos
 
@@ -220,19 +223,7 @@ fun cons_assumptions assumptions cgoal =
     cgoal assumptions
 
 fun delete_nth function_name pos values =
-  if pos < 1 then
-    raise mk_HOL_ERR "clasetGoal" function_name
-      "assumption positions are one-based"
-  else
-    let
-      val prefix = List.take (values, pos - 1)
-      val suffix = List.drop (values, pos)
-    in
-      prefix @ suffix
-    end
-    handle Subscript =>
-      raise mk_HOL_ERR "clasetGoal" function_name
-        "assumption position out of range"
+  clasetNorm.delete_nth ("clasetGoal", function_name) values pos
 
 fun delete_assumption pos ({params, asl, w} : cgoal) =
   {params = params, asl = delete_nth "delete_assumption" pos asl, w = w}
@@ -369,8 +360,18 @@ fun canonical_cgoal store ({params, asl, w} : cgoal) =
     list_mk_forall (params', body)
   end
 
-fun canonical_rendering node =
-  encode_list (map (canonical_cgoal (store node)) (goals node))
+fun canonical_rendering
+      (node as Node {rendering, ...}) =
+  case !rendering of
+      SOME cached => cached
+    | NONE =>
+        let
+          val computed =
+            encode_list (map (canonical_cgoal (store node)) (goals node))
+          val _ = rendering := SOME computed
+        in
+          computed
+        end
 
 fun equal (left, right) =
   size left = size right andalso

@@ -38,7 +38,11 @@ datatype step_record =
      action : replay_action,
      children : step_record option list}
 
-datatype script = Script of step_record option list
+datatype script =
+  Script of
+    {roots : step_record option list,
+     length : int,
+     open_paths : int list list}
 datatype grounded_script =
   Grounded of {store : clasetMeta.store, script : script}
 
@@ -65,29 +69,14 @@ fun action_of (StepRecord {action, ...}) = action
 fun eigenvariables_of (StepRecord {eigenvariables, ...}) =
   List.concat eigenvariables
 
-fun nth1 function_name values pos =
-  if pos < 1 then
-    raise mk_HOL_ERR "clasetReplay" function_name
-      "positions are one-based"
-  else
-    List.nth (values, pos - 1)
-    handle Subscript =>
-      raise mk_HOL_ERR "clasetReplay" function_name
-        "position out of range"
+fun nth1 function_name =
+  clasetNorm.nth1 ("clasetReplay", function_name)
 
-fun delete_nth function_name values pos =
-  let
-    val _ = nth1 function_name values pos
-  in
-    List.take (values, pos - 1) @ List.drop (values, pos)
-  end
+fun delete_nth function_name =
+  clasetNorm.delete_nth ("clasetReplay", function_name)
 
-val normalize_conv =
-  Conv.QCONV
-    (Conv.REDEPTH_CONV
-      (Conv.ORELSEC (BETA_CONV, Drule.ETA_CONV)))
-
-fun normalize_thm th = Conv.CONV_RULE normalize_conv th
+val normalize_conv = clasetNorm.normalize_conv
+val normalize_thm = clasetNorm.normalize_thm
 
 fun restore_target function_name target normalized_target theorem =
   let
@@ -112,37 +101,10 @@ fun restore_target function_name target normalized_target theorem =
         "the normalized target cannot be restored exactly"
   end
 
-fun normalize_rule_thm th =
-  let
-    fun normalize_hypothesis (hypothesis, current) =
-      let
-        val equality = normalize_conv hypothesis
-        val normalized = rhs (concl equality)
-        val original = EQ_MP (SYM equality) (ASSUME normalized)
-      in
-        Drule.PROVE_HYP original current
-      end
-  in
-    normalize_thm (List.foldl normalize_hypothesis th (hyp th))
-  end
+val normalize_rule_thm = clasetNorm.normalize_rule_thm
 
 fun split_imp_prefix function_name arity tm =
-  let
-    fun split 0 premises conclusion =
-          (List.rev premises, conclusion)
-      | split remaining premises current =
-          (case total dest_imp_only current of
-               SOME (premise, rest) =>
-                 split (remaining - 1) (premise :: premises) rest
-             | NONE =>
-                 raise mk_HOL_ERR "clasetReplay" function_name
-                   "the instantiated rule has fewer premises than recorded")
-  in
-    if arity < 0 then
-      raise mk_HOL_ERR "clasetReplay" function_name
-        "negative implication-prefix arity"
-    else split arity [] tm
-  end
+  clasetNorm.split_imp_prefix ("clasetReplay", function_name) arity tm
 
 fun assumption_thm store asm target =
   let
@@ -354,9 +316,7 @@ fun blast_rule_child parent_asl premise names descriptor =
     ((cons_assumptions assumptions parent_asl, residual), rebuild)
   end
 
-fun normalize_assumption asm =
-  let val equality = normalize_conv asm
-  in (rhs (concl equality), EQ_MP equality (ASSUME asm)) end
+val normalize_assumption = clasetNorm.normalize_assumption
 
 fun theorem_hypothesis normalized_asl hypothesis =
   case List.find (fn (normalized, _) => aconv normalized hypothesis)
@@ -532,7 +492,7 @@ fun blast_hyp_orientation equality =
           end
   end
 
-fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
+fun blast_hyp_subst_tac_at position recorded_changed (asl, w) =
   let
     val equality = nth1 "BLAST_HYP_SUBST_TAC_AT" asl position
     val (old, replacement, equality_thm) =
@@ -546,7 +506,26 @@ fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
     val substitution = [{redex = old, residue = replacement}]
     fun substituted tm = Term.subst substitution tm
     fun affected tm = not (aconv (substituted tm) tm)
-    val (changed, unchanged) = List.partition affected remaining
+    val changed_mask =
+      case recorded_changed of
+          NONE => map affected remaining
+        | SOME mask =>
+            if length mask = length remaining then mask
+            else
+              raise mk_HOL_ERR "clasetReplay"
+                "BLAST_HYP_SUBST_TAC_AT"
+                "recorded changed mask has the wrong length"
+    fun partition [] [] changed unchanged =
+          (List.rev changed, List.rev unchanged)
+      | partition (true :: flags) (tm :: terms) changed unchanged =
+          partition flags terms (tm :: changed) unchanged
+      | partition (false :: flags) (tm :: terms) changed unchanged =
+          partition flags terms changed (tm :: unchanged)
+      | partition _ _ _ _ =
+          raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
+            "recorded changed mask has the wrong length"
+    val (changed, unchanged) =
+      partition changed_mask remaining [] []
     val reordered = map substituted (changed @ unchanged)
     val target = substituted w
     val target_equality = normalize_conv w
@@ -579,8 +558,14 @@ fun BLAST_HYP_SUBST_TAC_AT position (asl, w) =
           raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC_AT"
             "validation received the wrong number of theorems"
   in
-    ([(reordered, target)], validation)
+    (changed_mask, ([(reordered, target)], validation))
   end
+
+fun BLAST_HYP_SUBST_TAC_AT {position, changed} goal =
+  #2 (blast_hyp_subst_tac_at position (SOME changed) goal)
+
+fun COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal =
+  blast_hyp_subst_tac_at position NONE goal
 
 fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) =
   let
@@ -588,7 +573,7 @@ fun BLAST_HYP_SUBST_TAC (goal as (asl, _)) =
           raise mk_HOL_ERR "clasetReplay" "BLAST_HYP_SUBST_TAC"
             "no suitable equality assumption"
       | first position (_ :: rest) =
-          (BLAST_HYP_SUBST_TAC_AT position goal
+          (#2 (COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal)
            handle HOL_ERR _ => first (position + 1) rest)
   in
     first 1 asl
@@ -746,8 +731,8 @@ fun rule_action make store = RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC
-fun blast_hyp_subst_action_at position _ =
-  BLAST_HYP_SUBST_TAC_AT position
+fun blast_hyp_subst_action_at fields _ =
+  BLAST_HYP_SUBST_TAC_AT fields
 val disch_action = fn _ => Tactic.DISCH_TAC
 fun gen_action name _ = GEN_NAMED_TAC name
 val goal_negation_action = fn _ => GOAL_NEGATION_TAC
@@ -780,96 +765,90 @@ fun fixed_action (result as (goals, validation)) store (asl, w) =
     else (map ground_goal goals, ground_validation)
   end
 
-fun open_record (StepRecord {children, ...}) =
-  List.foldl
-    (fn (NONE, total) => total + 1
-      | (SOME child, total) => open_record child + total)
-    0 children
-
-fun open_option NONE = 1
-  | open_option (SOME record) = open_record record
-
 fun empty count =
   if count < 0 then
     raise mk_HOL_ERR "clasetReplay" "empty" "negative root count"
-  else Script (List.tabulate (count, fn _ => NONE))
+  else
+    Script
+      {roots = List.tabulate (count, fn _ => NONE), length = 0,
+       open_paths = List.tabulate (count, fn index => [index])}
 
-fun open_goals (Script roots) =
-  List.foldl (fn (root, total) => open_option root + total) 0 roots
+fun open_goals (Script {open_paths, ...}) = List.length open_paths
 
-fun fill_option target record NONE =
-      if target = 1 then (SOME record, true, 0)
-      else (NONE, false, target - 1)
-  | fill_option target record (SOME old) =
-      let
-        val StepRecord
-          {kind, target = old_target, consumed, created,
-           eigenvariables, validation, action, children} = old
+fun replace_nth values index replacement =
+  List.take (values, index) @ replacement :: List.drop (values, index + 1)
 
-        fun fill_children remaining [] = ([], false, remaining)
-          | fill_children remaining (child :: rest) =
-              let
-                val (child', found, remaining') =
-                  fill_option remaining record child
-              in
-                if found then (child' :: rest, true, remaining')
-                else
-                  let
-                    val (rest', found', final_remaining) =
-                      fill_children remaining' rest
-                  in
-                    (child' :: rest', found', final_remaining)
-                  end
-              end
-        val (children', found, remaining) =
-          fill_children target children
-      in
-        (SOME
-          (StepRecord
-            {kind = kind, target = old_target, consumed = consumed,
-             created = created, eigenvariables = eigenvariables,
-             validation = validation, action = action,
-             children = children'}), found, remaining)
-      end
-
-fun append (Script roots) record =
+fun install path record roots =
   let
-    val target = target_of record
-
-    fun fill_roots remaining [] = ([], false, remaining)
-      | fill_roots remaining (root :: rest) =
-          let
-            val (root', found, remaining') =
-              fill_option remaining record root
-          in
-            if found then (root' :: rest, true, remaining')
-            else
-              let
-                val (rest', found', final_remaining) =
-                  fill_roots remaining' rest
-              in
-                (root' :: rest', found', final_remaining)
-              end
-          end
-    val (roots', found, _) = fill_roots target roots
+    fun descend [] _ =
+          raise mk_HOL_ERR "clasetReplay" "append"
+            "the target does not identify an open goal"
+      | descend [index] options =
+          (case List.nth (options, index) of
+               NONE => replace_nth options index (SOME record)
+             | SOME _ =>
+                 raise mk_HOL_ERR "clasetReplay" "append"
+                   "the target does not identify an open goal")
+      | descend (index :: rest) options =
+          (case List.nth (options, index) of
+               NONE =>
+                 raise mk_HOL_ERR "clasetReplay" "append"
+                   "the target does not identify an open goal"
+             | SOME
+                 (StepRecord
+                   {kind, target, consumed, created, eigenvariables,
+                    validation, action, children}) =>
+                 replace_nth options index
+                   (SOME
+                     (StepRecord
+                       {kind = kind, target = target, consumed = consumed,
+                        created = created,
+                        eigenvariables = eigenvariables,
+                        validation = validation, action = action,
+                        children = descend rest children})))
   in
-    if found then Script roots'
-    else
+    descend path roots
+    handle Subscript =>
       raise mk_HOL_ERR "clasetReplay" "append"
         "the target does not identify an open goal"
   end
 
-fun record_count (StepRecord {children, ...}) =
-  1 + List.foldl
-    (fn (NONE, total) => total
-      | (SOME child, total) => record_count child + total)
-    0 children
+fun record_open_paths base (StepRecord {children, ...}) =
+  let
+    fun enumerate _ [] = []
+      | enumerate index (NONE :: rest) =
+          (base @ [index]) :: enumerate (index + 1) rest
+      | enumerate index (SOME child :: rest) =
+          record_open_paths (base @ [index]) child @
+          enumerate (index + 1) rest
+  in
+    enumerate 0 children
+  end
 
-fun script_length (Script roots) =
-  List.foldl
-    (fn (NONE, total) => total
-      | (SOME record, total) => record_count record + total)
-    0 roots
+fun append
+      (Script {roots, length, open_paths}) record =
+  let
+    val target = target_of record
+    val index = target - 1
+    val path =
+      if index < 0 then
+        raise mk_HOL_ERR "clasetReplay" "append"
+          "the target does not identify an open goal"
+      else
+        List.nth (open_paths, index)
+        handle Subscript =>
+          raise mk_HOL_ERR "clasetReplay" "append"
+            "the target does not identify an open goal"
+    val roots' = install path record roots
+    val open_paths' =
+      List.take (open_paths, index) @ record_open_paths path record @
+      List.drop (open_paths, index + 1)
+  in
+    Script
+      {roots = roots', length = length + 1, open_paths = open_paths'}
+  end
+
+fun script_length (Script {length, ...}) = length
 
 fun variant_name Plain = "plain"
   | variant_name Swapped = "swapped"
@@ -906,7 +885,7 @@ fun lines_of_record indent (StepRecord {kind, target, children, ...}) =
     line :: child_lines
   end
 
-fun to_string (Script roots) =
+fun to_string (Script {roots, ...}) =
   String.concatWith "\n"
     (List.concat
       (map
@@ -994,7 +973,9 @@ fun replay_roots _ [] [] = ([], fn [] => [] | _ =>
       raise mk_HOL_ERR "clasetReplay" "replay_roots"
         "script root count does not match the input"
 
-fun replay (Grounded {store, script = Script roots}) goal =
+fun replay
+      (Grounded
+        {store, script = script as Script {roots, ...}}) goal =
   let
     val (goals, validate_roots) = replay_roots store roots [goal]
     fun validation theorems =
@@ -1010,13 +991,13 @@ fun replay (Grounded {store, script = Script roots}) goal =
     ReplayFailed
       (ReplayFailure
         {goal = bad_goal, step = SOME (kind_of record),
-         message = message, script = to_string (Script roots)})
+         message = message, script = to_string script})
        | error =>
     ReplayFailed
       (ReplayFailure
         {goal = goal, step = NONE,
          message = Feedback.exn_to_string error,
-         script = to_string (Script roots)})
+         script = to_string script})
 
 fun goal_string (asl, w) =
   let

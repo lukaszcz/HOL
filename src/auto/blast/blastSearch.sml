@@ -39,7 +39,7 @@ type branch =
    lim : int}
 
 datatype script_step =
-    HypSubst of {equality : int}
+    HypSubst of {equality : int, changed : bool list}
   | CloseAssume of {assumption : int}
   | CloseContradiction of {negative : int, positive : int}
   | SafeRule of
@@ -1168,20 +1168,22 @@ fun equalTrackedSubst
           (changed, result :: unchanged)
         else ((result, true) :: changed, unchanged)
       end
-    fun subEntry ((entry as (_, term)), (changed, unchanged)) =
+    fun subEntry
+          ((entry as (_, term)), (mask, changed, unchanged)) =
       let val result = subst term
       in
         if aconv (result, term) then
-          (changed, entry :: unchanged)
-        else ((#1 entry, result) :: changed, unchanged)
+          (false :: mask, changed, entry :: unchanged)
+        else
+          (true :: mask, (#1 entry, result) :: changed, unchanged)
       end
     val remaining = deleteToken "equalTrackedSubst" token assumptions
-    val (changed_assumptions, unchanged_assumptions) =
-      List.foldr subEntry ([], []) remaining
+    val (changed_mask, changed_assumptions, unchanged_assumptions) =
+      List.foldr subEntry ([], [], []) remaining
     val (changed, lits') = List.foldr subLit ([], []) lits
     val (changed', pairs') = List.foldr subFrame (changed, []) pairs
   in
-    (equality,
+    (equality, changed_mask,
      {pairs = (changed', []) :: pairs', lits = lits', vars = vars,
       lim = lim,
       assumptions = changed_assumptions @ unchanged_assumptions})
@@ -1232,22 +1234,24 @@ fun equalTrackedSubstMeasured checkpoint
           (changed, result :: unchanged)
         else ((result, true) :: changed, unchanged)
       end
-    fun subEntry ((entry as (_, term)), (changed, unchanged)) =
+    fun subEntry
+          ((entry as (_, term)), (mask, changed, unchanged)) =
       let val result = model_subst term
       in
         if aconv (result, term) then
-          (changed, entry :: unchanged)
-        else ((#1 entry, result) :: changed, unchanged)
+          (false :: mask, changed, entry :: unchanged)
+        else
+          (true :: mask, (#1 entry, result) :: changed, unchanged)
       end
     val remaining =
       deleteToken "equalTrackedSubstMeasured" token assumptions
-    val (changed_assumptions, unchanged_assumptions) =
-      List.foldr subEntry ([], []) remaining
+    val (changed_mask, changed_assumptions, unchanged_assumptions) =
+      List.foldr subEntry ([], [], []) remaining
     val (changed, lits') = List.foldr subLit ([], []) lits
     val (changed', pairs') = List.foldr subFrame (changed, []) pairs
     val _ = checkpoint ()
   in
-    (equality,
+    (equality, changed_mask,
      {pairs = (changed', []) :: pairs', lits = lits', vars = vars,
       lim = lim,
       assumptions = changed_assumptions @ unchanged_assumptions})
@@ -1777,7 +1781,7 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
                 if lim < 0 then backtrack choices
                 else
                   (let
-                     val (equality, substituted) =
+                     val (equality, changed, substituted) =
                        equalTrackedSubst
                          (formula,
                           {pairs = (safe, unsafe) :: pairs,
@@ -1786,7 +1790,8 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
                      val _ = noteInference ()
                    in
                      prv
-                       (HypSubst {equality = equality} :: tacs,
+                       (HypSubst
+                          {equality = equality, changed = changed} :: tacs,
                         brs0 :: trace, choices,
                         substituted :: brs)
                    end
@@ -2027,7 +2032,7 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
                           (let
                              val _ = checkpoint ()
                              val _ = #noteEqualityAttempt monitor ()
-                             val (equality, substituted) =
+                             val (equality, changed, substituted) =
                                equalTrackedSubstMeasured checkpoint
                                  (formula,
                                   {pairs = (safe, unsafe) :: pairs,
@@ -2038,7 +2043,9 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
                              val _ = noteInference ()
                            in
                              prv
-                               (HypSubst {equality = equality} :: tacs,
+                               (HypSubst
+                                  {equality = equality,
+                                   changed = changed} :: tacs,
                                 brs0 :: trace,
                                 choices, substituted :: brs)
                            end

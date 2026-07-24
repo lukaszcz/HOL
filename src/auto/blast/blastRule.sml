@@ -209,78 +209,7 @@ fun member_term_measured checkpoint tm =
     member
   end
 
-fun translator {rigid_types, goal_frees, rule_vars} =
-  let
-    (* Type.compare is structural equality on HOL types.  Term.compare is a
-       total ordering that respects alpha-equivalence, matching the former
-       [=] and [Term.aconv] association-list lookups respectively. *)
-    val term_map : (hol_term, pterm) Redblackmap.dict ref =
-      ref (Redblackmap.mkDict Term.compare)
-    val type_map : (hol_type, pterm) Redblackmap.dict ref =
-      ref (Redblackmap.mkDict Type.compare)
-
-    fun fresh_variable tm make =
-      case Redblackmap.peek (!term_map, tm) of
-          SOME value => value
-        | NONE =>
-            let
-              val value = make ()
-            in
-              term_map := Redblackmap.insert (!term_map, tm, value);
-              value
-            end
-
-    fun variable depth bounds tm =
-      case Redblackmap.peek (bounds, tm) of
-          SOME binder_depth => Bound (depth - binder_depth)
-        | NONE =>
-            if member_term tm rule_vars then
-              fresh_variable tm (fn () => Var (ref NONE))
-            else if goal_frees then
-              fresh_variable tm
-                (fn () => Skolem (freshName () "*Free*", []))
-            else
-              let val (name, _) = dest_var tm in Free name end
-
-    fun from depth bounds tm =
-      if is_const tm then
-        let
-          val {Thy, Name, ...} = dest_thy_const tm
-          val args = const_tyargs rigid_types type_map tm
-        in
-          Const (const_name {Thy = Thy, Name = Name}, args)
-        end
-      else if is_var tm then variable depth bounds tm
-      else if is_abs tm then
-        let
-          val (binder, body) = dest_abs tm
-          val (name, _) = dest_var binder
-          val body_depth = depth + 1
-          (* Persistent maps restore an outer binding when recursion returns.
-             Storing absolute depth avoids rebuilding every outer binding. *)
-          val body_bounds =
-            Redblackmap.insert (bounds, binder, body_depth)
-          val body' = from body_depth body_bounds body
-        in
-          case body' of
-              f $ Bound 0 =>
-                if List.exists (fn i => i = 0) (loose_bnos f) then
-                  Abs (name, body')
-                else incr_boundvars ~1 f
-            | _ => Abs (name, body')
-        end
-      else
-        let val (rator, rand) = dest_comb tm
-        in from depth bounds rator $ from depth bounds rand end
-  in
-    fn hol_term =>
-      from 0 (Redblackmap.mkDict Term.compare) hol_term
-  end
-
-(* A separate translator keeps ordinary rule conversion callback-free.  Each
-   recursive HOL/type item is separated by a checkpoint; calls into the HOL
-   kernel and persistent maps remain the indivisible units. *)
-fun translatorMeasured checkpoint
+fun translator_with checkpoint
       {rigid_types, goal_frees, rule_vars} =
   let
     val term_map : (hol_term, pterm) Redblackmap.dict ref =
@@ -428,6 +357,10 @@ fun translatorMeasured checkpoint
     fn hol_term =>
       from 0 (Redblackmap.mkDict Term.compare) hol_term
   end
+
+fun translator fields = translator_with (fn () => ()) fields
+fun translatorMeasured checkpoint fields =
+  translator_with checkpoint fields
 
 fun fromGoalTerm tm =
   translator
@@ -612,19 +545,7 @@ fun canonical_dataMeasured checkpoint is_elim theorem =
 fun countConversion (Cache {conversions, ...}) =
   conversions := !conversions + 1
 
-fun convertIntro cache vars theorem =
-  let
-    val _ = countConversion cache
-    val {premises, conclusion, ...} = canonical_data false theorem
-    fun one premise = convertPrem (skoPrem cache vars premise)
-  in
-    {origin = Stored {is_elim = false, theorem = theorem},
-     pattern = mkGoal conclusion,
-     premises = map one premises,
-     hidden_assumptions = map (fn _ => NONE) premises}
-  end
-
-fun convertIntroMeasured checkpoint cache vars theorem =
+fun convertIntroWith checkpoint cache vars theorem =
   let
     val _ = countConversion cache
     val {premises, conclusion, ...} =
@@ -644,6 +565,12 @@ fun convertIntroMeasured checkpoint cache vars theorem =
      premises = convert premises,
      hidden_assumptions = map (fn _ => NONE) premises}
   end
+
+fun convertIntro cache vars theorem =
+  convertIntroWith (fn () => ()) cache vars theorem
+
+fun convertIntroMeasured checkpoint cache vars theorem =
+  convertIntroWith checkpoint cache vars theorem
 
 fun weak_warning theorem =
   if Feedback.current_trace "blast" >= 1 then
@@ -820,20 +747,7 @@ fun find_cached find entries safe vars formula =
     newest (first, second)
   end
 
-fun cached (Cache {entries, hits, ...}) safe vars formula =
-  case find_cached
-         (List.find
-            (fn entry =>
-               #safe entry = safe andalso
-               same_vars (#vars entry, vars) andalso
-               aconv (#formula entry, formula)))
-         (!entries) safe vars formula of
-      NONE => NONE
-    | SOME entry =>
-        (hits := !hits + 1;
-         SOME (#rules entry))
-
-fun cachedMeasured checkpoint (Cache {entries, hits, ...})
+fun cachedWith checkpoint (Cache {entries, hits, ...})
       safe vars formula =
   let
     fun same ([], []) = true
@@ -860,6 +774,12 @@ fun cachedMeasured checkpoint (Cache {entries, hits, ...})
            SOME (#rules entry))
   end
 
+fun cached cache safe vars formula =
+  cachedWith (fn () => ()) cache safe vars formula
+
+fun cachedMeasured checkpoint cache safe vars formula =
+  cachedWith checkpoint cache safe vars formula
+
 fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
   let
     val key = cache_key safe vars formula
@@ -871,103 +791,6 @@ fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
   in
     next_stamp := stamp + 1;
     entries := Redblackmap.insert (!entries, key, entry :: values)
-  end
-
-(* Rule variables are assigned destructively and off-trail by unify.  Keep
-   pristine templates in a search cache, and give every acquisition fresh
-   rule variables and fresh rule-local Skolems.  Variables and Skolems from
-   the branch formula remain shared with the branch. *)
-fun copyRules cache vars formula fresh_skolems rules =
-  let
-    val variable_copies = ref ([] : (var * var) list)
-    val skolem_copies = ref ([] : (string * string) list)
-
-    fun insert_string value values =
-      if List.exists (fn other => other = value) values then values
-      else value :: values
-
-    fun add_skolems (Const (_, args)) names =
-          List.foldl (fn (term, result) => add_skolems term result)
-            names args
-      | add_skolems (Skolem (name, arguments)) names =
-          List.foldl
-            (fn (variable, result) =>
-               case !variable of
-                   NONE => result
-                 | SOME term => add_skolems term result)
-            (insert_string name names) arguments
-      | add_skolems (Var variable) names =
-          (case !variable of
-               NONE => names
-             | SOME term => add_skolems term names)
-      | add_skolems (Abs (_, body)) names = add_skolems body names
-      | add_skolems (left $ right) names =
-          add_skolems left (add_skolems right names)
-      | add_skolems _ names = names
-
-    val external_skolems =
-      List.foldl
-        (fn (variable, names) =>
-           case !variable of
-               NONE => names
-             | SOME term => add_skolems term names)
-        (add_skolems formula []) vars
-
-    fun copy_variable variable =
-      if mem_var (variable, vars) then variable
-      else
-        case List.find
-               (fn (source, _) => source = variable) (!variable_copies) of
-            SOME (_, copy) => copy
-          | NONE =>
-              let
-                val copy = ref NONE
-                val _ =
-                  variable_copies :=
-                    (variable, copy) :: !variable_copies
-                val _ =
-                  case !variable of
-                      NONE => ()
-                    | SOME term => copy := SOME (copy_term term)
-              in
-                copy
-              end
-
-    and copy_skolem name =
-      if not fresh_skolems orelse
-         List.exists (fn external => external = name) external_skolems
-      then name
-      else
-        case List.find
-               (fn (source, _) => source = name) (!skolem_copies) of
-            SOME (_, copy) => copy
-          | NONE =>
-              let
-                val copy = freshName cache "S"
-              in
-                skolem_copies := (name, copy) :: !skolem_copies;
-                copy
-              end
-
-    and copy_term term =
-      case term of
-          Const (name, args) => Const (name, map copy_term args)
-        | Skolem (name, arguments) =>
-            Skolem (copy_skolem name, map copy_variable arguments)
-        | Free name => Free name
-        | Var variable => Var (copy_variable variable)
-        | Bound index => Bound index
-        | Abs (name, body) => Abs (name, copy_term body)
-        | left $ right => copy_term left $ copy_term right
-
-    fun copy_rule
-          ({origin, pattern, premises, hidden_assumptions} : tableau_rule) =
-      {origin = origin,
-       pattern = copy_term pattern,
-       premises = map (map copy_term) premises,
-       hidden_assumptions = hidden_assumptions}
-  in
-    map copy_rule rules
   end
 
 fun query_skeleton formula =
@@ -1268,32 +1091,11 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
       clasetRules.candidate_order_measured checkpoint tagged
     end
 
-fun acquire cache claset safe vars formula =
-  case cached cache safe vars formula of
-      SOME rules => copyRules cache vars formula true rules
-    | NONE =>
-        let
-          val tagged = candidates claset safe formula
-          fun convert (_, (is_elim, theorem)) =
-            if is_elim then convertElim cache vars theorem
-            else SOME (convertIntro cache vars theorem)
-          fun weight_at_most_one ({weight, ...} : clasetRules.tag, _) =
-            weight <= 1
-          val (early, late) = List.partition weight_at_most_one tagged
-          val early_rules = List.mapPartial convert early
-          val late_rules = List.mapPartial convert late
-          val rules =
-            if safe then
-              early_rules @ pseudoRules cache vars formula @ late_rules
-            else early_rules @ late_rules
-          val _ =
-            remember cache safe vars formula
-              (copyRules cache vars formula false rules)
-        in
-          rules
-        end
-
-fun copyRulesMeasured ({checkpoint, ...} : monitor)
+(* Rule variables are assigned destructively and off-trail by unify.  Keep
+   pristine templates in a search cache, and give every acquisition fresh
+   rule variables and fresh rule-local Skolems.  Variables and Skolems from
+   the branch formula remain shared with the branch. *)
+fun copyRulesWith checkpoint
       cache vars formula fresh_skolems rules =
   let
     val variable_copies = ref ([] : (var * var) list)
@@ -1442,11 +1244,11 @@ fun copyRulesMeasured ({checkpoint, ...} : monitor)
     copy_rules rules
   end
 
-fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
+fun acquireWith (monitor as {candidate, conversion, checkpoint})
       cache claset safe vars formula =
   case cachedMeasured checkpoint cache safe vars formula of
       SOME rules =>
-        copyRulesMeasured monitor cache vars formula true rules
+        copyRulesWith checkpoint cache vars formula true rules
     | NONE =>
         let
           val tagged = candidatesMeasured monitor claset safe formula
@@ -1502,11 +1304,28 @@ fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
             else append early_rules late_rules
           val _ = checkpoint ()
           val templates =
-            copyRulesMeasured monitor cache vars formula false rules
+            copyRulesWith checkpoint cache vars formula false rules
           val _ = remember cache safe vars formula templates
         in
           rules
         end
+
+fun copyRules cache vars formula fresh_skolems rules =
+  copyRulesWith (fn () => ())
+    cache vars formula fresh_skolems rules
+
+fun copyRulesMeasured ({checkpoint, ...} : monitor)
+      cache vars formula fresh_skolems rules =
+  copyRulesWith checkpoint cache vars formula fresh_skolems rules
+
+fun acquire cache claset safe vars formula =
+  acquireWith
+    {candidate = fn () => (), conversion = fn () => (),
+     checkpoint = fn () => ()}
+    cache claset safe vars formula
+
+fun acquireMeasured monitor cache claset safe vars formula =
+  acquireWith monitor cache claset safe vars formula
 
 fun safeRules cache claset vars formula =
   acquire cache claset true vars formula

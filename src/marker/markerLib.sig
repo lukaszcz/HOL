@@ -52,6 +52,8 @@ sig
   (* True iff the theorem carries a generic simplifier-control marker.
      Owners of new such markers must extend this predicate here. *)
   val is_generic_simp_marker : thm -> bool
+  (* Repeatedly remove content-bearing generic simplifier wrappers. *)
+  val dest_generic_simp_wrapper : thm -> thm option
 
   val ABB                 : term -> term -> tactic
   val ABB'                : {redex : term, residue : term} -> tactic

@@ -52,7 +52,8 @@ sig
   val blast_gen_step : step
   val blast_ccontr_step : step
   val blast_hyp_subst_step : step
-  val blast_hyp_subst_step_at : int -> step
+  val blast_hyp_subst_step_at :
+    {equality : int, changed : bool list} -> step
   val blast_move_back_step : int -> step
 
   (* [depth_step cs part m] selects the duplicating or non-duplicating

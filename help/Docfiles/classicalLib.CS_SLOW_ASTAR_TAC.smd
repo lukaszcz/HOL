@@ -1,15 +1,15 @@
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
-## `slow_astar_tac`
+## `CS_SLOW_ASTAR_TAC`
 
 ``` hol4
-classicalLib.slow_astar_tac : clasetLib.claset -> NTactical.ntactic
+classicalLib.CS_SLOW_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
 ```
 
 ------------------------------------------------------------------------
 
 Constructs the claset-explicit form of `SLOW_ASTAR_TAC`.
 
-`slow_astar_tac cs` safely saturates the whole state, then expands the
+`CS_SLOW_ASTAR_TAC cs` safely saturates the whole state, then expands the
 first goal in A-star solve-completely search. It retains unsafe-rule
 alternatives after instantiating alternatives. State cost is
 `goal size + 5 * search level`; the weight 5 is fixed.
@@ -27,12 +27,12 @@ reached without a complete proof. Replay failure is an error.
 
 ``` hol4
 val slow_astar =
-  classicalLib.slow_astar_tac (clasetLib.the_claset ());
+  classicalLib.CS_SLOW_ASTAR_TAC (clasetLib.the_claset ());
 ```
 
 ### See also
 
 [`classicalLib.SLOW_ASTAR_TAC`](#classicalLib.SLOW_ASTAR_TAC),
-[`classicalLib.astar_tac`](#classicalLib.astar_tac),
-[`classicalLib.slow_best_tac`](#classicalLib.slow_best_tac),
+[`classicalLib.CS_ASTAR_TAC`](#classicalLib.CS_ASTAR_TAC),
+[`classicalLib.CS_SLOW_BEST_TAC`](#classicalLib.CS_SLOW_BEST_TAC),
 [`clasetLib`](#clasetLib)

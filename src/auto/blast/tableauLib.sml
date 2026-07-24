@@ -181,11 +181,14 @@ fun next_through limit depth =
 
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
-fun BLAST_DEPTH_TAC depth theorems goal =
+fun blast_depth_tac depth theorems goal =
   run_depths (invocation_claset theorems) (SOME depth)
     (fn _ => NONE) goal
 
-fun BLAST_TAC theorems goal =
+fun BLAST_DEPTH_TAC depth =
+  markerLib.ABBRS_THEN (blast_depth_tac depth)
+
+fun blast_tac theorems goal =
   let
     val limit = !depth_limit
     val initial = if limit < 0 then NONE else SOME 0
@@ -193,6 +196,8 @@ fun BLAST_TAC theorems goal =
     run_depths (invocation_claset theorems) initial
       (next_through limit) goal
   end
+
+val BLAST_TAC = markerLib.ABBRS_THEN blast_tac
 
 fun tryIt depth theorems goal =
   blastSearch.debugGoal (invocation_claset theorems) depth goal

@@ -118,13 +118,9 @@ fun form_of th' =
   end
 
 fun canonical_form th = form_of (canonical_rule th)
-fun canonical_form_of kind th = form_of (canonical_rule_of kind th)
 
-(* The measured canonicalizer deliberately has its own recursion.  The
-   ordinary rule database path above remains free of polling closures, while
-   measured blast conversion gets a safe point between theorem-kernel stages
-   and between items of the outer theorem spine. *)
-fun canonical_form_of_measured checkpoint kind th =
+(* One checkpoint-parameterized canonicalizer serves both paths. *)
+fun canonical_form_of_with checkpoint kind th =
   let
     fun member _ [] = false
       | member variable (item :: items) =
@@ -321,6 +317,12 @@ fun canonical_form_of_measured checkpoint kind th =
      prems = prems,
      concl = cncl}
   end
+
+fun canonical_form_of kind th =
+  canonical_form_of_with (fn () => ()) kind th
+
+fun canonical_form_of_measured checkpoint kind th =
+  canonical_form_of_with checkpoint kind th
 
 fun rule_premises th = #prems (canonical_form th)
 fun rule_premises_of kind th = #prems (canonical_form_of kind th)
@@ -626,15 +628,17 @@ fun compare_tag ({weight = w1, index = i1} : tag,
       EQUAL => Int.compare (i1, i2)
     | ord => ord
 
-fun candidate_order candidates =
-  Listsort.sort (fn ((tag1, _), (tag2, _)) => compare_tag (tag1, tag2))
-                candidates
-
-fun candidate_order_measured checkpoint candidates =
+fun candidate_order_with checkpoint candidates =
   Listsort.sort
     (fn ((tag1, _), (tag2, _)) =>
        (checkpoint (); compare_tag (tag1, tag2)))
     candidates
+
+fun candidate_order candidates =
+  candidate_order_with (fn () => ()) candidates
+
+fun candidate_order_measured checkpoint candidates =
+  candidate_order_with checkpoint candidates
 
 fun same_kind ({kind = kind1, safe = safe1, ...} : rulespec)
               ({kind = kind2, safe = safe2, ...} : rulespec) =

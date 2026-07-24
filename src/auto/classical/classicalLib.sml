@@ -120,6 +120,17 @@ fun replay_node original node =
   in
     seq.result (clasetReplay.REPLAY_TAC grounded original)
   end
+  handle HOL_ERR error =>
+    let
+      val _ =
+        if Feedback.current_trace "classical" >= 1 then
+          Feedback.HOL_MESG
+            ("Classical reasoner: kernel replay failed for an engine " ^
+             "solution; backtracking: " ^ Feedback.message_of error)
+        else ()
+    in
+      seq.empty
+    end
 
 fun replay_step step cs goal =
   let val initial = clasetGoal.from_goal goal
@@ -221,12 +232,30 @@ fun bounded_depth cs bound initial =
 fun deepen_tac cs {start} =
   solve (clasetSearch.DEEPEN (2, 10) (bounded_depth cs) start)
 
+val CS_SAFE_TAC = safe_tac
+val CS_CLARIFY_TAC = clarify_tac
+val CS_SAFE_STEP_TAC = safe_step_tac
+val CS_CLARIFY_STEP_TAC = clarify_step_tac
+val CS_STEP_TAC = step_tac
+val CS_SLOW_STEP_TAC = slow_step_tac
+val CS_INST_STEP_TAC = inst_step_tac
+val CS_FAST_TAC = fast_tac
+val CS_SLOW_TAC = slow_tac
+val CS_BEST_TAC = best_tac
+val CS_SLOW_BEST_TAC = slow_best_tac
+val CS_FIRST_BEST_TAC = first_best_tac
+val CS_ASTAR_TAC = astar_tac
+val CS_SLOW_ASTAR_TAC = slow_astar_tac
+val CS_DEEPEN_TAC = deepen_tac
+
 fun invocation_claset theorems =
   clasetLib.invocation_claset {prefix = "__classical_extra_"}
     (clasetLib.the_claset ()) theorems
 
-fun public tactic theorems goal =
+fun public_raw tactic theorems goal =
   NTactical.DETERM (tactic (invocation_claset theorems)) goal
+
+fun public tactic = markerLib.ABBRS_THEN (public_raw tactic)
 
 fun SAFE_TAC theorems = public safe_tac theorems
 fun CLARIFY_TAC theorems = public clarify_tac theorems

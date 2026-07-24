@@ -17,7 +17,8 @@ Positive-premise instantiating and duplicating unsafe steps consume one
 unit on each branch. Search uses dynamic per-goal pruning and
 stops at the first successful bound.
 
-The lowercase `deepen_tac cs {start = n}` interface permits another start;
+The claset-explicit `CS_DEEPEN_TAC cs {start = n}` interface permits
+another start;
 its increment and ceiling remain 2 and 10.
 
 The theorem list locally processes `SIntro`, `Intro`, `SElim`, `Elim`,

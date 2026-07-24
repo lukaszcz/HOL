@@ -136,20 +136,7 @@ fun match tm net =
     walk [(tm, [])] net
   end
 
-fun unify {q, qvars} net =
-  let
-    fun walk [] (NODE (tips, _)) = tips
-      | walk ((tm, bvars) :: rest) node =
-          if is_var tm andalso not (is_bound bvars tm) andalso
-             HOLset.member (qvars, tm) then
-            List.concat (map (walk rest) (skip_one node))
-          else
-            follow walk (tm, bvars) rest node
-  in
-    walk [(q, [])] net
-  end
-
-fun unifyMeasured checkpoint {q, qvars} net =
+fun unify_with checkpoint {q, qvars} net =
   let
     fun append [] right = right
       | append (item :: items) right =
@@ -238,6 +225,10 @@ fun unifyMeasured checkpoint {q, qvars} net =
   in
     walk [(q, [])] net
   end
+
+fun unify query net = unify_with (fn () => ()) query net
+fun unifyMeasured checkpoint query net =
+  unify_with checkpoint query net
 
 fun vfilter pred net =
   let

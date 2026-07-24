@@ -19,21 +19,21 @@ sig
   val SLOW_ASTAR_TAC : thm list -> tactic
   val DEEPEN_TAC : thm list -> tactic
 
-  val safe_tac : clasetLib.claset -> NTactical.ntactic
-  val clarify_tac : clasetLib.claset -> NTactical.ntactic
-  val safe_step_tac : clasetLib.claset -> NTactical.ntactic
-  val clarify_step_tac : clasetLib.claset -> NTactical.ntactic
-  val step_tac : clasetLib.claset -> NTactical.ntactic
-  val slow_step_tac : clasetLib.claset -> NTactical.ntactic
-  val inst_step_tac : clasetLib.claset -> NTactical.ntactic
+  val CS_SAFE_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_CLARIFY_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_SAFE_STEP_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_CLARIFY_STEP_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_STEP_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_SLOW_STEP_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_INST_STEP_TAC : clasetLib.claset -> NTactical.ntactic
 
-  val fast_tac : clasetLib.claset -> NTactical.ntactic
-  val slow_tac : clasetLib.claset -> NTactical.ntactic
-  val best_tac : clasetLib.claset -> NTactical.ntactic
-  val slow_best_tac : clasetLib.claset -> NTactical.ntactic
-  val first_best_tac : clasetLib.claset -> NTactical.ntactic
-  val astar_tac : clasetLib.claset -> NTactical.ntactic
-  val slow_astar_tac : clasetLib.claset -> NTactical.ntactic
-  val deepen_tac : clasetLib.claset ->
-                   {start : int} -> NTactical.ntactic
+  val CS_FAST_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_SLOW_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_BEST_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_SLOW_BEST_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_FIRST_BEST_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_SLOW_ASTAR_TAC : clasetLib.claset -> NTactical.ntactic
+  val CS_DEEPEN_TAC : clasetLib.claset ->
+                      {start : int} -> NTactical.ntactic
 end

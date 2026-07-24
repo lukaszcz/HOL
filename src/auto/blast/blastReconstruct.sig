@@ -16,9 +16,4 @@ sig
      blastSearch.PROOF_FAILED, so the tableau resumes at its choice stack. *)
   val searchGoal :
     claset -> int -> goal -> (proof * (goal list * validation)) option
-  val deepenGoal :
-    claset -> goal -> (proof * (goal list * validation)) option
-
-  val DEPTH_TAC : claset -> int -> tactic
-  val DEEPEN_TAC : claset -> tactic
 end

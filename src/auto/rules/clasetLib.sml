@@ -324,9 +324,7 @@ fun match_intro_candidates (inet, _) tm =
 fun match_elim_candidates (_, enet) tm =
   candidate_order (clasetNet.match tm enet)
 
-fun free_var_set tm = boolSyntax.FVLset [tm]
-
-fun free_var_set_measured checkpoint tm =
+fun free_var_set_with checkpoint tm =
   let
     val empty = HOLset.empty Term.compare
     fun collect ([], variables) = variables
@@ -354,25 +352,31 @@ fun free_var_set_measured checkpoint tm =
     collect ([(tm, empty)], empty)
   end
 
-fun unify_intro_candidates (inet, _) tm =
-  candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} inet)
-
-fun unify_elim_candidates (_, enet) tm =
-  candidate_order (clasetNet.unify {q = tm, qvars = free_var_set tm} enet)
-
-fun unify_intro_candidates_measured checkpoint (inet, _) tm =
-  let val qvars = free_var_set_measured checkpoint tm
+fun unify_intro_candidates_with checkpoint (inet, _) tm =
+  let val qvars = free_var_set_with checkpoint tm
   in
     candidate_order_measured checkpoint
       (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} inet)
   end
 
-fun unify_elim_candidates_measured checkpoint (_, enet) tm =
-  let val qvars = free_var_set_measured checkpoint tm
+fun unify_elim_candidates_with checkpoint (_, enet) tm =
+  let val qvars = free_var_set_with checkpoint tm
   in
     candidate_order_measured checkpoint
       (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} enet)
   end
+
+fun unify_intro_candidates netpair tm =
+  unify_intro_candidates_with (fn () => ()) netpair tm
+
+fun unify_elim_candidates netpair tm =
+  unify_elim_candidates_with (fn () => ()) netpair tm
+
+fun unify_intro_candidates_measured checkpoint netpair tm =
+  unify_intro_candidates_with checkpoint netpair tm
+
+fun unify_elim_candidates_measured checkpoint netpair tm =
+  unify_elim_candidates_with checkpoint netpair tm
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
@@ -870,12 +874,19 @@ fun next_extra_name prefix cs index =
 fun add_plain_theorems prefix theorems cs =
   let
     fun add (theorem, (current, index)) =
+      let
+        val theorem =
+          case markerLib.dest_generic_simp_wrapper theorem of
+              NONE => theorem
+            | SOME payload => payload
+      in
       if markerLib.is_generic_simp_marker theorem then (current, index)
       else
         let val (name, next) = next_extra_name prefix current index
         in
           (add_intros [(name, theorem)] current, next)
         end
+      end
   in
     #1 (List.foldl add (cs, 0) theorems)
   end

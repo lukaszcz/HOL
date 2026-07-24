@@ -1,15 +1,15 @@
 >>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
-## `slow_tac`
+## `CS_SLOW_TAC`
 
 ``` hol4
-classicalLib.slow_tac : clasetLib.claset -> NTactical.ntactic
+classicalLib.CS_SLOW_TAC : clasetLib.claset -> NTactical.ntactic
 ```
 
 ------------------------------------------------------------------------
 
 Constructs the claset-explicit form of `SLOW_TAC`.
 
-`slow_tac cs` performs depth-first solve-completely search using `cs`. It
+`CS_SLOW_TAC cs` performs depth-first solve-completely search using `cs`. It
 retains unsafe-rule alternatives after instantiating alternatives, and
 uses dynamic per-goal pruning. There is no depth or node bound.
 
@@ -25,12 +25,12 @@ It may diverge; replay failure is reported as an error.
 ### Example
 
 ``` hol4
-val slow = classicalLib.slow_tac (clasetLib.the_claset ());
+val slow = classicalLib.CS_SLOW_TAC (clasetLib.the_claset ());
 ```
 
 ### See also
 
 [`classicalLib.SLOW_TAC`](#classicalLib.SLOW_TAC),
-[`classicalLib.fast_tac`](#classicalLib.fast_tac),
-[`classicalLib.slow_step_tac`](#classicalLib.slow_step_tac),
+[`classicalLib.CS_FAST_TAC`](#classicalLib.CS_FAST_TAC),
+[`classicalLib.CS_SLOW_STEP_TAC`](#classicalLib.CS_SLOW_STEP_TAC),
 [`clasetLib`](#clasetLib)

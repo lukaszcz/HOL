@@ -1996,7 +1996,7 @@ val _ =
 
 val _ =
   test
-    ("generic simp markers do not change invocation claset rules",
+    ("inert generic simp markers do not change invocation claset rules",
      fn () =>
        let
          val plain = boolTheory.TRUTH
@@ -2007,9 +2007,9 @@ val _ =
             markerLib.Excl "claset-selftest",
             markerLib.ExclSF "claset-selftest",
             markerLib.FRAG "claset-selftest",
-            markerLib.mk_Req0 boolTheory.AND_CLAUSES,
-            markerLib.mk_ReqD boolTheory.OR_CLAUSES,
-            BoundedRewrites.Once boolTheory.IMP_CLAUSES]
+            markerLib.NoAsms,
+            markerLib.IgnAsm [QUOTE "claset_ignored"],
+            markerLib.Abbr [QUOTE "claset_abbreviation"]]
          val baseline =
            invocation_claset {prefix = "__claset_req_"} empty_cs
              [plain]
@@ -2020,5 +2020,24 @@ val _ =
          List.all markerLib.is_generic_simp_marker markers andalso
          same_rules (rules_of baseline) (rules_of with_markers) andalso
          length (rules_of with_markers) = 1 andalso
+         named_marker_is "__claset_req_0" plain with_markers andalso
          has_marker_rule marker_intro_spec plain with_markers
+       end)
+
+val _ =
+  test
+    ("content-bearing simp wrappers retain their classical payload",
+     fn () =>
+       let
+         val payload = boolTheory.IMP_CLAUSES
+         val wrapped =
+           markerLib.mk_Req0
+             (markerLib.mk_ReqD (BoundedRewrites.Once payload))
+         val cs =
+           invocation_claset {prefix = "__claset_req_"} empty_cs
+             [wrapped]
+       in
+         markerLib.is_generic_simp_marker wrapped andalso
+         length (rules_of cs) = 1 andalso
+         named_marker_is "__claset_req_0" payload cs
        end)

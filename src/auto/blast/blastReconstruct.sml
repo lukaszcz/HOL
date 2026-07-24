@@ -68,8 +68,10 @@ fun apply_rule cs duplicate major rule node =
 
 fun execute cs step node =
   case step of
-      blastSearch.HypSubst {equality} =>
-        apply (clasetStep.blast_hyp_subst_step_at equality) node
+      blastSearch.HypSubst {equality, changed} =>
+        apply
+          (clasetStep.blast_hyp_subst_step_at
+            {equality = equality, changed = changed}) node
     | blastSearch.CloseAssume {assumption} =>
         apply (clasetStep.blast_assumption_step_at assumption) node
     | blastSearch.CloseContradiction positions =>
@@ -144,21 +146,5 @@ fun accept cs goal proof =
 
 fun searchGoal cs depth goal =
   blastSearch.searchGoal cs depth goal (accept cs goal)
-
-fun deepenGoal cs goal =
-  blastSearch.deepenGoal cs goal (accept cs goal)
-
-fun tactic_result function_name result =
-  case result of
-      SOME (_, tactic_result) => tactic_result
-    | NONE =>
-        raise mk_HOL_ERR "blastReconstruct" function_name
-          "blast search found no reconstructible proof"
-
-fun DEPTH_TAC cs depth goal =
-  tactic_result "DEPTH_TAC" (searchGoal cs depth goal)
-
-fun DEEPEN_TAC cs goal =
-  tactic_result "DEEPEN_TAC" (deepenGoal cs goal)
 
 end

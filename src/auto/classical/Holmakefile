@@ -4,18 +4,20 @@ INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/metis
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-clasetUnify.uo: clasetMeta.uo
-clasetReplay.uo: clasetMeta.uo
-clasetGoal.uo: clasetMeta.uo clasetReplay.uo
-clasetStep.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo clasetGoal.uo
-clasetSearch.uo: clasetMeta.uo clasetGoal.uo searchHeap.uo
+clasetUnify.uo: clasetNorm.uo clasetMeta.uo
+clasetReplay.uo: clasetNorm.uo clasetMeta.uo
+clasetGoal.uo: clasetNorm.uo clasetMeta.uo clasetReplay.uo
+clasetStep.uo: clasetNorm.uo clasetMeta.uo clasetUnify.uo \
+               clasetReplay.uo clasetGoal.uo
+clasetSearch.uo: clasetNorm.uo clasetMeta.uo clasetGoal.uo searchHeap.uo
 classicalLib.uo: clasetGoal.uo clasetStep.uo clasetSearch.uo
 
-selftest.uo: clasetMeta.uo clasetUnify.uo clasetReplay.uo \
+selftest.uo: clasetNorm.uo clasetMeta.uo clasetUnify.uo clasetReplay.uo \
               clasetGoal.uo clasetStep.uo clasetSearch.uo classicalLib.uo \
               searchHeap.uo
 
-selftest.exe: selftest.uo clasetMeta.uo clasetUnify.uo clasetReplay.uo \
+selftest.exe: selftest.uo clasetNorm.uo clasetMeta.uo clasetUnify.uo \
+              clasetReplay.uo \
               clasetGoal.uo clasetStep.uo clasetSearch.uo classicalLib.uo \
               searchHeap.uo
 	$(HOLMOSMLC) -o $@ $<

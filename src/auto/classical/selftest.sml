@@ -16,19 +16,6 @@ fun int_compare (x : int, y : int) =
 fun from_list compare values =
   List.foldl (fn (x, heap) => add x heap) (empty compare) values
 
-fun drain heap =
-  if is_empty heap then [] else min heap :: drain (delete_min heap)
-
-val _ =
-  test
-    ("heap returns values in ascending order",
-     fn () =>
-       let
-         val heap = from_list int_compare [5, 1, 4, 2, 3]
-       in
-         size heap = 5 andalso drain heap = [1, 2, 3, 4, 5]
-       end)
-
 fun key_compare ((key1, _) : int * string, (key2, _)) =
   int_compare (key1, key2)
 
@@ -37,24 +24,19 @@ val duplicate_heap =
 
 val _ =
   test
-    ("heap preserves entries with duplicate keys",
-     fn () =>
-       size duplicate_heap = 4 andalso
-       map #1 (drain duplicate_heap) = [1, 1, 2, 3])
-
-val _ =
-  test
     ("delete_all_min pops every entry with the minimal key",
      fn () =>
        let
          val (entries, rest) = delete_all_min duplicate_heap
          val payloads = map #2 entries
-       in
+         val (second, final) = delete_all_min rest
+      in
          length entries = 2 andalso
          List.all (fn (key, _) => key = 1) entries andalso
          List.exists (fn value => value = "a") payloads andalso
          List.exists (fn value => value = "b") payloads andalso
-         size rest = 2 andalso min rest = (2, "c")
+         map #1 second = [2] andalso
+         not (is_empty final)
        end)
 
 fun raises_empty f =
@@ -62,13 +44,11 @@ fun raises_empty f =
 
 val _ =
   test
-    ("empty heap operations fail",
+    ("delete_all_min fails on an empty heap",
      fn () =>
        let
          val heap : int heap = empty int_compare
        in
-         raises_empty (fn () => ignore (min heap)) andalso
-         raises_empty (fn () => ignore (delete_min heap)) andalso
          raises_empty (fn () => ignore (delete_all_min heap))
        end)
 
@@ -2527,6 +2507,40 @@ val _ =
 
 val _ =
   test
+    ("FAST_TAC retains a Once-wrapped theorem",
+     fn () =>
+       let
+         val theorem = combinTheory.I_THM
+         val goal = ([], concl theorem)
+       in
+         tactic_fails (classicalLib.FAST_TAC []) goal andalso
+         not
+           (tactic_fails
+             (classicalLib.FAST_TAC [BoundedRewrites.Once theorem])
+             goal)
+       end)
+
+val _ =
+  test
+    ("FAST_TAC honors Abbr controls before classical search",
+     fn () =>
+       let
+         val abbreviation = "classical_abbreviated_p"
+         val abbreviated =
+           Term.mk_var (abbreviation, Type.bool)
+         val goal =
+           ([markerSyntax.mk_abbrev (abbreviation, phase1_pa), phase1_pa],
+            abbreviated)
+       in
+         tactic_fails (classicalLib.FAST_TAC []) goal andalso
+         not
+           (tactic_fails
+             (classicalLib.FAST_TAC
+               [markerLib.Abbr [QUOTE abbreviation]]) goal)
+       end)
+
+val _ =
+  test
     ("Del is consumed and removes a seed rule for one invocation",
      fn () =>
        let
@@ -4693,7 +4707,7 @@ val _ =
          val goal = ([], nested_exists 5 boolSyntax.T)
          val tactic =
            NTactical.DETERM
-             (classicalLib.deepen_tac (clasetLib.the_claset ())
+             (classicalLib.CS_DEEPEN_TAC (clasetLib.the_claset ())
                {start = 6})
        in
          tactic_solves tactic goal andalso
@@ -4715,7 +4729,7 @@ val _ =
          val goal = ([], boolSyntax.mk_conj (left, right))
          val tactic =
            NTactical.DETERM
-             (classicalLib.deepen_tac (clasetLib.the_claset ())
+             (classicalLib.CS_DEEPEN_TAC (clasetLib.the_claset ())
                {start = 1})
        in
          tactic_solves tactic goal
@@ -4876,7 +4890,7 @@ val _ =
              ("driver-meta-conjunction",
               safe_before observed_conjunction)
              (clasetLib.the_claset ())
-         val tactic = NTactical.DETERM (classicalLib.fast_tac cs)
+         val tactic = NTactical.DETERM (classicalLib.CS_FAST_TAC cs)
        in
          tactic_solves tactic ([], target) andalso !saw_marked_goal
        end)
@@ -4905,8 +4919,8 @@ val _ =
              (clasetLib.add_sintros [("driver-inst", inst_rule)]
                clasetLib.empty_cs)
          val goal = ([available], boolSyntax.T)
-         val fast = NTactical.DETERM (classicalLib.fast_tac cs)
-         val slow = NTactical.DETERM (classicalLib.slow_tac cs)
+         val fast = NTactical.DETERM (classicalLib.CS_FAST_TAC cs)
+         val slow = NTactical.DETERM (classicalLib.CS_SLOW_TAC cs)
        in
          tactic_fails fast goal andalso tactic_solves slow goal
        end)
@@ -4941,7 +4955,7 @@ val _ =
            case first_step clasetStep.unsafe_step plain_cs goal of
                NONE => raise Fail "expected a large first alternative"
              | SOME (_, node) => #2 (the_singleton (rendered_goals node))
-         val tactic = NTactical.DETERM (classicalLib.best_tac cs)
+         val tactic = NTactical.DETERM (classicalLib.CS_BEST_TAC cs)
          val solved = tactic_solves tactic goal
          val order = List.rev (!visited)
        in
@@ -5097,6 +5111,59 @@ val _ =
        in
          order_ok andalso null residuals andalso
          (ignore (validation []); true)
+       end)
+
+val _ =
+  test
+    ("recorded hyp-subst mask survives a late metavariable binding",
+     fn () =>
+       let
+         val x = Term.mk_var ("late_subst_x", Type.bool)
+         val y = Term.mk_var ("late_subst_y", Type.bool)
+         val p =
+           Term.mk_var ("late_subst_P", Type.bool --> Type.bool)
+         val q =
+           Term.mk_var ("late_subst_Q", Type.bool --> Type.bool)
+         fun app operator operand = Term.mk_comb (operator, operand)
+         val (meta, store0) =
+           clasetMeta.new_meta {allow = [], ty = Type.bool}
+             clasetMeta.empty
+         val raw_goal =
+           ([boolSyntax.mk_eq (x, y), app p meta, app q x, app p y],
+            app q y)
+         val root =
+           clasetGoal.create
+             {goals =
+                [{params = [], asl = #1 raw_goal, w = #2 raw_goal}],
+              store = store0, level = 0}
+         val (_, substituted) =
+           case seq.cases
+             (clasetStep.blast_hyp_subst_step_at
+               {equality = 1, changed = [false, true, false]}
+               (root, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "recorded late-binding substitution"
+         val store1 =
+           the_store
+             (clasetMeta.bind (meta, x) (clasetGoal.store substituted))
+         val rebound = clasetGoal.set_store store1 substituted
+         val (_, closed) =
+           case seq.cases
+             (clasetStep.blast_assumption_step_at 1 (rebound, 1)) of
+               SOME (result, _) => result
+             | NONE => raise Fail "late-binding exact close"
+         val grounded =
+           clasetReplay.ground (clasetGoal.store closed)
+             (clasetGoal.replay closed)
+         val original =
+           (map (clasetMeta.norm store1) (#1 raw_goal),
+            clasetMeta.norm store1 (#2 raw_goal))
+       in
+         case total
+           (Tactical.VALID (clasetReplay.REPLAY_TAC grounded)) original of
+             SOME ([], validation) =>
+               (ignore (validation []); true)
+           | _ => false
        end)
 
 val _ =
@@ -5397,9 +5464,14 @@ val _ =
          val goal = ([first, selected, unchanged, app y], app y)
          val node = clasetGoal.from_goal goal
          val results =
-           drain_exact (clasetStep.blast_hyp_subst_step_at 2 (node, 1))
+           drain_exact
+             (clasetStep.blast_hyp_subst_step_at
+               {equality = 2, changed = [true, false, true]}
+               (node, 1))
          val wrong =
-           seq.null (clasetStep.blast_hyp_subst_step_at 5 (node, 1))
+           seq.null
+             (clasetStep.blast_hyp_subst_step_at
+               {equality = 5, changed = []} (node, 1))
        in
          case results of
              [(record, next)] =>
@@ -5458,11 +5530,12 @@ val _ =
          val selected_substitutions =
            List.concat
              (map
-               (fn position =>
+               (fn (equality, changed) =>
                  drain_exact
-                   (clasetStep.blast_hyp_subst_step_at position
+                   (clasetStep.blast_hyp_subst_step_at
+                     {equality = equality, changed = changed}
                      (substitution_node, 1)))
-               [1, 2, 3])
+               [(1, [false, true]), (2, [true, false]), (3, [])])
          fun same_nodes ([], []) = true
            | same_nodes ((_, left) :: lefts, (_, right) :: rights) =
                clasetGoal.equal (left, right) andalso

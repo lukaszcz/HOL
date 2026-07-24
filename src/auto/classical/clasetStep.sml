@@ -27,56 +27,21 @@ fun trace level message =
     Feedback.HOL_MESG ("Classical reasoner: " ^ message)
   else ()
 
-val normalize_conv =
-  Conv.QCONV
-    (Conv.REDEPTH_CONV
-      (Conv.ORELSEC (BETA_CONV, Drule.ETA_CONV)))
+val normalize_conv = clasetNorm.normalize_conv
 
 fun normalize_term store tm = clasetMeta.norm store tm
 
 fun closing_equal store left right =
   aconv (normalize_term store left) (normalize_term store right)
 
-fun normalize_thm th = Conv.CONV_RULE normalize_conv th
-
-fun normalize_rule_thm th =
-  let
-    fun normalize_hypothesis (hypothesis, current) =
-      let
-        val equality = normalize_conv hypothesis
-        val normalized = rhs (concl equality)
-        val original = EQ_MP (SYM equality) (ASSUME normalized)
-      in
-        Drule.PROVE_HYP original current
-      end
-  in
-    normalize_thm (List.foldl normalize_hypothesis th (hyp th))
-  end
+val normalize_thm = clasetNorm.normalize_thm
+val normalize_rule_thm = clasetNorm.normalize_rule_thm
 
 fun split_imp_prefix function_name arity tm =
-  let
-    fun split 0 premises conclusion =
-          (List.rev premises, conclusion)
-      | split remaining premises current =
-          (case total dest_imp_only current of
-               SOME (premise, rest) =>
-                 split (remaining - 1) (premise :: premises) rest
-             | NONE =>
-                 raise mk_HOL_ERR "clasetStep" function_name
-                   "the instantiated rule has fewer premises than recorded")
-  in
-    if arity < 0 then
-      raise mk_HOL_ERR "clasetStep" function_name
-        "negative implication-prefix arity"
-    else split arity [] tm
-  end
+  clasetNorm.split_imp_prefix ("clasetStep", function_name) arity tm
 
-fun normalize_assumption_thm theorem =
-  let val equality = normalize_conv (concl theorem)
-  in (rhs (concl equality), EQ_MP equality theorem) end
-
-fun normalize_assumption asm =
-  normalize_assumption_thm (ASSUME asm)
+val normalize_assumption_thm = clasetNorm.normalize_assumption_thm
+val normalize_assumption = clasetNorm.normalize_assumption
 
 fun assumption_thm asm target =
   let
@@ -114,10 +79,8 @@ fun supplied_major_thm store major target =
       end
   end
 
-fun nth1 values pos = List.nth (values, pos - 1)
-
-fun delete_nth values pos =
-  List.take (values, pos - 1) @ List.drop (values, pos)
+val nth1 = clasetNorm.nth1 ("clasetStep", "nth1")
+val delete_nth = clasetNorm.delete_nth ("clasetStep", "delete_nth")
 
 fun position_map f values =
   let
@@ -1115,12 +1078,20 @@ fun prepare_blast_hyp_subst node pos : blast_hyp_subst_context =
 
 fun blast_hyp_subst_in
       ({store, params, assumption_count, goal} :
-        blast_hyp_subst_context) position =
+        blast_hyp_subst_context) {position, changed} =
   if position <= 0 orelse position > assumption_count then NONE
   else
-    case total (clasetReplay.BLAST_HYP_SUBST_TAC_AT position) goal of
+    case total
+      (fn () =>
+        case changed of
+            NONE =>
+              clasetReplay.COMPUTE_BLAST_HYP_SUBST_TAC_AT position goal
+          | SOME mask =>
+              (mask,
+               clasetReplay.BLAST_HYP_SUBST_TAC_AT
+                 {position = position, changed = mask} goal)) () of
         NONE => NONE
-      | SOME (result as (goals, _)) =>
+      | SOME (changed, result as (goals, _)) =>
           let
             fun child (child_asl, child_w) =
               {params = params, asl = child_asl, w = child_w}
@@ -1132,7 +1103,8 @@ fun blast_hyp_subst_in
                  eigenvariables = map (fn _ => []) goals,
                  result = result, children = SOME (map child goals),
                  action =
-                   clasetReplay.blast_hyp_subst_action_at position,
+                   clasetReplay.blast_hyp_subst_action_at
+                     {position = position, changed = changed},
                  closed = map (fn _ => NONE) goals, store = store})
           end
 
@@ -1145,14 +1117,17 @@ fun blast_hyp_subst_results (node, pos) =
           List.tabulate
             (#assumption_count prepared, fn index => index + 1)
       in
-        List.mapPartial (blast_hyp_subst_in prepared) positions
+        List.mapPartial
+          (fn position =>
+            blast_hyp_subst_in prepared
+              {position = position, changed = NONE}) positions
       end)
 
-fun blast_hyp_subst_results_at position (node, pos) =
+fun blast_hyp_subst_results_at {equality, changed} (node, pos) =
   list_seq
     (fn () =>
       case blast_hyp_subst_in (prepare_blast_hyp_subst node pos)
-        position of
+        {position = equality, changed = SOME changed} of
           NONE => []
         | SOME direct => [direct])
 
@@ -1696,8 +1671,8 @@ val blast_disch_step = direct_step disch_results
 val blast_gen_step = direct_step gen_results
 val blast_ccontr_step = direct_step ccontr_results
 val blast_hyp_subst_step = direct_step blast_hyp_subst_results
-fun blast_hyp_subst_step_at position =
-  direct_step (blast_hyp_subst_results_at position)
+fun blast_hyp_subst_step_at fields =
+  direct_step (blast_hyp_subst_results_at fields)
 fun blast_move_back_step position =
   direct_step (move_back_results position)
 

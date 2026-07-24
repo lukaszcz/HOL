@@ -180,10 +180,15 @@ struct
              case !v of
                  SOME body => add_vars (vs, add_term (body, accumulated))
                | NONE => add_vars (vs, add_var (v, accumulated)))
-      and add_var (v, []) = [v]
-        | add_var (v, w :: ws) =
-            (checkpoint ();
-             if v = w then w :: ws else w :: add_var (v, ws))
+      and add_var (v, values) =
+        let
+          fun member [] = false
+            | member (w :: ws) =
+                (checkpoint ();
+                 v = w orelse member ws)
+        in
+          if member values then values else v :: values
+        end
     in
       add_term (term, vars)
     end

@@ -31,7 +31,7 @@ fun string_compare (left : string, right) = String.compare (left, right)
 
 type store =
   {allows : (string, term list) Redblackmap.dict,
-   eigens : (term, unit) Redblackmap.dict,
+   eigens : (string, term list) Redblackmap.dict,
    metas : (string, meta) Redblackmap.dict,
    tm_bindings : (string, term) Redblackmap.dict,
    tymetas : (string, tymeta) Redblackmap.dict,
@@ -40,7 +40,7 @@ type store =
 
 val empty =
   {allows = Redblackmap.mkDict string_compare,
-   eigens = Redblackmap.mkDict Term.compare,
+   eigens = Redblackmap.mkDict string_compare,
    metas = Redblackmap.mkDict string_compare,
    tm_bindings = Redblackmap.mkDict string_compare,
    tymetas = Redblackmap.mkDict string_compare,
@@ -66,7 +66,16 @@ fun fresh_tymeta () =
 fun new_meta {allow, ty} store =
   let
     fun add_eigen (eigen, eigens) =
-      Redblackmap.insert (eigens, eigen, ())
+      let
+        val name = #1 (dest_var eigen)
+        val bucket =
+          case Redblackmap.peek (eigens, name) of
+              NONE => []
+            | SOME entries => entries
+      in
+        if List.exists (fn known => aconv eigen known) bucket then eigens
+        else Redblackmap.insert (eigens, name, eigen :: bucket)
+      end
 
     val m = fresh_meta ty
     val name = valOf (meta_name m)
@@ -371,10 +380,18 @@ fun metas_of store tm =
 fun same_var left right = aconv left right
 
 fun listed_as_eigen store variable =
-  List.exists
-    (fn (eigen, ()) =>
-      same_var (inst_types store variable) (inst_types store eigen))
-    (Redblackmap.listItems (#eigens store))
+  if not (is_var variable) then false
+  else
+    let
+      val name = #1 (dest_var variable)
+      val normalized = inst_types store variable
+    in
+      case Redblackmap.peek (#eigens store, name) of
+          NONE => false
+        | SOME entries =>
+            List.exists
+              (same_var normalized o inst_types store) entries
+    end
 
 fun is_eigen store variable =
   is_var variable andalso listed_as_eigen store variable
@@ -400,23 +417,33 @@ fun binding_respects_allow store (name, residue) =
   end
 
 fun register_eigen eigen store =
-  if not (is_var eigen) orelse is_meta eigen orelse
-     Redblackmap.inDomain (#eigens store, eigen)
+  if not (is_var eigen) orelse is_meta eigen
   then NONE
   else
     let
-      val candidate =
-        {allows = #allows store,
-         eigens = Redblackmap.insert (#eigens store, eigen, ()),
-         metas = #metas store,
-         tm_bindings = #tm_bindings store,
-         tymetas = #tymetas store,
-         ty_bindings = #ty_bindings store}
-      val permitted =
-        List.all (binding_respects_allow candidate)
-          (Redblackmap.listItems (#tm_bindings candidate))
+      val name = #1 (dest_var eigen)
+      val bucket =
+        case Redblackmap.peek (#eigens store, name) of
+            NONE => []
+          | SOME entries => entries
     in
-      if permitted then SOME candidate else NONE
+      if List.exists (fn known => aconv eigen known) bucket then NONE
+      else
+        let
+          val candidate =
+            {allows = #allows store,
+             eigens =
+               Redblackmap.insert (#eigens store, name, eigen :: bucket),
+             metas = #metas store,
+             tm_bindings = #tm_bindings store,
+             tymetas = #tymetas store,
+             ty_bindings = #ty_bindings store}
+          val permitted =
+            List.all (binding_respects_allow candidate)
+              (Redblackmap.listItems (#tm_bindings candidate))
+        in
+          if permitted then SOME candidate else NONE
+        end
     end
 
 fun bind (m, tm) store =

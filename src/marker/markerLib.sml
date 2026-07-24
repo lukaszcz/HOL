@@ -117,6 +117,8 @@ val Req0_t = mk_marker_const "Req0"
 val Req0_th = EQT_ELIM markerTheory.Req0_def
 val ReqD_t = mk_marker_const "ReqD"
 val ReqD_th = EQT_ELIM markerTheory.ReqD_def
+val GenericNoAsms_t = mk_marker_const "NoAsms"
+val GenericIgnAsm_t = mk_marker_const "IgnAsm"
 val mk_Req0 = ADD_ASSUM Req0_t
 val mk_ReqD = ADD_ASSUM ReqD_t
 
@@ -147,7 +149,29 @@ fun is_generic_simp_marker th =
     Option.isSome (destFRAG th) orelse
     Option.isSome (dest_Req0 th) orelse
     Option.isSome (dest_ReqD th) orelse
-    Option.isSome (total BoundedRewrites.DEST_BOUNDED th)
+    Option.isSome (total BoundedRewrites.DEST_BOUNDED th) orelse
+    aconv (concl th) GenericNoAsms_t orelse
+    has_marker_head GenericIgnAsm_t th orelse
+    is_abbr th
+
+fun dest_generic_simp_wrapper th =
+  let
+    val changed = ref false
+    fun unwrap theorem =
+      case dest_Req0 theorem of
+          SOME payload => (changed := true; unwrap payload)
+        | NONE =>
+            (case dest_ReqD theorem of
+                 SOME payload => (changed := true; unwrap payload)
+               | NONE =>
+                   case total BoundedRewrites.DEST_BOUNDED theorem of
+                       SOME (payload, _) =>
+                         (changed := true; unwrap payload)
+                     | NONE => theorem)
+    val payload = unwrap th
+  in
+    if !changed then SOME payload else NONE
+  end
 
 fun req0_modify tac th =
     case dest_Req0 th of
