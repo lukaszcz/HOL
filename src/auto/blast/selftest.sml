@@ -854,6 +854,188 @@ val _ =
            first_vars
        end)
 
+type reference_cache_entry =
+  {formula : blastTerm.term,
+   safe : bool,
+   vars : blastTerm.var list,
+   marker : int}
+
+fun reference_same_vars ([], []) = true
+  | reference_same_vars (left :: lefts, right :: rights) =
+      left = right andalso reference_same_vars (lefts, rights)
+  | reference_same_vars _ = false
+
+fun reference_cached entries safe vars formula =
+  List.find
+    (fn (entry : reference_cache_entry) =>
+       #safe entry = safe andalso
+       reference_same_vars (#vars entry, vars) andalso
+       aconv (#formula entry, formula))
+    entries
+
+val _ =
+  test
+    ("bucketed rule cache agrees with the linear cache oracle",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val oracle = ref ([] : reference_cache_entry list)
+         val next_marker = ref 0
+         val empty = clasetLib.empty_cs
+         val first_var = ref NONE
+         val second_var = ref NONE
+         val head_var = ref NONE
+         val alpha_left = Abs ("left", Bound 0)
+         val alpha_right = Abs ("right", Bound 0)
+         val plain = Const ("cache-plain", [])
+         val variable = Var head_var
+         val formulas =
+           [alpha_left, alpha_right, plain,
+            Const ("cache-f", []) $ Var first_var,
+            Const ("cache-f", []) $ Var second_var,
+            Skolem ("cache-skolem", [first_var]),
+            Free "cache-free", Bound 3, variable]
+         val variable_lists =
+           [[], [first_var], [second_var],
+            [first_var, second_var], [second_var, first_var]]
+
+         fun query safe vars formula =
+           let
+             val expected =
+               reference_cached (!oracle) safe vars formula
+             val hits_before = blastRule.hitCount cache
+             val rules =
+               if safe then
+                 blastRule.safeRules cache empty vars formula
+               else blastRule.unsafeRules cache empty vars formula
+             val after = blastRule.hitCount cache
+             val actual_hit = after = hits_before + 1
+             val expected_hit = Option.isSome expected
+             val marker = !next_marker
+             val _ =
+               if expected_hit then ()
+               else
+                 (next_marker := marker + 1;
+                  oracle :=
+                    {formula = formula, safe = safe, vars = vars,
+                     marker = marker} :: !oracle)
+           in
+             null rules andalso actual_hit = expected_hit
+           end
+
+         fun random 0 _ = true
+           | random count seed =
+               let
+                 val next = (seed * 17 + 11) mod 97
+                 val formula =
+                   List.nth (formulas, next mod length formulas)
+                 val vars =
+                   List.nth
+                     (variable_lists,
+                      (next div 3) mod length variable_lists)
+                 val safe = next mod 2 = 0
+               in
+                 query safe vars formula andalso
+                 random (count - 1) next
+               end
+       in
+         query true [] alpha_left andalso
+         query true [] alpha_right andalso
+         query true [] plain andalso
+         query true [first_var] plain andalso
+         query true [second_var] plain andalso
+         query false [] plain andalso
+         query false [head_var] variable andalso
+         query false [head_var] variable andalso
+         random 96 7
+       end)
+
+val _ =
+  test
+    ("cache keeps the newest alpha-equivalent entry",
+     fn () =>
+       let
+         val cache = blastRule.newCache ()
+         val left = ref NONE
+         val right = ref NONE
+         val vars = [left, right]
+         val p = mk_var ("cache_order_p", bool)
+         val q = mk_var ("cache_order_q", bool)
+         val reversed =
+           GENL [p, q]
+             (DISCH q (DISCH p (CONJ (ASSUME p) (ASSUME q))))
+         val first_cs =
+           clasetLib.add_sintros
+             [("cache_order_first", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+         val second_cs =
+           clasetLib.add_sintros
+             [("cache_order_second", reversed)] clasetLib.empty_cs
+         val head = Const ("bool$/\\", [])
+         val truth = Const ("bool$T", [])
+         val first_formula = mkGoal ((head $ Var left) $ truth)
+         val second_formula = mkGoal ((head $ Var right) $ truth)
+         val first =
+           blastRule.safeRules cache first_cs vars first_formula
+         val second =
+           blastRule.safeRules cache second_cs vars second_formula
+         val joined = unify (newState ()) ([], Var left, Var right)
+         val selected =
+           blastRule.safeRules cache clasetLib.empty_cs vars first_formula
+         fun is_reversed
+               ({origin = blastRule.Stored {theorem, ...}, ...} :
+                blastRule.tableau_rule) =
+               Term.aconv (concl theorem) (concl reversed)
+           | is_reversed _ = false
+       in
+         length first = 1 andalso length second = 1 andalso joined andalso
+         blastRule.hitCount cache = 1 andalso
+         case selected of [rule] => is_reversed rule | _ => false
+       end)
+
+val _ =
+  test
+    ("variable-head fallback preserves mutation and newest order",
+     fn () =>
+       let
+         val head = Const ("bool$/\\", [])
+         val truth = Const ("bool$T", [])
+         val concrete = mkGoal ((head $ truth) $ truth)
+         val cs =
+           clasetLib.add_sintros
+             [("cache_var_head", boolTheory.AND_INTRO_THM)]
+             clasetLib.empty_cs
+
+         val newest_cache = blastRule.newCache ()
+         val newest_var = ref NONE
+         val concrete_rules =
+           blastRule.safeRules newest_cache cs [newest_var] concrete
+         val variable_rules =
+           blastRule.safeRules newest_cache clasetLib.empty_cs
+             [newest_var] (Var newest_var)
+         val newest_bound =
+           unify (newState ()) ([], Var newest_var, concrete)
+         val newest_selected =
+           blastRule.safeRules newest_cache cs [newest_var] concrete
+
+         val resolved_cache = blastRule.newCache ()
+         val resolved_var = ref NONE
+         val resolved_stored =
+           blastRule.safeRules resolved_cache cs [resolved_var] concrete
+         val resolved_bound =
+           unify (newState ()) ([], Var resolved_var, concrete)
+         val resolved_selected =
+           blastRule.safeRules resolved_cache clasetLib.empty_cs
+             [resolved_var] (Var resolved_var)
+       in
+         length concrete_rules = 1 andalso null variable_rules andalso
+         newest_bound andalso null newest_selected andalso
+         blastRule.hitCount newest_cache = 1 andalso
+         length resolved_stored = 1 andalso resolved_bound andalso
+         length resolved_selected = 1 andalso
+         blastRule.hitCount resolved_cache = 1
+       end)
+
 val _ =
   test
     ("each search run starts cold and then reuses its rule cache",
@@ -4111,6 +4293,76 @@ fun selftest_level () =
          (OS.Process.getEnv "HOLSELFTESTLEVEL") of
       SOME level => level
     | NONE => 1
+
+val _ =
+  if selftest_level () >= 2 then
+    test
+      ("rule-cache lookup probes scale below the linear baseline",
+       fn () =>
+         let
+           fun run size =
+             let
+               val formulas =
+                 List.tabulate
+                   (size,
+                    fn index =>
+                      Const
+                        ("cache-benchmark-" ^ Int.toString index, []))
+               val cache = blastRule.newCache ()
+               val _ =
+                 List.app
+                   (fn formula =>
+                      ignore
+                        (blastRule.unsafeRules cache
+                           clasetLib.empty_cs [] formula))
+                   formulas
+               val polls = ref 0
+               val candidates = ref 0
+               val conversions = ref 0
+               val monitor : blastRule.monitor =
+                 {checkpoint = fn () => polls := !polls + 1,
+                  candidate =
+                    fn () => candidates := !candidates + 1,
+                  conversion =
+                    fn () => conversions := !conversions + 1}
+               val hits_before = blastRule.hitCount cache
+               val _ =
+                 List.app
+                   (fn formula =>
+                      ignore
+                        (blastRule.unsafeRulesMeasured monitor cache
+                           clasetLib.empty_cs [] formula))
+                   formulas
+               val actual = !polls
+               val reference = ref 0
+
+               fun reference_find formula =
+                 let
+                   fun find [] = false
+                     | find (entry :: rest) =
+                         (reference := !reference + 1;
+                          aconv (entry, formula) orelse find rest)
+                 in
+                   find (rev formulas)
+                 end
+
+               val reference_hits =
+                 List.all reference_find formulas
+             in
+               (actual, !reference, reference_hits andalso
+                !candidates = 0 andalso !conversions = 0 andalso
+                blastRule.hitCount cache - hits_before = size)
+             end
+
+           val (small, linear_small, small_ok) = run 256
+           val (large, linear_large, large_ok) = run 512
+         in
+           small_ok andalso large_ok andalso small > 0 andalso
+           large <= 3 * small andalso
+           linear_large > 3 * linear_small andalso
+           linear_large > 32 * large
+         end)
+  else ()
 
 val halting_ii =
   “(((?x:'a. A x /\ (!y. C y ==> !z. D x y z)) ==>

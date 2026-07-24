@@ -32,7 +32,75 @@ type entry =
   {formula : pterm,
    safe : bool,
    vars : var list,
-   rules : tableau_rule list}
+   rules : tableau_rule list,
+   stamp : int}
+
+datatype head_tag =
+    HAbs
+  | HBound of int
+  | HConst of string
+  | HFree of string
+  | HSkolem of string
+  | HVar
+
+type cache_key = bool * int * head_tag
+
+fun head_tag_rank HAbs = 0
+  | head_tag_rank (HBound _) = 1
+  | head_tag_rank (HConst _) = 2
+  | head_tag_rank (HFree _) = 3
+  | head_tag_rank (HSkolem _) = 4
+  | head_tag_rank HVar = 5
+
+fun head_tag_compare (left, right) =
+  case Int.compare (head_tag_rank left, head_tag_rank right) of
+      EQUAL =>
+        (case (left, right) of
+             (HBound i, HBound j) => Int.compare (i, j)
+           | (HConst a, HConst b) => String.compare (a, b)
+           | (HFree a, HFree b) => String.compare (a, b)
+           | (HSkolem a, HSkolem b) => String.compare (a, b)
+           | _ => EQUAL)
+    | order => order
+
+fun bool_compare (false, true) = LESS
+  | bool_compare (true, false) = GREATER
+  | bool_compare _ = EQUAL
+
+fun cache_key_compare
+      ((safe_left, vars_left, head_left),
+       (safe_right, vars_right, head_right)) =
+  case bool_compare (safe_left, safe_right) of
+      EQUAL =>
+        (case Int.compare (vars_left, vars_right) of
+             EQUAL => head_tag_compare (head_left, head_right)
+           | order => order)
+    | order => order
+
+fun stable_head_tag formula =
+  case head_of formula of
+      Const (name, _) => HConst name
+    | Skolem (name, _) => HSkolem name
+    | Free name => HFree name
+    | Var _ => HVar
+    | Bound index => HBound index
+    | Abs _ => HAbs
+    | _ $ _ => raise Fail "blastRule.stable_head_tag"
+
+(* A syntactic variable head is the only head whose [aconv] class can
+   change after insertion.  Its stable key remains [HVar], while this
+   helper identifies the additional concrete bucket that a lookup may
+   have to inspect after the variable is assigned. *)
+fun resolved_head_tag formula =
+  case head_of formula of
+      Var variable =>
+        (case !variable of
+             NONE => HVar
+           | SOME assigned => resolved_head_tag assigned)
+    | head => stable_head_tag head
+
+fun cache_key safe vars formula =
+  (safe, length vars, stable_head_tag formula)
 
 fun containsZeroMeasured checkpoint [] = false
   | containsZeroMeasured checkpoint (i :: rest) =
@@ -40,12 +108,15 @@ fun containsZeroMeasured checkpoint [] = false
        i = 0 orelse containsZeroMeasured checkpoint rest)
 
 datatype cache = Cache of
-  {entries : entry list ref,
+  {entries : (cache_key, entry list) Redblackmap.dict ref,
    conversions : int ref,
-   hits : int ref}
+   hits : int ref,
+   next_stamp : int ref}
 
 fun newCache () =
-  Cache {entries = ref [], conversions = ref 0, hits = ref 0}
+  Cache
+    {entries = ref (Redblackmap.mkDict cache_key_compare),
+     conversions = ref 0, hits = ref 0, next_stamp = ref 0}
 
 fun conversionCount (Cache {conversions, ...}) = !conversions
 fun hitCount (Cache {hits, ...}) = !hits
@@ -712,13 +783,51 @@ fun same_vars ([], []) = true
       left = right andalso same_vars (lefts, rights)
   | same_vars _ = false
 
+fun bucket entries key =
+  case Redblackmap.peek (entries, key) of
+      NONE => []
+    | SOME values => values
+
+fun lookup_keys safe vars formula =
+  let
+    val count = length vars
+    val stable = stable_head_tag formula
+    val primary = (safe, count, stable)
+    val variable = (safe, count, HVar)
+  in
+    case stable of
+        HVar =>
+          (case resolved_head_tag formula of
+               HVar => (primary, NONE)
+             | resolved => (primary, SOME (safe, count, resolved)))
+      | _ => (primary, SOME variable)
+  end
+
+fun newest (NONE, right) = right
+  | newest (left, NONE) = left
+  | newest (left as SOME first, right as SOME second) =
+      if #stamp first > #stamp second then left else right
+
+fun find_cached find entries safe vars formula =
+  let
+    val (primary, fallback) = lookup_keys safe vars formula
+    val first = find (bucket entries primary)
+    val second =
+      case fallback of
+          NONE => NONE
+        | SOME key => find (bucket entries key)
+  in
+    newest (first, second)
+  end
+
 fun cached (Cache {entries, hits, ...}) safe vars formula =
-  case List.find
-         (fn entry =>
-            #safe entry = safe andalso
-            same_vars (#vars entry, vars) andalso
-            aconv (#formula entry, formula))
-         (!entries) of
+  case find_cached
+         (List.find
+            (fn entry =>
+               #safe entry = safe andalso
+               same_vars (#vars entry, vars) andalso
+               aconv (#formula entry, formula)))
+         (!entries) safe vars formula of
       NONE => NONE
     | SOME entry =>
         (hits := !hits + 1;
@@ -741,17 +850,28 @@ fun cachedMeasured checkpoint (Cache {entries, hits, ...})
            then SOME entry
            else find rest)
   in
-    case find (!entries) of
+    (* Red-black lookup itself is indivisible.  Poll once for every member
+       of the selected head bucket (and the variable-head fallback), rather
+       than once for every entry in the whole search cache. *)
+    case find_cached find (!entries) safe vars formula of
         NONE => NONE
       | SOME entry =>
           (hits := !hits + 1;
            SOME (#rules entry))
   end
 
-fun remember (Cache {entries, ...}) safe vars formula rules =
-  entries :=
-    {formula = formula, safe = safe, vars = vars, rules = rules} ::
-    !entries
+fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
+  let
+    val key = cache_key safe vars formula
+    val stamp = !next_stamp
+    val entry =
+      {formula = formula, safe = safe, vars = vars, rules = rules,
+       stamp = stamp}
+    val values = bucket (!entries) key
+  in
+    next_stamp := stamp + 1;
+    entries := Redblackmap.insert (!entries, key, entry :: values)
+  end
 
 (* Rule variables are assigned destructively and off-trail by unify.  Keep
    pristine templates in a search cache, and give every acquisition fresh
