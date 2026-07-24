@@ -774,9 +774,13 @@ in
   structure UnicodeStrings =
   struct
 
+    (* String literals use the Phase-4 num-list representation.  TASK_13
+       replaces these abstract operator placeholders with theory constants. *)
+    val string_ty = listSyntax.mk_list_type numSyntax.num
+
     val tyentries = [
       official_entry "String" no_attributes ["(String 0)"]
-        (K_zero_zero stringSyntax.string_ty),
+        (K_zero_zero string_ty),
       official_entry "RegLan" (parametric_attributes ["String"])
         ["(RegLan String)"]
         (K_zero_one (fn _ => reglan_ty))
@@ -795,7 +799,7 @@ in
     fun str_int_binary name =
       official_entry name no_attributes ["(" ^ name ^ " String Int String)"]
         (K_zero_two (fn (x, i) =>
-          abstract_const name stringSyntax.string_ty [x, i]))
+          abstract_const name string_ty [x, i]))
 
     fun re_binary name =
       official_entry name no_attributes
@@ -805,22 +809,24 @@ in
     val tmentries = [
       official_entry "str.++" left_assoc_attributes
         ["(str.++ String String String :left-assoc)"]
-        (leftassoc stringSyntax.mk_strcat),
+        (leftassoc
+          (fn (x, y) => abstract_const "str.++" string_ty [x, y])),
       official_entry "str.len" no_attributes ["(str.len String Int)"]
-        (K_zero_one (intSyntax.mk_injected o stringSyntax.mk_strlen)),
+        (K_zero_one
+          (fn s => abstract_const "str.len" intSyntax.int_ty [s])),
       official_entry "str.<" chainable_attributes
         ["(str.< String String Bool :chainable)"]
-        (chainable stringSyntax.mk_string_lt),
+        (chainable (fn (x, y) => abstract_bool "str.<" [x, y])),
       official_entry "str.<=" chainable_attributes
         ["(str.<= String String Bool :chainable)"]
-        (chainable stringSyntax.mk_string_le),
+        (chainable (fn (x, y) => abstract_bool "str.<=" [x, y])),
       str_int_binary "str.at",
       official_entry "str.substr" no_attributes
         ["(str.substr String Int Int String)"]
         (K_zero_three (fn (s, i, n) =>
-          abstract_const "str.substr" stringSyntax.string_ty [s, i, n])),
+          abstract_const "str.substr" string_ty [s, i, n])),
       official_entry "str.prefixof" no_attributes ["(str.prefixof String String Bool)"]
-        (K_zero_two stringSyntax.mk_isprefix),
+        (K_zero_two (fn (x, y) => abstract_bool "str.prefixof" [x, y])),
       str_binary "str.suffixof" Type.bool,
       str_binary "str.contains" Type.bool,
       official_entry "str.indexof" no_attributes ["(str.indexof String String Int Int)"]
@@ -829,23 +835,23 @@ in
       official_entry "str.replace" no_attributes
         ["(str.replace String String String String)"]
         (K_zero_three (fn (s, src, dst) =>
-          abstract_const "str.replace" stringSyntax.string_ty [s, src, dst])),
+          abstract_const "str.replace" string_ty [s, src, dst])),
       official_entry "str.replace_all" no_attributes
         ["(str.replace_all String String String String)"]
         (K_zero_three (fn (s, src, dst) =>
-          abstract_const "str.replace_all" stringSyntax.string_ty [s, src, dst])),
+          abstract_const "str.replace_all" string_ty [s, src, dst])),
       official_entry "str.is_digit" no_attributes ["(str.is_digit String Bool)"]
         (K_zero_one (fn s => abstract_bool "str.is_digit" [s])),
       official_entry "str.to_code" no_attributes ["(str.to_code String Int)"]
         (K_zero_one (fn s => abstract_const "str.to_code" intSyntax.int_ty [s])),
       official_entry "str.from_code" no_attributes ["(str.from_code Int String)"]
         (K_zero_one (fn i =>
-          abstract_const "str.from_code" stringSyntax.string_ty [i])),
+          abstract_const "str.from_code" string_ty [i])),
       official_entry "str.to_int" no_attributes ["(str.to_int String Int)"]
         (K_zero_one (fn s => abstract_const "str.to_int" intSyntax.int_ty [s])),
       official_entry "str.from_int" no_attributes ["(str.from_int Int String)"]
         (K_zero_one (fn i =>
-          abstract_const "str.from_int" stringSyntax.string_ty [i])),
+          abstract_const "str.from_int" string_ty [i])),
       official_entry "str.to_re" no_attributes ["(str.to_re String (RegLan String))"]
         (K_zero_one (fn s => abstract_const "str.to_re" reglan_ty [s])),
       official_entry "str.in_re" no_attributes ["(str.in_re String (RegLan String) Bool)"]
@@ -853,11 +859,11 @@ in
       official_entry "str.replace_re" no_attributes
         ["(str.replace_re String (RegLan String) String String)"]
         (K_zero_three (fn (s, re, dst) =>
-          abstract_const "str.replace_re" stringSyntax.string_ty [s, re, dst])),
+          abstract_const "str.replace_re" string_ty [s, re, dst])),
       official_entry "str.replace_re_all" no_attributes
         ["(str.replace_re_all String (RegLan String) String String)"]
         (K_zero_three (fn (s, re, dst) =>
-          abstract_const "str.replace_re_all" stringSyntax.string_ty
+          abstract_const "str.replace_re_all" string_ty
             [s, re, dst])),
       official_entry "re.none" no_attributes ["(re.none (RegLan String))"]
         (K_zero_zero (Term.mk_var ("smtlib_re_none", reglan_ty))),

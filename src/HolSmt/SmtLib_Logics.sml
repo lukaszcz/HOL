@@ -373,7 +373,14 @@ in
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
   val type_contains_word = Library.type_contains_word
-  val type_contains_string = Library.type_contains_string
+  val legacy_type_contains_string = Library.type_contains_string
+  (* Accept the inbound SMT String representation without changing the
+     outbound HOL-string classification ahead of TASK_13. *)
+  val smt_string_ty = listSyntax.mk_list_type numSyntax.num
+  fun type_contains_string ty =
+    legacy_type_contains_string ty orelse
+    type_contains (fn candidate =>
+      Type.compare (candidate, smt_string_ty) = EQUAL) ty
   val same_const = Library.same_const
   val subterms = Library.subterms
   val has_quantifier = Library.has_quantifier
@@ -572,6 +579,7 @@ in
     Type.compare (ty, intSyntax.int_ty) = EQUAL orelse
     Type.compare (ty, realSyntax.real_ty) = EQUAL orelse
     Type.compare (ty, stringSyntax.string_ty) = EQUAL orelse
+    Type.compare (ty, smt_string_ty) = EQUAL orelse
     Lib.can fcpSyntax.dest_numeric_type ty orelse
     (case Lib.total Type.dest_type ty of
        SOME ("itself", [_]) => true
@@ -589,7 +597,7 @@ in
 
   fun type_is_native_datatype_sort ty =
     Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
-    (Type.compare (ty, stringSyntax.string_ty) <> EQUAL andalso
+    (not (type_contains_string ty) andalso
      Lib.can listSyntax.dest_list_type ty)
 
   fun type_is_datatype_sort ty =

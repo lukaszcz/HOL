@@ -551,6 +551,121 @@ in
   n = 0 orelse loop 0
 end
 
+fun smtlib_string_literal_codec_success () =
+let
+  open SmtLib_String_Literal
+  val decode_cases = [
+    ("empty", "", []),
+    ("plain ASCII", "AZ az09", [65, 90, 32, 97, 122, 48, 57]),
+    ("fixed lowercase", "\\u0041", [65]),
+    ("fixed uppercase", "\\uFfFf", [65535]),
+    ("braced one digit", "\\u{7}", [7]),
+    ("braced two digits", "\\u{20}", [32]),
+    ("braced three digits", "\\u{123}", [291]),
+    ("braced four digits", "\\u{27E8}", [10216]),
+    ("braced five digits", "\\u{1f642}", [128578]),
+    ("braced uppercase", "\\u{2FFFF}", [196607]),
+    ("mixed", "A\\u0042\\u{43}Z", [65, 66, 67, 90]),
+    ("quote value", "\"", [34]),
+    ("literal backslash", "\\", [92]),
+    ("verbatim unknown escape", "\\n", [92, 110]),
+    ("verbatim malformed fixed", "\\u12xz", [92, 117, 49, 50, 120, 122]),
+    ("verbatim empty braces", "\\u{}", [92, 117, 123, 125]),
+    ("verbatim long braces", "\\u{000001}",
+      [92, 117, 123, 48, 48, 48, 48, 48, 49, 125])
+  ]
+  val canonical =
+    "\\u{0}\\u{1f} \\u{22}#\\~\\u{7f}\\u{1f600}\\u{2ffff}"
+  val canonical_values =
+    [0, 31, 32, 34, 35, 92, 126, 127, 128512, 196607]
+  val canonical_literals =
+    ["", "ASCII", "\\", "\\u{0}", "\\u{22}", "\\u{7f}",
+     "\\u{1f642}", "\\u{2ffff}"]
+  val z3_pinned = [
+    ("\"", [34]),
+    ("A\\u{1f642}", [65, 128578]),
+    ("\\", [92]),
+    ("\\u{2ffff}", [196607]),
+    ("\\u{7}", [7])
+  ]
+  fun check_decode (label, literal, expected) =
+    assert (decode_string_literal literal = expected,
+      "string literal decoder mismatch for " ^ label)
+  fun check_roundtrip values =
+    assert
+      (decode_string_literal (encode_string_literal values) = values,
+       "string literal decode/encode round-trip mismatch")
+  fun check_canonical_roundtrip literal =
+    assert
+      (encode_string_literal (decode_string_literal literal) = literal,
+       "canonical string literal encode/decode round-trip mismatch for '" ^
+       literal ^ "'")
+  fun check_pinned (literal, expected) =
+    assert (decode_string_literal literal = expected,
+      "string literal decoder rejected pinned Z3 spelling '" ^
+      literal ^ "'")
+in
+  List.app check_decode decode_cases;
+  assert (encode_string_literal canonical_values = canonical,
+    "string literal encoder did not produce canonical escapes");
+  List.app check_canonical_roundtrip canonical_literals;
+  check_roundtrip [];
+  check_roundtrip [65, 34, 92, 0, 196607];
+  List.app check_pinned z3_pinned
+end
+
+fun smtlib_string_literal_typecheck_success () =
+let
+  fun single_assertion script =
+    case #assertions (SmtLib_Parser.typecheck_script_string script) of
+      [assertion] => assertion
+    | _ => die "expected exactly one string-literal assertion"
+  val assertion =
+    single_assertion
+      ("(set-logic QF_UF)\n" ^
+       "(assert (= \"A\\u0042\\u{1f642}\" " ^
+       "\"A\\u{42}\\u{1F642}\"))")
+  val (left, right) = boolSyntax.dest_eq assertion
+  fun dest_code_points term =
+    let val (elements, ty) = listSyntax.dest_list term
+    in
+      assert (ty = numSyntax.num,
+        "SMT-LIB string literal did not produce a num list");
+      List.map
+        (Arbnum.toInt o numSyntax.dest_numeral)
+        elements
+    end
+  val doubled_quote =
+    single_assertion
+      "(set-logic QF_UF)\n(assert (= \"\"\"\" \"\\u0022\"))"
+  val (doubled_left, doubled_right) = boolSyntax.dest_eq doubled_quote
+in
+  assert (dest_code_points left = [65, 66, 128578],
+    "left SMT-LIB string literal decoded incorrectly");
+  assert (dest_code_points right = [65, 66, 128578],
+    "right SMT-LIB string literal decoded incorrectly");
+  assert (dest_code_points doubled_left = [34] andalso
+      dest_code_points doubled_right = [34],
+    "doubled quote did not decode as an SMT-LIB quote")
+end
+
+fun smtlib_string_literal_out_of_range_diagnostic () =
+let
+  val _ = SmtLib_Parser.typecheck_script_string
+    "(set-logic QF_UF)\n(assert (= \"\\u{30000}\" \"\"))"
+in
+  die "out-of-range SMT-LIB string escape typechecked successfully"
+end
+handle Feedback.HOL_ERR holerr =>
+  let val msg = Feedback.message_of holerr
+  in
+    assert
+      (contains "line 2, column 12" msg andalso
+       contains "Unicode escape '\\u{30000}' denotes code point 0x30000" msg
+       andalso contains "above the SMT-LIB maximum 0x2ffff" msg,
+       "out-of-range SMT-LIB string escape diagnostic mismatch: " ^ msg)
+  end
+
 fun transferred_smtlib_text tm =
 let
   val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], tm)
@@ -7319,6 +7434,12 @@ fun run_unittests () =
 let
   val () = print "Running unit tests...\n\n"
   val tests = [
+    ("smtlib_string_literal_codec_success",
+      smtlib_string_literal_codec_success),
+    ("smtlib_string_literal_typecheck_success",
+      smtlib_string_literal_typecheck_success),
+    ("smtlib_string_literal_out_of_range_diagnostic",
+      smtlib_string_literal_out_of_range_diagnostic),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",

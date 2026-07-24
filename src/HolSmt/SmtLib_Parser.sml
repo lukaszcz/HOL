@@ -3979,7 +3979,15 @@ local
         TermIdentifier name =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
       | TermString value =>
-          checked_term_of (stringSyntax.fromMLstring value)
+          (checked_term_of
+             (listSyntax.mk_list
+               (List.map
+                 (numSyntax.mk_numeral o Arbnum.fromInt)
+                 (SmtLib_String_Literal.decode_string_literal value),
+                numSyntax.num))
+           handle SmtLib_String_Literal.InvalidStringLiteral detail =>
+             type_error "typecheck_term" context (loc_of term_ast)
+               NONE NONE detail)
       | TermIndexed (name, indices) =>
           indexed_or_apply (loc_of term_ast) name indices []
       | TermApply (head, args) =>
