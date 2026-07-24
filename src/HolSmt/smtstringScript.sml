@@ -68,6 +68,10 @@ Definition smtstr_char_def:
   smtstr_char (c : num) = [c]
 End
 
+Definition str_inj_def:
+  str_inj (s : string) = MAP ORD (EXPLODE s)
+End
+
 (* SMT-LIB regular languages over Unicode code points. *)
 
 Datatype:
@@ -336,6 +340,13 @@ Proof
   simp [smtstr_char_def]
 QED
 
+Theorem str_inj_compute[compute]:
+  (str_inj "" = []) /\
+  (str_inj (STRING c s) = ORD c::str_inj s)
+Proof
+  simp [str_inj_def]
+QED
+
 (* Wellformedness algebra for every string-valued operator above. *)
 
 Theorem wfstr_concat:
@@ -363,6 +374,84 @@ Theorem wfstr_char:
   c <= 196607 ==> wfstr (smtstr_char c)
 Proof
   simp [wfstr_def, smtstr_char_def]
+QED
+
+(* Injection from native HOL strings. *)
+
+Theorem ORD_unicode_bound[local]:
+  ORD c <= 196607
+Proof
+  `ORD c < 256` by simp [stringTheory.ORD_BOUND] >>
+  decide_tac
+QED
+
+Theorem wfstr_str_inj:
+  wfstr (str_inj s)
+Proof
+  simp [wfstr_def, str_inj_def, listTheory.EVERY_MAP,
+        ORD_unicode_bound]
+QED
+
+Theorem str_inj_11[simp]:
+  str_inj s = str_inj t <=> s = t
+Proof
+  qid_spec_tac `t` >>
+  Induct_on `s` >>
+  Cases_on `t` >>
+  simp [str_inj_compute, stringTheory.ORD_11]
+QED
+
+Theorem str_inj_STRCAT:
+  str_inj (STRCAT s t) =
+    smtstr_concat (str_inj s) (str_inj t)
+Proof
+  simp [str_inj_def, smtstr_concat_def,
+        stringTheory.IMPLODE_EXPLODE_I]
+QED
+
+Theorem str_inj_STRLEN:
+  STRLEN s = LENGTH (str_inj s)
+Proof
+  simp [str_inj_def, stringTheory.IMPLODE_EXPLODE_I]
+QED
+
+Theorem str_inj_isPREFIX:
+  isPREFIX s t <=>
+    smtstr_prefixof (str_inj s) (str_inj t)
+Proof
+  qid_spec_tac `t` >>
+  Induct_on `s` >>
+  Cases_on `t` >>
+  simp [str_inj_compute, smtstr_prefixof_def,
+        rich_listTheory.IS_PREFIX, stringTheory.ORD_11]
+QED
+
+Theorem LLEX_MAP_ORD:
+  LLEX $< (MAP ORD s) (MAP ORD t) <=>
+    LLEX char_lt s t
+Proof
+  qid_spec_tac `t` >>
+  Induct_on `s` >>
+  Cases_on `t` >>
+  simp [listTheory.LLEX_THM, stringTheory.char_lt_def,
+        stringTheory.ORD_11]
+QED
+
+Theorem str_inj_string_lt:
+  string_lt s t <=>
+    smtstr_lt (str_inj s) (str_inj t)
+Proof
+  simp [stringTheory.string_lt_LLEX, smtstr_lt_def, str_inj_def,
+        stringTheory.IMPLODE_EXPLODE_I, LLEX_MAP_ORD]
+QED
+
+Theorem str_inj_string_le:
+  string_le s t <=>
+    smtstr_le (str_inj s) (str_inj t)
+Proof
+  simp [stringTheory.string_le_def, smtstr_le_def,
+        str_inj_string_lt] >>
+  metis_tac []
 QED
 
 (* Language-algebra facts used by the derivative proof. *)
@@ -1031,6 +1120,7 @@ Theorem smtstr_core_eval:
   ~smtstr_lt [1; 2] [1; 2] /\
   smtstr_le [1; 2] [1; 2] /\
   smtstr_char 196607 = [196607] /\
+  str_inj "Az" = [65; 122] /\
   wfstr [196607] /\
   ~wfstr [196608]
 Proof
