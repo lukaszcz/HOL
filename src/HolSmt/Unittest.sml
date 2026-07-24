@@ -4657,6 +4657,34 @@ let
        "(assert (not (= (bvand v0 (_ bv3 8)) " ^
          "(bvor v1 (_ bv1 8)))))\n",
        "(check-sat)\n"]},
+    {name = "native-string-concat",
+     goal = ([], ``STRCAT (s:string) t = STRCAT t s``),
+     body = prelude "QF_S" @ [
+       "(declare-fun v0 () String)\n",
+       "(declare-fun v1 () String)\n",
+       "(assert (not (= (str.++ v0 v1) (str.++ v1 v0))))\n",
+       "(check-sat)\n"]},
+    {name = "native-string-prefix",
+     goal = ([], ``isPREFIX (s:string) t``),
+     body = prelude "QF_S" @ [
+       "(declare-fun v0 () String)\n",
+       "(declare-fun v1 () String)\n",
+       "(assert (not (str.prefixof v0 v1)))\n",
+       "(check-sat)\n"]},
+    {name = "native-string-less",
+     goal = ([], ``(s:string) < t``),
+     body = prelude "QF_S" @ [
+       "(declare-fun v0 () String)\n",
+       "(declare-fun v1 () String)\n",
+       "(assert (not (str.< v0 v1)))\n",
+       "(check-sat)\n"]},
+    {name = "native-string-less-equal",
+     goal = ([], ``(s:string) <= t``),
+     body = prelude "QF_S" @ [
+       "(declare-fun v0 () String)\n",
+       "(declare-fun v1 () String)\n",
+       "(assert (not (str.<= v0 v1)))\n",
+       "(check-sat)\n"]},
     {name = "arrays-select-store-equality",
      goal = array_goal,
      body = prelude "QF_AUFLIA" @ [
