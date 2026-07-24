@@ -51,28 +51,32 @@ fun asm_full_simp ss =
 fun safe_asm_full_simp ss =
   simpLib.GEN_GLOBAL_SIMP_TAC {safe = true} asm_full_simp_config ss
 
-fun add_simp_wrapper ss =
+fun add_simp_wrapper_with ss simp_args =
   let
     fun wrapper step =
       NTactical.NAPPEND
         (NTactical.NCHANGED
-           (NTactical.LIFT (asm_full_simp ss [])),
+           (NTactical.LIFT (asm_full_simp ss simp_args)),
          step)
   in
     clasetLib.add_unsafe_wrapper ("asm_full_simp_tac", wrapper)
   end
 
-fun add_safe_simp_wrapper ss =
+fun add_safe_simp_wrapper_with ss simp_args =
   let
     fun wrapper step =
       NTactical.NORELSE
         (step,
          NTactical.NCHANGED
-           (NTactical.LIFT (safe_asm_full_simp ss [])))
+           (NTactical.LIFT (safe_asm_full_simp ss simp_args)))
   in
     clasetLib.add_safe_wrapper
       ("safe_asm_full_simp_tac", wrapper)
   end
+
+fun add_simp_wrapper ss = add_simp_wrapper_with ss []
+
+fun add_safe_simp_wrapper ss = add_safe_simp_wrapper_with ss []
 
 fun process_clasimp_args body base_cs base_ss =
   markerLib.ABBRS_THEN
@@ -109,5 +113,77 @@ fun process_clasimp_args body base_cs base_ss =
         Tactical.THEN
           (insert, body invocation_cs invocation_ss simp_args)
       end)
+
+fun must_close name tactic goal =
+  let
+    val result as (goals, _) = tactic goal
+  in
+    if null goals then result
+    else
+      raise mk_HOL_ERR "clasimpLib" name
+        "tactic did not close the goal"
+  end
+
+(* The classical search drivers already succeed only with a closed engine
+   state.  must_close is the public contract guard in case that invariant
+   changes; it does not add another search step. *)
+fun search_with_simp name engine cs ss simp_args =
+  must_close name
+    (NTactical.DETERM
+       (engine (add_simp_wrapper_with ss simp_args cs)))
+
+fun CS_FASTFORCE_TAC cs ss =
+  search_with_simp "CS_FASTFORCE_TAC"
+    classicalLib.CS_FAST_TAC cs ss []
+
+fun CS_SLOWSIMP_TAC cs ss =
+  search_with_simp "CS_SLOWSIMP_TAC"
+    classicalLib.CS_SLOW_TAC cs ss []
+
+fun CS_BESTSIMP_TAC cs ss =
+  search_with_simp "CS_BESTSIMP_TAC"
+    classicalLib.CS_BEST_TAC cs ss []
+
+fun clarsimp_with cs ss simp_args =
+  let
+    val clarify =
+      NTactical.DETERM
+        (classicalLib.CS_CLARIFY_TAC
+           (add_safe_simp_wrapper_with ss simp_args cs))
+    val script =
+      Tactical.THEN
+        (safe_asm_full_simp ss simp_args,
+         (* Isabelle's clarify tactic succeeds unchanged.  The HOL4
+            CS_CLARIFY_TAC deliberately fails on a no-op, so TRY restores
+            the sequencing behavior; CHANGED_TAC below guards the complete
+            script. *)
+         Tactical.TRY clarify)
+  in
+    Tactical.CHANGED_TAC script
+  end
+
+fun CS_CLARSIMP_TAC cs ss = clarsimp_with cs ss []
+
+fun public body theorems goal =
+  process_clasimp_args body
+    (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal
+
+fun FASTFORCE_TAC theorems =
+  public
+    (search_with_simp "FASTFORCE_TAC"
+       classicalLib.CS_FAST_TAC) theorems
+
+fun SLOWSIMP_TAC theorems =
+  public
+    (search_with_simp "SLOWSIMP_TAC"
+       classicalLib.CS_SLOW_TAC) theorems
+
+fun BESTSIMP_TAC theorems =
+  public
+    (search_with_simp "BESTSIMP_TAC"
+       classicalLib.CS_BEST_TAC) theorems
+
+fun CLARSIMP_TAC theorems =
+  public clarsimp_with theorems
 
 end

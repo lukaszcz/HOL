@@ -1,4 +1,5 @@
 open HolKernel testutils
+open listTheory optionTheory pred_setTheory
 
 fun test (name, check) =
   (tprint name;
@@ -461,4 +462,156 @@ val _ =
                           (clasetMeta.metas_of
                             (clasetGoal.store next) w))
                   | _ => false)
+       end)
+
+fun same_goals left right =
+  ListPair.allEq
+    (fn (goal1, goal2) => boolSyntax.goal_eq goal1 goal2)
+    (left, right)
+
+val force_logic_goals : Abbrev.goal list =
+  [([], ``((P ==> Q) /\ P) ==> Q``),
+   ([], ``(!x:'a. P x ==> Q x) ==> P a ==> Q a``),
+   ([], ``(P \/ Q) ==> (P ==> R) ==> (Q ==> R) ==> R``)]
+
+val force_native_goals : Abbrev.goal list =
+  [([], ``MEM (x:'a) (x :: xs)``),
+   ([], ``THE (SOME (x:'a)) = x``),
+   ([],
+    ``((x:'a) IN (s UNION t)) =
+      (x IN s \/ x IN t)``)]
+
+val force_goals = force_logic_goals @ force_native_goals
+
+val force_tactics =
+  [("FASTFORCE_TAC", clasimpLib.FASTFORCE_TAC []),
+   ("SLOWSIMP_TAC", clasimpLib.SLOWSIMP_TAC []),
+   ("BESTSIMP_TAC", clasimpLib.BESTSIMP_TAC [])]
+
+fun force_battery (name, tactic) =
+  test
+    (name ^ " solves logical and set/list/option batteries",
+     fn () => List.all (solves tactic) force_goals)
+
+val _ = List.app force_battery force_tactics
+
+val context_force_tactics =
+  [("CS_FASTFORCE_TAC", clasimpLib.CS_FASTFORCE_TAC),
+   ("CS_SLOWSIMP_TAC", clasimpLib.CS_SLOWSIMP_TAC),
+   ("CS_BESTSIMP_TAC", clasimpLib.CS_BESTSIMP_TAC)]
+
+fun context_force_battery (name, tactic) =
+  test
+    (name ^ " uses the supplied claset and simpset",
+     fn () =>
+       List.all
+         (solves
+            (tactic (clasetLib.the_claset ())
+              (clasimpLib.clasimp_ss ())))
+         force_logic_goals)
+
+val _ = List.app context_force_battery context_force_tactics
+
+val force_negative_goal : Abbrev.goal =
+  ([], ``clasimp_force_unprovable:bool``)
+
+fun force_must_close (name, tactic) =
+  test
+    (name ^ " fails instead of returning an open residue",
+     fn () => tactic_fails tactic force_negative_goal)
+
+val _ = List.app force_must_close force_tactics
+
+val _ =
+  List.app
+    (fn (name, tactic) =>
+      force_must_close
+        (name,
+         tactic (clasetLib.the_claset ())
+           (clasimpLib.clasimp_ss ())))
+    context_force_tactics
+
+val _ =
+  test
+    ("CLARSIMP_TAC returns an exact non-closing residue",
+     fn () =>
+       let
+         val goal = ([], ``clasimp_p ==> clasimp_q``)
+         val expected =
+           [([], ``clasimp_q:bool``)]
+         val actual =
+           residual (clasimpLib.CLARSIMP_TAC []) goal
+       in
+         same_goals actual expected
+       end)
+
+val _ =
+  test
+    ("CS_CLARSIMP_TAC uses the supplied claset and simpset",
+     fn () =>
+       solves
+         (clasimpLib.CS_CLARSIMP_TAC
+            (clasetLib.the_claset ())
+            (clasimpLib.clasimp_ss ()))
+         ([], ``THE (SOME (clasimp_cs_x:'a)) =
+                clasimp_cs_x``))
+
+val _ =
+  test
+    ("CLARSIMP_TAC accepts simplification-only progress",
+     fn () =>
+       let
+         val goal =
+           ([], ``T /\ clasimp_simp_residue``)
+         val expected =
+           [([], ``clasimp_simp_residue:bool``)]
+       in
+         same_goals
+           (residual (clasimpLib.CLARSIMP_TAC []) goal)
+           expected
+       end)
+
+val _ =
+  test
+    ("CLARSIMP_TAC solves set/list/option simplification goals",
+     fn () =>
+       List.all
+         (solves (clasimpLib.CLARSIMP_TAC []))
+         force_native_goals)
+
+val _ =
+  test
+    ("CLARSIMP_TAC fails exactly when its script changes nothing",
+     fn () =>
+       tactic_fails
+         (clasimpLib.CLARSIMP_TAC [])
+         ([], ``clasimp_clarsimp_unchanged:bool``))
+
+val _ =
+  test
+    ("CS_CLARSIMP_TAC fails exactly when its script changes nothing",
+     fn () =>
+       tactic_fails
+         (clasimpLib.CS_CLARSIMP_TAC
+            (clasetLib.the_claset ())
+            (clasimpLib.clasimp_ss ()))
+         ([], ``clasimp_cs_clarsimp_unchanged:bool``))
+
+val _ =
+  test
+    ("CLARSIMP_TAC still splits a conditional assumption",
+     fn () =>
+       let
+         val goal =
+           ([``P (if b then x:'a else y) : bool``],
+            ``clasimp_split_residue:bool``)
+         val residues =
+           residual (clasimpLib.CLARSIMP_TAC []) goal
+         fun clean (assumptions, conclusion) =
+           not
+             (List.exists
+                (can (find_term boolSyntax.is_cond))
+                (conclusion :: assumptions))
+       in
+         length residues = 2 andalso List.all clean residues
        end)

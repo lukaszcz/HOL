@@ -16,4 +16,18 @@ sig
   val process_clasimp_args :
     (clasetLib.claset -> simpLib.simpset -> thm list -> tactic) ->
     clasetLib.claset -> simpLib.simpset -> thm list -> tactic
+
+  val CS_FASTFORCE_TAC :
+    clasetLib.claset -> simpLib.simpset -> tactic
+  val CS_SLOWSIMP_TAC :
+    clasetLib.claset -> simpLib.simpset -> tactic
+  val CS_BESTSIMP_TAC :
+    clasetLib.claset -> simpLib.simpset -> tactic
+  val CS_CLARSIMP_TAC :
+    clasetLib.claset -> simpLib.simpset -> tactic
+
+  val FASTFORCE_TAC : thm list -> tactic
+  val SLOWSIMP_TAC : thm list -> tactic
+  val BESTSIMP_TAC : thm list -> tactic
+  val CLARSIMP_TAC : thm list -> tactic
 end
