@@ -15,7 +15,10 @@ Adds safe assumption-aware full simplification as a safe wrapper.
 classical step. Only when that step has no result does it offer a changed
 safe-simplification transition using `ss`.
 
-Safe simplification avoids unsafe solvers and unsafe simpset operations.
+Safe mode selects the safe final-solver list for the residual goal. It
+does not change rewriting: conditional-rewrite side conditions still use
+the unsafe solver list, and loopers still run.
+
 The operation does not change `cs`, `ss`, or the global claset. Adding a
 wrapper with the same name replaces the existing wrapper in the returned
 claset.

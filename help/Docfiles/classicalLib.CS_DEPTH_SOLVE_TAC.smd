@@ -26,8 +26,9 @@ no theorem-list processing, and does not make the result deterministic.
 
 ### Failure
 
-Produces no result if no complete proof is found within the bound. Replay
-failure is reported as an error.
+Produces no result if no complete proof is found within the bound. If
+kernel replay of an engine solution fails, search backtracks to another
+solution; the tactic has no result if none can be replayed.
 
 ### Example
 
