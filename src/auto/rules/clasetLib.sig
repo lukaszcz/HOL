@@ -73,6 +73,8 @@ sig
   val Elim : thm -> thm
   val SDest : thm -> thm
   val Dest : thm -> thm
+  val Simp : thm -> thm
+  val Iff : thm -> thm
   val Del : string -> thm
 
   val destSIntro : thm -> thm option
@@ -81,6 +83,8 @@ sig
   val destElim : thm -> thm option
   val destSDest : thm -> thm option
   val destDest : thm -> thm option
+  val destSimp : thm -> thm option
+  val destIff : thm -> thm option
   val destDel : thm -> string option
 
   val process_claset_tags : thm list -> claset -> claset * thm list

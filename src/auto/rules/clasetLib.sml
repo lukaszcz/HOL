@@ -797,6 +797,8 @@ val SElim_t = mk_marker_const "SElim"
 val Elim_t = mk_marker_const "Elim"
 val SDest_t = mk_marker_const "SDest"
 val Dest_t = mk_marker_const "Dest"
+val Simp_t = mk_marker_const "Simp"
+val Iff_t = mk_marker_const "Iff"
 val Del_t = mk_marker_const "Del"
 
 val SIntro = markerLib.genCong clasetMarkerTheory.SIntro_def
@@ -805,6 +807,8 @@ val SElim = markerLib.genCong clasetMarkerTheory.SElim_def
 val Elim = markerLib.genCong clasetMarkerTheory.Elim_def
 val SDest = markerLib.genCong clasetMarkerTheory.SDest_def
 val Dest = markerLib.genCong clasetMarkerTheory.Dest_def
+val Simp = markerLib.genCong clasetMarkerTheory.Simp_def
+val Iff = markerLib.genCong clasetMarkerTheory.Iff_def
 
 val destSIntro =
   markerLib.genUnCong SIntro_t clasetMarkerTheory.SIntro_def
@@ -813,6 +817,8 @@ val destSElim = markerLib.genUnCong SElim_t clasetMarkerTheory.SElim_def
 val destElim = markerLib.genUnCong Elim_t clasetMarkerTheory.Elim_def
 val destSDest = markerLib.genUnCong SDest_t clasetMarkerTheory.SDest_def
 val destDest = markerLib.genUnCong Dest_t clasetMarkerTheory.Dest_def
+val destSimp = markerLib.genUnCong Simp_t clasetMarkerTheory.Simp_def
+val destIff = markerLib.genUnCong Iff_t clasetMarkerTheory.Iff_def
 
 val Del = markerLib.genmktagged clasetMarkerTheory.Del_def
 val destDel = markerLib.gendest_tagged Del_t
@@ -863,12 +869,25 @@ fun process_claset_tags thms cs =
    unwrapped to their theorem payload or discarded as inert here. *)
 fun invocation_facts theorems =
   let
+    fun reject_simpset_marker theorem =
+      case destSimp theorem of
+          SOME _ =>
+            raise mk_HOL_ERR "clasetLib" "invocation_facts"
+              "Simp marker requires a tactic with a simpset"
+        | NONE =>
+            (case destIff theorem of
+                 SOME _ =>
+                   raise mk_HOL_ERR "clasetLib" "invocation_facts"
+                     "Iff marker requires a tactic with a simpset"
+               | NONE => ())
+
     fun fact theorem =
       let
         val theorem =
           case markerLib.dest_generic_simp_wrapper theorem of
               NONE => theorem
             | SOME payload => payload
+        val _ = reject_simpset_marker theorem
       in
         if markerLib.is_generic_simp_marker theorem then NONE
         else SOME theorem

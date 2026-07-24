@@ -3606,6 +3606,37 @@ fun blast_solves tactic goal =
 fun blast_fails tactic goal =
   not (Option.isSome (total (Tactical.VALID tactic) goal))
 
+fun blast_error_message action =
+  (action (); NONE)
+  handle HOL_ERR error => SOME (Feedback.message_of error)
+
+val _ =
+  test
+    ("blast entry points clearly reject Simp and Iff markers",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.T)
+         fun rejected (marker, expected) =
+           let
+             val actions =
+               [fn () => ignore (tableauLib.BLAST_TAC [marker] goal),
+                fn () =>
+                  ignore (tableauLib.BLAST_DEPTH_TAC 0 [marker] goal),
+                fn () => ignore (tableauLib.tryIt 0 [marker] goal)]
+           in
+             List.all
+               (fn action => blast_error_message action = SOME expected)
+               actions
+           end
+       in
+         rejected
+           (clasetLib.Simp boolTheory.TRUTH,
+            "Simp marker requires a tactic with a simpset") andalso
+         rejected
+           (clasetLib.Iff boolTheory.TRUTH,
+            "Iff marker requires a tactic with a simpset")
+       end)
+
 (* True when the tactic does not close the goal within the budget --
    whether it fails outright or simply runs over.  Expected-failure
    entries assert this, so a search that becomes fast enough turns the

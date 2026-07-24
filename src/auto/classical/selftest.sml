@@ -1977,6 +1977,41 @@ fun tactic_fails tactic goal =
   (ignore (tactic goal); false)
   handle HOL_ERR _ => true
 
+fun tactic_error_message tactic goal =
+  (ignore (tactic goal); NONE)
+  handle HOL_ERR error => SOME (Feedback.message_of error)
+
+val classical_marker_entry_points =
+  [classicalLib.SAFE_TAC, classicalLib.CLARIFY_TAC,
+   classicalLib.SAFE_STEP_TAC, classicalLib.CLARIFY_STEP_TAC,
+   classicalLib.STEP_TAC, classicalLib.SLOW_STEP_TAC,
+   classicalLib.INST_STEP_TAC, classicalLib.FAST_TAC,
+   classicalLib.SLOW_TAC, classicalLib.BEST_TAC,
+   classicalLib.SLOW_BEST_TAC, classicalLib.FIRST_BEST_TAC,
+   classicalLib.ASTAR_TAC, classicalLib.SLOW_ASTAR_TAC,
+   classicalLib.DEEPEN_TAC]
+
+val _ =
+  test
+    ("classical tactics clearly reject Simp and Iff markers",
+     fn () =>
+       let
+         val goal = ([], boolSyntax.T)
+         fun rejected (marker, expected) =
+           List.all
+             (fn entry_point =>
+                tactic_error_message (entry_point [marker]) goal =
+                  SOME expected)
+             classical_marker_entry_points
+       in
+         rejected
+           (clasetLib.Simp boolTheory.TRUTH,
+            "Simp marker requires a tactic with a simpset") andalso
+         rejected
+           (clasetLib.Iff boolTheory.TRUTH,
+            "Iff marker requires a tactic with a simpset")
+       end)
+
 val _ =
   test
     ("SAFE_TAC saturates implication and conjunction in premise order",

@@ -1841,6 +1841,10 @@ val marker_cases =
    ("SDest", SDest, destSDest, marker_sdest_spec, boolTheory.OR_ELIM_THM),
    ("Dest", Dest, destDest, marker_dest_spec, boolTheory.OR_ELIM_THM)]
 
+val simpset_marker_cases =
+  [("Simp", Simp, destSimp, boolTheory.AND_CLAUSES),
+   ("Iff", Iff, destIff, boolTheory.IMP_CLAUSES)]
+
 val classical_marker_theorems =
   [SIntro boolTheory.AND_INTRO_THM,
    Intro boolTheory.AND_INTRO_THM,
@@ -1848,6 +1852,8 @@ val classical_marker_theorems =
    Elim boolTheory.OR_ELIM_THM,
    SDest boolTheory.OR_ELIM_THM,
    Dest boolTheory.OR_ELIM_THM,
+   Simp boolTheory.AND_CLAUSES,
+   Iff boolTheory.IMP_CLAUSES,
    Del "claset-selftest"]
 
 val marker_prefix = "__claset_marker_"
@@ -1873,6 +1879,26 @@ val _ =
               List.null rest andalso has_marker_rule spec th cs
             end)
          marker_cases)
+
+val _ =
+  test
+    ("simpset markers round-trip without becoming claset rules",
+     fn () =>
+       List.all
+         (fn (_, mark, dest, th) =>
+            let
+              val marked = mark th
+              val (cs, rest) = process_claset_tags [marked] empty_cs
+            in
+              (case dest marked of
+                   SOME th' => same_thm th th'
+                 | NONE => false) andalso
+              List.null (rules_of cs) andalso
+              ListPair.allEq
+                (fn (left, right) => same_thm left right)
+                (rest, [marked])
+            end)
+         simpset_marker_cases)
 
 val _ =
   test
