@@ -17,6 +17,11 @@ sig
     (clasetLib.claset -> simpLib.simpset -> thm list -> tactic) ->
     clasetLib.claset -> simpLib.simpset -> thm list -> tactic
 
+  val CS_AUTO_TAC :
+    {blast : int, depth : int} ->
+    clasetLib.claset -> simpLib.simpset -> tactic
+  val CS_FORCE_TAC :
+    clasetLib.claset -> simpLib.simpset -> tactic
   val CS_FASTFORCE_TAC :
     clasetLib.claset -> simpLib.simpset -> tactic
   val CS_SLOWSIMP_TAC :
@@ -26,6 +31,10 @@ sig
   val CS_CLARSIMP_TAC :
     clasetLib.claset -> simpLib.simpset -> tactic
 
+  val AUTO_DEPTH_TAC :
+    {blast : int, depth : int} -> thm list -> tactic
+  val AUTO_TAC : thm list -> tactic
+  val FORCE_TAC : thm list -> tactic
   val FASTFORCE_TAC : thm list -> tactic
   val SLOWSIMP_TAC : thm list -> tactic
   val BESTSIMP_TAC : thm list -> tactic

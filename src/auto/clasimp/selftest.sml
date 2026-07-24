@@ -615,3 +615,254 @@ val _ =
        in
          length residues = 2 andalso List.all clean residues
        end)
+
+val auto_logic_goals : Abbrev.goal list =
+  [([], ``((P ==> Q) /\ P) ==> Q``),
+   ([], ``(!x:'a. P x ==> Q x) ==> P a ==> Q a``),
+   ([], ``(P \/ Q) ==> (P ==> R) ==> (Q ==> R) ==> R``),
+   ([], ``(~P ==> P) ==> P``)]
+
+val auto_native_goals : Abbrev.goal list =
+  [([], ``MEM (x:'a) (x :: xs)``),
+   ([], ``THE (SOME (x:'a)) = x``),
+   ([],
+    ``((x:'a) IN (s UNION t)) =
+      (x IN s \/ x IN t)``)]
+
+val auto_goals = auto_logic_goals @ auto_native_goals
+
+val _ =
+  test
+    ("AUTO_TAC solves translated auto regressions and HOL4 goals",
+     fn () =>
+       List.all
+         (solves (clasimpLib.AUTO_TAC []))
+         auto_goals)
+
+val _ =
+  test
+    ("CS_AUTO_TAC uses the supplied claset and simpset",
+     fn () =>
+       List.all
+         (solves
+            (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+              (clasetLib.the_claset ())
+              (clasimpLib.clasimp_ss ())))
+         auto_logic_goals)
+
+val _ =
+  test
+    ("AUTO_DEPTH_TAC accepts explicit blast and depth bounds",
+     fn () =>
+       let
+         val x = mk_var ("clasimp_auto_depth_x", Type.ind)
+         val y = mk_var ("clasimp_auto_depth_y", Type.ind)
+         val body =
+           boolSyntax.mk_conj
+             (boolSyntax.mk_eq (x, x), boolSyntax.mk_eq (y, y))
+         val goal =
+           ([], boolSyntax.mk_exists
+             (x, boolSyntax.mk_exists (y, body)))
+         fun auto blast =
+           clasimpLib.CS_AUTO_TAC {blast = blast, depth = 0}
+             (clasetLib.the_claset ()) simpLib.empty_ss
+         val witness = mk_var ("clasimp_auto_witness", Type.ind)
+         val constant = mk_var ("clasimp_auto_constant", Type.ind)
+         val predicate =
+           mk_var
+             ("clasimp_auto_predicate", Type.ind --> Type.bool)
+         val fact = mk_comb (predicate, constant)
+         val depth_goal =
+           ([fact], boolSyntax.mk_exists
+             (witness, mk_comb (predicate, witness)))
+         fun depth_auto depth =
+           clasimpLib.CS_AUTO_TAC {blast = 0, depth = depth}
+             (clasetLib.the_claset ()) simpLib.empty_ss
+       in
+         tactic_fails (auto 1) goal andalso
+         solves (auto 2) goal andalso
+         tactic_fails (depth_auto 0) depth_goal andalso
+         solves (depth_auto 1) depth_goal andalso
+         solves
+           (clasimpLib.AUTO_DEPTH_TAC {blast = 4, depth = 2} [])
+           ([], ``(~clasimp_auto_bound_p ==>
+                    clasimp_auto_bound_p) ==>
+                   clasimp_auto_bound_p``)
+       end)
+
+val _ =
+  test
+    ("AUTO_TAC returns an exact non-closing residue",
+     fn () =>
+       let
+         val goal =
+           ([], ``clasimp_auto_p ==> clasimp_auto_q``)
+         val expected =
+           [([], ``clasimp_auto_q:bool``)]
+       in
+         same_goals
+           (residual (clasimpLib.AUTO_TAC []) goal)
+           expected
+       end)
+
+val _ =
+  test
+    ("AUTO_TAC fails exactly when its script changes nothing",
+     fn () =>
+       tactic_fails
+         (clasimpLib.AUTO_TAC [])
+         ([], ``clasimp_auto_unchanged:bool``))
+
+val _ =
+  test
+    ("CS_AUTO_TAC fails exactly when its script changes nothing",
+     fn () =>
+       tactic_fails
+         (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
+            (clasetLib.the_claset ())
+            (clasimpLib.clasimp_ss ()))
+         ([], ``clasimp_cs_auto_unchanged:bool``))
+
+val auto_idempotence_goals : Abbrev.goal list =
+  [([], ``T /\ clasimp_auto_stable_a``),
+   ([], ``clasimp_auto_stable_b ==> clasimp_auto_stable_c``),
+   ([``P (if clasimp_auto_stable_b then x:'a else y) : bool``],
+    ``clasimp_auto_stable_d:bool``)]
+
+val _ =
+  test
+    ("AUTO_TAC residues are idempotent without blast instantiations",
+     fn () =>
+       List.all
+         (fn goal =>
+           let
+             val residues =
+               residual (clasimpLib.AUTO_TAC []) goal
+           in
+             not (null residues) andalso
+             List.all
+               (tactic_fails (clasimpLib.AUTO_TAC []))
+               residues
+           end)
+         auto_idempotence_goals)
+
+fun goal_has_cond (assumptions, conclusion) =
+  List.exists
+    (can (find_term boolSyntax.is_cond))
+    (conclusion :: assumptions)
+
+val _ =
+  test
+    ("AUTO_TAC splits if where srw_ss simplification does not",
+     fn () =>
+       let
+         val goal =
+           ([``P (if clasimp_auto_split_b then
+                    clasimp_auto_split_x:'a
+                  else clasimp_auto_split_y) : bool``],
+            ``clasimp_auto_split_result:bool``)
+         val plain =
+           residual
+             (simpLib.SIMP_TAC (BasicProvers.srw_ss ()) [])
+             goal
+         val automatic =
+           residual (clasimpLib.AUTO_TAC []) goal
+       in
+         case plain of
+             [residue] =>
+               goal_has_cond residue andalso
+               length automatic = 2 andalso
+               not (List.exists goal_has_cond automatic)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("AUTO_TAC splits datatype cases where srw_ss does not",
+     fn () =>
+       let
+         val goal =
+           ([``P (case xs:'a list of
+                    [] => clasimp_auto_case_x
+                  | h::t => clasimp_auto_case_y) : bool``],
+            ``clasimp_auto_case_result:bool``)
+         val plain =
+           residual
+             (simpLib.SIMP_TAC (BasicProvers.srw_ss ()) [])
+             goal
+         val automatic =
+           residual (clasimpLib.AUTO_TAC []) goal
+         fun has_case (assumptions, conclusion) =
+           List.exists
+             (can (find_term TypeBase.is_case))
+             (conclusion :: assumptions)
+       in
+         case plain of
+             [residue] =>
+               has_case residue andalso
+               length automatic = 2 andalso
+               not (List.exists has_case automatic)
+           | _ => false
+       end)
+
+val _ =
+  test
+    ("FORCE_TAC solves translated force regressions and HOL4 goals",
+     fn () =>
+       List.all
+         (solves (clasimpLib.FORCE_TAC []))
+         force_goals)
+
+val _ =
+  test
+    ("CS_FORCE_TAC uses the supplied claset and simpset",
+     fn () =>
+       List.all
+         (solves
+            (clasimpLib.CS_FORCE_TAC
+              (clasetLib.the_claset ())
+              (clasimpLib.clasimp_ss ())))
+         force_goals)
+
+val _ =
+  test
+    ("FORCE_TAC and CS_FORCE_TAC fail unless they close the goal",
+     fn () =>
+       tactic_fails
+         (clasimpLib.FORCE_TAC [])
+         force_negative_goal andalso
+       tactic_fails
+         (clasimpLib.CS_FORCE_TAC
+            (clasetLib.the_claset ())
+            (clasimpLib.clasimp_ss ()))
+         force_negative_goal)
+
+val _ =
+  test
+    ("AUTO_TAC arguments are temporary and leave no state behind",
+     fn () =>
+       let
+         val lhs = ``clasimp_temporary_lhs:'a``
+         val goal =
+           ([], ``clasimp_temporary_goal:bool``)
+         val rules_before =
+           length (clasetLib.rules_of (clasetLib.the_claset ()))
+         val before_conv =
+           Conv.QCONV
+             (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
+             lhs
+         val failed =
+           tactic_fails
+             (clasimpLib.AUTO_TAC
+               [clasetLib.Simp boolTheory.IMP_CLAUSES])
+             goal
+         val after_conv =
+           Conv.QCONV
+             (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
+             lhs
+         val rules_after =
+           length (clasetLib.rules_of (clasetLib.the_claset ()))
+       in
+         failed andalso rules_before = rules_after andalso
+         aconv (concl before_conv) (concl after_conv)
+       end)

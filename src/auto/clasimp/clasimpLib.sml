@@ -124,6 +124,64 @@ fun must_close name tactic goal =
         "tactic did not close the goal"
   end
 
+fun auto_with {blast, depth} cs ss simp_args =
+  let
+    val search_cs = add_simp_wrapper_with ss simp_args cs
+    val final_cs = add_safe_simp_wrapper_with ss simp_args cs
+    val initial_safe =
+      NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
+    val search =
+      Tactical.ORELSE
+        (tableauLib.CS_BLAST_DEPTH_TAC cs blast,
+         NTactical.DETERM
+           (classicalLib.CS_DEPTH_SOLVE_TAC
+              {dup = false} depth search_cs))
+    val final_safe =
+      NTactical.DETERM (classicalLib.CS_SAFE_TAC final_cs)
+
+    (* Isabelle repeatedly selects the first goal on which search succeeds.
+       Both search legs solve their selected goal, and the repetition only
+       revisits a residue when solving another goal instantiates shared
+       schematic variables.  HOL4 kernel subgoals cannot share
+       metavariables, so one TRY per subgoal (from THEN) is equivalent. *)
+    val script =
+      Tactical.EVERY
+        [asm_full_simp ss simp_args,
+         Tactical.TRY initial_safe,
+         Tactical.TRY search,
+         Tactical.TRY final_safe]
+  in
+    Tactical.CHANGED_TAC script
+  end
+
+fun CS_AUTO_TAC bounds cs ss = auto_with bounds cs ss []
+
+fun force_with name cs ss simp_args =
+  let
+    val search_cs = add_simp_wrapper_with ss simp_args cs
+
+    (* add_simp_wrapper installs an unsafe wrapper.  It is deliberately
+       inert under CS_CLARIFY_TAC, which consults only safe wrappers; this
+       follows Isabelle's force_tac literally.  Isabelle's clarify succeeds
+       unchanged, whereas CS_CLARIFY_TAC reports a no-op as failure, so TRY
+       restores the upstream sequencing behavior. *)
+    val clarify =
+      NTactical.DETERM
+        (classicalLib.CS_CLARIFY_TAC search_cs)
+    val search =
+      NTactical.DETERM
+        (classicalLib.CS_FIRST_BEST_TAC search_cs)
+    val script =
+      Tactical.EVERY
+        [Tactical.TRY clarify,
+         asm_full_simp ss simp_args,
+         search]
+  in
+    must_close name script
+  end
+
+fun CS_FORCE_TAC cs ss = force_with "CS_FORCE_TAC" cs ss []
+
 (* The classical search drivers already succeed only with a closed engine
    state.  must_close is the public contract guard in case that invariant
    changes; it does not add another search step. *)
@@ -167,6 +225,15 @@ fun CS_CLARSIMP_TAC cs ss = clarsimp_with cs ss []
 fun public body theorems goal =
   process_clasimp_args body
     (clasetLib.the_claset ()) (clasimp_ss ()) theorems goal
+
+fun AUTO_DEPTH_TAC bounds theorems =
+  public (auto_with bounds) theorems
+
+fun AUTO_TAC theorems =
+  AUTO_DEPTH_TAC {blast = 4, depth = 2} theorems
+
+fun FORCE_TAC theorems =
+  public (force_with "FORCE_TAC") theorems
 
 fun FASTFORCE_TAC theorems =
   public
