@@ -9,22 +9,22 @@ task, no more.
 
 - TASK_01 (D1 kickoff baseline verification; rescoped
   2026-07-23) — complete (2026-07-23)
-- TASK_02 (E1 proof corpus + inventory) — unblocked (not started)
-- TASK_03 (aut.accept catalog + provability) — blocked (02)
+- TASK_02 (E1 proof corpus + inventory) — complete (2026-07-24)
+- TASK_03 (aut.accept catalog + provability) — unblocked (not started)
 - TASK_04 (red-first rows + needles + pin) — unblocked (not started)
 - TASK_05 (rework unsat-proof scripts) — blocked (03)
 - TASK_06 (A1+A2 core theory) — unblocked (not started)
 - TASK_07 (A3 RegLan + derivatives) — blocked (06)
 - TASK_08 (A2 replace + conversions) — blocked (06, 07)
 - TASK_09 (A5 injection kit) — blocked (06)
-- TASK_10 (A4 internal layer) — blocked (02, 03, 06, 07)
-- TASK_11 (A6 replay lemma seed) — blocked (02, 06, 07, 08)
-- TASK_12 (B1 string literals) — blocked (02, 06)
+- TASK_10 (A4 internal layer) — blocked (03, 06, 07)
+- TASK_11 (A6 replay lemma seed) — blocked (06, 07, 08)
+- TASK_12 (B1 string literals) — blocked (06)
 - TASK_13 (B2+B3 dictionaries + gates) — blocked (06, 07, 08, 12)
 - TASK_14 (B2 wf elaboration) — blocked (04, 13)
 - TASK_15 (C1 injection conversion) — blocked (04, 09, 13)
 - TASK_16 (C2–C4 native surface) — blocked (12, 13, 14)
-- TASK_17 (B4+E2 proof-parser dicts) — blocked (02, 10, 12)
+- TASK_17 (B4+E2 proof-parser dicts) — blocked (10, 12)
 - TASK_18 (E3+E5 prover core) — blocked (11, 17)
 - TASK_19 (E3 rung 4 symbolic) — blocked (18)
 - TASK_20 (E3 rung 5 regex/aut.accept) — blocked (03, 18)
@@ -39,7 +39,7 @@ task, no more.
 
 ## 2. Next unblocked task
 
-TASK_02 — E1 proof corpus + inventory.  (TASK_04 and TASK_06 are
+TASK_03 — aut.accept catalog + provability.  (TASK_04 and TASK_06 are
 also unblocked and parallelizable.)
 
 ## 3. Completion log
@@ -47,3 +47,4 @@ also unblocked and parallelizable.)
 (one line per task as it lands)
 
 - 2026-07-23 — TASK_01 complete: baseline green; strings ledger recorded.
+- 2026-07-24 — TASK_02 complete: five-version string corpus recorded.
