@@ -61,17 +61,71 @@ Definition char_bit_def:
   char_bit k (c : num) <=> BIT k c
 End
 
-(* TASK_03's clause catalog refuted the original construction-order
-   interpretation of k.  The regex argument is already the residual
-   language and k is a cursor into s.  Keep aut_state as an explicit
-   boundary for the replay layer, but do not invent derivative states. *)
+(* Characters which distinguish derivatives of a regex.  Literal code
+   points occur in syntax order; 0 represents the remaining well-formed
+   character class and 196608 represents ill-formed characters. *)
+Definition aut_chars_def:
+  (aut_chars reglan_none = []) /\
+  (aut_chars reglan_all = []) /\
+  (aut_chars reglan_allchar = []) /\
+  (aut_chars (reglan_to_re s) = s) /\
+  (aut_chars (reglan_range lo hi) = lo ++ hi) /\
+  (aut_chars (reglan_concat r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_union r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_inter r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_diff r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_comp r) = aut_chars r) /\
+  (aut_chars (reglan_star r) = aut_chars r) /\
+  (aut_chars (reglan_plus r) = aut_chars r) /\
+  (aut_chars (reglan_opt r) = aut_chars r) /\
+  (aut_chars (reglan_power r n) = aut_chars r) /\
+  (aut_chars (reglan_loop r i n) = aut_chars r)
+End
+
+Definition aut_alphabet_def:
+  aut_alphabet r = nub (aut_chars r ++ [0; 196608])
+End
+
+(* Z3 constructs automaton states breadth first.  Preserve that order:
+   existing states first, then each state's derivatives in character-class
+   order, discarding repeats at their later occurrences. *)
+Definition aut_extend_def:
+  aut_extend cs states =
+    nub
+      (states ++
+       FLAT (MAP (\r. MAP (\c. re_deriv c r) cs) states))
+End
+
+Definition aut_enumerate_def:
+  (aut_enumerate 0 cs states = nub states) /\
+  (aut_enumerate (SUC fuel) cs states =
+     aut_enumerate fuel cs (aut_extend cs states))
+End
+
+Definition aut_derivatives_def:
+  aut_derivatives fuel r =
+    aut_enumerate fuel (aut_alphabet r) [r]
+End
+
+(* Expanding SUC k rounds is sufficient to compute the construction-order
+   prefix needed for state k.  A missing index denotes the empty language. *)
 Definition aut_state_def:
-  aut_state k (r : reglan) = r
+  aut_state k (r : reglan) =
+    if k = 0 then r
+    else
+      let states = aut_derivatives (SUC k) r
+      in
+        if k < LENGTH states then EL k states
+        else reglan_none
 End
 
 Definition aut_accept_def:
   aut_accept (s : num list) k r <=>
-    smt_in_re (DROP k s) (aut_state k r)
+    smt_in_re s (aut_state k r)
 End
 
 (* seq.prefix.c/d/x/y/z are proof-local witnesses, not theory constants.
@@ -81,7 +135,9 @@ End
 val _ = computeLib.add_funs
   [seq_unit_def, seq_tail_def, seq_eq_def, seq_nth_i_def,
    char_is_digit_def, seq_digit2int_def, seq_digit_def,
-   seq_stoi_def, char_bit_def, aut_state_def, aut_accept_def];
+   seq_stoi_def, char_bit_def, aut_chars_def, aut_alphabet_def,
+   aut_extend_def, aut_enumerate_def, aut_derivatives_def,
+   aut_state_def, aut_accept_def];
 
 (* Evaluation equations consumed by the character and regex replay rungs. *)
 
@@ -141,57 +197,103 @@ Proof
   simp [char_bit_def]
 QED
 
+Theorem aut_chars_compute[compute]:
+  (aut_chars reglan_none = []) /\
+  (aut_chars reglan_all = []) /\
+  (aut_chars reglan_allchar = []) /\
+  (aut_chars (reglan_to_re s) = s) /\
+  (aut_chars (reglan_range lo hi) = lo ++ hi) /\
+  (aut_chars (reglan_concat r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_union r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_inter r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_diff r1 r2) =
+     aut_chars r1 ++ aut_chars r2) /\
+  (aut_chars (reglan_comp r) = aut_chars r) /\
+  (aut_chars (reglan_star r) = aut_chars r) /\
+  (aut_chars (reglan_plus r) = aut_chars r) /\
+  (aut_chars (reglan_opt r) = aut_chars r) /\
+  (aut_chars (reglan_power r n) = aut_chars r) /\
+  (aut_chars (reglan_loop r i n) = aut_chars r)
+Proof
+  simp [aut_chars_def]
+QED
+
+Theorem aut_alphabet_compute[compute]:
+  aut_alphabet r = nub (aut_chars r ++ [0; 196608])
+Proof
+  simp [aut_alphabet_def]
+QED
+
+Theorem aut_extend_compute[compute]:
+  aut_extend cs states =
+    nub
+      (states ++
+       FLAT (MAP (\r. MAP (\c. re_deriv c r) cs) states))
+Proof
+  simp [aut_extend_def]
+QED
+
+Theorem aut_derivatives_compute[compute]:
+  aut_derivatives fuel r =
+    aut_enumerate fuel (aut_alphabet r) [r]
+Proof
+  simp [aut_derivatives_def]
+QED
+
 Theorem aut_state_compute[compute]:
-  aut_state k r = r
+  (aut_state 0 r = r) /\
+  (aut_state (SUC k) r =
+     let states = aut_derivatives (SUC (SUC k)) r
+     in
+       if SUC k < LENGTH states then EL (SUC k) states
+       else reglan_none)
 Proof
   simp [aut_state_def]
 QED
 
 Theorem aut_accept_compute[compute]:
-  aut_accept s k r <=> smt_in_re (DROP k s) r
+  aut_accept s k r <=> smt_in_re s (aut_state k r)
 Proof
-  simp [aut_accept_def, aut_state_def]
+  simp [aut_accept_def]
 QED
 
 Theorem aut_accept_zero:
   aut_accept s 0 r <=> smt_in_re s r
 Proof
-  simp [aut_accept_compute]
+  simp [aut_accept_compute, aut_state_compute]
 QED
 
-Theorem aut_accept_suc:
-  aut_accept (c::s) (SUC k) r <=> aut_accept s k r
+Theorem aut_enumerate_distinct:
+  ALL_DISTINCT (aut_enumerate fuel cs states)
 Proof
-  simp [aut_accept_compute]
+  qid_spec_tac `states` >>
+  Induct_on `fuel` >>
+  simp [aut_enumerate_def, listTheory.all_distinct_nub]
 QED
 
-(* Ground checks of TASK_03's M/B/T/N clause shapes. *)
+Theorem aut_derivatives_distinct:
+  ALL_DISTINCT (aut_derivatives fuel r)
+Proof
+  simp [aut_derivatives_def, aut_enumerate_distinct]
+QED
+
+(* Ground EVAL checks for TASK_03's range and complement catalogs. *)
 Theorem aut_accept_catalog_eval:
-  (~smt_in_re [98] (reglan_range [97] [122]) \/
-   aut_accept [98] 0 (reglan_range [97] [122])) /\
-  (aut_accept [98] 0 (reglan_range [97] [122]) ==>
-   1 <= LENGTH [98]) /\
-  (~aut_accept [98] 0 (reglan_range [97] [122]) \/
-   LENGTH [98] <= 0 \/
-   (97 <= seq_nth_i [98] 0 /\ seq_nth_i [98] 0 <= 122 /\
-    aut_accept [98] 1 (reglan_to_re []))) /\
-  (~aut_accept [98] 1 (reglan_to_re []) \/
-   LENGTH [98] <= 1) /\
-  (~aut_accept [97; 97] 0
-       (reglan_loop (reglan_to_re [97]) 1 3) \/
-   LENGTH [97; 97] <= 0 \/
-   (seq_nth_i [97; 97] 0 = 97 /\
-    aut_accept [97; 97] 1
-      (reglan_loop (reglan_to_re [97]) 0 2))) /\
-  (~aut_accept [97; 97] 2 (reglan_to_re []) \/
-   LENGTH [97; 97] <= 2) /\
-  (~aut_accept [97; 98] 0
-       (reglan_comp (reglan_to_re [97])) \/
-   LENGTH [97; 98] <= 0 \/
-   (seq_nth_i [97; 98] 0 <> 97 \/
-    aut_accept [97; 98] 1 (reglan_plus reglan_allchar)))
+  aut_state 0 (reglan_range [97] [122]) =
+    reglan_range [97] [122] /\
+  aut_state 1 (reglan_range [97] [122]) = reglan_to_re [] /\
+  aut_state 2 (reglan_range [97] [122]) = reglan_none /\
+  aut_accept [] 1 (reglan_range [97] [122]) /\
+  aut_state 1 (reglan_comp (reglan_to_re [97])) =
+    reglan_comp (reglan_to_re []) /\
+  aut_state 2 (reglan_comp (reglan_to_re [97])) =
+    reglan_comp reglan_none /\
+  ~aut_accept [] 1 (reglan_comp (reglan_to_re [97])) /\
+  aut_accept [] 2 (reglan_comp (reglan_to_re [97]))
 Proof
-  simp [seq_nth_i_def] >>
   EVAL_TAC
 QED
 
