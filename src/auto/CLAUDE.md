@@ -18,6 +18,7 @@ Scope: `src/auto/` — the opt-in automation project: Isabelle/HOL-parity automa
 - Architectural decisions are the owner's: present them one-by-one with
   options and a recommendation; never decide silently.  Settled
   decisions are not re-litigated.
+- NO CHEATS ALLOWED.
 
 ## Building and testing
 
