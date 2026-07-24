@@ -1,7 +1,9 @@
 !src/boss/theory_tests
 !src/tfl/src/test
 src/parallel_builds/core
+src/auto/clasimp
 !src/auto/rules/theory_tests
+!src/auto/clasimp/theory_tests
 !!src/emit/ML
 !src/emit/theory_tests
 !src/emit/theory_tests1

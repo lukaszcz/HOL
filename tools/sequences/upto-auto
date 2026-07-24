@@ -3,4 +3,6 @@
 src/auto/rules
 src/auto/classical
 src/auto/blast
+src/auto/clasimp
 !src/auto/rules/theory_tests
+!src/auto/clasimp/theory_tests
