@@ -312,6 +312,172 @@ Proof
         smtstringTheory.smtstr_concat_def, seq_nth_i_def]
 QED
 
+(* TASK_02 draft_regex_membership, draft_substr, and draft_re_comp all emit
+   this integer-length form of the head/tail alternative. *)
+
+Theorem seq_head_tail_int:
+  &(smtstr_len s) = 0 \/
+  seq_eq s
+    (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
+Proof
+  Cases_on `s` >>
+  simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def,
+        smtstringTheory.smtstr_len_def, seq_nth_i_def]
+QED
+
+Theorem seq_head_tail_int_zero_left:
+  0 = &(smtstr_len s) \/
+  seq_eq s
+    (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
+Proof
+  metis_tac [seq_head_tail_int]
+QED
+
+(* TASK_02 draft_regex_membership uses these singleton consequences of the
+   prefix witnesses and concat decompositions. *)
+
+Theorem seq_prefixof_singleton:
+  seq_eq s
+      (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
+    smtstr_prefixof s (seq_unit c) ==>
+  s = seq_unit c
+Proof
+  Cases_on `s` >>
+  simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def,
+        smtstringTheory.smtstr_prefixof_singleton,
+        seq_nth_i_def]
+QED
+
+Theorem seq_prefixof_head:
+  seq_eq s
+      (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
+    smtstr_prefixof s (seq_unit c) ==>
+  c = seq_nth_i s 0
+Proof
+  Cases_on `s` >>
+  simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_concat_def,
+        smtstringTheory.smtstr_prefixof_singleton,
+        seq_nth_i_def]
+QED
+
+Theorem seq_concat_middle_singleton:
+  seq_eq (seq_unit d)
+    (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
+  c = d
+Proof
+  simp [seq_eq_def, seq_unit_def] >>
+  metis_tac [smtstringTheory.smtstr_concat_middle_singleton]
+QED
+
+Theorem seq_concat_middle_singleton_result:
+  seq_eq (seq_unit d)
+    (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
+  d = c
+Proof
+  metis_tac [seq_concat_middle_singleton]
+QED
+
+Theorem seq_concat_middle_singleton_right:
+  smtstr_concat p (smtstr_concat (seq_unit c) q) = seq_unit d ==>
+  d = c
+Proof
+  simp [seq_unit_def] >>
+  metis_tac [smtstringTheory.smtstr_concat_middle_singleton]
+QED
+
+Theorem seq_concat_middle_singleton_left:
+  seq_unit d = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
+  d = c
+Proof
+  metis_tac [seq_concat_middle_singleton_right]
+QED
+
+Theorem seq_head_shared_singleton_prefix:
+  s =
+      smtstr_concat
+        (seq_unit (seq_nth_i s 0)) (seq_tail s 0) /\
+    s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
+    seq_unit d = smtstr_concat p (smtstr_concat (seq_unit e) r) ==>
+  seq_nth_i s 0 = c
+Proof
+  Cases_on `p`
+  >- (Cases_on `s` >>
+      simp [seq_unit_def, seq_tail_def, seq_nth_i_def,
+            smtstringTheory.smtstr_concat_def])
+  >> simp [seq_unit_def, smtstringTheory.smtstr_concat_def]
+QED
+
+Theorem seq_head_shared_singleton_prefix_right:
+  seq_eq s
+      (smtstr_concat
+        (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
+    s = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
+    smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
+  seq_nth_i s 0 = c
+Proof
+  rpt strip_tac >>
+  Cases_on `p`
+  >- (Cases_on `s` >>
+      fs [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+          smtstringTheory.smtstr_concat_def])
+  >> fs [seq_eq_def, seq_unit_def,
+         smtstringTheory.smtstr_concat_def]
+QED
+
+(* TASK_02 draft_length emits the exact two-unit reconstruction after proving
+   a sequence has length two. *)
+
+Theorem seq_length_two:
+  smtstr_len s = 2 ==>
+  seq_eq
+    (smtstr_concat
+      (seq_unit (seq_nth_i s 0)) (seq_unit (seq_nth_i s 1))) s
+Proof
+  Cases_on `s`
+  >- simp [smtstringTheory.smtstr_len_def]
+  >> Cases_on `t`
+  >- simp [smtstringTheory.smtstr_len_def]
+  >> Cases_on `t'`
+  >- simp [seq_eq_def, seq_unit_def, seq_nth_i_def,
+           smtstringTheory.smtstr_concat_def,
+           smtstringTheory.smtstr_len_def]
+  >> simp [smtstringTheory.smtstr_len_def]
+QED
+
+Theorem seq_two_two_concat_not_three:
+  seq_eq
+      (smtstr_concat
+        (seq_unit (seq_nth_i y 0)) (seq_unit (seq_nth_i y 1))) y /\
+    seq_eq
+      (smtstr_concat
+        (seq_unit (seq_nth_i x 0)) (seq_unit (seq_nth_i x 1))) x /\
+    smtstr_concat (seq_unit a)
+      (smtstr_concat (seq_unit b) (seq_unit c)) =
+      smtstr_concat x y ==>
+  F
+Proof
+  rpt strip_tac >>
+  fs [seq_eq_def] >>
+  `smtstr_len
+      (smtstr_concat
+        (seq_unit (seq_nth_i y 0)) (seq_unit (seq_nth_i y 1))) =
+    smtstr_len y` by (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
+  `smtstr_len
+      (smtstr_concat
+        (seq_unit (seq_nth_i x 0)) (seq_unit (seq_nth_i x 1))) =
+    smtstr_len x` by (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
+  `smtstr_len
+      (smtstr_concat (seq_unit a)
+        (smtstr_concat (seq_unit b) (seq_unit c))) =
+    smtstr_len (smtstr_concat x y)` by
+      (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
+  fs [seq_unit_length, smtstringTheory.smtstr_len_concat] >>
+  decide_tac
+QED
+
 Theorem seq_tail_step:
   SUC i < LENGTH s ==>
     seq_tail s i =
@@ -323,6 +489,30 @@ Proof
         smtstringTheory.smtstr_concat_def,
         seq_nth_i_def, rich_listTheory.DROP_EL_CONS,
         arithmeticTheory.ADD1]
+QED
+
+Theorem seq_tail_zero_step:
+  s <> smtstr_at s 0 /\
+    seq_eq (seq_unit (seq_nth_i s 0)) (smtstr_at s 0) /\
+    seq_eq s
+      (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
+  seq_tail s 0 =
+    smtstr_concat (seq_unit (seq_nth_i s 1)) (seq_tail s 1)
+Proof
+  Cases_on `s`
+  >- simp [seq_eq_def, seq_unit_def, seq_tail_def,
+           smtstringTheory.smtstr_concat_def,
+           smtstringTheory.smtstr_at_def,
+           smtstringTheory.smtstr_substr_def]
+  >> Cases_on `t`
+  >- simp [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+           smtstringTheory.smtstr_concat_def,
+           smtstringTheory.smtstr_at_def,
+           smtstringTheory.smtstr_substr_def]
+  >> simp [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+           smtstringTheory.smtstr_concat_def,
+           smtstringTheory.smtstr_at_def,
+           smtstringTheory.smtstr_substr_def]
 QED
 
 Theorem seq_tail_length:

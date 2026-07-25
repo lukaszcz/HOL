@@ -17,7 +17,8 @@ struct
     raise ERR (theory ^ "_prove")
       ("unsupported th-lemma shape: theory=" ^ theory ^
        "; checked replay is only implemented for Unicode-string proforma, " ^
-       "ground evaluation, and length/arithmetic lemmas; conclusion=" ^
+       "ground evaluation, length/arithmetic, and symbolic " ^
+       "concat/prefix/suffix/contains lemmas; conclusion=" ^
        Library.term_to_string t)
 
   fun phase6_seq_gate t =
@@ -138,6 +139,97 @@ struct
       raise ERR "length_arith_prove"
         ("length/arithmetic replay failed: " ^ message)
 
+  val symbolic_normalizations = [
+    smtstringTheory.smtstr_concat_assoc,
+    smtstringTheory.smtstr_concat_nil_left,
+    smtstringTheory.smtstr_concat_nil_right,
+    smtstringTheory.smtstr_concat_middle_singleton,
+    smtstringTheory.smtstr_singleton_concat_middle,
+    smtstringTheory.smtstr_prefixof_refl,
+    smtstringTheory.smtstr_suffixof_refl,
+    smtstringTheory.smtstr_contains_refl,
+    smtstringTheory.smtstr_prefixof_singleton,
+    smtstringz3Theory.seq_head_tail_int,
+    smtstringz3Theory.seq_head_tail_int_zero_left,
+    smtstringz3Theory.seq_prefixof_singleton,
+    smtstringz3Theory.seq_prefixof_head,
+    smtstringz3Theory.seq_concat_middle_singleton,
+    smtstringz3Theory.seq_concat_middle_singleton_result,
+    smtstringz3Theory.seq_concat_middle_singleton_right,
+    smtstringz3Theory.seq_concat_middle_singleton_left,
+    smtstringz3Theory.seq_head_shared_singleton_prefix,
+    smtstringz3Theory.seq_head_shared_singleton_prefix_right,
+    smtstringz3Theory.seq_length_two,
+    smtstringz3Theory.seq_two_two_concat_not_three,
+    smtstringz3Theory.seq_tail_zero_step,
+    smtstringz3Theory.seq_unit_compute,
+    smtstringz3Theory.seq_eq_compute
+  ]
+
+  val symbolic_lemmas = [
+    smtstringTheory.smtstr_concat_middle_singleton,
+    smtstringTheory.smtstr_singleton_concat_middle,
+    smtstringTheory.smtstr_len_eq_zero,
+    smtstringTheory.smtstr_prefixof_decompose,
+    smtstringTheory.smtstr_suffixof_decompose,
+    smtstringTheory.smtstr_contains_decompose,
+    smtstringTheory.smtstr_prefixof_refl,
+    smtstringTheory.smtstr_suffixof_refl,
+    smtstringTheory.smtstr_contains_refl,
+    smtstringTheory.smtstr_prefixof_singleton,
+    smtstringTheory.smtstr_prefixof_imp_contains,
+    smtstringTheory.smtstr_suffixof_imp_contains,
+    smtstringTheory.smtstr_prefixof_trans,
+    smtstringTheory.smtstr_suffixof_trans,
+    smtstringTheory.smtstr_contains_trans,
+    smtstringz3Theory.seq_head_tail_int,
+    smtstringz3Theory.seq_head_tail_int_zero_left,
+    smtstringz3Theory.seq_prefixof_singleton,
+    smtstringz3Theory.seq_prefixof_head,
+    smtstringz3Theory.seq_concat_middle_singleton,
+    smtstringz3Theory.seq_concat_middle_singleton_result,
+    smtstringz3Theory.seq_concat_middle_singleton_right,
+    smtstringz3Theory.seq_concat_middle_singleton_left,
+    smtstringz3Theory.seq_head_shared_singleton_prefix,
+    smtstringz3Theory.seq_head_shared_singleton_prefix_right,
+    smtstringz3Theory.seq_length_two,
+    smtstringz3Theory.seq_two_two_concat_not_three,
+    smtstringz3Theory.seq_tail_zero_step
+  ]
+
+  val symbolic_string_consts =
+    List.map
+      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
+      ["smtstr_concat", "smtstr_prefixof", "smtstr_suffixof",
+       "smtstr_contains"]
+
+  val symbolic_thms =
+    Z3_ProformaThms.thm_net_from_list symbolic_lemmas
+
+  fun is_symbolic_string_goal t =
+    List.exists
+      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
+      symbolic_string_consts
+
+  fun symbolic_string_prove t =
+    if not (is_symbolic_string_goal t) then
+      raise ERR "symbolic_string_prove"
+        "no symbolic concat/prefix/suffix/contains term"
+    else
+      Z3_ProformaThms.prove symbolic_thms t
+      handle Feedback.HOL_ERR _ =>
+      with_metis_limit (fn () =>
+        metisLib.METIS_PROVE
+          [smtstringz3Theory.seq_head_shared_singleton_prefix_right] t) ()
+      handle Feedback.HOL_ERR _ =>
+      with_metis_limit (fn () =>
+        Tactical.prove (t,
+          Tactical.THEN
+            (bossLib.RW_TAC
+               (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+               symbolic_normalizations,
+             bossLib.METIS_TAC symbolic_lemmas))) ()
+
   fun string_prove arith_prove t =
     let val () = check_seq_type t in
       profile "string(rung:1/proforma)" proforma_prove t
@@ -146,6 +238,8 @@ struct
       handle Feedback.HOL_ERR _ =>
       profile "string(rung:3/length-arith)"
         (length_arith_prove arith_prove) t
+      handle Feedback.HOL_ERR _ =>
+      profile "string(rung:4/symbolic)" symbolic_string_prove t
       handle Feedback.HOL_ERR _ =>
       profile "string(rung:7/unsupported)" (unsupported "seq") t
     end

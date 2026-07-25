@@ -7631,6 +7631,54 @@ fun string_prove_ladder_rungs_success () =
      ``(&(smtstr_len (smtstr_concat s t)) : int) >=
        &(smtstr_len s)``)
 
+fun string_prove_symbolic_rung_success () =
+  let
+    fun direct name tm =
+      assert_string_prover name
+        SmtStringProve.symbolic_string_prove tm
+    val concat_goal =
+      ``smtstr_concat p (smtstr_concat (seq_unit c) q) =
+          seq_unit d ==> d = c``
+  in
+    direct "string symbolic concat" concat_goal;
+    direct "string symbolic concat singleton-left"
+      ``seq_unit d =
+          smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
+    direct "string symbolic concat applied witnesses"
+      ``seq_unit 97 =
+          smtstr_concat (prefix_part x (seq_unit 97))
+            (smtstr_concat
+              (seq_unit (middle_char x (seq_unit 97)))
+              (suffix_part x (seq_unit 97))) ==>
+        97 = middle_char x (seq_unit 97)``;
+    direct "string symbolic shared concat prefix"
+      ``seq_eq s
+          (smtstr_concat
+            (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
+        s = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
+        smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
+        seq_nth_i s 0 = c``;
+    direct "string symbolic prefix"
+      ``seq_eq s
+          (smtstr_concat
+            (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
+        smtstr_prefixof s (seq_unit c) ==>
+        c = seq_nth_i s 0``;
+    direct "string symbolic suffix"
+      ``smtstr_suffixof s t /\ smtstr_suffixof t u ==>
+        smtstr_suffixof s u``;
+    direct "string symbolic contains"
+      ``smtstr_contains s t /\ smtstr_contains t u ==>
+        smtstr_contains s u``;
+    Profile.reset_all ();
+    assert_string_prover "string symbolic full ladder"
+      (SmtStringProve.string_prove intLib.ARITH_PROVE) concat_goal;
+    assert (profile_call_count "string(rung:4/symbolic)" > 0,
+      "symbolic string goal did not reach rung 4");
+    assert (profile_call_count "string(rung:7/unsupported)" = 0,
+      "symbolic string goal fell through to the unsupported rung")
+  end
+
 fun string_prove_structured_failures () =
   let
     fun expect_message name expected thunk =
@@ -7650,6 +7698,17 @@ fun string_prove_structured_failures () =
         SmtStringProve.string_prove intLib.ARITH_PROVE
           ``~((&(smtstr_len x) : int) <= 1) \/
             smtstr_to_int x = seq_stoi x 0``);
+    expect_message "proof-local prefix witness" "theory=seq"
+      (fn () =>
+        SmtStringProve.string_prove intLib.ARITH_PROVE
+          ``smtstr_prefixof x (seq_unit c) ==>
+            seq_unit c =
+              smtstr_concat x (suffix_witness x (seq_unit c))``);
+    expect_message "regex th-lemma" "theory=seq"
+      (fn () =>
+        SmtStringProve.string_prove intLib.ARITH_PROVE
+          ``~smt_in_re x (reglan_to_re (seq_unit c)) \/
+            aut_accept x 0 (reglan_to_re (seq_unit c))``);
     expect_message "char th-lemma" "theory=char"
       (fn () => SmtStringProve.char_prove ``F``);
     expect_message "non-string Seq th-lemma"
@@ -8532,6 +8591,8 @@ let
       datatype_prove_unsupported_diagnostic),
     ("string_prove_ladder_rungs_success",
       string_prove_ladder_rungs_success),
+    ("string_prove_symbolic_rung_success",
+      string_prove_symbolic_rung_success),
     ("string_prove_structured_failures",
       string_prove_structured_failures),
     ("z3_string_th_lemma_dispatch_success",

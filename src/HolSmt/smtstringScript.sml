@@ -1095,6 +1095,23 @@ Proof
   simp [smtstr_concat_def]
 QED
 
+(* TASK_02 draft_regex_membership compares a concat with a singleton and
+   concludes that the distinguished middle character is that singleton. *)
+
+Theorem smtstr_concat_middle_singleton:
+  smtstr_concat p (smtstr_concat [c] q) = [d] ==> c = d
+Proof
+  Cases_on `p`
+  >- (Cases_on `q` >> simp [smtstr_concat_def])
+  >> simp [smtstr_concat_def]
+QED
+
+Theorem smtstr_singleton_concat_middle:
+  [d] = smtstr_concat p (smtstr_concat [c] q) ==> d = c
+Proof
+  metis_tac [smtstr_concat_middle_singleton]
+QED
+
 Theorem smtstr_len_concat:
   smtstr_len (smtstr_concat s t) =
     smtstr_len s + smtstr_len t
@@ -1109,10 +1126,19 @@ Proof
   simp [smtstr_len_concat, integerTheory.INT_OF_NUM_ADD]
 QED
 
+(* TASK_02 draft_regex_membership, draft_substr, and draft_re_comp use
+   zero length as the empty-string branch of their sequence clauses. *)
+
 Theorem smtstr_len_nonnegative:
   0 <= &(smtstr_len s)
 Proof
   simp []
+QED
+
+Theorem smtstr_len_eq_zero:
+  smtstr_len s = 0 <=> s = []
+Proof
+  simp [smtstr_len_def]
 QED
 
 Theorem smtstr_len_char:
@@ -1159,6 +1185,59 @@ Theorem smtstr_contains_decompose:
 Proof
   simp [smtstr_contains_def, smtstr_concat_def,
         rich_listTheory.IS_SUBLIST_APPEND]
+QED
+
+(* TASK_02 draft_regex_membership records reflexive prefix clauses.  The
+   suffix and contains variants complete the same symbolic A6 family used by
+   the TASK_02 per-operator recordings. *)
+
+Theorem smtstr_prefixof_refl:
+  smtstr_prefixof s s
+Proof
+  simp [smtstr_prefixof_decompose] >>
+  qexists `[]` >>
+  simp [smtstr_concat_nil_right]
+QED
+
+Theorem smtstr_suffixof_refl:
+  smtstr_suffixof s s
+Proof
+  simp [smtstr_suffixof_decompose] >>
+  qexists `[]` >>
+  simp [smtstr_concat_nil_left]
+QED
+
+Theorem smtstr_contains_refl:
+  smtstr_contains s s
+Proof
+  simp [smtstr_contains_decompose] >>
+  qexistsl [`[]`, `[]`] >>
+  simp [smtstr_concat_nil_left, smtstr_concat_nil_right]
+QED
+
+(* TASK_02 draft_regex_membership repeatedly specializes prefix reasoning to
+   a one-character right operand.  The implication lemmas connect the
+   TASK_02 prefix/suffix recordings to their contains consequences. *)
+
+Theorem smtstr_prefixof_singleton:
+  smtstr_prefixof s [c] <=> s = [] \/ s = [c]
+Proof
+  Cases_on `s` >>
+  simp [smtstr_prefixof_def]
+QED
+
+Theorem smtstr_prefixof_imp_contains:
+  smtstr_prefixof s t ==> smtstr_contains t s
+Proof
+  simp [smtstr_prefixof_decompose, smtstr_contains_decompose] >>
+  metis_tac [smtstr_concat_nil_left]
+QED
+
+Theorem smtstr_suffixof_imp_contains:
+  smtstr_suffixof s t ==> smtstr_contains t s
+Proof
+  simp [smtstr_suffixof_decompose, smtstr_contains_decompose] >>
+  metis_tac [smtstr_concat_nil_right]
 QED
 
 Theorem smtstr_prefixof_trans:
