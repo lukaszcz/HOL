@@ -265,6 +265,14 @@ in
     (``case p of T => (q ==> p) | F => (p ==> q)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Native HOL strings are proved through the smtstring injection.  Checked
+       string replay lands later in Phase 4, so C1 pins the oracle path. *)
+    (``STRCAT (STRCAT (s:string) t) u = STRCAT s (STRCAT t u)``,
+      [thm_Z3]),
+    (``isPREFIX (s:string) s``, [thm_Z3]),
+    (``~((s:string) < s)``, [thm_Z3]),
+    (``(s:string) <= s``, [thm_Z3]),
+
     (* numerals *)
 
     (* FIXME: SMT-LIB 2 does not provide a theory of natural numbers, but only

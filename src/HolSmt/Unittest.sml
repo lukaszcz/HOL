@@ -350,6 +350,40 @@ in
      boolSyntax.mk_eq (binder_input, binder_expected))
 end
 
+fun hol_string_to_smt_conversion_success () =
+let
+  val input =
+    ``STRCAT (s:string) t = STRCAT t s /\
+      isPREFIX s t /\ (s < t) /\ (s <= t)``
+  val expected =
+    ``smtstring$smtstr_concat
+        (smtstring$str_inj s) (smtstring$str_inj t) =
+      smtstring$smtstr_concat
+        (smtstring$str_inj t) (smtstring$str_inj s) /\
+      smtstring$smtstr_prefixof
+        (smtstring$str_inj s) (smtstring$str_inj t) /\
+      smtstring$smtstr_lt
+        (smtstring$str_inj s) (smtstring$str_inj t) /\
+      smtstring$smtstr_le
+        (smtstring$str_inj s) (smtstring$str_inj t)``
+  val thm = SmtLib.HOL_STRING_TO_SMT_CONV input
+  val quantified_input = ``!s:string. isPREFIX s s``
+  val quantified_expected =
+    ``!s:string.
+        smtstring$smtstr_prefixof
+          (smtstring$str_inj s) (smtstring$str_inj s)``
+  val quantified_thm =
+    SmtLib.HOL_STRING_TO_SMT_CONV quantified_input
+in
+  assert_no_hyps ("HOL_STRING_TO_SMT_CONV", thm);
+  assert_concl_alpha
+    ("HOL_STRING_TO_SMT_CONV", thm, boolSyntax.mk_eq (input, expected));
+  assert_no_hyps ("quantified HOL_STRING_TO_SMT_CONV", quantified_thm);
+  assert_concl_alpha
+    ("quantified HOL_STRING_TO_SMT_CONV", quantified_thm,
+     boolSyntax.mk_eq (quantified_input, quantified_expected))
+end
+
 (* Test: `Z3_ProofReplay.remove_definitions` works without any definitions *)
 fun remove_defs_no_defs () = ([], [])
 
@@ -4230,8 +4264,10 @@ let
       (fn SmtLib.HOLTheoryEncoding {
             feature, smt_theory = "UnicodeStrings",
             mode = SmtLib.NativeSMTLIB, parse = true,
-            typecheck = true, translate = true, replay = false, ...} =>
+            typecheck = true, translate = true, replay = true,
+            proof_obligation, ...} =>
             contains "HOL strings" feature
+            andalso contains "Discharged" proof_obligation
         | _ => false) records
   val has_concat_symbol =
     List.exists (fn SmtLib.EncodedSymbol {smt_symbol = "str.++", ...} =>
@@ -4258,6 +4294,13 @@ let
             translate = false, replay = false, notes, ...} =>
             contains "Seq/Set/Bag" notes
         | _ => false) records
+  val has_regex_translation_row =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "UnicodeStrings RegLan",
+            translate = true, replay = false, notes, ...} =>
+            contains "no implicit RegLan injection" notes
+        | _ => false) records
   val _ = SmtLib.parser_dicts_for_translation translation
 in
   assert (logic = "QF_S",
@@ -4271,7 +4314,49 @@ in
   assert (has_datatype_matrix_row,
     "translation records lacked native Datatypes encoding row");
   assert (has_bag_matrix_row,
-    "translation records lacked sequence/set/bag matrix row")
+    "translation records lacked sequence/set/bag matrix row");
+  assert (has_regex_translation_row,
+    "translation records lacked native RegLan translation row")
+end
+
+fun smtlib_hol_string_injection_translation_success () =
+let
+  val original =
+    ([], ``STRCAT (s:string) t = STRCAT t s``)
+  val (goal as (assumptions, conclusion), _) =
+    SolverSpec.simplify (SmtLib.SIMP_TAC true) original
+  val expected =
+    ``smtstring$smtstr_concat
+        (smtstring$str_inj s) (smtstring$str_inj t) =
+      smtstring$smtstr_concat
+        (smtstring$str_inj t) (smtstring$str_inj s)``
+  val (translation, strings) =
+    SmtLib.goal_to_SmtLib_translation NONE goal
+  val text = String.concat strings
+  val (_, standard_strings) =
+    SmtLib.goal_to_SmtLib_translation_with_regime
+      (SmtLib.HigherOrder SmtLib.Standard27) NONE goal
+  val standard_text = String.concat standard_strings
+in
+  assert (List.null assumptions andalso Term.aconv conclusion expected,
+    "HOL string preprocessing did not expose the str_inj surface");
+  assert (contains "(set-logic QF_S)\n" text,
+    "injected HOL string goal inferred " ^
+    SmtLib.translation_logic translation ^ ":\n" ^ text);
+  assert (contains "(declare-fun v0 () String)\n" text andalso
+      contains "(declare-fun v1 () String)\n" text,
+    "injected HOL strings were not generalized to String variables");
+  assert (contains "(declare-const v0 String)\n" standard_text andalso
+      contains "(declare-const v1 String)\n" standard_text,
+    "Standard27 did not thread its declaration regime through injection");
+  assert (contains
+      "(= (str.++ v0 v1) (str.++ v1 v0))" text,
+    "injected HOL string goal changed the pinned operator emission");
+  assert (not (contains "List_Num" text) andalso
+      not (contains "str_inj" text),
+    "injection internals leaked into emitted SMT-LIB");
+  assert_goal_roundtrip "HOL string injection" goal;
+  ignore (SmtLib.translation_records translation)
 end
 
 (* P3.4 leaves this function-valued argument on the byte-identical FO route:
@@ -7712,6 +7797,8 @@ let
       num_binder_relativization_non_num_noop_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),
+    ("hol_string_to_smt_conversion_success",
+      hol_string_to_smt_conversion_success),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",
@@ -7877,6 +7964,8 @@ let
       smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
+    ("smtlib_hol_string_injection_translation_success",
+      smtlib_hol_string_injection_translation_success),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_ho_parser_dict_currying_success",

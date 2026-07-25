@@ -245,6 +245,12 @@ For a theorem-producing result, the trusted path is:
 
 - `SmtLib.sml`: translates the HOL goal to SMT-LIB and records the selected
   logic, emitted symbols and HOL theory encodings.
+- Native HOL strings are first rewritten through the proved `str_inj`
+  injectivity and operator-transfer theorems.  Each resulting injection image
+  is generalized to an unconstrained SMT-LIB `String` value.  A solver result
+  proved for every well-formed Unicode string therefore specializes soundly
+  to the injection image, while tactic validation carries the exact HOL-side
+  rewrite back to the original goal.
 - `SmtLib_Datatypes.sml`: elaborates SMT-LIB datatype declarations to HOL
   datatypes and builds selector/tester case expressions.
 - `Z3.sml`: invokes the configured Z3 executable, requests proof output,
@@ -307,7 +313,6 @@ Semantic Mismatches`. Current manifest-backed audit items include:
 - SMT-LIB division-by-zero underspecification versus HOL encodings;
 - bit-vector division, remainder, overflow, shift and rotation edge cases;
 - FloatingPoint NaN, infinity and rounding-mode semantics;
-- HOL char-list strings versus SMT-LIB UnicodeStrings and regex languages;
 - ArraysEx select/store versus current HOL function encoding;
 - SMT-LIB datatype selectors are total but underspecified on constructors that
   do not own the selector. The HOL encoding chooses the `ARB` value for those
@@ -320,11 +325,6 @@ For each item, accepted reconstruction needs a checked proof path, a
 preprocessing theorem that relates the HOL and SMT-LIB meanings, or an explicit
 unsupported diagnostic before replay. Silent acceptance or oracle fallback is
 outside the audited boundary.
-
-The current native HOL string translation covers the string sort, STRCAT,
-isPREFIX, string_lt and string_le.  It emits SMT-LIB UnicodeStrings symbols;
-the semantic mismatch with HOL's char-list strings is deliberately recorded as
-a soundness-audit proof obligation.
 
 HOL-to-SMT translation has two regimes, selected by the P3.4 failure trigger
 after preprocessing.  The byte-identical FirstOrder path encodes function

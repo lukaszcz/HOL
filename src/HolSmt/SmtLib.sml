@@ -89,6 +89,59 @@ local
 
   val apfst_K = Lib.apfst o Lib.K
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
+  val str_inj_tm =
+    Term.prim_mk_const {Thy="smtstring", Name="str_inj"}
+  val smtstr_concat_tm =
+    Term.prim_mk_const {Thy="smtstring", Name="smtstr_concat"}
+  val smtstr_prefixof_tm =
+    Term.prim_mk_const {Thy="smtstring", Name="smtstr_prefixof"}
+  val smtstr_lt_tm =
+    Term.prim_mk_const {Thy="smtstring", Name="smtstr_lt"}
+  val smtstr_le_tm =
+    Term.prim_mk_const {Thy="smtstring", Name="smtstr_le"}
+
+  fun dest_injected_string tm =
+    let
+      val (inject, string) = Term.dest_comb tm
+      val _ =
+        if Term.same_const inject str_inj_tm then ()
+        else raise ERR "dest_injected_string" "not str_inj"
+    in
+      string
+    end
+
+  fun is_injected_string tm = Lib.can dest_injected_string tm
+
+  fun injected_string_operator tm =
+    if Term.same_const tm smtstr_concat_tm then "str.++"
+    else if Term.same_const tm smtstr_prefixof_tm then "str.prefixof"
+    else if Term.same_const tm smtstr_lt_tm then "str.<"
+    else if Term.same_const tm smtstr_le_tm then "str.<="
+    else raise ERR "injected_string_operator" "not an injection operator"
+
+  fun dest_injected_string_operation tm =
+    let
+      val (rator, rands) = boolSyntax.strip_comb tm
+      val name = injected_string_operator rator
+      val _ =
+        if List.length rands = 2 then ()
+        else raise ERR "dest_injected_string_operation" "wrong arity"
+    in
+      (name, rands)
+    end
+
+  fun is_injected_string_expression tm =
+    is_injected_string tm orelse
+    (case Lib.total dest_injected_string_operation tm of
+       SOME ("str.++", rands) =>
+         List.all is_injected_string_expression rands
+     | _ => false)
+
+  fun is_injected_string_operation tm =
+    case Lib.total dest_injected_string_operation tm of
+      SOME (_, rands) => List.all is_injected_string_expression rands
+    | NONE => false
+
   fun mk_int_emod (dividend, divisor) =
     Term.list_mk_comb (int_emod_tm, [dividend, divisor])
 
@@ -141,8 +194,9 @@ local
           elements as _ :: _ :: _ => ("distinct", elements)
         | _ => ("true", [])) ts),
     (boolSyntax.conditional, apfst_K "ite"),
-    (* UnicodeStrings.  HOL strings are char lists; the encoding is native
-       SMT-LIB String syntax with a semantic obligation recorded below. *)
+    (* UnicodeStrings.  Solver-facing translation first rewrites the native
+       HOL operators through str_inj; the original entries remain for the
+       public, byte-identical raw emission path. *)
     (stringSyntax.strcat_tm, apfst_K "str.++"),
     (stringSyntax.isprefix_tm, apfst_K "str.prefixof"),
     (stringSyntax.string_lt_tm, apfst_K "str.<"),
@@ -525,7 +579,8 @@ local
   fun is_string_const tm =
     List.exists (fn c => same_const c tm) [
       stringSyntax.strcat_tm, stringSyntax.isprefix_tm,
-      stringSyntax.string_lt_tm, stringSyntax.string_le_tm
+      stringSyntax.string_lt_tm, stringSyntax.string_le_tm,
+      str_inj_tm
     ]
 
   val subterms = Library.subterms
@@ -750,10 +805,13 @@ local
         | doms_rng acc n ty =
           let val (dom, rng) = Type.dom_rng ty
           in doms_rng (dom :: acc) (n - 1) rng end
+      val injected_string = arity = 0 andalso is_injected_string tm
       val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
       val domain_sorts =
         List.map (smt_sort_of_type regime tydict) domtys
-      val range_sort = smt_sort_of_type regime tydict rngty
+      val range_sort =
+        if injected_string then "String"
+        else smt_sort_of_type regime tydict rngty
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
     in
@@ -1074,6 +1132,18 @@ local
         not (has_type_builtin ty) andalso Option.isSome (datatype_family ty)
       fun type_contains_datatype ty =
         type_contains type_is_datatype ty
+      val has_injected_strings =
+        List.exists is_injected_string all_subterms
+      fun term_contains_datatype tm =
+        let
+          val (rator, _) = boolSyntax.strip_comb tm
+        in
+          not (has_injected_strings andalso
+            (is_string_const rator orelse
+             Lib.can injected_string_operator rator orelse
+             same_const boolSyntax.equality rator)) andalso
+          type_contains_datatype (Term.type_of tm)
+        end
       fun term_is_datatype_constructor tm =
         TypeBase.is_constructor tm
       fun term_is_datatype_record_selector tm =
@@ -1097,11 +1167,13 @@ local
            SOME result => result
          | NONE => false)
       val datatypes =
-        subterm_types type_contains_datatype orelse
+        List.exists term_contains_datatype all_subterms orelse
         Redblackmap.foldl (fn (ty, _, b) =>
           b orelse type_contains_datatype ty) false tydict orelse
         Redblackmap.foldl (fn ((tm, _), _, b) =>
-          b orelse type_contains_datatype (Term.type_of tm)) false tmdict
+          b orelse
+          (not (is_injected_string tm) andalso
+           type_contains_datatype (Term.type_of tm))) false tmdict
       val nonlinear =
         List.exists (fn tm => is_nonlinear_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
@@ -1112,6 +1184,8 @@ local
         | range_after n ty = range_after (n - 1) (Lib.snd (Type.dom_rng ty))
       fun term_needs_uf ((tm, arity), _) =
         if term_is_datatype_native ((tm, arity), "") then
+          false
+        else if arity = 0 andalso is_injected_string tm then
           false
         else
           arity > 0 orelse
@@ -1161,10 +1235,13 @@ local
           parse = true,
           typecheck = true,
           translate = true,
-          replay = false,
-          notes = "HOL strings are char lists over HOL characters; SMT-LIB String is UnicodeStrings.",
+          replay = true,
+          notes =
+            "HOL strings are rewritten through the proved str_inj transfer " ^
+            "kit; injected occurrences are generalized to SMT-LIB String.",
           proof_obligation =
-            "A checked soundness argument must prove or constrain the HOL char-list to SMT Unicode string correspondence before replay is claimed."
+            "Discharged by the str_inj injectivity and operator-transfer " ^
+            "theorems plus checked preprocessing validation."
         }
       val datatype_record =
         HOLTheoryEncoding {
@@ -1217,10 +1294,11 @@ local
           mode = ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = false,
+          translate = true,
           replay = false,
           notes =
-            "SMT-LIB regex terms are parsed/typechecked through RegLan; HOL regex libraries are not translated to RegLan.",
+            "Native smtstring/RegLan terms use the UnicodeStrings surface; " ^
+            "HOL regex libraries have no implicit RegLan injection.",
           proof_obligation =
             "A checked soundness argument must relate HOL regex languages to SMT-LIB RegLan membership and Unicode string semantics before replay support."
         }
@@ -1613,6 +1691,49 @@ local
     fun ensure_type ((tydict, tmdict), ty) =
       let val (tydict, (decls, name)) = translate_type regime (tydict, ty)
       in (((tydict, tmdict), decls), name) end
+    fun translate_injected_string acc =
+      let
+        val string = dest_injected_string tm
+      in
+        case Redblackmap.peek (bounds, string) of
+          SOME name => (acc, ([], name))
+        | NONE =>
+          let
+            val depends_on_bound =
+              List.exists
+                (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
+                (Term.free_vars string)
+            val _ =
+              if depends_on_bound then
+                raise ERR "translate_injected_string"
+                  "non-atomic injected term depends on a bound variable"
+              else
+                ()
+          in
+            case Redblackmap.peek (tmdict, (tm, 0)) of
+              SOME name => (acc, ([], name))
+            | NONE =>
+              let
+                val name =
+                  tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
+                val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+                val declaration =
+                  term_declaration_text regime name [] "String"
+              in
+                ((tydict, tmdict), ([declaration], name))
+              end
+          end
+      end
+    fun translate_injected_string_operation acc =
+      let
+        val (name, rands) = dest_injected_string_operation tm
+        val (acc, declnames) = Lib.foldl_map
+          (fn (a, t) => translate_term regime apply_operator
+            (a, (bounds, t))) (acc, rands)
+        val (declss, names) = Lib.split declnames
+      in
+        (acc, (List.concat declss, sexpr name names))
+      end
     fun declared_const_arity c =
       let
         val {Thy, Name, ...} = Term.dest_thy_const c
@@ -1942,6 +2063,28 @@ local
     (* bound variables may shadow built-in symbols etc. *)
     (acc, ([], Redblackmap.find (bounds, tm)))
     handle Redblackmap.NotFound =>
+
+    (* Each str_inj image is generalized to an SMT String value.  Proving the
+       strengthened SMT formula over every Unicode string and then using the
+       tactic validation at this image is the sound direction. *)
+    (if is_injected_string tm then
+       translate_injected_string acc
+       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+     else
+       raise ERR "translate_term" "not an injected string")
+    handle e as NestedTranslation _ => raise e
+         | Feedback.HOL_ERR _ =>
+
+    (* Only the terms produced by HOL_STRING_TO_SMT_CONV receive native
+       UnicodeStrings operators here.  Bare smtstring terms retain their
+       pre-C2 translation until the guarded native surface lands. *)
+    (if is_injected_string_operation tm then
+       translate_injected_string_operation acc
+       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+     else
+       raise ERR "translate_term" "not an injected string operation")
+    handle e as NestedTranslation _ => raise e
+         | Feedback.HOL_ERR _ =>
 
     (* Native lambda terms survive preprocessing only in the HO regime. *)
     (case regime of
@@ -2645,6 +2788,18 @@ local
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
+  val hol_string_transfer_rewrites = [
+    Conv.GSYM smtstringTheory.str_inj_11,
+    smtstringTheory.str_inj_STRCAT,
+    smtstringTheory.str_inj_isPREFIX,
+    smtstringTheory.str_inj_string_lt,
+    smtstringTheory.str_inj_string_le
+  ]
+
+  fun HOL_STRING_TO_SMT_CONV tm =
+    simpLib.SIMP_CONV pureSimps.pure_ss hol_string_transfer_rewrites tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
   fun num_free_concl_vars (asms, concl) =
   let
     fun is_num_var v =
@@ -2936,6 +3091,7 @@ in
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
+  val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
 
   fun type_mentions_num ty =
     Type.compare (ty, numSyntax.num) = EQUAL orelse
@@ -3028,6 +3184,11 @@ in
     CONV_TAC NUM_BINDERS_TO_INT_CONV
   end
 
+  val HOL_STRING_TO_SMT_TAC =
+    Tactical.THEN
+      (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE HOL_STRING_TO_SMT_CONV),
+       Tactic.CONV_TAC HOL_STRING_TO_SMT_CONV)
+
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT
      solvers to solve the goal (but only if `include_theorems` is true) *)
   fun ADD_THEOREMS_TAC g =
@@ -3081,6 +3242,7 @@ in
   let
     open Tactical simpLib
   in
+    HOL_STRING_TO_SMT_TAC THEN
     (* This must precede num transfer: the native real numeral form lets the
        closed positivity proof erase the whole pow term, including its nat
        exponent. *)
