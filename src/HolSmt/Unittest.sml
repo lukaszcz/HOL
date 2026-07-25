@@ -688,6 +688,118 @@ handle Feedback.HOL_ERR holerr =>
        "out-of-range SMT-LIB string escape diagnostic mismatch: " ^ msg)
   end
 
+val smt_string_ty = listSyntax.mk_list_type numSyntax.num
+
+val wfstr_const =
+  Term.prim_mk_const {Thy = "smtstring", Name = "wfstr"}
+
+fun mk_wfstr tm = Term.mk_comb (wfstr_const, tm)
+
+fun assert_term_alpha label expected actual =
+  assert (expected ~~ actual,
+    label ^ " mismatch\nexpected: " ^ term_with_types expected ^
+    "\nactual: " ^ term_with_types actual)
+
+fun smtlib_string_wf_declaration_elaboration_success () =
+let
+  val state =
+    SmtLib_Parser.typecheck_script_string
+      ("(set-logic ALL)\n" ^
+       "(declare-const s String)\n" ^
+       "(declare-fun t () String)\n" ^
+       "(declare-fun f (String Int) String)\n" ^
+       "(assert (distinct s t))\n" ^
+       "(check-sat)\n")
+  val (s_guard, t_guard, f_guard, user_assertion) =
+    case #assertions state of
+      [s_guard, t_guard, f_guard, user_assertion] =>
+        (s_guard, t_guard, f_guard, user_assertion)
+    | assertions =>
+        die ("String declaration elaboration produced " ^
+          Int.toString (List.length assertions) ^
+          " assertions, expected four")
+  val s = Term.mk_var ("s", smt_string_ty)
+  val t = Term.mk_var ("t", smt_string_ty)
+  val f = Term.mk_var
+    ("f", Type.--> (smt_string_ty,
+      Type.--> (intSyntax.int_ty, smt_string_ty)))
+  val string_arg = Term.mk_var ("string_arg", smt_string_ty)
+  val int_arg = Term.mk_var ("int_arg", intSyntax.int_ty)
+  val f_expected =
+    boolSyntax.list_mk_forall
+      ([string_arg, int_arg],
+       boolSyntax.mk_imp
+         (mk_wfstr string_arg,
+          mk_wfstr (Term.list_mk_comb (f, [string_arg, int_arg]))))
+  val query_assertions =
+    case #queries state of
+      [SmtLib_Parser.QueryCheckSat {assertions, ...}] => assertions
+    | _ => die "String declaration elaboration lost check-sat query"
+in
+  assert_term_alpha "declare-const String wfstr hypothesis"
+    (mk_wfstr s) s_guard;
+  assert_term_alpha "nullary declare-fun String wfstr hypothesis"
+    (mk_wfstr t) t_guard;
+  assert_term_alpha "String-returning declare-fun wfstr hypothesis"
+    f_expected f_guard;
+  assert (List.length (Term.free_vars user_assertion) = 2,
+    "String declaration test lost its user assertion");
+  assert (ListPair.allEq (fn (x, y) => x ~~ y)
+      (query_assertions, #assertions state),
+    "check-sat query did not carry String declaration hypotheses")
+end
+
+fun smtlib_string_wf_binder_elaboration_success () =
+let
+  val assertion =
+    case #assertions
+        (SmtLib_Parser.typecheck_script_string
+          ("(set-logic ALL)\n" ^
+           "(assert (forall ((s String) (i Int))\n" ^
+           "  (exists ((t String) (j Int)) (= t s))))\n")) of
+      [assertion] => assertion
+    | _ => die "String binder elaboration produced the wrong assertion count"
+  val s = Term.mk_var ("s", smt_string_ty)
+  val i = Term.mk_var ("i", intSyntax.int_ty)
+  val t = Term.mk_var ("t", smt_string_ty)
+  val j = Term.mk_var ("j", intSyntax.int_ty)
+  val equality = boolSyntax.mk_eq (t, s)
+  val existential =
+    boolSyntax.list_mk_exists
+      ([t, j], boolSyntax.mk_conj (mk_wfstr t, equality))
+  val expected =
+    boolSyntax.list_mk_forall
+      ([s, i],
+       boolSyntax.mk_imp (mk_wfstr s, existential))
+in
+  assert_term_alpha "nested String forall/exists relativization"
+    expected assertion
+end
+
+fun smtlib_string_wf_reset_assertions_success () =
+let
+  val state =
+    SmtLib_Parser.typecheck_script_string
+      ("(set-logic QF_S)\n" ^
+       "(declare-const s String)\n" ^
+       "(assert false)\n" ^
+       "(reset-assertions)\n" ^
+       "(assert (= s s))\n" ^
+       "(check-sat)\n")
+  val s = Term.mk_var ("s", smt_string_ty)
+in
+  case #assertions state of
+    [guard, assertion] =>
+      (assert_term_alpha
+         "reset-assertions preserved String declaration hypothesis"
+         (mk_wfstr s) guard;
+       assert (assertion ~~ boolSyntax.mk_eq (s, s),
+         "reset-assertions retained an old assertion"))
+  | assertions =>
+      die ("reset-assertions String elaboration produced " ^
+        Int.toString (List.length assertions) ^ " assertions, expected two")
+end
+
 fun transferred_smtlib_text tm =
 let
   val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], tm)
@@ -3392,8 +3504,8 @@ let
         String.isPrefix "'smtlib_RegLan" (Type.dest_vartype ty))
       (Term.type_of tm)
 in
-  assert (List.length assertions = 1,
-    "string/regex signature script produced the wrong assertion count");
+  assert (List.length assertions = 4,
+    "string/regex signature script did not include three wfstr hypotheses");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "string/regex signature assertion did not parse as Bool");
   List.app
@@ -7582,6 +7694,12 @@ let
       smtlib_string_literal_typecheck_success),
     ("smtlib_string_literal_out_of_range_diagnostic",
       smtlib_string_literal_out_of_range_diagnostic),
+    ("smtlib_string_wf_declaration_elaboration_success",
+      smtlib_string_wf_declaration_elaboration_success),
+    ("smtlib_string_wf_binder_elaboration_success",
+      smtlib_string_wf_binder_elaboration_success),
+    ("smtlib_string_wf_reset_assertions_success",
+      smtlib_string_wf_reset_assertions_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",
