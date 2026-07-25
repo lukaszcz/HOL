@@ -74,6 +74,16 @@ local
   val ERR = Feedback.mk_HOL_ERR "SmtLib"
   val WARNING = Feedback.HOL_WARNING "SmtLib"
 
+  val reglan_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
+
+  fun smtstring_const name =
+    Term.prim_mk_const {Thy = "smtstring", Name = name}
+
+  val wfstr_tm = smtstring_const "wfstr"
+  val int_of_num_tm =
+    Term.prim_mk_const {Thy = "integer", Name = "int_of_num"}
+
   (* (HOL type, a function that maps the type to its SMT-LIB sort name) *)
   val builtin_types = List.foldl
     (fn ((ty, x), net) => TypeNet.insert (net, ty, x)) TypeNet.empty [
@@ -81,6 +91,7 @@ local
     (intSyntax.int_ty, Lib.K "Int"),
     (realSyntax.real_ty, Lib.K "Real"),
     (stringSyntax.string_ty, Lib.K "String"),
+    (reglan_ty, Lib.K "(RegLan String)"),
     (* bit-vector types *)
     (wordsSyntax.mk_word_type Type.alpha, fn ty =>
       "(_ BitVec " ^ Arbnum.toString
@@ -89,16 +100,162 @@ local
 
   val apfst_K = Lib.apfst o Lib.K
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
-  val str_inj_tm =
-    Term.prim_mk_const {Thy="smtstring", Name="str_inj"}
-  val smtstr_concat_tm =
-    Term.prim_mk_const {Thy="smtstring", Name="smtstr_concat"}
-  val smtstr_prefixof_tm =
-    Term.prim_mk_const {Thy="smtstring", Name="smtstr_prefixof"}
-  val smtstr_lt_tm =
-    Term.prim_mk_const {Thy="smtstring", Name="smtstr_lt"}
-  val smtstr_le_tm =
-    Term.prim_mk_const {Thy="smtstring", Name="smtstr_le"}
+  val str_inj_tm = smtstring_const "str_inj"
+  val smtstr_concat_tm = smtstring_const "smtstr_concat"
+  val smtstr_prefixof_tm = smtstring_const "smtstr_prefixof"
+  val smtstr_lt_tm = smtstring_const "smtstr_lt"
+  val smtstr_le_tm = smtstring_const "smtstr_le"
+
+  type native_string_info = {
+    hol_name : string,
+    smt_name : string,
+    string_args : int list,
+    result_string : bool
+  }
+
+  val native_string_infos : native_string_info list = [
+    {hol_name = "smtstr_concat", smt_name = "str.++",
+     string_args = [0, 1], result_string = true},
+    {hol_name = "smtstr_len", smt_name = "str.len",
+     string_args = [0], result_string = false},
+    {hol_name = "smtstr_substr", smt_name = "str.substr",
+     string_args = [0], result_string = true},
+    {hol_name = "smtstr_at", smt_name = "str.at",
+     string_args = [0], result_string = true},
+    {hol_name = "smtstr_prefixof", smt_name = "str.prefixof",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_suffixof", smt_name = "str.suffixof",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_contains", smt_name = "str.contains",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_indexof", smt_name = "str.indexof",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_lt", smt_name = "str.<",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_le", smt_name = "str.<=",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "smtstr_char", smt_name = "char",
+     string_args = [], result_string = true},
+    {hol_name = "smtstr_replace", smt_name = "str.replace",
+     string_args = [0, 1, 2], result_string = true},
+    {hol_name = "smtstr_replace_all", smt_name = "str.replace_all",
+     string_args = [0, 1, 2], result_string = true},
+    {hol_name = "smtstr_replace_re", smt_name = "str.replace_re",
+     string_args = [0, 2], result_string = true},
+    {hol_name = "smtstr_replace_re_all",
+     smt_name = "str.replace_re_all",
+     string_args = [0, 2], result_string = true},
+    {hol_name = "smtstr_is_digit", smt_name = "str.is_digit",
+     string_args = [0], result_string = false},
+    {hol_name = "smtstr_to_code", smt_name = "str.to_code",
+     string_args = [0], result_string = false},
+    {hol_name = "smtstr_from_code", smt_name = "str.from_code",
+     string_args = [], result_string = true},
+    {hol_name = "smtstr_to_int", smt_name = "str.to_int",
+     string_args = [0], result_string = false},
+    {hol_name = "smtstr_from_int", smt_name = "str.from_int",
+     string_args = [], result_string = true},
+    {hol_name = "reglan_to_re", smt_name = "str.to_re",
+     string_args = [0], result_string = false},
+    {hol_name = "smt_in_re", smt_name = "str.in_re",
+     string_args = [0], result_string = false},
+    {hol_name = "reglan_none", smt_name = "re.none",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_all", smt_name = "re.all",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_allchar", smt_name = "re.allchar",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_concat", smt_name = "re.++",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_union", smt_name = "re.union",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_inter", smt_name = "re.inter",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_diff", smt_name = "re.diff",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_comp", smt_name = "re.comp",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_star", smt_name = "re.*",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_plus", smt_name = "re.+",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_opt", smt_name = "re.opt",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_range", smt_name = "re.range",
+     string_args = [0, 1], result_string = false},
+    {hol_name = "reglan_power", smt_name = "re.^",
+     string_args = [], result_string = false},
+    {hol_name = "reglan_loop", smt_name = "re.loop",
+     string_args = [], result_string = false}
+  ]
+
+  fun native_string_info tm =
+    if Term.is_const tm then
+      let
+        val {Thy, Name, ...} = Term.dest_thy_const tm
+      in
+        if Thy = "smtstring" then
+          List.find
+            (fn {hol_name, ...} : native_string_info =>
+              hol_name = Name)
+            native_string_infos
+        else
+          NONE
+      end
+    else
+      NONE
+
+  fun is_native_string_const tm = Option.isSome (native_string_info tm)
+
+  fun numeral_string function_name tm =
+    Arbnum.toString (numSyntax.dest_numeral tm)
+    handle Feedback.HOL_ERR _ =>
+      raise ERR function_name "expected a numeral index"
+
+  fun hexadecimal_string function_name tm =
+    String.map Char.toLower
+      (Arbnum.toHexString (numSyntax.dest_numeral tm))
+    handle Feedback.HOL_ERR _ =>
+      raise ERR function_name "expected a numeral character index"
+
+  fun indexed_char_encoding (_, args) =
+    SmtLib_Theories.one_arg
+      (fn code =>
+        ("(_ char #x" ^
+         hexadecimal_string "<builtin_symbols.smtstr_char>" code ^ ")",
+         []))
+      args
+
+  fun indexed_power_encoding (_, args) =
+    SmtLib_Theories.two_args
+      (fn (regex, power) =>
+        ("(_ re.^ " ^
+         numeral_string "<builtin_symbols.reglan_power>" power ^ ")",
+         [regex]))
+      args
+
+  fun indexed_loop_encoding (_, args) =
+    SmtLib_Theories.three_args
+      (fn (regex, lower, upper) =>
+        ("(_ re.loop " ^
+         numeral_string "<builtin_symbols.reglan_loop>" lower ^ " " ^
+         numeral_string "<builtin_symbols.reglan_loop>" upper ^ ")",
+         [regex]))
+      args
+
+  fun injected_length_encoding (_, args) =
+    SmtLib_Theories.one_arg
+      (fn tm =>
+        let
+          val (rator, rands) = boolSyntax.strip_comb tm
+        in
+          case (native_string_info rator, rands) of
+            (SOME {hol_name = "smtstr_len", ...}, [string]) =>
+              ("str.len", [string])
+          | _ => raise ERR "<builtin_symbols.int_of_num>"
+              "not a native string length"
+        end)
+      args
 
   fun dest_injected_string tm =
     let
@@ -201,6 +358,45 @@ local
     (stringSyntax.isprefix_tm, apfst_K "str.prefixof"),
     (stringSyntax.string_lt_tm, apfst_K "str.<"),
     (stringSyntax.string_le_tm, apfst_K "str.<="),
+    (* Native smtstringTheory UnicodeStrings and RegLan surface. *)
+    (smtstring_const "smtstr_concat", apfst_K "str.++"),
+    (smtstring_const "smtstr_len", apfst_K "str.len"),
+    (smtstring_const "smtstr_substr", apfst_K "str.substr"),
+    (smtstring_const "smtstr_at", apfst_K "str.at"),
+    (smtstring_const "smtstr_prefixof", apfst_K "str.prefixof"),
+    (smtstring_const "smtstr_suffixof", apfst_K "str.suffixof"),
+    (smtstring_const "smtstr_contains", apfst_K "str.contains"),
+    (smtstring_const "smtstr_indexof", apfst_K "str.indexof"),
+    (smtstring_const "smtstr_replace", apfst_K "str.replace"),
+    (smtstring_const "smtstr_replace_all", apfst_K "str.replace_all"),
+    (smtstring_const "smtstr_lt", apfst_K "str.<"),
+    (smtstring_const "smtstr_le", apfst_K "str.<="),
+    (smtstring_const "smtstr_char", indexed_char_encoding),
+    (smtstring_const "smtstr_replace_re", apfst_K "str.replace_re"),
+    (smtstring_const "smtstr_replace_re_all",
+      apfst_K "str.replace_re_all"),
+    (smtstring_const "smtstr_is_digit", apfst_K "str.is_digit"),
+    (smtstring_const "smtstr_to_code", apfst_K "str.to_code"),
+    (smtstring_const "smtstr_from_code", apfst_K "str.from_code"),
+    (smtstring_const "smtstr_to_int", apfst_K "str.to_int"),
+    (smtstring_const "smtstr_from_int", apfst_K "str.from_int"),
+    (smtstring_const "reglan_to_re", apfst_K "str.to_re"),
+    (smtstring_const "smt_in_re", apfst_K "str.in_re"),
+    (smtstring_const "reglan_none", apfst_K "re.none"),
+    (smtstring_const "reglan_all", apfst_K "re.all"),
+    (smtstring_const "reglan_allchar", apfst_K "re.allchar"),
+    (smtstring_const "reglan_concat", apfst_K "re.++"),
+    (smtstring_const "reglan_union", apfst_K "re.union"),
+    (smtstring_const "reglan_inter", apfst_K "re.inter"),
+    (smtstring_const "reglan_diff", apfst_K "re.diff"),
+    (smtstring_const "reglan_comp", apfst_K "re.comp"),
+    (smtstring_const "reglan_star", apfst_K "re.*"),
+    (smtstring_const "reglan_plus", apfst_K "re.+"),
+    (smtstring_const "reglan_opt", apfst_K "re.opt"),
+    (smtstring_const "reglan_range", apfst_K "re.range"),
+    (smtstring_const "reglan_power", indexed_power_encoding),
+    (smtstring_const "reglan_loop", indexed_loop_encoding),
+    (int_of_num_tm, injected_length_encoding),
     (* Reals_Ints *)
     (* numerals (excluding 'intSyntax.negate_tm') *)
     (Term.mk_var ("x", intSyntax.int_ty), Lib.apfst (fn tm =>
@@ -581,7 +777,204 @@ local
       stringSyntax.strcat_tm, stringSyntax.isprefix_tm,
       stringSyntax.string_lt_tm, stringSyntax.string_le_tm,
       str_inj_tm
-    ]
+    ] orelse is_native_string_const tm
+
+  type native_string_signature = {
+    head : Term.term,
+    arity : int,
+    string_args : int list
+  }
+
+  type native_string_context = {
+    signatures : native_string_signature list,
+    guarded_terms : Term.term list
+  }
+
+  val empty_native_string_context : native_string_context = {
+    signatures = [],
+    guarded_terms = []
+  }
+
+  fun dest_wfstr tm =
+    let
+      val (rator, argument) = Term.dest_comb tm
+      val _ =
+        if same_const wfstr_tm rator then ()
+        else raise ERR "dest_wfstr" "not a wfstr guard"
+    in
+      argument
+    end
+
+  fun conjunction_terms tm =
+    let val (left, right) = boolSyntax.dest_conj tm
+    in conjunction_terms left @ conjunction_terms right end
+    handle Feedback.HOL_ERR _ => [tm]
+
+  fun native_signature_for ({signatures, ...} : native_string_context)
+      head arity =
+    List.find
+      (fn {head = candidate, arity = candidate_arity, ...} =>
+        Term.aconv head candidate andalso arity = candidate_arity)
+      signatures
+
+  fun add_native_signature
+      (entry as {head, arity, ...} : native_string_signature)
+      signatures =
+    if List.exists
+        (fn {head = candidate, arity = candidate_arity, ...} =>
+          Term.aconv head candidate andalso arity = candidate_arity)
+        signatures
+    then
+      signatures
+    else
+      entry :: signatures
+
+  fun guard_signature assumption =
+    let
+      val (vars, guarded_body) = boolSyntax.strip_forall assumption
+      val (premise, result_guard) =
+        boolSyntax.dest_imp guarded_body
+        handle Feedback.HOL_ERR _ => (boolSyntax.T, guarded_body)
+      val result = dest_wfstr result_guard
+      val (head, args) = boolSyntax.strip_comb result
+      val guards =
+        if Term.aconv premise boolSyntax.T then []
+        else List.map dest_wfstr (conjunction_terms premise)
+      fun is_string_arg (index, argument) =
+        List.exists (Term.aconv argument) guards
+      val string_args =
+        List.map Lib.fst
+          (List.filter is_string_arg
+            (ListPair.zipEq
+              (List.tabulate (List.length args, fn n => n), args)))
+      val quantified_shape =
+        not (List.null vars) andalso
+        List.length vars = List.length args andalso
+        ListPair.allEq (fn (var, argument) => Term.aconv var argument)
+          (vars, args) andalso
+        List.all
+          (fn guard => List.exists (Term.aconv guard) vars)
+          guards
+      val direct_shape = List.null vars andalso List.null args
+      val _ =
+        if quantified_shape orelse direct_shape then ()
+        else raise ERR "guard_signature" "not a declaration guard"
+    in
+      {head = head, arity = List.length args, string_args = string_args}
+    end
+
+  fun prepare_native_string_assumptions assumptions =
+    let
+      fun one (assumption, (context, kept)) =
+        let
+          val entry = guard_signature assumption
+          val {signatures, guarded_terms} = context
+          val context = {
+            signatures = add_native_signature entry signatures,
+            guarded_terms =
+              dest_wfstr assumption :: guarded_terms
+              handle Feedback.HOL_ERR _ => guarded_terms
+          }
+        in
+          (context, kept)
+        end
+        handle Feedback.HOL_ERR _ => (context, assumption :: kept)
+      val (context, kept) =
+        List.foldl one (empty_native_string_context, []) assumptions
+    in
+      (context, List.rev kept)
+    end
+
+  fun index_member index indices =
+    List.exists (fn candidate => index = candidate) indices
+
+  fun native_string_term
+      (context as {guarded_terms, ...} : native_string_context)
+      string_bounds tm =
+    List.exists (Term.aconv tm) guarded_terms orelse
+    List.exists (Term.aconv tm) string_bounds orelse
+    is_injected_string tm orelse
+    let
+      val (head, args) = boolSyntax.strip_comb tm
+    in
+      case native_string_info head of
+        SOME {result_string, ...} => result_string
+      | NONE =>
+          Option.isSome (native_signature_for context head (List.length args))
+    end
+
+  fun native_string_arg_indices context string_bounds rator rands =
+    case native_string_info rator of
+      SOME {string_args, ...} => string_args
+    | NONE =>
+        if same_const boolSyntax.equality rator andalso
+           List.length rands = 2 andalso
+           List.exists (native_string_term context string_bounds) rands
+        then
+          [0, 1]
+        else
+          (case native_signature_for context rator (List.length rands) of
+             SOME {string_args, ...} => string_args
+           | NONE => [])
+
+  fun native_string_literal tm =
+    let
+      val (elements, element_ty) = listSyntax.dest_list tm
+      val _ =
+        if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
+        else raise ERR "native_string_literal" "not a num list"
+      fun code_point element =
+        let
+          val value = numSyntax.dest_numeral element
+          val _ =
+            if Arbnum.<=
+                (value, Arbnum.fromInt SmtLib_String_Literal.max_code_point)
+            then ()
+            else raise ERR "native_string_literal"
+              ("code point 0x" ^
+               String.map Char.toLower (Arbnum.toHexString value) ^
+               " is above the SMT-LIB maximum 0x2ffff")
+        in
+          Arbnum.toInt value
+        end
+      val code_points = List.map code_point elements
+    in
+      "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
+    end
+
+  fun guarded_binder tm =
+    let
+      fun guarded_vars vars guards =
+        let
+          val guarded = List.map dest_wfstr (conjunction_terms guards)
+          val _ =
+            if List.all
+                (fn guard => List.exists (Term.aconv guard) vars)
+                guarded
+            then ()
+            else raise ERR "guarded_binder"
+              "wfstr guard does not name a bound variable"
+        in
+          guarded
+        end
+    in
+      if boolSyntax.is_forall tm then
+        let
+          val (vars, body) = boolSyntax.strip_forall tm
+          val (guards, body) = boolSyntax.dest_imp body
+        in
+          ("forall", vars, guarded_vars vars guards, body)
+        end
+      else if boolSyntax.is_exists tm then
+        let
+          val (vars, body) = boolSyntax.strip_exists tm
+          val (guards, body) = boolSyntax.dest_conj body
+        in
+          ("exists", vars, guarded_vars vars guards, body)
+        end
+      else
+        raise ERR "guarded_binder" "not a binder"
+    end
 
   val subterms = Library.subterms
 
@@ -745,7 +1138,9 @@ local
           "UFBVDT"
       val logic =
         if strings then
-          (* Phase 4 will refine UnicodeStrings/RegLan combinations. *)
+          (* RegLan and guarded smtstring symbols are classified as the
+             UnicodeStrings feature, not as HOL datatypes or UFs.  Only
+             genuinely orthogonal theories force the conservative fallback. *)
           if bitvectors orelse reals orelse quantifiers orelse arrays orelse
              uninterpreted orelse datatypes then
             "ALL"
@@ -799,7 +1194,8 @@ local
         "(declare-fun " ^ name ^ " (" ^
         String.concatWith " " domain_sorts ^ ") " ^ range_sort ^ ")\n"
 
-  fun term_decl_for_tmdict regime tydict ((tm, arity), name) =
+  fun term_decl_for_tmdict regime native_context tydict
+      ((tm, arity), name) =
     let
       fun doms_rng acc 0 ty = (List.rev acc, ty)
         | doms_rng acc n ty =
@@ -807,10 +1203,20 @@ local
           in doms_rng (dom :: acc) (n - 1) rng end
       val injected_string = arity = 0 andalso is_injected_string tm
       val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
+      val native_signature =
+        native_signature_for native_context tm arity
+      val string_args =
+        case native_signature of
+          SOME {string_args, ...} => string_args
+        | NONE => []
       val domain_sorts =
-        List.map (smt_sort_of_type regime tydict) domtys
+        ListPair.mapEq
+          (fn (index, ty) =>
+            if index_member index string_args then "String"
+            else smt_sort_of_type regime tydict ty)
+          (List.tabulate (List.length domtys, fn n => n), domtys)
       val range_sort =
-        if injected_string then "String"
+        if injected_string orelse Option.isSome native_signature then "String"
         else smt_sort_of_type regime tydict rngty
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
@@ -1084,7 +1490,7 @@ local
       handle Redblackmap.NotFound => NONE
            | Feedback.HOL_ERR _ => NONE
 
-  fun infer_features regime terms tydict tmdict =
+  fun infer_features regime native_context terms tydict tmdict =
     let
       fun encoding_subterms tm =
         let
@@ -1126,8 +1532,21 @@ local
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val strings =
         subterm_types type_contains_string orelse
+        subterm_types
+          (Library.type_contains
+            (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
         List.exists (fn tm => is_string_const
-          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms orelse
+        not (List.null (#signatures native_context))
+      fun term_is_native_string_surface tm =
+        let val (rator, _) = boolSyntax.strip_comb tm
+        in
+          is_native_string_const rator orelse
+          native_string_term native_context [] tm orelse
+          Library.type_contains
+            (fn ty => Type.compare (ty, reglan_ty) = EQUAL)
+            (Term.type_of tm)
+        end
       fun type_is_datatype ty =
         not (has_type_builtin ty) andalso Option.isSome (datatype_family ty)
       fun type_contains_datatype ty =
@@ -1138,10 +1557,12 @@ local
         let
           val (rator, _) = boolSyntax.strip_comb tm
         in
+          not (term_is_native_string_surface tm) andalso
+          not (strings andalso same_const boolSyntax.equality rator) andalso
           not (has_injected_strings andalso
             (is_string_const rator orelse
-             Lib.can injected_string_operator rator orelse
-             same_const boolSyntax.equality rator)) andalso
+              Lib.can injected_string_operator rator orelse
+              same_const boolSyntax.equality rator)) andalso
           type_contains_datatype (Term.type_of tm)
         end
       fun term_is_datatype_constructor tm =
@@ -1161,7 +1582,10 @@ local
             fields
         end
       fun term_is_datatype_native ((tm, arity), _) =
-        (arity = 0 andalso type_contains_datatype (Term.type_of tm)) orelse
+        (arity = 0 andalso
+         not (Option.isSome
+           (native_signature_for native_context tm arity)) andalso
+         type_contains_datatype (Term.type_of tm)) orelse
         term_is_datatype_constructor tm orelse
         (case Lib.total term_is_datatype_record_selector tm of
            SOME result => result
@@ -1170,9 +1594,11 @@ local
         List.exists term_contains_datatype all_subterms orelse
         Redblackmap.foldl (fn (ty, _, b) =>
           b orelse type_contains_datatype ty) false tydict orelse
-        Redblackmap.foldl (fn ((tm, _), _, b) =>
+        Redblackmap.foldl (fn ((tm, arity), _, b) =>
           b orelse
           (not (is_injected_string tm) andalso
+           not (Option.isSome
+             (native_signature_for native_context tm arity)) andalso
            type_contains_datatype (Term.type_of tm))) false tmdict
       val nonlinear =
         List.exists (fn tm => is_nonlinear_arith_const
@@ -1183,7 +1609,10 @@ local
       fun range_after 0 ty = ty
         | range_after n ty = range_after (n - 1) (Lib.snd (Type.dom_rng ty))
       fun term_needs_uf ((tm, arity), _) =
-        if term_is_datatype_native ((tm, arity), "") then
+        if Option.isSome
+            (native_signature_for native_context tm arity) then
+          false
+        else if term_is_datatype_native ((tm, arity), "") then
           false
         else if arity = 0 andalso is_injected_string tm then
           false
@@ -1339,8 +1768,8 @@ local
        ho_core_record]
     end
 
-  fun build_translation_records regime regime_reason terms logic reason
-      features tydict tmdict =
+  fun build_translation_records regime regime_reason native_context terms
+      logic reason features tydict tmdict =
     let
       val regime_record =
         RegimeSelection {regime = regime, reason = regime_reason}
@@ -1358,7 +1787,8 @@ local
               (add_type ty seen, type_decl_record (ty, name) :: acc)
       val (_, type_records) = Redblackmap.foldl add_type_record ([], []) tydict
       val term_records = Redblackmap.foldl (fn (key, name, acc) =>
-        term_decl_for_tmdict regime tydict (key, name) :: acc) [] tmdict
+        term_decl_for_tmdict regime native_context tydict (key, name) :: acc)
+        [] tmdict
       val builtin_records = encoded_symbol_records terms
       val advanced_records = advanced_encoding_records regime terms
     in
@@ -1652,7 +2082,8 @@ local
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
-  fun translate_term regime apply_operator
+  fun translate_term regime apply_operator native_context string_bounds
+      expected_string
       (acc as (tydict, tmdict), (bounds, tm)) =
   let
     fun sexpr x [] = x
@@ -1671,9 +2102,22 @@ local
       let
         val (name, rands) = Lib.tryfind (fn parsefn => parsefn (rator, rands))
           (Net.match rator builtin_symbols)  (* may fail *)
+        val string_args =
+          case native_string_info rator of
+            SOME {string_args, ...} => string_args
+          | NONE =>
+              if name = "str.len" then [0]
+              else native_string_arg_indices native_context string_bounds
+                rator rands
+        val indexed_rands =
+          ListPair.zipEq
+            (List.tabulate (List.length rands, fn n => n), rands)
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term regime apply_operator
-            (a, (bounds, t))) (acc, rands)
+          (fn (a, (index, t)) =>
+            translate_term regime apply_operator native_context
+              string_bounds (index_member index string_args)
+              (a, (bounds, t)))
+          (acc, indexed_rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (List.concat declss, sexpr name names))
@@ -1728,8 +2172,10 @@ local
       let
         val (name, rands) = dest_injected_string_operation tm
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term regime apply_operator
-            (a, (bounds, t))) (acc, rands)
+          (fn (a, t) =>
+            translate_term regime apply_operator native_context
+              string_bounds false (a, (bounds, t)))
+          (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (List.concat declss, sexpr name names))
@@ -1754,7 +2200,8 @@ local
         val (((tydict, tmdict), typedecls), tyname) =
           ensure_type (acc, Term.type_of v)
         val (acc, (bodydecls, bodyname)) =
-          translate_term regime apply_operator
+          translate_term regime apply_operator native_context
+            string_bounds false
             ((tydict, tmdict), (bounds, body))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
@@ -1777,7 +2224,8 @@ local
         val expanded = Term.list_mk_abs
           (vars, Term.list_mk_comb (applied, vars))
       in
-        translate_term regime apply_operator (acc, (bounds, expanded))
+        translate_term regime apply_operator native_context string_bounds
+          false (acc, (bounds, expanded))
         handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       end
     fun constructor_info_for tydict ty constructor =
@@ -1806,8 +2254,10 @@ local
         val tmdict = Redblackmap.insert (tmdict, (rator, arity), cname)
         val acc = (tydict, tmdict)
         val (acc, declnames) = Lib.foldl_map
-          (fn (a, t) => translate_term regime apply_operator
-            (a, (bounds, t))) (acc, rands)
+          (fn (a, t) =>
+            translate_term regime apply_operator native_context
+              string_bounds false (a, (bounds, t)))
+          (acc, rands)
         val (declss, names) = Lib.split declnames
       in
         (acc, (typedecls @ List.concat declss, sexpr cname names))
@@ -1859,7 +2309,8 @@ local
           | NONE => raise ERR "translate_term" "not a selector case"
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, elem))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, elem))
       in
         (acc, (typedecls @ elemdecls, sexpr selector_name [elemname]))
       end
@@ -1892,10 +2343,13 @@ local
         val branch_terms = ListPair.mapEq branch_term (cases, infos)
         val acc = (tydict, tmdict)
         val (acc, (elemdecls, elemname)) =
-          translate_term regime apply_operator (acc, (bounds, elem))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, elem))
         val (acc, declbranches) = Lib.foldl_map
-          (fn (a, t) => translate_term regime apply_operator
-            (a, (bounds, t))) (acc, branch_terms)
+          (fn (a, t) =>
+            translate_term regime apply_operator native_context
+              string_bounds false (a, (bounds, t)))
+          (acc, branch_terms)
         val (branchdeclss, branchnames) = Lib.split declbranches
         fun tester (_, cname, _) = sexpr ("(_ is " ^ cname ^ ")") [elemname]
         fun cascaded [] [] = raise ERR "translate_term" "empty datatype case"
@@ -1961,7 +2415,8 @@ local
         val tmdict = Redblackmap.insert (tmdict, (select, 1), selector_name)
         val acc = (tydict, tmdict)
         val (acc, (xdecls, xname)) =
-          translate_term regime apply_operator (acc, (bounds, x))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, x))
       in
         (acc, (typedecls @ xdecls, sexpr selector_name [xname]))
       end
@@ -2000,36 +2455,64 @@ local
           | _ => raise ERR "translate_term" "record has multiple constructors"
         val acc = (tydict, tmdict)
         val (acc, (xdecls, xname)) =
-          translate_term regime apply_operator (acc, (bounds, x))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, x))
         val (acc, (newdecls, newname)) =
-          translate_term regime apply_operator (acc, (bounds, new_val))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, new_val))
         fun field_name (n, (selector_name, _)) =
           if n = j then newname else sexpr selector_name [xname]
         val field_names = ListPair.mapEq field_name
           (List.tabulate (List.length selectors, fn n => n), selectors)
       in
         (acc, (typedecls @ xdecls @ newdecls, sexpr cname field_names))
-      end
+    end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
+    val literal =
+      if expected_string then Lib.total native_string_literal tm else NONE
+    val _ =
+      if expected_string andalso not (Option.isSome literal) andalso
+         not (native_string_term native_context string_bounds tm)
+      then
+        raise ERR "translate_native_string"
+          ("missing wfstr guard for native SMT String term '" ^
+           Hol_pp.term_to_string tm ^ "'")
+      else
+        ()
   in
+    case literal of
+      SOME text => (acc, ([], text))
+    | NONE =>
     (* binders *)
     let
-      (* perhaps we should use a table of binders instead *)
-      val (binder, (vars, body)) = if boolSyntax.is_forall tm then
-          ("forall", boolSyntax.strip_forall tm)
-        else if boolSyntax.is_exists tm then
-          ("exists", boolSyntax.strip_exists tm)
-        else
-          raise ERR "translate_term" "not a binder"  (* handled below *)
+      val (binder, vars, native_vars, body) =
+        guarded_binder tm
+        handle Feedback.HOL_ERR _ =>
+          if boolSyntax.is_forall tm then
+            let val (vars, body) = boolSyntax.strip_forall tm
+            in ("forall", vars, [], body) end
+          else if boolSyntax.is_exists tm then
+            let val (vars, body) = boolSyntax.strip_exists tm
+            in ("exists", vars, [], body) end
+          else
+            raise ERR "translate_term" "not a binder"
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
-      val (tydict, vardecltys) = Lib.foldl_map (translate_type regime)
-        (tydict, List.map Term.type_of vars)
+      fun variable_type (tydict, var) =
+        if List.exists (Term.aconv var) native_vars then
+          (tydict, ([], "String"))
+        else
+          translate_type regime (tydict, Term.type_of var)
+      val (tydict, vardecltys) =
+        Lib.foldl_map variable_type (tydict, vars)
       val (vardeclss, vartys) = Lib.split vardecltys
       val vardecls = List.concat vardeclss
       val smtvars = ListPair.mapEq (fn (v, ty) => "(" ^ v ^ " " ^ ty ^ ")")
         (smtvars, vartys)
-      val (acc, (bodydecls, body)) = translate_term regime apply_operator
-        ((tydict, tmdict), (bounds, body))
+      val (acc, (bodydecls, body)) =
+        translate_term regime apply_operator native_context
+          (native_vars @ string_bounds) false
+          ((tydict, tmdict), (bounds, body))
+        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
     in
       (acc, (vardecls @ bodydecls, "(" ^ binder ^ " (" ^
         String.concatWith " " smtvars ^ ") " ^ body ^ ")"))
@@ -2043,7 +2526,9 @@ local
       (* we should translate the bodies without first creating the bound names *)
       val bounds_bodies = List.map (fn body => (bounds, body)) bodies
       val (acc, decls_bodies) =
-        Lib.foldl_map (translate_term regime apply_operator)
+        Lib.foldl_map
+          (translate_term regime apply_operator native_context
+            string_bounds false)
           (acc, bounds_bodies)
       (* now we can create the bound names *)
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
@@ -2053,7 +2538,8 @@ local
           decls_bodies_smtvars
       val bindings_str = String.concatWith " " (List.rev smtbinds)
       val (acc, (bodydecls, body)) =
-        translate_term regime apply_operator (acc, (bounds, body))
+        translate_term regime apply_operator native_context string_bounds
+          false (acc, (bounds, body))
     in
       (acc, (decls @ bodydecls,
         "(let (" ^ bindings_str ^ ") " ^ body ^ ")"))
@@ -2146,13 +2632,16 @@ local
                 ensure_type (acc, Term.type_of v)
               val old_value = Term.mk_comb (array, v)
               val (acc, (arraydecls, oldname)) =
-                translate_term regime apply_operator
+                translate_term regime apply_operator native_context
+                  string_bounds false
                   ((tydict, tmdict), (lambda_bounds, old_value))
               val (acc, (indexdecls, indexname)) =
-                translate_term regime apply_operator
+                translate_term regime apply_operator native_context
+                  string_bounds false
                   (acc, (bounds, index))
               val (acc, (valuedecls, valuename)) =
-                translate_term regime apply_operator
+                translate_term regime apply_operator native_context
+                  string_bounds false
                   (acc, (bounds, value))
               val body = sexpr "ite"
                 [sexpr "=" [smtvar, indexname], valuename, oldname]
@@ -2163,11 +2652,14 @@ local
         | _ =>
             let
               val (acc, (arraydecls, arrayname)) =
-                translate_term regime apply_operator (acc, (bounds, array))
+                translate_term regime apply_operator native_context
+                  string_bounds false (acc, (bounds, array))
               val (acc, (indexdecls, indexname)) =
-                translate_term regime apply_operator (acc, (bounds, index))
+                translate_term regime apply_operator native_context
+                  string_bounds false (acc, (bounds, index))
               val (acc, (valuedecls, valuename)) =
-                translate_term regime apply_operator (acc, (bounds, value))
+                translate_term regime apply_operator native_context
+                  string_bounds false (acc, (bounds, value))
             in
               (acc, (arraydecls @ indexdecls @ valuedecls,
                 sexpr "store" [arrayname, indexname, valuename]))
@@ -2215,10 +2707,12 @@ local
               else
                 ()
         val (acc, (functiondecls, functionname)) =
-          translate_term regime apply_operator (acc, (bounds, function))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, function))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
         val (acc, (argumentdecls, argumentname)) =
-          translate_term regime apply_operator (acc, (bounds, argument))
+          translate_term regime apply_operator native_context string_bounds
+            false (acc, (bounds, argument))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
         (acc, (functiondecls @ argumentdecls,
@@ -2274,12 +2768,29 @@ local
                    partial and full applications from splitting one symbol. *)
                 val (domtys, rngty) = doms_rng [] declaration_arity
                   (Term.type_of rator)
+                val native_signature =
+                  native_signature_for native_context rator declaration_arity
+                val string_args =
+                  case native_signature of
+                    SOME {string_args, ...} => string_args
+                  | NONE => []
+                val indexed_domtys =
+                  ListPair.zipEq
+                    (List.tabulate (List.length domtys, fn n => n), domtys)
+                fun translate_dom (tydict, (index, ty)) =
+                  if index_member index string_args then
+                    (tydict, ([], "String"))
+                  else
+                    translate_type regime (tydict, ty)
                 val (tydict, domdecltys) =
-                  Lib.foldl_map (translate_type regime) (tydict, domtys)
+                  Lib.foldl_map translate_dom (tydict, indexed_domtys)
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 val (tydict, (rngdecls, rngty)) =
-                  translate_type regime (tydict, rngty)
+                  if Option.isSome native_signature then
+                    (tydict, ([], "String"))
+                  else
+                    translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
                 val name = tm_prefix ^
                   Int.toString (Redblackmap.numItems tmdict)
@@ -2305,9 +2816,18 @@ local
                  (domdecls @ rngdecls @ [decl], name))
               end
             (* translate 'rands' *)
+            val string_args =
+              native_string_arg_indices native_context string_bounds
+                rator rands
+            val indexed_rands =
+              ListPair.zipEq
+                (List.tabulate (List.length rands, fn n => n), rands)
             val (acc, declnames) = Lib.foldl_map
-              (fn (a, t) => translate_term regime apply_operator
-                (a, (bounds, t))) (acc, rands)
+              (fn (a, (index, t)) =>
+                translate_term regime apply_operator native_context
+                  string_bounds (index_member index string_args)
+                  (a, (bounds, t)))
+              (acc, indexed_rands)
             val (declss, names) = Lib.split declnames
           in
             (acc, (decls @ List.concat declss, sexpr name names))
@@ -2463,20 +2983,25 @@ local
      full applications share one symbol. *)
   fun goal_to_SmtLib_aux request apply_operator
       (policy : logic_selection_policy)
-      (goal as (ts, t)) : translation * string list =
+      (goal as (original_ts, t)) : translation * string list =
   let
     val (regime, regime_reason) = select_regime request goal
+    val (native_context, ts) =
+      prepare_native_string_assumptions original_ts
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
     val bounds = Redblackmap.mkDict Term.compare
     val terms = ts @ [boolSyntax.mk_neg t]
     val (acc, smtlibs) = Lib.foldl_map
-      (fn (acc, tm) => translate_term regime apply_operator
-        (acc, (bounds, tm))) ((tydict, tmdict), terms)
+      (fn (acc, tm) =>
+        translate_term regime apply_operator native_context [] false
+          (acc, (bounds, tm)))
+      ((tydict, tmdict), terms)
       handle NestedTranslation e => raise e
     val (tydict, tmdict) = acc
-    val features = infer_features regime terms tydict tmdict
+    val features =
+      infer_features regime native_context terms tydict tmdict
     val (feature_logic, feature_reason) =
       infer_logic_from_features_for_regime regime features
     (* Z3's array-lambda extension is accepted uniformly under ALL, while
@@ -2496,8 +3021,8 @@ local
         NONE => (inferred_logic, reason)
       | SOME {logic, reason} => (logic, reason)
     val records = fn () =>
-      build_translation_records regime regime_reason terms selected_logic
-        reason features tydict tmdict
+      build_translation_records regime regime_reason native_context terms
+        selected_logic reason features tydict tmdict
     val translation = {logic = selected_logic, regime = regime,
       tydict = tydict, tmdict = tmdict, records = records}
     (* we choose to intertwine declarations and assertions (for no

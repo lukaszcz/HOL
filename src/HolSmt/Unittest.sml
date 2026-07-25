@@ -4359,6 +4359,151 @@ in
   ignore (SmtLib.translation_records translation)
 end
 
+fun smtlib_native_string_translation_success () =
+let
+  fun translate_assertions assertions =
+    case List.rev assertions of
+      conclusion :: reversed_assumptions =>
+        SmtLib.goal_to_SmtLib_translation NONE
+          (List.rev reversed_assumptions, conclusion)
+    | [] => die "native string script produced no assertions"
+  fun translate_script script =
+    translate_assertions (parse_smtlib_assertions script)
+  fun text_of result = String.concat (Lib.snd result)
+  fun assert_has label text snippet =
+    assert (contains snippet text,
+      label ^ " missed SMT-LIB snippet '" ^ snippet ^ "':\n" ^ text)
+  fun assert_lacks label text snippet =
+    assert (not (contains snippet text),
+      label ^ " unexpectedly emitted '" ^ snippet ^ "':\n" ^ text)
+  val full_surface =
+    translate_script
+      ("(set-logic QF_SLIA)\n" ^
+       "(declare-const s String)\n" ^
+       "(declare-const t String)\n" ^
+       "(declare-const u String)\n" ^
+       "(assert (and " ^
+       "(= (str.++ s t) s) (= (str.len s) 0) " ^
+       "(str.< s t) (str.<= s t) " ^
+       "(= (str.at s 0) t) (= (str.substr s 0 1) t) " ^
+       "(str.prefixof s t) (str.suffixof s t) (str.contains s t) " ^
+       "(= (str.indexof s t 0) 0) " ^
+       "(= (str.replace s t u) s) " ^
+       "(= (str.replace_all s t u) s) " ^
+       "(str.is_digit s) (= (str.to_code s) 0) " ^
+       "(= (str.from_code 65) s) (= (str.to_int s) 0) " ^
+       "(= (str.from_int 65) s) " ^
+       "(= (str.replace_re s (str.to_re t) u) s) " ^
+       "(= (str.replace_re_all s (str.to_re t) u) s) " ^
+       "(= (_ char #x41) s) " ^
+       "(str.in_re s re.none) (str.in_re s re.all) " ^
+       "(str.in_re s re.allchar) " ^
+       "(str.in_re s (re.++ (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.union (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.inter (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.diff (str.to_re s) (str.to_re t))) " ^
+       "(str.in_re s (re.comp (str.to_re t))) " ^
+       "(str.in_re s (re.* (str.to_re t))) " ^
+       "(str.in_re s (re.+ (str.to_re t))) " ^
+       "(str.in_re s (re.opt (str.to_re t))) " ^
+       "(str.in_re s (re.range s t)) " ^
+       "(str.in_re s ((_ re.^ 2) (str.to_re t))) " ^
+       "(str.in_re s ((_ re.loop 1 3) (str.to_re t)))))\n")
+  val full_translation = Lib.fst full_surface
+  val full_text = text_of full_surface
+  val expected_symbols = [
+    "str.++", "str.len", "str.<", "str.<=", "str.at", "str.substr",
+    "str.prefixof", "str.suffixof", "str.contains", "str.indexof",
+    "str.replace", "str.replace_all", "str.is_digit", "str.to_code",
+    "str.from_code", "str.to_int", "str.from_int", "str.replace_re",
+    "str.replace_re_all", "(_ char #x41)", "str.in_re", "str.to_re",
+    "re.none", "re.all", "re.allchar", "re.++", "re.union", "re.inter",
+    "re.diff", "re.comp", "re.*", "re.+", "re.opt", "re.range",
+    "(_ re.^ 2)", "(_ re.loop 1 3)"
+  ]
+  val string_ty = listSyntax.mk_list_type numSyntax.num
+  val s = Term.mk_var ("literal_s", string_ty)
+  val literal = listSyntax.mk_list
+    (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
+      [0, 31, 32, 34, 65, 127, 128512, 196607],
+     numSyntax.num)
+  val literal_result =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([mk_wfstr s], boolSyntax.mk_eq (s, literal))
+  val literal_text = text_of literal_result
+  val binder_result =
+    translate_script
+      ("(set-logic QF_S)\n" ^
+       "(assert (forall ((s String)) (= (str.++ s \"\") s)))\n")
+  val binder_text = text_of binder_result
+  val qf_s_result =
+    translate_script
+      ("(set-logic QF_S)\n" ^
+       "(declare-const s String)\n" ^
+       "(declare-const t String)\n" ^
+       "(assert (= (str.++ s t) (str.++ t s)))\n")
+  val nonlinear_result =
+    translate_script
+      ("(set-logic QF_SNIA)\n" ^
+       "(declare-const s String)\n" ^
+       "(declare-const t String)\n" ^
+       "(assert (= (* (str.len s) (str.len t)) 0))\n")
+  val raw_list_text = text_of
+    (SmtLib.goal_to_SmtLib_translation NONE
+      ([], ``(raw_xs:num list) = raw_ys``))
+in
+  assert
+    (SmtLib.translation_logic full_translation = "QF_SLIA",
+     "full native string surface inferred " ^
+     SmtLib.translation_logic full_translation ^ ":\n" ^ full_text);
+  List.app (assert_has "full native string surface" full_text)
+    expected_symbols;
+  assert_has "native String declaration" full_text
+    "(declare-fun v0 () String)";
+  assert_lacks "native String guards" full_text "wfstr";
+  assert_lacks "native String representation" full_text "List_Num";
+  assert_lacks "native RegLan representation" full_text
+    "declare-datatypes";
+  assert_has "native string literal" literal_text
+    "\"\\u{0}\\u{1f} \\u{22}A\\u{7f}\\u{1f600}\\u{2ffff}\"";
+  assert_has "relativized String binder" binder_text
+    "(forall ((b0 String)) (= (str.++ b0 \"\") b0))";
+  assert_lacks "relativized String binder" binder_text "wfstr";
+  assert
+    (SmtLib.translation_logic (Lib.fst binder_result) = "ALL",
+     "quantified native string goal did not select conservative ALL");
+  assert
+    (SmtLib.translation_logic (Lib.fst qf_s_result) = "QF_S",
+     "pure native string goal did not infer QF_S");
+  assert
+    (SmtLib.translation_logic (Lib.fst nonlinear_result) = "QF_SNIA",
+     "nonlinear native string goal did not infer QF_SNIA");
+  assert_has "raw num list" raw_list_text "(List_Num 0)";
+  assert_lacks "raw num list" raw_list_text " String)";
+  ignore (SmtLib.translation_records full_translation)
+end
+
+fun smtlib_native_string_missing_guard_diagnostic () =
+let
+  val _ =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([], ``smtstring$smtstr_concat
+        (unguarded_s:num list) unguarded_t = unguarded_s``)
+in
+  die "unguarded native smtstring goal translated successfully"
+end
+handle Feedback.HOL_ERR holerr =>
+  let
+    val message = Feedback.message_of holerr
+  in
+    assert
+      (Feedback.top_structure_of holerr = "SmtLib" andalso
+       Feedback.top_function_of holerr = "translate_native_string" andalso
+       contains "missing wfstr guard" message andalso
+       contains "unguarded_s" message,
+       "native smtstring missing-guard diagnostic mismatch: " ^ message)
+  end
+
 (* P3.4 leaves this function-valued argument on the byte-identical FO route:
    nested Arrays preserve it without encountering an HO-trigger shape. *)
 fun smtlib_higher_order_translation_abstraction_success () =
@@ -7966,6 +8111,10 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
+    ("smtlib_native_string_translation_success",
+      smtlib_native_string_translation_success),
+    ("smtlib_native_string_missing_guard_diagnostic",
+      smtlib_native_string_missing_guard_diagnostic),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_ho_parser_dict_currying_success",
