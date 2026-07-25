@@ -85,6 +85,10 @@ struct
                          Term.term
                      | TH_LEMMA_DATATYPE of th_lemma_metadata *
                          proofterm list * Term.term
+                     | TH_LEMMA_SEQ of th_lemma_metadata * proofterm list *
+                         Term.term
+                     | TH_LEMMA_CHAR of th_lemma_metadata * proofterm list *
+                         Term.term
                      | TH_LEMMA_ADVANCED of th_lemma_metadata * proofterm list *
                          Term.term
                      | TRANS of proofterm * proofterm * Term.term
@@ -190,15 +194,21 @@ struct
     mk_rule ("th-lemma-fp", ["th-lemma[fp]", "th-lemma-fpa",
       "th-lemma[fpa]", "th-lemma-floating-point",
       "th-lemma[floating-point]"], ListPremises, "th_lemma[advanced]"),
-    mk_rule ("th-lemma-seq", ["th-lemma[seq]", "th-lemma-sequence",
+    mk_z3_4_rule ("th-lemma-seq", ["th-lemma[seq]", "th-lemma-sequence",
       "th-lemma[sequence]", "th-lemma-sequences", "th-lemma[sequences]"],
-      ListPremises, "th_lemma[advanced]"),
-    mk_rule ("th-lemma-string", ["th-lemma[string]", "th-lemma-strings",
+      ListPremises, "th_lemma[seq]"),
+    mk_z3_4_rule ("th-lemma-string", ["th-lemma[string]",
+      "th-lemma-strings",
       "th-lemma[strings]", "th-lemma-str", "th-lemma[str]"],
-      ListPremises, "th_lemma[advanced]"),
-    mk_rule ("th-lemma-regexp", ["th-lemma[regexp]", "th-lemma-regex",
+      ListPremises, "th_lemma[seq]"),
+    mk_z3_4_rule ("th-lemma-regexp", ["th-lemma[regexp]",
+      "th-lemma-regex",
       "th-lemma[regex]", "th-lemma-re", "th-lemma[re]"], ListPremises,
-      "th_lemma[advanced]"),
+      "th_lemma[seq]"),
+    mk_z3_4_rule ("th-lemma-char", ["th-lemma[char]",
+      "th-lemma-character", "th-lemma[character]",
+      "th-lemma-characters", "th-lemma[characters]"], ListPremises,
+      "th_lemma[char]"),
     mk_rule ("th-lemma-datatype", ["th-lemma[datatype]",
       "th-lemma-datatypes", "th-lemma[datatypes]", "th-lemma-dt",
       "th-lemma[dt]"], ListPremises, "th_lemma[datatype]"),

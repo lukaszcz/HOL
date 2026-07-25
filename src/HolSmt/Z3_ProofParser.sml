@@ -661,9 +661,7 @@ local
               ("malformed Z3 proof rule '" ^ name ^ "' in local proof subterm <" ^
                Library.term_to_string t ^ ">: " ^ Feedback.message_of holerr))
     | NONE =>
-        if name = "th-lemma-char" then
-          checked (proofterm_maker version "th_lemma[advanced]" args)
-        else if List.null args andalso String.isPrefix "@x" name then
+        if List.null args andalso String.isPrefix "@x" name then
           ID (proofterm_id name)
         else
           raise ERR "proofterm_of_term"
@@ -768,6 +766,10 @@ local
         th_lemma_prems_pt version false TH_LEMMA_BV
     | proofterm_maker version "th_lemma[datatype]" =
         th_lemma_prems_pt version false TH_LEMMA_DATATYPE
+    | proofterm_maker version "th_lemma[seq]" =
+        th_lemma_prems_pt version false TH_LEMMA_SEQ
+    | proofterm_maker version "th_lemma[char]" =
+        th_lemma_prems_pt version false TH_LEMMA_CHAR
     | proofterm_maker version "th_lemma[advanced]" =
         th_lemma_prems_pt version false TH_LEMMA_ADVANCED
     | proofterm_maker version "trans" = two_prems_pt version false TRANS

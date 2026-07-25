@@ -6737,7 +6737,7 @@ let
     "((proof ((_ th-lemma char) false)))"
 in
   case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
-    SOME (Z3_Proof.TH_LEMMA_ADVANCED
+    SOME (Z3_Proof.TH_LEMMA_CHAR
       ({theory, subkind, indices}, [], concl)) =>
         assert (theory = "char" andalso subkind = NONE andalso
             List.null indices andalso concl ~~ ``F``,
@@ -7600,6 +7600,96 @@ fun datatype_prove_unsupported_diagnostic () =
         "datatype th-lemma diagnostic did not include conclusion: " ^ msg)
     end
 
+fun assert_string_prover name prover tm =
+  (let
+     val thm = prover tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
+     Library.check_oracle_tags name thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: " ^ name ^ " did not prove string goal: " ^
+       Feedback.message_of holerr)
+        | exn =>
+      die ("FAIL: " ^ name ^ " raised " ^ General.exnMessage exn))
+
+fun string_prove_ladder_rungs_success () =
+  (assert (not (List.null Z3_ProformaThms.string_thm_list),
+     "string proforma list was not installed");
+   assert_string_prover "string_prove proforma rung"
+     SmtStringProve.proforma_prove
+     ``smtstr_concat (smtstr_concat s t) u =
+       smtstr_concat s (smtstr_concat t u)``;
+   assert_string_prover "string_prove ground evaluation rung"
+     SmtStringProve.ground_eval_prove
+     ``smtstr_lt [97; 98] [97; 99] /\
+       smtstr_to_int [49; 50] = 12 /\
+       smt_in_re [97; 97] (reglan_star (reglan_to_re [97]))``;
+   assert_string_prover "string_prove length arithmetic rung"
+     (SmtStringProve.length_arith_prove intLib.ARITH_PROVE)
+     ``(&(smtstr_len (smtstr_concat s t)) : int) >=
+       &(smtstr_len s)``)
+
+fun string_prove_structured_failures () =
+  let
+    fun expect_message name expected thunk =
+      (ignore (thunk ());
+       die ("FAIL: unsupported " ^ name ^ " replayed successfully"))
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr
+        in assert (String.isSubstring expected msg,
+          name ^ " diagnostic did not include '" ^ expected ^ "': " ^ msg)
+        end
+  in
+    expect_message "string th-lemma" "theory=seq"
+      (fn () =>
+        SmtStringProve.string_prove intLib.ARITH_PROVE ``F``);
+    expect_message "corpus-shaped string th-lemma" "theory=seq"
+      (fn () =>
+        SmtStringProve.string_prove intLib.ARITH_PROVE
+          ``~((&(smtstr_len x) : int) <= 1) \/
+            smtstr_to_int x = seq_stoi x 0``);
+    expect_message "char th-lemma" "theory=char"
+      (fn () => SmtStringProve.char_prove ``F``);
+    expect_message "non-string Seq th-lemma"
+      "theory:Z3_Extensions:seq-set-bag:checked-replay"
+      (fn () =>
+        SmtStringProve.string_prove intLib.ARITH_PROVE
+          ``(xs : bool list) = xs``)
+  end
+
+fun z3_string_th_lemma_dispatch_success () =
+let
+  val proforma = replay_z3_proof_string
+    "((declare-fun x () String) (declare-fun y () String) \
+    \(declare-fun z () String) (proof ((_ th-lemma seq) \
+    \(= (str.++ (str.++ x y) z) (str.++ x (str.++ y z))))))"
+  val ground = replay_z3_proof_string
+    "((proof ((_ th-lemma string) (= (str.to_int \"12\") 12))))"
+  val alias = replay_z3_proof_string
+    "((proof ((_ th-lemma regexp) true)))"
+in
+  assert (Thm.concl proforma ~~
+      ``smtstr_concat (smtstr_concat x y) z =
+        smtstr_concat x (smtstr_concat y z)``,
+    "th-lemma-seq did not route through the proforma rung");
+  assert (Thm.concl ground ~~
+      ``smtstr_to_int [49; 50] = 12``,
+    "th-lemma-string alias did not route through ground evaluation");
+  assert (Thm.concl alias ~~ ``T``,
+    "th-lemma-regexp alias did not route through the seq handler");
+  Library.check_oracle_tags "Z3 seq proforma dispatch" proforma;
+  Library.check_oracle_tags "Z3 string ground dispatch" ground;
+  Library.check_oracle_tags "Z3 regexp alias dispatch" alias
+end
+
+fun z3_char_th_lemma_placeholder_diagnostic () =
+  expect_hol_error_contains "char th-lemma placeholder"
+    "unsupported th-lemma shape: theory=char"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof ((_ th-lemma char) false)))"))
+
 fun z3_rewrite_datatype_rung_replay_success () =
 let
   val acyclic_eq =
@@ -8440,6 +8530,14 @@ let
       datatype_prove_ladder_rungs_success),
     ("datatype_prove_unsupported_diagnostic",
       datatype_prove_unsupported_diagnostic),
+    ("string_prove_ladder_rungs_success",
+      string_prove_ladder_rungs_success),
+    ("string_prove_structured_failures",
+      string_prove_structured_failures),
+    ("z3_string_th_lemma_dispatch_success",
+      z3_string_th_lemma_dispatch_success),
+    ("z3_char_th_lemma_placeholder_diagnostic",
+      z3_char_th_lemma_placeholder_diagnostic),
     ("z3_rewrite_datatype_rung_replay_success",
       z3_rewrite_datatype_rung_replay_success),
     ("z3_th_lemma_advanced_unsupported_diagnostic",

@@ -1900,6 +1900,46 @@ local
       raise ERR "z3_th_lemma_advanced_unsupported"
         (unsupported_advanced_th_lemma_message state metadata t))
 
+  fun unsupported_string_th_lemma_message dispatch_theory
+      (state : state) (metadata : th_lemma_metadata) t =
+  let
+    val {missing_feature, failing_case_ids} =
+      advanced_th_lemma_obligation metadata
+  in
+    "unsupported th-lemma shape: theory=" ^ dispatch_theory ^ "; " ^
+    th_lemma_metadata_to_string metadata ^
+    "; z3_version=" ^ #z3_version state ^
+    "; missing feature: " ^ missing_feature ^
+    "; failing case IDs: " ^ String.concatWith ", " failing_case_ids ^
+    "; proof-format limitation=the checked string prover has no rung for " ^
+    "this clause shape; conclusion=" ^ Library.term_to_string t
+  end
+
+  fun string_th_lemma_wrapper dispatch_theory metadata prover
+      (state, thms, t) =
+  let
+    val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    val thm =
+      prover t'
+      handle Feedback.HOL_ERR holerr =>
+        if String.isSubstring "theory:Z3_Extensions:seq-set-bag"
+            (Feedback.message_of holerr)
+        then raise Feedback.HOL_ERR holerr
+        else
+          raise ERR ("z3_th_lemma_" ^ dispatch_theory)
+            (unsupported_string_th_lemma_message dispatch_theory
+              state metadata t')
+  in
+    (state_cache_thm state thm, Drule.LIST_MP thms thm)
+  end
+
+  fun z3_th_lemma_seq metadata =
+    string_th_lemma_wrapper "seq" metadata
+      (SmtStringProve.string_prove arith_prove)
+
+  fun z3_th_lemma_char metadata =
+    string_th_lemma_wrapper "char" metadata SmtStringProve.char_prove
+
   fun z3_trans (state, thm1, thm2, t) =
     (state, Thm.TRANS thm1 thm2)
 
@@ -2048,6 +2088,8 @@ local
     | proofterm_replay_handler (TH_LEMMA_BASIC _) = "th_lemma[basic]"
     | proofterm_replay_handler (TH_LEMMA_BV _) = "th_lemma[bv]"
     | proofterm_replay_handler (TH_LEMMA_DATATYPE _) = "th_lemma[datatype]"
+    | proofterm_replay_handler (TH_LEMMA_SEQ _) = "th_lemma[seq]"
+    | proofterm_replay_handler (TH_LEMMA_CHAR _) = "th_lemma[char]"
     | proofterm_replay_handler (TH_LEMMA_ADVANCED _) = "th_lemma[advanced]"
     | proofterm_replay_handler (TRANS _) = "trans"
     | proofterm_replay_handler (TRANS_STAR _) = "trans_star"
@@ -2067,6 +2109,10 @@ local
     | proofterm_rule (TH_LEMMA_BV (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule (TH_LEMMA_DATATYPE (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_SEQ (metadata, _, _)) =
+        th_lemma_rule_name metadata
+    | proofterm_rule (TH_LEMMA_CHAR (metadata, _, _)) =
         th_lemma_rule_name metadata
     | proofterm_rule (TH_LEMMA_ADVANCED (metadata, _, _)) =
         th_lemma_rule_name metadata
@@ -2103,6 +2149,8 @@ local
     | proofterm_concl (TH_LEMMA_BASIC (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_BV (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_DATATYPE (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_SEQ (_, _, concl)) = SOME concl
+    | proofterm_concl (TH_LEMMA_CHAR (_, _, concl)) = SOME concl
     | proofterm_concl (TH_LEMMA_ADVANCED (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS (_, _, concl)) = SOME concl
     | proofterm_concl (TRANS_STAR (_, concl)) = SOME concl
@@ -2417,6 +2465,14 @@ local
         (metadata, pts, concl)) continuation =
         list_prems state_proof (th_lemma_rule_name metadata)
           z3_th_lemma_datatype (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_SEQ (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata)
+          (z3_th_lemma_seq metadata) (pts, concl) continuation []
+    | thm_of_proofterm (state_proof, TH_LEMMA_CHAR (metadata, pts, concl))
+        continuation =
+        list_prems state_proof (th_lemma_rule_name metadata)
+          (z3_th_lemma_char metadata) (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TH_LEMMA_ADVANCED (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata)
@@ -2828,6 +2884,7 @@ in
   val beta_equal_for_test = beta_equal
   val eta_equal_for_test = eta_equal
   val monotonicity_prove_for_test = monotonicity_prove
+  val string_prove_for_test = SmtStringProve.string_prove arith_prove
 
   fun replay_root_for_test proof : Thm.thm =
   let
