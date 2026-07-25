@@ -14,7 +14,7 @@ struct
 
 local
 
-  local open HolSmtTheory in end
+  local open HolSmtTheory smtstringz3Theory in end
 
   open Z3_Proof
 
@@ -153,6 +153,205 @@ local
   fun builtin_name name =
     SmtLib_Theories.K_zero_zero (Term.mk_var (name, Type.alpha))
 
+  (***************************************************************************)
+  (* Z3-internal Unicode-string symbols                                      *)
+  (***************************************************************************)
+
+  val z3_string_ty = listSyntax.mk_list_type numSyntax.num
+
+  fun z3_string_const name =
+    Term.prim_mk_const {Thy = "smtstringz3", Name = name}
+
+  fun z3_string_app name args =
+    Term.list_mk_comb (z3_string_const name, args)
+
+  fun z3_natural tm =
+    numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
+
+  fun z3_same_index expected actual =
+    Term.same_const expected actual orelse Term.aconv expected actual
+
+  fun z3_indexed_unary name make =
+    let val marker = z3_string_const name
+    in
+      fn _ => fn indices => fn args =>
+        case (indices, args) of
+          ([], []) => marker
+        | ([], [x]) => make x
+        | ([index], [x]) =>
+            if z3_same_index marker index then make x
+            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+              "unexpected self index"
+        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+            "at most one self index and one argument expected"
+    end
+
+  fun z3_indexed_binary name make =
+    let val marker = z3_string_const name
+    in
+      fn _ => fn indices => fn args =>
+        case (indices, args) of
+          ([], []) => marker
+        | ([], [x, y]) => make (x, y)
+        | ([index], [x, y]) =>
+            if z3_same_index marker index then make (x, y)
+            else raise ERR ("<z3_string_dict." ^ name ^ ">")
+              "unexpected self index"
+        | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+            "at most one self index and two arguments expected"
+    end
+
+  fun z3_string_witness_specs version =
+    let
+      val common =
+        ["seq.prefix.c", "seq.prefix.d", "seq.prefix.x",
+         "seq.prefix.y", "seq.prefix.z",
+         "str.<.c", "str.<.d", "str.<.x", "str.<.y", "str.<.z"]
+      val names =
+        case version of
+          "4.11.2" => common
+        | "4.12.4" => common @ ["seq.p.suffix"]
+        | "4.13.0" => common @ ["seq.p.suffix"]
+        | "4.14.1" => common @ ["seq.p.suffix"]
+        | "4.15.3" => common @ ["seq.p.suffix"]
+        | _ => raise ERR "z3_string_witness_specs"
+            ("no pinned string-proof inventory for Z3 " ^ version)
+      fun result_ty name =
+        if String.isSuffix ".c" name orelse String.isSuffix ".d" name then
+          numSyntax.num
+        else z3_string_ty
+      fun witness name =
+        let
+          val ty = boolSyntax.list_mk_fun
+            ([z3_string_ty, z3_string_ty], result_ty name)
+        in
+          (name, Term.mk_var (name, ty))
+        end
+    in
+      List.map witness names
+    end
+
+  fun z3_string_witness_entry (name, witness) =
+    (name, fn _ => fn indices => fn args =>
+      case (indices, args) of
+        ([], []) => witness
+      | ([index], [x, y]) =>
+          if Term.aconv index witness then
+            Term.list_mk_comb (witness, [x, y])
+          else
+            raise ERR ("<z3_string_dict." ^ name ^ ">")
+              "unexpected self index"
+      | _ => raise ERR ("<z3_string_dict." ^ name ^ ">")
+          "one self index and two arguments expected")
+
+  fun z3_bits2char bits =
+    let
+      val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
+      fun add_bit ([], 18, sum) = sum
+        | add_bit (bit :: rest, index, sum) =
+            let
+              val weight = numSyntax.mk_exp
+                (two, numSyntax.mk_numeral (Arbnum.fromInt index))
+              val contribution =
+                boolSyntax.mk_cond (bit, weight, numSyntax.zero_tm)
+            in
+              add_bit (rest, index + 1,
+                numSyntax.mk_plus (sum, contribution))
+            end
+        | add_bit _ = raise ERR "<z3_string_dict.bits2char>"
+            "exactly 18 Boolean arguments expected"
+    in
+      add_bit (bits, 0, numSyntax.zero_tm)
+    end
+
+  val z3_string_tydict = Library.dict_from_list [
+    ("Char", SmtLib_Theories.K_zero_zero numSyntax.num)
+  ]
+
+  fun z3_string_tmdict version =
+    let
+      val string_witnesses = z3_string_witness_specs version
+      val entries = [
+        ("_", SmtLib_Theories.zero_zero (fn token =>
+          case SmtLib_Parser.proof_string_token token of
+            SOME value =>
+              (listSyntax.mk_list
+                (List.map
+                  (numSyntax.mk_numeral o Arbnum.fromInt)
+                  (SmtLib_String_Literal.decode_string_literal value),
+                 numSyntax.num)
+               handle SmtLib_String_Literal.InvalidStringLiteral detail =>
+                 raise ERR "<z3_string_dict._>" detail)
+          | NONE => raise ERR "<z3_string_dict._>"
+              "not a proof string literal")),
+        ("Char", fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([code], []) => z3_natural code
+          | _ => raise ERR "<z3_string_dict.Char>"
+              "one code-point index and no arguments expected"),
+        ("seq.unit", SmtLib_Theories.K_zero_one
+          (fn c => z3_string_app "seq_unit" [c])),
+        ("seq.nth_i", SmtLib_Theories.K_zero_two
+          (fn (s, i) => z3_string_app "seq_nth_i"
+            [s, z3_natural i])),
+        ("seq.tail", z3_indexed_binary "seq_tail"
+          (fn (s, i) => z3_string_app "seq_tail"
+            [s, z3_natural i])),
+        ("seq.eq", z3_indexed_binary "seq_eq"
+          (fn (s, t) => z3_string_app "seq_eq" [s, t])),
+        ("seq.stoi", z3_indexed_binary "seq_stoi"
+          (fn (s, i) => z3_string_app "seq_stoi"
+            [s, z3_natural i])),
+        ("seq.digit2int", z3_indexed_unary "seq_digit2int"
+          (fn c => z3_string_app "seq_digit2int" [c])),
+        ("seq.digit", SmtLib_Theories.K_zero_one
+          (fn c => z3_string_app "seq_digit" [c])),
+        ("char.is_digit", SmtLib_Theories.K_zero_one
+          (fn c => z3_string_app "char_is_digit" [c])),
+        ("char.<=", SmtLib_Theories.K_zero_two numSyntax.mk_leq),
+        ("bits2char", fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([], []) => Term.mk_var ("bits2char", Type.alpha)
+          | ([marker], bits) =>
+              if Term.is_var marker andalso
+                 Lib.fst (Term.dest_var marker) = "bits2char" then
+                z3_bits2char bits
+              else
+                raise ERR "<z3_string_dict.bits2char>"
+                  "unexpected self index"
+          | _ => raise ERR "<z3_string_dict.bits2char>"
+              "one self index and 18 arguments expected"),
+        ("char.bit", fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([marker, bit], [c]) =>
+              if Term.is_var marker andalso
+                 Lib.fst (Term.dest_var marker) = "char.bit" then
+                z3_string_app "char_bit" [z3_natural bit, c]
+              else
+                raise ERR "<z3_string_dict.char.bit>"
+                  "unexpected self index"
+          | ([], []) => Term.mk_var ("char.bit", Type.alpha)
+          | _ => raise ERR "<z3_string_dict.char.bit>"
+              "self index, bit index, and one argument expected"),
+        ("aut.accept", fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([marker], [s, state, re]) =>
+              if Term.is_var marker andalso
+                 Lib.fst (Term.dest_var marker) = "aut.accept" then
+                z3_string_app "aut_accept"
+                  [s, z3_natural state, re]
+              else
+                raise ERR "<z3_string_dict.aut.accept>"
+                  "unexpected self index"
+          | ([], []) => Term.mk_var ("aut.accept", Type.alpha)
+          | _ => raise ERR "<z3_string_dict.aut.accept>"
+              "one self index and three arguments expected")
+      ]
+    in
+      Library.dict_from_list
+        (entries @ List.map z3_string_witness_entry string_witnesses)
+    end
+
   fun proof_rule_builtin (rule : proof_rule) =
     let
       val names = rule_names rule
@@ -184,6 +383,7 @@ local
     ("basic",           builtin_name "basic"),
     ("bit-blast",       builtin_name "bit-blast"),
     ("bv",              builtin_name "bv"),
+    ("char",            builtin_name "char"),
     ("datatype",        builtin_name "datatype"),
     ("datatypes",       builtin_name "datatypes"),
     ("dt",              builtin_name "dt"),
@@ -461,7 +661,9 @@ local
               ("malformed Z3 proof rule '" ^ name ^ "' in local proof subterm <" ^
                Library.term_to_string t ^ ">: " ^ Feedback.message_of holerr))
     | NONE =>
-        if List.null args andalso String.isPrefix "@x" name then
+        if name = "th-lemma-char" then
+          checked (proofterm_maker version "th_lemma[advanced]" args)
+        else if List.null args andalso String.isPrefix "@x" name then
           ID (proofterm_id name)
         else
           raise ERR "proofterm_of_term"
@@ -798,14 +1000,22 @@ in
     (* Resolve once, here: everything downstream -- rule lookup, gating and
        diagnostics -- then works with a tested anchor. *)
     val z3_version = resolve_version z3_version
+    val string_witnesses = z3_string_witness_specs z3_version
+    val tydict = Library.union_dict tydict z3_string_tydict
+    val tmdict = Library.union_dict tmdict
+      (z3_string_tmdict z3_version)
     (* union of user-declared names and Z3's inference rule names *)
     val tmdict = Library.union_dict tmdict z3_builtin_dict
     (* parse the stream *)
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"
       else ()
-    val get_token = Library.get_token (Library.get_buffered_char instream)
-    val initial_proof = empty_proof z3_version
+    val text = TextIO.inputAll instream
+    val get_token = SmtLib_Parser.make_proof_tokenizer text
+    val initial_proof = update_proof_vars (empty_proof z3_version)
+      (List.foldl
+        (fn ((_, witness), vars) => HOLset.add (vars, witness))
+        Term.empty_tmset string_witnesses)
     val proof = parse_proof get_token
       (tydict, tmdict, initial_proof)
     val _ = if !Library.trace > 0 then

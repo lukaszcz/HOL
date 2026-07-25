@@ -6636,6 +6636,154 @@ in
   ignore proof
 end
 
+fun z3_proof_parser_string_internal_symbols_success () =
+let
+  val fragment =
+    "((declare-fun x () String)\n\
+    \(declare-fun ch () Char)\n\
+    \(proof\n\
+    \(asserted\n\
+    \(and\n\
+    \ (= x \"a\")\n\
+    \ (= ch (_ Char 97))\n\
+    \ (= (seq.unit (_ Char 97)) (seq.unit (_ Char 97)))\n\
+    \ (= (seq.nth_i x 0) (seq.nth_i x 0))\n\
+    \ ((_ seq.eq seq.eq) x ((_ seq.tail seq.tail) x 0))\n\
+    \ (= ((_ seq.stoi seq.stoi) x 0) (seq.stoi x 0))\n\
+    \ (= ((_ seq.digit2int seq.digit2int) ch)\n\
+    \    (seq.digit2int ch))\n\
+    \ (= (seq.digit ch) (seq.digit ch))\n\
+    \ (char.is_digit ch)\n\
+    \ (char.<= ch ch)\n\
+    \ ((_ char.bit char.bit 0) ch)\n\
+    \ (= (seq.digit ((_ bits2char bits2char)\n\
+    \      true false false false false false false false false\n\
+    \      false false false false false false false false false))\n\
+    \    (seq.digit ch))\n\
+    \ ((_ aut.accept aut.accept) x 0 (str.to_re x))\n\
+    \ (= ((_ seq.prefix.c seq.prefix.c) x x)\n\
+    \    ((_ seq.prefix.d seq.prefix.d) x x))\n\
+    \ ((_ seq.eq seq.eq)\n\
+    \   ((_ seq.prefix.x seq.prefix.x) x x)\n\
+    \   (str.++ ((_ seq.prefix.y seq.prefix.y) x x)\n\
+    \           ((_ seq.prefix.z seq.prefix.z) x x)))\n\
+    \ (= ((_ str.<.c str.<.c) x x)\n\
+    \    ((_ str.<.d str.<.d) x x))\n\
+    \ ((_ seq.eq seq.eq)\n\
+    \   ((_ str.<.x str.<.x) x x)\n\
+    \   (str.++ ((_ str.<.y str.<.y) x x)\n\
+    \           ((_ str.<.z str.<.z) x x))))))))"
+  val expected_constants = [
+    "seq_unit", "seq_nth_i", "seq_tail", "seq_eq", "seq_stoi",
+    "seq_digit2int", "seq_digit", "char_is_digit", "char_bit",
+    "aut_accept"
+  ]
+  val expected_witnesses = [
+    "seq.prefix.c", "seq.prefix.d", "seq.prefix.x",
+    "seq.prefix.y", "seq.prefix.z", "str.<.c", "str.<.d",
+    "str.<.x", "str.<.y", "str.<.z"
+  ]
+  fun root_conclusion proof =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.ASSERTED concl) => concl
+    | SOME _ => die "FAIL: string-internal fragment parsed to wrong rule"
+    | NONE => die "FAIL: string-internal fragment has no root proof step"
+  fun has_constant name concl =
+    Lib.can (HolKernel.find_term (fn tm =>
+      Term.is_const tm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const tm
+      in Thy = "smtstringz3" andalso Name = name end)) concl
+  fun has_witness name concl =
+    List.exists (fn tm =>
+      Term.is_var tm andalso Lib.fst (Term.dest_var tm) = name)
+      (Term.free_vars concl)
+  fun check_version version =
+    let
+      val proof = parse_z3_proof_string version fragment
+      val concl = root_conclusion proof
+      val ch = List.find (fn tm =>
+        Term.is_var tm andalso Lib.fst (Term.dest_var tm) = "ch")
+        (Term.free_vars concl)
+    in
+      List.app (fn name => assert (has_constant name concl,
+        "Z3 " ^ version ^ " did not resolve " ^ name ^
+        " to smtstringz3Theory")) expected_constants;
+      List.app (fn name => assert (has_witness name concl,
+        "Z3 " ^ version ^ " did not retain proof-local witness " ^
+        name)) expected_witnesses;
+      if version = "4.15.3" then
+        assert (HOLset.member (Z3_Proof.proof_vars proof,
+            Term.mk_var ("seq.p.suffix",
+              boolSyntax.list_mk_fun
+                ([listSyntax.mk_list_type numSyntax.num,
+                  listSyntax.mk_list_type numSyntax.num],
+                 listSyntax.mk_list_type numSyntax.num))),
+          "Z3 4.15.3 did not register seq.p.suffix as proof-local")
+      else ();
+      case ch of
+        SOME tm => assert (Term.type_of tm = numSyntax.num,
+          "Z3 " ^ version ^ " Char sort did not resolve to num")
+      | NONE => die ("FAIL: Z3 " ^ version ^
+          " string-internal fragment lost its Char variable")
+    end
+in
+  check_version "4.11.2";
+  check_version "4.15.3"
+end
+
+fun z3_proof_parser_char_th_lemma_index_success () =
+let
+  val proof = parse_z3_proof_string "4.15.3"
+    "((proof ((_ th-lemma char) false)))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.TH_LEMMA_ADVANCED
+      ({theory, subkind, indices}, [], concl)) =>
+        assert (theory = "char" andalso subkind = NONE andalso
+            List.null indices andalso concl ~~ ``F``,
+          "char th-lemma index metadata was not preserved")
+  | SOME _ => die "FAIL: char th-lemma parsed to unexpected constructor"
+  | NONE => die "FAIL: char th-lemma proof has no root step"
+end
+
+fun benchmark_rejects_z3_string_internal_symbols () =
+let
+  val cases = [
+    ("Char", "(declare-const ch Char)\n(assert (= ch ch))\n"),
+    ("Char", "(assert (= x (_ Char 97)))\n"),
+    ("seq.unit", "(assert (= x (seq.unit 97)))\n"),
+    ("seq.nth_i", "(assert (= (seq.nth_i x 0) 0))\n"),
+    ("seq.tail",
+      "(assert (= x ((_ seq.tail seq.tail) x 0)))\n"),
+    ("seq.eq", "(assert ((_ seq.eq seq.eq) x x))\n"),
+    ("seq.stoi", "(assert (= (seq.stoi x 0) 0))\n"),
+    ("seq.digit2int", "(assert (= (seq.digit2int 48) 0))\n"),
+    ("seq.digit", "(assert (= (seq.digit 48) 0))\n"),
+    ("char.is_digit", "(assert (char.is_digit 48))\n"),
+    ("char.<=", "(assert (char.<= 48 57))\n"),
+    ("bits2char",
+      "(assert (= ((_ bits2char bits2char)\
+      \ true false false false false false false false false\
+      \ false false false false false false false false false) 1))\n"),
+    ("char.bit", "(assert ((_ char.bit char.bit 0) 48))\n"),
+    ("aut.accept",
+      "(assert ((_ aut.accept aut.accept) x 0 (str.to_re x)))\n"),
+    ("seq.prefix.c",
+      "(assert (= ((_ seq.prefix.c seq.prefix.c) x x) 0))\n"),
+    ("str.<.c",
+      "(assert (= ((_ str.<.c str.<.c) x x) 0))\n"),
+    ("seq.p.suffix",
+      "(assert (= ((_ seq.p.suffix seq.p.suffix) x x) x))\n")
+  ]
+  fun check (symbol, command) =
+    expect_hol_error_contains ("benchmark Z3 internal " ^ symbol)
+      symbol (fn () => ignore (parse_legacy_smtlib_assertions
+        ("(set-logic QF_S)\n(declare-const x String)\n" ^
+         command ^ "(exit)\n")))
+in
+  List.app check cases
+end
+
 fun replay_z3_proof_string contents =
   Z3_ProofReplay.replay_root_for_test
     (parse_z3_proof_string "4.12.4" contents)
@@ -8238,6 +8386,12 @@ let
       z3_proof_parser_rule_name_term_boundary),
     ("z3_proof_parser_is_int_translation_collision_success",
       z3_proof_parser_is_int_translation_collision_success),
+    ("z3_proof_parser_string_internal_symbols_success",
+      z3_proof_parser_string_internal_symbols_success),
+    ("z3_proof_parser_char_th_lemma_index_success",
+      z3_proof_parser_char_th_lemma_index_success),
+    ("benchmark_rejects_z3_string_internal_symbols",
+      benchmark_rejects_z3_string_internal_symbols),
     ("z3_beta_eta_replay_rungs_success",
       z3_beta_eta_replay_rungs_success),
     ("z3_beta_eta_replay_rungs_shaped_failure",

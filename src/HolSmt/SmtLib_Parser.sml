@@ -339,6 +339,29 @@ local
            in SOME (atom start [c]) end)
   end
 
+  val proof_string_token_prefix = "\001HolSmtString:"
+
+  fun make_proof_tokenizer text =
+    let
+      val next_token = make_located_tokenizer text
+    in
+      fn () =>
+        case next_token () of
+          SOME tok =>
+            if token_kind tok = StringToken then
+              proof_string_token_prefix ^ token_text tok
+            else
+              token_text tok
+        | NONE => raise ERR "make_proof_tokenizer" "end of stream"
+    end
+
+  fun proof_string_token token =
+    if String.isPrefix proof_string_token_prefix token then
+      SOME (String.extract
+        (token, String.size proof_string_token_prefix, NONE))
+    else
+      NONE
+
   fun parse_script_tokens next_token : script_ast =
   let
     val last_loc =
@@ -5270,6 +5293,8 @@ in
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list
+  val make_proof_tokenizer = make_proof_tokenizer
+  val proof_string_token = proof_string_token
   val parse_benchmark_state = parse_benchmark_state
   val parse_benchmark = parse_benchmark
 
