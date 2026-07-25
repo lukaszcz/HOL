@@ -7679,6 +7679,117 @@ fun string_prove_symbolic_rung_success () =
       "symbolic string goal fell through to the unsupported rung")
   end
 
+fun string_prove_regex_rung_success () =
+  let
+    fun direct name tm =
+      assert_string_prover name SmtStringProve.regex_prove tm
+    val range = ``reglan_range (seq_unit 97) (seq_unit 122)``
+    val loop13 =
+      ``reglan_loop (reglan_to_re (seq_unit 97)) 1 3``
+    val comp =
+      ``reglan_comp (reglan_to_re (seq_unit 97))``
+    val inter =
+      ``reglan_inter
+          (reglan_range (seq_unit 97) (seq_unit 122))
+          (reglan_comp (reglan_to_re (seq_unit 109)))``
+    val nullable =
+      ``reglan_loop
+          (reglan_union
+            (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+          1 2``
+  in
+    direct "regex membership bridge"
+      ``~smt_in_re x ^range \/ aut_accept x 0 ^range``;
+    direct "regex range length"
+      ``aut_accept x 0 ^range ==>
+        (&(smtstr_len x) : int) >= 1``;
+    direct "regex range transition"
+      ``~aut_accept x 0 ^range \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (seq_nth_i x 0 <= 122 /\ 97 <= seq_nth_i x 0 /\
+         aut_accept x 1 (reglan_to_re []))``;
+    direct "regex bounded-loop transition zero"
+      ``~aut_accept x 0 ^loop13 \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (seq_nth_i x 0 = 97 /\
+         aut_accept x 1
+           (reglan_loop (reglan_to_re (seq_unit 97)) 0 2))``;
+    direct "regex bounded-loop length"
+      ``aut_accept x 0 ^loop13 ==>
+        (&(smtstr_len x) : int) >= 1``;
+    direct "regex bounded-loop transition one"
+      ``~aut_accept x 1
+          (reglan_loop (reglan_to_re (seq_unit 97)) 0 2) \/
+        (&(smtstr_len x) : int) <= 1 \/
+        (seq_nth_i x 1 = 97 /\
+         aut_accept x 2
+           (reglan_loop (reglan_to_re (seq_unit 97)) 0 1))``;
+    direct "regex bounded-loop transition two"
+      ``~aut_accept x 2
+          (reglan_loop (reglan_to_re (seq_unit 97)) 0 1) \/
+        (&(smtstr_len x) : int) <= 2 \/
+        (seq_nth_i x 2 = 97 /\
+         aut_accept x 3 (reglan_to_re []))``;
+    direct "regex empty terminal"
+      ``~aut_accept x 3 (reglan_to_re []) \/
+        (&(smtstr_len x) : int) <= 3 \/ F``;
+    direct "regex complement transition"
+      ``~aut_accept x 0 ^comp \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (seq_nth_i x 0 <> 97 \/
+         aut_accept x 1 (reglan_plus reglan_allchar))``;
+    direct "regex complement residual length"
+      ``aut_accept x 1 (reglan_plus reglan_allchar) ==>
+        (&(smtstr_len x) : int) >= 2``;
+    direct "regex complement-range transition"
+      ``~aut_accept x 0
+          (reglan_comp
+            (reglan_range (seq_unit 97) (seq_unit 122))) \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (seq_nth_i x 0 < 97 \/ 122 < seq_nth_i x 0 \/
+         aut_accept x 1 (reglan_plus reglan_allchar))``;
+    direct "regex intersection transition"
+      ``~aut_accept x 0 ^inter \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (97 <= seq_nth_i x 0 /\ seq_nth_i x 0 <= 122 /\
+         seq_nth_i x 0 <> 109 /\
+         aut_accept x 1 (reglan_to_re []))``;
+    direct "regex nullable-loop transition zero"
+      ``~aut_accept x 0 ^nullable \/
+        (&(smtstr_len x) : int) <= 0 \/
+        (seq_nth_i x 0 = 97 /\
+         aut_accept x 1
+           (reglan_loop
+             (reglan_union
+               (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+             0 1))``;
+    direct "regex nullable-loop transition one"
+      ``~aut_accept x 1
+          (reglan_loop
+            (reglan_union
+              (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+            0 1) \/
+        (&(smtstr_len x) : int) <= 1 \/
+        (seq_nth_i x 1 = 97 /\
+         aut_accept x 2 (reglan_to_re []))``;
+    direct "regex nullable-loop terminal"
+      ``~aut_accept x 2 (reglan_to_re []) \/
+        (&(smtstr_len x) : int) <= 2 \/ F``;
+    assert_string_prover "regex ground derivative evaluation"
+      (SmtStringProve.string_prove intLib.ARITH_PROVE)
+      ``smt_in_re [97] ^range /\
+        smt_in_re [97; 97] ^nullable /\
+        smt_in_re [98] ^comp``;
+    Profile.reset_all ();
+    assert_string_prover "regex full ladder"
+      (SmtStringProve.string_prove intLib.ARITH_PROVE)
+      ``~smt_in_re x ^range \/ aut_accept x 0 ^range``;
+    assert (profile_call_count "string(rung:5/regex)" > 0,
+      "regex goal did not reach rung 5");
+    assert (profile_call_count "string(rung:7/unsupported)" = 0,
+      "regex goal fell through to the unsupported rung")
+  end
+
 fun string_prove_structured_failures () =
   let
     fun expect_message name expected thunk =
@@ -7704,11 +7815,6 @@ fun string_prove_structured_failures () =
           ``smtstr_prefixof x (seq_unit c) ==>
             seq_unit c =
               smtstr_concat x (suffix_witness x (seq_unit c))``);
-    expect_message "regex th-lemma" "theory=seq"
-      (fn () =>
-        SmtStringProve.string_prove intLib.ARITH_PROVE
-          ``~smt_in_re x (reglan_to_re (seq_unit c)) \/
-            aut_accept x 0 (reglan_to_re (seq_unit c))``);
     expect_message "char th-lemma" "theory=char"
       (fn () => SmtStringProve.char_prove ``F``);
     expect_message "non-string Seq th-lemma"
@@ -8593,6 +8699,8 @@ let
       string_prove_ladder_rungs_success),
     ("string_prove_symbolic_rung_success",
       string_prove_symbolic_rung_success),
+    ("string_prove_regex_rung_success",
+      string_prove_regex_rung_success),
     ("string_prove_structured_failures",
       string_prove_structured_failures),
     ("z3_string_th_lemma_dispatch_success",

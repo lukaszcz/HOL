@@ -18,7 +18,8 @@ struct
       ("unsupported th-lemma shape: theory=" ^ theory ^
        "; checked replay is only implemented for Unicode-string proforma, " ^
        "ground evaluation, length/arithmetic, and symbolic " ^
-       "concat/prefix/suffix/contains lemmas; conclusion=" ^
+       "concat/prefix/suffix/contains and regex/aut.accept lemmas; " ^
+       "conclusion=" ^
        Library.term_to_string t)
 
   fun phase6_seq_gate t =
@@ -86,10 +87,6 @@ struct
     smtstringz3Theory.seq_digit2int_compute,
     smtstringz3Theory.seq_digit_compute,
     smtstringz3Theory.seq_stoi_compute,
-    smtstringz3Theory.aut_chars_compute,
-    smtstringz3Theory.aut_alphabet_compute,
-    smtstringz3Theory.aut_extend_compute,
-    smtstringz3Theory.aut_derivatives_compute,
     smtstringz3Theory.aut_state_compute,
     smtstringz3Theory.aut_accept_compute
   ]
@@ -230,6 +227,125 @@ struct
                symbolic_normalizations,
              bossLib.METIS_TAC symbolic_lemmas))) ()
 
+  val regex_normalizations = [
+    smtstringz3Theory.seq_unit_compute,
+    smtstringTheory.re_nullable_def,
+    smtstringTheory.re_deriv_def,
+    smtstringTheory.reglan_power_deriv_def,
+    smtstringTheory.reglan_loop_deriv_def,
+    smtstringTheory.smt_in_re_loop_singleton_0_1,
+    smtstringTheory.smt_in_re_loop_singleton_0_2,
+    smtstringTheory.smt_in_re_loop_singleton_1_3,
+    smtstringTheory.smt_in_re_loop_nullable_singleton_0_1,
+    smtstringTheory.smt_in_re_loop_nullable_singleton_1_2,
+    smtstringTheory.smt_in_re_star_allchar,
+    smtstringTheory.smt_in_re_plus_allchar,
+    smtstringTheory.smt_in_re_def,
+    smtstringTheory.smtstr_len_def,
+    smtstringz3Theory.aut_accept_zero,
+    smtstringz3Theory.aut_accept_transition_int,
+    smtstringz3Theory.aut_accept_range_deriv,
+    smtstringz3Theory.aut_accept_loop_deriv_1_3,
+    smtstringz3Theory.aut_accept_loop_deriv_0_2,
+    smtstringz3Theory.aut_accept_loop_deriv_0_1,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
+    smtstringz3Theory.aut_accept_range_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_one,
+    smtstringz3Theory.aut_accept_loop_transition_two,
+    smtstringz3Theory.aut_accept_range_transition_seq_unit,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two,
+    smtstringz3Theory.aut_accept_comp_transition_seq_unit,
+    smtstringz3Theory.aut_accept_inter_transition_seq_unit,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_zero,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_one,
+    smtstringz3Theory.aut_accept_empty,
+    smtstringz3Theory.aut_accept_empty_terminal_int
+  ]
+
+  val regex_lemmas = [
+    smtstringTheory.re_nullable_def,
+    smtstringTheory.smt_in_re_loop_singleton_0_1,
+    smtstringTheory.smt_in_re_loop_singleton_0_2,
+    smtstringTheory.smt_in_re_loop_singleton_1_3,
+    smtstringTheory.smt_in_re_loop_nullable_singleton_0_1,
+    smtstringTheory.smt_in_re_loop_nullable_singleton_1_2,
+    smtstringTheory.smt_in_re_star_allchar,
+    smtstringTheory.smt_in_re_plus_allchar,
+    smtstringTheory.re_deriv_correct,
+    smtstringTheory.re_nullable_correct,
+    smtstringz3Theory.aut_accept_nonnullable_length,
+    smtstringz3Theory.aut_accept_nonnullable_length_int,
+    smtstringz3Theory.aut_accept_range_length_int,
+    smtstringz3Theory.aut_accept_range_length_zero,
+    smtstringz3Theory.aut_accept_loop_positive_length_zero,
+    smtstringz3Theory.aut_accept_loop_positive_length_seq_unit,
+    smtstringz3Theory.aut_accept_plus_allchar_length_one,
+    smtstringz3Theory.aut_accept_step,
+    smtstringz3Theory.aut_accept_transition,
+    smtstringz3Theory.aut_accept_transition_int,
+    smtstringz3Theory.aut_accept_range_deriv,
+    smtstringz3Theory.aut_accept_loop_deriv_1_3,
+    smtstringz3Theory.aut_accept_loop_deriv_0_2,
+    smtstringz3Theory.aut_accept_loop_deriv_0_1,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
+    smtstringz3Theory.aut_accept_range_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_one,
+    smtstringz3Theory.aut_accept_loop_transition_two,
+    smtstringz3Theory.aut_accept_range_transition_seq_unit,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two,
+    smtstringz3Theory.aut_accept_comp_singleton_transition,
+    smtstringz3Theory.aut_accept_comp_range_transition,
+    smtstringz3Theory.aut_accept_inter_range_comp_transition,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_zero,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_one,
+    smtstringz3Theory.aut_accept_comp_transition_seq_unit,
+    smtstringz3Theory.aut_accept_comp_range_transition_seq_unit,
+    smtstringz3Theory.aut_accept_inter_transition_seq_unit,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_zero,
+    smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_one,
+    smtstringz3Theory.aut_accept_empty,
+    smtstringz3Theory.aut_accept_empty_terminal_int
+  ]
+
+  val regex_consts =
+    List.map
+      (fn {Thy, Name} => Term.prim_mk_const {Thy = Thy, Name = Name})
+      [{Thy = "smtstring", Name = "smt_in_re"},
+       {Thy = "smtstringz3", Name = "aut_accept"}]
+
+  val regex_thms =
+    Z3_ProformaThms.thm_net_from_list regex_lemmas
+
+  fun is_regex_goal t =
+    List.exists
+      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
+      regex_consts
+
+  fun regex_prove t =
+    if not (is_regex_goal t) then
+      raise ERR "regex_prove" "no regex membership or aut.accept term"
+    else
+      Z3_ProformaThms.prove regex_thms t
+      handle Feedback.HOL_ERR _ =>
+      with_metis_limit
+        (fn () => metisLib.METIS_PROVE regex_lemmas t) ()
+      handle Feedback.HOL_ERR _ =>
+      with_metis_limit (fn () =>
+        Tactical.prove (t,
+          Tactical.THEN
+            (bossLib.RW_TAC
+               (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+               regex_normalizations,
+             bossLib.METIS_TAC regex_lemmas))) ()
+
   fun string_prove arith_prove t =
     let val () = check_seq_type t in
       profile "string(rung:1/proforma)" proforma_prove t
@@ -240,6 +356,8 @@ struct
         (length_arith_prove arith_prove) t
       handle Feedback.HOL_ERR _ =>
       profile "string(rung:4/symbolic)" symbolic_string_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "string(rung:5/regex)" regex_prove t
       handle Feedback.HOL_ERR _ =>
       profile "string(rung:7/unsupported)" (unsupported "seq") t
     end

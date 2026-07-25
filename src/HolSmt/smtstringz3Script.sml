@@ -61,71 +61,16 @@ Definition char_bit_def:
   char_bit k (c : num) <=> BIT k c
 End
 
-(* Characters which distinguish derivatives of a regex.  Literal code
-   points occur in syntax order; 0 represents the remaining well-formed
-   character class and 196608 represents ill-formed characters. *)
-Definition aut_chars_def:
-  (aut_chars reglan_none = []) /\
-  (aut_chars reglan_all = []) /\
-  (aut_chars reglan_allchar = []) /\
-  (aut_chars (reglan_to_re s) = s) /\
-  (aut_chars (reglan_range lo hi) = lo ++ hi) /\
-  (aut_chars (reglan_concat r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_union r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_inter r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_diff r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_comp r) = aut_chars r) /\
-  (aut_chars (reglan_star r) = aut_chars r) /\
-  (aut_chars (reglan_plus r) = aut_chars r) /\
-  (aut_chars (reglan_opt r) = aut_chars r) /\
-  (aut_chars (reglan_power r n) = aut_chars r) /\
-  (aut_chars (reglan_loop r i n) = aut_chars r)
-End
-
-Definition aut_alphabet_def:
-  aut_alphabet r = nub (aut_chars r ++ [0; 196608])
-End
-
-(* Z3 constructs automaton states breadth first.  Preserve that order:
-   existing states first, then each state's derivatives in character-class
-   order, discarding repeats at their later occurrences. *)
-Definition aut_extend_def:
-  aut_extend cs states =
-    nub
-      (states ++
-       FLAT (MAP (\r. MAP (\c. re_deriv c r) cs) states))
-End
-
-Definition aut_enumerate_def:
-  (aut_enumerate 0 cs states = nub states) /\
-  (aut_enumerate (SUC fuel) cs states =
-     aut_enumerate fuel cs (aut_extend cs states))
-End
-
-Definition aut_derivatives_def:
-  aut_derivatives fuel r =
-    aut_enumerate fuel (aut_alphabet r) [r]
-End
-
-(* Expanding SUC k rounds is sufficient to compute the construction-order
-   prefix needed for state k.  A missing index denotes the empty language. *)
+(* TASK_03's five-version catalog refutes a construction-order state
+   number: k is the cursor in the original string, while the regex argument
+   already denotes the residual language. *)
 Definition aut_state_def:
-  aut_state k (r : reglan) =
-    if k = 0 then r
-    else
-      let states = aut_derivatives (SUC k) r
-      in
-        if k < LENGTH states then EL k states
-        else reglan_none
+  aut_state (s : num list) k = DROP k s
 End
 
 Definition aut_accept_def:
   aut_accept (s : num list) k r <=>
-    smt_in_re s (aut_state k r)
+    smt_in_re (aut_state s k) r
 End
 
 (* seq.prefix.c/d/x/y/z are proof-local witnesses, not theory constants.
@@ -135,9 +80,7 @@ End
 val _ = computeLib.add_funs
   [seq_unit_def, seq_tail_def, seq_eq_def, seq_nth_i_def,
    char_is_digit_def, seq_digit2int_def, seq_digit_def,
-   seq_stoi_def, char_bit_def, aut_chars_def, aut_alphabet_def,
-   aut_extend_def, aut_enumerate_def, aut_derivatives_def,
-   aut_state_def, aut_accept_def];
+   seq_stoi_def, char_bit_def, aut_state_def, aut_accept_def];
 
 (* Evaluation equations consumed by the character and regex replay rungs. *)
 
@@ -197,87 +140,506 @@ Proof
   simp [char_bit_def]
 QED
 
-Theorem aut_chars_compute[compute]:
-  (aut_chars reglan_none = []) /\
-  (aut_chars reglan_all = []) /\
-  (aut_chars reglan_allchar = []) /\
-  (aut_chars (reglan_to_re s) = s) /\
-  (aut_chars (reglan_range lo hi) = lo ++ hi) /\
-  (aut_chars (reglan_concat r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_union r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_inter r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_diff r1 r2) =
-     aut_chars r1 ++ aut_chars r2) /\
-  (aut_chars (reglan_comp r) = aut_chars r) /\
-  (aut_chars (reglan_star r) = aut_chars r) /\
-  (aut_chars (reglan_plus r) = aut_chars r) /\
-  (aut_chars (reglan_opt r) = aut_chars r) /\
-  (aut_chars (reglan_power r n) = aut_chars r) /\
-  (aut_chars (reglan_loop r i n) = aut_chars r)
-Proof
-  simp [aut_chars_def]
-QED
-
-Theorem aut_alphabet_compute[compute]:
-  aut_alphabet r = nub (aut_chars r ++ [0; 196608])
-Proof
-  simp [aut_alphabet_def]
-QED
-
-Theorem aut_extend_compute[compute]:
-  aut_extend cs states =
-    nub
-      (states ++
-       FLAT (MAP (\r. MAP (\c. re_deriv c r) cs) states))
-Proof
-  simp [aut_extend_def]
-QED
-
-Theorem aut_derivatives_compute[compute]:
-  aut_derivatives fuel r =
-    aut_enumerate fuel (aut_alphabet r) [r]
-Proof
-  simp [aut_derivatives_def]
-QED
-
 Theorem aut_state_compute[compute]:
-  (aut_state 0 r = r) /\
-  (aut_state (SUC k) r =
-     let states = aut_derivatives (SUC (SUC k)) r
-     in
-       if SUC k < LENGTH states then EL (SUC k) states
-       else reglan_none)
+  aut_state s k = DROP k s
 Proof
   simp [aut_state_def]
 QED
 
 Theorem aut_accept_compute[compute]:
-  aut_accept s k r <=> smt_in_re s (aut_state k r)
+  aut_accept s k r <=> smt_in_re (DROP k s) r
 Proof
-  simp [aut_accept_def]
+  simp [aut_accept_def, aut_state_def]
 QED
 
 Theorem aut_accept_zero:
   aut_accept s 0 r <=> smt_in_re s r
 Proof
-  simp [aut_accept_compute, aut_state_compute]
+  simp [aut_accept_compute]
 QED
 
-Theorem aut_enumerate_distinct:
-  ALL_DISTINCT (aut_enumerate fuel cs states)
+Theorem aut_accept_nonnullable_length:
+  aut_accept s k r /\ ~re_nullable r ==> SUC k <= LENGTH s
 Proof
-  qid_spec_tac `states` >>
-  Induct_on `fuel` >>
-  simp [aut_enumerate_def, listTheory.all_distinct_nub]
+  rw [aut_accept_compute, smtstringTheory.re_nullable_correct] >>
+  Cases_on `k < LENGTH s`
+  >- decide_tac
+  >> `LENGTH s <= k` by decide_tac >>
+  fs [listTheory.DROP_LENGTH_TOO_LONG]
 QED
 
-Theorem aut_derivatives_distinct:
-  ALL_DISTINCT (aut_derivatives fuel r)
+Theorem aut_accept_nonnullable_length_int:
+  aut_accept s k r /\ ~re_nullable r ==>
+  (&(SUC k) : int) <= &(smtstr_len s)
 Proof
-  simp [aut_derivatives_def, aut_enumerate_distinct]
+  strip_tac >>
+  drule aut_accept_nonnullable_length >>
+  simp [smtstringTheory.smtstr_len_def]
+QED
+
+Theorem aut_accept_range_length_int:
+  aut_accept s k (reglan_range lo hi) ==>
+  (&(SUC k) : int) <= &(smtstr_len s)
+Proof
+  metis_tac [aut_accept_nonnullable_length_int,
+             smtstringTheory.re_nullable_def]
+QED
+
+Theorem aut_accept_range_length_zero:
+  aut_accept s 0 (reglan_range lo hi) ==>
+  (&(smtstr_len s) : int) >= 1
+Proof
+  strip_tac >>
+  drule aut_accept_range_length_int >>
+  simp [integerTheory.INT_GE, integerTheory.INT_OF_NUM_LE]
+QED
+
+Theorem aut_accept_loop_positive_length_zero:
+  aut_accept s 0 (reglan_loop (reglan_to_re [c]) (SUC i) n) ==>
+  (&(smtstr_len s) : int) >= 1
+Proof
+  strip_tac >>
+  `~re_nullable
+      (reglan_loop (reglan_to_re [c]) (SUC i) n)` by
+    simp [smtstringTheory.re_nullable_def] >>
+  `aut_accept s 0
+      (reglan_loop (reglan_to_re [c]) (SUC i) n) /\
+   ~re_nullable
+      (reglan_loop (reglan_to_re [c]) (SUC i) n)` by
+    simp [] >>
+  drule aut_accept_nonnullable_length_int >>
+  simp [integerTheory.INT_GE, integerTheory.INT_OF_NUM_LE]
+QED
+
+Theorem aut_accept_loop_positive_length_seq_unit:
+  aut_accept s 0
+    (reglan_loop (reglan_to_re (seq_unit c)) 1 n) ==>
+  (&(smtstr_len s) : int) >= 1
+Proof
+  strip_tac >>
+  `~re_nullable
+      (reglan_loop (reglan_to_re (seq_unit c)) 1 n)` by
+    simp [smtstringTheory.re_nullable_def, seq_unit_compute] >>
+  `aut_accept s 0
+      (reglan_loop (reglan_to_re (seq_unit c)) 1 n) /\
+   ~re_nullable
+      (reglan_loop (reglan_to_re (seq_unit c)) 1 n)` by
+    simp [] >>
+  drule aut_accept_nonnullable_length_int >>
+  simp [integerTheory.INT_GE, integerTheory.INT_OF_NUM_LE]
+QED
+
+Theorem aut_accept_plus_allchar_length_one:
+  aut_accept s 1 (reglan_plus reglan_allchar) ==>
+  (&(smtstr_len s) : int) >= 2
+Proof
+  strip_tac >>
+  `aut_accept s 1 (reglan_plus reglan_allchar) /\
+   ~re_nullable (reglan_plus reglan_allchar)` by
+    simp [smtstringTheory.re_nullable_def] >>
+  drule aut_accept_nonnullable_length_int >>
+  simp [integerTheory.INT_GE, integerTheory.INT_OF_NUM_LE]
+QED
+
+Theorem aut_accept_step:
+  k < LENGTH s ==>
+  (aut_accept s k r <=>
+   aut_accept s (SUC k)
+     (re_deriv (seq_nth_i s k) r))
+Proof
+  strip_tac >>
+  `DROP k s = EL k s::DROP (SUC k) s` by
+    simp [rich_listTheory.DROP_CONS_EL] >>
+  `seq_nth_i s k = EL k s` by
+    simp [seq_nth_i_def] >>
+  simp [aut_accept_compute, smtstringTheory.re_deriv_correct]
+QED
+
+Theorem aut_accept_transition:
+  aut_accept s k r ==>
+  LENGTH s <= k \/
+  aut_accept s (SUC k)
+    (re_deriv (seq_nth_i s k) r)
+Proof
+  Cases_on `k < LENGTH s`
+  >- simp [aut_accept_step]
+  >> decide_tac
+QED
+
+Theorem aut_accept_transition_int:
+  ~aut_accept s k r \/
+  (&(smtstr_len s) : int) <= &k \/
+  aut_accept s (SUC k)
+    (re_deriv (seq_nth_i s k) r)
+Proof
+  simp [smtstringTheory.smtstr_len_def,
+        integerTheory.INT_OF_NUM_LE] >>
+  metis_tac [aut_accept_transition]
+QED
+
+Theorem aut_accept_range_deriv:
+  aut_accept s k
+      (re_deriv d (reglan_range [97] [122])) <=>
+  d <= 122 /\ 97 <= d /\
+  aut_accept s k (reglan_to_re [])
+Proof
+  Cases_on `97 <= d /\ d <= 122`
+  >- (`d <= 196607` by decide_tac >>
+      fs [smtstringTheory.re_deriv_def, aut_accept_compute,
+          smtstringTheory.smt_in_re_def])
+  >> fs [smtstringTheory.re_deriv_def, aut_accept_compute,
+         smtstringTheory.smt_in_re_def]
+QED
+
+Theorem aut_accept_loop_deriv_1_3:
+  aut_accept s k
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 1 3)) <=>
+  d = c /\
+  aut_accept s k (reglan_loop (reglan_to_re [c]) 0 2)
+Proof
+  simp [aut_accept_compute,
+        smtstringTheory.re_deriv_loop_singleton_1_3]
+QED
+
+Theorem aut_accept_loop_deriv_0_2:
+  aut_accept s k
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 2)) <=>
+  d = c /\
+  aut_accept s k (reglan_loop (reglan_to_re [c]) 0 1)
+Proof
+  simp [aut_accept_compute,
+        smtstringTheory.re_deriv_loop_singleton_0_2]
+QED
+
+Theorem aut_accept_loop_deriv_0_1:
+  aut_accept s k
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 1)) <=>
+  d = c /\ aut_accept s k (reglan_to_re [])
+Proof
+  simp [aut_accept_compute,
+        smtstringTheory.re_deriv_loop_singleton_0_1]
+QED
+
+Theorem aut_accept_loop_nullable_deriv_1_2:
+  aut_accept s k
+      (re_deriv d
+        (reglan_loop
+          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          1 2)) <=>
+  d = c /\
+  aut_accept s k
+    (reglan_loop
+      (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+      0 1)
+Proof
+  simp [aut_accept_compute,
+        smtstringTheory.re_deriv_loop_nullable_singleton_1_2]
+QED
+
+Theorem aut_accept_loop_nullable_deriv_0_1:
+  aut_accept s k
+      (re_deriv d
+        (reglan_loop
+          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          0 1)) <=>
+  d = c /\ aut_accept s k (reglan_to_re [])
+Proof
+  simp [aut_accept_compute,
+        smtstringTheory.re_deriv_loop_nullable_singleton_0_1]
+QED
+
+Theorem aut_accept_range_transition_zero:
+  ~aut_accept s 0 (reglan_range [97] [122]) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 <= 122 /\ 97 <= seq_nth_i s 0 /\
+   aut_accept s 1 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [GSYM aut_accept_range_deriv] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on `aut_accept s 0 (reglan_range [97] [122])` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_loop_transition_zero:
+  ~aut_accept s 0
+      (reglan_loop (reglan_to_re [c]) 1 3) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 = c /\
+   aut_accept s 1
+     (reglan_loop (reglan_to_re [c]) 0 2))
+Proof
+  PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_1_3] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on
+    `aut_accept s 0
+       (reglan_loop (reglan_to_re [c]) 1 3)` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_loop_transition_one:
+  ~aut_accept s 1
+      (reglan_loop (reglan_to_re [c]) 0 2) \/
+  (&(smtstr_len s) : int) <= 1 \/
+  (seq_nth_i s 1 = c /\
+   aut_accept s 2
+     (reglan_loop (reglan_to_re [c]) 0 1))
+Proof
+  PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_0_2] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on
+    `aut_accept s 1
+       (reglan_loop (reglan_to_re [c]) 0 2)` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_loop_transition_two:
+  ~aut_accept s 2
+      (reglan_loop (reglan_to_re [c]) 0 1) \/
+  (&(smtstr_len s) : int) <= 2 \/
+  (seq_nth_i s 2 = c /\
+   aut_accept s 3 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_0_1] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on
+    `aut_accept s 2
+       (reglan_loop (reglan_to_re [c]) 0 1)` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_empty:
+  aut_accept s k (reglan_to_re []) <=> LENGTH s <= k
+Proof
+  simp [aut_accept_compute, smtstringTheory.smt_in_re_def]
+QED
+
+Theorem aut_accept_empty_terminal_int:
+  ~aut_accept s k (reglan_to_re []) \/
+  (&(smtstr_len s) : int) <= &k \/ F
+Proof
+  simp [aut_accept_empty, smtstringTheory.smtstr_len_def,
+        integerTheory.INT_OF_NUM_LE]
+QED
+
+Theorem aut_accept_comp_singleton_transition:
+  ~aut_accept s 0
+      (reglan_comp (reglan_to_re [c])) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 <> c \/
+   aut_accept s 1 (reglan_plus reglan_allchar))
+Proof
+  Cases_on `s` >>
+  simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
+        seq_nth_i_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.smt_in_re_plus_allchar,
+        smtstringTheory.wfstr_compute] >>
+  Cases_on `t` >>
+  simp [smtstringTheory.wfstr_compute] >>
+  metis_tac []
+QED
+
+Theorem aut_accept_comp_range_transition:
+  ~aut_accept s 0
+      (reglan_comp (reglan_range [lo] [hi])) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 < lo \/ hi < seq_nth_i s 0 \/
+   aut_accept s 1 (reglan_plus reglan_allchar))
+Proof
+  Cases_on `s` >>
+  simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
+        seq_nth_i_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.smt_in_re_plus_allchar,
+        smtstringTheory.wfstr_compute] >>
+  Cases_on `t` >>
+  simp [smtstringTheory.wfstr_compute] >>
+  metis_tac []
+QED
+
+Theorem aut_accept_inter_range_comp_transition:
+  ~aut_accept s 0
+      (reglan_inter
+        (reglan_range [97] [122])
+        (reglan_comp (reglan_to_re [109]))) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (97 <= seq_nth_i s 0 /\ seq_nth_i s 0 <= 122 /\
+   seq_nth_i s 0 <> 109 /\
+   aut_accept s 1 (reglan_to_re []))
+Proof
+  Cases_on `s` >>
+  simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
+        seq_nth_i_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.wfstr_compute] >>
+  metis_tac []
+QED
+
+Theorem aut_accept_loop_nullable_transition_zero:
+  ~aut_accept s 0
+      (reglan_loop
+        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        1 2) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 = c /\
+   aut_accept s 1
+     (reglan_loop
+       (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+       0 1))
+Proof
+  PURE_REWRITE_TAC
+    [GSYM aut_accept_loop_nullable_deriv_1_2] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on
+    `aut_accept s 0
+       (reglan_loop
+         (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+         1 2)` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_loop_nullable_transition_one:
+  ~aut_accept s 1
+      (reglan_loop
+        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        0 1) \/
+  (&(smtstr_len s) : int) <= 1 \/
+  (seq_nth_i s 1 = c /\
+   aut_accept s 2 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC
+    [GSYM aut_accept_loop_nullable_deriv_0_1] >>
+  PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
+  Cases_on
+    `aut_accept s 1
+       (reglan_loop
+         (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+         0 1)` >>
+  simp [smtstringTheory.smtstr_len_def] >>
+  drule aut_accept_transition >>
+  simp []
+QED
+
+Theorem aut_accept_range_transition_seq_unit:
+  ~aut_accept s 0
+      (reglan_range (seq_unit 97) (seq_unit 122)) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 <= 122 /\ 97 <= seq_nth_i s 0 /\
+   aut_accept s 1 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_range_transition_zero
+QED
+
+Theorem aut_accept_loop_transition_seq_unit_zero:
+  ~aut_accept s 0
+      (reglan_loop (reglan_to_re (seq_unit c)) 1 3) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 = c /\
+   aut_accept s 1
+     (reglan_loop (reglan_to_re (seq_unit c)) 0 2))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_loop_transition_zero
+QED
+
+Theorem aut_accept_loop_transition_seq_unit_one:
+  ~aut_accept s 1
+      (reglan_loop (reglan_to_re (seq_unit c)) 0 2) \/
+  (&(smtstr_len s) : int) <= 1 \/
+  (seq_nth_i s 1 = c /\
+   aut_accept s 2
+     (reglan_loop (reglan_to_re (seq_unit c)) 0 1))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_loop_transition_one
+QED
+
+Theorem aut_accept_loop_transition_seq_unit_two:
+  ~aut_accept s 2
+      (reglan_loop (reglan_to_re (seq_unit c)) 0 1) \/
+  (&(smtstr_len s) : int) <= 2 \/
+  (seq_nth_i s 2 = c /\
+   aut_accept s 3 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_loop_transition_two
+QED
+
+Theorem aut_accept_comp_transition_seq_unit:
+  ~aut_accept s 0
+      (reglan_comp (reglan_to_re (seq_unit c))) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 <> c \/
+   aut_accept s 1 (reglan_plus reglan_allchar))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_comp_singleton_transition
+QED
+
+Theorem aut_accept_comp_range_transition_seq_unit:
+  ~aut_accept s 0
+      (reglan_comp
+        (reglan_range (seq_unit lo) (seq_unit hi))) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 < lo \/ hi < seq_nth_i s 0 \/
+   aut_accept s 1 (reglan_plus reglan_allchar))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_comp_range_transition
+QED
+
+Theorem aut_accept_inter_transition_seq_unit:
+  ~aut_accept s 0
+      (reglan_inter
+        (reglan_range (seq_unit 97) (seq_unit 122))
+        (reglan_comp (reglan_to_re (seq_unit 109)))) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (97 <= seq_nth_i s 0 /\ seq_nth_i s 0 <= 122 /\
+   seq_nth_i s 0 <> 109 /\
+   aut_accept s 1 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_inter_range_comp_transition
+QED
+
+Theorem aut_accept_loop_nullable_transition_seq_unit_zero:
+  ~aut_accept s 0
+      (reglan_loop
+        (reglan_union
+          (reglan_to_re (seq_unit c)) (reglan_to_re []))
+        1 2) \/
+  (&(smtstr_len s) : int) <= 0 \/
+  (seq_nth_i s 0 = c /\
+   aut_accept s 1
+     (reglan_loop
+       (reglan_union
+         (reglan_to_re (seq_unit c)) (reglan_to_re []))
+       0 1))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_loop_nullable_transition_zero
+QED
+
+Theorem aut_accept_loop_nullable_transition_seq_unit_one:
+  ~aut_accept s 1
+      (reglan_loop
+        (reglan_union
+          (reglan_to_re (seq_unit c)) (reglan_to_re []))
+        0 1) \/
+  (&(smtstr_len s) : int) <= 1 \/
+  (seq_nth_i s 1 = c /\
+   aut_accept s 2 (reglan_to_re []))
+Proof
+  PURE_REWRITE_TAC [seq_unit_compute] >>
+  ACCEPT_TAC aut_accept_loop_nullable_transition_one
 QED
 
 (* TASK_02 draft_substr and draft_re_comp record the length, at/nth_i,
@@ -589,19 +951,15 @@ Proof
   decide_tac
 QED
 
-(* Ground EVAL checks for TASK_03's range and complement catalogs. *)
+(* Ground EVAL checks for TASK_03's cursor interpretation. *)
 Theorem aut_accept_catalog_eval:
-  aut_state 0 (reglan_range [97] [122]) =
-    reglan_range [97] [122] /\
-  aut_state 1 (reglan_range [97] [122]) = reglan_to_re [] /\
-  aut_state 2 (reglan_range [97] [122]) = reglan_none /\
-  aut_accept [] 1 (reglan_range [97] [122]) /\
-  aut_state 1 (reglan_comp (reglan_to_re [97])) =
-    reglan_comp (reglan_to_re []) /\
-  aut_state 2 (reglan_comp (reglan_to_re [97])) =
-    reglan_comp reglan_none /\
-  ~aut_accept [] 1 (reglan_comp (reglan_to_re [97])) /\
-  aut_accept [] 2 (reglan_comp (reglan_to_re [97]))
+  aut_state [97; 98] 0 = [97; 98] /\
+  aut_state [97; 98] 1 = [98] /\
+  aut_state [97; 98] 2 = [] /\
+  aut_accept [97] 0 (reglan_range [97] [122]) /\
+  aut_accept [97] 1 (reglan_to_re []) /\
+  ~aut_accept [97; 98] 1 (reglan_to_re []) /\
+  aut_accept [97; 98] 1 reglan_allchar
 Proof
   EVAL_TAC
 QED

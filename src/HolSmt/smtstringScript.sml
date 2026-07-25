@@ -116,6 +116,9 @@ Definition reglan_loop_lang_def:
      reglan_loop_lang p i n s)
 End
 
+val reglan_loop_lang_compute_thm =
+  DB.fetch "smtstring" "reglan_loop_lang_compute";
+
 Definition smt_in_re_def:
   (smt_in_re s reglan_none <=> F) /\
   (smt_in_re s reglan_all <=> wfstr s) /\
@@ -477,6 +480,102 @@ Proof
       simp [])
 QED
 
+Theorem reglan_repeat_singleton:
+  reglan_repeat (\u. u = [c]) n s <=> s = REPLICATE n c
+Proof
+  qid_spec_tac `s` >>
+  Induct_on `n` >>
+  simp [reglan_repeat_zero, reglan_repeat_suc, reglan_dot_def]
+QED
+
+Theorem REPLICATE_small[local]:
+  REPLICATE 1 c = [c] /\
+  REPLICATE 2 c = [c; c] /\
+  REPLICATE 3 c = [c; c; c]
+Proof
+  EVAL_TAC
+QED
+
+Theorem smt_in_re_loop_singleton_0_1:
+  smt_in_re s (reglan_loop (reglan_to_re [c]) 0 1) <=>
+  s = [] \/ s = [c]
+Proof
+  simp [smt_in_re_def, reglan_loop_lang_compute_thm,
+        reglan_repeat_singleton, REPLICATE_small] >>
+  metis_tac []
+QED
+
+Theorem smt_in_re_loop_singleton_0_2:
+  smt_in_re s (reglan_loop (reglan_to_re [c]) 0 2) <=>
+  s = [] \/ s = [c] \/ s = [c; c]
+Proof
+  simp [smt_in_re_def, reglan_loop_lang_compute_thm,
+        reglan_repeat_singleton, REPLICATE_small] >>
+  metis_tac []
+QED
+
+Theorem smt_in_re_loop_singleton_1_3:
+  smt_in_re s (reglan_loop (reglan_to_re [c]) 1 3) <=>
+  s = [c] \/ s = [c; c] \/ s = [c; c; c]
+Proof
+  simp [smt_in_re_def, reglan_loop_lang_compute_thm,
+        reglan_repeat_singleton, REPLICATE_small] >>
+  metis_tac []
+QED
+
+Theorem reglan_repeat_nullable_singleton_one:
+  reglan_repeat (\u. u = [c] \/ u = []) 1 s <=>
+  s = [] \/ s = [c]
+Proof
+  PURE_REWRITE_TAC
+    [arithmeticTheory.ONE, reglan_repeat_suc,
+     reglan_repeat_zero, reglan_dot_def] >>
+  simp [] >>
+  metis_tac []
+QED
+
+Theorem reglan_repeat_nullable_singleton_two:
+  reglan_repeat (\u. u = [c] \/ u = []) 2 s <=>
+  s = [] \/ s = [c] \/ s = [c; c]
+Proof
+  PURE_REWRITE_TAC
+    [arithmeticTheory.TWO, reglan_repeat_suc,
+     reglan_repeat_nullable_singleton_one, reglan_dot_def] >>
+  simp [] >>
+  EQ_TAC
+  >- (rpt strip_tac >> fs [])
+  >> rpt strip_tac
+  >- (qexistsl [`[]`, `[]`] >> simp [])
+  >- (qexistsl [`[c]`, `[]`] >> simp [])
+  >> qexistsl [`[c]`, `[c]`] >>
+  simp []
+QED
+
+Theorem smt_in_re_loop_nullable_singleton_0_1:
+  smt_in_re s
+      (reglan_loop
+        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        0 1) <=>
+  s = [] \/ s = [c]
+Proof
+  simp [smt_in_re_def, reglan_loop_lang_compute_thm,
+        reglan_repeat_zero, reglan_repeat_nullable_singleton_one] >>
+  metis_tac []
+QED
+
+Theorem smt_in_re_loop_nullable_singleton_1_2:
+  smt_in_re s
+      (reglan_loop
+        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        1 2) <=>
+  s = [] \/ s = [c] \/ s = [c; c]
+Proof
+  simp [smt_in_re_def, reglan_loop_lang_compute_thm,
+        reglan_repeat_nullable_singleton_one,
+        reglan_repeat_nullable_singleton_two] >>
+  metis_tac []
+QED
+
 Theorem reglan_repeat_nil:
   reglan_repeat p n [] <=> n = 0 \/ p []
 Proof
@@ -650,6 +749,97 @@ Proof
            re_nullable_correct, reglan_power_deriv_correct]
   >- simp [re_deriv_def, smt_in_re_def,
            re_nullable_correct, reglan_loop_deriv_correct]
+QED
+
+Theorem reglan_kstar_allchar:
+  reglan_kstar (\u. smt_in_re u reglan_allchar) s <=>
+  wfstr s
+Proof
+  Induct_on `s`
+  >- simp [wfstr_def, reglan_kstar_nil]
+  >> rpt strip_tac >>
+  `!t. smt_in_re (h::t) reglan_allchar <=>
+           h <= 196607 /\ t = []` by
+       simp [smt_in_re_def] >>
+  PURE_REWRITE_TAC [reglan_kstar_cons_unfold] >>
+  simp [reglan_dot_def, wfstr_compute]
+QED
+
+Theorem smt_in_re_star_allchar:
+  smt_in_re s (reglan_star reglan_allchar) <=> wfstr s
+Proof
+  simp [smt_in_re_def, reglan_kstar_allchar]
+QED
+
+Theorem smt_in_re_plus_allchar:
+  smt_in_re s (reglan_plus reglan_allchar) <=>
+  wfstr s /\ s <> []
+Proof
+  Cases_on `s` >>
+  simp [smt_in_re_def, reglan_kstar_allchar,
+        wfstr_compute, reglan_dot_cons_unfold,
+        reglan_dot_def]
+QED
+
+Theorem re_deriv_loop_singleton_1_3:
+  smt_in_re s
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 1 3)) <=>
+  d = c /\ smt_in_re s (reglan_loop (reglan_to_re [c]) 0 2)
+Proof
+  simp [GSYM re_deriv_correct, smt_in_re_loop_singleton_0_2,
+        smt_in_re_loop_singleton_1_3] >>
+  metis_tac []
+QED
+
+Theorem re_deriv_loop_singleton_0_2:
+  smt_in_re s
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 2)) <=>
+  d = c /\ smt_in_re s (reglan_loop (reglan_to_re [c]) 0 1)
+Proof
+  simp [GSYM re_deriv_correct, smt_in_re_loop_singleton_0_1,
+        smt_in_re_loop_singleton_0_2] >>
+  metis_tac []
+QED
+
+Theorem re_deriv_loop_singleton_0_1:
+  smt_in_re s
+      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 1)) <=>
+  d = c /\ smt_in_re s (reglan_to_re [])
+Proof
+  simp [GSYM re_deriv_correct, smt_in_re_def,
+        smt_in_re_loop_singleton_0_1] >>
+  metis_tac []
+QED
+
+Theorem re_deriv_loop_nullable_singleton_1_2:
+  smt_in_re s
+      (re_deriv d
+        (reglan_loop
+          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          1 2)) <=>
+  d = c /\
+  smt_in_re s
+    (reglan_loop
+      (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+      0 1)
+Proof
+  simp [GSYM re_deriv_correct,
+        smt_in_re_loop_nullable_singleton_0_1,
+        smt_in_re_loop_nullable_singleton_1_2] >>
+  metis_tac []
+QED
+
+Theorem re_deriv_loop_nullable_singleton_0_1:
+  smt_in_re s
+      (re_deriv d
+        (reglan_loop
+          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          0 1)) <=>
+  d = c /\ smt_in_re s (reglan_to_re [])
+Proof
+  simp [GSYM re_deriv_correct, smt_in_re_def,
+        smt_in_re_loop_nullable_singleton_0_1] >>
+  metis_tac []
 QED
 
 Theorem smt_in_re_deriv[compute]:
