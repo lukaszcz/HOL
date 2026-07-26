@@ -322,6 +322,31 @@ val _ =
            (has_iff_fragment persistent_name (clasimpLib.clasimp_ss ()))
        end)
 
+val _ =
+  test
+    ("remove_iff preserves colliding rules for an absent declaration",
+     fn () =>
+       let
+         val local_name = "clasimp_absent_iff_test"
+         val persistent_name =
+           KernelSig.name_toString (ThmSetData.toKName local_name)
+         val rule_name = persistent_name ^ "_intro"
+         val spec =
+           {kind = clasetRules.Intro, safe = false, prio = NONE}
+         val theorem =
+           ASSUME (mk_var ("clasimp_absent_iff_rule", Type.bool))
+         val _ = clasetLib.temp_add_rule spec (rule_name, theorem)
+         val _ = clasimpLib.remove_iff local_name
+         val preserved =
+           List.exists
+             (fn (_, (name, rule)) =>
+               name = rule_name andalso same_thm theorem rule)
+             (clasetLib.rules_of (clasetLib.the_claset ()))
+         val _ = clasetLib.temp_delrule rule_name
+       in
+         preserved
+       end)
+
 fun tyinfo_named tyop =
   case List.filter
     (fn tyi => #2 (TypeBasePure.ty_name_of tyi) = tyop)

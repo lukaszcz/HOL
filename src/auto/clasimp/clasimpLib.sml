@@ -251,7 +251,13 @@ fun apply_iff_to_global delta db =
             install_persistent_iff
               (persistent_iff_name name) theorem
         | ThmSetData.REMOVE name =>
-            retract_iff_declaration (normalise_iff_name name)
+            let
+              val persistent_name = normalise_iff_name name
+            in
+              if Symtab.defined db persistent_name then
+                retract_iff_declaration persistent_name
+              else ()
+            end
   in
     apply_iff_delta delta db
   end
