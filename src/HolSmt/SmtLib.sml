@@ -863,6 +863,10 @@ local
       {head = head, arity = List.length args, string_args = string_args}
     end
 
+  fun is_native_string_guard tm =
+    (ignore (guard_signature tm); true)
+    handle Feedback.HOL_ERR _ => false
+
   fun prepare_native_string_assumptions assumptions =
     let
       fun one (assumption, (context, kept)) =
@@ -3490,6 +3494,7 @@ in
   fun translation_records ({records, ...} : translation) = records ()
   fun translation_dicts ({tydict, tmdict, ...} : translation) = (tydict, tmdict)
   val parser_dicts_for_translation = parser_dicts_for_translation_aux
+  val is_native_string_guard = is_native_string_guard
   fun infer_logic_from_features features =
     infer_logic_from_features_for_regime FirstOrder features
   val infer_logic_from_features_with_regime =

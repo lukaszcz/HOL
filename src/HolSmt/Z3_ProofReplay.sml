@@ -1523,6 +1523,19 @@ local
     (* at this point, we should have dealt with all propositional
        tautologies (i.e., 'tautLib.TAUT_PROVE t' should fail here) *)
 
+    (* Z3's String theory emits rewrite steps for literal normalization,
+       ground `str.*` evaluation, and regex normalization.  Give the
+       dedicated, solver-neutral ladder a chance before generic unification
+       or arithmetic reconstruction. *)
+    let
+      val thm = profile "rewrite(03)(string)"
+        SmtStringProve.string_rewrite_prove t
+    in
+      (state_cache_thm state thm, thm)
+    end
+
+    handle Feedback.HOL_ERR _ =>
+
     (* |- ALL_DISTINCT ... /\ T = ... *)
     (state, profile "rewrite(06)(all_distinct)" rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>

@@ -734,15 +734,7 @@ in
       val all_subterms = List.concat (List.map subterms assertions)
       fun some_subterm p = List.exists p all_subterms
     in
-      if some_subterm term_mentions_reglan then
-        SOME (checked_replay_gap_message logic "regular expressions"
-          "theory:UnicodeStrings:RegLan:checked-replay"
-          ["theory:UnicodeStrings:regex", "proof-rule:th-lemma-regexp"])
-      else if some_subterm (term_type_contains type_contains_string) then
-        SOME (checked_replay_gap_message logic "UnicodeStrings"
-          "theory:UnicodeStrings:checked-replay"
-          ["theory:UnicodeStrings:string", "proof-rule:th-lemma-string"])
-      else if some_subterm term_mentions_z3_sequence_set_bag then
+      if some_subterm term_mentions_z3_sequence_set_bag then
         SOME (checked_replay_gap_message logic "Z3 sequence/set/bag extensions"
           "theory:Z3_Extensions:seq-set-bag:checked-replay"
           ["theory:Z3_Extensions:seq", "theory:Z3_Extensions:set",

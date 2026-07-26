@@ -97,7 +97,12 @@ fun z3_tac_goal queries assertions =
   if z3_tac_hypothesis_goal_required queries then
     (assertions, boolSyntax.F)
   else
-    ([], boolSyntax.mk_neg (z3_tac_conjunction assertions))
+    let
+      val (string_guards, assertions) =
+        List.partition SmtLib.is_native_string_guard assertions
+    in
+      (string_guards, boolSyntax.mk_neg (z3_tac_conjunction assertions))
+    end
 
 fun z3_tac_parenthesized_list items =
   "(" ^ String.concatWith " " items ^ ")"

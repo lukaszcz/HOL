@@ -3119,18 +3119,16 @@ fun smtlib_checked_replay_gap_diagnostics () =
           die (label ^ " reported a spurious checked replay gap: " ^ msg)
       | NONE => ()
   in
-    expect_gap "UnicodeStrings replay" "QF_SLIA"
+    expect_no_gap "UnicodeStrings replay" "QF_SLIA"
       ("(set-logic QF_SLIA)\n" ^
        "(declare-const s String)\n" ^
        "(assert (str.prefixof s (str.++ s s)))\n" ^
-       "(check-sat)\n")
-      "theory:UnicodeStrings:checked-replay";
-    expect_gap "RegLan replay" "QF_SLIA"
+       "(check-sat)\n");
+    expect_no_gap "RegLan replay" "QF_SLIA"
       ("(set-logic QF_SLIA)\n" ^
        "(declare-const s String)\n" ^
        "(assert (str.in_re s (str.to_re s)))\n" ^
-       "(check-sat)\n")
-      "theory:UnicodeStrings:RegLan:checked-replay";
+       "(check-sat)\n");
     expect_gap "Z3 set replay" "ALL"
       ("(set-logic ALL)\n" ^
        "(declare-const x Int)\n" ^
@@ -4337,6 +4335,9 @@ let
     SmtLib.goal_to_SmtLib_translation_with_regime
       (SmtLib.HigherOrder SmtLib.Standard27) NONE goal
   val standard_text = String.concat standard_strings
+  val (z3_translation, z3_strings) =
+    Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal
+  val z3_text = String.concat z3_strings
 in
   assert (List.null assumptions andalso Term.aconv conclusion expected,
     "HOL string preprocessing did not expose the str_inj surface");
@@ -4352,6 +4353,10 @@ in
   assert (contains
       "(= (str.++ v0 v1) (str.++ v1 v0))" text,
     "injected HOL string goal changed the pinned operator emission");
+  assert (SmtLib.translation_logic z3_translation = "QF_S" andalso
+      contains "(set-logic QF_S)\n" z3_text,
+    "Z3 adapter widened the injected HOL string goal to " ^
+    SmtLib.translation_logic z3_translation ^ ":\n" ^ z3_text);
   assert (not (contains "List_Num" text) andalso
       not (contains "str_inj" text),
     "injection internals leaked into emitted SMT-LIB");
@@ -4466,6 +4471,11 @@ in
     "declare-datatypes";
   assert_has "native string literal" literal_text
     "\"\\u{0}\\u{1f} \\u{22}A\\u{7f}\\u{1f600}\\u{2ffff}\"";
+  assert (SmtLib.is_native_string_guard (mk_wfstr s),
+    "native String declaration guard was not recognized");
+  assert (not (SmtLib.is_native_string_guard
+      (boolSyntax.mk_eq (s, literal))),
+    "ordinary native String assertion was mistaken for a declaration guard");
   assert_has "relativized String binder" binder_text
     "(forall ((b0 String)) (= (str.++ b0 \"\") b0))";
   assert_lacks "relativized String binder" binder_text "wfstr";
@@ -6683,6 +6693,8 @@ let
     "seq.prefix.y", "seq.prefix.z", "str.<.c", "str.<.d",
     "str.<.x", "str.<.y", "str.<.z"
   ]
+  val expected_char_ty = wordsSyntax.mk_word_type
+    (fcpLib.index_type (Arbnum.fromInt 18))
   fun root_conclusion proof =
     case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
       SOME (Z3_Proof.ASSERTED concl) => concl
@@ -6721,8 +6733,8 @@ let
           "Z3 4.15.3 did not register seq.p.suffix as proof-local")
       else ();
       case ch of
-        SOME tm => assert (Term.type_of tm = numSyntax.num,
-          "Z3 " ^ version ^ " Char sort did not resolve to num")
+        SOME tm => assert (Term.type_of tm = expected_char_ty,
+          "Z3 " ^ version ^ " Char sort did not resolve to 18 word")
       | NONE => die ("FAIL: Z3 " ^ version ^
           " string-internal fragment lost its Char variable")
     end
@@ -7849,8 +7861,57 @@ in
   Library.check_oracle_tags "Z3 regexp alias dispatch" alias
 end
 
-fun z3_char_th_lemma_placeholder_diagnostic () =
-  expect_hol_error_contains "char th-lemma placeholder"
+fun z3_char_th_lemma_bit_decomposition_success () =
+let
+  fun bit_arguments (0, _) = []
+    | bit_arguments (remaining, n) =
+        (if Int.mod (n, 2) = 1 then "true" else "false") ::
+        bit_arguments (remaining - 1, Int.div (n, 2))
+  fun reconstruction_proof n =
+    "((proof ((_ th-lemma char) \
+    \(= (_ Char " ^ Int.toString n ^ ") \
+    \((_ bits2char bits2char) " ^
+    String.concatWith " " (bit_arguments (18, n)) ^ ")))))"
+  fun check_boundary n =
+    let val thm = replay_z3_proof_string (reconstruction_proof n)
+    in
+      Library.check_oracle_tags
+        ("Z3 char boundary " ^ Int.toString n) thm
+    end
+  val digit_proof =
+    "((declare-fun ch () Char) \
+    \(proof ((_ th-lemma char) \
+    \(= (char.is_digit ch) \
+    \   (and (char.<= (_ Char 48) ch) \
+    \        (char.<= ch (_ Char 57)))))))"
+  val () = Profile.reset_all ()
+  val () = List.app check_boundary [0, 127, 196607]
+  val digit_thm = replay_z3_proof_string digit_proof
+in
+  assert (profile_call_count "string(rung:6/char-bitblast)" = 4,
+    "char decomposition proofs did not use rung 6 exactly four times");
+  assert (profile_call_count "string(rung:7/unsupported)" = 0,
+    "char decomposition proofs fell through to unsupported");
+  Library.check_oracle_tags "Z3 char.is_digit decomposition" digit_thm
+end
+
+fun z3_char_th_lemma_shaped_diagnostics () =
+let
+  fun expect name proof =
+    expect_hol_error_contains name
+      "unsupported th-lemma shape: theory=char"
+      (fn () => ignore (replay_z3_proof_string proof))
+in
+  expect "char bit outside 18-bit decomposition"
+    "((proof ((_ th-lemma char) \
+    \(not ((_ char.bit char.bit 18) (_ Char 0))))))";
+  expect "char comparison without decomposition"
+    "((proof ((_ th-lemma char) \
+    \(char.<= (_ Char 0) (_ Char 127)))))"
+end
+
+fun z3_char_th_lemma_false_diagnostic () =
+  expect_hol_error_contains "char th-lemma false"
     "unsupported th-lemma shape: theory=char"
     (fn () => ignore (replay_z3_proof_string
       "((proof ((_ th-lemma char) false)))"))
@@ -7877,6 +7938,55 @@ in
     "datatype rewrite did not use the rewrite datatype rung");
   Library.check_oracle_tags "datatype rewrite replay" thm
 end
+
+fun z3_rewrite_string_rungs_replay_success () =
+let
+  val literal = replay_z3_proof_string
+    ("((proof (rewrite (= (str.++ (str.++ \"a\" \"b\") \"c\") " ^
+     "\"abc\"))))")
+  val length = replay_z3_proof_string
+    "((proof (rewrite (= (str.len \"abc\") 3))))"
+  val regex_literal = replay_z3_proof_string
+    ("((proof (rewrite (= (str.to_re (str.++ \"a\" \"b\")) " ^
+     "(str.to_re \"ab\")))))")
+  val re_comp = replay_z3_proof_string
+    ("((proof (rewrite (= (re.diff re.all (str.to_re \"a\")) " ^
+     "(re.comp (str.to_re \"a\"))))))")
+  val direct_ground = SmtStringProve.string_rewrite_prove
+    ``smtstr_len [97; 98; 99] = 3``
+in
+  assert (Thm.concl literal ~~
+      ``smtstr_concat (smtstr_concat [97] [98]) [99] = [97; 98; 99]``,
+    "string literal rewrite returned the wrong equality");
+  assert (Thm.concl length ~~
+      ``(&(smtstr_len [97; 98; 99]) : int) = 3``,
+    "string ground rewrite returned the wrong equality: " ^
+    Library.thm_to_string length);
+  assert (profile_call_count "rewrite(03.1)(string-ground-eval)" > 0,
+    "string rewrite ladder did not use ground evaluation");
+  assert (Thm.concl regex_literal ~~
+      ``reglan_to_re (smtstr_concat [97] [98]) =
+        reglan_to_re [97; 98]``,
+    "regex literal rewrite returned the wrong equality: " ^
+    Library.thm_to_string regex_literal);
+  assert (Thm.concl re_comp ~~
+      ``reglan_comp (reglan_to_re [97]) =
+        reglan_comp (reglan_to_re [97])``,
+    "re.comp rewrite returned the wrong equality: " ^
+    Library.thm_to_string re_comp);
+  assert (Thm.concl direct_ground ~~
+      ``smtstr_len [97; 98; 99] = 3``,
+    "direct string ground rewrite returned the wrong equality");
+  Library.check_oracle_tags "Z3 string literal rewrite" literal;
+  Library.check_oracle_tags "Z3 string length rewrite" length;
+  ()
+end
+
+fun z3_rewrite_string_rung_shaped_failure () =
+  expect_hol_error_contains "string rewrite shaped failure"
+    "string rewrite normalization did not close"
+    (fn () => ignore (SmtStringProve.string_rewrite_prove
+      ``smtstr_concat x [97] = smtstr_concat x [98]``))
 
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
@@ -7908,26 +8018,28 @@ fun expect_advanced_th_lemma_diagnostic
 
 fun z3_th_lemma_advanced_unsupported_diagnostic () =
 let
-  val cases = [
+  val string_cases = [
+    ("sequence",
+      "((proof ((_ th-lemma seq eq-propagate 2) false)))",
+      "sequence"),
+    ("string",
+      "((proof ((_ th-lemma string eq-propagate 3) false)))",
+      "string"),
+    ("regexp",
+      "((proof ((_ th-lemma regexp eq-propagate 4) false)))",
+      "regexp")
+  ]
+  fun expect_string_diagnostic (name, proof_text, _) =
+    expect_hol_error_contains ("unsupported " ^ name ^ " th-lemma")
+      "unsupported th-lemma shape: theory=seq"
+      (fn () => ignore (replay_z3_proof_string proof_text))
+in
+  expect_advanced_th_lemma_diagnostic
     ("floating-point",
       "((proof ((_ th-lemma fp eq-propagate 1) false)))",
       "theory=fp",
-      "proof-rule:th-lemma-fp"),
-    ("sequence",
-      "((proof ((_ th-lemma seq eq-propagate 2) false)))",
-      "theory=seq",
-      "proof-rule:th-lemma-seq"),
-    ("string",
-      "((proof ((_ th-lemma string eq-propagate 3) false)))",
-      "theory=string",
-      "proof-rule:th-lemma-string"),
-    ("regexp",
-      "((proof ((_ th-lemma regexp eq-propagate 4) false)))",
-      "theory=regexp",
-      "proof-rule:th-lemma-regexp")
-  ]
-in
-  List.app expect_advanced_th_lemma_diagnostic cases
+      "proof-rule:th-lemma-fp");
+  List.app expect_string_diagnostic string_cases
 end
 
 fun z3_proof_replay_failure_diagnostic () =
@@ -8705,10 +8817,18 @@ let
       string_prove_structured_failures),
     ("z3_string_th_lemma_dispatch_success",
       z3_string_th_lemma_dispatch_success),
-    ("z3_char_th_lemma_placeholder_diagnostic",
-      z3_char_th_lemma_placeholder_diagnostic),
+    ("z3_char_th_lemma_bit_decomposition_success",
+      z3_char_th_lemma_bit_decomposition_success),
+    ("z3_char_th_lemma_shaped_diagnostics",
+      z3_char_th_lemma_shaped_diagnostics),
+    ("z3_char_th_lemma_false_diagnostic",
+      z3_char_th_lemma_false_diagnostic),
     ("z3_rewrite_datatype_rung_replay_success",
       z3_rewrite_datatype_rung_replay_success),
+    ("z3_rewrite_string_rungs_replay_success",
+      z3_rewrite_string_rungs_replay_success),
+    ("z3_rewrite_string_rung_shaped_failure",
+      z3_rewrite_string_rung_shaped_failure),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",

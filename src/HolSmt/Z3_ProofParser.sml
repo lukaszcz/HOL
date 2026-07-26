@@ -158,6 +158,14 @@ local
   (***************************************************************************)
 
   val z3_string_ty = listSyntax.mk_list_type numSyntax.num
+  val z3_char_width = Arbnum.fromInt 18
+  val z3_char_index_ty = fcpLib.index_type z3_char_width
+  val z3_char_ty = wordsSyntax.mk_word_type z3_char_index_ty
+
+  fun z3_char_to_num c = wordsSyntax.mk_w2n c
+
+  fun z3_num_to_char n =
+    wordsSyntax.mk_n2w (n, z3_char_index_ty)
 
   fun z3_string_const name =
     Term.prim_mk_const {Thy = "smtstringz3", Name = name}
@@ -218,7 +226,7 @@ local
             ("no pinned string-proof inventory for Z3 " ^ version)
       fun result_ty name =
         if String.isSuffix ".c" name orelse String.isSuffix ".d" name then
-          numSyntax.num
+          z3_char_ty
         else z3_string_ty
       fun witness name =
         let
@@ -246,26 +254,27 @@ local
 
   fun z3_bits2char bits =
     let
-      val two = numSyntax.mk_numeral (Arbnum.fromInt 2)
+      val zero = wordsSyntax.mk_word (Arbnum.zero, z3_char_width)
       fun add_bit ([], 18, sum) = sum
         | add_bit (bit :: rest, index, sum) =
             let
-              val weight = numSyntax.mk_exp
-                (two, numSyntax.mk_numeral (Arbnum.fromInt index))
+              val weight = wordsSyntax.mk_word
+                (Arbnum.pow (Arbnum.two, Arbnum.fromInt index),
+                 z3_char_width)
               val contribution =
-                boolSyntax.mk_cond (bit, weight, numSyntax.zero_tm)
+                boolSyntax.mk_cond (bit, weight, zero)
             in
               add_bit (rest, index + 1,
-                numSyntax.mk_plus (sum, contribution))
+                wordsSyntax.mk_word_or (sum, contribution))
             end
         | add_bit _ = raise ERR "<z3_string_dict.bits2char>"
             "exactly 18 Boolean arguments expected"
     in
-      add_bit (bits, 0, numSyntax.zero_tm)
+      add_bit (bits, 0, zero)
     end
 
   val z3_string_tydict = Library.dict_from_list [
-    ("Char", SmtLib_Theories.K_zero_zero numSyntax.num)
+    ("Char", SmtLib_Theories.K_zero_zero z3_char_ty)
   ]
 
   fun z3_string_tmdict version =
@@ -284,16 +293,31 @@ local
                  raise ERR "<z3_string_dict._>" detail)
           | NONE => raise ERR "<z3_string_dict._>"
               "not a proof string literal")),
+        ("re.diff", SmtLib_Theories.K_zero_two (fn (x, y) =>
+          if Lib.can
+              (Term.same_const
+                (Term.prim_mk_const
+                  {Thy = "smtstring", Name = "reglan_all"})) x then
+            (* Z3 canonicalizes re.diff re.all R to re.comp R in proofs.
+               Keep that proof-local alias canonical without changing the
+               ordinary SMT-LIB surface dictionary. *)
+            Term.list_mk_comb
+              (Term.prim_mk_const
+                {Thy = "smtstring", Name = "reglan_comp"}, [y])
+          else
+            Term.list_mk_comb
+              (Term.prim_mk_const
+                {Thy = "smtstring", Name = "reglan_diff"}, [x, y]))),
         ("Char", fn _ => fn indices => fn args =>
           case (indices, args) of
-            ([code], []) => z3_natural code
+            ([code], []) => z3_num_to_char (z3_natural code)
           | _ => raise ERR "<z3_string_dict.Char>"
               "one code-point index and no arguments expected"),
         ("seq.unit", SmtLib_Theories.K_zero_one
-          (fn c => z3_string_app "seq_unit" [c])),
+          (fn c => z3_string_app "seq_unit" [z3_char_to_num c])),
         ("seq.nth_i", SmtLib_Theories.K_zero_two
-          (fn (s, i) => z3_string_app "seq_nth_i"
-            [s, z3_natural i])),
+          (fn (s, i) => z3_num_to_char
+            (z3_string_app "seq_nth_i" [s, z3_natural i]))),
         ("seq.tail", z3_indexed_binary "seq_tail"
           (fn (s, i) => z3_string_app "seq_tail"
             [s, z3_natural i])),
@@ -303,12 +327,16 @@ local
           (fn (s, i) => z3_string_app "seq_stoi"
             [s, z3_natural i])),
         ("seq.digit2int", z3_indexed_unary "seq_digit2int"
-          (fn c => z3_string_app "seq_digit2int" [c])),
+          (fn c => z3_string_app "seq_digit2int"
+            [z3_char_to_num c])),
         ("seq.digit", SmtLib_Theories.K_zero_one
-          (fn c => z3_string_app "seq_digit" [c])),
+          (fn c => z3_string_app "seq_digit" [z3_char_to_num c])),
         ("char.is_digit", SmtLib_Theories.K_zero_one
-          (fn c => z3_string_app "char_is_digit" [c])),
-        ("char.<=", SmtLib_Theories.K_zero_two numSyntax.mk_leq),
+          (fn c => z3_string_app "char_is_digit"
+            [z3_char_to_num c])),
+        ("char.<=", SmtLib_Theories.K_zero_two
+          (fn (c, d) => numSyntax.mk_leq
+            (z3_char_to_num c, z3_char_to_num d))),
         ("bits2char", fn _ => fn indices => fn args =>
           case (indices, args) of
             ([], []) => Term.mk_var ("bits2char", Type.alpha)
@@ -326,7 +354,8 @@ local
             ([marker, bit], [c]) =>
               if Term.is_var marker andalso
                  Lib.fst (Term.dest_var marker) = "char.bit" then
-                z3_string_app "char_bit" [z3_natural bit, c]
+                z3_string_app "char_bit"
+                  [z3_natural bit, z3_char_to_num c]
               else
                 raise ERR "<z3_string_dict.char.bit>"
                   "unexpected self index"

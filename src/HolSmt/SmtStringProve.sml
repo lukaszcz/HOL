@@ -344,7 +344,110 @@ struct
             (bossLib.RW_TAC
                (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
                regex_normalizations,
-             bossLib.METIS_TAC regex_lemmas))) ()
+            bossLib.METIS_TAC regex_lemmas))) ()
+
+  (* `rewrite` steps are a separate customer of the string theory.  Keep
+     their entry point narrow: a failed string attempt must not turn an
+     ordinary arithmetic rewrite into a string diagnostic. *)
+  val string_theory_consts =
+    List.map
+      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
+      ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_at",
+       "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
+       "smtstr_indexof", "smtstr_lt", "smtstr_le", "smtstr_replace",
+       "smtstr_replace_all", "smtstr_replace_re",
+       "smtstr_replace_re_all", "smtstr_is_digit", "smtstr_to_code",
+       "smtstr_from_code", "smtstr_to_int", "smtstr_from_int",
+       "smt_in_re", "reglan_to_re", "reglan_concat", "reglan_union",
+       "reglan_inter", "reglan_diff", "reglan_comp", "reglan_star",
+       "reglan_plus", "reglan_opt", "reglan_range", "reglan_power",
+       "reglan_loop"] @
+    List.map
+      (fn name => Term.prim_mk_const {Thy = "smtstringz3", Name = name})
+      ["seq_unit", "seq_tail", "seq_eq", "seq_nth_i", "seq_stoi",
+       "seq_digit", "char_is_digit", "char_bit", "aut_state",
+       "aut_accept"]
+
+  fun is_string_theory_term tm =
+    List.exists (fn c => Term.same_const c tm) string_theory_consts
+    handle Feedback.HOL_ERR _ => false
+
+  fun has_string_theory_term t =
+    List.exists is_string_theory_term (subterms t)
+
+  (* These are semantic rewrite facts, rather than a general-purpose simp
+     set.  In particular, do not include METIS here: each rewrite rung must
+     reconstruct the recorded equality by a targeted conversion. *)
+  val rewrite_normalizations = [
+    smtstringTheory.smtstr_concat_def,
+    smtstringTheory.smtstr_concat_assoc,
+    smtstringTheory.smtstr_concat_nil_left,
+    smtstringTheory.smtstr_concat_nil_right,
+    smtstringTheory.smtstr_len_concat,
+    smtstringTheory.smtstr_len_concat_int,
+    smtstringTheory.smtstr_len_eq_zero,
+    smtstringTheory.smtstr_prefixof_refl,
+    smtstringTheory.smtstr_suffixof_refl,
+    smtstringTheory.smtstr_contains_refl,
+    smtstringTheory.smtstr_lt_irrefl,
+    smtstringTheory.smtstr_le_refl,
+    smtstringTheory.smtstr_lt_imp_le,
+    smtstringTheory.smt_in_re_deriv,
+    smtstringz3Theory.seq_unit_compute,
+    smtstringz3Theory.seq_tail_compute,
+    smtstringz3Theory.seq_eq_compute,
+    smtstringz3Theory.seq_nth_i_compute,
+    smtstringz3Theory.char_is_digit_compute,
+    smtstringz3Theory.seq_digit_compute,
+    smtstringz3Theory.seq_stoi_compute,
+    smtstringz3Theory.aut_state_compute,
+    smtstringz3Theory.aut_accept_compute
+  ]
+
+  fun rewrite_simp_prove t =
+    simpLib.SIMP_PROVE
+      (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+      rewrite_normalizations t
+    handle Feedback.HOL_ERR _ =>
+      raise ERR "rewrite_simp_prove"
+        "string rewrite normalization did not close the conclusion"
+
+  val regex_rewrite_consts =
+    List.map
+      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
+      ["reglan_to_re", "reglan_none", "reglan_all", "reglan_allchar",
+       "reglan_concat", "reglan_union", "reglan_inter", "reglan_diff",
+       "reglan_comp", "reglan_star", "reglan_plus", "reglan_opt",
+       "reglan_range", "reglan_power", "reglan_loop"]
+
+  fun has_regex_rewrite_term t =
+    List.exists
+      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
+      regex_rewrite_consts
+
+  fun rewrite_evaluation_prove t =
+    if has_regex_rewrite_term t andalso not (is_regex_goal t) then
+      (* Regex constructor equalities are normalized structurally.  Sending
+         them through CBV unfolds the derivative engine unnecessarily. *)
+      rewrite_simp_prove t
+    else if List.null (Term.free_vars t) then
+      ground_eval_prove t
+    else
+      raise ERR "rewrite_ground_eval_prove"
+        "ground evaluation requires a closed conclusion"
+
+  (* The ordering is intentional and mirrors `string_prove`: the recorded
+     proforma net gets first refusal, then the executable compute set, then
+     only the small, named normalization set above. *)
+  fun string_rewrite_prove t =
+    if not (has_string_theory_term t) then
+      raise ERR "string_rewrite_prove" "no Unicode-string term"
+    else
+      profile "rewrite(03.0)(string-proforma)" proforma_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "rewrite(03.1)(string-ground-eval)" rewrite_evaluation_prove t
+      handle Feedback.HOL_ERR _ =>
+      profile "rewrite(03.2)(string-normalization)" rewrite_simp_prove t
 
   fun string_prove arith_prove t =
     let val () = check_seq_type t in
@@ -362,7 +465,54 @@ struct
       profile "string(rung:7/unsupported)" (unsupported "seq") t
     end
 
+  (* Z3 shares each tail of its bitwise comparison through proof lets.
+     Parsing expands those lets, so compact the Boolean recurrence
+     top-down before bit-blasting to keep the checked term linear. *)
+  val compact_char_compare =
+    tautLib.TAUT_PROVE
+      ``((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) =
+        ((c /\ ~d) \/ ((c = d) /\ r))``
+
+  fun char_bitblast_prove t =
+    let
+      val char_bit_const =
+        Term.prim_mk_const {Thy = "smtstringz3", Name = "char_bit"}
+      val char_is_digit_const =
+        Term.prim_mk_const {Thy = "smtstringz3",
+          Name = "char_is_digit"}
+      val word_or_const =
+        Term.prim_mk_const {Thy = "words", Name = "word_or"}
+      val has_decomposition =
+        List.exists
+          (fn c => Lib.can
+            (HolKernel.find_term (Term.same_const c)) t)
+          [char_bit_const, char_is_digit_const, word_or_const]
+      val _ =
+        if has_decomposition then ()
+        else raise ERR "char_prove" "no char decomposition atom"
+      val compacted =
+        Conv.TRY_CONV
+          (Conv.TOP_DEPTH_CONV
+            (Conv.REWR_CONV compact_char_compare)) t
+        handle Conv.UNCHANGED => Thm.REFL t
+             | Feedback.HOL_ERR _ => Thm.REFL t
+      val compacted_t = boolSyntax.rhs (Thm.concl compacted)
+      val simplified =
+        simpLib.SIMP_CONV
+          (simpLib.++ (bossLib.srw_ss(), wordsLib.WORD_BIT_EQ_ss))
+          [smtstringz3Theory.char_bit_word18,
+           smtstringz3Theory.char_is_digit_word18,
+           smtstringz3Theory.char_le_word18] compacted_t
+      val normalized = Thm.TRANS compacted simplified
+      val t' = boolSyntax.rhs (Thm.concl normalized)
+      val thm = Tactical.prove (t', blastLib.BBLAST_TAC)
+    in
+      Thm.EQ_MP (Thm.SYM normalized) thm
+    end
+
   fun char_prove t =
-    profile "string(rung:6/char-placeholder)" (unsupported "char") t
+    profile "string(rung:6/char-bitblast)" char_bitblast_prove t
+    handle Feedback.HOL_ERR _ =>
+      profile "string(rung:7/unsupported)" (unsupported "char") t
 
 end

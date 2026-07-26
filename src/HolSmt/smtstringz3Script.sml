@@ -3,11 +3,11 @@
 (* Definitional semantics for Z3's internal string-proof vocabulary. *)
 Theory smtstringz3
 Ancestors[qualified]
-  smtstring bit
+  smtstring bit words
 
-(* Z3's internal Char sort is represented by num.  Proof parsing maps
-   (_ Char n) directly to the numeral n; well-formed character terms
-   carry the side condition n <= 196607. *)
+(* Official SMT strings use num code points.  Proof parsing gives Z3's
+   internal Char sort a bounded 18-bit representation and converts at
+   the sequence boundary. *)
 
 Definition seq_unit_def:
   seq_unit (c : num) = [c]
@@ -138,6 +138,34 @@ Theorem char_bit_compute[compute]:
   char_bit k c <=> BIT k c
 Proof
   simp [char_bit_def]
+QED
+
+(* Proof parsing represents Z3's internal Char sort by an 18-bit word.
+   Official SMT strings remain num lists; these lemmas are the checked
+   boundary between those representations. *)
+
+Theorem char_is_digit_word18:
+  char_is_digit (w2n (c : 18 word)) <=>
+    (n2w 48 : 18 word) <=+ c /\ c <=+ (n2w 57 : 18 word)
+Proof
+  simp [char_is_digit_def, wordsTheory.WORD_LS]
+QED
+
+Theorem char_le_word18:
+  w2n (c : 18 word) <= w2n d <=> c <=+ d
+Proof
+  simp [wordsTheory.WORD_LS]
+QED
+
+Theorem char_bit_word18:
+  k < 18 ==>
+    (char_bit k (w2n (c : 18 word)) <=> word_bit k c)
+Proof
+  rw [char_bit_def] >>
+  `c = n2w (w2n c)` by simp [] >>
+  pop_assum SUBST1_TAC >>
+  simp [wordsTheory.word_bit_n2w, arithmeticTheory.LESS_MOD,
+        wordsTheory.w2n_lt]
 QED
 
 Theorem aut_state_compute[compute]:
