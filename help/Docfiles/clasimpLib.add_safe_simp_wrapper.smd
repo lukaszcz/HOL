@@ -3,17 +3,19 @@
 
 ``` hol4
 clasimpLib.add_safe_simp_wrapper :
-  simpLib.simpset -> clasetLib.claset -> clasetLib.claset
+  simpLib.simpset -> thm list ->
+  clasetLib.claset -> clasetLib.claset
 ```
 
 ------------------------------------------------------------------------
 
 Adds safe assumption-aware full simplification as a safe wrapper.
 
-`add_safe_simp_wrapper ss cs` returns `cs` with a wrapper named
+`add_safe_simp_wrapper ss controls cs` returns `cs` with a wrapper named
 `"safe_asm_full_simp_tac"`. The wrapper first runs the wrapped safe
 classical step. Only when that step has no result does it offer a changed
-safe-simplification transition using `ss`.
+safe-simplification transition using `ss` and `controls`. The control list
+accepts the ordinary simplifier markers, including `Excl`, `Cong`, and `SF`.
 
 Safe mode selects the safe final-solver list for the residual goal. It
 does not change rewriting: conditional-rewrite side conditions still use
@@ -33,7 +35,9 @@ wrapped step nor safe simplification changes the goal.
 ``` hol4
 val safe_cs =
   clasimpLib.add_safe_simp_wrapper
-    (clasimpLib.clasimp_ss ()) (clasetLib.the_claset ());
+    (clasimpLib.clasimp_ss ())
+    [markerLib.Excl "myTheory.expensive_rule"]
+    (clasetLib.the_claset ());
 ```
 
 ### See also

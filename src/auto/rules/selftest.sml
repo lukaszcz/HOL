@@ -1601,6 +1601,32 @@ fun typebase_iff_dest th =
     GENL vars (#1 (EQ_IMP_RULE (typebase_specl vars th)))
   end
 
+fun legacy_fresh_outer_vars th vars =
+  let
+    fun freshen avoids [] = []
+      | freshen avoids (v :: vs) =
+          let val v' = variant avoids v
+          in v' :: freshen (v' :: avoids) vs end
+  in
+    freshen (free_varsl (hyp th)) vars
+  end
+
+fun legacy_iff_dest_rule th =
+  let
+    val th' = canonical_rule th
+    val (vars, _) = strip_forall (concl th')
+    val vars' = legacy_fresh_outer_vars th' vars
+  in
+    GENL vars' (#1 (EQ_IMP_RULE (Drule.SPECL vars' th')))
+  end
+
+fun derived_iff_dest th =
+  case List.filter
+    (fn ({kind, ...}, _) => kind = clasetRules.Dest)
+    (iff_rules "claset-selftest-iff" th) of
+      [(_, (_, dest))] => dest
+    | _ => raise Fail "missing derived iff dest rule"
+
 fun typebase_hook_tyinfo () =
   case List.filter
     (fn tyi => #2 (TypeBasePure.ty_name_of tyi) =
@@ -1620,6 +1646,39 @@ val typebase_selim_spec =
   {kind = clasetRules.Elim, safe = true, prio = NONE}
 val typebase_sdest_spec =
   {kind = clasetRules.Dest, safe = true, prio = NONE}
+val typebase_sintro_spec =
+  {kind = clasetRules.Intro, safe = true, prio = NONE}
+
+val _ =
+  test
+    ("moved iff derivation agrees with legacy TypeBase injectivity dests",
+     fn () =>
+       let
+         fun agrees tyi =
+           case Lib.total TypeBasePure.one_one_of tyi of
+               SOME (SOME theorem) =>
+                 List.all
+                   (fn conjunct =>
+                     let
+                       val legacy =
+                         canonical_rule (legacy_iff_dest_rule conjunct)
+                       val moved =
+                         canonical_rule (derived_iff_dest conjunct)
+                     in
+                       if same_thm legacy moved then true
+                       else
+                         (print
+                            ("legacy iff dest: " ^
+                             Parse.thm_to_string legacy ^
+                             "\nmoved iff dest: " ^
+                             Parse.thm_to_string moved ^ "\n");
+                          false)
+                     end)
+                   (Drule.CONJUNCTS theorem)
+             | _ => true
+       in
+         List.all agrees (TypeBase.elts ())
+       end)
 
 val _ =
   test
@@ -1635,11 +1694,16 @@ val _ =
                              typebase_distinct_elim (Conv.GSYM th)])
                   (Drule.CONJUNCTS distinct))
          val injective_rules =
-           map typebase_iff_dest (Drule.CONJUNCTS injective)
+           List.concat
+             (map (iff_rules "claset-selftest-injectivity")
+                (Drule.CONJUNCTS injective))
        in
          List.all (has_typebase_rule typebase_selim_spec) distinct_rules
            andalso
-         List.all (has_typebase_rule typebase_sdest_spec) injective_rules
+         List.all
+           (fn (spec, (_, theorem)) =>
+             has_typebase_rule spec theorem)
+           injective_rules
        end)
 
 val tyinfo_idempotence_p = ``claset_tyinfo_idempotence_p : bool``
@@ -1899,6 +1963,34 @@ val _ =
                 (rest, [marked])
             end)
          simpset_marker_cases)
+
+val _ =
+  test
+    ("simp argument classifier preserves every bucket's input order",
+     fn () =>
+       let
+         val simp1 = boolTheory.AND_CLAUSES
+         val simp2 = boolTheory.OR_CLAUSES
+         val iff1 = boolTheory.IMP_CLAUSES
+         val iff2 = boolTheory.NOT_CLAUSES
+         val control1 = markerLib.Excl "claset-selftest-one"
+         val control2 = BoundedRewrites.Once boolTheory.TRUTH
+         val fact1 = boolTheory.EQ_REFL
+         val fact2 = boolTheory.FORALL_SIMP
+         val {simp_rules, iff_rules, simp_controls, rest} =
+           classify_simp_args
+             [Simp simp1, control1, fact1, Iff iff1,
+              Simp simp2, control2, Iff iff2, fact2]
+         fun same_list left right =
+           ListPair.allEq
+             (fn (theorem1, theorem2) => same_thm theorem1 theorem2)
+             (left, right)
+       in
+         same_list simp_rules [simp1, simp2] andalso
+         same_list iff_rules [iff1, iff2] andalso
+         same_list simp_controls [control1, control2] andalso
+         same_list rest [fact1, fact2]
+       end)
 
 val _ =
   test

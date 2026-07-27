@@ -30,6 +30,11 @@ and `[iff]` use separate declaration streams, their relative recency can
 change across reload when otherwise equal candidates tie; rule meaning and
 priority are unaffected.
 
+The simpset view is an ordinary named rewrite. Its deletion key is the
+declaring theorem's `Thy.name`, so `Excl "Thy.name"`, `delsimps`, and
+`temp_delsimps` affect it exactly as they affect a rewrite declared with
+`[simp]`; none of those simpset-only controls removes the classical view.
+
 Use `clasimpLib.remove_iff "name"` to record removal. Use `Iff th` for the
 same two derived views during one clasimp tactic invocation only.
 

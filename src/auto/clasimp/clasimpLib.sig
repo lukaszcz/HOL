@@ -7,9 +7,9 @@ sig
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic
 
   val add_simp_wrapper :
-    simpLib.simpset -> clasetLib.claset -> clasetLib.claset
+    simpLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
   val add_safe_simp_wrapper :
-    simpLib.simpset -> clasetLib.claset -> clasetLib.claset
+    simpLib.simpset -> thm list -> clasetLib.claset -> clasetLib.claset
 
   (* Pure [iff] decision tree.  Callers choose where to install the
      derived claset rules and the normalized simpset rewrite. *)

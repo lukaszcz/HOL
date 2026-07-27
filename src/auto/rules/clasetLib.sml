@@ -666,13 +666,80 @@ fun distinct_elim_rule th =
     GENL (vars' @ [r]) (DISCH eq result)
   end
 
-fun iff_dest_rule th =
+fun iff_rules name theorem =
   let
-    val th' = canonical_rule th
-    val (vars, _) = strip_forall (concl th')
-    val vars' = fresh_outer_vars th' vars
+    val (outer_vars, _) = strip_forall (concl theorem)
+    val outer_vars' = fresh_outer_vars theorem outer_vars
+    val th = Drule.SPECL outer_vars' theorem
+    val (prems, final) = boolSyntax.strip_imp_only (concl th)
+    val safe = null prems
+    fun spec kind = {kind = kind, safe = safe, prio = NONE}
+
+    (* GEN_ALL's set traversal may reverse source binders.  Retain their
+       declaration order, then generalise any remaining conclusion-only
+       variables in GEN_ALL's established order. *)
+    fun gen_all_ordered result =
+      let
+        val eligible =
+          HOLset.difference
+            (FVL [concl result] empty_tmset, hyp_frees result)
+        val source =
+          List.filter (fn variable => HOLset.member (eligible, variable))
+            outer_vars'
+        val remaining =
+          List.foldl
+            (fn (variable, variables) =>
+              HOLset.delete (variables, variable))
+            eligible source
+      in
+        GENL (source @ HOLset.listItems remaining) result
+      end
+
+    (* The derived iff/not rule initially has the source antecedents as
+       hypotheses and its new major premise last.  Discharge the source
+       antecedents first, then the major, to put the major premise at the
+       front as Isabelle's rotate_prems n does. *)
+    fun rotate_major major result =
+      gen_all_ordered
+        (DISCH major (Lib.itlist DISCH prems result))
+
+    (* Move source antecedents into hypotheses so that rotate_major can
+       discharge them behind the new major premise. *)
+    fun undisch_prems () = Lib.funpow (length prems) Drule.UNDISCH th
+
+    fun equality_rules () =
+      let
+        val core = undisch_prems ()
+        val (left, right) = boolSyntax.dest_eq final
+        val (forward, backward) = EQ_IMP_RULE core
+        val intro = rotate_major right (MP backward (ASSUME right))
+        val dest = rotate_major left (MP forward (ASSUME left))
+      in
+        [(spec clasetRules.Intro, (name ^ "_intro", intro)),
+         (spec clasetRules.Dest, (name ^ "_dest", dest))]
+      end
+
+    fun not_rule () =
+      let
+        val core = undisch_prems ()
+        val major = boolSyntax.dest_neg final
+        val false_th = MP (NOT_ELIM core) (ASSUME major)
+        val result_var =
+          variant (free_varsl (concl core :: hyp core))
+            (mk_var ("iff_result", Type.bool))
+        val result = MP (SPEC result_var boolTheory.FALSITY) false_th
+        val elim = rotate_major major result
+      in
+        [(spec clasetRules.Elim, (name ^ "_elim", elim))]
+      end
   in
-    GENL vars' (#1 (EQ_IMP_RULE (Drule.SPECL vars' th')))
+    if boolSyntax.is_eq final andalso
+       type_of (fst (boolSyntax.dest_eq final)) = Type.bool
+    then equality_rules ()
+    else if boolSyntax.is_neg final then not_rule ()
+    else
+      [(spec clasetRules.Intro,
+        (name ^ "_intro", gen_all_ordered th))]
   end
 
 fun tyinfo_stem tyi =
@@ -705,8 +772,7 @@ fun injectivity_contribution tyi =
         let
           val stem = tyinfo_stem tyi ^ "_inject_"
           fun make_rule index conjunct =
-            [(sdest_spec,
-              (stem ^ Int.toString index, iff_dest_rule conjunct))]
+            iff_rules (stem ^ Int.toString index) conjunct
         in
           number_contribution make_rule (CONJUNCTS th)
         end
@@ -864,36 +930,70 @@ fun process_claset_tags thms cs =
     process (cs, []) thms
   end
 
+type simp_arg_split =
+  {simp_rules : thm list,
+   iff_rules : thm list,
+   simp_controls : thm list,
+   rest : thm list}
+
+fun classify_simp_args theorems =
+  let
+    fun classify
+      (theorem, {simp_rules, iff_rules, simp_controls, rest}) =
+      case destSimp theorem of
+          SOME rule =>
+            {simp_rules = rule :: simp_rules,
+             iff_rules = iff_rules,
+             simp_controls = simp_controls,
+             rest = rest}
+        | NONE =>
+            (case destIff theorem of
+                 SOME rule =>
+                   {simp_rules = simp_rules,
+                    iff_rules = rule :: iff_rules,
+                    simp_controls = simp_controls,
+                    rest = rest}
+               | NONE =>
+                   if markerLib.is_generic_simp_marker theorem then
+                     {simp_rules = simp_rules,
+                      iff_rules = iff_rules,
+                      simp_controls = theorem :: simp_controls,
+                      rest = rest}
+                   else
+                     {simp_rules = simp_rules,
+                      iff_rules = iff_rules,
+                      simp_controls = simp_controls,
+                      rest = theorem :: rest})
+    val {simp_rules, iff_rules, simp_controls, rest} =
+      List.foldl classify
+        {simp_rules = [], iff_rules = [], simp_controls = [], rest = []}
+        theorems
+  in
+    {simp_rules = List.rev simp_rules,
+     iff_rules = List.rev iff_rules,
+     simp_controls = List.rev simp_controls,
+     rest = List.rev rest}
+  end
+
 (* process_claset_tags consumes the classical marker vocabulary.  Plain
    leftovers become inserted facts; generic simplifier controls are either
    unwrapped to their theorem payload or discarded as inert here. *)
 fun invocation_facts theorems =
   let
-    fun reject_simpset_marker theorem =
-      case destSimp theorem of
-          SOME _ =>
-            raise mk_HOL_ERR "clasetLib" "invocation_facts"
-              "Simp marker requires a tactic with a simpset"
-        | NONE =>
-            (case destIff theorem of
-                 SOME _ =>
-                   raise mk_HOL_ERR "clasetLib" "invocation_facts"
-                     "Iff marker requires a tactic with a simpset"
-               | NONE => ())
-
-    fun fact theorem =
-      let
-        val theorem =
-          case markerLib.dest_generic_simp_wrapper theorem of
-              NONE => theorem
-            | SOME payload => payload
-        val _ = reject_simpset_marker theorem
-      in
-        if markerLib.is_generic_simp_marker theorem then NONE
-        else SOME theorem
-      end
+    fun unwrap theorem =
+      case markerLib.dest_generic_simp_wrapper theorem of
+          NONE => theorem
+        | SOME payload => payload
+    val {simp_rules, iff_rules, rest, ...} =
+      classify_simp_args (map unwrap theorems)
   in
-    List.mapPartial fact theorems
+    if not (null simp_rules) then
+      raise mk_HOL_ERR "clasetLib" "invocation_facts"
+        "Simp marker requires a tactic with a simpset"
+    else if not (null iff_rules) then
+      raise mk_HOL_ERR "clasetLib" "invocation_facts"
+        "Iff marker requires a tactic with a simpset"
+    else rest
   end
 
 fun INSERT_FACTS_TAC facts = Tactical.MAP_EVERY Tactic.ASSUME_TAC facts

@@ -48,6 +48,14 @@ provided by `delrule` and `temp_delrule`, not by a removal attribute.
 Stored rules are normally named by their fully qualified database names,
 such as `bool$AND_INTRO_THM`.
 
+The base claset also derives safe datatype rules from `TypeBase`.
+Constructor distinctness contributes elimination rules in both
+orientations. Constructor injectivity contributes both directions of each
+equivalence: a safe introduction rule for rebuilding constructor equality
+from component equalities and a safe destruction rule for extracting
+component equalities. These derived facts follow datatypes added after
+library load as well as entries found during the initial catch-up.
+
 ### Per-invocation markers
 
 The seven marker constructors modify only the temporary rule set assembled

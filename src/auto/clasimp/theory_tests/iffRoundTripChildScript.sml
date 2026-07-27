@@ -2,36 +2,46 @@ Theory iffRoundTripChild
 Ancestors
   iffRoundTripBase
 Libs
-  HolKernel BasicProvers clasimpLib
+  HolKernel BasicProvers clasimpLib iffTestSupport
 
-open clasimpLib
+open clasimpLib iffTestSupport
 
 fun fail message = raise Fail ("iff round-trip child test: " ^ message)
 
-fun has_rule name =
-  List.exists
-    (fn (_, (name', _)) => name = name')
-    (clasetLib.rules_of (clasetLib.the_claset ()))
-
-fun has_fragment name ss =
-  List.exists
-    (fn fragment => fragment = "__clasimp_iff_" ^ name)
-    (simpLib.ssfrag_names_of ss)
-
 val live_name = "iffRoundTripBase$iff_round_trip_live_rule"
 val removed_name = "iffRoundTripBase$iff_round_trip_removed_rule"
+val delsimp_name = "iffRoundTripBase$iff_round_trip_delsimp_rule"
 
 val _ =
-  if not (has_rule (live_name ^ "_intro")) orelse
-     not (has_rule (live_name ^ "_dest"))
+  let
+    val source = ``iffRoundTripBase$iff_round_trip_live T``
+    val ordinary =
+      Conv.QCONV (simpLib.SIMP_CONV (BasicProvers.srw_ss ()) []) source
+    val excluded =
+      Conv.QCONV
+        (simpLib.SIMP_CONV (BasicProvers.srw_ss ())
+          [markerLib.Excl
+             "iffRoundTripBase.iff_round_trip_live_rule"])
+        source
+  in
+    if aconv (snd (boolSyntax.dest_eq (concl ordinary))) boolSyntax.T andalso
+       aconv (snd (boolSyntax.dest_eq (concl excluded))) source andalso
+       has_iff_rules live_name
+    then ()
+    else fail "Excl did not disable only the named iff rewrite"
+  end
+
+val _ =
+  if not (has_iff_rules live_name)
   then fail "the reloaded child claset lost its inherited declaration"
-  else if not (has_fragment live_name (BasicProvers.srw_ss ())) orelse
-          not (has_fragment live_name (clasimp_ss ()))
+  else if not (has_iff_rewrite live_name)
   then fail "the reloaded child simpsets lost the inherited declaration"
-  else if has_rule (removed_name ^ "_intro") orelse
-          has_rule (removed_name ^ "_dest")
+  else if has_iff_rules removed_name
   then fail "the removed declaration reappeared in the child claset"
-  else if has_fragment removed_name (BasicProvers.srw_ss ()) orelse
-          has_fragment removed_name (clasimp_ss ())
+  else if has_iff_rewrite removed_name
   then fail "the removed declaration reappeared in the child simpsets"
+  else if has_iff_rewrite delsimp_name
+  then fail "the persistent delsimps removal was lost in the child"
+  else if not (has_iff_rules delsimp_name)
+  then fail "delsimps removed the child claset view"
   else ()

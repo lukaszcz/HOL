@@ -89,9 +89,12 @@ sig
 
   val process_claset_tags : thm list -> claset -> claset * thm list
 
-  (* Remove inert generic simplifier controls and unwrap controls that carry
-     theorem content. *)
-  val invocation_facts : thm list -> thm list
+  type simp_arg_split =
+    {simp_rules : thm list,
+     iff_rules : thm list,
+     simp_controls : thm list,
+     rest : thm list}
+  val classify_simp_args : thm list -> simp_arg_split
 
   (* Assemble the classical rules and inserted facts for one tactic
      invocation.  Engines insert the facts with INSERT_FACTS_TAC, lifting it
@@ -111,10 +114,8 @@ sig
       string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
       -> unit
 
-  (* Name prefix shared by every rule a contribution derives from one
-     TypeBase entry.  Contributions in other libraries use it so that the
-     halves of one derived rule set keep matching names. *)
-  val tyinfo_stem : TypeBasePure.tyinfo -> string
+  val iff_rules :
+    string -> thm -> (rulespec * (string * thm)) list
 
   val claset_config : {hyp_subst_tac : tactic, size_of : goal -> int}
 end

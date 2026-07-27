@@ -17,6 +17,10 @@ registered safe introduction, elimination and destruction rules. Registered
 safe wrappers also participate. Newly generated goals are rescanned from the
 left, and rule-premise order is preserved.
 
+Safe rules derived from `TypeBase` include constructor introduction as well
+as constructor injectivity and distinctness, so datatype equalities can be
+both decomposed and rebuilt during saturation.
+
 The theorem list can modify the rule set for this invocation. The markers
 `SIntro`, `Intro`, `SElim`, `Elim`, `SDest`, `Dest` and `Del` respectively
 add or remove rules. Every unmarked theorem is inserted into the goal as an

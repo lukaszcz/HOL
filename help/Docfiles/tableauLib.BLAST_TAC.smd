@@ -23,6 +23,10 @@ tableau translation, so it becomes an ordinary branch formula.
 Content-bearing generic simplifier wrappers are unwrapped and inserted;
 inert generic controls are ignored.
 
+The rule nets include both safe directions of datatype constructor
+injectivity supplied by `TypeBase`, allowing the tableau to decompose and
+rebuild constructor equalities.
+
 The raw `CS_BLAST_DEPTH_TAC` export does not change `BLAST_TAC`'s public
 packaging: preprocessing, iterative deepening through `depth_limit`, typed
 reconstruction, and tracing retain their existing behaviour.

@@ -148,6 +148,14 @@ fun tactic_fails tactic goal =
   (ignore (Tactical.VALID tactic goal); false)
   handle HOL_ERR _ => true
 
+fun local_clasimp body base_cs base_ss controls =
+  clasimpLib.process_clasimp_args body base_cs base_ss controls
+
+fun probe_goal tactic =
+  not
+    (tactic_fails tactic
+       ([], ``clasimp_argument_processor_probe:bool``))
+
 fun same_thm left right =
   Term.aconv (concl left) (concl right)
 
@@ -286,10 +294,29 @@ fun has_named_claset_rule name =
     (fn (_, (name', _)) => name = name')
     (clasetLib.rules_of (clasetLib.the_claset ()))
 
-fun has_iff_fragment name ss =
-  List.exists
-    (fn fragment => fragment = "__clasimp_iff_" ^ name)
-    (simpLib.ssfrag_names_of ss)
+fun fetch_persistent name =
+  case String.fields (equal #"$") name of
+      [thy, theorem] => DB.fetch thy theorem
+    | _ => raise Fail ("malformed persistent theorem name: " ^ name)
+
+fun has_iff_rewrite name ss =
+  let
+    val rewrite = Drule.SPEC_ALL (fetch_persistent name)
+    val (_, final) = boolSyntax.strip_imp_only (concl rewrite)
+    val source =
+      if boolSyntax.is_eq final then fst (boolSyntax.dest_eq final)
+      else if boolSyntax.is_neg final then boolSyntax.dest_neg final
+      else final
+    val result =
+      Conv.QCONV (simpLib.SIMP_CONV ss []) source
+  in
+    not (Term.aconv (snd (boolSyntax.dest_eq (concl result))) source)
+  end
+
+val clasimp_iff_attribute_probe_def =
+  new_definition
+    ("clasimp_iff_attribute_probe_def",
+     ``clasimp_iff_attribute_probe (p : bool) = p``)
 
 val _ =
   test
@@ -306,23 +333,22 @@ val _ =
          val local_name = "clasimp_iff_attribute_test"
          val persistent_name =
            KernelSig.name_toString (ThmSetData.toKName local_name)
-         val theorem =
-           CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES)
+         val theorem = clasimp_iff_attribute_probe_def
          val _ = boolLib.save_thm (local_name ^ "[iff]", theorem)
          val added =
            has_named_claset_rule (persistent_name ^ "_intro") andalso
            has_named_claset_rule (persistent_name ^ "_dest") andalso
-           has_iff_fragment persistent_name (BasicProvers.srw_ss ()) andalso
-           has_iff_fragment persistent_name (clasimpLib.clasimp_ss ())
+           has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
+           has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
          val _ = clasimpLib.remove_iff local_name
        in
          added andalso
          not (has_named_claset_rule (persistent_name ^ "_intro")) andalso
          not (has_named_claset_rule (persistent_name ^ "_dest")) andalso
          not
-           (has_iff_fragment persistent_name (BasicProvers.srw_ss ())) andalso
+           (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
          not
-           (has_iff_fragment persistent_name (clasimpLib.clasimp_ss ()))
+           (has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ()))
        end)
 
 val _ =
@@ -367,10 +393,12 @@ val constructor_sintro_spec =
 
 fun constructor_rule_names tyi index =
   let
+    val (thy, tyop) = TypeBasePure.ty_name_of tyi
     val base =
-      clasetLib.tyinfo_stem tyi ^ "_inject_" ^ Int.toString index
+      "__claset_tyinfo_" ^ thy ^ "_" ^ tyop ^
+      "_inject_" ^ Int.toString index
   in
-    {dest = base, intro = base ^ "_intro"}
+    {dest = base ^ "_dest", intro = base ^ "_intro"}
   end
 
 fun has_constructor_intro tyi index =
@@ -451,6 +479,14 @@ val _ =
          (constructor_safe constructor_intro_cs)
          constructor_intro_goal)
 
+val _ =
+  test
+    ("the base claset proves constructor equality with its safe intro",
+     fn () =>
+       solves
+         (constructor_safe (clasetLib.the_claset ()))
+         constructor_intro_goal)
+
 val marker_rule_cases :
     (string * thm * clasetRules.rulespec) list =
   [("SIntro", clasetLib.SIntro boolTheory.AND_INTRO_THM,
@@ -475,10 +511,9 @@ fun claset_marker_routed (_, marker, expected_spec) =
             else Tactical.NO_TAC
         | _ => Tactical.NO_TAC
     val tactic =
-      clasimpLib.process_clasimp_args inspect
-        clasetLib.empty_cs simpLib.empty_ss [marker]
+      local_clasimp inspect clasetLib.empty_cs simpLib.empty_ss [marker]
   in
-    not (tactic_fails tactic ([], ``clasimp_marker_goal:bool``))
+    probe_goal tactic
   end
 
 val _ =
@@ -500,10 +535,10 @@ val _ =
            then Tactical.ALL_TAC
            else Tactical.NO_TAC
          val tactic =
-           clasimpLib.process_clasimp_args inspect base
-             simpLib.empty_ss [clasetLib.Del "clasimp-delete"]
+           local_clasimp inspect base simpLib.empty_ss
+             [clasetLib.Del "clasimp-delete"]
        in
-         not (tactic_fails tactic ([], ``clasimp_del_goal:bool``))
+         probe_goal tactic
        end)
 
 val _ =
@@ -514,8 +549,7 @@ val _ =
          fun simplify _ ss simp_args =
            simpLib.SIMP_TAC ss simp_args
          val tactic =
-           clasimpLib.process_clasimp_args simplify
-             clasetLib.empty_cs simpLib.empty_ss
+           local_clasimp simplify clasetLib.empty_cs simpLib.empty_ss
              [clasetLib.Simp
                 (CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))]
        in
@@ -548,11 +582,10 @@ val _ =
            then Tactical.ALL_TAC
            else Tactical.NO_TAC
          val tactic =
-           clasimpLib.process_clasimp_args inspect
-             clasetLib.empty_cs simpLib.empty_ss
+           local_clasimp inspect clasetLib.empty_cs simpLib.empty_ss
              generic_simp_markers
        in
-         not (tactic_fails tactic ([], ``clasimp_generic_goal:bool``))
+         probe_goal tactic
        end)
 
 val _ =
@@ -572,10 +605,9 @@ val _ =
                end
            | inspect _ _ _ = Tactical.NO_TAC
          val tactic =
-           clasimpLib.process_clasimp_args inspect
-             clasetLib.empty_cs simpLib.empty_ss [once]
+           local_clasimp inspect clasetLib.empty_cs simpLib.empty_ss [once]
        in
-         not (tactic_fails tactic ([], ``clasimp_once_goal:bool``))
+         probe_goal tactic
        end)
 
 val _ =
@@ -587,8 +619,8 @@ val _ =
          val fact = DISCH p (ASSUME p)
          fun leave_residue _ _ _ = Tactical.ALL_TAC
          val tactic =
-           clasimpLib.process_clasimp_args leave_residue
-             clasetLib.empty_cs simpLib.empty_ss [fact]
+           local_clasimp leave_residue clasetLib.empty_cs
+             simpLib.empty_ss [fact]
        in
          case residual tactic ([], ``clasimp_insert_goal:bool``) of
              [([assumption], _)] => Term.aconv assumption (concl fact)
@@ -607,9 +639,8 @@ val _ =
          val goal = ([right], left)
          fun search cs ss _ =
            clasimpLib.CS_FASTFORCE_TAC cs ss
-         fun local_clasimp controls =
-           clasimpLib.process_clasimp_args search
-             clasetLib.empty_cs simpLib.empty_ss controls
+         fun tactic controls =
+           local_clasimp search clasetLib.empty_cs simpLib.empty_ss controls
          val rules_before =
            length (clasetLib.rules_of (clasetLib.the_claset ()))
          val rewrite_before =
@@ -617,10 +648,10 @@ val _ =
              (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) [])
              iff_test_left
          val unavailable_before =
-           tactic_fails (local_clasimp []) goal
+           tactic_fails (tactic []) goal
          val available =
            solves
-             (local_clasimp
+             (tactic
                [clasetLib.Iff equivalence]) goal
          val rules_after =
            length (clasetLib.rules_of (clasetLib.the_claset ()))
@@ -630,7 +661,7 @@ val _ =
              iff_test_left
        in
          unavailable_before andalso available andalso
-         tactic_fails (local_clasimp []) goal andalso
+         tactic_fails (tactic []) goal andalso
          rules_before = rules_after andalso
          Term.aconv (concl rewrite_before) (concl rewrite_after)
        end)
@@ -649,8 +680,7 @@ val _ =
          fun accept _ _ _ =
            Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC
          fun tactic controls =
-           clasimpLib.process_clasimp_args accept
-             clasetLib.empty_cs simpLib.empty_ss controls
+           local_clasimp accept clasetLib.empty_cs simpLib.empty_ss controls
        in
          tactic_fails (tactic []) goal andalso
          solves
@@ -665,68 +695,57 @@ val wrapper_ss =
 
 val wrapper_goal : Abbrev.goal = ([], ``~F``)
 
-val _ =
+val wrapper_rungs =
+  [("add_simp_wrapper reaches the FAST unsafe rung",
+    fn cs => NTactical.DETERM (classicalLib.CS_FAST_TAC cs),
+    clasimpLib.add_simp_wrapper),
+   ("add_simp_wrapper reaches the bounded depth rung",
+    fn cs =>
+      NTactical.DETERM
+        (classicalLib.CS_DEPTH_SOLVE_TAC {dup = false} 1 cs),
+    clasimpLib.add_simp_wrapper),
+   ("add_safe_simp_wrapper reaches the SAFE rung",
+    fn cs => NTactical.DETERM (classicalLib.CS_SAFE_TAC cs),
+    clasimpLib.add_safe_simp_wrapper),
+   ("add_safe_simp_wrapper reaches the CLARIFY rung",
+    fn cs => NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs),
+    clasimpLib.add_safe_simp_wrapper)]
+
+fun wrapper_rung (name, rung, add_wrapper) =
   test
-    ("add_simp_wrapper reaches the FAST unsafe rung",
+    (name,
      fn () =>
-       let
-         fun fast cs =
-           NTactical.DETERM (classicalLib.CS_FAST_TAC cs)
-       in
-         tactic_fails (fast clasetLib.empty_cs) wrapper_goal andalso
-         solves
-           (fast
-             (clasimpLib.add_simp_wrapper wrapper_ss
-               clasetLib.empty_cs))
-           wrapper_goal
-       end)
+       tactic_fails (rung clasetLib.empty_cs) wrapper_goal andalso
+       solves
+         (rung (add_wrapper wrapper_ss [] clasetLib.empty_cs))
+         wrapper_goal)
+
+val _ = List.app wrapper_rung wrapper_rungs
+
+val wrapper_control_name =
+  {Thy = "clasimpSelftest", Name = "wrapper_control"}
+
+val wrapper_control_ss =
+  simpLib.++
+    (simpLib.clear_rules (clasimpLib.clasimp_ss ()),
+     simpLib.named_rewrites_with_names "clasimp-wrapper-control"
+       [(wrapper_control_name,
+         CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))])
 
 val _ =
   test
-    ("add_simp_wrapper reaches the bounded depth rung",
+    ("add_simp_wrapper passes controls to its embedded simp step",
      fn () =>
        let
-         fun depth cs =
+         fun fast controls =
            NTactical.DETERM
-             (classicalLib.CS_DEPTH_SOLVE_TAC {dup = false} 1 cs)
+             (classicalLib.CS_FAST_TAC
+                (clasimpLib.add_simp_wrapper wrapper_control_ss controls
+                   clasetLib.empty_cs))
        in
-         tactic_fails (depth clasetLib.empty_cs) wrapper_goal andalso
-         solves
-           (depth
-             (clasimpLib.add_simp_wrapper wrapper_ss
-               clasetLib.empty_cs))
-           wrapper_goal
-       end)
-
-val _ =
-  test
-    ("add_safe_simp_wrapper reaches the SAFE rung",
-     fn () =>
-       let
-         fun safe cs =
-           NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
-       in
-         tactic_fails (safe clasetLib.empty_cs) wrapper_goal andalso
-         solves
-           (safe
-             (clasimpLib.add_safe_simp_wrapper wrapper_ss
-               clasetLib.empty_cs))
-           wrapper_goal
-       end)
-
-val _ =
-  test
-    ("add_safe_simp_wrapper reaches the CLARIFY rung",
-     fn () =>
-       let
-         fun clarify cs =
-           NTactical.DETERM (classicalLib.CS_CLARIFY_TAC cs)
-       in
-         tactic_fails (clarify clasetLib.empty_cs) wrapper_goal andalso
-         solves
-           (clarify
-             (clasimpLib.add_safe_simp_wrapper wrapper_ss
-               clasetLib.empty_cs))
+         solves (fast []) wrapper_goal andalso
+         tactic_fails
+           (fast [markerLib.Excl "clasimpSelftest.wrapper_control"])
            wrapper_goal
        end)
 
@@ -738,12 +757,12 @@ val _ =
          val inert_ss =
            simpLib.clear_rules (clasimpLib.clasimp_ss ())
          val unsafe_cs =
-           clasimpLib.add_simp_wrapper inert_ss
-             (clasimpLib.add_simp_wrapper wrapper_ss
+           clasimpLib.add_simp_wrapper inert_ss []
+             (clasimpLib.add_simp_wrapper wrapper_ss []
                clasetLib.empty_cs)
          val safe_cs =
-           clasimpLib.add_safe_simp_wrapper inert_ss
-             (clasimpLib.add_safe_simp_wrapper wrapper_ss
+           clasimpLib.add_safe_simp_wrapper inert_ss []
+             (clasimpLib.add_safe_simp_wrapper wrapper_ss []
                clasetLib.empty_cs)
          val unsafe =
            NTactical.DETERM (classicalLib.CS_FAST_TAC unsafe_cs)
@@ -772,7 +791,7 @@ val _ =
              (simpLib.clear_rules (clasimpLib.clasimp_ss ()),
               simpLib.rewrites [combinTheory.I_THM])
          val cs =
-           clasimpLib.add_safe_simp_wrapper ss clasetLib.empty_cs
+           clasimpLib.add_safe_simp_wrapper ss [] clasetLib.empty_cs
        in
          case seq.cases (clasetStep.safe_step cs (node, 1)) of
              NONE => false

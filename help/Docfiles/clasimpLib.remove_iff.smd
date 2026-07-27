@@ -18,6 +18,9 @@ Removal is part of the theory's persistent iff declaration stream and is
 therefore replayed and inherited through theory ancestry. It does not
 delete the theorem from the theorem database.
 
+Use `BasicProvers.delsimps ["name"]` instead when only the simpset view
+should be removed and the derived classical rules should remain available.
+
 ### Failure
 
 Removing an absent declaration has no effect. Name-resolution or theory
@@ -33,4 +36,5 @@ clasimpLib.remove_iff "my_iff";
 
 [`clasimpLib.iff`](#clasimpLib.iff),
 [`clasetLib.Iff`](#clasetLib.Iff),
-[`clasetLib.Del`](#clasetLib.Del)
+[`clasetLib.Del`](#clasetLib.Del),
+[`BasicProvers.delsimps`](#BasicProvers.delsimps)
