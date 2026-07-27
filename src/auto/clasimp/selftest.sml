@@ -313,6 +313,9 @@ fun has_iff_rewrite name ss =
     not (Term.aconv (snd (boolSyntax.dest_eq (concl result))) source)
   end
 
+fun persistent_iff_rule_name name suffix =
+  name ^ ".__clasimp_iff_" ^ suffix
+
 val clasimp_iff_attribute_probe_def =
   new_definition
     ("clasimp_iff_attribute_probe_def",
@@ -336,15 +339,21 @@ val _ =
          val theorem = clasimp_iff_attribute_probe_def
          val _ = boolLib.save_thm (local_name ^ "[iff]", theorem)
          val added =
-           has_named_claset_rule (persistent_name ^ "_intro") andalso
-           has_named_claset_rule (persistent_name ^ "_dest") andalso
+           has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "intro") andalso
+           has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "dest") andalso
            has_iff_rewrite persistent_name (BasicProvers.srw_ss ()) andalso
            has_iff_rewrite persistent_name (clasimpLib.clasimp_ss ())
          val _ = clasimpLib.remove_iff local_name
        in
          added andalso
-         not (has_named_claset_rule (persistent_name ^ "_intro")) andalso
-         not (has_named_claset_rule (persistent_name ^ "_dest")) andalso
+         not
+           (has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "intro")) andalso
+         not
+           (has_named_claset_rule
+             (persistent_iff_rule_name persistent_name "dest")) andalso
          not
            (has_iff_rewrite persistent_name (BasicProvers.srw_ss ())) andalso
          not

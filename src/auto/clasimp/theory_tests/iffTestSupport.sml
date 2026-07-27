@@ -32,7 +32,28 @@ fun has_rule name =
     (fn (_, (name', _)) => name = name')
     (clasetLib.rules_of (clasetLib.the_claset ()))
 
+fun has_named_rule name theorem =
+  List.exists
+    (fn (_, (name', theorem')) =>
+      name = name' andalso aconv (concl theorem) (concl theorem'))
+    (clasetLib.rules_of (clasetLib.the_claset ()))
+
 fun has_iff_rules name =
-  has_rule (name ^ "_intro") andalso has_rule (name ^ "_dest")
+  let val stem = name ^ ".__clasimp_iff"
+  in has_rule (stem ^ "_intro") andalso has_rule (stem ^ "_dest")
+  end
+
+fun rewrites_to source target =
+  let
+    fun changes ss =
+      let
+        val result = Conv.QCONV (simpLib.SIMP_CONV ss []) source
+      in
+        aconv (snd (boolSyntax.dest_eq (concl result))) target
+      end
+  in
+    changes (BasicProvers.srw_ss ()) andalso
+    changes (clasimpLib.clasimp_ss ())
+  end
 
 end
