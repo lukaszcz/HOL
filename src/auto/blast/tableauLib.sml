@@ -23,9 +23,8 @@ fun invocation_claset theorems =
 fun invoke tactic theorems goal =
   let
     val (cs, facts) = invocation_claset theorems
-    val insert = Tactical.MAP_EVERY Tactic.ASSUME_TAC facts
   in
-    Tactical.THEN (insert, tactic cs) goal
+    Tactical.THEN (clasetLib.INSERT_FACTS_TAC facts, tactic cs) goal
   end
 
 fun add_time elapsed accumulated =
@@ -192,9 +191,7 @@ fun next_through limit depth =
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
 fun blast_depth_tac depth theorems goal =
-  invoke
-    (fn cs => run_depths cs (SOME depth) (fn _ => NONE))
-    theorems goal
+  invoke (fn cs => CS_BLAST_DEPTH_TAC cs depth) theorems goal
 
 fun BLAST_DEPTH_TAC depth =
   markerLib.ABBRS_THEN (blast_depth_tac depth)
@@ -214,14 +211,9 @@ val BLAST_TAC = markerLib.ABBRS_THEN blast_tac
 fun tryIt depth theorems goal =
   let
     val (cs, facts) = invocation_claset theorems
-    val (goals, _) =
-      Tactical.MAP_EVERY Tactic.ASSUME_TAC facts goal
+    val (goals, _) = clasetLib.INSERT_FACTS_TAC facts goal
   in
-    case goals of
-        [goal] => blastSearch.debugGoal cs depth goal
-      | _ =>
-          raise mk_HOL_ERR "tableauLib" "tryIt"
-            "fact insertion produced an unexpected goal state"
+    blastSearch.debugGoal cs depth (Lib.singleton_of_list goals)
   end
 
 end

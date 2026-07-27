@@ -261,9 +261,7 @@ fun invocation_claset theorems =
 fun public_raw tactic theorems goal =
   let
     val (cs, facts) = invocation_claset theorems
-    val insert =
-      NTactical.LIFT
-        (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts)
+    val insert = NTactical.LIFT (clasetLib.INSERT_FACTS_TAC facts)
   in
     NTactical.DETERM
       (NTactical.NTHEN (insert, tactic cs)) goal

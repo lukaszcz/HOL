@@ -16,6 +16,11 @@ fun residual tactic goal =
 fun solves tactic goal =
   null (residual tactic goal)
 
+fun same_goals left right =
+  ListPair.allEq
+    (fn (goal1, goal2) => boolSyntax.goal_eq goal1 goal2)
+    (left, right)
+
 val solver_ss = simpLib.clear_rules (clasimpLib.clasimp_ss ())
 val safe_simp = clasimpLib.safe_asm_full_simp solver_ss []
 
@@ -116,12 +121,11 @@ val _ =
   test
     ("asm_full_simp uses later assumptions mutually",
      fn () =>
-       ListPair.allEq
-         (fn (goal1, goal2) => boolSyntax.goal_eq goal1 goal2)
+       same_goals
          (residual
             (clasimpLib.asm_full_simp BasicProvers.bool_ss [])
-            mutual_goal,
-          mutual_expected))
+            mutual_goal)
+         mutual_expected)
 
 val chain_goal =
   ([``(f:'a -> 'b) x = g x``, ``(g:'a -> 'b) x = z``,
@@ -134,12 +138,11 @@ val _ =
   test
     ("asm_full_simp closes a three-assumption mutual chain",
      fn () =>
-       ListPair.allEq
-         (fn (goal1, goal2) => boolSyntax.goal_eq goal1 goal2)
+       same_goals
          (residual
             (clasimpLib.asm_full_simp BasicProvers.bool_ss [])
-            chain_goal,
-          chain_expected))
+            chain_goal)
+         chain_expected)
 
 fun tactic_fails tactic goal =
   (ignore (Tactical.VALID tactic goal); false)
@@ -354,10 +357,6 @@ fun tyinfo_named tyop =
       [tyi] => tyi
     | _ => raise Fail ("missing or ambiguous TypeBase entry for " ^ tyop)
 
-fun tyinfo_rule_stem tyi =
-  let val (thy, tyop) = TypeBasePure.ty_name_of tyi
-  in "__claset_tyinfo_" ^ thy ^ "_" ^ tyop end
-
 fun rules_named name =
   List.filter
     (fn (_, (name', _)) => name = name')
@@ -369,7 +368,7 @@ val constructor_sintro_spec =
 fun constructor_rule_names tyi index =
   let
     val base =
-      tyinfo_rule_stem tyi ^ "_inject_" ^ Int.toString index
+      clasetLib.tyinfo_stem tyi ^ "_inject_" ^ Int.toString index
   in
     {dest = base, intro = base ^ "_intro"}
   end
@@ -787,11 +786,6 @@ val _ =
                             (clasetGoal.store next) w))
                   | _ => false)
        end)
-
-fun same_goals left right =
-  ListPair.allEq
-    (fn (goal1, goal2) => boolSyntax.goal_eq goal1 goal2)
-    (left, right)
 
 val force_logic_goals : Abbrev.goal list =
   [([], ``((P ==> Q) /\ P) ==> Q``),

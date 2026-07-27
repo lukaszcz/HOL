@@ -896,6 +896,8 @@ fun invocation_facts theorems =
     List.mapPartial fact theorems
   end
 
+fun INSERT_FACTS_TAC facts = Tactical.MAP_EVERY Tactic.ASSUME_TAC facts
+
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base
   in

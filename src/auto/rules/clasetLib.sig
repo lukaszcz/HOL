@@ -94,8 +94,15 @@ sig
   val invocation_facts : thm list -> thm list
 
   (* Assemble the classical rules and inserted facts for one tactic
-     invocation. *)
+     invocation.  Engines insert the facts with INSERT_FACTS_TAC, lifting it
+     into their own tactic representation where necessary. *)
   val invocation_claset : claset -> thm list -> claset * thm list
+  val INSERT_FACTS_TAC : thm list -> tactic
+
+  (* The persistent form of a rule name, as recorded in the claset delta
+     stream: a "Thy$Name" kernel name where the source name identifies a
+     stored theorem, and the name unchanged otherwise. *)
+  val normalise_rule_name : string -> string
 
   (* A contribution must be pure and deterministic.  Its result for a given
      tyinfo may be evaluated more than once; invocation count and timing are
@@ -103,6 +110,11 @@ sig
   val register_tyinfo_contribution :
       string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
       -> unit
+
+  (* Name prefix shared by every rule a contribution derives from one
+     TypeBase entry.  Contributions in other libraries use it so that the
+     halves of one derived rule set keep matching names. *)
+  val tyinfo_stem : TypeBasePure.tyinfo -> string
 
   val claset_config : {hyp_subst_tac : tactic, size_of : goal -> int}
 end
