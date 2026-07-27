@@ -943,7 +943,7 @@ in
          Preserve their token kind so the empty string is not confused with
          an empty atom by the legacy term parser. *)
       val get_token =
-        SmtLib_Parser.make_proof_tokenizer (TextIO.inputAll instream)
+        SmtLib_Parser.make_proof_stream_tokenizer instream
       val commands = parse_commands (ref (with_cpc_literals dicts)) version
         get_token false []
     in

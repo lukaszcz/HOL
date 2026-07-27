@@ -588,9 +588,20 @@ end
 fun smtlib_string_literal_codec_success () =
 let
   open SmtLib_String_Literal
+  fun bytes values = String.implode (List.map Char.chr values)
+  val e_acute = bytes [195, 169]
+  val euro = bytes [226, 130, 172]
+  val smiling = bytes [240, 159, 153, 130]
+  val maximum = bytes [240, 175, 191, 191]
   val decode_cases = [
     ("empty", "", []),
     ("plain ASCII", "AZ az09", [65, 90, 32, 97, 122, 48, 57]),
+    ("raw two-byte UTF-8", e_acute, [233]),
+    ("raw three-byte UTF-8", euro, [8364]),
+    ("raw four-byte UTF-8", smiling, [128578]),
+    ("raw maximum UTF-8", maximum, [196607]),
+    ("mixed raw UTF-8 and escape", e_acute ^ "\\u{20ac}",
+      [233, 8364]),
     ("fixed lowercase", "\\u0041", [65]),
     ("fixed uppercase", "\\uFfFf", [65535]),
     ("braced one digit", "\\u{7}", [7]),
@@ -672,6 +683,7 @@ end
 
 fun smtlib_string_literal_typecheck_success () =
 let
+  val e_acute = String.implode (List.map Char.chr [195, 169])
   fun single_assertion script =
     case #assertions (SmtLib_Parser.typecheck_script_string script) of
       [assertion] => assertion
@@ -695,6 +707,11 @@ let
     single_assertion
       "(set-logic QF_UF)\n(assert (= \"\"\"\" \"\\u0022\"))"
   val (doubled_left, doubled_right) = boolSyntax.dest_eq doubled_quote
+  val raw_utf8 =
+    single_assertion
+      ("(set-logic QF_UF)\n(assert (= \"" ^ e_acute ^
+       "\" \"\\u{e9}\"))")
+  val (raw_left, raw_right) = boolSyntax.dest_eq raw_utf8
 in
   assert (dest_code_points left = [65, 66, 128578],
     "left SMT-LIB string literal decoded incorrectly");
@@ -702,7 +719,10 @@ in
     "right SMT-LIB string literal decoded incorrectly");
   assert (dest_code_points doubled_left = [34] andalso
       dest_code_points doubled_right = [34],
-    "doubled quote did not decode as an SMT-LIB quote")
+    "doubled quote did not decode as an SMT-LIB quote");
+  assert (dest_code_points raw_left = [233] andalso
+      dest_code_points raw_right = [233],
+    "raw UTF-8 SMT-LIB literal was decoded as bytes")
 end
 
 fun smtlib_string_literal_out_of_range_diagnostic () =
@@ -721,6 +741,78 @@ handle Feedback.HOL_ERR holerr =>
        andalso contains "above the SMT-LIB maximum 0x2ffff" msg,
        "out-of-range SMT-LIB string escape diagnostic mismatch: " ^ msg)
   end
+
+fun smtlib_indexed_char_out_of_range_diagnostic () =
+let
+  val _ = SmtLib_Parser.typecheck_script_string
+    ("(set-logic ALL)\n" ^
+     "(assert (= (_ char #x30000) \"\"))")
+in
+  die "out-of-range indexed SMT-LIB character typechecked successfully"
+end
+handle Feedback.HOL_ERR holerr =>
+  let val msg = Feedback.message_of holerr
+  in
+    assert
+      (contains "could not resolve indexed symbol 'char'" msg andalso
+       contains "0x30000" msg,
+       "out-of-range indexed character diagnostic mismatch: " ^ msg)
+  end
+
+fun smtlib_indexed_char_outbound_range_diagnostic () =
+let
+  val char_const =
+    Term.prim_mk_const {Thy = "smtstring", Name = "smtstr_char"}
+  val out_of_range =
+    numSyntax.mk_numeral
+      (Arbnum.fromInt (SmtLib_String_Literal.max_code_point + 1))
+  val char_term = Term.mk_comb (char_const, out_of_range)
+  val valid_char =
+    Term.mk_comb (char_const, numSyntax.mk_numeral Arbnum.zero)
+  val (_, strings) =
+    SmtLib.goal_to_SmtLib_translation NONE
+      ([], boolSyntax.mk_eq (char_term, valid_char))
+in
+  die ("out-of-range HOL character was emitted as an SMT-LIB character:\n" ^
+    String.concat strings)
+end
+handle Feedback.HOL_ERR holerr =>
+  let val msg = Feedback.message_of holerr
+  in
+    assert
+      (contains "character index 0x30000" msg andalso
+       contains "above the SMT-LIB maximum 0x2ffff" msg,
+       "outbound indexed character diagnostic mismatch: " ^ msg)
+  end
+
+fun smtlib_proof_stream_tokenizer_success () =
+let
+  val e_acute = String.implode (List.map Char.chr [195, 169])
+  val tokens =
+    with_temp_file ("(proof \"\" \"" ^ e_acute ^ "\") trailing")
+      (fn path =>
+        let
+          val instream = TextIO.openIn path
+          val get_token =
+            SmtLib_Parser.make_proof_stream_tokenizer instream
+          val result =
+            [get_token (), get_token (), get_token (),
+             get_token (), get_token ()]
+          val _ = TextIO.closeIn instream
+        in
+          result
+        end)
+in
+  case tokens of
+    ["(", "proof", empty_string, raw_string, ")"] =>
+      (assert
+         (SmtLib_Parser.proof_string_token empty_string = SOME "",
+          "stream tokenizer lost the empty String token kind");
+       assert
+         (SmtLib_Parser.proof_string_token raw_string = SOME e_acute,
+          "stream tokenizer changed raw UTF-8 String token bytes"))
+  | _ => die "stream proof tokenizer returned unexpected tokens"
+end
 
 val smt_string_ty = listSyntax.mk_list_type numSyntax.num
 
@@ -742,21 +834,23 @@ let
        "(declare-const s String)\n" ^
        "(declare-fun t () String)\n" ^
        "(declare-fun f (String Int) String)\n" ^
+       "(declare-fun g (String) Int)\n" ^
        "(assert (distinct s t))\n" ^
        "(check-sat)\n")
-  val (s_guard, t_guard, f_guard, user_assertion) =
+  val (s_guard, t_guard, f_guard, g_guard, user_assertion) =
     case #assertions state of
-      [s_guard, t_guard, f_guard, user_assertion] =>
-        (s_guard, t_guard, f_guard, user_assertion)
+      [s_guard, t_guard, f_guard, g_guard, user_assertion] =>
+        (s_guard, t_guard, f_guard, g_guard, user_assertion)
     | assertions =>
         die ("String declaration elaboration produced " ^
           Int.toString (List.length assertions) ^
-          " assertions, expected four")
+          " assertions, expected five")
   val s = Term.mk_var ("s", smt_string_ty)
   val t = Term.mk_var ("t", smt_string_ty)
   val f = Term.mk_var
     ("f", Type.--> (smt_string_ty,
       Type.--> (intSyntax.int_ty, smt_string_ty)))
+  val g = Term.mk_var ("g", Type.--> (smt_string_ty, intSyntax.int_ty))
   val string_arg = Term.mk_var ("string_arg", smt_string_ty)
   val int_arg = Term.mk_var ("int_arg", intSyntax.int_ty)
   val f_expected =
@@ -765,6 +859,13 @@ let
        boolSyntax.mk_imp
          (mk_wfstr string_arg,
           mk_wfstr (Term.list_mk_comb (f, [string_arg, int_arg]))))
+  val g_application = Term.mk_comb (g, string_arg)
+  val g_expected =
+    boolSyntax.mk_forall
+      (string_arg,
+       boolSyntax.mk_imp
+         (mk_wfstr string_arg,
+          boolSyntax.mk_eq (g_application, g_application)))
   val query_assertions =
     case #queries state of
       [SmtLib_Parser.QueryCheckSat {assertions, ...}] => assertions
@@ -776,6 +877,8 @@ in
     (mk_wfstr t) t_guard;
   assert_term_alpha "String-returning declare-fun wfstr hypothesis"
     f_expected f_guard;
+  assert_term_alpha "String-domain declare-fun signature hypothesis"
+    g_expected g_guard;
   assert (List.length (Term.free_vars user_assertion) = 2,
     "String declaration test lost its user assertion");
   assert (ListPair.allEq (fn (x, y) => x ~~ y)
@@ -832,6 +935,38 @@ in
   | assertions =>
       die ("reset-assertions String elaboration produced " ^
         Int.toString (List.length assertions) ^ " assertions, expected two")
+end
+
+fun smtlib_string_definition_relativization_success () =
+let
+  val {assertions, local_definitions, ...} =
+    SmtLib_Parser.typecheck_script_string
+      ("(set-logic ALL)\n" ^
+       "(define-const c String \"x\")\n" ^
+       "(define-fun f ((s String)) Int (str.len s))\n" ^
+       "(define-fun g ((i Int)) String (str.from_int i))\n" ^
+       "(define-fun-rec r ((s String)) Int (str.len s))\n" ^
+       "(define-funs-rec\n" ^
+       " ((h ((s String)) Int) (k ((i Int)) String))\n" ^
+       " ((str.len s) (str.from_int i)))\n")
+  val (_, strings) =
+    SmtLib.goal_to_SmtLib_translation NONE
+      (assertions @ local_definitions, boolSyntax.T)
+  val text = String.concat strings
+in
+  assert (List.length assertions = 6 andalso
+      List.all SmtLib.is_native_string_guard assertions,
+    "String definitions did not register all native signatures");
+  assert (List.length local_definitions = 6,
+    "String definition family lost a local definition");
+  assert (contains "(String) Int)" text,
+    "String-domain definition was declared with a non-String domain:\n" ^
+    text);
+  assert (contains "(Int) String)" text,
+    "String-valued definition was declared with a non-String range:\n" ^
+    text);
+  assert (not (contains "List_Num" text),
+    "String definition translation leaked the num-list representation")
 end
 
 fun transferred_smtlib_text tm =
@@ -8527,12 +8662,20 @@ let
       smtlib_string_literal_typecheck_success),
     ("smtlib_string_literal_out_of_range_diagnostic",
       smtlib_string_literal_out_of_range_diagnostic),
+    ("smtlib_indexed_char_out_of_range_diagnostic",
+      smtlib_indexed_char_out_of_range_diagnostic),
+    ("smtlib_indexed_char_outbound_range_diagnostic",
+      smtlib_indexed_char_outbound_range_diagnostic),
+    ("smtlib_proof_stream_tokenizer_success",
+      smtlib_proof_stream_tokenizer_success),
     ("smtlib_string_wf_declaration_elaboration_success",
       smtlib_string_wf_declaration_elaboration_success),
     ("smtlib_string_wf_binder_elaboration_success",
       smtlib_string_wf_binder_elaboration_success),
     ("smtlib_string_wf_reset_assertions_success",
       smtlib_string_wf_reset_assertions_success),
+    ("smtlib_string_definition_relativization_success",
+      smtlib_string_definition_relativization_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",

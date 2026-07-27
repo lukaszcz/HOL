@@ -1041,8 +1041,7 @@ in
     val _ = if !Library.trace > 1 then
         Feedback.HOL_MESG "HolSmtLib: parsing Z3 proof"
       else ()
-    val text = TextIO.inputAll instream
-    val get_token = SmtLib_Parser.make_proof_tokenizer text
+    val get_token = SmtLib_Parser.make_proof_stream_tokenizer instream
     val initial_proof = update_proof_vars (empty_proof z3_version)
       (List.foldl
         (fn ((_, witness), vars) => HOLset.add (vars, witness))

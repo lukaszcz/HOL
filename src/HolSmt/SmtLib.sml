@@ -207,24 +207,41 @@ local
 
   fun is_native_string_const tm = Option.isSome (native_string_info tm)
 
+  (* Recursive failures must bypass the recognizer exception cascade: once a
+     term's shape is known, an error in its body is the real diagnostic. *)
+  exception NestedTranslation of exn
+
   fun numeral_string function_name tm =
     Arbnum.toString (numSyntax.dest_numeral tm)
     handle Feedback.HOL_ERR _ =>
       raise ERR function_name "expected a numeral index"
 
   fun hexadecimal_string function_name tm =
-    String.map Char.toLower
-      (Arbnum.toHexString (numSyntax.dest_numeral tm))
-    handle Feedback.HOL_ERR _ =>
-      raise ERR function_name "expected a numeral character index"
+    let
+      val value =
+        numSyntax.dest_numeral tm
+        handle Feedback.HOL_ERR _ =>
+          raise ERR function_name "expected a numeral character index"
+      val maximum =
+        Arbnum.fromInt SmtLib_String_Literal.max_code_point
+    in
+      if Arbnum.<=(value, maximum) then
+        String.map Char.toLower (Arbnum.toHexString value)
+      else
+        raise ERR function_name
+          ("character index 0x" ^
+           String.map Char.toLower (Arbnum.toHexString value) ^
+           " is above the SMT-LIB maximum 0x2ffff")
+    end
 
   fun indexed_char_encoding (_, args) =
-    SmtLib_Theories.one_arg
-      (fn code =>
-        ("(_ char #x" ^
-         hexadecimal_string "<builtin_symbols.smtstr_char>" code ^ ")",
-         []))
-      args
+    (SmtLib_Theories.one_arg
+       (fn code =>
+         ("(_ char #x" ^
+          hexadecimal_string "<builtin_symbols.smtstr_char>" code ^ ")",
+          []))
+       args)
+    handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
 
   fun indexed_power_encoding (_, args) =
     SmtLib_Theories.two_args
@@ -782,7 +799,8 @@ local
   type native_string_signature = {
     head : Term.term,
     arity : int,
-    string_args : int list
+    string_args : int list,
+    result_string : bool
   }
 
   type native_string_context = {
@@ -835,7 +853,18 @@ local
       val (premise, result_guard) =
         boolSyntax.dest_imp guarded_body
         handle Feedback.HOL_ERR _ => (boolSyntax.T, guarded_body)
-      val result = dest_wfstr result_guard
+      val (result, result_string) =
+        (dest_wfstr result_guard, true)
+        handle Feedback.HOL_ERR _ =>
+          let
+            val (left, right) = boolSyntax.dest_eq result_guard
+            val _ =
+              if Term.aconv left right then ()
+              else raise ERR "guard_signature"
+                "non-String declaration marker is not reflexive"
+          in
+            (left, false)
+          end
       val (head, args) = boolSyntax.strip_comb result
       val guards =
         if Term.aconv premise boolSyntax.T then []
@@ -860,7 +889,8 @@ local
         if quantified_shape orelse direct_shape then ()
         else raise ERR "guard_signature" "not a declaration guard"
     in
-      {head = head, arity = List.length args, string_args = string_args}
+      {head = head, arity = List.length args, string_args = string_args,
+       result_string = result_string}
     end
 
   fun is_native_string_guard tm =
@@ -904,7 +934,9 @@ local
       case native_string_info head of
         SOME {result_string, ...} => result_string
       | NONE =>
-          Option.isSome (native_signature_for context head (List.length args))
+          (case native_signature_for context head (List.length args) of
+             SOME {result_string, ...} => result_string
+           | NONE => false)
     end
 
   fun native_string_arg_indices context string_bounds rator rands =
@@ -1220,8 +1252,11 @@ local
             else smt_sort_of_type regime tydict ty)
           (List.tabulate (List.length domtys, fn n => n), domtys)
       val range_sort =
-        if injected_string orelse Option.isSome native_signature then "String"
-        else smt_sort_of_type regime tydict rngty
+        if injected_string then "String"
+        else
+          case native_signature of
+            SOME {result_string = true, ...} => "String"
+          | _ => smt_sort_of_type regime tydict rngty
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
     in
@@ -2079,10 +2114,6 @@ local
      nested Array/select.  Both dialects eta-expand partially applied ranked
      constants when omission would lose their built-in semantics. *)
 
-  (* Recursive failures must bypass the recognizer exception cascade: once a
-     term's shape is known, an error in its body is the real diagnostic. *)
-  exception NestedTranslation of exn
-
   (* returns an updated accumulator, a (possibly empty) list of
      SMT-LIB (type and term) declarations, and the SMT-LIB
      representation of the given term *)
@@ -2472,6 +2503,16 @@ local
         (acc, (typedecls @ xdecls @ newdecls, sexpr cname field_names))
     end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
+    val _ =
+      (case boolSyntax.strip_comb tm of
+         (head, [code]) =>
+           if same_const (smtstring_const "smtstr_char") head then
+             ignore
+               (hexadecimal_string
+                 "<builtin_symbols.smtstr_char>" code)
+           else ()
+       | _ => ())
+      handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
     val literal =
       if expected_string then Lib.total native_string_literal tm else NONE
     val _ =
@@ -2675,6 +2716,13 @@ local
         val (function, argument) = Term.dest_comb tm
         val _ = Type.dom_rng (Term.type_of function)
         val (head, head_rands) = boolSyntax.strip_comb tm
+        val _ =
+          if Option.isSome
+              (native_signature_for native_context head
+                (List.length head_rands)) then
+            raise ERR "translate_term"
+              "native String signature uses direct application"
+          else ()
         val semantically_ranked_partial =
           Term.is_const head andalso
           let val rank = declared_const_arity head
@@ -2733,10 +2781,14 @@ local
               ("unsupported higher-order rator expression: " ^
                Hol_pp.term_to_string rator)
         val declaration_arity =
-          case regime of
-            FirstOrder => rands_count
-          | HigherOrder _ =>
-              if Term.is_const rator then declared_const_arity rator else 0
+          if Option.isSome
+              (native_signature_for native_context rator rands_count) then
+            rands_count
+          else
+            case regime of
+              FirstOrder => rands_count
+            | HigherOrder _ =>
+                if Term.is_const rator then declared_const_arity rator else 0
       in
         if declaration_arity > rands_count andalso
            (regime = HigherOrder Z3LambdaArray orelse
@@ -2791,10 +2843,10 @@ local
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 val (tydict, (rngdecls, rngty)) =
-                  if Option.isSome native_signature then
-                    (tydict, ([], "String"))
-                  else
-                    translate_type regime (tydict, rngty)
+                  case native_signature of
+                    SOME {result_string = true, ...} =>
+                      (tydict, ([], "String"))
+                  | _ => translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
                 val name = tm_prefix ^
                   Int.toString (Redblackmap.numItems tmdict)

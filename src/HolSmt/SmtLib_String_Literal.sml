@@ -32,9 +32,76 @@ struct
        "' denotes code point 0x" ^ hex_string value ^
        ", above the SMT-LIB maximum 0x2ffff")
 
+  fun invalid_utf8 pos detail =
+    raise InvalidStringLiteral
+      ("invalid UTF-8 at byte " ^ Int.toString pos ^ ": " ^ detail)
+
+  fun raw_out_of_range pos value =
+    raise InvalidStringLiteral
+      ("UTF-8 code point at byte " ^ Int.toString pos ^ " is 0x" ^
+       hex_string value ^ ", above the SMT-LIB maximum 0x2ffff")
+
   fun decode_string_literal text =
   let
     val size = String.size text
+
+    fun byte pos = Char.ord (String.sub (text, pos))
+
+    fun continuation start offset =
+      let val pos = start + offset
+      in
+        if pos >= size then
+          invalid_utf8 start "truncated multi-byte sequence"
+        else
+          let val value = byte pos
+          in
+            if 128 <= value andalso value <= 191 then value
+            else invalid_utf8 pos "expected a continuation byte"
+          end
+      end
+
+    fun utf8_code_point start =
+      let
+        val first = byte start
+        fun two () =
+          let val second = continuation start 1
+          in (64 * (first - 192) + second - 128, start + 2) end
+        fun three () =
+          let
+            val second = continuation start 1
+            val third = continuation start 2
+            val _ =
+              if first = 224 andalso second < 160 then
+                invalid_utf8 start "overlong three-byte sequence"
+              else if first = 237 andalso 160 <= second then
+                invalid_utf8 start "surrogate code point"
+              else ()
+          in
+            (4096 * (first - 224) + 64 * (second - 128) + third - 128,
+             start + 3)
+          end
+        fun four () =
+          let
+            val second = continuation start 1
+            val third = continuation start 2
+            val fourth = continuation start 3
+            val _ =
+              if first = 240 andalso second < 144 then
+                invalid_utf8 start "overlong four-byte sequence"
+              else if first = 244 andalso 143 < second then
+                invalid_utf8 start "code point above 0x10ffff"
+              else ()
+          in
+            (262144 * (first - 240) + 4096 * (second - 128) +
+             64 * (third - 128) + fourth - 128, start + 4)
+          end
+      in
+        if first < 128 then (first, start + 1)
+        else if 194 <= first andalso first <= 223 then two ()
+        else if 224 <= first andalso first <= 239 then three ()
+        else if 240 <= first andalso first <= 244 then four ()
+        else invalid_utf8 start "invalid leading byte"
+      end
 
     fun fixed_escape start =
       if start + 6 <= size then
@@ -89,7 +156,14 @@ struct
       if pos >= size then
         List.rev code_points
       else if String.sub (text, pos) <> #"\\" then
-        loop (pos + 1) (Char.ord (String.sub (text, pos)) :: code_points)
+        let
+          val (value, next) = utf8_code_point pos
+        in
+          if value <= max_code_point then
+            loop next (value :: code_points)
+          else
+            raw_out_of_range pos value
+        end
       else
         case unicode_escape pos of
           NONE => loop (pos + 1) (Char.ord #"\\" :: code_points)

@@ -242,9 +242,12 @@ local
 
   fun mk_point_span pos = SourceSpan {start = pos, stop = pos}
 
-  fun make_located_tokenizer (text: string) : unit -> located_token option =
+  fun make_located_tokenizer_from_input
+      (input: unit -> char option) : unit -> located_token option =
   let
-    val len = String.size text
+    datatype lookahead = NeedChar | NextChar of char | EndOfInput
+
+    val lookahead = ref NeedChar
     val index = ref 0
     val line = ref 1
     val column = ref 1
@@ -252,13 +255,20 @@ local
     fun pos () = {line = !line, column = !column, offset = !index}
 
     fun peek () =
-      if !index >= len then NONE else SOME (String.sub (text, !index))
+      case !lookahead of
+        NextChar c => SOME c
+      | EndOfInput => NONE
+      | NeedChar =>
+          (case input () of
+             SOME c => (lookahead := NextChar c; SOME c)
+           | NONE => (lookahead := EndOfInput; NONE))
 
     fun advance () =
       case peek () of
         NONE => NONE
       | SOME c =>
-          (index := !index + 1;
+          (lookahead := NeedChar;
+           index := !index + 1;
            if c = #"\n" then (line := !line + 1; column := 1)
            else column := !column + 1;
            SOME c)
@@ -339,11 +349,25 @@ local
            in SOME (atom start [c]) end)
   end
 
+  fun make_located_tokenizer (text: string) : unit -> located_token option =
+  let
+    val len = String.size text
+    val index = ref 0
+
+    fun input () =
+      if !index >= len then NONE
+      else
+        let val c = String.sub (text, !index)
+        in index := !index + 1; SOME c end
+  in
+    make_located_tokenizer_from_input input
+  end
+
   val proof_string_token_prefix = "\001HolSmtString:"
 
-  fun make_proof_tokenizer text =
+  fun make_proof_tokenizer_from_input input =
     let
-      val next_token = make_located_tokenizer text
+      val next_token = make_located_tokenizer_from_input input
     in
       fn () =>
         case next_token () of
@@ -354,6 +378,42 @@ local
               token_text tok
         | NONE => raise ERR "make_proof_tokenizer" "end of stream"
     end
+
+  fun make_proof_tokenizer text =
+  let
+    val len = String.size text
+    val index = ref 0
+
+    fun input () =
+      if !index >= len then NONE
+      else
+        let val c = String.sub (text, !index)
+        in index := !index + 1; SOME c end
+  in
+    make_proof_tokenizer_from_input input
+  end
+
+  fun make_proof_stream_tokenizer instream =
+  let
+    val chunk = ref ""
+    val index = ref 0
+
+    fun input () =
+      if !index < String.size (!chunk) then
+        let val c = String.sub (!chunk, !index)
+        in index := !index + 1; SOME c end
+      else
+        let val next = TextIO.inputN (instream, 65536)
+        in
+          if String.size next = 0 then NONE
+          else
+            (chunk := next;
+             index := 1;
+             SOME (String.sub (next, 0)))
+        end
+  in
+    make_proof_tokenizer_from_input input
+  end
 
   fun proof_string_token token =
     if String.isPrefix proof_string_token_prefix token then
@@ -3184,14 +3244,14 @@ local
   fun mk_wfstr tm = Term.mk_comb (wfstr_const, tm)
 
   fun string_declaration_hypothesis tm domain range =
-    if is_smt_string_ty range then
+    if is_smt_string_ty range orelse List.exists is_smt_string_ty domain then
       let
         fun mk_vars _ [] = []
           | mk_vars n (ty :: tys) =
               Term.mk_var ("_wfarg" ^ Int.toString n, ty) ::
               mk_vars (n + 1) tys
         val vars = mk_vars 0 domain
-        val result_guard = mk_wfstr (Term.list_mk_comb (tm, vars))
+        val application = Term.list_mk_comb (tm, vars)
         val argument_guards =
           List.mapPartial
             (fn var =>
@@ -3199,11 +3259,14 @@ local
                 SOME (mk_wfstr var)
               else NONE)
             vars
+        val result =
+          if is_smt_string_ty range then mk_wfstr application
+          else boolSyntax.mk_eq (application, application)
         val body =
-          if List.null argument_guards then result_guard
+          if List.null argument_guards then result
           else
             boolSyntax.mk_imp
-              (boolSyntax.list_mk_conj argument_guards, result_guard)
+              (boolSyntax.list_mk_conj argument_guards, result)
       in
         SOME (boolSyntax.list_mk_forall (vars, body))
       end
@@ -3214,6 +3277,12 @@ local
     case string_declaration_hypothesis tm domain range of
       SOME hypothesis => add_typechecked_wf_hypothesis hypothesis state
     | NONE => state
+
+  fun add_named_string_declaration_hypothesis name sigdict state =
+    case peek_signatures (sigdict, name) of
+      SOME ({tm, domain, range, ...} :: _) =>
+        add_string_declaration_hypothesis tm domain range state
+    | _ => state
 
   fun add_value_term_signature_with_surface name tm domain domain_surface range
       range_surface (tmdict, sigdict) =
@@ -4662,6 +4731,26 @@ local
         ListPair.foldl add_one (tydict, tmdict, sigdict) (infos, decls)
     end
 
+  fun mk_definition tm vars definiens =
+    let
+      val vars = List.map #2 vars
+      val equation =
+        boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens)
+      val string_guards =
+        List.mapPartial
+          (fn var =>
+            if is_smt_string_ty (Term.type_of var) then
+              SOME (mk_wfstr var)
+            else NONE)
+          vars
+      val body =
+        if List.null string_guards then equation
+        else boolSyntax.mk_imp
+          (boolSyntax.list_mk_conj string_guards, equation)
+    in
+      boolSyntax.list_mk_forall (vars, body)
+    end
+
   fun define_typechecked_fun context loc name vars range_type range_surface
       definiens (tmdict, sigdict) =
     let
@@ -4671,9 +4760,7 @@ local
       val (tm, tmdict, sigdict) =
         add_value_signature_with_surface name domain_types domain_surface
           range_type range_surface (tmdict, sigdict)
-      val vars = List.map #2 vars
-      val definition = boolSyntax.list_mk_forall (vars,
-        boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
+      val definition = mk_definition tm vars definiens
     in
       (tmdict, sigdict, definition)
     end
@@ -4696,13 +4783,6 @@ local
     in
       expect_checked_surface_sort "typecheck_definition_body" context loc
         range_type range_surface body_checked
-    end
-
-  fun mk_definition tm vars definiens =
-    let val vars = List.map #2 vars
-    in
-      boolSyntax.list_mk_forall (vars,
-        boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens))
     end
 
   fun typecheck_define_const elaborate_datatypes context name sort body
@@ -4916,6 +4996,7 @@ local
         SmtLib_Logics.parsedicts_of_logic (dictionary_logic logic)
       fun typecheck_define_fun_command command_name name vars range body state =
         let
+          val name_text = located_string_node name
           val command_state = dest_typecheck_state command_name state
           val (tydict, tmdict, sigdict) =
             current_typecheck_dicts command_state
@@ -4924,6 +5005,9 @@ local
               name vars range body (tydict, tmdict, sigdict)
           val command_state = update_current_typecheck_dicts
             (tydict, tmdict, sigdict) command_state
+          val command_state =
+            add_named_string_declaration_hypothesis
+              name_text sigdict command_state
         in
           finish (add_typechecked_definition def command_state)
         end
@@ -5035,6 +5119,7 @@ local
           end
       | CmdDefineConst (name, sort, body) =>
           let
+            val name_text = located_string_node name
             val command_state =
               dest_typecheck_state "define-const" state
             val (tydict, tmdict, sigdict) =
@@ -5045,6 +5130,9 @@ local
                 (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
+            val command_state =
+              add_named_string_declaration_hypothesis
+                name_text sigdict command_state
           in
             finish (add_typechecked_definition def command_state)
           end
@@ -5052,6 +5140,7 @@ local
           typecheck_define_fun_command "define-fun" name vars range body state
       | CmdDefineFunRec (name, vars, range, body) =>
           let
+            val name_text = located_string_node name
             val command_state = dest_typecheck_state "define-fun-rec" state
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
@@ -5061,6 +5150,9 @@ local
                 name vars range body (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
+            val command_state =
+              add_named_string_declaration_hypothesis
+                name_text sigdict command_state
           in
             finish (add_typechecked_definition def command_state)
           end
@@ -5075,6 +5167,15 @@ local
                 sigs bodies (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
+            fun signature_name sig_ast =
+              case node_of sig_ast of
+                FunctionSignature (name, _, _) => located_string_node name
+            val command_state =
+              List.foldl
+                (fn (name, state) =>
+                  add_named_string_declaration_hypothesis
+                    name sigdict state)
+                command_state (List.map signature_name sigs)
           in
             finish (add_definitions definitions command_state)
           end
@@ -5294,6 +5395,7 @@ in
   val parse_term = parse_term
   val parse_term_list = parse_term_list
   val make_proof_tokenizer = make_proof_tokenizer
+  val make_proof_stream_tokenizer = make_proof_stream_tokenizer
   val proof_string_token = proof_string_token
   val parse_benchmark_state = parse_benchmark_state
   val parse_benchmark = parse_benchmark
