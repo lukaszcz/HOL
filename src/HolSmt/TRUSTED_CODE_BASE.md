@@ -21,3 +21,13 @@ Neither printer creates an oracle path.  `Z3_TAC` and `CVC_TAC` must replay
 the solver proof to the original HOL goal and reject unexpected oracle tags.
 See `README` for the complete parser, replay, solver-process, and HOL-kernel
 boundary.
+
+Native Unicode string printing is also part of the trusted translation
+surface.  `smtstringTheory` supplies the HOL-checked UnicodeStrings and
+RegLan definitions, while `SmtLib_String_Literal.sml` chooses and emits the
+corresponding SMT-LIB literal encoding.  The definitions, derivative engine,
+and correspondence lemmas are checked in HOL; trust attaches to choosing
+those definitions as the SMT-LIB meanings and to the decoder/encoder that
+crosses the textual boundary.  Z3's reverse-engineered internal string
+symbols are defined in `smtstringz3Theory`, then their emitted clauses are
+re-proved in HOL rather than assumed.

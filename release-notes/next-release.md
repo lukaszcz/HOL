@@ -25,6 +25,13 @@ New features
     reconstructs the proof, and checks the resulting theorem has no oracle
     tags.  cvc5 1.3.4 is covered by a 60-query checked replay matrix.
 
+-   `HolSmt` now translates native SMT-LIB Unicode strings and regular
+    languages, injects HOL strings through proved transfer theorems, and
+    reconstructs checked Z3 string/regex proofs through sequence, character,
+    rewrite, and Brzozowski-derivative replay.  cvc5 CPC string rules and RARE
+    rewrites use the same checked string prover, with unsupported steps
+    reported as named obligations rather than accepted by an oracle.
+
 -   `HolSmt` now supports the higher-order SMT-LIB 2.7 surface, including
     function sorts, lambda abstractions, both application spellings,
     application omission sugar, and strict partial application.  The
@@ -175,6 +182,10 @@ Bugs fixed
 
 New theories
 ------------
+
+-  `smtstringTheory`: SMT-LIB Unicode strings as well-formed code-point lists,
+   the complete String operator surface, regular languages, and a
+   Brzozowski-derivative matcher with proved correctness.
 
 -  `lebesgue_measure`: The equivalence of Lebesgue and Gauge integration.
    A (measurable) function is Lebesgue integrable iff it is Gauge absolutely

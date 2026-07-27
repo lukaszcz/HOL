@@ -140,8 +140,8 @@ SMT-LIB support matrix:
   Int/Real arithmetic          yes    yes        native         linear and nonlinear
   Fixed bit-vectors            yes    yes        native         partial
   ArraysEx select/store        yes    yes        native         yes
-  Unicode strings              yes    yes        selected native no
-  Regular expressions          yes    yes        no             no
+  Unicode strings              yes    yes        native         Z3/cvc5 paths
+  Regular expressions          yes    yes        native         Z3/cvc5 paths
   FloatingPoint                yes    yes        no             no
   Datatypes                    yes    yes        native         yes
   Recursive/mutual/parametric
@@ -192,9 +192,9 @@ Logic coverage summary:
   AUFBVDTNIA, AUFBVDTNIRA     fragment-violation diagnostics.
   QF_AX                       Array parser/typechecker coverage exists; proof
                               reconstruction coverage remains limited.
-  QF_S, QF_SLIA, QF_SNIA      String logic parse/typecheck embeddings; string
-                              and regex theory lemmas are unsupported for
-                              checked replay unless a listed replay path applies.
+  QF_S, QF_SLIA, QF_SNIA      Native Unicode string and RegLan translation;
+                              checked Z3 seq/char/regex replay and cvc5 CPC
+                              string replay are manifest-backed.
   QF_FP, QF_FPBV, QF_BVFP,    FloatingPoint parse/typecheck embeddings; checked
   QF_UFFP, QF_UFBVFP          replay for FP theory lemmas is unsupported.
   HO_ALL, HO_UF, HO_QF_UF,    cvc5-convention extension logics for the SMT-LIB
@@ -245,6 +245,14 @@ For a theorem-producing result, the trusted path is:
 
 - `SmtLib.sml`: translates the HOL goal to SMT-LIB and records the selected
   logic, emitted symbols and HOL theory encodings.
+- `smtstringTheory` fixes the HOL definitions used for the SMT-LIB
+  UnicodeStrings and RegLan meanings.  HOL checks those definitions and all
+  derivative, matching, and correspondence theorems; the trusted translation
+  choice is that these definitions faithfully represent the SMT-LIB theory.
+- `SmtLib_String_Literal.sml` decodes input literals to code-point lists and
+  encodes native string literals for the printer.  The decoder/encoder and
+  their choice of SMT-LIB escape representation are trusted translation
+  code, with deterministic round-trip and range checks in `Unittest.sml`.
 - Native HOL strings are first rewritten through the proved `str_inj`
   injectivity and operator-transfer theorems.  Each resulting injection image
   is generalized to an unconstrained SMT-LIB `String` value.  A solver result
@@ -260,6 +268,12 @@ For a theorem-producing result, the trusted path is:
   registry and rejects unknown rules.
 - `Z3_ProofReplay.sml`: replays supported proof rules in HOL and reports
   unsupported theory-lemma families with explicit diagnostics.
+- `smtstringz3Theory` gives reverse-engineered meanings to Z3's undocumented
+  `seq.*`, `char.*`, and `aut.accept` proof symbols.  The meanings are derived
+  from the versioned proof corpus, but every accepted emitted clause is
+  re-proved from HOL definitions and the proved derivative correspondence;
+  no reverse-engineered clause is assumed.  Unknown shapes fail explicitly,
+  while approved solver limitations remain enumerated D2 diagnostics.
 - HOL kernel, primitive inference rules, accepted HOL theories and trusted
   external process execution are part of the surrounding HOL4 TCB.
 
@@ -370,6 +384,13 @@ Z3 th-lemma replay coverage:
   basic       eq-propagate                   checked by Boolean TAUT_PROVE, then
                                              arithmetic, bit-vector and array
                                              dispatch before METIS fallback
+  seq/string  string equations, character    checked by SmtStringProve's
+              bounds, regex membership,      symbolic, derivative and
+              aut.accept transitions         proof-local rewrite ladders
+  char        18-bit code-point bounds and   checked by word18 decomposition
+              comparisons                    and HOL arithmetic
+  regexp      string/regexp aliases for the  routed to the checked seq/string
+              emitted seq/char families      prover; aliases are preserved
 
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.
