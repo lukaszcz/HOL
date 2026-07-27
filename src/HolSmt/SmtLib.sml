@@ -978,6 +978,62 @@ local
       "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
     end
 
+  (* SMT String and an ordinary HOL num list share a representation.  For
+     unguarded local binders, recover the native sort only when a use of the
+     variable is reached through an operand that requires String. *)
+  fun string_variable_demanded context string_bounds variable expected tm =
+    if Term.aconv variable tm then
+      expected
+    else
+      let
+        val (bound, body) = Term.dest_abs tm
+      in
+        not (Term.aconv variable bound) andalso
+        string_variable_demanded context string_bounds variable false body
+      end
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (bindings, body) = pairSyntax.dest_anylet tm
+        val (vars, values) = ListPair.unzip bindings
+        val string_vars =
+          List.filter
+            (fn var =>
+              string_variable_demanded context string_bounds var expected body)
+            vars
+        val body_demand =
+          string_variable_demanded context
+            (string_vars @ string_bounds) variable expected body
+        val value_demands =
+          List.exists
+            (fn (var, value) =>
+              List.exists (Term.aconv var) string_vars andalso
+              string_variable_demanded context string_bounds variable
+                true value)
+            (ListPair.zipEq (vars, values))
+      in
+        body_demand orelse value_demands
+      end
+      handle Feedback.HOL_ERR _ =>
+      let
+        val (rator, rands) = boolSyntax.strip_comb tm
+        val string_args =
+          if expected andalso same_const boolSyntax.conditional rator andalso
+             List.length rands = 3
+          then
+            [1, 2]
+          else
+            native_string_arg_indices context string_bounds rator rands
+        val indexed_rands =
+          ListPair.zipEq
+            (List.tabulate (List.length rands, fn n => n), rands)
+      in
+        List.exists
+          (fn (index, rand) =>
+            string_variable_demanded context string_bounds variable
+              (index_member index string_args) rand)
+          indexed_rands
+      end
+
   fun guarded_binder tm =
     let
       fun guarded_vars vars guards =
@@ -2142,6 +2198,7 @@ local
             SOME {string_args, ...} => string_args
           | NONE =>
               if name = "str.len" then [0]
+              else if expected_string andalso name = "ite" then [1, 2]
               else native_string_arg_indices native_context string_bounds
                 rator rands
         val indexed_rands =
@@ -2232,11 +2289,16 @@ local
       let
         val (v, body) = Term.dest_abs tm
         val (bounds, smtvar) = create_bound_name (bounds, v)
+        val native_var =
+          string_variable_demanded native_context string_bounds v false body
         val (((tydict, tmdict), typedecls), tyname) =
-          ensure_type (acc, Term.type_of v)
+          if native_var then
+            ((acc, []), "String")
+          else
+            ensure_type (acc, Term.type_of v)
         val (acc, (bodydecls, bodyname)) =
           translate_term regime apply_operator native_context
-            string_bounds false
+            (if native_var then v :: string_bounds else string_bounds) false
             ((tydict, tmdict), (bounds, body))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
@@ -2517,7 +2579,9 @@ local
       if expected_string then Lib.total native_string_literal tm else NONE
     val _ =
       if expected_string andalso not (Option.isSome literal) andalso
-         not (native_string_term native_context string_bounds tm)
+         not (native_string_term native_context string_bounds tm) andalso
+         not (Lib.can boolSyntax.dest_cond tm) andalso
+         not (Lib.can pairSyntax.dest_anylet tm)
       then
         raise ERR "translate_native_string"
           ("missing wfstr guard for native SMT String term '" ^
@@ -2568,13 +2632,26 @@ local
     let
       val (bindings, body) = pairSyntax.dest_anylet tm
       val (vars, bodies) = ListPair.unzip bindings
+      val string_vars =
+        List.filter
+          (fn var =>
+            string_variable_demanded native_context string_bounds var
+              expected_string body)
+          vars
+      val expected_bodies =
+        List.map
+          (fn var => List.exists (Term.aconv var) string_vars)
+          vars
       (* we should translate the bodies without first creating the bound names *)
       val bounds_bodies = List.map (fn body => (bounds, body)) bodies
+      val expected_bounds_bodies =
+        ListPair.zipEq (expected_bodies, bounds_bodies)
       val (acc, decls_bodies) =
         Lib.foldl_map
-          (translate_term regime apply_operator native_context
-            string_bounds false)
-          (acc, bounds_bodies)
+          (fn (a, (expected, bound_body)) =>
+            translate_term regime apply_operator native_context
+              string_bounds expected (a, bound_body))
+          (acc, expected_bounds_bodies)
       (* now we can create the bound names *)
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
       val decls_bodies_smtvars = ListPair.zipEq (decls_bodies, smtvars)
@@ -2583,8 +2660,9 @@ local
           decls_bodies_smtvars
       val bindings_str = String.concatWith " " (List.rev smtbinds)
       val (acc, (bodydecls, body)) =
-        translate_term regime apply_operator native_context string_bounds
-          false (acc, (bounds, body))
+        translate_term regime apply_operator native_context
+          (string_vars @ string_bounds) expected_string
+          (acc, (bounds, body))
     in
       (acc, (decls @ bodydecls,
         "(let (" ^ bindings_str ^ ") " ^ body ^ ")"))

@@ -4628,6 +4628,39 @@ in
   ignore (SmtLib.translation_records full_translation)
 end
 
+fun smtlib_native_string_sort_propagation_success () =
+let
+  fun translate_script script =
+    case List.rev (parse_smtlib_assertions script) of
+      conclusion :: reversed_assumptions =>
+        SmtLib.goal_to_SmtLib_translation NONE
+          (List.rev reversed_assumptions, conclusion)
+    | [] => die "native String propagation script produced no assertions"
+  fun text_of script = String.concat (Lib.snd (translate_script script))
+  fun check label script snippet =
+    let val text = text_of script in
+      assert (contains snippet text,
+        label ^ " missed SMT-LIB snippet '" ^ snippet ^ "':\n" ^ text);
+      assert (not (contains "List_Num" text),
+        label ^ " lost a native String sort:\n" ^ text)
+    end
+in
+  check "String conditional propagation"
+    ("(set-logic QF_SLIA)\n" ^
+     "(declare-const c Bool)\n" ^
+     "(assert (= 1 (str.len (ite c \"a\" \"bb\"))))\n")
+    "(str.len (ite v0 \"a\" \"bb\"))";
+  check "String let propagation"
+    ("(set-logic QF_SLIA)\n" ^
+     "(assert (= 1 (str.len (let ((x \"a\")) x))))\n")
+    "(str.len (let ((b0 \"a\")) b0))";
+  check "String lambda propagation"
+    ("(set-logic ALL)\n" ^
+     "(assert (= (lambda ((x String)) (str.++ x \"a\")) " ^
+     "(lambda ((y String)) (str.++ y \"a\"))))\n")
+    "(lambda ((b0 String)) (str.++ b0 \"a\"))"
+end
+
 fun smtlib_native_string_missing_guard_diagnostic () =
 let
   val _ =
@@ -8859,6 +8892,8 @@ let
       smtlib_hol_string_injection_translation_success),
     ("smtlib_native_string_translation_success",
       smtlib_native_string_translation_success),
+    ("smtlib_native_string_sort_propagation_success",
+      smtlib_native_string_sort_propagation_success),
     ("smtlib_native_string_missing_guard_diagnostic",
       smtlib_native_string_missing_guard_diagnostic),
     ("smtlib_higher_order_translation_abstraction_success",
