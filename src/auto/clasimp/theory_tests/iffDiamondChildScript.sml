@@ -6,7 +6,7 @@ Libs
 
 open clasimpLib iffTestSupport
 
-fun fail message = raise Fail ("iff diamond test: " ^ message)
+fun fail message = failer "iff diamond test" message
 
 val root_name = "iffDiamondRoot$iff_diamond_root_rule"
 val add_name = "iffDiamondAdd$iff_diamond_add_rule"

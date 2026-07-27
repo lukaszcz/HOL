@@ -12,9 +12,10 @@ Runs `AUTO_TAC` with explicit tableau and classical-search bounds.
 
 `AUTO_DEPTH_TAC {blast = m, depth = n} thms` has the same simplification,
 safe-reasoning, and residue semantics as `AUTO_TAC thms`. On every goal
-remaining after the first safe pass, it first tries raw tableau search at
-resource bound `m`. If that fails, it tries non-duplicating classical depth
-search at bound `n`, with simplification installed as an unsafe wrapper.
+remaining after the first safe pass, it first tries tableau search at
+resource bound `m`, over the same claset `BLAST_DEPTH_TAC` uses. If that
+fails, it tries non-duplicating classical depth search at bound `n`, with
+simplification installed as an unsafe wrapper.
 
 The bounds measure their respective engines' search resources; neither is
 a literal formula depth. A negative blast bound disables tableau search. A

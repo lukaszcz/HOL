@@ -186,11 +186,7 @@ fun install_iff name theorem =
   let
     val {rules, rewrite} =
       clasimpLib.iff_declaration name theorem
-    val cs =
-      List.foldl
-        (fn ((spec, named_rule), current) =>
-          clasetLib.add_rule spec named_rule current)
-        clasetLib.empty_cs rules
+    val cs = clasimpLib.add_iff_rules rules clasetLib.empty_cs
     val ss =
       simpLib.++
         (BasicProvers.bool_ss, simpLib.rewrites [rewrite])
@@ -289,29 +285,10 @@ val _ =
          fn () => iff_derivation_case case_info))
     iff_derivation_cases
 
-fun has_named_claset_rule name =
-  List.exists
-    (fn (_, (name', _)) => name = name')
-    (clasetLib.rules_of (clasetLib.the_claset ()))
+val has_named_claset_rule = iffTestSupport.has_rule
 
-fun fetch_persistent name =
-  case String.fields (equal #"$") name of
-      [thy, theorem] => DB.fetch thy theorem
-    | _ => raise Fail ("malformed persistent theorem name: " ^ name)
-
-fun has_iff_rewrite name ss =
-  let
-    val rewrite = Drule.SPEC_ALL (fetch_persistent name)
-    val (_, final) = boolSyntax.strip_imp_only (concl rewrite)
-    val source =
-      if boolSyntax.is_eq final then fst (boolSyntax.dest_eq final)
-      else if boolSyntax.is_neg final then boolSyntax.dest_neg final
-      else final
-    val result =
-      Conv.QCONV (simpLib.SIMP_CONV ss []) source
-  in
-    not (Term.aconv (snd (boolSyntax.dest_eq (concl result))) source)
-  end
+(* The theory tests probe the persistent views the same way. *)
+val has_iff_rewrite = iffTestSupport.rewrite_changes
 
 fun persistent_iff_rule_name name suffix =
   name ^ ".__clasimp_iff_" ^ suffix
@@ -383,6 +360,48 @@ val _ =
          val _ = clasetLib.temp_delrule rule_name
        in
          preserved
+       end)
+
+(* A delta the finaliser cannot parse would make the exported theory, and
+   every descendant of it, fail to load. *)
+val _ =
+  test
+    ("remove_iff rejects a malformed name before recording a delta",
+     fn () =>
+       let
+         fun deltas () =
+           length (ThmSetData.current_data {settype = "iff"})
+         val before_delta = deltas ()
+         val raised =
+           (clasimpLib.remove_iff "clasimp.absent.iff"; false)
+             handle HOL_ERR _ => true
+       in
+         raised andalso deltas () = before_delta
+       end)
+
+val _ =
+  test
+    ("a derived iff rule the claset already has is dropped without warning",
+     fn () =>
+       let
+         val theorem = clasimp_iff_attribute_probe_def
+         val {rules = first, ...} =
+           clasimpLib.iff_declaration "clasimp_iff_duplicate_first" theorem
+         val {rules = second, ...} =
+           clasimpLib.iff_declaration "clasimp_iff_duplicate_second" theorem
+         val cs = clasimpLib.add_iff_rules first clasetLib.empty_cs
+         val warnings = ref ([] : string list)
+         val saved = !Feedback.WARNING_outstream
+         val _ =
+           Feedback.WARNING_outstream :=
+             (fn message => warnings := message :: !warnings)
+         val cs' =
+           clasimpLib.add_iff_rules second cs
+             handle e => (Feedback.WARNING_outstream := saved; raise e)
+         val _ = Feedback.WARNING_outstream := saved
+       in
+         null (!warnings) andalso
+         length (clasetLib.rules_of cs') = length (clasetLib.rules_of cs)
        end)
 
 fun tyinfo_named tyop =

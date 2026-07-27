@@ -7,9 +7,10 @@ INCLUDES = $(HOLDIR)/src/auto/rules \
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.uo: clasimpLib.uo
+iffTestSupport.uo: clasimpLib.uo
+selftest.uo: clasimpLib.uo iffTestSupport.uo
 
-selftest.exe: selftest.uo clasimpLib.uo
+selftest.exe: selftest.uo clasimpLib.uo iffTestSupport.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL

@@ -11,11 +11,12 @@ type try_result =
 
 val depth_limit = blastSearch.depth_limit
 
-fun blast_claset () =
+val add_blast_selims =
   clasetLib.add_selims
     [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
      ("blast_not_forall", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
-    (clasetLib.the_claset ())
+
+fun blast_claset () = add_blast_selims (clasetLib.the_claset ())
 
 fun invocation_claset theorems =
   clasetLib.invocation_claset (blast_claset ()) theorems

@@ -120,13 +120,13 @@ fun make_rule_decl spec (name, th) =
                info = info, orig = th}
   end
 
-fun add_rule spec named_th
+fun add_rule_by extend spec named_th
   (cs as CS {decls, safe_wrappers, unsafe_wrappers,
              safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair}) =
   let
     val decl = make_rule_decl spec named_th
   in
-    case extend_decl decl decls of
+    case extend decl decls of
         (NONE, _) => cs
       | (SOME new_decl, decls') =>
           let
@@ -144,6 +144,13 @@ fun add_rule spec named_th
                 dup_netpair = dup_netpair'}
           end
   end
+
+val add_rule = add_rule_by extend_decl
+
+(* Rules a library derives from a user declaration rather than rules the
+   user named.  A duplicate among them is an internal coincidence, so it is
+   dropped without the diagnostics add_rule prints. *)
+val add_derived_rule = add_rule_by extend_derived_decl
 
 val sintro_spec = {kind = Intro, safe = true, prio = NONE}
 val intro_spec = {kind = Intro, safe = false, prio = NONE}
@@ -936,43 +943,32 @@ type simp_arg_split =
    simp_controls : thm list,
    rest : thm list}
 
+datatype simp_arg_bucket = SimpRule | IffRule | SimpControl | Plain
+
+fun simp_arg_bucket theorem =
+  case destSimp theorem of
+      SOME rule => (SimpRule, rule)
+    | NONE =>
+        (case destIff theorem of
+             SOME rule => (IffRule, rule)
+           | NONE =>
+               if markerLib.is_generic_simp_marker theorem
+               then (SimpControl, theorem)
+               else (Plain, theorem))
+
+(* Each bucket keeps the arguments in the order they were given. *)
 fun classify_simp_args theorems =
   let
-    fun classify
-      (theorem, {simp_rules, iff_rules, simp_controls, rest}) =
-      case destSimp theorem of
-          SOME rule =>
-            {simp_rules = rule :: simp_rules,
-             iff_rules = iff_rules,
-             simp_controls = simp_controls,
-             rest = rest}
-        | NONE =>
-            (case destIff theorem of
-                 SOME rule =>
-                   {simp_rules = simp_rules,
-                    iff_rules = rule :: iff_rules,
-                    simp_controls = simp_controls,
-                    rest = rest}
-               | NONE =>
-                   if markerLib.is_generic_simp_marker theorem then
-                     {simp_rules = simp_rules,
-                      iff_rules = iff_rules,
-                      simp_controls = theorem :: simp_controls,
-                      rest = rest}
-                   else
-                     {simp_rules = simp_rules,
-                      iff_rules = iff_rules,
-                      simp_controls = simp_controls,
-                      rest = theorem :: rest})
-    val {simp_rules, iff_rules, simp_controls, rest} =
-      List.foldl classify
-        {simp_rules = [], iff_rules = [], simp_controls = [], rest = []}
-        theorems
+    val tagged = map simp_arg_bucket theorems
+    fun bucket wanted =
+      List.mapPartial
+        (fn (tag, theorem) => if tag = wanted then SOME theorem else NONE)
+        tagged
   in
-    {simp_rules = List.rev simp_rules,
-     iff_rules = List.rev iff_rules,
-     simp_controls = List.rev simp_controls,
-     rest = List.rev rest}
+    {simp_rules = bucket SimpRule,
+     iff_rules = bucket IffRule,
+     simp_controls = bucket SimpControl,
+     rest = bucket Plain}
   end
 
 (* process_claset_tags consumes the classical marker vocabulary.  Plain
@@ -996,7 +992,12 @@ fun invocation_facts theorems =
     else rest
   end
 
-fun INSERT_FACTS_TAC facts = Tactical.MAP_EVERY Tactic.ASSUME_TAC facts
+(* ASSUME_TAC conses onto the assumption list, so the facts are assumed
+   back-to-front to leave them in declaration order.  Order is observable:
+   it is the recency tie-break the classical engines use when scanning
+   assumptions, and what FIRST_ASSUM and friends see in the residue. *)
+fun INSERT_FACTS_TAC facts =
+  Tactical.MAP_EVERY Tactic.ASSUME_TAC (List.rev facts)
 
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base

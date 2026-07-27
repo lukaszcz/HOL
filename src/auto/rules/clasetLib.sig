@@ -15,6 +15,12 @@ sig
   val empty_cs : claset
 
   val add_rule : rulespec -> string * thm -> claset -> claset
+
+  (* Adds a rule a library derived from a user declaration.  Behaves as
+     add_rule, but a duplicate or cross-kind clash among derived rules is
+     dropped silently instead of warning on every invocation. *)
+  val add_derived_rule : rulespec -> string * thm -> claset -> claset
+
   val add_sintros : (string * thm) list -> claset -> claset
   val add_intros : (string * thm) list -> claset -> claset
   val add_selims : (string * thm) list -> claset -> claset
@@ -100,6 +106,9 @@ sig
      invocation.  Engines insert the facts with INSERT_FACTS_TAC, lifting it
      into their own tactic representation where necessary. *)
   val invocation_claset : claset -> thm list -> claset * thm list
+
+  (* Inserts the facts so that they appear in the assumption list in the
+     order given, as Isabelle's cut_facts_tac does. *)
   val INSERT_FACTS_TAC : thm list -> tactic
 
   (* The persistent form of a rule name, as recorded in the claset delta

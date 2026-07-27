@@ -46,6 +46,7 @@ sig
   val make_decl : {name : string, spec : rulespec, weight : int,
                    info : info, orig : thm} -> decl
   val extend_decl : decl -> decls -> decl option * decls
+  val extend_derived_decl : decl -> decls -> decl option * decls
   val remove_decl : string -> decls -> decl list * decls
   val has_decls : decls -> thm -> bool
   val decl_name_member : decls -> string -> bool

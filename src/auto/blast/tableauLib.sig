@@ -11,6 +11,11 @@ sig
   val BLAST_TAC : thm list -> tactic
   val BLAST_DEPTH_TAC : int -> thm list -> tactic
   val CS_BLAST_DEPTH_TAC : clasetLib.claset -> int -> tactic
+
+  (* The safe elimination rules the tableau engine needs to decompose a
+     negated implication or a negated universal.  Every entry point that
+     hands CS_BLAST_DEPTH_TAC a claset of its own must add them. *)
+  val add_blast_selims : clasetLib.claset -> clasetLib.claset
   val depth_limit : int ref
 
   (* Run tableau search only.  The result contains the recorded script and

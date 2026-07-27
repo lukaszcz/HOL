@@ -19,6 +19,12 @@ sig
        (clasetRules.rulespec * (string * thm)) list,
      rewrite : thm}
 
+  (* Installs the rules of an iff_declaration.  They are derived rather than
+     named by the user, so a duplicate among them is dropped silently. *)
+  val add_iff_rules :
+    (clasetRules.rulespec * (string * thm)) list ->
+    clasetLib.claset -> clasetLib.claset
+
   val remove_iff : string -> unit
 
   (* Shared packaging for theorem-list clasimp tactics.  The body receives

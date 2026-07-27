@@ -1594,13 +1594,6 @@ fun typebase_distinct_elim th =
       (DISCH eq (MP (SPEC r boolTheory.FALSITY) false_th))
   end
 
-fun typebase_iff_dest th =
-  let
-    val (vars, _) = strip_forall (concl th)
-  in
-    GENL vars (#1 (EQ_IMP_RULE (typebase_specl vars th)))
-  end
-
 fun legacy_fresh_outer_vars th vars =
   let
     fun freshen avoids [] = []
@@ -1704,6 +1697,34 @@ val _ =
            (fn (spec, (_, theorem)) =>
              has_typebase_rule spec theorem)
            injective_rules
+       end)
+
+fun has_named_spec_rule spec name =
+  List.exists
+    (fn (spec', (name', _)) => name = name' andalso same_spec spec spec')
+    (rules_of (the_claset ()))
+
+(* The names are the handle a proof uses to suppress a contributed rule with
+   Del, so they are part of the interface and not free to drift. *)
+val _ =
+  test
+    ("TypeBase injectivity contributes named safe intro and dest rules",
+     fn () =>
+       let
+         val tyi = typebase_hook_tyinfo ()
+         val (thy, tyop) = TypeBasePure.ty_name_of tyi
+         val stem = "__claset_tyinfo_" ^ thy ^ "_" ^ tyop ^ "_inject_"
+         val injective = Option.valOf (TypeBasePure.one_one_of tyi)
+         fun named index =
+           let val name = stem ^ Int.toString index
+           in
+             has_named_spec_rule typebase_sintro_spec (name ^ "_intro")
+               andalso
+             has_named_spec_rule typebase_sdest_spec (name ^ "_dest")
+           end
+       in
+         List.all named
+           (List.tabulate (length (Drule.CONJUNCTS injective), Lib.I))
        end)
 
 val tyinfo_idempotence_p = ``claset_tyinfo_idempotence_p : bool``
@@ -2160,4 +2181,23 @@ val _ =
          null (rules_of cs) andalso
          ListPair.allEq (fn (left, right) => same_thm left right)
            (facts, [payload])
+       end)
+
+(* Assumption order is observable: it is the recency tie-break the search
+   engines use, and what FIRST_ASSUM sees in a residue. *)
+val _ =
+  test
+    ("inserted facts reach the assumptions in the order supplied",
+     fn () =>
+       let
+         val facts =
+           [boolTheory.IMP_F, boolTheory.EXCLUDED_MIDDLE,
+            boolTheory.IMP_ANTISYM_AX]
+         val goal = ([] : term list, boolSyntax.T)
+       in
+         case #1 (Tactical.VALID (INSERT_FACTS_TAC facts) goal) of
+             [(asl, _)] =>
+               ListPair.allEq (fn (left, right) => Term.aconv left right)
+                 (asl, map concl facts)
+           | _ => false
        end)

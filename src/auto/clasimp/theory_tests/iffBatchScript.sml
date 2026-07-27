@@ -36,8 +36,13 @@ Proof
   simp[iff_batch_three_def]
 QED
 
+(* Batching is the finaliser's job, so the count that matters is the one a
+   descendant theory sees; iffBatchChild asserts it.  Here the declarations
+   only have to be individually live. *)
 val _ =
-  case List.filter (equal "iffBatch")
-    (simpLib.ssfrag_names_of (BasicProvers.srw_ss ())) of
-      [_] => ()
-    | _ => fail "three iff declarations did not share one theory fragment"
+  if List.all has_iff_rewrite
+       ["iffBatch$iff_batch_one_rule",
+        "iffBatch$iff_batch_two_rule",
+        "iffBatch$iff_batch_three_rule"]
+  then ()
+  else fail "an iff declaration was not immediately live in its own theory"

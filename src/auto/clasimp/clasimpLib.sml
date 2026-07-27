@@ -83,19 +83,14 @@ fun iff_declaration name theorem =
     {rules = clasetLib.iff_rules name theorem, rewrite = th}
   end
 
-fun add_iff_declaration name theorem (cs, ss) =
-  let
-    val {rules, rewrite} = iff_declaration name theorem
-    val cs' =
-      List.foldl
-        (fn ((rule_spec, named_rule), current) =>
-          clasetLib.add_rule rule_spec named_rule current)
-        cs rules
-    val ss' =
-      simpLib.++ (ss, simpLib.rewrites [rewrite])
-  in
-    (cs', ss')
-  end
+(* The derived rules are internal to the [iff] declaration, so a duplicate
+   among them is not a declaration the user can correct.  add_derived_rule
+   drops it silently instead of warning once per goal. *)
+fun add_iff_rules rules cs =
+  List.foldl
+    (fn ((rule_spec, named_rule), current) =>
+      clasetLib.add_derived_rule rule_spec named_rule current)
+    cs rules
 
 fun persistent_iff_name name = KernelSig.name_toString name
 
@@ -125,45 +120,102 @@ fun simp_delete_key ({Thy, Name} : KernelSig.kernelname) =
 fun iff_simp_delete_key kname =
   simp_delete_key (iff_simp_kname kname)
 
-fun persistent_iff_kname name =
+(* The one spelling of an iff rule name, shared by the declaration path and
+   by the theory finaliser: the kernel "Thy$Name" form, the public "Thy.Name"
+   form, or a bare name resolved against [default_thy].  Parsing in one place
+   is what lets remove_iff reject a name up front, so a name a descendant
+   theory could not parse never reaches the delta stream. *)
+fun iff_kname {default_thy} name =
   case String.fields (equal #"$") name of
       [thy, theorem] => {Thy = thy, Name = theorem}
-    | _ => ThmSetData.toKName name
+    | _ =>
+        (case String.fields (equal #".") name of
+             [thy, theorem] => {Thy = thy, Name = theorem}
+           | [theorem] => {Thy = default_thy, Name = theorem}
+           | _ =>
+               raise ERR "iff_kname" ("malformed iff name: " ^ name))
+
+fun persistent_iff_kname name =
+  iff_kname {default_thy = current_theory ()} name
 
 fun remove_iff_rules name =
   clasetLib.remove_rule (name ^ "_intro") o
   clasetLib.remove_rule (name ^ "_dest") o
   clasetLib.remove_rule (name ^ "_elim")
 
-fun retract_iff_declaration kname =
+(* The simp stream is loaded before this later-registered iff stream.  An
+   explicit delsimps in the declaring theory is respected instead of the iff
+   view resurrecting the named rewrite behind it.  Both the declaration path
+   and the finaliser apply the predicate, so what a session ends with is what
+   a descendant theory reloads. *)
+fun theory_delsimped thyname =
   let
-    val name = iff_rule_name kname
-    val _ = clasetLib.augment_claset (remove_iff_rules name)
+    val names =
+      List.foldl
+        (fn (ThmSetData.REMOVE name, names) => Symtab.update (name, ()) names
+          | (_, names) => names)
+        Symtab.empty
+        (ThmSetData.theory_data {settype = "simp", thy = thyname})
   in
-    BasicProvers.temp_delsimps [iff_simp_delete_key kname]
+    fn (kname : KernelSig.kernelname) =>
+      Symtab.defined names (#Name kname) orelse
+      Symtab.defined names (simp_delete_key kname)
   end
+
+(* Installing and retracting a single declaration and installing a theory's
+   whole batch are the same operation; the batched form is the only
+   implementation.  [declarations] is in claset declaration order. *)
+fun retract_persistent_iffs [] = ()
+  | retract_persistent_iffs knames =
+      let
+        fun remove_rules cs =
+          List.foldl
+            (fn (kname, current) =>
+              remove_iff_rules (iff_rule_name kname) current)
+            cs knames
+      in
+        BasicProvers.temp_delsimps (map iff_simp_delete_key knames);
+        clasetLib.augment_claset remove_rules
+      end
+
+fun install_persistent_iffs thyname declarations =
+  let
+    val delsimped = theory_delsimped thyname
+    (* Reversed so that the most recent declaration takes precedence in the
+       fragment, as successive single-declaration fragments do. *)
+    val rewrites =
+      List.rev
+        (List.filter (fn (kname, _) => not (delsimped kname)) declarations)
+    fun add_rules ((kname, theorem), cs) =
+      add_iff_rules
+        (#rules (iff_declaration (iff_rule_name kname) theorem)) cs
+    val _ =
+      if null rewrites then ()
+      else
+        BasicProvers.augment_srw_ss
+          [simpLib.named_rewrites_with_names thyname
+             (map
+                (fn (kname, theorem) =>
+                  (iff_simp_kname kname, Drule.SPEC_ALL theorem))
+                rewrites)]
+  in
+    if null declarations then ()
+    else
+      clasetLib.augment_claset
+        (fn cs => List.foldl add_rules cs declarations)
+  end
+
+fun retract_iff_declaration kname = retract_persistent_iffs [kname]
 
 fun install_persistent_iff kname theorem =
-  let
-    val name = iff_rule_name kname
-    val {rules, rewrite} = iff_declaration name theorem
-    fun add_rules cs =
-      List.foldl
-        (fn ((spec, named_rule), current) =>
-          clasetLib.add_rule spec named_rule current)
-        cs rules
-    val fragment =
-      simpLib.named_rewrites_with_names (#Thy kname)
-        [(iff_simp_kname kname, rewrite)]
-    val _ = clasetLib.augment_claset add_rules
-  in
-    BasicProvers.augment_srw_ss [fragment]
-  end
+  install_persistent_iffs (#Thy kname) [(kname, theorem)]
 
+(* Only the source theorem is persistent; the db is the set of names whose
+   claset and simpset views are currently installed. *)
 fun apply_iff_delta delta db =
   case delta of
-      ThmSetData.ADD (name, theorem) =>
-        Symtab.update (persistent_iff_name name, theorem) db
+      ThmSetData.ADD (name, _) =>
+        Symtab.update (persistent_iff_name name, ()) db
     | ThmSetData.REMOVE name =>
         Symtab.delete_safe (normalise_iff_name name) db
 
@@ -192,106 +244,34 @@ fun apply_iff_to_global delta db =
    Final-touch order preserves the recency tie-break of sequential replay. *)
 fun iff_finaliser {thyname} deltas db =
   let
-    fun remove_kname name =
-      case String.fields (equal #"$") name of
-          [thy, theorem] => {Thy = thy, Name = theorem}
-        | _ =>
-            (case String.fields (equal #".") name of
-                 [thy, theorem] => {Thy = thy, Name = theorem}
-               | [theorem] => {Thy = thyname, Name = theorem}
-               | _ =>
-                   raise ERR "iff_finaliser"
-                     ("malformed iff name: " ^ name))
+    fun delta_info (ThmSetData.ADD (kname, theorem)) =
+          (kname, SOME (kname, theorem))
+      | delta_info (ThmSetData.REMOVE name) =
+          (iff_kname {default_thy = thyname} name, NONE)
 
-    fun delta_info delta =
-      case delta of
-          ThmSetData.ADD (kname, theorem) =>
-            (kname, SOME (kname, theorem))
-        | ThmSetData.REMOVE name =>
-            (remove_kname name, NONE)
-
-    fun remember (delta, (recent, states)) =
+    (* Scanning from the right keeps each name's final event, in the order
+       those final events occur.  That is the recency order sequential
+       replay would leave behind, at one pass over the deltas. *)
+    fun remember (delta, (seen, touched)) =
       let
         val (kname, state) = delta_info delta
         val key = persistent_iff_name kname
       in
-        (key :: List.filter (fn key' => key <> key') recent,
-         Symtab.update (key, state) states)
+        if Symtab.defined seen key then (seen, touched)
+        else (Symtab.update (key, ()) seen, (kname, state) :: touched)
       end
 
-    val (recent, states) =
-      List.foldl remember ([], Symtab.empty) deltas
-    val touched =
-      map
-        (fn key =>
-          case Symtab.lookup states key of
-              SOME (SOME (kname, _)) => kname
-            | SOME NONE => remove_kname key
-            | NONE => raise Fail "iff_finaliser: missing final state")
-        (List.rev recent)
+    val (_, touched) = List.foldr remember (Symtab.empty, []) deltas
     val stale =
-      List.filter
-        (fn kname => Symtab.defined db (persistent_iff_name kname))
-        touched
-    val live =
       List.mapPartial
-        (fn kname =>
-          case Symtab.lookup states (persistent_iff_name kname) of
-              SOME (SOME declaration) => SOME declaration
-            | _ => NONE)
+        (fn (kname, _) =>
+          if Symtab.defined db (persistent_iff_name kname) then SOME kname
+          else NONE)
         touched
-    val simp_deltas =
-      ThmSetData.theory_data {settype = "simp", thy = thyname}
-
-    (* The simp stream is loaded before this later-registered iff stream.
-       Respect an explicit delsimps declaration instead of resurrecting the
-       named rewrite when the iff view is replayed afterwards. *)
-    fun explicitly_delsimped (kname : KernelSig.kernelname) =
-      List.exists
-        (fn ThmSetData.REMOVE name =>
-              name = #Name kname orelse name = simp_delete_key kname
-          | _ => false)
-        simp_deltas
-    val live_rewrites =
-      List.filter (not o explicitly_delsimped o #1) live
-
-    fun remove_rules cs =
-      List.foldl
-        (fn (kname, current) =>
-          remove_iff_rules (iff_rule_name kname) current)
-        cs stale
-
-    fun add_rules ((kname, theorem), cs) =
-      let
-        val {rules, ...} =
-          iff_declaration (iff_rule_name kname) theorem
-      in
-        List.foldl
-          (fn ((spec, named_rule), current) =>
-            clasetLib.add_rule spec named_rule current)
-          cs rules
-      end
-
-    val _ =
-      if null stale then ()
-      else
-        (BasicProvers.temp_delsimps (map iff_simp_delete_key stale);
-         clasetLib.augment_claset remove_rules)
-    val _ =
-      if null live_rewrites then ()
-      else
-        BasicProvers.augment_srw_ss
-          [simpLib.named_rewrites_with_names thyname
-             (map
-                (fn (kname, theorem) =>
-                  (iff_simp_kname kname, Drule.SPEC_ALL theorem))
-                (List.rev live_rewrites))]
-    val _ =
-      if null live then ()
-      else
-        clasetLib.augment_claset
-          (fn cs => List.foldl add_rules cs live)
+    val live = List.mapPartial #2 touched
   in
+    retract_persistent_iffs stale;
+    install_persistent_iffs thyname live;
     List.foldl
       (fn (delta, current) => apply_iff_delta delta current)
       db deltas
@@ -324,7 +304,12 @@ val iff_data =
 
 fun remove_iff name =
   let
-    val delta = ThmSetData.REMOVE (normalise_iff_name name)
+    val normalised = normalise_iff_name name
+    (* Parse before recording anything: a delta whose name the finaliser
+       cannot parse would make the exported theory, and every descendant of
+       it, fail to load. *)
+    val _ = persistent_iff_kname normalised
+    val delta = ThmSetData.REMOVE normalised
   in
     #record_delta iff_data delta;
     #update_global_value iff_data (apply_iff_to_global delta)
@@ -337,13 +322,28 @@ fun process_clasimp_args body base_cs base_ss =
         val {simp_rules, iff_rules, simp_controls, rest = classical_args} =
           clasetLib.classify_simp_args theorems
         val simp_ss = simpLib.++ (base_ss, simpLib.rewrites simp_rules)
-        val (iff_cs, invocation_ss) =
+        val iff_declarations =
+          map
+            (fn (index, rule) =>
+              iff_declaration
+                ("__clasimp_iff_arg_" ^ Int.toString index) rule)
+            (Lib.enumerate 0 iff_rules)
+        val iff_cs =
           List.foldl
-            (fn ((index, rule), pair) =>
-              add_iff_declaration
-                ("__clasimp_iff_arg_" ^ Int.toString index)
-                rule pair)
-            (base_cs, simp_ss) (Lib.enumerate 0 iff_rules)
+            (fn ({rules, ...}, cs) => add_iff_rules rules cs)
+            base_cs iff_declarations
+        (* One fragment for all the iff rewrites rather than one per
+           argument, so a tactic with Iff arguments rebuilds the rewrite net
+           once per goal.  The list is reversed because a fragment gives its
+           head the highest precedence, where successive fragments give it to
+           the one added last. *)
+        val invocation_ss =
+          if null iff_declarations then simp_ss
+          else
+            simpLib.++
+              (simp_ss,
+               simpLib.rewrites
+                 (List.rev (map #rewrite iff_declarations)))
         val (invocation_cs, leftovers) =
           clasetLib.process_claset_tags classical_args iff_cs
       in
@@ -363,9 +363,13 @@ fun auto_with {blast, depth} cs ss simp_args =
     val final_cs = add_safe_simp_wrapper ss simp_args cs
     val initial_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
+    (* The blast leg gets the elimination rules every other blast entry
+       point adds; without them the engine cannot decompose a negated
+       implication or universal left in the residue. *)
     val search =
       Tactical.ORELSE
-        (tableauLib.CS_BLAST_DEPTH_TAC cs blast,
+        (tableauLib.CS_BLAST_DEPTH_TAC
+           (tableauLib.add_blast_selims cs) blast,
          NTactical.DETERM
            (classicalLib.CS_DEPTH_SOLVE_TAC
               {dup = false} depth search_cs))

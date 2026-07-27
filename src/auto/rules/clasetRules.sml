@@ -718,26 +718,30 @@ fun duplicate decl ds =
 fun rule_description ({kind, safe, ...} : rulespec) =
   (if safe then "safe " else "unsafe ") ^ kind_name kind ^ " rule"
 
-fun extend_decl (decl : decl) (Decls {next, byconcl, byname}) =
+(* [quiet] suppresses the duplicate and cross-kind diagnostics.  Only
+   internally derived rules use it: a rule the caller never named cannot be
+   the declaration mistake those warnings are meant to report, and the
+   invocation-scoped tactics would otherwise repeat them on every goal. *)
+fun extend_decl_gen {quiet} (decl : decl) (Decls {next, byconcl, byname}) =
   let
     val key = canonical_key (#orig decl)
     val old = Option.getOpt (Termtab.lookup byconcl key, [])
     val unchanged = Decls {next = next, byconcl = byconcl, byname = byname}
+    fun warn message =
+      if quiet then () else HOL_WARNING "clasetRules" "extend_decl" message
   in
     if duplicate decl old orelse
        Option.isSome (Symtab.lookup byname (#name decl))
     then
-      (HOL_WARNING "clasetRules" "extend_decl"
-         ("Ignoring duplicate " ^ rule_description (#spec decl));
+      (warn ("Ignoring duplicate " ^ rule_description (#spec decl));
        (NONE, unchanged))
     else
       let
         val _ =
           if List.exists (fn old => not (same_kind (#spec decl) (#spec old)))
                          old
-          then HOL_WARNING "clasetRules" "extend_decl"
-                 ("Rule already declared as a different " ^
-                  rule_description (#spec (hd old)))
+          then warn ("Rule already declared as a different " ^
+                     rule_description (#spec (hd old)))
           else ()
         val {weight, ...} = #tag decl
         val decl' =
@@ -751,6 +755,9 @@ fun extend_decl (decl : decl) (Decls {next, byconcl, byname}) =
                 byname = Symtab.update (#name decl', decl') byname})
       end
   end
+
+val extend_decl = extend_decl_gen {quiet = false}
+val extend_derived_decl = extend_decl_gen {quiet = true}
 
 fun remove_decl name (decls as Decls {next, byconcl, byname}) =
   case Symtab.lookup byname name of

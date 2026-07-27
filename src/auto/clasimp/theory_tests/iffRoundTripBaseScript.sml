@@ -6,7 +6,7 @@ Libs
 
 open clasimpLib iffTestSupport
 
-fun fail message = raise Fail ("iff round-trip base test: " ^ message)
+fun fail message = failer "iff round-trip base test" message
 
 Definition iff_round_trip_live_def:
   iff_round_trip_live (p : bool) = p
@@ -65,4 +65,28 @@ val _ =
   then fail "delsimps did not retract the iff simpset view"
   else if not (has_iff_rules delsimp_name)
   then fail "delsimps unexpectedly retracted the iff claset view"
+  else ()
+
+(* The finaliser weighs a theory's delsimps declarations against its whole
+   iff stream, so a delsimps recorded first has to suppress the iff rewrite
+   in the session too.  Otherwise the session and a reload disagree. *)
+val _ = BasicProvers.delsimps ["iff_round_trip_predelsimp_rule"]
+
+Definition iff_round_trip_predelsimp_def:
+  iff_round_trip_predelsimp (p : bool) = p
+End
+
+Theorem iff_round_trip_predelsimp_rule[iff]:
+  !p. iff_round_trip_predelsimp p <=> p
+Proof
+  simp[iff_round_trip_predelsimp_def]
+QED
+
+val predelsimp_name = "iffRoundTripBase$iff_round_trip_predelsimp_rule"
+
+val _ =
+  if has_iff_rewrite predelsimp_name
+  then fail "a delsimps recorded before the declaration was ignored"
+  else if not (has_iff_rules predelsimp_name)
+  then fail "the early delsimps also retracted the iff claset view"
   else ()

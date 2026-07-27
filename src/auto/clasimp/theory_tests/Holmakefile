@@ -4,14 +4,10 @@ INCLUDES = ..
 all: $(DEFAULT_TARGETS)
 .PHONY: all
 
-iffRoundTripBaseTheory.uo: iffTestSupport.uo
 iffRoundTripChildTheory.uo: iffRoundTripBaseTheory.uo
-iffRoundTripChildTheory.uo: iffTestSupport.uo
 iffDiamondAddTheory.uo: iffDiamondRootTheory.uo
 iffDiamondRemoveTheory.uo: iffDiamondRootTheory.uo
 iffDiamondChildTheory.uo: iffDiamondAddTheory.uo \
-                          iffDiamondRemoveTheory.uo \
-                          iffTestSupport.uo
-iffBatchTheory.uo: iffTestSupport.uo
-iffWithinRemoveTheory.uo: iffTestSupport.uo
-iffWithinRemoveChildTheory.uo: iffWithinRemoveTheory.uo iffTestSupport.uo
+                          iffDiamondRemoveTheory.uo
+iffBatchChildTheory.uo: iffBatchTheory.uo
+iffWithinRemoveChildTheory.uo: iffWithinRemoveTheory.uo

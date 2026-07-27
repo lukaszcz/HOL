@@ -6,11 +6,12 @@ Libs
 
 open clasimpLib iffTestSupport
 
-fun fail message = raise Fail ("iff round-trip child test: " ^ message)
+fun fail message = failer "iff round-trip child test" message
 
 val live_name = "iffRoundTripBase$iff_round_trip_live_rule"
 val removed_name = "iffRoundTripBase$iff_round_trip_removed_rule"
 val delsimp_name = "iffRoundTripBase$iff_round_trip_delsimp_rule"
+val predelsimp_name = "iffRoundTripBase$iff_round_trip_predelsimp_rule"
 
 val _ =
   let
@@ -44,4 +45,8 @@ val _ =
   then fail "the persistent delsimps removal was lost in the child"
   else if not (has_iff_rules delsimp_name)
   then fail "delsimps removed the child claset view"
+  else if has_iff_rewrite predelsimp_name
+  then fail "the delsimps recorded before the declaration was lost"
+  else if not (has_iff_rules predelsimp_name)
+  then fail "the early delsimps removed the child claset view"
   else ()

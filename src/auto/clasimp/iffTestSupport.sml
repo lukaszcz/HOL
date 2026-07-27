@@ -3,7 +3,10 @@ struct
 
 open HolKernel
 
-fun fail message = raise Fail ("iff theory test: " ^ message)
+(* Scripts name their own scenario rather than each shadowing [fail]. *)
+fun failer scenario message = raise Fail (scenario ^ ": " ^ message)
+
+fun fail message = failer "iff theory test" message
 
 fun fetch_persistent name =
   case String.fields (equal #"$") name of
@@ -41,6 +44,22 @@ fun has_named_rule name theorem =
 fun has_iff_rules name =
   let val stem = name ^ ".__clasimp_iff"
   in has_rule (stem ^ "_intro") andalso has_rule (stem ^ "_dest")
+  end
+
+(* How many fragments of [ss] carry one of the named iff rewrites.  Counting
+   by fragment name would not do: ssfrag_names_of de-duplicates, and a
+   theory's simp declarations already contribute a fragment of the same
+   name as the iff batch. *)
+fun iff_fragment_count names ss =
+  let
+    val wanted =
+      map (concl o Drule.SPEC_ALL o fetch_persistent) names
+    fun carries fragment =
+      List.exists
+        (fn rewrite => List.exists (aconv (concl rewrite)) wanted)
+        (simpLib.frag_rewrites fragment)
+  in
+    length (List.filter carries (simpLib.ssfrags_of ss))
   end
 
 fun rewrites_to source target =
