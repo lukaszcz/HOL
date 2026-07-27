@@ -33,6 +33,30 @@ struct
 
   fun subterms t = HolKernel.find_terms (fn _ => true) t
 
+  fun smtstring_consts thy names =
+    List.map (fn name => Term.prim_mk_const {Thy = thy, Name = name}) names
+
+  (* Rung guards test a term against a whole family of constants.  Comparing
+     (theory, name) pairs against a set keeps that to one traversal, rather
+     than one traversal per constant, while agreeing with
+     'Term.same_const' in ignoring the type instance. *)
+  fun const_name_set consts =
+    Redblackset.addList
+      (Redblackset.empty (Lib.pair_compare (String.compare, String.compare)),
+       List.map
+         (fn c =>
+           let val {Thy, Name, ...} = Term.dest_thy_const c
+           in (Thy, Name) end)
+         consts)
+
+  fun is_named_const names tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Redblackset.member (names, (Thy, Name)) end
+
+  fun mentions_any names t =
+    Lib.can (HolKernel.find_term (is_named_const names)) t
+
   fun list_element_type tm =
     Lib.total listSyntax.dest_list_type (Term.type_of tm)
 
@@ -194,19 +218,16 @@ struct
     smtstringz3Theory.seq_tail_zero_step
   ]
 
-  val symbolic_string_consts =
-    List.map
-      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
-      ["smtstr_concat", "smtstr_prefixof", "smtstr_suffixof",
-       "smtstr_contains"]
+  val symbolic_string_names =
+    const_name_set
+      (smtstring_consts "smtstring"
+        ["smtstr_concat", "smtstr_prefixof", "smtstr_suffixof",
+         "smtstr_contains"])
 
   val symbolic_thms =
     Z3_ProformaThms.thm_net_from_list symbolic_lemmas
 
-  fun is_symbolic_string_goal t =
-    List.exists
-      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
-      symbolic_string_consts
+  fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
   fun symbolic_string_prove t =
     if not (is_symbolic_string_goal t) then
@@ -315,19 +336,15 @@ struct
     smtstringz3Theory.aut_accept_empty_terminal_int
   ]
 
-  val regex_consts =
-    List.map
-      (fn {Thy, Name} => Term.prim_mk_const {Thy = Thy, Name = Name})
-      [{Thy = "smtstring", Name = "smt_in_re"},
-       {Thy = "smtstringz3", Name = "aut_accept"}]
+  val regex_names =
+    const_name_set
+      (smtstring_consts "smtstring" ["smt_in_re"] @
+       smtstring_consts "smtstringz3" ["aut_accept"])
 
   val regex_thms =
     Z3_ProformaThms.thm_net_from_list regex_lemmas
 
-  fun is_regex_goal t =
-    List.exists
-      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
-      regex_consts
+  fun is_regex_goal t = mentions_any regex_names t
 
   fun regex_prove t =
     if not (is_regex_goal t) then
@@ -349,31 +366,25 @@ struct
   (* `rewrite` steps are a separate customer of the string theory.  Keep
      their entry point narrow: a failed string attempt must not turn an
      ordinary arithmetic rewrite into a string diagnostic. *)
-  val string_theory_consts =
-    List.map
-      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
-      ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_at",
-       "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
-       "smtstr_indexof", "smtstr_lt", "smtstr_le", "smtstr_replace",
-       "smtstr_replace_all", "smtstr_replace_re",
-       "smtstr_replace_re_all", "smtstr_is_digit", "smtstr_to_code",
-       "smtstr_from_code", "smtstr_to_int", "smtstr_from_int",
-       "smt_in_re", "reglan_to_re", "reglan_concat", "reglan_union",
-       "reglan_inter", "reglan_diff", "reglan_comp", "reglan_star",
-       "reglan_plus", "reglan_opt", "reglan_range", "reglan_power",
-       "reglan_loop"] @
-    List.map
-      (fn name => Term.prim_mk_const {Thy = "smtstringz3", Name = name})
-      ["seq_unit", "seq_tail", "seq_eq", "seq_nth_i", "seq_stoi",
-       "seq_digit", "char_is_digit", "char_bit", "aut_state",
-       "aut_accept"]
+  val string_theory_names =
+    const_name_set
+      (smtstring_consts "smtstring"
+         ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_at",
+          "smtstr_prefixof", "smtstr_suffixof", "smtstr_contains",
+          "smtstr_indexof", "smtstr_lt", "smtstr_le", "smtstr_replace",
+          "smtstr_replace_all", "smtstr_replace_re",
+          "smtstr_replace_re_all", "smtstr_is_digit", "smtstr_to_code",
+          "smtstr_from_code", "smtstr_to_int", "smtstr_from_int",
+          "smt_in_re", "reglan_to_re", "reglan_concat", "reglan_union",
+          "reglan_inter", "reglan_diff", "reglan_comp", "reglan_star",
+          "reglan_plus", "reglan_opt", "reglan_range", "reglan_power",
+          "reglan_loop"] @
+       smtstring_consts "smtstringz3"
+         ["seq_unit", "seq_tail", "seq_eq", "seq_nth_i", "seq_stoi",
+          "seq_digit", "char_is_digit", "char_bit", "aut_state",
+          "aut_accept"])
 
-  fun is_string_theory_term tm =
-    List.exists (fn c => Term.same_const c tm) string_theory_consts
-    handle Feedback.HOL_ERR _ => false
-
-  fun has_string_theory_term t =
-    List.exists is_string_theory_term (subterms t)
+  fun has_string_theory_term t = mentions_any string_theory_names t
 
   (* These are semantic rewrite facts, rather than a general-purpose simp
      set.  In particular, do not include METIS here: each rewrite rung must
@@ -412,18 +423,15 @@ struct
       raise ERR "rewrite_simp_prove"
         "string rewrite normalization did not close the conclusion"
 
-  val regex_rewrite_consts =
-    List.map
-      (fn name => Term.prim_mk_const {Thy = "smtstring", Name = name})
-      ["reglan_to_re", "reglan_none", "reglan_all", "reglan_allchar",
-       "reglan_concat", "reglan_union", "reglan_inter", "reglan_diff",
-       "reglan_comp", "reglan_star", "reglan_plus", "reglan_opt",
-       "reglan_range", "reglan_power", "reglan_loop"]
+  val regex_rewrite_names =
+    const_name_set
+      (smtstring_consts "smtstring"
+         ["reglan_to_re", "reglan_none", "reglan_all", "reglan_allchar",
+          "reglan_concat", "reglan_union", "reglan_inter", "reglan_diff",
+          "reglan_comp", "reglan_star", "reglan_plus", "reglan_opt",
+          "reglan_range", "reglan_power", "reglan_loop"])
 
-  fun has_regex_rewrite_term t =
-    List.exists
-      (fn c => Lib.can (HolKernel.find_term (Term.same_const c)) t)
-      regex_rewrite_consts
+  fun has_regex_rewrite_term t = mentions_any regex_rewrite_names t
 
   fun rewrite_evaluation_prove t =
     if has_regex_rewrite_term t andalso not (is_regex_goal t) then

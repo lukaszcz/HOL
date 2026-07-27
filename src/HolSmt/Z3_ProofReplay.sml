@@ -2897,7 +2897,6 @@ in
   val beta_equal_for_test = beta_equal
   val eta_equal_for_test = eta_equal
   val monotonicity_prove_for_test = monotonicity_prove
-  val string_prove_for_test = SmtStringProve.string_prove arith_prove
 
   fun replay_root_for_test proof : Thm.thm =
   let

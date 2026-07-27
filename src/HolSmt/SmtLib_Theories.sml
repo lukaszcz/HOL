@@ -565,19 +565,11 @@ in
     numSyntax.mk_numeral (natural_or_word_index index)
 
   fun smtstring_char_index index =
-    let
-      val value = natural_or_word_index index
-      val maximum =
-        Arbnum.fromInt SmtLib_String_Literal.max_code_point
-    in
-      if Arbnum.<=(value, maximum) then
-        numSyntax.mk_numeral value
-      else
-        raise ERR "<UnicodeStrings.char>"
-          ("character index 0x" ^
-           String.map Char.toLower (Arbnum.toHexString value) ^
-           " is above the SMT-LIB maximum 0x2ffff")
-    end
+    numSyntax.mk_numeral
+      (SmtLib_String_Literal.check_code_point "character index"
+        (natural_or_word_index index))
+    handle SmtLib_String_Literal.InvalidCodePoint detail =>
+      raise ERR "<UnicodeStrings.char>" detail
 
   fun sequence_ty elem_ty =
     Type.mk_thy_type {Thy = "list", Tyop = "list", Args = [elem_ty]}

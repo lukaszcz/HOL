@@ -101,6 +101,7 @@ local
   val apfst_K = Lib.apfst o Lib.K
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
   val str_inj_tm = smtstring_const "str_inj"
+  val smtstr_char_tm = smtstring_const "smtstr_char"
   val smtstr_concat_tm = smtstring_const "smtstr_concat"
   val smtstr_prefixof_tm = smtstring_const "smtstr_prefixof"
   val smtstr_lt_tm = smtstring_const "smtstr_lt"
@@ -222,16 +223,11 @@ local
         numSyntax.dest_numeral tm
         handle Feedback.HOL_ERR _ =>
           raise ERR function_name "expected a numeral character index"
-      val maximum =
-        Arbnum.fromInt SmtLib_String_Literal.max_code_point
     in
-      if Arbnum.<=(value, maximum) then
-        String.map Char.toLower (Arbnum.toHexString value)
-      else
-        raise ERR function_name
-          ("character index 0x" ^
-           String.map Char.toLower (Arbnum.toHexString value) ^
-           " is above the SMT-LIB maximum 0x2ffff")
+      SmtLib_String_Literal.hex_num
+        (SmtLib_String_Literal.check_code_point "character index" value)
+      handle SmtLib_String_Literal.InvalidCodePoint detail =>
+        raise ERR function_name detail
     end
 
   fun indexed_char_encoding (_, args) =
@@ -347,6 +343,23 @@ local
   (* (HOL term, a function that maps a pair (rator, rands) to an
      SMT-LIB symbol and a list of remaining (still-to-be-encoded)
      argument terms) *)
+  type builtin_encoding =
+    (Term.term * Term.term list) -> (string * Term.term list)
+
+  (* Native smtstringTheory UnicodeStrings and RegLan surface, derived from
+     'native_string_infos' so that the SMT name of an operator is recorded
+     in one table only. *)
+  val native_string_encodings : (Term.term * builtin_encoding) list =
+    List.map
+      (fn {hol_name, smt_name, ...} : native_string_info =>
+        (smtstring_const hol_name,
+         case hol_name of
+           "smtstr_char" => indexed_char_encoding
+         | "reglan_power" => indexed_power_encoding
+         | "reglan_loop" => indexed_loop_encoding
+         | _ => apfst_K smt_name))
+      native_string_infos
+
   val builtin_symbol_encodings = [
     (* Core *)
     (boolSyntax.T, apfst_K "true"),
@@ -375,44 +388,6 @@ local
     (stringSyntax.isprefix_tm, apfst_K "str.prefixof"),
     (stringSyntax.string_lt_tm, apfst_K "str.<"),
     (stringSyntax.string_le_tm, apfst_K "str.<="),
-    (* Native smtstringTheory UnicodeStrings and RegLan surface. *)
-    (smtstring_const "smtstr_concat", apfst_K "str.++"),
-    (smtstring_const "smtstr_len", apfst_K "str.len"),
-    (smtstring_const "smtstr_substr", apfst_K "str.substr"),
-    (smtstring_const "smtstr_at", apfst_K "str.at"),
-    (smtstring_const "smtstr_prefixof", apfst_K "str.prefixof"),
-    (smtstring_const "smtstr_suffixof", apfst_K "str.suffixof"),
-    (smtstring_const "smtstr_contains", apfst_K "str.contains"),
-    (smtstring_const "smtstr_indexof", apfst_K "str.indexof"),
-    (smtstring_const "smtstr_replace", apfst_K "str.replace"),
-    (smtstring_const "smtstr_replace_all", apfst_K "str.replace_all"),
-    (smtstring_const "smtstr_lt", apfst_K "str.<"),
-    (smtstring_const "smtstr_le", apfst_K "str.<="),
-    (smtstring_const "smtstr_char", indexed_char_encoding),
-    (smtstring_const "smtstr_replace_re", apfst_K "str.replace_re"),
-    (smtstring_const "smtstr_replace_re_all",
-      apfst_K "str.replace_re_all"),
-    (smtstring_const "smtstr_is_digit", apfst_K "str.is_digit"),
-    (smtstring_const "smtstr_to_code", apfst_K "str.to_code"),
-    (smtstring_const "smtstr_from_code", apfst_K "str.from_code"),
-    (smtstring_const "smtstr_to_int", apfst_K "str.to_int"),
-    (smtstring_const "smtstr_from_int", apfst_K "str.from_int"),
-    (smtstring_const "reglan_to_re", apfst_K "str.to_re"),
-    (smtstring_const "smt_in_re", apfst_K "str.in_re"),
-    (smtstring_const "reglan_none", apfst_K "re.none"),
-    (smtstring_const "reglan_all", apfst_K "re.all"),
-    (smtstring_const "reglan_allchar", apfst_K "re.allchar"),
-    (smtstring_const "reglan_concat", apfst_K "re.++"),
-    (smtstring_const "reglan_union", apfst_K "re.union"),
-    (smtstring_const "reglan_inter", apfst_K "re.inter"),
-    (smtstring_const "reglan_diff", apfst_K "re.diff"),
-    (smtstring_const "reglan_comp", apfst_K "re.comp"),
-    (smtstring_const "reglan_star", apfst_K "re.*"),
-    (smtstring_const "reglan_plus", apfst_K "re.+"),
-    (smtstring_const "reglan_opt", apfst_K "re.opt"),
-    (smtstring_const "reglan_range", apfst_K "re.range"),
-    (smtstring_const "reglan_power", indexed_power_encoding),
-    (smtstring_const "reglan_loop", indexed_loop_encoding),
     (int_of_num_tm, injected_length_encoding),
     (* Reals_Ints *)
     (* numerals (excluding 'intSyntax.negate_tm') *)
@@ -668,7 +643,7 @@ local
     (wordsSyntax.word_le_tm, apfst_fixed_width "bvsle"),
     (wordsSyntax.word_gt_tm, apfst_fixed_width "bvsgt"),
     (wordsSyntax.word_ge_tm, apfst_fixed_width "bvsge")
-  ]
+  ] @ native_string_encodings
 
   val builtin_symbols =
     List.foldl (Lib.uncurry Net.insert) Net.empty builtin_symbol_encodings
@@ -823,11 +798,6 @@ local
       argument
     end
 
-  fun conjunction_terms tm =
-    let val (left, right) = boolSyntax.dest_conj tm
-    in conjunction_terms left @ conjunction_terms right end
-    handle Feedback.HOL_ERR _ => [tm]
-
   fun native_signature_for ({signatures, ...} : native_string_context)
       head arity =
     List.find
@@ -868,14 +838,12 @@ local
       val (head, args) = boolSyntax.strip_comb result
       val guards =
         if Term.aconv premise boolSyntax.T then []
-        else List.map dest_wfstr (conjunction_terms premise)
+        else List.map dest_wfstr (boolSyntax.strip_conj premise)
       fun is_string_arg (index, argument) =
         List.exists (Term.aconv argument) guards
       val string_args =
         List.map Lib.fst
-          (List.filter is_string_arg
-            (ListPair.zipEq
-              (List.tabulate (List.length args, fn n => n), args)))
+          (List.filter is_string_arg (Lib.enumerate 0 args))
       val quantified_shape =
         not (List.null vars) andalso
         List.length vars = List.length args andalso
@@ -919,9 +887,6 @@ local
       (context, List.rev kept)
     end
 
-  fun index_member index indices =
-    List.exists (fn candidate => index = candidate) indices
-
   fun native_string_term
       (context as {guarded_terms, ...} : native_string_context)
       string_bounds tm =
@@ -960,19 +925,11 @@ local
         if Type.compare (element_ty, numSyntax.num) = EQUAL then ()
         else raise ERR "native_string_literal" "not a num list"
       fun code_point element =
-        let
-          val value = numSyntax.dest_numeral element
-          val _ =
-            if Arbnum.<=
-                (value, Arbnum.fromInt SmtLib_String_Literal.max_code_point)
-            then ()
-            else raise ERR "native_string_literal"
-              ("code point 0x" ^
-               String.map Char.toLower (Arbnum.toHexString value) ^
-               " is above the SMT-LIB maximum 0x2ffff")
-        in
-          Arbnum.toInt value
-        end
+        Arbnum.toInt
+          (SmtLib_String_Literal.check_code_point "code point"
+            (numSyntax.dest_numeral element))
+        handle SmtLib_String_Literal.InvalidCodePoint detail =>
+          raise ERR "native_string_literal" detail
       val code_points = List.map code_point elements
     in
       "\"" ^ SmtLib_String_Literal.encode_string_literal code_points ^ "\""
@@ -1023,22 +980,19 @@ local
             [1, 2]
           else
             native_string_arg_indices context string_bounds rator rands
-        val indexed_rands =
-          ListPair.zipEq
-            (List.tabulate (List.length rands, fn n => n), rands)
       in
         List.exists
           (fn (index, rand) =>
             string_variable_demanded context string_bounds variable
-              (index_member index string_args) rand)
-          indexed_rands
+              (Lib.mem index string_args) rand)
+          (Lib.enumerate 0 rands)
       end
 
   fun guarded_binder tm =
     let
       fun guarded_vars vars guards =
         let
-          val guarded = List.map dest_wfstr (conjunction_terms guards)
+          val guarded = List.map dest_wfstr (boolSyntax.strip_conj guards)
           val _ =
             if List.all
                 (fn guard => List.exists (Term.aconv guard) vars)
@@ -1304,7 +1258,7 @@ local
       val domain_sorts =
         ListPair.mapEq
           (fn (index, ty) =>
-            if index_member index string_args then "String"
+            if Lib.mem index string_args then "String"
             else smt_sort_of_type regime tydict ty)
           (List.tabulate (List.length domtys, fn n => n), domtys)
       val range_sort =
@@ -2207,7 +2161,7 @@ local
         val (acc, declnames) = Lib.foldl_map
           (fn (a, (index, t)) =>
             translate_term regime apply_operator native_context
-              string_bounds (index_member index string_args)
+              string_bounds (Lib.mem index string_args)
               (a, (bounds, t)))
           (acc, indexed_rands)
         val (declss, names) = Lib.split declnames
@@ -2566,14 +2520,14 @@ local
     end
     val tm_has_base_type = not (Lib.can Type.dom_rng (Term.type_of tm))
     val _ =
-      (case boolSyntax.strip_comb tm of
-         (head, [code]) =>
-           if same_const (smtstring_const "smtstr_char") head then
+      (case Lib.total Term.dest_comb tm of
+         SOME (head, code) =>
+           if same_const smtstr_char_tm head then
              ignore
                (hexadecimal_string
                  "<builtin_symbols.smtstr_char>" code)
            else ()
-       | _ => ())
+       | NONE => ())
       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
     val literal =
       if expected_string then Lib.total native_string_literal tm else NONE
@@ -2912,7 +2866,7 @@ local
                   ListPair.zipEq
                     (List.tabulate (List.length domtys, fn n => n), domtys)
                 fun translate_dom (tydict, (index, ty)) =
-                  if index_member index string_args then
+                  if Lib.mem index string_args then
                     (tydict, ([], "String"))
                   else
                     translate_type regime (tydict, ty)
@@ -2959,7 +2913,7 @@ local
             val (acc, declnames) = Lib.foldl_map
               (fn (a, (index, t)) =>
                 translate_term regime apply_operator native_context
-                  string_bounds (index_member index string_args)
+                  string_bounds (Lib.mem index string_args)
                   (a, (bounds, t)))
               (acc, indexed_rands)
             val (declss, names) = Lib.split declnames

@@ -165,34 +165,8 @@ struct
           end
       end
 
-  (* returns a function that returns the next character in 'instream'
-     and raises 'HOL_ERR' when at the end of 'instream' *)
-  fun get_buffered_char instream : unit -> char =
-  (* The fastest approach would be to slurp in the whole stream at
-     once. However, this is infeasible for long streams (especially
-     because 'String.explode' causes a significant memory
-     blowup). Reading chunks of 10000000 bytes (i.e., 10 MB) should be
-     a reasonable compromise between a small memory footprint (even
-     after 'String.explode') and a small number of reads. *)
-  let
-    val buffer = ref ([] : char list)
-  in
-    fn () =>
-      (case !buffer of
-        [] =>
-        (case String.explode (TextIO.inputN (instream, 10000000)) of
-          [] =>
-          raise Feedback.mk_HOL_ERR "Library" "get_buffered_char"
-            "end of stream"
-        | c::cs =>
-          (buffer := cs; c))
-      | c::cs =>
-        (buffer := cs; c))
-  end
-
-  (* Takes a function that returns characters
-     (cf. 'get_buffered_char'), returns a function that returns
-     tokens. SMT-LIB 2 tokens are separated by whitespace (which is
+  (* Takes a function that returns characters, returns a function that
+     returns tokens. SMT-LIB 2 tokens are separated by whitespace (which is
      dropped) or parentheses (which are tokens themselves). Tokens are
      simply strings; we use no markup. *)
   fun get_token (get_char : unit -> char) : unit -> string =
@@ -638,14 +612,12 @@ struct
       ty
 
   (* Inbound SMT-LIB String is the smtstringTheory num-list representation. *)
+  val smt_string_ty = listSyntax.mk_list_type numSyntax.num
+
   fun type_contains_string ty =
-    let val smt_string_ty = listSyntax.mk_list_type numSyntax.num
-    in
-      type_contains
-        (fn candidate =>
-          Type.compare (candidate, smt_string_ty) = EQUAL)
-        ty
-    end
+    type_contains
+      (fn candidate => Type.compare (candidate, smt_string_ty) = EQUAL)
+      ty
 
   (* 'tm' is exactly the constant 'c' (same name and theory) *)
   fun same_const c tm = Term.is_const tm andalso Term.same_const tm c

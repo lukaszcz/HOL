@@ -3391,10 +3391,14 @@ local
         case conclusion of
           SOME target => target
         | NONE => inferred_target ()
-      val context =
-        HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
-        List.map Thm.concl prems
       fun semantic_prove target =
+      let
+        (* Only this rung needs the assertion set, and it is reached only
+           after the cheaper string rungs have failed. *)
+        val context =
+          HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+          List.map Thm.concl prems
+      in
         Tactical.TAC_PROOF ((context, target),
           bossLib.ASM_SIMP_TAC
             (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
@@ -3411,6 +3415,7 @@ local
              smtstringTheory.reglan_kstar_def,
              smtstringTheory.reglan_repeat_def,
              smtstringTheory.reglan_loop_lang_def])
+      end
       fun fail () =
         raise ERR "string"
           ("unsupported CPC string step: rule=" ^ name ^

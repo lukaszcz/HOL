@@ -23,6 +23,19 @@ struct
   fun hex_string n =
     String.map Char.toLower (Int.fmt StringCvt.HEX n)
 
+  fun hex_num value =
+    String.map Char.toLower (Arbnum.toHexString value)
+
+  (* Returns 'value' unchanged if it is a legal SMT-LIB code point.  'what'
+     names the quantity in the diagnostic, e.g. "character index". *)
+  fun check_code_point what value =
+    if Arbnum.<= (value, Arbnum.fromInt max_code_point) then
+      value
+    else
+      raise InvalidCodePoint
+        (what ^ " 0x" ^ hex_num value ^
+         " is above the SMT-LIB maximum 0x2ffff")
+
   fun escape_text text start stop =
     String.substring (text, start, stop - start)
 
@@ -175,6 +188,15 @@ struct
   in
     loop 0 []
   end
+
+  (* The HOL image of an SMT-LIB string literal: the list of its code
+     points.  Raises 'InvalidStringLiteral'; callers wrap that in their own
+     diagnostic. *)
+  fun mk_string_term text =
+    listSyntax.mk_list
+      (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
+        (decode_string_literal text),
+       numSyntax.num)
 
   fun encode_code_point value =
     if value < 0 orelse max_code_point < value then

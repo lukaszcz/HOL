@@ -37,11 +37,7 @@ local
       raise ERR "cpc_literal_parsefn" "not a nullary CPC literal"
     else case SmtLib_Parser.proof_string_token token of
       SOME value =>
-        (listSyntax.mk_list
-          (List.map
-            (numSyntax.mk_numeral o Arbnum.fromInt)
-            (SmtLib_String_Literal.decode_string_literal value),
-           numSyntax.num)
+        (SmtLib_String_Literal.mk_string_term value
          handle SmtLib_String_Literal.InvalidStringLiteral detail =>
            raise ERR "cpc_literal_parsefn" detail)
     | NONE =>

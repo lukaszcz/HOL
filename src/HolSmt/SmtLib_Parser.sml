@@ -376,22 +376,9 @@ local
               proof_string_token_prefix ^ token_text tok
             else
               token_text tok
-        | NONE => raise ERR "make_proof_tokenizer" "end of stream"
+        | NONE =>
+            raise ERR "make_proof_tokenizer_from_input" "end of stream"
     end
-
-  fun make_proof_tokenizer text =
-  let
-    val len = String.size text
-    val index = ref 0
-
-    fun input () =
-      if !index >= len then NONE
-      else
-        let val c = String.sub (text, !index)
-        in index := !index + 1; SOME c end
-  in
-    make_proof_tokenizer_from_input input
-  end
 
   fun make_proof_stream_tokenizer instream =
   let
@@ -3243,6 +3230,20 @@ local
 
   fun mk_wfstr tm = Term.mk_comb (wfstr_const, tm)
 
+  (* SMT String shares the num-list representation of ordinary HOL lists, so
+     the sort is carried by an explicit wellformedness guard on every String
+     variable; 'SmtLib.guard_signature' reads them back. *)
+  fun wfstr_guards vars =
+    List.mapPartial
+      (fn var =>
+        if is_smt_string_ty (Term.type_of var) then SOME (mk_wfstr var)
+        else NONE)
+      vars
+
+  fun relativize_by combine guards body =
+    if List.null guards then body
+    else combine (boolSyntax.list_mk_conj guards, body)
+
   fun string_declaration_hypothesis tm domain range =
     if is_smt_string_ty range orelse List.exists is_smt_string_ty domain then
       let
@@ -3252,21 +3253,11 @@ local
               mk_vars (n + 1) tys
         val vars = mk_vars 0 domain
         val application = Term.list_mk_comb (tm, vars)
-        val argument_guards =
-          List.mapPartial
-            (fn var =>
-              if is_smt_string_ty (Term.type_of var) then
-                SOME (mk_wfstr var)
-              else NONE)
-            vars
         val result =
           if is_smt_string_ty range then mk_wfstr application
           else boolSyntax.mk_eq (application, application)
         val body =
-          if List.null argument_guards then result
-          else
-            boolSyntax.mk_imp
-              (boolSyntax.list_mk_conj argument_guards, result)
+          relativize_by boolSyntax.mk_imp (wfstr_guards vars) result
       in
         SOME (boolSyntax.list_mk_forall (vars, body))
       end
@@ -4153,12 +4144,7 @@ local
         TermIdentifier name =>
           apply_symbol "typecheck_term" context (loc_of term_ast) env name [] []
       | TermString value =>
-          (checked_term_of
-             (listSyntax.mk_list
-               (List.map
-                 (numSyntax.mk_numeral o Arbnum.fromInt)
-                 (SmtLib_String_Literal.decode_string_literal value),
-                numSyntax.num))
+          (checked_term_of (SmtLib_String_Literal.mk_string_term value)
            handle SmtLib_String_Literal.InvalidStringLiteral detail =>
              type_error "typecheck_term" context (loc_of term_ast)
                NONE NONE detail)
@@ -4202,16 +4188,10 @@ local
             scrutinee branches
       | TermForall (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
-            term_ast vars body boolSyntax.list_mk_forall
-            (fn (guards, body) =>
-              boolSyntax.mk_imp
-                (boolSyntax.list_mk_conj guards, body))
+            term_ast vars body boolSyntax.list_mk_forall boolSyntax.mk_imp
       | TermExists (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
-            term_ast vars body boolSyntax.list_mk_exists
-            (fn (guards, body) =>
-              boolSyntax.mk_conj
-                (boolSyntax.list_mk_conj guards, body))
+            term_ast vars body boolSyntax.list_mk_exists boolSyntax.mk_conj
       | TermLambda (vars, body) =>
           let
             val _ = note_surface_event context LambdaUsed
@@ -4243,16 +4223,9 @@ local
           (tydict, tmdict, sigdict) body
       val body = expect_checked_sort "typecheck_binder" context (loc_of body)
         Type.bool body_checked
-      val guards =
-        List.mapPartial
-          (fn (_, var, _) =>
-            if is_smt_string_ty (Term.type_of var) then
-              SOME (mk_wfstr var)
-            else NONE)
-          vars
       val body =
-        if List.null guards then body
-        else relativize (guards, body)
+        relativize_by relativize
+          (wfstr_guards (List.map (fn (_, var, _) => var) vars)) body
     in
       checked_term_of
         (mk_binder (List.map (fn (_, var, _) => var) vars, body))
@@ -4736,17 +4709,8 @@ local
       val vars = List.map #2 vars
       val equation =
         boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens)
-      val string_guards =
-        List.mapPartial
-          (fn var =>
-            if is_smt_string_ty (Term.type_of var) then
-              SOME (mk_wfstr var)
-            else NONE)
-          vars
       val body =
-        if List.null string_guards then equation
-        else boolSyntax.mk_imp
-          (boolSyntax.list_mk_conj string_guards, equation)
+        relativize_by boolSyntax.mk_imp (wfstr_guards vars) equation
     in
       boolSyntax.list_mk_forall (vars, body)
     end
@@ -5394,7 +5358,6 @@ in
   val parse_term_with_cfg = parse_term_with_cfg
   val parse_term = parse_term
   val parse_term_list = parse_term_list
-  val make_proof_tokenizer = make_proof_tokenizer
   val make_proof_stream_tokenizer = make_proof_stream_tokenizer
   val proof_string_token = proof_string_token
   val parse_benchmark_state = parse_benchmark_state
