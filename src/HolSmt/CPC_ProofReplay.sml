@@ -3348,6 +3348,86 @@ local
       SOME target => arith_prove_from_prems prems target
     | NONE => raise ERR "arith" "CPC arithmetic step omitted its conclusion"
 
+  fun replay_string state name prems conclusion args =
+    let
+      fun smtstring_app constant arguments =
+        Term.list_mk_comb
+          (Term.prim_mk_const {Thy = "smtstring", Name = constant},
+           arguments)
+      fun int_literal n =
+        intSyntax.term_of_int (Arbint.fromInt n)
+      fun inferred_target () =
+        case (name, args) of
+          ("str-lt-elim", [left, right]) =>
+            let
+              val lt = smtstring_app "smtstr_lt" [left, right]
+              val le = smtstring_app "smtstr_le" [left, right]
+            in
+              boolSyntax.mk_eq
+                (lt, boolSyntax.mk_conj
+                  (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)), le))
+            end
+        | ("str-is-digit-elim", [string]) =>
+            let
+              val is_digit =
+                smtstring_app "smtstr_is_digit" [string]
+              val code = smtstring_app "smtstr_to_code" [string]
+            in
+              boolSyntax.mk_eq
+                (is_digit, boolSyntax.mk_conj
+                  (intSyntax.mk_leq (int_literal 48, code),
+                   intSyntax.mk_leq (code, int_literal 57)))
+            end
+        | (_, [target]) =>
+            if Type.compare (Term.type_of target, Type.bool) = EQUAL then
+              target
+            else raise ERR "string"
+              ("CPC string step " ^ name ^
+               " omitted its conclusion; tracked replay obligation")
+        | _ => raise ERR "string"
+            ("CPC string step " ^ name ^
+             " omitted its conclusion; tracked replay obligation")
+      val target =
+        case conclusion of
+          SOME target => target
+        | NONE => inferred_target ()
+      val context =
+        HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+        List.map Thm.concl prems
+      fun semantic_prove target =
+        Tactical.TAC_PROOF ((context, target),
+          bossLib.ASM_SIMP_TAC
+            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+            [smtstringTheory.wfstr_def,
+             smtstringTheory.smtstr_concat_def,
+             smtstringTheory.smtstr_len_def,
+             smtstringTheory.smtstr_substr_def,
+             smtstringTheory.smtstr_at_def,
+             smtstringTheory.smtstr_contains_def,
+             smtstringTheory.smtstr_lt_def,
+             smtstringTheory.smtstr_is_digit_def,
+             smtstringTheory.smt_in_re_def,
+             smtstringTheory.reglan_dot_def,
+             smtstringTheory.reglan_kstar_def,
+             smtstringTheory.reglan_repeat_def,
+             smtstringTheory.reglan_loop_lang_def])
+      fun fail () =
+        raise ERR "string"
+          ("unsupported CPC string step: rule=" ^ name ^
+           "; conclusion=" ^ Library.term_to_string target ^
+           "; attempted rungs=[rewrite, theory, contextual]")
+    in
+      profile "CPC(rung:string/rewrite)"
+        SmtStringProve.string_rewrite_prove target
+      handle Feedback.HOL_ERR _ =>
+      profile "CPC(rung:string/theory)"
+        (SmtStringProve.string_prove arith_prove) target
+      handle Feedback.HOL_ERR _ =>
+      profile "CPC(rung:string/contextual)" semantic_prove target
+      handle Feedback.HOL_ERR _ =>
+      profile "CPC(rung:string/unsupported)" fail ()
+    end
+
   fun unsupported_step ({id, rule, conclusion, ...} : step) =
     let
       val conclusion_text =
@@ -3475,6 +3555,8 @@ local
            | "resolution" => replay_resolution prems conclusion args
            | "bool" => replay_bool prems conclusion
            | "arith" => replay_arith prems conclusion
+           | "string" =>
+               replay_string state (#name rule) prems conclusion args
            | _ => unsupported_step step)) ()
            handle Feedback.HOL_ERR holerr =>
              raise ERR "replay_step"

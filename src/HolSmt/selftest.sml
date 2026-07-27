@@ -277,17 +277,17 @@ in
            (smtstring$smtstr_concat [97] [98])) : int) =
        &(smtstring$smtstr_len [97]) +
        &(smtstring$smtstr_len [98])``,
-      [thm_Z3p_v4]),
+      [thm_Z3p_v4, thm_CVCp]),
     (``smtstring$smtstr_prefixof [97]
          (smtstring$smtstr_concat [97] [98])``,
-      [thm_Z3p_v4]),
+      [thm_Z3p_v4, thm_CVCp]),
     (``smtstring$smt_in_re [97]
        (smtstring$reglan_to_re [97])``,
-      [thm_Z3p_v4]),
+      [thm_Z3p_v4, thm_CVCp]),
     (``smtstring$smtstr_to_int [49; 50] = 12``,
       [thm_Z3p_v4]),
     (``smtstring$smtstr_lt [97; 98] [97; 99]``,
-      [thm_Z3p_v4]),
+      [thm_Z3p_v4, thm_CVCp]),
 
     (* numerals *)
 

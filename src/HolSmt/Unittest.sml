@@ -5674,6 +5674,94 @@ in
   | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
 end
 
+fun cpc_string_registry_and_literal_parser_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 (= \"\" \"\") :rule refl :args (\"\")))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val concat_proof = parse_cpc_proof_string
+    "((assume @p1 (= (str.++ \"a\") \"a\")))"
+  val proof_rules =
+    ["str", "string_eager_reduction", "string_length_pos",
+     "string_reduction"]
+  val rare_rules =
+    ["re-all-elim", "re-concat-merge", "re-diff-elim",
+     "re-in-comp", "re-in-cstring", "re-inter-cstring",
+     "re-loop-elim", "re-opt-elim", "re-plus-elim",
+     "re-repeat-elim", "str-concat-clash-rev",
+     "str-concat-unify-rev", "str-contains-concat-find",
+     "str-in-re-eval", "str-in-re-range-elim",
+     "str-in-re-union-elim", "str-is-digit-elim",
+     "str-len-concat-rec", "str-lt-elim",
+     "str-replace-re-all-eval", "str-replace-re-eval",
+     "str-substr-empty-range", "str-substr-empty-str",
+     "str-substr-eq-empty"]
+  fun check namespace name =
+    case CPC_Proof.lookup_rule "1.3.4" name of
+      SOME rule =>
+        assert (#namespace rule = namespace andalso
+                #replay_handler rule = "string",
+          "CPC string registry metadata is wrong for " ^ name)
+    | NONE => die ("FAIL: CPC string registry omitted " ^ name)
+in
+  assert (Thm.concl theorem ~~ ``([]:num list) = []``,
+    "CPC empty string literal was not preserved");
+  (case CPC_Proof.proof_commands concat_proof of
+     [CPC_Proof.ASSUME (_, equality)] =>
+       assert (boolSyntax.lhs equality ~~ boolSyntax.rhs equality,
+         "CPC unary str.++ annotation did not preserve its payload")
+   | _ => die "FAIL: CPC unary str.++ annotation did not parse");
+  List.app (check CPC_Proof.ProofRule) proof_rules;
+  List.app (check CPC_Proof.RareRewrite) rare_rules;
+  Library.check_oracle_tags "CPC string literal parser" theorem
+end
+
+fun cpc_proof_replay_string_rules_success () =
+let
+  val lt_proof = parse_cpc_proof_string
+      "((step @p1 \
+      \(= (str.< \"a\" \"b\") \
+      \(and (not (= \"a\" \"b\")) (str.<= \"a\" \"b\"))) \
+      \:rule str-lt-elim :args (\"a\" \"b\")))"
+  val digit_proof = parse_cpc_proof_string
+      "((step @p1 \
+      \(= (str.is_digit \"7\") \
+      \(and (<= 48 (str.to_code \"7\")) \
+      \     (<= (str.to_code \"7\") 57))) \
+      \:rule str-is-digit-elim :args (\"7\")))"
+  val lt = CPC_ProofReplay.replay_root_for_test lt_proof
+  val digit = CPC_ProofReplay.replay_root_for_test digit_proof
+  val lt_omitted = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((step @p1 :rule str-lt-elim :args (\"a\" \"b\")))")
+  val digit_omitted = CPC_ProofReplay.replay_root_for_test
+    (parse_cpc_proof_string
+      "((step @p1 :rule str-is-digit-elim :args (\"7\")))")
+  fun explicit_conclusion proof =
+    case CPC_Proof.proof_commands proof of
+      [CPC_Proof.STEP {conclusion = SOME target, ...}] => target
+    | _ => die "FAIL: CPC string test lost its explicit conclusion"
+in
+  assert (Thm.concl lt ~~ explicit_conclusion lt_proof,
+    "CPC str-lt-elim replay returned the wrong equality");
+  assert (Thm.concl digit ~~ explicit_conclusion digit_proof,
+    "CPC str-is-digit-elim replay returned the wrong equality");
+  assert (Thm.concl lt_omitted ~~ Thm.concl lt,
+    "CPC str-lt-elim omitted-conclusion reconstruction disagrees");
+  assert (Thm.concl digit_omitted ~~ Thm.concl digit,
+    "CPC str-is-digit-elim omitted-conclusion reconstruction disagrees");
+  List.app (Library.check_oracle_tags "CPC string RARE rewrite")
+    [lt, digit, lt_omitted, digit_omitted]
+end
+
+fun cpc_proof_replay_string_obligation_diagnostic () =
+  expect_hol_error_contains "CPC re-all-elim obligation"
+    "rule=re-all-elim"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test
+      (parse_cpc_proof_string
+        "((step @p1 (= re.all (re.* re.allchar)) \
+        \:rule re-all-elim))")))
+
 (* Captured cvc5 1.3.4 CPC spelling: binders may be inline @var terms and
    partial application is printed with CPC's `_` application constructor. *)
 fun cpc_proof_parser_lambda_inline_var_apply_success () =
@@ -8660,6 +8748,12 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_string_registry_and_literal_parser_success",
+      cpc_string_registry_and_literal_parser_success),
+    ("cpc_proof_replay_string_rules_success",
+      cpc_proof_replay_string_rules_success),
+    ("cpc_proof_replay_string_obligation_diagnostic",
+      cpc_proof_replay_string_obligation_diagnostic),
     ("cpc_proof_parser_lambda_inline_var_apply_success",
       cpc_proof_parser_lambda_inline_var_apply_success),
     ("cpc_proof_replay_ho_conversion_rules_success",

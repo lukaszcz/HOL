@@ -33,8 +33,19 @@ local
      remain delegated to the ordinary dictionaries and unknown proof tokens
      still fail loudly. *)
   fun cpc_literal_parsefn token indices args =
-    if List.null indices andalso List.null args andalso
-       (String.isPrefix "-" token orelse String.isSubstring "/" token) then
+    if not (List.null indices) orelse not (List.null args) then
+      raise ERR "cpc_literal_parsefn" "not a nullary CPC literal"
+    else case SmtLib_Parser.proof_string_token token of
+      SOME value =>
+        (listSyntax.mk_list
+          (List.map
+            (numSyntax.mk_numeral o Arbnum.fromInt)
+            (SmtLib_String_Literal.decode_string_literal value),
+           numSyntax.num)
+         handle SmtLib_String_Literal.InvalidStringLiteral detail =>
+           raise ERR "cpc_literal_parsefn" detail)
+    | NONE =>
+    if String.isPrefix "-" token orelse String.isSubstring "/" token then
       let
         val is_fraction = String.isSubstring "/" token
         val fields = String.fields (fn c => c = #"/") token
@@ -184,6 +195,26 @@ local
       | _ => cpc_arith_total_error
         ("unsupported totalized arithmetic symbol " ^ token)
 
+  (* cvc5 uses unary str.++ and re.++ applications as compact suffix
+     containers in RARE annotations.  They are proof metadata, not accepted
+     benchmark syntax; interpret a singleton as itself and retain the
+     standard left-associative meaning for longer lists. *)
+  fun cpc_concat_parsefn theory_name token indices args =
+    if not (List.null indices) then
+      raise ERR "cpc_concat_parsefn" "unexpected concat indices"
+    else
+      let
+        val constant =
+          Term.prim_mk_const {Thy = "smtstring", Name = theory_name}
+        fun concat (right, left) =
+          Term.list_mk_comb (constant, [left, right])
+      in
+        case args of
+          first :: rest => List.foldl concat first rest
+        | [] => raise ERR "cpc_concat_parsefn"
+            (token ^ " expects at least one CPC argument")
+      end
+
   fun with_cpc_literals (tydict, tmdict) =
     let
       (* The source translation dictionary is deliberately as narrow as its
@@ -223,6 +254,10 @@ local
     in
     (tydict, Library.extend_dict
       (("@quantifiers_skolemize", cpc_quantifiers_skolemize_parsefn),
+      Library.extend_dict (("str.++",
+        cpc_concat_parsefn "smtstr_concat"),
+      Library.extend_dict (("re.++",
+        cpc_concat_parsefn "reglan_concat"),
       Library.extend_dict (("to_int", cpc_intreal_parsefn),
       Library.extend_dict (("to_real", cpc_intreal_parsefn),
       Library.extend_dict (("int.pow2", cpc_intreal_parsefn),
@@ -239,7 +274,8 @@ local
       Library.extend_dict (("@from_bools", cpc_bv_parsefn),
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
-          Library.extend_dict (("_", cpc_literal_parsefn), tmdict)))))))))))))))))))
+          Library.extend_dict (("_", cpc_literal_parsefn),
+            tmdict)))))))))))))))))))))
     end
 
   (* @list is CPC's compact representation for a list of binders or
@@ -903,7 +939,11 @@ in
       val version = resolve_version version
       val _ = cpc_list_definitions := Redblackmap.mkDict String.compare
       val _ = cpc_list_names := []
-      val get_token = Library.get_token (Library.get_buffered_char instream)
+      (* CPC conclusions and arguments can contain SMT-LIB string literals.
+         Preserve their token kind so the empty string is not confused with
+         an empty atom by the legacy term parser. *)
+      val get_token =
+        SmtLib_Parser.make_proof_tokenizer (TextIO.inputAll instream)
       val commands = parse_commands (ref (with_cpc_literals dicts)) version
         get_token false []
     in
