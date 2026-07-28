@@ -5,9 +5,67 @@
 structure Z3_ProformaThms =
 struct
 
+  (* The Unicode-string carrier bounds every code point, so string lemmas
+     about literal characters carry a '<= 196607' antecedent.  'prove'
+     matches on the conclusion and discharges hypotheses, so such a lemma
+     would never match at all; move exactly those antecedents into the
+     sequent, where the ground instance discharges by simplification.  Any
+     other antecedent is left alone: it is part of what the net matches. *)
+  local
+    val max_code_point = Arbnum.fromInt 196607
+
+    fun is_code_point_bound tm =
+      case Lib.total boolSyntax.dest_conj tm of
+        SOME (left, right) =>
+          is_code_point_bound left andalso is_code_point_bound right
+      | NONE =>
+          (case Lib.total numSyntax.dest_leq tm of
+             SOME (_, bound) =>
+               (case Lib.total numSyntax.dest_numeral bound of
+                  SOME value => Arbnum.compare (value, max_code_point) = EQUAL
+                | NONE => false)
+           | NONE => false)
+  in
+    (* '|- bound /\ rest ==> concl'  becomes  'bound |- rest ==> concl', so
+       the surviving implication is what the net matches. *)
+    fun split_leading_bound th antecedent =
+      case Lib.total boolSyntax.dest_conj antecedent of
+        SOME (bound, rest) =>
+          if is_code_point_bound bound then
+            SOME (Thm.DISCH rest
+              (Drule.PROVE_HYP
+                (Thm.CONJ (Thm.ASSUME bound) (Thm.ASSUME rest))
+                (Drule.UNDISCH th)))
+          else NONE
+      | NONE => NONE
+
+    fun undisch_code_point_bounds th =
+      case Lib.total boolSyntax.dest_imp (Thm.concl th) of
+        SOME (antecedent, _) =>
+          if is_code_point_bound antecedent then
+            undisch_code_point_bounds (Drule.UNDISCH th)
+          else
+            (case split_leading_bound th antecedent of
+               SOME split => undisch_code_point_bounds split
+             | NONE => th)
+      | NONE => th
+  end
+
+  (* Both forms are indexed: the original still matches a goal that carries
+     the bound as its own antecedent, while the undischarged form matches a
+     goal shaped like the bare conclusion. *)
   fun thm_net_from_list thms =
-    List.foldl (fn (th, net) => Net.insert (Thm.concl th, th) net) Net.empty
-      thms
+    let
+      fun insert (th, net) = Net.insert (Thm.concl th, th) net
+      fun forms th =
+        let val undisched = undisch_code_point_bounds th
+        in
+          if Term.aconv (Thm.concl undisched) (Thm.concl th) then [th]
+          else [th, undisched]
+        end
+    in
+      List.foldl insert Net.empty (List.concat (List.map forms thms))
+    end
 
   val array_thm_list = [
     Tactical.prove

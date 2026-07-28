@@ -152,6 +152,13 @@ SMT-LIB support matrix:
   Partial application          yes    yes        dual dialect   Z3/cvc5 paths
   Z3 Seq/Set/Bag extensions    yes    yes        no             no
 
+Unicode-string and regular-expression replay covers goals stated over the
+native `smtstr` carrier.  A goal stated over HOL's `:string` reaches the
+solver only as a `str_inj` image, and Z3 then answers it with seq th-lemmas
+over that image while cvc5 uses the `trust` and `str-substr-full-eq` CPC
+rules; none of those replay, so such goals are supported on the oracle
+tactics only.
+
 Logic coverage summary:
 
   Logic family                 Contract summary
@@ -247,9 +254,11 @@ For a theorem-producing result, the trusted path is:
   logic, emitted symbols and HOL theory encodings.
 - `smtstringTheory` fixes the HOL definitions used for the SMT-LIB
   UnicodeStrings and RegLan meanings.  SMT strings use the dedicated HOL
-  carrier `smtstr = SmtStr (num list)`, so the SMT `String` sort is distinct
-  from ordinary HOL lists; `wfstr` separately records the SMT-LIB code-point
-  range.  HOL checks those definitions and all derivative, matching, and
+  carrier `smtstr`, a type definition over the code-point-bounded `num`
+  lists, so the SMT `String` sort is distinct from ordinary HOL lists and its
+  HOL universe is exactly the SMT-LIB String universe: `wfstr` holds of every
+  `:smtstr`, so quantifiers need no wellformedness relativization in either
+  direction.  HOL checks those definitions and all derivative, matching, and
   correspondence theorems; the trusted translation choice is that these
   definitions faithfully represent the SMT-LIB theory.
 - `SmtLib_String_Literal.sml` decodes input literals to code-point payloads,
@@ -262,7 +271,11 @@ For a theorem-producing result, the trusted path is:
   is generalized to an unconstrained SMT-LIB `String` value.  A solver result
   proved for every well-formed Unicode string therefore specializes soundly
   to the injection image, while tactic validation carries the exact HOL-side
-  rewrite back to the original goal.
+  rewrite back to the original goal.  This is the only route from HOL string
+  content to the SMT `String` sort: HOL's `:string` (a `char list`) is not
+  mapped to `String`, and a `:string` term that survives the rewrite is
+  emitted as an uninterpreted sort.  There is therefore no HOL char-list
+  versus SMT-LIB Unicode-string semantic mismatch left to audit.
 - `SmtLib_Datatypes.sml`: elaborates SMT-LIB datatype declarations to HOL
   datatypes and builds selector/tester case expressions.
 - `Z3.sml`: invokes the configured Z3 executable, requests proof output,

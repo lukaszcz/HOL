@@ -211,13 +211,15 @@ structure CVC = struct
           "; cvc5 lambda/HO_QF compatibility widening"}
     else NONE
 
-  fun goal_to_SmtLib_translation goal =
-    SmtLib.goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
-      cvc_logic_policy SmtLib.Standard27 SmtLib.ApplyAt goal
+  fun cvc_translation get_proof goal =
+    SmtLib.goal_to_SmtLib_translation_for_solver
+      {policy = cvc_logic_policy, dialect = SmtLib.Standard27,
+       apply_operator = SmtLib.ApplyAt, get_proof = get_proof} goal
+
+  fun goal_to_SmtLib_translation goal = cvc_translation false goal
 
   fun goal_to_SmtLib_with_get_proof_translation goal =
-    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
-      cvc_logic_policy SmtLib.Standard27 SmtLib.ApplyAt goal
+    cvc_translation true goal
 
   (* cvc5, SMT-LIB file format, no proofs *)
   val CVC_SMT_Oracle =

@@ -88,7 +88,9 @@ local
     (Type.bool, Lib.K "Bool"),
     (intSyntax.int_ty, Lib.K "Int"),
     (realSyntax.real_ty, Lib.K "Real"),
-    (stringSyntax.string_ty, Lib.K "String"),
+    (* HOL's own :string (a char list) is deliberately absent: string content
+       reaches SMT-LIB only through the str_inj images that
+       HOL_STRING_TO_SMT_CONV produces, and those have type smtstr. *)
     (smtstr_ty, Lib.K "String"),
     (reglan_ty, Lib.K "(RegLan String)"),
     (* bit-vector types *)
@@ -108,85 +110,46 @@ local
 
   type native_string_info = {
     hol_name : string,
-    smt_name : string,
-    string_args : int list,
-    result_string : bool
+    smt_name : string
   }
 
   val native_string_infos : native_string_info list = [
-    {hol_name = "smtstr_concat", smt_name = "str.++",
-     string_args = [0, 1], result_string = true},
-    {hol_name = "smtstr_len", smt_name = "str.len",
-     string_args = [0], result_string = false},
-    {hol_name = "smtstr_substr", smt_name = "str.substr",
-     string_args = [0], result_string = true},
-    {hol_name = "smtstr_at", smt_name = "str.at",
-     string_args = [0], result_string = true},
-    {hol_name = "smtstr_prefixof", smt_name = "str.prefixof",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_suffixof", smt_name = "str.suffixof",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_contains", smt_name = "str.contains",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_indexof", smt_name = "str.indexof",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_lt", smt_name = "str.<",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_le", smt_name = "str.<=",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "smtstr_char", smt_name = "char",
-     string_args = [], result_string = true},
-    {hol_name = "smtstr_replace", smt_name = "str.replace",
-     string_args = [0, 1, 2], result_string = true},
-    {hol_name = "smtstr_replace_all", smt_name = "str.replace_all",
-     string_args = [0, 1, 2], result_string = true},
-    {hol_name = "smtstr_replace_re", smt_name = "str.replace_re",
-     string_args = [0, 2], result_string = true},
-    {hol_name = "smtstr_replace_re_all",
-     smt_name = "str.replace_re_all",
-     string_args = [0, 2], result_string = true},
-    {hol_name = "smtstr_is_digit", smt_name = "str.is_digit",
-     string_args = [0], result_string = false},
-    {hol_name = "smtstr_to_code", smt_name = "str.to_code",
-     string_args = [0], result_string = false},
-    {hol_name = "smtstr_from_code", smt_name = "str.from_code",
-     string_args = [], result_string = true},
-    {hol_name = "smtstr_to_int", smt_name = "str.to_int",
-     string_args = [0], result_string = false},
-    {hol_name = "smtstr_from_int", smt_name = "str.from_int",
-     string_args = [], result_string = true},
-    {hol_name = "reglan_to_re", smt_name = "str.to_re",
-     string_args = [0], result_string = false},
-    {hol_name = "smt_in_re", smt_name = "str.in_re",
-     string_args = [0], result_string = false},
-    {hol_name = "reglan_none", smt_name = "re.none",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_all", smt_name = "re.all",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_allchar", smt_name = "re.allchar",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_concat", smt_name = "re.++",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_union", smt_name = "re.union",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_inter", smt_name = "re.inter",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_diff", smt_name = "re.diff",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_comp", smt_name = "re.comp",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_star", smt_name = "re.*",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_plus", smt_name = "re.+",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_opt", smt_name = "re.opt",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_range", smt_name = "re.range",
-     string_args = [0, 1], result_string = false},
-    {hol_name = "reglan_power", smt_name = "re.^",
-     string_args = [], result_string = false},
-    {hol_name = "reglan_loop", smt_name = "re.loop",
-     string_args = [], result_string = false}
+    {hol_name = "smtstr_concat", smt_name = "str.++"},
+    {hol_name = "smtstr_len", smt_name = "str.len"},
+    {hol_name = "smtstr_substr", smt_name = "str.substr"},
+    {hol_name = "smtstr_at", smt_name = "str.at"},
+    {hol_name = "smtstr_prefixof", smt_name = "str.prefixof"},
+    {hol_name = "smtstr_suffixof", smt_name = "str.suffixof"},
+    {hol_name = "smtstr_contains", smt_name = "str.contains"},
+    {hol_name = "smtstr_indexof", smt_name = "str.indexof"},
+    {hol_name = "smtstr_lt", smt_name = "str.<"},
+    {hol_name = "smtstr_le", smt_name = "str.<="},
+    {hol_name = "smtstr_char", smt_name = "char"},
+    {hol_name = "smtstr_replace", smt_name = "str.replace"},
+    {hol_name = "smtstr_replace_all", smt_name = "str.replace_all"},
+    {hol_name = "smtstr_replace_re", smt_name = "str.replace_re"},
+    {hol_name = "smtstr_replace_re_all", smt_name = "str.replace_re_all"},
+    {hol_name = "smtstr_is_digit", smt_name = "str.is_digit"},
+    {hol_name = "smtstr_to_code", smt_name = "str.to_code"},
+    {hol_name = "smtstr_from_code", smt_name = "str.from_code"},
+    {hol_name = "smtstr_to_int", smt_name = "str.to_int"},
+    {hol_name = "smtstr_from_int", smt_name = "str.from_int"},
+    {hol_name = "reglan_to_re", smt_name = "str.to_re"},
+    {hol_name = "smt_in_re", smt_name = "str.in_re"},
+    {hol_name = "reglan_none", smt_name = "re.none"},
+    {hol_name = "reglan_all", smt_name = "re.all"},
+    {hol_name = "reglan_allchar", smt_name = "re.allchar"},
+    {hol_name = "reglan_concat", smt_name = "re.++"},
+    {hol_name = "reglan_union", smt_name = "re.union"},
+    {hol_name = "reglan_inter", smt_name = "re.inter"},
+    {hol_name = "reglan_diff", smt_name = "re.diff"},
+    {hol_name = "reglan_comp", smt_name = "re.comp"},
+    {hol_name = "reglan_star", smt_name = "re.*"},
+    {hol_name = "reglan_plus", smt_name = "re.+"},
+    {hol_name = "reglan_opt", smt_name = "re.opt"},
+    {hol_name = "reglan_range", smt_name = "re.range"},
+    {hol_name = "reglan_power", smt_name = "re.^"},
+    {hol_name = "reglan_loop", smt_name = "re.loop"}
   ]
 
   fun native_string_info tm =
@@ -336,7 +299,7 @@ local
      in one table only. *)
   val native_string_encodings : (Term.term * builtin_encoding) list =
     List.map
-      (fn {hol_name, smt_name, ...} : native_string_info =>
+      (fn {hol_name, smt_name} : native_string_info =>
         (smtstring_const hol_name,
          case hol_name of
            "smtstr_char" => indexed_char_encoding
@@ -366,13 +329,10 @@ local
           elements as _ :: _ :: _ => ("distinct", elements)
         | _ => ("true", [])) ts),
     (boolSyntax.conditional, apfst_K "ite"),
-    (* UnicodeStrings.  Solver-facing translation first rewrites the native
-       HOL operators through str_inj; the original entries remain for the
-       public, byte-identical raw emission path. *)
-    (stringSyntax.strcat_tm, apfst_K "str.++"),
-    (stringSyntax.isprefix_tm, apfst_K "str.prefixof"),
-    (stringSyntax.string_lt_tm, apfst_K "str.<"),
-    (stringSyntax.string_le_tm, apfst_K "str.<="),
+    (* UnicodeStrings symbols are reached only through the smtstr operators
+       appended from 'native_string_encodings'.  Encoding HOL's STRCAT and
+       friends directly would emit str.* applied to arguments whose sort is
+       no longer String (see 'builtin_types'). *)
     (* Reals_Ints *)
     (* numerals (excluding 'intSyntax.negate_tm') *)
     (Term.mk_var ("x", intSyntax.int_ty), Lib.apfst (fn tm =>
@@ -645,6 +605,31 @@ local
       (Redblackset.empty (Lib.pair_compare (String.compare, String.compare)))
       builtin_symbol_encodings
 
+  (* The declared arity of a constant depends only on its (theory, name), and
+     'translate_term' asks for the same rator up to four times per application
+     node; cache the symbol-table lookup and the type traversal. *)
+  val declared_const_arities = ref (Redblackmap.mkDict
+    (Lib.pair_compare (String.compare, String.compare)) :
+      (string * string, int) Redblackmap.dict)
+
+  fun declared_const_arity c =
+    let
+      val {Thy, Name, ...} = Term.dest_thy_const c
+    in
+      case Redblackmap.peek (!declared_const_arities, (Thy, Name)) of
+        SOME arity => arity
+      | NONE =>
+        let
+          val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
+          val (doms, _) = boolSyntax.strip_fun (Term.type_of generic)
+          val arity = List.length doms
+        in
+          declared_const_arities :=
+            Redblackmap.insert (!declared_const_arities, (Thy, Name), arity);
+          arity
+        end
+    end
+
   (* SMT-LIB type and function names are uniformly generated as "tN"
      and "vN", respectively, where N is a number. Prefixes must be
      distinct. *)
@@ -692,6 +677,8 @@ local
   val type_contains_word = Library.type_contains_word
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
+  (* smtstr only, which is exactly the set of types that 'builtin_types' maps
+     to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
 
   fun type_contains_function ty =
@@ -749,11 +736,7 @@ local
     same_const int_emod_tm tm
 
   fun is_string_const tm =
-    List.exists (fn c => same_const c tm) [
-      stringSyntax.strcat_tm, stringSyntax.isprefix_tm,
-      stringSyntax.string_lt_tm, stringSyntax.string_le_tm,
-      str_inj_tm
-    ] orelse is_native_string_const tm
+    same_const str_inj_tm tm orelse is_native_string_const tm
 
   fun native_string_literal tm =
     let
@@ -1102,7 +1085,13 @@ local
     Lib.can TypeBasePure.case_def_of tyinfo andalso
     Lib.can TypeBasePure.induction_of tyinfo
 
-  fun datatype_translation_excluded ty = same_type (ty, numSyntax.num)
+  (* 'num' is transferred to SMT Int by preprocessing.  A residual HOL :string
+     is a char list, but its content reaches SMT only through str_inj, so
+     enumerating its list structure would burden the solver with a datatype no
+     emitted symbol ever inspects; it stays an opaque sort instead. *)
+  fun datatype_translation_excluded ty =
+    same_type (ty, numSyntax.num) orelse
+    same_type (ty, stringSyntax.string_ty)
 
   fun predicate_domain_type pred =
     let
@@ -1351,8 +1340,7 @@ local
           not (strings andalso same_const boolSyntax.equality rator) andalso
           not (has_injected_strings andalso
             (is_string_const rator orelse
-              Lib.can injected_string_operator rator orelse
-              same_const boolSyntax.equality rator)) andalso
+              Lib.can injected_string_operator rator)) andalso
           type_contains_datatype (Term.type_of tm)
         end
       fun term_is_datatype_constructor tm =
@@ -1441,19 +1429,29 @@ local
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val string_record =
         HOLTheoryEncoding {
-          feature = "HOL strings: string type, STRCAT, isPREFIX, string_lt, string_le",
+          feature =
+            "HOL strings: str_inj images of STRCAT, isPREFIX, string_lt, " ^
+            "string_le and string equality",
           smt_theory = "UnicodeStrings",
           mode = NativeSMTLIB,
           parse = true,
           typecheck = true,
           translate = true,
-          replay = true,
+          replay = false,
           notes =
             "HOL strings are rewritten through the proved str_inj transfer " ^
-            "kit; injected occurrences are generalized to SMT-LIB String.",
+            "kit; injected occurrences are generalized to SMT-LIB String.  " ^
+            "The HOL :string type itself is not the SMT String sort: a " ^
+            "residual occurrence is emitted as an uninterpreted sort.  " ^
+            "Ground native smtstr goals do replay; the oracle tactics " ^
+            "cover the injected HOL-string surface.",
           proof_obligation =
-            "Discharged by the str_inj injectivity and operator-transfer " ^
-            "theorems plus checked preprocessing validation."
+            "Translation is discharged by the str_inj injectivity and " ^
+            "operator-transfer theorems.  Checked replay of an injected " ^
+            "HOL-string goal is not implemented: Z3 answers such goals " ^
+            "with seq th-lemmas over the str_inj image, and cvc5 with the " ^
+            "trust and str-substr-full-eq CPC rules, none of which the " ^
+            "replay engines support."
         }
       val datatype_record =
         HOLTheoryEncoding {
@@ -1945,14 +1943,6 @@ local
       in
         (acc, (List.concat declss, sexpr name names))
       end
-    fun declared_const_arity c =
-      let
-        val {Thy, Name, ...} = Term.dest_thy_const c
-        val generic = Term.prim_mk_const {Thy = Thy, Name = Name}
-        val (doms, _) = boolSyntax.strip_fun (Term.type_of generic)
-      in
-        List.length doms
-      end
     fun has_ranked_semantics c =
       TypeBase.is_constructor c orelse
       (Term.is_const c andalso
@@ -2410,18 +2400,17 @@ local
       let
         val (function, argument) = Term.dest_comb tm
         val _ = Type.dom_rng (Term.type_of function)
-        val (head, head_rands) = boolSyntax.strip_comb tm
         val semantically_ranked_partial =
-          Term.is_const head andalso
-          let val rank = declared_const_arity head
+          Term.is_const rator andalso
+          let val rank = declared_const_arity rator
           in
-            List.length head_rands < rank andalso
-            has_ranked_semantics head
+            List.length rands < rank andalso
+            has_ranked_semantics rator
           end
         val symbol_head =
-          (Term.is_const head orelse Term.is_var head) andalso
+          (Term.is_const rator orelse Term.is_var rator) andalso
           (semantically_ranked_partial orelse
-           not (has_semantic_function_prefix head head_rands))
+           not (has_semantic_function_prefix rator rands))
         val _ =
           case regime of
             HigherOrder Standard27 =>
@@ -2430,16 +2419,16 @@ local
               else
                 ()
           | _ =>
-              if Term.is_const head andalso
+              if Term.is_const rator andalso
                  not (combinSyntax.is_update_comb function) then
                 (case regime of
                    FirstOrder =>
                      raise ERR "translate_term"
                        "HOL constants are emitted as functions"
                  | HigherOrder _ =>
-                     if List.length head_rands >
-                          declared_const_arity head orelse
-                        has_semantic_function_prefix head head_rands then
+                     if List.length rands >
+                          declared_const_arity rator orelse
+                        has_semantic_function_prefix rator rands then
                        ()
                      else
                        raise ERR "translate_term"
@@ -3242,91 +3231,98 @@ in
     Lib.apfst translation_dicts
       (goal_to_SmtLib_translation_gen opts goal)
 
-  fun goal_to_SmtLib_translation_with_policy_and_dialect_and_apply_operator
-      policy dialect apply_operator =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime dialect,
-      apply_operator = apply_operator,
-      policy = policy,
-      get_proof = false
-    }
+  local
 
-  (* Generic callers default to the standard `_` apply spelling used by our
-     parser and corpus.  A cvc5 boundary selects ApplyAt explicitly. *)
-  fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime dialect,
-      apply_operator = ApplyUnderscore,
-      policy = policy,
-      get_proof = false
-    }
-
-  fun goal_to_SmtLib_translation_with_regime_and_apply_operator
-      regime apply_operator logic =
-    goal_to_SmtLib_translation_gen {
-      request = RegimeOverride regime,
-      apply_operator = apply_operator,
-      policy = option_logic_policy logic,
-      get_proof = false
-    }
-
-  fun goal_to_SmtLib_translation_with_regime regime logic =
-    goal_to_SmtLib_translation_gen {
-      request = RegimeOverride regime,
-      apply_operator = ApplyUnderscore,
-      policy = option_logic_policy logic,
-      get_proof = false
-    }
-
-  fun goal_to_SmtLib_translation_with_dialect dialect logic =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime dialect,
-      apply_operator = ApplyUnderscore,
-      policy = option_logic_policy logic,
-      get_proof = false
-    }
-
-  fun goal_to_SmtLib_translation logic =
-    goal_to_SmtLib_translation_gen {
+    (* Generic callers emit for the automatic Standard27 regime, with the `_`
+       apply spelling used by our parser and corpus, no logic override and no
+       proof request.  Each entry point below is these defaults plus the
+       overrides it names, so a newly added option cannot be forgotten in all
+       but one of them. *)
+    val default_emit_options : smtlib_emit_options = {
       request = AutomaticRegime Standard27,
       apply_operator = ApplyUnderscore,
-      policy = option_logic_policy logic,
+      policy = option_logic_policy NONE,
       get_proof = false
     }
 
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect_and_apply_operator
-      policy dialect apply_operator =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime dialect,
-      apply_operator = apply_operator,
-      policy = policy,
-      get_proof = true
-    }
+    fun with_request request ({apply_operator, policy, get_proof, ...}
+        : smtlib_emit_options) : smtlib_emit_options =
+      {request = request, apply_operator = apply_operator, policy = policy,
+       get_proof = get_proof}
 
-  fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
-      policy dialect =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime dialect,
-      apply_operator = ApplyUnderscore,
-      policy = policy,
-      get_proof = true
-    }
+    fun with_apply_operator apply_operator ({request, policy, get_proof, ...}
+        : smtlib_emit_options) : smtlib_emit_options =
+      {request = request, apply_operator = apply_operator, policy = policy,
+       get_proof = get_proof}
 
-  fun goal_to_SmtLib_with_get_proof_translation logic =
-    goal_to_SmtLib_translation_gen {
-      request = AutomaticRegime Standard27,
-      apply_operator = ApplyUnderscore,
-      policy = option_logic_policy logic,
-      get_proof = true
-    }
+    fun with_policy policy ({request, apply_operator, get_proof, ...}
+        : smtlib_emit_options) : smtlib_emit_options =
+      {request = request, apply_operator = apply_operator, policy = policy,
+       get_proof = get_proof}
 
-  fun goal_to_SmtLib logic =
-    goal_to_SmtLib_gen {
-      request = AutomaticRegime Standard27,
-      apply_operator = ApplyUnderscore,
-      policy = option_logic_policy logic,
-      get_proof = false
-    }
+    fun with_get_proof get_proof ({request, apply_operator, policy, ...}
+        : smtlib_emit_options) : smtlib_emit_options =
+      {request = request, apply_operator = apply_operator, policy = policy,
+       get_proof = get_proof}
+
+    fun emit_options overrides =
+      List.foldl (fn (override, opts) => override opts) default_emit_options
+        overrides
+
+  in
+
+    (* A solver boundary that pins every emission dimension.  It takes a
+       dialect rather than a full regime request: overriding the regime and
+       asking for a proof are not combinations any boundary needs. *)
+    fun goal_to_SmtLib_translation_for_solver
+        {policy, dialect, apply_operator, get_proof} =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (AutomaticRegime dialect),
+                       with_apply_operator apply_operator,
+                       with_policy policy, with_get_proof get_proof])
+
+    fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (AutomaticRegime dialect),
+                       with_policy policy])
+
+    fun goal_to_SmtLib_translation_with_regime_and_apply_operator
+        regime apply_operator logic =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (RegimeOverride regime),
+                       with_apply_operator apply_operator,
+                       with_policy (option_logic_policy logic)])
+
+    fun goal_to_SmtLib_translation_with_regime regime logic =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (RegimeOverride regime),
+                       with_policy (option_logic_policy logic)])
+
+    fun goal_to_SmtLib_translation_with_dialect dialect logic =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (AutomaticRegime dialect),
+                       with_policy (option_logic_policy logic)])
+
+    fun goal_to_SmtLib_translation logic =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_policy (option_logic_policy logic)])
+
+    fun goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
+        policy dialect =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_request (AutomaticRegime dialect),
+                       with_policy policy, with_get_proof true])
+
+    fun goal_to_SmtLib_with_get_proof_translation logic =
+      goal_to_SmtLib_translation_gen
+        (emit_options [with_policy (option_logic_policy logic),
+                       with_get_proof true])
+
+    fun goal_to_SmtLib logic =
+      goal_to_SmtLib_gen
+        (emit_options [with_policy (option_logic_policy logic)])
+
+  end  (* local *)
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV

@@ -24,9 +24,11 @@ boundary.
 
 Native Unicode string printing is also part of the trusted translation
 surface.  `smtstringTheory` supplies the HOL-checked UnicodeStrings and
-RegLan definitions.  Its `smtstr = SmtStr (num list)` carrier makes SMT
-`String` a distinct HOL type, while `wfstr` retains the separate code-point
-range property.  `SmtLib_String_Literal.sml` chooses and emits the
+RegLan definitions.  Its `smtstr` carrier is a HOL type definition over the
+code-point-bounded `num list`s, so SMT `String` is a distinct HOL type whose
+universe is exactly the SMT-LIB String universe: `wfstr` holds of every
+`:smtstr`, and binders need no wellformedness relativization in either
+translation direction.  `SmtLib_String_Literal.sml` chooses and emits the
 corresponding SMT-LIB literal encoding, wrapping decoded code-point payloads
 in `SmtStr`.  The definitions, derivative engine, and correspondence lemmas
 are checked in HOL; trust attaches to choosing those definitions as the

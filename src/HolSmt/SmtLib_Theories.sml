@@ -310,8 +310,15 @@ in
   handle Feedback.HOL_ERR _ =>
     raise ERR "real_of_decimal" "not a decimal"
 
+  (* The parser turns every numeric index -- decimal as well as the '#b'
+     and '#x' literals used for character indices -- into an Int term, so
+     an index that is not one here is a genuinely symbolic index. *)
   fun natural_of_index n_tm =
     Arbint.toNat (intSyntax.int_of_term n_tm)
+    handle Feedback.HOL_ERR _ =>
+      raise ERR "natural_of_index"
+        ("numeric index expected, but '" ^ Hol_pp.term_to_string n_tm ^
+         "' found")
 
   fun word_index_type n_tm =
     fcpLib.index_type (natural_of_index n_tm)
@@ -546,28 +553,13 @@ in
   fun smtstring_app name args =
     Term.list_mk_comb (smtstring_const name, args)
 
-  fun natural_or_word_index index =
-    Arbint.toNat (intSyntax.int_of_term index)
-    handle Feedback.HOL_ERR _ =>
-      (wordsSyntax.dest_word_literal index
-       handle Feedback.HOL_ERR _ =>
-         let
-           val (token, _) = Term.dest_var index
-         in
-           if String.isPrefix "#x" token then
-             Arbnum.fromHexString (String.extract (token, 2, NONE))
-           else
-             raise ERR "natural_or_word_index"
-               "expected a natural or hexadecimal index"
-         end)
-
   fun smtstring_index index =
-    numSyntax.mk_numeral (natural_or_word_index index)
+    numSyntax.mk_numeral (natural_of_index index)
 
   fun smtstring_char_index index =
     numSyntax.mk_numeral
       (SmtLib_String_Literal.check_code_point "character index"
-        (natural_or_word_index index))
+        (natural_of_index index))
     handle SmtLib_String_Literal.InvalidCodePoint detail =>
       raise ERR "<UnicodeStrings.char>" detail
 

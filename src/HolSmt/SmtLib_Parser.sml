@@ -242,7 +242,10 @@ local
 
   fun mk_point_span pos = SourceSpan {start = pos, stop = pos}
 
-  fun make_located_tokenizer_from_input
+  val unlocated_pos : source_pos = {line = 1, column = 1, offset = 0}
+  val unlocated_span = mk_point_span unlocated_pos
+
+  fun make_tokenizer_from_input track_locations
       (input: unit -> char option) : unit -> located_token option =
   let
     datatype lookahead = NeedChar | NextChar of char | EndOfInput
@@ -253,6 +256,15 @@ local
     val column = ref 1
 
     fun pos () = {line = !line, column = !column, offset = !index}
+
+    (* A span costs two position records and the span itself, per token.
+       Proof streams run to hundreds of megabytes and never report a span,
+       so they are tokenized with 'track_locations' false; 'pos' itself
+       stays exact, so the syntax errors below remain located either way. *)
+    fun token_start () = if track_locations then pos () else unlocated_pos
+    fun token_span start =
+      if track_locations then SourceSpan {start = start, stop = pos ()}
+      else unlocated_span
 
     fun peek () =
       case !lookahead of
@@ -291,7 +303,7 @@ local
     fun token kind start chars =
       Token {text = String.implode (List.rev chars),
              kind = kind,
-             loc = SourceSpan {start = start, stop = pos ()}}
+             loc = token_span start}
 
     fun atom start chars =
       case peek () of
@@ -328,23 +340,23 @@ local
        case peek () of
          NONE => NONE
        | SOME #"(" =>
-           let val start = pos ()
+           let val start = token_start ()
                val _ = advance ()
            in SOME (token AtomToken start [#"("]) end
        | SOME #")" =>
-           let val start = pos ()
+           let val start = token_start ()
                val _ = advance ()
            in SOME (token AtomToken start [#")"]) end
        | SOME #"|" =>
-           let val start = pos ()
+           let val start = token_start ()
                val _ = advance ()
            in SOME (quoted_symbol start []) end
        | SOME #"\"" =>
-           let val start = pos ()
+           let val start = token_start ()
                val _ = advance ()
            in SOME (string_lit start []) end
        | SOME c =>
-           let val start = pos ()
+           let val start = token_start ()
                val _ = advance ()
            in SOME (atom start [c]) end)
   end
@@ -360,20 +372,31 @@ local
         let val c = String.sub (text, !index)
         in index := !index + 1; SOME c end
   in
-    make_located_tokenizer_from_input input
+    make_tokenizer_from_input true input
   end
 
+  (* Proof tokens reach the dictionaries as plain strings, so a String token
+     is marked with a prefix that no SMT-LIB symbol can carry: control
+     characters are excluded from simple symbols by the grammar and from
+     quoted symbols by the printable-character requirement.  A token that
+     carries the marker anyway is therefore rejected, rather than silently
+     taken for a string literal. *)
   val proof_string_token_prefix = "\001HolSmtString:"
 
   fun make_proof_tokenizer_from_input input =
     let
-      val next_token = make_located_tokenizer_from_input input
+      val next_token = make_tokenizer_from_input false input
     in
       fn () =>
         case next_token () of
           SOME tok =>
             if token_kind tok = StringToken then
               proof_string_token_prefix ^ token_text tok
+            else if String.isPrefix proof_string_token_prefix
+                (token_text tok) then
+              raise ERR "make_proof_tokenizer_from_input"
+                ("symbol '" ^ token_text tok ^
+                 "' collides with the string literal marker")
             else
               token_text tok
         | NONE =>
@@ -1262,7 +1285,12 @@ local
         (case try_fns catch_all_fns NONE of
            (SOME result, _) => result
          | (NONE, catch_all_err) =>
-             (case (catch_all_err, primary_err) of
+             (* The entry registered under this very name knows why it
+                rejected the input; the '_' catch-all only knows that the
+                token is not one of its own literals.  Report the specific
+                reason, so an enumerated diagnostic is not masked by a
+                generic one. *)
+             (case (primary_err, catch_all_err) of
                 (SOME holerr, _) =>
                   raise ERR "t_with_args"
                     (generic_msg (": " ^ Feedback.message_of holerr))
@@ -1434,6 +1462,32 @@ local
   (* term-specific parsing functions                                         *)
   (***************************************************************************)
 
+  (* Indices are numerals, except that the Unicode strings theory writes
+     character indices as hexadecimal literals, as in '(_ char #x2A)'.
+     Both forms are turned into a numeral here, so that no consumer of an
+     index has to recover one from the token text. *)
+  fun index_numeral_term token =
+  let
+    fun radix from_string =
+      let
+        fun bad () =
+          raise ERR "index_numeral_term"
+            ("index numeral expected, but '" ^ token ^ "' found")
+      in
+        from_string (String.extract (token, 2, NONE))
+        (* Moscow ML's Arbnum implementation throws Option.Option on error,
+           while Poly/ML's throws the Fail exception *)
+        handle Option.Option => bad ()
+             | Fail _ => bad ()
+      end
+    val value =
+      if String.isPrefix "#x" token then radix Arbnum.fromHexString
+      else if String.isPrefix "#b" token then radix Arbnum.fromBinString
+      else Library.parse_arbnum token
+  in
+    intSyntax.term_of_int (Arbint.fromNat value)
+  end
+
   fun parse_indexed_term cfg get_token (tydict, tmdict)
     : Term.term list -> Term.term =
   let
@@ -1445,7 +1499,7 @@ local
       val token = get_token ()
       val get_token' = Library.undo_look_ahead [token] get_token
       fun parse_index () =
-        intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
+        index_numeral_term token
         handle Feedback.HOL_ERR _ =>
           parse_term_with_cfg cfg get_token' (tydict, tmdict)
           handle Feedback.HOL_ERR _ =>
@@ -2764,9 +2818,13 @@ local
   fun instantiate_surface_sort_with bindings subst surface_sort =
     case surface_sort of
       PolySort ty =>
+        (* An unbound polymorphic position stays polymorphic: it never
+           claimed a surface structure, so collapsing it to 'RigidSort'
+           would assert that it is atomic and reject a structured term of
+           the very same sort. *)
         (case List.find (fn (template, _) => same_sort template ty) bindings of
            SOME (_, actual) => actual
-         | NONE => RigidSort (Type.type_subst subst ty))
+         | NONE => PolySort (Type.type_subst subst ty))
     | ConstructorSort (ty, args) =>
         ConstructorSort (Type.type_subst subst ty,
           List.map (instantiate_surface_sort_with bindings subst) args)
@@ -3200,34 +3258,21 @@ local
       (tmdict, sigdict)
     end
 
-  fun add_value_term_signature name tm domain range env =
-    add_value_term_signature_with_surface name tm domain
-      (List.map RigidSort domain) range (RigidSort range) env
-
   fun index_term_from_ast_with_options elaborate_datatypes context
       (tydict, tmdict, sigdict) term_ast =
-    let
-      fun parse_numeral token =
-        intSyntax.term_of_int (Arbint.fromNat (Library.parse_arbnum token))
-    in
-      case node_of term_ast of
-        TermIdentifier token =>
-          (parse_numeral token
-           handle Feedback.HOL_ERR _ =>
-             ((checked_term o
-                 typecheck_term_with_options elaborate_datatypes context
-                   (tydict, tmdict, sigdict)) term_ast
-              handle Feedback.HOL_ERR _ =>
-                Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
-      | TermString _ =>
-          checked_term
-            (typecheck_term_with_options elaborate_datatypes context
-              (tydict, tmdict, sigdict) term_ast)
-      | _ =>
-          checked_term
-            (typecheck_term_with_options elaborate_datatypes context
-              (tydict, tmdict, sigdict) term_ast)
-    end
+    case node_of term_ast of
+      TermIdentifier token =>
+        (index_numeral_term token
+         handle Feedback.HOL_ERR _ =>
+           ((checked_term o
+               typecheck_term_with_options elaborate_datatypes context
+                 (tydict, tmdict, sigdict)) term_ast
+            handle Feedback.HOL_ERR _ =>
+              Term.mk_var (token, Type.mk_vartype "'smtlib_index")))
+    | _ =>
+        checked_term
+          (typecheck_term_with_options elaborate_datatypes context
+            (tydict, tmdict, sigdict) term_ast)
 
   and index_term_from_ast context env term_ast =
     index_term_from_ast_with_options false context env term_ast
@@ -3692,16 +3737,20 @@ local
         const_name tm = const_name ctor
         handle Feedback.HOL_ERR _ => false
 
-      fun instantiate ({tm, domain, range, ...}: function_signature) =
+      fun instantiate
+          ({tm, domain, domain_surface, range, ...}: function_signature) =
         let
           val subst = Type.match_type range scrutinee_sort
           val tm = Term.inst subst tm
           val domain = List.map (Type.type_subst subst) domain
+          val domain_surface =
+            List.map (instantiate_surface_sort subst) domain_surface
         in
           case List.find (same_constructor tm) constructors of
             SOME ctor =>
               SOME {smt_name = smt_name, hol_name = const_name ctor,
-                constructor = ctor, domain = domain}
+                constructor = ctor, domain = domain,
+                domain_surface = domain_surface}
           | NONE => NONE
         end
         handle Feedback.HOL_ERR _ => NONE
@@ -3721,13 +3770,16 @@ local
              "' for scrutinee sort " ^ type_to_string scrutinee_sort)
     end
 
+  (* Pattern binders keep the surface sort the pattern gives them: a binder
+     for a '(Pair Int)' field must be usable wherever a '(Pair Int)' term is,
+     which a plain rigid sort would not be. *)
   and add_pattern_bindings bindings (tmdict, sigdict) =
     List.foldl
-      (fn (var, (tmdict, sigdict)) =>
+      (fn ((var, surface_sort), (tmdict, sigdict)) =>
         let val name = Lib.fst (Term.dest_var var)
         in
-          add_value_term_signature name var [] (Term.type_of var)
-            (tmdict, sigdict)
+          add_value_term_signature_with_surface name var [] []
+            (Term.type_of var) surface_sort (tmdict, sigdict)
         end)
       (tmdict, sigdict) bindings
 
@@ -3776,7 +3828,7 @@ local
           val ctor_s = located_string_node ctor_name
           val binders = List.map located_string_node binder_names
           val _ = reject_duplicate_pattern_binders context pattern_loc binders
-          val {hol_name, constructor, domain, ...} =
+          val {hol_name, constructor, domain, domain_surface, ...} =
             constructor_for_pattern context (loc_of ctor_name) sigdict
               scrutinee_sort constructors ctor_s
           val _ =
@@ -3788,7 +3840,8 @@ local
                  " binders, actual " ^ Int.toString (List.length binders))
           val vars = ListPair.map Term.mk_var (binders, domain)
           val (local_tmdict, local_sigdict) =
-            add_pattern_bindings vars (tmdict, sigdict)
+            add_pattern_bindings (ListPair.zip (vars, domain_surface))
+              (tmdict, sigdict)
           val body_checked = check_body local_tmdict local_sigdict body
           val pattern = Term.list_mk_comb (constructor, vars)
         in
@@ -3806,7 +3859,9 @@ local
         let
           val var = Term.mk_var (located_string_node name, scrutinee_sort)
           val (local_tmdict, local_sigdict) =
-            add_pattern_bindings [var] (tmdict, sigdict)
+            add_pattern_bindings
+              [(var, checked_surface_sort scrutinee_checked)]
+              (tmdict, sigdict)
           val body_checked = check_body local_tmdict local_sigdict body
         in
           CheckedMatchDefault {var = var, body = body_checked, loc = branch_loc}
@@ -3868,7 +3923,8 @@ local
         List.app
           (fn branch =>
             if body_sort branch = result_sort andalso
-               branch_surface_sort branch = result_surface_sort then ()
+               surface_sorts_equivalent (branch_surface_sort branch)
+                 result_surface_sort then ()
             else type_error "typecheck_match" context (body_loc branch)
               (SOME result_sort) (SOME (body_sort branch))
               "match branch result sort mismatch")
@@ -4101,10 +4157,10 @@ local
             scrutinee branches
       | TermForall (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
-            term_ast vars body boolSyntax.list_mk_forall boolSyntax.mk_imp
+            term_ast vars body boolSyntax.list_mk_forall
       | TermExists (vars, body) =>
           typecheck_binder_with_options elaborate_datatypes context env
-            term_ast vars body boolSyntax.list_mk_exists boolSyntax.mk_conj
+            term_ast vars body boolSyntax.list_mk_exists
       | TermLambda (vars, body) =>
           let
             val _ = note_surface_event context LambdaUsed
@@ -4116,13 +4172,8 @@ local
           check term
     end
 
-  and typecheck_binder context (tydict, tmdict, sigdict) term_ast vars body
-      mk_binder relativize =
-    typecheck_binder_with_options false context (tydict, tmdict, sigdict)
-      term_ast vars body mk_binder relativize
-
   and typecheck_binder_with_options elaborate_datatypes context
-      (tydict, tmdict, sigdict) term_ast vars body mk_binder _ =
+      (tydict, tmdict, sigdict) term_ast vars body mk_binder =
     let
       val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =

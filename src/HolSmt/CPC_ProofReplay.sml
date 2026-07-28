@@ -233,19 +233,23 @@ local
       (Conv.TOP_DEPTH_CONV Drule.ETA_CONV)
       (expect_one_arg "lambda-elim" args)
 
-  (* CPC's HO_CONG omits both :args and its conclusion.  Its two equality
-     premises are exactly the function and argument equalities consumed by
-     the HOL kernel's MK_COMB rule. *)
+  (* CPC's HO_CONG omits both :args and its conclusion.  For an n-ary
+     application cvc5 emits the function equality followed by one equality
+     per argument, which is exactly a left-to-right fold of the HOL kernel's
+     MK_COMB rule over the curried application. *)
   fun replay_ho_cong prems =
     case prems of
-      [function_equality, argument_equality] =>
-        (Thm.MK_COMB (function_equality, argument_equality)
+      function_equality :: (argument_equalities as _ :: _) =>
+        (List.foldl
+           (fn (argument_equality, applied) =>
+              Thm.MK_COMB (applied, argument_equality))
+           function_equality argument_equalities
          handle Feedback.HOL_ERR holerr =>
            raise ERR "ho_cong"
              ("MK_COMB rejected CPC premise types: " ^
               Feedback.message_of holerr))
     | _ => raise ERR "ho_cong"
-        "expected function and argument equality premises"
+        "expected a function equality and at least one argument equality"
 
   (* A CPC congruence step supplies the source term in :args and equality
      premises for the subterms rewritten by cvc5.  Reconstruct its context as
@@ -3395,10 +3399,20 @@ local
           SOME target => target
         | NONE => inferred_target ()
       (* Only this rung needs the assertion set, and it is reached only after
-         the cheaper string rungs have failed. *)
-      val context =
-        HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
-        List.map Thm.concl prems
+         the cheaper string rungs have failed, so the flattening stays behind
+         a thunk.  ASM_SIMP_TAC turns every context assumption it uses into a
+         hypothesis, so the premise conclusions are discharged again against
+         the premises themselves; only the tracked assertion and scope
+         hypotheses may survive into the replayed theorem. *)
+      fun contextual_prove () =
+        let
+          val context =
+            HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+            List.map Thm.concl prems
+        in
+          List.foldl (fn (premise, proved) => Drule.PROVE_HYP premise proved)
+            (SmtStringProve.string_contextual_prove context target) prems
+        end
       fun fail () =
         raise ERR "string"
           ("unsupported CPC string step: rule=" ^ name ^
@@ -3411,8 +3425,7 @@ local
       profile "CPC(rung:string/theory)"
         (SmtStringProve.string_prove arith_prove) target
       handle Feedback.HOL_ERR _ =>
-      profile "CPC(rung:string/contextual)"
-        (SmtStringProve.string_contextual_prove context) target
+      profile "CPC(rung:string/contextual)" contextual_prove ()
       handle Feedback.HOL_ERR _ =>
       profile "CPC(rung:string/unsupported)" fail ()
     end

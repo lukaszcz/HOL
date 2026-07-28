@@ -606,11 +606,15 @@ struct
   fun type_contains_word ty =
     type_contains (Lib.can wordsSyntax.dest_word_type) ty
 
-  (* Outbound HOL strings retain their native char-list representation. *)
+  (* HOL's own :string, i.e. a char list.  Used by the logic-fragment checker
+     to keep a parsed char-list string out of the datatype classification; the
+     SMT String sort is 'type_contains_string' below. *)
   fun type_contains_native_string ty =
     type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
       ty
 
+  (* The SMT-LIB String sort, i.e. smtstring$smtstr.  HOL's :string is
+     deliberately not included: it is never emitted as an SMT String. *)
   fun type_contains_string ty =
     type_contains
       (fn candidate =>

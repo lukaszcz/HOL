@@ -265,7 +265,11 @@ in
     (``case p of T => (q ==> p) | F => (p ==> q)``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (* Native HOL strings are proved through the smtstring injection. *)
+    (* Native HOL strings are proved through the smtstring injection.  The
+       oracle path only: Z3 discharges the injected goals with seq
+       th-lemmas over the str_inj image and cvc5 with the trust and
+       str-substr-full-eq CPC rules, none of which replay.  The checked
+       tactics are covered by the ground smtstr goals below. *)
     (``STRCAT (STRCAT (s:string) t) u = STRCAT s (STRCAT t u)``,
       [thm_Z3]),
     (``isPREFIX (s:string) s``, [thm_Z3]),

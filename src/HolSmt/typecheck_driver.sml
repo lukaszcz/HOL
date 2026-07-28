@@ -35,11 +35,31 @@ fun typecheck_count_queries
     (state: SmtLib_Parser.command_state_snapshot) =
   List.length (#queries state)
 
+(* 'define-fun' bodies are part of the checked query, so the fragment gate
+   has to see them too, or a quantifier or nonlinear product buried in a
+   macro escapes the check.  Only the definiens and the parameters are
+   benchmark constructs: the universal closure and the definiendum
+   application are artefacts of the equational encoding, and handing those
+   to the gate would report every parameterised macro as a quantified
+   formula and as an uninterpreted application. *)
+fun typecheck_definition_terms definition =
+  let
+    val (vars, body) = boolSyntax.strip_forall definition
+    val definiens =
+      Lib.snd (boolSyntax.dest_eq body)
+        handle Feedback.HOL_ERR _ => body
+  in
+    definiens :: vars
+  end
+
 fun typecheck_query_fragment_terms queries =
   List.concat (List.map (fn query =>
     case query of
-      SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} =>
-        assertions @ assumptions
+      SmtLib_Parser.QueryCheckSat
+        {assumptions, assertions, local_definitions} =>
+          List.concat
+            (List.map typecheck_definition_terms local_definitions) @
+          assertions @ assumptions
     | _ => []) queries)
 
 fun typecheck_ok path expected_logic elaborate_datatypes =

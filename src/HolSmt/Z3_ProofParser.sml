@@ -291,10 +291,9 @@ local
           | NONE => raise ERR "<z3_string_dict._>"
               "not a proof string literal")),
         ("re.diff", SmtLib_Theories.K_zero_two (fn (x, y) =>
-          if Lib.can
-              (Term.same_const
-                (Term.prim_mk_const
-                  {Thy = "smtstring", Name = "reglan_all"})) x then
+          if Library.same_const
+              (Term.prim_mk_const
+                {Thy = "smtstring", Name = "reglan_all"}) x then
             (* Z3 canonicalizes re.diff re.all R to re.comp R in proofs.
                Keep that proof-local alias canonical without changing the
                ordinary SMT-LIB surface dictionary. *)
@@ -669,14 +668,12 @@ local
         raise ERR "proofterm_of_term"
           ("local proof subterm <" ^ Library.term_to_string t ^
            "> does not encode a Z3 proofterm: " ^ Feedback.message_of holerr)
+    (* Z3 also emits `proof-bind` where no rule looks at the variables it
+       binds.  There the wrapper carries no semantic content, so erase it
+       instead of rejecting a proof Z3 actually produced. *)
     fun checked pt =
       case pt of
-        PROOF_BIND _ =>
-          if accepts_bind then pt
-          else
-            raise ERR "proofterm_of_term"
-              ("unsupported proof-bind shape: expected a direct premise of " ^
-               "nnf-neg, nnf-pos, or quant-intro")
+        PROOF_BIND (_, body) => if accepts_bind then pt else body
       | _ => pt
   in
     case lookup_rule version name of
@@ -714,17 +711,15 @@ local
   and proof_bind_pt version = SmtLib_Theories.one_arg (fn operand =>
     let
       val (vars, body) = Term.strip_abs operand
-      val _ = if List.null vars then
-          raise ERR "proof_bind_pt"
-            ("unsupported proof-bind shape: expected a lambda " ^
-             "abstraction over a proofterm")
-        else ()
       val _ = if Type.compare (Term.type_of body, pt_ty) = EQUAL then ()
         else
           raise ERR "proof_bind_pt"
-            "unsupported proof-bind shape: lambda body is not a proofterm"
+            "unsupported proof-bind shape: body is not a proofterm"
+      val pt = proofterm_of_term version body
     in
-      PROOF_BIND (vars, proofterm_of_term version body)
+      (* Without a lambda operand there are no bound variables to preserve,
+         and the wrapper degrades to the plain proofterm it wraps. *)
+      if List.null vars then pt else PROOF_BIND (vars, pt)
     end)
 
   and th_lemma_metadata_of_term metadata_tm =
@@ -745,8 +740,9 @@ local
           (Lib.fst (listSyntax.dest_list pts_tm)),
          concl))
 
-  (* The `accepts_bind` flag records whether a rule's premises may be a Z3
-     `proof-bind`; only nnf-neg, nnf-pos, and quant-intro consume one. *)
+  (* The `accepts_bind` flag records whether a rule consumes the variables a
+     Z3 `proof-bind` premise binds; only nnf-neg, nnf-pos, and quant-intro
+     do.  Everywhere else the wrapper is erased. *)
   and proofterm_maker version "and_elim" =
         one_prem_pt version false AND_ELIM
     | proofterm_maker version "apply_def" =

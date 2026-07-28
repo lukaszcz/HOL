@@ -1345,6 +1345,10 @@ local
      rejects any attempt to capture a variable occurring in a hypothesis. *)
   fun z3_nnf_bound z3_nnf (state, bound_thms, t) =
   let
+    (* The congruence is an extra rewrite, not a precondition: a premise that
+       is not a boolean equation, or whose binder occurs in its hypotheses,
+       still feeds the rungs the NNF machinery is built around, so an
+       unliftable premise must not abort the whole step. *)
     fun lift ([], thm) = [thm]
       | lift (vars, thm) =
           let
@@ -1353,6 +1357,7 @@ local
           in
             [thm, lifted]
           end
+          handle Feedback.HOL_ERR _ => [thm]
     val thms = List.concat (List.map lift bound_thms)
   in
     z3_nnf (state, thms, t)
@@ -1457,16 +1462,6 @@ local
     (state, thm)
   end
 
-  (* proof-bind under quant-intro annotates which binders the surrounding NNF
-     step introduced.  Those variables are only metadata: `z3_quant_intro`
-     recovers the quantifier structure from the terms themselves, and the
-     framework's `check_thm` then validates the reconstructed theorem against
-     the target.  Consulting the annotation as a replay precondition adds no
-     soundness (check_thm is authoritative) and can only reject a provable
-     step whose binders are recorded differently, so replay ignores it. *)
-  fun z3_quant_intro_bound (state, _, thm, t) =
-    z3_quant_intro (state, thm, t)
-
   (* A proof for `R t t`, where R is a reflexive relation. The only `R` that are
      used are equivalence modulo namings, equality and equivalence, i.e. `~`,
      `=` or `iff`, all represented in HOL4 terms as `boolSyntax.mk_eq`. *)
@@ -1545,7 +1540,7 @@ local
        definition, and nonlinear fallback can otherwise spend a long time on
        the deliberately underconstrained formula. *)
     let
-      val thm = profile "rewrite(12.1)(unification)"
+      val thm = profile "rewrite(06.5)(unification-early)"
         Library.gen_instantiation (l, r, #var_set state)
       val asl = Thm.hyp thm
       fun is_safe_early_definition tm =
@@ -1668,7 +1663,7 @@ local
        definitions (as in the `z3_intro_def` handler), to make sure it gets
        removed from the set of hypotheses of the final theorem. *)
 
-    (* General unification fallback.  The earlier `rewrite(12.1)` attempt runs
+    (* General unification fallback.  The earlier `rewrite(06.5)` attempt runs
        before arithmetic but deliberately declines a bare variable alias
        (`v1 = v2`) so as not to commit an underconstrained proof-local
        definition prematurely.  Once the arithmetic and word rungs have had
@@ -1928,18 +1923,21 @@ local
     "this clause shape; conclusion=" ^ Library.term_to_string t
   end
 
-  fun string_th_lemma_wrapper dispatch_theory metadata prover
+  (* `gate` runs the theory preconditions that must surface their own
+     enumerated diagnostic.  Deciding this before the prover keeps the gate
+     distinguishable from an ordinary prover failure — the contextual rung
+     below would otherwise mask a gated clause behind the generic unsupported
+     message. *)
+  fun string_th_lemma_wrapper dispatch_theory gate metadata prover
       (state, thms, t) =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
     val context = HOLset.listItems (#asserted_hyps state)
+    val () = gate t'
     val thm =
       prover t'
-      handle Feedback.HOL_ERR holerr =>
-        if String.isSubstring "theory:Z3_Extensions:seq-set-bag"
-            (Feedback.message_of holerr)
-        then raise Feedback.HOL_ERR holerr
-        else (profile ("Z3(rung:string/contextual:" ^ dispatch_theory ^ ")")
+      handle Feedback.HOL_ERR _ =>
+        (profile ("Z3(rung:string/contextual:" ^ dispatch_theory ^ ")")
           (SmtStringProve.string_contextual_prove context) t'
           handle Feedback.HOL_ERR _ =>
           raise ERR ("z3_th_lemma_" ^ dispatch_theory)
@@ -1950,11 +1948,12 @@ local
   end
 
   fun z3_th_lemma_seq metadata =
-    string_th_lemma_wrapper "seq" metadata
+    string_th_lemma_wrapper "seq" SmtStringProve.check_seq_type metadata
       (SmtStringProve.string_prove arith_prove)
 
   fun z3_th_lemma_char metadata =
-    string_th_lemma_wrapper "char" metadata SmtStringProve.char_prove
+    string_th_lemma_wrapper "char" (fn _ => ()) metadata
+      SmtStringProve.char_prove
 
   fun z3_trans (state, thm1, thm2, t) =
     (state, Thm.TRANS thm1 thm2)
@@ -2282,35 +2281,6 @@ local
           ((state, proof), thm)
         end))
 
-  and one_bound_prem (state_proof : state * proof)
-      (name : string)
-      (z3_rule_fn : state * Term.term list * Thm.thm * Term.term ->
-        state * Thm.thm)
-      (pt : proofterm, concl : Term.term)
-      (continuation : (state * proof) * Thm.thm -> (state * proof) * Thm.thm)
-      : (state * proof) * Thm.thm =
-    let
-      val (vars, body) =
-        case pt of
-          PROOF_BIND pair => pair
-        | _ => ([], pt)
-    in
-      thm_of_proofterm (state_proof, body) (continuation o
-        (fn ((state, proof), thm) =>
-          let
-            val (state, thm) = profile name z3_rule_fn
-              (state, vars, thm, concl)
-              handle Feedback.HOL_ERR holerr =>
-                raise_replay_error name state name [pt] concl [thm] holerr
-            val _ = profile "check_thm" check_thm (name, thm, concl)
-              handle Feedback.HOL_ERR holerr =>
-                raise_replay_error "check_thm" state name [pt] concl
-                  [thm] holerr
-          in
-            ((state, proof), thm)
-          end))
-    end
-
   and two_prems (state_proof : state * proof)
       (name : string)
       (z3_rule_fn : state * Thm.thm * Thm.thm * Term.term -> state * Thm.thm)
@@ -2440,19 +2410,22 @@ local
           continuation []
     | thm_of_proofterm (state_proof, NOT_OR_ELIM x) continuation =
         one_prem state_proof "not_or_elim" z3_not_or_elim x continuation
-    | thm_of_proofterm (_, PROOF_BIND ([], _)) _ =
-        raise ERR "proof_bind"
-          "structured proof-bind has no bound variables"
     | thm_of_proofterm (state_proof, PROOF_BIND (_, body)) continuation =
-        (* proof-bind is a binder annotation rather than a logical rule.  Its
-           consumers inspect the preserved variables before replaying [body];
-           direct traversal therefore has the same theorem as the body. *)
+        (* proof-bind is a binder annotation rather than a logical rule.  The
+           consumers that need the preserved variables (the NNF rules) destruct
+           the annotation themselves; everywhere else — including an empty
+           annotation — it erases to its body, which is the theorem the
+           surrounding rule expects. *)
         thm_of_proofterm (state_proof, body) continuation
     | thm_of_proofterm (state_proof, QUANT_INST x) continuation =
         one_arg_zero_prems state_proof "quant_inst" z3_quant_inst x continuation
+    (* A proof-bind premise of quant-intro only annotates which binders the
+       surrounding step introduced.  `z3_quant_intro` recovers the quantifier
+       structure from the terms themselves and `check_thm` validates the
+       result, so the annotation erases and the rule takes the plain
+       premise. *)
     | thm_of_proofterm (state_proof, QUANT_INTRO x) continuation =
-        one_bound_prem state_proof "quant_intro" z3_quant_intro_bound x
-          continuation
+        one_prem state_proof "quant_intro" z3_quant_intro x continuation
     | thm_of_proofterm (state_proof, REFL x) continuation =
         zero_prems state_proof "refl" z3_refl x continuation
     | thm_of_proofterm (state_proof, REWRITE x) continuation =

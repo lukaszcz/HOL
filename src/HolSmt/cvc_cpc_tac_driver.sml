@@ -20,11 +20,30 @@ fun cvc_cpc_conjunction [] = boolSyntax.T
   | cvc_cpc_conjunction (tm :: tms) =
       List.foldl (fn (next, acc) => boolSyntax.mk_conj (acc, next)) tm tms
 
+(* 'define-fun' bodies reach the solver through 'local_definitions', so the
+   fragment gate has to see them too, or a quantifier or nonlinear product
+   buried in a macro escapes the check.  Only the definiens and the
+   parameters are benchmark constructs: the universal closure and the
+   definiendum application are artefacts of the equational encoding, and
+   handing those to the gate would report every parameterised macro as a
+   quantified formula and as an uninterpreted application. *)
+fun cvc_cpc_definition_terms definition =
+  let
+    val (vars, body) = boolSyntax.strip_forall definition
+    val definiens =
+      Lib.snd (boolSyntax.dest_eq body)
+        handle Feedback.HOL_ERR _ => body
+  in
+    definiens :: vars
+  end
+
 fun cvc_cpc_query_fragment_terms queries =
   List.concat (List.map (fn query =>
     case query of
-      SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} =>
-        assertions @ assumptions
+      SmtLib_Parser.QueryCheckSat
+        {assumptions, assertions, local_definitions} =>
+          List.concat (List.map cvc_cpc_definition_terms local_definitions) @
+          assertions @ assumptions
     | _ => []) queries)
 
 fun cvc_cpc_goal queries =

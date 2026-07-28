@@ -22,16 +22,22 @@ struct
        "conclusion=" ^
        Library.term_to_string t)
 
+  (* The sequence/set/bag gate classifies its input as out of scope; it is
+     not an ordinary rung failure.  A caller that retried a gated conclusion
+     through another string rung would replace this enumerated diagnostic
+     with the generic unsupported-shape message, so callers run
+     'check_seq_type' themselves before the rung ladder rather than trying to
+     recognize the gate in a failure. *)
+  val seq_set_bag_case_id = "theory:Z3_Extensions:seq-set-bag:checked-replay"
+
   fun phase6_seq_gate t =
     raise ERR "check_seq_type"
       ("checked Z3_TAC replay for Z3 sequence/set/bag extensions is not " ^
-       "implemented; missing feature: " ^
-       "theory:Z3_Extensions:seq-set-bag:checked-replay; failing case IDs: " ^
+       "implemented; missing feature: " ^ seq_set_bag_case_id ^
+       "; failing case IDs: " ^
        "theory:Z3_Extensions:seq, theory:Z3_Extensions:set, " ^
        "theory:Z3_Extensions:bag, proof-rule:th-lemma-seq; conclusion=" ^
        Library.term_to_string t)
-
-  fun subterms t = HolKernel.find_terms (fn _ => true) t
 
   fun smtstring_consts thy names =
     List.map (fn name => Term.prim_mk_const {Thy = thy, Name = name}) names
@@ -94,10 +100,16 @@ struct
     handle Fail message =>
       raise ERR "proforma_prove" ("proforma lookup failed: " ^ message)
 
+  (* ':smtstr' is a type definition rather than a datatype, so evaluation
+     goes through the representation: 'smtstr_rep_compute' unfolds a
+     wellformed literal and 'SmtStr_eq_compute' supplies the equality test
+     that a datatype constructor would otherwise have given us.  Both are
+     load-bearing here -- without them ground string steps do not reduce. *)
   val ground_eval_thms = [
-    smtstringTheory.wfstr_compute,
-    smtstringTheory.smtstr_concat_compute,
-    smtstringTheory.smtstr_len_compute,
+    smtstringTheory.smtstr_rep_compute,
+    smtstringTheory.SmtStr_eq_compute,
+    smtstringTheory.smtstr_concat_def,
+    smtstringTheory.smtstr_len_def,
     smtstringTheory.smtstr_substr_def,
     smtstringTheory.smtstr_at_def,
     smtstringTheory.smtstr_prefixof_def,
@@ -105,7 +117,7 @@ struct
     smtstringTheory.smtstr_contains_def,
     smtstringTheory.smtstr_indexof_aux_def,
     smtstringTheory.smtstr_indexof_def,
-    smtstringTheory.smtstr_lt_compute,
+    smtstringTheory.smtstr_lt_def,
     smtstringTheory.smtstr_le_def,
     smtstringTheory.smtstr_char_def,
     smtstringTheory.smt_in_re_deriv,
@@ -114,9 +126,9 @@ struct
     smtstringTheory.smtstr_replace_re_def,
     smtstringTheory.smtstr_replace_re_all_def,
     smtstringTheory.smtstr_is_digit_compute,
-    smtstringTheory.smtstr_to_code_compute,
+    smtstringTheory.smtstr_to_code_def,
     smtstringTheory.smtstr_from_code_def,
-    smtstringTheory.smtstr_digits_compute,
+    smtstringTheory.smtstr_digits_def,
     smtstringTheory.smtstr_to_int_def,
     smtstringTheory.smtstr_from_int_def,
     smtstringz3Theory.seq_unit_def,
@@ -242,6 +254,13 @@ struct
   val symbolic_thms =
     Z3_ProformaThms.thm_net_from_list symbolic_lemmas
 
+  val middle_singleton_lemmas = [
+    smtstringz3Theory.seq_concat_middle_singleton,
+    smtstringz3Theory.seq_concat_middle_singleton_result,
+    smtstringz3Theory.seq_concat_middle_singleton_right,
+    smtstringz3Theory.seq_concat_middle_singleton_left
+  ]
+
   fun is_symbolic_string_goal t = mentions_any symbolic_string_names t
 
   fun symbolic_string_prove t =
@@ -255,6 +274,13 @@ struct
         metisLib.METIS_PROVE
           [smtstringz3Theory.seq_head_shared_singleton_prefix_right] t) ()
       handle Feedback.HOL_ERR _ =>
+      (* Before normalizing: the middle-singleton lemmas are stated over
+         'seq_unit', which the rewrite rung below unfolds away.  A narrow
+         lemma set keeps this within the shared replay budget, which the
+         full symbolic set does not. *)
+      with_metis_limit (fn () =>
+        metisLib.METIS_PROVE middle_singleton_lemmas t) ()
+      handle Feedback.HOL_ERR _ =>
       with_metis_limit (fn () =>
         Tactical.prove (t,
           Tactical.THEN
@@ -263,8 +289,19 @@ struct
                symbolic_normalizations,
              bossLib.METIS_TAC symbolic_lemmas))) ()
 
+  (* The general rules close whole classes of automaton steps: any code-point
+     range, any loop bounds, any state.  The corpus-shaped instances stay
+     because the proforma net matches conclusions syntactically, and a
+     ground step at state 0 does not match a 'SUC k' conclusion. *)
   val aut_transition_rules = [
     smtstringz3Theory.aut_accept_range_deriv,
+    smtstringz3Theory.aut_accept_loop_deriv,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv,
+    smtstringz3Theory.aut_accept_range_transition,
+    smtstringz3Theory.aut_accept_loop_transition,
+    smtstringz3Theory.aut_accept_loop_nullable_transition,
+    smtstringz3Theory.aut_accept_comp_transition,
+    smtstringz3Theory.aut_accept_loop_empty,
     smtstringz3Theory.aut_accept_loop_deriv_1_3,
     smtstringz3Theory.aut_accept_loop_deriv_0_2,
     smtstringz3Theory.aut_accept_loop_deriv_0_1,
@@ -286,6 +323,11 @@ struct
     smtstringTheory.re_deriv_def,
     smtstringTheory.reglan_power_deriv_def,
     smtstringTheory.reglan_loop_deriv_def,
+    smtstringTheory.smt_in_re_loop_singleton,
+    smtstringTheory.smt_in_re_loop_nullable_singleton,
+    smtstringTheory.smt_in_re_loop_empty,
+    smtstringTheory.re_deriv_loop_singleton,
+    smtstringTheory.re_deriv_loop_nullable_singleton,
     smtstringTheory.smt_in_re_loop_singleton_0_1,
     smtstringTheory.smt_in_re_loop_singleton_0_2,
     smtstringTheory.smt_in_re_loop_singleton_1_3,
@@ -308,6 +350,11 @@ struct
 
   val regex_lemmas = [
     smtstringTheory.re_nullable_def,
+    smtstringTheory.smt_in_re_loop_singleton,
+    smtstringTheory.smt_in_re_loop_nullable_singleton,
+    smtstringTheory.smt_in_re_loop_empty,
+    smtstringTheory.re_deriv_loop_singleton,
+    smtstringTheory.re_deriv_loop_nullable_singleton,
     smtstringTheory.smt_in_re_loop_singleton_0_1,
     smtstringTheory.smt_in_re_loop_singleton_0_2,
     smtstringTheory.smt_in_re_loop_singleton_1_3,
@@ -498,22 +545,15 @@ struct
       ``((~d /\ c) \/ (~d /\ r) \/ (c /\ r)) =
         ((c /\ ~d) \/ ((c = d) /\ r))``
 
+  val char_decomposition_names =
+    const_name_set
+      (smtstring_consts "smtstringz3" ["char_bit", "char_is_digit"] @
+       smtstring_consts "words" ["word_or"])
+
   fun char_bitblast_prove t =
     let
-      val char_bit_const =
-        Term.prim_mk_const {Thy = "smtstringz3", Name = "char_bit"}
-      val char_is_digit_const =
-        Term.prim_mk_const {Thy = "smtstringz3",
-          Name = "char_is_digit"}
-      val word_or_const =
-        Term.prim_mk_const {Thy = "words", Name = "word_or"}
-      val has_decomposition =
-        List.exists
-          (fn c => Lib.can
-            (HolKernel.find_term (Term.same_const c)) t)
-          [char_bit_const, char_is_digit_const, word_or_const]
       val _ =
-        if has_decomposition then ()
+        if mentions_any char_decomposition_names t then ()
         else raise ERR "char_prove" "no char decomposition atom"
       val compacted =
         Conv.TRY_CONV

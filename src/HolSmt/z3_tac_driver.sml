@@ -75,10 +75,30 @@ fun z3_tac_query_assumptions queries =
     SmtLib_Parser.QueryCheckSat {assumptions, ...} :: _ => assumptions
   | _ => []
 
+(* 'define-fun' bodies reach the solver through 'local_definitions' (see
+   'z3_tac_query_assertions'), so the fragment gate has to see them too, or
+   a quantifier or nonlinear product buried in a macro escapes the check.
+   Only the definiens and the parameters are benchmark constructs: the
+   universal closure and the definiendum application are artefacts of the
+   equational encoding, and handing those to the gate would report every
+   parameterised macro as a quantified formula and as an uninterpreted
+   application. *)
+fun z3_tac_definition_terms definition =
+  let
+    val (vars, body) = boolSyntax.strip_forall definition
+    val definiens =
+      Lib.snd (boolSyntax.dest_eq body)
+        handle Feedback.HOL_ERR _ => body
+  in
+    definiens :: vars
+  end
+
 fun z3_tac_query_fragment_terms queries =
   case queries of
-    SmtLib_Parser.QueryCheckSat {assumptions, assertions, ...} :: _ =>
-      assertions @ assumptions
+    SmtLib_Parser.QueryCheckSat
+      {assumptions, assertions, local_definitions} :: _ =>
+        List.concat (List.map z3_tac_definition_terms local_definitions) @
+        assertions @ assumptions
   | _ => []
 
 fun z3_tac_conjunction [] = boolSyntax.T

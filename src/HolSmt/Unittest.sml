@@ -764,6 +764,19 @@ handle Feedback.HOL_ERR holerr =>
        "out-of-range indexed character diagnostic mismatch: " ^ msg)
   end
 
+fun smtlib_indexed_char_hex_index_success () =
+let
+  fun char_assertion index =
+    List.hd (parse_smtlib_assertions
+      ("(set-logic QF_SLIA)\n" ^
+       "(declare-const sC1 String)\n" ^
+       "(assert (= (_ char " ^ index ^ ") sC1))\n" ^
+       "(exit)\n"))
+in
+  assert (Term.aconv (char_assertion "#x41") (char_assertion "65"),
+    "hexadecimal character index did not parse as the numeral 65")
+end
+
 fun smtlib_indexed_char_outbound_range_diagnostic () =
 let
   val char_const =
@@ -817,6 +830,31 @@ in
          (SmtLib_Parser.proof_string_token raw_string = SOME e_acute,
           "stream tokenizer changed raw UTF-8 String token bytes"))
   | _ => die "stream proof tokenizer returned unexpected tokens"
+end
+
+fun smtlib_proof_stream_tokenizer_marker_collision () =
+let
+  (* A quoted symbol whose text is the internal String marker must fail
+     loudly, not be decoded as a string literal. *)
+  val forged = "|\001HolSmtString:x|"
+  val tokens =
+    with_temp_file ("(proof " ^ forged ^ ")")
+      (fn path =>
+        let
+          val instream = TextIO.openIn path
+          val get_token =
+            SmtLib_Parser.make_proof_stream_tokenizer instream
+          val result =
+            Lib.total (fn () => [get_token (), get_token (), get_token ()]) ()
+          val _ = TextIO.closeIn instream
+        in
+          result
+        end)
+in
+  case tokens of
+    NONE => ()
+  | SOME _ =>
+      die "proof tokenizer accepted a symbol forging the string marker"
 end
 
 val smt_string_ty =
@@ -1499,8 +1537,10 @@ let
   val options = {dict_logic = NONE, elaborate_datatypes = true}
   fun typecheck script =
     SmtLib_Parser.typecheck_script_string_with_options options script
+  (* 'TypeBase.is_constructor' is total, so wrapping it in 'Lib.can' would
+     make the test vacuous rather than checking for a constructor. *)
   fun has_typebase_constructor tm =
-    term_has_subterm (Lib.can TypeBase.is_constructor) tm
+    term_has_subterm TypeBase.is_constructor tm
   fun assert_assertions label state =
     let val assertions = #assertions state
     in
@@ -1609,6 +1649,28 @@ in
   assert (List.all (term_has_subterm (Lib.can TypeBase.dest_case))
       assertions,
     "match elaboration did not build TypeBase case terms")
+end
+
+fun parse_file_match_binder_surface_sort_success () =
+let
+  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val state =
+    SmtLib_Parser.typecheck_script_string_with_options options
+      ("(set-logic ALL)\n" ^
+       "(declare-datatype PairB16 " ^
+       "(par (A) ((mkB16 (fstB16 A) (sndB16 A)))))\n" ^
+       "(declare-datatype WrapB16 " ^
+       "((wB16 (getB16 (PairB16 Int))) (eB16)))\n" ^
+       "(declare-const pB16 (PairB16 Int))\n" ^
+       "(declare-const xB16 WrapB16)\n" ^
+       "(assert (= pB16 (match xB16 (((wB16 vB16) vB16) (eB16 pB16)))))\n" ^
+       "(exit)\n")
+  val assertions = #assertions state
+in
+  assert (List.length assertions = 1,
+    "match binder surface sort script produced the wrong assertion count");
+  assert (Term.type_of (List.hd assertions) = Type.bool,
+    "match binder surface sort assertion did not parse as Bool")
 end
 
 fun parse_file_datatype_dependency_elaboration_success () =
@@ -2065,6 +2127,38 @@ in
           List.length query_defs = 1
       | _ => false) queries,
     "check-sat query did not preserve define-fun state snapshot")
+end
+
+(* The mirror image of the test above: a macro body is not an assertion, but
+   whatever it contains still reaches the solver through the drivers' goal,
+   so the definiens must answer the fragment check.  The outer closure and
+   the definiendum application must not: they are artefacts of the equational
+   encoding. *)
+fun parse_file_define_fun_body_fragment_violation_success () =
+let
+  val {local_definitions, ...} =
+    parse_smtlib_state
+      ("(set-logic QF_UF)\n" ^
+       "(declare-sort U 0)\n" ^
+       "(declare-fun p (U) Bool)\n" ^
+       "(define-fun q () Bool (forall ((x U)) (p x)))\n" ^
+       "(assert q)\n" ^
+       "(check-sat)\n")
+  fun definiens definition =
+    let
+      val (vars, body) = boolSyntax.strip_forall definition
+      val rhs = Lib.snd (boolSyntax.dest_eq body)
+        handle Feedback.HOL_ERR _ => body
+    in
+      rhs :: vars
+    end
+in
+  assert (List.length local_definitions = 1,
+    "define-fun definition was not tracked as a local definition");
+  assert (Option.isSome (SmtLib_Logics.fragment_violation_diagnostic "QF_UF"
+      SmtLib_Logics.empty_surface_flags
+      (List.concat (List.map definiens local_definitions))),
+    "quantifier in a define-fun body escaped the QF_UF fragment check")
 end
 
 fun parse_file_define_funs_rec_fragment_scope_success () =
@@ -4349,9 +4443,12 @@ in
   assert_has "mutual datatype block" "(declare-datatypes" mutual_text;
   assert_has "non-free fallback sort" "(declare-sort t0 0)" nonfree_text;
   assert_lacks "non-free fallback" "(declare-datatypes" nonfree_text;
-  assert_has "builtin string precedence" "(declare-fun v0 () String)"
+  assert_has "HOL string uninterpreted sort" "(declare-sort t0 0)"
     builtin_text;
-  assert_lacks "builtin string precedence" "(declare-datatypes"
+  assert_has "HOL string uninterpreted sort" "(declare-fun v0 () t0)"
+    builtin_text;
+  assert_lacks "HOL string uninterpreted sort" "String" builtin_text;
+  assert_lacks "HOL string uninterpreted sort" "(declare-datatypes"
     builtin_text;
   assert (has_datatype_record,
     "translation records did not include datatype declaration record")
@@ -4359,20 +4456,23 @@ end
 
 fun smtlib_extended_hol_encoding_records_success () =
 let
-  val s = Term.mk_var ("s", stringSyntax.string_ty)
-  val t = Term.mk_var ("t", stringSyntax.string_ty)
-  val term = boolSyntax.mk_eq
-    (stringSyntax.mk_strcat (s, t), stringSyntax.mk_strcat (t, s))
+  (* HOL strings reach SMT-LIB only through str_inj, so the encoding records
+     are driven from the injected surface. *)
+  val term =
+    ``smtstring$smtstr_concat
+        (smtstring$str_inj s) (smtstring$str_inj t) =
+      smtstring$smtstr_concat
+        (smtstring$str_inj t) (smtstring$str_inj s)``
   val (logic, _, records, translation) = inferred_logic term
   val has_string_encoding =
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
             feature, smt_theory = "UnicodeStrings",
             mode = SmtLib.NativeSMTLIB, parse = true,
-            typecheck = true, translate = true, replay = true,
+            typecheck = true, translate = true, replay = false,
             proof_obligation, ...} =>
             contains "HOL strings" feature
-            andalso contains "Discharged" proof_obligation
+            andalso contains "Checked replay" proof_obligation
         | _ => false) records
   val has_concat_symbol =
     List.exists (fn SmtLib.EncodedSymbol {smt_symbol = "str.++", ...} =>
@@ -5405,28 +5505,36 @@ let
          "(bvor v1 (_ bv1 8)))))\n",
        "(check-sat)\n"]},
     {name = "native-string-concat",
-     goal = ([], ``STRCAT (s:string) t = STRCAT t s``),
+     goal = ([],
+       ``smtstring$smtstr_concat
+           (smtstring$str_inj s) (smtstring$str_inj t) =
+         smtstring$smtstr_concat
+           (smtstring$str_inj t) (smtstring$str_inj s)``),
      body = prelude "QF_S" @ [
        "(declare-fun v0 () String)\n",
        "(declare-fun v1 () String)\n",
        "(assert (not (= (str.++ v0 v1) (str.++ v1 v0))))\n",
        "(check-sat)\n"]},
     {name = "native-string-prefix",
-     goal = ([], ``isPREFIX (s:string) t``),
+     goal = ([],
+       ``smtstring$smtstr_prefixof
+           (smtstring$str_inj s) (smtstring$str_inj t)``),
      body = prelude "QF_S" @ [
        "(declare-fun v0 () String)\n",
        "(declare-fun v1 () String)\n",
        "(assert (not (str.prefixof v0 v1)))\n",
        "(check-sat)\n"]},
     {name = "native-string-less",
-     goal = ([], ``(s:string) < t``),
+     goal = ([],
+       ``smtstring$smtstr_lt (smtstring$str_inj s) (smtstring$str_inj t)``),
      body = prelude "QF_S" @ [
        "(declare-fun v0 () String)\n",
        "(declare-fun v1 () String)\n",
        "(assert (not (str.< v0 v1)))\n",
        "(check-sat)\n"]},
     {name = "native-string-less-equal",
-     goal = ([], ``(s:string) <= t``),
+     goal = ([],
+       ``smtstring$smtstr_le (smtstring$str_inj s) (smtstring$str_inj t)``),
      body = prelude "QF_S" @ [
        "(declare-fun v0 () String)\n",
        "(declare-fun v1 () String)\n",
@@ -5498,7 +5606,10 @@ let
       ["(set-logic QF_BV)\n", "(_ BitVec 8)",
        "(= (bvand v0 (_ bv3 8)) (bvor v1 (_ bv1 8)))"]),
     ("string-native-sort-and-concat", ([],
-       ``STRCAT (s:string) t = STRCAT t s``),
+       ``smtstring$smtstr_concat
+           (smtstring$str_inj s) (smtstring$str_inj t) =
+         smtstring$smtstr_concat
+           (smtstring$str_inj t) (smtstring$str_inj s)``),
       ["(set-logic QF_S)\n", "(declare-fun v0 () String)\n",
        "(= (str.++ v0 v1) (str.++ v1 v0))"]),
     ("list-constructor-native-dt", ([],
@@ -5563,7 +5674,11 @@ let
        ``((w2w (x:word8)):word16) = sw2sw x``),
       ["((_ zero_extend 8) v0)", "((_ sign_extend 8) v0)"]),
     ("string-operations", ([],
-       ``isPREFIX (s:string) (STRCAT s t) /\ (s < t) /\ (s <= t)``),
+       ``smtstring$smtstr_prefixof (smtstring$str_inj s)
+           (smtstring$smtstr_concat
+              (smtstring$str_inj s) (smtstring$str_inj t)) /\
+         smtstring$smtstr_lt (smtstring$str_inj s) (smtstring$str_inj t) /\
+         smtstring$smtstr_le (smtstring$str_inj s) (smtstring$str_inj t)``),
       ["str.prefixof", "str.++", "str.<", "str.<="]),
     ("datatype-constructor-native-dt", ([],
        ``SOME (x:int) = SOME y``),
@@ -5908,6 +6023,37 @@ fun cpc_proof_replay_string_obligation_diagnostic () =
         "((step @p1 (= re.all (re.* re.allchar)) \
         \:rule re-all-elim))")))
 
+(* A CPC string step whose premise is an earlier derived lemma must not leak
+   that lemma's conclusion as a hypothesis: the contextual rung feeds it to
+   ASM_SIMP_TAC and has to discharge it against the premise again. *)
+fun cpc_proof_replay_string_premise_hypotheses () =
+let
+  val proof = parse_cpc_proof_string
+      "((declare-const s String) (declare-const t String) \
+      \(declare-const u String) \
+      \(assume @p1 (= s t)) (assume @p2 (= t u)) \
+      \(step @p3 (= s u) :rule trans :premises (@p1 @p2)) \
+      \(step @p4 (= (str.len s) (str.len u)) \
+      \:rule string_reduction :premises (@p3)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val assumed =
+    List.foldl
+      (fn (command, accumulated) =>
+        case command of
+          CPC_Proof.ASSUME (_, tm) => HOLset.add (accumulated, tm)
+        | _ => accumulated)
+      Term.empty_tmset (CPC_Proof.proof_commands proof)
+  val leaked = HOLset.difference (Thm.hypset theorem, assumed)
+in
+  assert (HOLset.numItems assumed = 2,
+    "CPC string premise test lost its assumptions");
+  assert (HOLset.isEmpty leaked,
+    "CPC string step leaked premise conclusions as hypotheses: " ^
+    String.concatWith ", "
+      (List.map Library.term_to_string (HOLset.listItems leaked)));
+  Library.check_oracle_tags "CPC string contextual premise unit test" theorem
+end
+
 (* Captured cvc5 1.3.4 CPC spelling: binders may be inline @var terms and
    partial application is printed with CPC's `_` application constructor. *)
 fun cpc_proof_parser_lambda_inline_var_apply_success () =
@@ -6008,6 +6154,42 @@ in
     "CPC ite-neg-branch returned the wrong equality");
   List.app (Library.check_oracle_tags "CPC HO congruence unit test")
     [ho_cong, ite]
+end
+
+(* cvc5 emits HO_CONG with n+1 premises for an n-ary application: the
+   function equality followed by one equality per argument.  The shape above
+   is only the unary case. *)
+fun cpc_proof_replay_ho_cong_nary_success () =
+let
+  val proof = parse_cpc_proof_string
+      "((declare-const f (-> Int Int Int)) \
+      \(declare-const g (-> Int Int Int)) \
+      \(declare-const x Int) (declare-const y Int) \
+      \(declare-const u Int) (declare-const v Int) \
+      \(assume @p1 (= f g)) (assume @p2 (= x y)) (assume @p3 (= u v)) \
+      \(step @p4 :rule ho_cong :premises (@p1 @p2 @p3)))"
+  val theorem = CPC_ProofReplay.replay_root_for_test proof
+  val expected =
+    case CPC_Proof.proof_commands proof of
+      [CPC_Proof.ASSUME (_, function_equality),
+       CPC_Proof.ASSUME (_, first_equality),
+       CPC_Proof.ASSUME (_, second_equality), _] =>
+        let
+          val (left_function, right_function) =
+            boolSyntax.dest_eq function_equality
+          val (left_first, right_first) = boolSyntax.dest_eq first_equality
+          val (left_second, right_second) =
+            boolSyntax.dest_eq second_equality
+        in
+          boolSyntax.mk_eq
+            (Term.list_mk_comb (left_function, [left_first, left_second]),
+             Term.list_mk_comb (right_function, [right_first, right_second]))
+        end
+    | _ => die "FAIL: CPC n-ary ho_cong capture lost its premise assumptions"
+in
+  assert (Thm.concl theorem ~~ expected,
+    "CPC ho_cong did not fold MK_COMB over every argument equality");
+  Library.check_oracle_tags "CPC n-ary HO congruence unit test" theorem
 end
 
 fun cpc_proof_replay_ho_rare_rewrites_success () =
@@ -6634,6 +6816,17 @@ in
   | NONE => die "FAIL: mp-eq proof did not define root proof step"
 end
 
+fun z3_proof_parser_erases_proof_bind_success () =
+let
+  val proof = parse_z3_proof_string "4.12.4"
+    "((proof (proof-bind (asserted false))))"
+in
+  case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+    SOME (Z3_Proof.ASSERTED _) => ()
+  | SOME _ => die "FAIL: proof-bind parsed to unexpected constructor"
+  | NONE => die "FAIL: proof-bind proof did not define root proof step"
+end
+
 fun z3_proof_parser_verbatim_lambda_binding_success () =
 let
   (* Pinned from the 4.11.2 lambda-equality proof family. *)
@@ -6696,11 +6889,28 @@ in
   | NONE => die "FAIL: proof-bind proof did not define root proof step"
 end
 
-fun z3_proof_parser_unpinned_proof_bind_shape_diagnostic () =
-  expect_hol_error_contains "unpinned proof-bind shape"
-    "expected a lambda abstraction over a proofterm"
-    (fn () => ignore (parse_z3_proof_string "4.15.3"
-      "((proof (nnf-pos (proof-bind (refl false)) false)))"))
+fun z3_proof_parser_erases_inert_proof_bind_success () =
+let
+  (* A `proof-bind` binds nothing without a lambda operand, and binds
+     nothing a consumer reads when the enclosing rule ignores bound
+     variables; both erase to the wrapped proofterm. *)
+  val no_lambda = parse_z3_proof_string "4.15.3"
+    "((proof (nnf-pos (proof-bind (refl false)) false)))"
+  val no_consumer = parse_z3_proof_string "4.15.3"
+    "((proof (mp (proof-bind (lambda ((x Int)) (asserted false))) \
+    \(asserted (= false false)) false)))"
+in
+  (case Redblackmap.peek (Z3_Proof.proof_steps no_lambda, 0) of
+     SOME (Z3_Proof.NNF_POS ([Z3_Proof.REFL _], _)) => ()
+   | SOME _ =>
+       die "FAIL: non-lambda proof-bind parsed to unexpected structure"
+   | NONE =>
+       die "FAIL: non-lambda proof-bind did not define root proof step");
+  case Redblackmap.peek (Z3_Proof.proof_steps no_consumer, 0) of
+    SOME (Z3_Proof.MP (Z3_Proof.ASSERTED _, Z3_Proof.ASSERTED _, _)) => ()
+  | SOME _ => die "FAIL: inert proof-bind parsed to unexpected structure"
+  | NONE => die "FAIL: inert proof-bind did not define root proof step"
+end
 
 fun z3_proof_bind_replay_success () =
 let
@@ -6717,17 +6927,20 @@ in
   Library.check_oracle_tags "Z3 structured proof-bind replay" thm
 end
 
-fun z3_proof_bind_replay_shaped_failure () =
+fun z3_proof_bind_empty_annotation_replay_success () =
 let
   val body = Z3_Proof.REFL ``T = T``
   val initial = Z3_Proof.empty_proof "4.15.3"
   val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0,
     Z3_Proof.PROOF_BIND ([], body))
   val proof = Z3_Proof.update_proof_steps initial steps
+  val thm = Z3_ProofReplay.replay_root_for_test proof
 in
-  expect_hol_error_contains "proof-bind without bound variables"
-    "structured proof-bind has no bound variables"
-    (fn () => ignore (Z3_ProofReplay.replay_root_for_test proof))
+  (* proof-bind is an annotation, not a rule: an empty annotation erases to
+     its body rather than rejecting the certificate. *)
+  assert (Thm.concl thm ~~ ``T = T``,
+    "empty proof-bind annotation did not replay its body theorem");
+  Library.check_oracle_tags "Z3 empty proof-bind annotation replay" thm
 end
 
 fun z3_proof_parser_th_lemma_metadata_success () =
@@ -7287,15 +7500,25 @@ in
     "Z3 proof-bind quant-intro binder annotation" thm
 end
 
-fun z3_proof_bind_nnf_pos_shaped_failure () =
-  expect_hol_error_contains "proof-bind nnf-pos binder capture"
-    "proof rule: nnf_pos"
-    (fn () => ignore (replay_z3_proof_string
-      "((proof (nnf-pos \
-      \(proof-bind (lambda ((x Int)) \
-      \(hypothesis (= x x)))) \
-      \(~ (forall ((x Int)) (= x x)) \
-      \(forall ((x Int)) (= x x))))))"))
+fun z3_proof_bind_nnf_pos_unliftable_premise_success () =
+let
+  (* The bound variable occurs free in the premise's hypothesis, so the
+     forall congruence is not constructible.  It is an extra rewrite rather
+     than a replay precondition, so the step still replays from the
+     unlifted premise. *)
+  val thm = replay_z3_proof_string
+    "((proof (nnf-pos \
+    \(proof-bind (lambda ((x Int)) \
+    \(hypothesis (= x x)))) \
+    \(~ (forall ((x Int)) (= x x)) \
+    \(forall ((x Int)) (= x x))))))"
+  val expected = ``(!x:int. x = x) = (!x:int. x = x)``
+in
+  assert (Thm.concl thm ~~ expected,
+    "unliftable proof-bind premise: wrong conclusion " ^
+    term_with_types (Thm.concl thm));
+  Library.check_oracle_tags "Z3 unliftable proof-bind nnf-pos premise" thm
+end
 
 fun z3_remove_extra_hyps_only_p_eq_p_success () =
 let
@@ -7882,30 +8105,40 @@ fun string_prove_symbolic_rung_success () =
     fun direct name tm =
       assert_string_prover name
         SmtStringProve.symbolic_string_prove tm
+    (* Character variables carry the SMT-LIB code-point bound: ':smtstr' is
+       a bounded carrier, so 'seq_unit c' only denotes a one-character
+       string when 'c' is a code point.  On the replay path the bound comes
+       from a literal or from 'seq_nth_i_bound'. *)
     val concat_goal =
-      ``smtstr_concat p (smtstr_concat (seq_unit c) q) =
+      ``c <= 196607 /\ d <= 196607 /\
+        smtstr_concat p (smtstr_concat (seq_unit c) q) =
           seq_unit d ==> d = c``
   in
     direct "string symbolic concat" concat_goal;
     direct "string symbolic concat singleton-left"
-      ``seq_unit d =
+      ``c <= 196607 /\ d <= 196607 /\
+        seq_unit d =
           smtstr_concat p (smtstr_concat (seq_unit c) q) ==> d = c``;
     direct "string symbolic concat applied witnesses"
-      ``seq_unit 97 =
+      ``(97:num) <= 196607 /\
+        middle_char x (seq_unit 97) <= 196607 /\
+        seq_unit 97 =
           smtstr_concat (prefix_part x (seq_unit 97))
             (smtstr_concat
               (seq_unit (middle_char x (seq_unit 97)))
               (suffix_part x (seq_unit 97))) ==>
         97 = middle_char x (seq_unit 97)``;
     direct "string symbolic shared concat prefix"
-      ``seq_eq s
+      ``c <= 196607 /\ d <= 196607 /\ e <= 196607 /\
+        seq_eq s
           (smtstr_concat
-            (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) ==>
-        s = smtstr_concat p (smtstr_concat (seq_unit c) q) ==>
+            (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
+        s = smtstr_concat p (smtstr_concat (seq_unit c) q) /\
         smtstr_concat p (smtstr_concat (seq_unit d) r) = seq_unit e ==>
         seq_nth_i s 0 = c``;
     direct "string symbolic prefix"
-      ``seq_eq s
+      ``c <= 196607 /\
+        seq_eq s
           (smtstr_concat
             (seq_unit (seq_nth_i s 0)) (seq_tail s 0)) /\
         smtstr_prefixof s (seq_unit c) ==>
@@ -8190,6 +8423,11 @@ let
   val re_comp = replay_z3_proof_string
     ("((proof (rewrite (= (re.diff re.all (str.to_re \"a\")) " ^
      "(re.comp (str.to_re \"a\"))))))")
+  (* A general re.diff must keep both operands: only 're.diff re.all r'
+     abbreviates to a complement. *)
+  val re_diff = replay_z3_proof_string
+    ("((proof (rewrite (= (re.diff (str.to_re \"a\") (str.to_re \"b\")) " ^
+     "(re.diff (str.to_re \"a\") (str.to_re \"b\"))))))")
   val direct_ground = SmtStringProve.string_rewrite_prove
     ``smtstr_len (SmtStr [97; 98; 99]) = 3``
 in
@@ -8215,6 +8453,13 @@ in
         reglan_comp (reglan_to_re (SmtStr [97]))``,
     "re.comp rewrite returned the wrong equality: " ^
     Library.thm_to_string re_comp);
+  assert (Thm.concl re_diff ~~
+      ``reglan_diff (reglan_to_re (SmtStr [97]))
+          (reglan_to_re (SmtStr [98])) =
+        reglan_diff (reglan_to_re (SmtStr [97]))
+          (reglan_to_re (SmtStr [98]))``,
+    "re.diff rewrite dropped its first regex argument: " ^
+    Library.thm_to_string re_diff);
   assert (Thm.concl direct_ground ~~
       ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "direct string ground rewrite returned the wrong equality");
@@ -8683,10 +8928,14 @@ let
       smtlib_string_literal_out_of_range_diagnostic),
     ("smtlib_indexed_char_out_of_range_diagnostic",
       smtlib_indexed_char_out_of_range_diagnostic),
+    ("smtlib_indexed_char_hex_index_success",
+      smtlib_indexed_char_hex_index_success),
     ("smtlib_indexed_char_outbound_range_diagnostic",
       smtlib_indexed_char_outbound_range_diagnostic),
     ("smtlib_proof_stream_tokenizer_success",
       smtlib_proof_stream_tokenizer_success),
+    ("smtlib_proof_stream_tokenizer_marker_collision",
+      smtlib_proof_stream_tokenizer_marker_collision),
     ("smtlib_string_typed_declaration_success",
       smtlib_string_typed_declaration_success),
     ("smtlib_string_typed_binder_success",
@@ -8752,6 +9001,8 @@ let
       parse_file_datatype_elaboration_flag_off_success),
     ("parse_file_datatype_match_elaboration_success",
       parse_file_datatype_match_elaboration_success),
+    ("parse_file_match_binder_surface_sort_success",
+      parse_file_match_binder_surface_sort_success),
     ("parse_file_datatype_dependency_elaboration_success",
       parse_file_datatype_dependency_elaboration_success),
     ("parse_file_datatype_match_source_order_success",
@@ -8778,6 +9029,8 @@ let
     ("parse_file_query_commands_success", parse_file_query_commands_success),
     ("parse_file_define_fun_fragment_scope_success",
       parse_file_define_fun_fragment_scope_success),
+    ("parse_file_define_fun_body_fragment_violation_success",
+      parse_file_define_fun_body_fragment_violation_success),
     ("parse_file_define_funs_rec_fragment_scope_success",
       parse_file_define_funs_rec_fragment_scope_success),
     ("parse_legacy_define_fun_rec_hypothesis_only_success",
@@ -8918,12 +9171,16 @@ let
       cpc_proof_replay_string_rules_success),
     ("cpc_proof_replay_string_obligation_diagnostic",
       cpc_proof_replay_string_obligation_diagnostic),
+    ("cpc_proof_replay_string_premise_hypotheses",
+      cpc_proof_replay_string_premise_hypotheses),
     ("cpc_proof_parser_lambda_inline_var_apply_success",
       cpc_proof_parser_lambda_inline_var_apply_success),
     ("cpc_proof_replay_ho_conversion_rules_success",
       cpc_proof_replay_ho_conversion_rules_success),
     ("cpc_proof_replay_ho_cong_and_ite_success",
       cpc_proof_replay_ho_cong_and_ite_success),
+    ("cpc_proof_replay_ho_cong_nary_success",
+      cpc_proof_replay_ho_cong_nary_success),
     ("cpc_proof_replay_ho_rare_rewrites_success",
       cpc_proof_replay_ho_rare_rewrites_success),
     ("cpc_proof_parser_declarations_success",
@@ -8987,16 +9244,18 @@ let
       z3_proof_registry_metadata_success),
     ("z3_proof_parser_normalizes_rule_alias_success",
       z3_proof_parser_normalizes_rule_alias_success),
+    ("z3_proof_parser_erases_proof_bind_success",
+      z3_proof_parser_erases_proof_bind_success),
     ("z3_proof_parser_verbatim_lambda_binding_success",
       z3_proof_parser_verbatim_lambda_binding_success),
     ("z3_proof_parser_structures_proof_bind_success",
       z3_proof_parser_structures_proof_bind_success),
-    ("z3_proof_parser_unpinned_proof_bind_shape_diagnostic",
-      z3_proof_parser_unpinned_proof_bind_shape_diagnostic),
+    ("z3_proof_parser_erases_inert_proof_bind_success",
+      z3_proof_parser_erases_inert_proof_bind_success),
     ("z3_proof_bind_replay_success",
       z3_proof_bind_replay_success),
-    ("z3_proof_bind_replay_shaped_failure",
-      z3_proof_bind_replay_shaped_failure),
+    ("z3_proof_bind_empty_annotation_replay_success",
+      z3_proof_bind_empty_annotation_replay_success),
     ("z3_proof_parser_th_lemma_metadata_success",
       z3_proof_parser_th_lemma_metadata_success),
     ("z3_proof_parser_advanced_th_lemma_metadata_success",
@@ -9037,8 +9296,8 @@ let
       z3_proof_bind_consumers_replay_success),
     ("z3_proof_bind_quant_intro_binder_annotation_ignored",
       z3_proof_bind_quant_intro_binder_annotation_ignored),
-    ("z3_proof_bind_nnf_pos_shaped_failure",
-      z3_proof_bind_nnf_pos_shaped_failure),
+    ("z3_proof_bind_nnf_pos_unliftable_premise_success",
+      z3_proof_bind_nnf_pos_unliftable_premise_success),
     ("z3_remove_extra_hyps_only_p_eq_p_success",
       z3_remove_extra_hyps_only_p_eq_p_success),
     ("z3_core_proof_rule_replay_minimal_raw_success",

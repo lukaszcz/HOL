@@ -172,7 +172,11 @@ struct
     | "Int" => SOME (PD.dTyop {Tyop = "int", Thy = SOME "integer", Args = []})
     | "Real" => SOME (PD.dTyop {Tyop = "real", Thy = SOME "realax",
         Args = []})
-    | "String" => SOME (PD.dAQ stringSyntax.string_ty)
+    (* The same carrier the UnicodeStrings dictionary decodes 'String' to.
+       HOL's ':string' is a char list and is no longer the SMT 'String'
+       sort, so elaborating a field at that type would not survive
+       re-emission. *)
+    | "String" => SOME (PD.dAQ SmtLib_Theories.UnicodeStrings.string_ty)
     | _ => NONE
 
   fun fun_pretype (domain, range) =
