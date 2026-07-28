@@ -258,19 +258,34 @@ val CS_DEEPEN_TAC = deepen_tac
 fun invocation_claset theorems =
   clasetLib.invocation_claset (clasetLib.the_claset ()) theorems
 
-fun public_raw tactic theorems goal =
+fun with_facts build theorems goal =
   let
     val (cs, facts) = invocation_claset theorems
     val insert = NTactical.LIFT (clasetLib.INSERT_FACTS_TAC facts)
   in
-    NTactical.DETERM
-      (NTactical.NTHEN (insert, tactic cs)) goal
+    NTactical.DETERM (build insert cs) goal
   end
 
-fun public tactic = markerLib.ABBRS_THEN (public_raw tactic)
+fun public_raw tactic =
+  with_facts (fn insert => fn cs => NTactical.NTHEN (insert, tactic cs))
 
-fun SAFE_TAC theorems = public safe_tac theorems
-fun CLARIFY_TAC theorems = public clarify_tac theorems
+(* The saturating tactics report a no-op as failure, and inserting a fact is
+   not a no-op, so their progress test spans the whole invocation: an engine
+   that finds no step leaves the supplied facts in the residue instead of
+   discarding them.  With nothing to insert this is exactly the engine's own
+   test.  The step tactics keep theirs, since one that could "succeed" by
+   inserting alone would make NREPEAT insert for ever. *)
+fun progress_raw tactic =
+  with_facts
+    (fn insert => fn cs =>
+      NTactical.NCHANGED
+        (NTactical.NTHEN (insert, NTactical.NTRY (tactic cs))))
+
+fun public tactic = markerLib.ABBRS_THEN (public_raw tactic)
+fun progress tactic = markerLib.ABBRS_THEN (progress_raw tactic)
+
+fun SAFE_TAC theorems = progress safe_tac theorems
+fun CLARIFY_TAC theorems = progress clarify_tac theorems
 fun SAFE_STEP_TAC theorems = public safe_step_tac theorems
 fun CLARIFY_STEP_TAC theorems = public clarify_step_tac theorems
 fun STEP_TAC theorems = public step_tac theorems

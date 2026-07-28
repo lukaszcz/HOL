@@ -35,8 +35,19 @@ declaring theorem's `Thy.name`, so `Excl "Thy.name"`, `delsimps`, and
 `temp_delsimps` affect it exactly as they affect a rewrite declared with
 `[simp]`; none of those simpset-only controls removes the classical view.
 
-Use `clasimpLib.remove_iff "name"` to record removal. Use `Iff th` for the
-same two derived views during one clasimp tactic invocation only.
+A theory's `[iff]` rewrites form a simpset fragment of their own, named
+`Thy-iff`, distinct from the `Thy` fragment carrying its `[simp]`
+declarations. `ExclSF`, `diminish_srw_ss` and `exclude_ssfrags` therefore
+address the two streams separately.
+
+Only a delsimps that names the rewrite in qualified form is persistent. A
+bare `delsimps ["name"]` matches any rewrite of that name from any theory,
+so it is read as aimed at the ancestor rewrite it names, and it reaches a
+same-named local `[iff]` declaration for the current session only. Use
+`clasimpLib.remove_iff "name"` to retract a declaration persistently, or
+`delsimps ["Thy.name.__clasimp_iff"]` to retract just its rewrite. Use
+`Iff th` for the same two derived views during one clasimp tactic
+invocation only.
 
 ### Failure
 

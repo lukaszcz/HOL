@@ -148,8 +148,9 @@ fun add_rule_by extend spec named_th
 val add_rule = add_rule_by extend_decl
 
 (* Rules a library derives from a user declaration rather than rules the
-   user named.  A duplicate among them is an internal coincidence, so it is
-   dropped without the diagnostics add_rule prints. *)
+   user named.  Such a rule belongs to the declaration that produced it, so
+   it is installed even when its conclusion duplicates an installed rule,
+   and it carries none of the diagnostics add_rule prints. *)
 val add_derived_rule = add_rule_by extend_derived_decl
 
 val sintro_spec = {kind = Intro, safe = true, prio = NONE}

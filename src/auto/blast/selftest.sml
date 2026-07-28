@@ -4279,6 +4279,27 @@ val _ =
          List.all same table1_depths
        end)
 
+(* The elimination rules that decompose a negated implication or universal
+   are not seeded into the default claset, so a caller passing a claset of
+   its own would search without them if the entry point did not add them. *)
+val _ =
+  test
+    ("a claset given to CS_BLAST_DEPTH_TAC gains the blast elim rules",
+     fn () =>
+       let
+         val p = mk_var ("blast_selims_p", Type.bool)
+         val q = mk_var ("blast_selims_q", Type.bool)
+         val cs = clasetLib.the_claset ()
+         val seeded =
+           List.exists
+             (fn (_, (name, _)) => name = "blast_not_imp")
+             (clasetLib.rules_of cs)
+       in
+         not seeded andalso
+         blast_solves (tableauLib.CS_BLAST_DEPTH_TAC cs 4)
+           ([mk_neg (mk_imp (p, q))], p)
+       end)
+
 val _ =
   test
     ("Table-1 depth accounting rejects shallower bounds",

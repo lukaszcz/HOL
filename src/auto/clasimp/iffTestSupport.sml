@@ -41,15 +41,40 @@ fun has_named_rule name theorem =
       name = name' andalso aconv (concl theorem) (concl theorem'))
     (clasetLib.rules_of (clasetLib.the_claset ()))
 
-fun has_iff_rules name =
-  let val stem = name ^ ".__clasimp_iff"
-  in has_rule (stem ^ "_intro") andalso has_rule (stem ^ "_dest")
+(* Each shape of [iff] declaration derives its own rules, so a test names
+   the shape it expects and the check is exact: a rule of another shape left
+   behind is as much a defect as a missing one. *)
+datatype iff_shape = IffShape | NegShape | PlainShape
+
+val iff_rule_suffixes = ["_intro", "_dest", "_elim"]
+
+fun shape_suffixes IffShape = ["_intro", "_dest"]
+  | shape_suffixes NegShape = ["_elim"]
+  | shape_suffixes PlainShape = ["_intro"]
+
+fun iff_rule_stem name = name ^ ".__clasimp_iff"
+
+fun has_iff_rules_of shape name =
+  let
+    val stem = iff_rule_stem name
+    val expected = shape_suffixes shape
+  in
+    List.all
+      (fn suffix =>
+        has_rule (stem ^ suffix) = Lib.mem suffix expected)
+      iff_rule_suffixes
   end
 
+val has_iff_rules = has_iff_rules_of IffShape
+
+(* The complement of every shape at once: what a retraction must leave. *)
+fun has_any_iff_rules name =
+  List.exists (fn suffix => has_rule (iff_rule_stem name ^ suffix))
+    iff_rule_suffixes
+
 (* How many fragments of [ss] carry one of the named iff rewrites.  Counting
-   by fragment name would not do: ssfrag_names_of de-duplicates, and a
-   theory's simp declarations already contribute a fragment of the same
-   name as the iff batch. *)
+   by fragment name would not do: ssfrag_names_of de-duplicates, and one
+   theory can contribute several iff batches. *)
 fun iff_fragment_count names ss =
   let
     val wanted =

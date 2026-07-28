@@ -17,8 +17,12 @@ sig
   val add_rule : rulespec -> string * thm -> claset -> claset
 
   (* Adds a rule a library derived from a user declaration.  Behaves as
-     add_rule, but a duplicate or cross-kind clash among derived rules is
-     dropped silently instead of warning on every invocation. *)
+     add_rule, but a cross-kind clash is not reported -- the caller never
+     named the rule, and invocation-scoped tactics would warn on every goal
+     -- and a rule whose conclusion duplicates an installed one is added
+     rather than dropped, so each declaration owns the rules derived from
+     it and retracting one leaves another's in place.  A name already in
+     use is still refused. *)
   val add_derived_rule : rulespec -> string * thm -> claset -> claset
 
   val add_sintros : (string * thm) list -> claset -> claset
@@ -108,7 +112,11 @@ sig
   val invocation_claset : claset -> thm list -> claset * thm list
 
   (* Inserts the facts so that they appear in the assumption list in the
-     order given, as Isabelle's cut_facts_tac does. *)
+     order given.  They occupy the most-recent end, ahead of the goal's own
+     assumptions, which is what the classical engines' recency tie-break and
+     FIRST_ASSUM see first; Isabelle's cut_facts_tac instead makes them the
+     first premises, so a traversal that starts from the oldest assumption
+     -- asm_full_simp's, for one -- reaches them last rather than first. *)
   val INSERT_FACTS_TAC : thm list -> tactic
 
   (* The persistent form of a rule name, as recorded in the claset delta

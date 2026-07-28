@@ -16,7 +16,7 @@ val _ =
   then fail "the sibling addition was not ancestry-merged into the claset"
   else if not (has_iff_rewrite add_name)
   then fail "the sibling addition was not ancestry-merged into the simpsets"
-  else if has_iff_rules root_name
+  else if has_any_iff_rules root_name
   then fail "the sibling removal did not beat the root claset addition"
   else if has_iff_rewrite root_name
   then fail "the sibling removal did not beat the root simpset addition"

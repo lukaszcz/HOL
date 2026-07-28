@@ -95,22 +95,34 @@ val derived_before =
   Conv.QCONV
     (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []) derived_lhs
 
-val _ =
-  BasicProvers.augment_srw_ss
-    [simpLib.named_rewrites "clasimp-selftest-derived" [derived_rule]]
-
+(* The extra rewrite is scoped to this one probe: the tests below run
+   against the ambient simpsets, and a rewrite with a live hypothesis left
+   in srw_ss would make an unrelated one fail for an unrelated reason. *)
 val derived_after =
+  BasicProvers.with_simpset_updates
+    (fn ss =>
+      simpLib.++
+        (ss, simpLib.named_rewrites "clasimp-selftest-derived"
+               [derived_rule]))
+    (fn () =>
+      Conv.QCONV
+        (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []) derived_lhs)
+    ()
+
+val derived_restored =
   Conv.QCONV
     (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []) derived_lhs
 
 val _ =
   test
-    ("clasimpset cache recomputes after augment_srw_ss",
+    ("clasimpset cache recomputes around a simpset update",
      fn () =>
        aconv (snd (boolSyntax.dest_eq (concl derived_before)))
          derived_lhs andalso
        aconv (snd (boolSyntax.dest_eq (concl derived_after)))
-         derived_rhs)
+         derived_rhs andalso
+       aconv (snd (boolSyntax.dest_eq (concl derived_restored)))
+         derived_lhs)
 
 val mutual_goal =
   ([``P (a:'a) : bool``, ``a:'a = b``], ``mutual_q:bool``)
@@ -339,7 +351,7 @@ val _ =
 
 val _ =
   test
-    ("remove_iff preserves colliding rules for an absent declaration",
+    ("a rejected remove_iff leaves a colliding claset rule installed",
      fn () =>
        let
          val local_name = "clasimp_absent_iff_test"
@@ -351,7 +363,9 @@ val _ =
          val theorem =
            ASSUME (mk_var ("clasimp_absent_iff_rule", Type.bool))
          val _ = clasetLib.temp_add_rule spec (rule_name, theorem)
-         val _ = clasimpLib.remove_iff local_name
+         val rejected =
+           (clasimpLib.remove_iff local_name; false)
+             handle HOL_ERR _ => true
          val preserved =
            List.exists
              (fn (_, (name, rule)) =>
@@ -359,29 +373,34 @@ val _ =
              (clasetLib.rules_of (clasetLib.the_claset ()))
          val _ = clasetLib.temp_delrule rule_name
        in
-         preserved
+         rejected andalso preserved
        end)
 
-(* A delta the finaliser cannot parse would make the exported theory, and
-   every descendant of it, fail to load. *)
+(* A name that denotes no installed declaration would be recorded as a
+   delta that this theory, and every descendant of it, replays as a silent
+   no-op -- and a malformed one would make them fail to load outright. *)
 val _ =
   test
-    ("remove_iff rejects a malformed name before recording a delta",
+    ("remove_iff rejects an unresolvable name before recording a delta",
      fn () =>
        let
          fun deltas () =
            length (ThmSetData.current_data {settype = "iff"})
          val before_delta = deltas ()
-         val raised =
-           (clasimpLib.remove_iff "clasimp.absent.iff"; false)
-             handle HOL_ERR _ => true
+         fun rejects name =
+           (clasimpLib.remove_iff name; false) handle HOL_ERR _ => true
        in
-         raised andalso deltas () = before_delta
+         rejects "clasimp.absent.iff" andalso
+         rejects "clasimp_absent_iff_name" andalso
+         deltas () = before_delta
        end)
 
+(* Two declarations may derive the same rule; each still owns its copy, so
+   retracting one cannot disarm the other.  Neither is a declaration the
+   user could correct, so neither warns. *)
 val _ =
   test
-    ("a derived iff rule the claset already has is dropped without warning",
+    ("a derived iff rule duplicating an installed one is kept, unannounced",
      fn () =>
        let
          val theorem = clasimp_iff_attribute_probe_def
@@ -399,9 +418,21 @@ val _ =
            clasimpLib.add_iff_rules second cs
              handle e => (Feedback.WARNING_outstream := saved; raise e)
          val _ = Feedback.WARNING_outstream := saved
+         val retracted =
+           List.foldl
+             (fn ((_, (name, _)), current) =>
+               clasetLib.remove_rule name current)
+             cs' first
+         fun installed cs (_, (name, _)) =
+           List.exists (fn (_, (name', _)) => name = name')
+             (clasetLib.rules_of cs)
        in
          null (!warnings) andalso
-         length (clasetLib.rules_of cs') = length (clasetLib.rules_of cs)
+         length (clasetLib.rules_of cs') =
+           length (clasetLib.rules_of cs) + length second andalso
+         List.all (installed cs') second andalso
+         List.all (installed retracted) second andalso
+         not (List.exists (installed retracted) first)
        end)
 
 fun tyinfo_named tyop =

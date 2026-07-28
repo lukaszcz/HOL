@@ -70,6 +70,15 @@ such as `Once th` are unwrapped and inserted, while inert generic controls
 such as `Cong`, `Excl` and `SF` are ignored. Explicit rule roles therefore
 always require one of the six rule markers.
 
+Insertion is `ASSUME_TAC`, so a theorem carrying hypotheses contributes them
+to the proved theorem whether or not the search uses it, exactly as
+`ASSUME_TAC` and `MP_TAC` do elsewhere. That is what makes
+`FIRST_ASSUM (fn th => AUTO_TAC [th])` valid, its hypothesis already being
+an assumption of the goal; a theorem whose hypotheses are not assumptions of
+the goal makes the invocation fail under `VALID`. Supply such a theorem
+under a rule marker instead, and its hypotheses reach the result only if the
+rule fires.
+
 Clasimp theorem lists additionally recognize `Simp th`, which adds only a
 temporary rewrite, and `Iff th`, which adds temporary rewrite and classical
 views. Classical-only and tableau tactics reject those two markers because

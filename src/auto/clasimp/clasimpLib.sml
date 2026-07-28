@@ -83,9 +83,11 @@ fun iff_declaration name theorem =
     {rules = clasetLib.iff_rules name theorem, rewrite = th}
   end
 
-(* The derived rules are internal to the [iff] declaration, so a duplicate
-   among them is not a declaration the user can correct.  add_derived_rule
-   drops it silently instead of warning once per goal. *)
+(* The derived rules are internal to the [iff] declaration, so a clash among
+   them is not a declaration the user can correct.  add_derived_rule keeps
+   the diagnostics quiet, and gives each declaration its own copy of a rule
+   two declarations happen to derive alike, so retracting one declaration
+   cannot silently disarm another. *)
 fun add_iff_rules rules cs =
   List.foldl
     (fn ((rule_spec, named_rule), current) =>
@@ -122,9 +124,9 @@ fun iff_simp_delete_key kname =
 
 (* The one spelling of an iff rule name, shared by the declaration path and
    by the theory finaliser: the kernel "Thy$Name" form, the public "Thy.Name"
-   form, or a bare name resolved against [default_thy].  Parsing in one place
-   is what lets remove_iff reject a name up front, so a name a descendant
-   theory could not parse never reaches the delta stream. *)
+   form, or a bare name resolved against [default_thy].  remove_iff records
+   only the kernel form, so the [default_thy] fallback serves the finaliser's
+   reading of a name it did not itself record. *)
 fun iff_kname {default_thy} name =
   case String.fields (equal #"$") name of
       [thy, theorem] => {Thy = thy, Name = theorem}
@@ -143,11 +145,19 @@ fun remove_iff_rules name =
   clasetLib.remove_rule (name ^ "_dest") o
   clasetLib.remove_rule (name ^ "_elim")
 
-(* The simp stream is loaded before this later-registered iff stream.  An
-   explicit delsimps in the declaring theory is respected instead of the iff
-   view resurrecting the named rewrite behind it.  Both the declaration path
-   and the finaliser apply the predicate, so what a session ends with is what
-   a descendant theory reloads. *)
+(* The simp stream is loaded before this later-registered iff stream, so a
+   delsimps in the declaring theory would otherwise find the iff view
+   resurrecting the named rewrite behind it.  The predicate makes such a
+   removal persist, and both the declaration path and the finaliser apply
+   it, so what a session ends with is what a descendant theory reloads.
+
+   Only a theory-qualified removal counts.  A bare name is theory-agnostic
+   in simp and matches by prefix, so honouring one here would let a
+   delsimps aimed at an ancestor's rewrite silently suppress an unrelated
+   local [iff] declaration that happens to share the theorem's name -- and
+   the two delta streams carry no common ordering with which to tell the
+   two apart.  remove_iff is the supported way to drop one's own
+   declaration; a bare delsimps of it reaches the current session only. *)
 fun theory_delsimped thyname =
   let
     val names =
@@ -158,8 +168,8 @@ fun theory_delsimped thyname =
         (ThmSetData.theory_data {settype = "simp", thy = thyname})
   in
     fn (kname : KernelSig.kernelname) =>
-      Symtab.defined names (#Name kname) orelse
-      Symtab.defined names (simp_delete_key kname)
+      Symtab.defined names (simp_delete_key kname) orelse
+      Symtab.defined names (iff_simp_delete_key kname)
   end
 
 (* Installing and retracting a single declaration and installing a theory's
@@ -178,6 +188,13 @@ fun retract_persistent_iffs [] = ()
         clasetLib.augment_claset remove_rules
       end
 
+(* The iff batch is a fragment of its own rather than one more contribution
+   to the fragment BasicProvers names after the theory.  Sharing that name
+   would leave Excl/ExclSF, diminish_srw_ss and exclude_ssfrags unable to
+   address the [simp] and [iff] streams separately, and would let an
+   exclusion already in force drop the whole batch unannounced. *)
+fun iff_fragment_name thyname = thyname ^ "-iff"
+
 fun install_persistent_iffs thyname declarations =
   let
     val delsimped = theory_delsimped thyname
@@ -193,7 +210,7 @@ fun install_persistent_iffs thyname declarations =
       if null rewrites then ()
       else
         BasicProvers.augment_srw_ss
-          [simpLib.named_rewrites_with_names thyname
+          [simpLib.named_rewrites_with_names (iff_fragment_name thyname)
              (map
                 (fn (kname, theorem) =>
                   (iff_simp_kname kname, Drule.SPEC_ALL theorem))
@@ -302,14 +319,36 @@ val iff_data =
         initial_value = Symtab.empty,
         apply_delta = apply_iff_delta}}
 
+(* Resolve against the declarations currently installed rather than against
+   the current theory.  Removing an ancestor's declaration by its plain name
+   is the ordinary case, and defaulting the theory part to the current
+   theory would name nothing and retract nothing, silently.  Resolving here
+   also settles the name before it reaches the delta stream: a descendant
+   theory replays the recorded name, so an unknown or ambiguous one would
+   otherwise be replayed as a no-op by every descendant in turn. *)
+fun resolve_iff_name name =
+  let
+    val installed = Symtab.keys (#get_global_value iff_data ())
+    fun denotes candidate =
+      candidate = name orelse
+      (case String.fields (equal #"$") candidate of
+           [thy, theorem] => theorem = name orelse thy ^ "." ^ theorem = name
+         | _ => false)
+  in
+    case List.filter denotes installed of
+        [resolved] => resolved
+      | [] =>
+          raise ERR "remove_iff"
+            ("no [iff] declaration named " ^ name ^ " is installed")
+      | candidates =>
+          raise ERR "remove_iff"
+            ("ambiguous [iff] name " ^ name ^ ": " ^
+             String.concatWith ", " candidates)
+  end
+
 fun remove_iff name =
   let
-    val normalised = normalise_iff_name name
-    (* Parse before recording anything: a delta whose name the finaliser
-       cannot parse would make the exported theory, and every descendant of
-       it, fail to load. *)
-    val _ = persistent_iff_kname normalised
-    val delta = ThmSetData.REMOVE normalised
+    val delta = ThmSetData.REMOVE (resolve_iff_name name)
   in
     #record_delta iff_data delta;
     #update_global_value iff_data (apply_iff_to_global delta)
@@ -363,13 +402,9 @@ fun auto_with {blast, depth} cs ss simp_args =
     val final_cs = add_safe_simp_wrapper ss simp_args cs
     val initial_safe =
       NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
-    (* The blast leg gets the elimination rules every other blast entry
-       point adds; without them the engine cannot decompose a negated
-       implication or universal left in the residue. *)
     val search =
       Tactical.ORELSE
-        (tableauLib.CS_BLAST_DEPTH_TAC
-           (tableauLib.add_blast_selims cs) blast,
+        (tableauLib.CS_BLAST_DEPTH_TAC cs blast,
          NTactical.DETERM
            (classicalLib.CS_DEPTH_SOLVE_TAC
               {dup = false} depth search_cs))

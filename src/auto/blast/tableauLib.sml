@@ -11,15 +11,17 @@ type try_result =
 
 val depth_limit = blastSearch.depth_limit
 
+(* The safe elimination rules the tableau engine needs to decompose a
+   negated implication or a negated universal.  Every search goes through
+   run_depths, which is where they are added, so no caller can hand the
+   engine a claset that lacks them. *)
 val add_blast_selims =
   clasetLib.add_selims
     [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
      ("blast_not_forall", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
 
-fun blast_claset () = add_blast_selims (clasetLib.the_claset ())
-
 fun invocation_claset theorems =
-  clasetLib.invocation_claset (blast_claset ()) theorems
+  clasetLib.invocation_claset (clasetLib.the_claset ()) theorems
 
 fun invoke tactic theorems goal =
   let
@@ -114,8 +116,9 @@ fun failed_stats summary search_time reconstruction_time =
      "; reconstruction " ^
      Time.toString reconstruction_time ^ "s")
 
-fun run_depths cs initial_depth next_depth goal =
+fun run_depths base_cs initial_depth next_depth goal =
   let
+    val cs = add_blast_selims base_cs
     val started = Time.now ()
     val reconstruction_time = ref Time.zeroTime
     (* Ordinary public tactics retain the uninstrumented search path.  The
@@ -214,7 +217,8 @@ fun tryIt depth theorems goal =
     val (cs, facts) = invocation_claset theorems
     val (goals, _) = clasetLib.INSERT_FACTS_TAC facts goal
   in
-    blastSearch.debugGoal cs depth (Lib.singleton_of_list goals)
+    blastSearch.debugGoal (add_blast_selims cs) depth
+      (Lib.singleton_of_list goals)
   end
 
 end

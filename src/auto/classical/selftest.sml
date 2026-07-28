@@ -2099,6 +2099,24 @@ val _ =
          tactic_fails (classicalLib.CLARIFY_STEP_TAC []) goal
        end)
 
+(* Inserting a fact changes the goal, so the invocation has made progress
+   even when the engine then finds no step; discarding the fact would fail
+   an invocation that did change something. *)
+val _ =
+  test
+    ("safe and clarify tactics keep an inserted fact when nothing steps",
+     fn () =>
+       let
+         val theorem = boolTheory.TRUTH
+         val goal = ([], goal_p)
+         val expected = [([concl theorem], goal_p)]
+         fun residues tactic =
+           #1 (Tactical.VALID (tactic [theorem]) goal)
+       in
+         same_goals (residues classicalLib.SAFE_TAC) expected andalso
+         same_goals (residues classicalLib.CLARIFY_TAC) expected
+       end)
+
 val _ =
   test
     ("an unmarked theorem is visible in non-closing tactic residues",

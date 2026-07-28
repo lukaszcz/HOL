@@ -718,19 +718,26 @@ fun duplicate decl ds =
 fun rule_description ({kind, safe, ...} : rulespec) =
   (if safe then "safe " else "unsafe ") ^ kind_name kind ^ " rule"
 
-(* [quiet] suppresses the duplicate and cross-kind diagnostics.  Only
-   internally derived rules use it: a rule the caller never named cannot be
-   the declaration mistake those warnings are meant to report, and the
-   invocation-scoped tactics would otherwise repeat them on every goal. *)
-fun extend_decl_gen {quiet} (decl : decl) (Decls {next, byconcl, byname}) =
+(* [derived] marks a rule a library computed from a user declaration rather
+   than one the user named.  Such a rule carries neither the duplicate and
+   cross-kind diagnostics -- a rule the caller never named cannot be the
+   declaration mistake those warnings are meant to report, and the
+   invocation-scoped tactics would otherwise repeat them on every goal --
+   nor the refusal of a rule whose conclusion duplicates an installed one.
+   A derived rule belongs to the declaration that produced it, so two
+   declarations deriving the same rule each own a copy: retracting one must
+   leave the other's contribution in place.  Name collisions are refused
+   either way, since a name identifies at most one declaration. *)
+fun extend_decl_gen {derived} (decl : decl) (Decls {next, byconcl, byname}) =
   let
     val key = canonical_key (#orig decl)
     val old = Option.getOpt (Termtab.lookup byconcl key, [])
     val unchanged = Decls {next = next, byconcl = byconcl, byname = byname}
     fun warn message =
-      if quiet then () else HOL_WARNING "clasetRules" "extend_decl" message
+      if derived then ()
+      else HOL_WARNING "clasetRules" "extend_decl" message
   in
-    if duplicate decl old orelse
+    if (duplicate decl old andalso not derived) orelse
        Option.isSome (Symtab.lookup byname (#name decl))
     then
       (warn ("Ignoring duplicate " ^ rule_description (#spec decl));
@@ -756,8 +763,8 @@ fun extend_decl_gen {quiet} (decl : decl) (Decls {next, byconcl, byname}) =
       end
   end
 
-val extend_decl = extend_decl_gen {quiet = false}
-val extend_derived_decl = extend_decl_gen {quiet = true}
+val extend_decl = extend_decl_gen {derived = false}
+val extend_derived_decl = extend_decl_gen {derived = true}
 
 fun remove_decl name (decls as Decls {next, byconcl, byname}) =
   case Symtab.lookup byname name of
