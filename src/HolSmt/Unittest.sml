@@ -8599,6 +8599,111 @@ fun z3_tac_oracle_tag_gate_rejects_oracle_thm () =
         "oracle gate diagnostic did not mention unexpected tags: " ^ msg)
     end
 
+fun smt_resource_diagnostic_contract () =
+let
+  val proof_diagnostic =
+    "resource-gated: fp-bitblast; limit=proof-size; " ^
+    "observed=16777217 bytes; maximum=16777216 bytes; " ^
+    "feature=resource-gate:FloatingPoint:z3-proof-text"
+  val time_diagnostic =
+    "resource-gated: fp-bitblast; limit=step-time; maximum=10 s; " ^
+    "feature=resource-gate:FloatingPoint:comparison-step"
+  val term_diagnostic =
+    "resource-gated: fp-bitblast; limit=term-size; " ^
+    "observed=200001 nodes; maximum=200000 nodes; " ^
+    "feature=resource-gate:FloatingPoint:comparison-goal"
+  fun expect_gate label expected thunk =
+    (thunk ();
+     die ("FAIL: " ^ label ^ " did not resource-gate"))
+    handle Feedback.HOL_ERR holerr =>
+      let val observed = Feedback.message_of holerr
+      in
+        assert (SmtResource.is_resource_gate holerr,
+          label ^ " did not raise the reserved resource diagnostic");
+        assert (observed = expected,
+          label ^ " diagnostic mismatch\nexpected: " ^ expected ^
+          "\nobserved: " ^ observed)
+      end
+in
+  assert (SmtResource.max_z3_proof_bytes = 16777216,
+    "Z3 proof-size budget is not 16 MB");
+  assert (Time.toSeconds SmtResource.max_bitblast_step_time = 10,
+    "bit-blast step-time budget is not 10 seconds");
+  assert (SmtResource.max_bitblast_term_nodes = 200000,
+    "bit-blast term-size budget is not 200k nodes");
+  SmtResource.check_proof_size "z3-proof-text" 16777216;
+  SmtResource.check_term_size "comparison-goal" 200000;
+  SmtResource.check_bitblast_goal "small-goal" boolSyntax.T;
+  expect_gate "proof-size cap" proof_diagnostic (fn () =>
+    SmtResource.check_proof_size "z3-proof-text" 16777217);
+  expect_gate "term-size cap" term_diagnostic (fn () =>
+    SmtResource.check_term_size "comparison-goal" 200001);
+  expect_gate "step-time cap" time_diagnostic (fn () =>
+    SmtResource.with_bitblast_step_time "comparison-step"
+      (fn () => raise Timeout.TIMEOUT Time.zeroTime) ())
+end
+
+fun smt_resource_proof_pre_gate_precedes_parser () =
+let
+  val path = OS.FileSys.tmpName ()
+  val block = String.implode (List.tabulate (4096, fn _ => #"("))
+  val parser_invoked = ref false
+  val expected =
+    "resource-gated: fp-bitblast; limit=proof-size; " ^
+    "observed=16777217 bytes; maximum=16777216 bytes; " ^
+    "feature=resource-gate:FloatingPoint:z3-proof-text"
+  fun remove () = OS.FileSys.remove path handle _ => ()
+  fun write_oversized_proof () =
+    let
+      val outstream = TextIO.openOut path
+      fun blocks 0 = ()
+        | blocks n = (TextIO.output (outstream, block); blocks (n - 1))
+    in
+      TextIO.output (outstream, "unsat\n");
+      blocks 4096;
+      TextIO.output (outstream, "x");
+      TextIO.closeOut outstream
+    end
+  fun check_file () =
+    let
+      val instream = TextIO.openIn path
+      fun close () = TextIO.closeIn instream handle _ => ()
+      fun check () =
+        let
+          val (result, proof_start) =
+            Z3.is_sat_stream_with_consumed instream
+          val () =
+            case result of
+              SolverSpec.UNSAT NONE => ()
+            | _ => die
+                "FAIL: synthetic oversized Z3 output did not start with unsat"
+        in
+          ignore (SmtResource.with_z3_proof_size_gate "z3-proof-text"
+            path proof_start instream
+            (fn _ => (parser_invoked := true; ())))
+        end
+    in
+      Portable.finally close check ()
+    end
+  fun run () =
+    (write_oversized_proof ();
+     check_file ();
+     die "FAIL: oversized synthetic proof text passed its pre-gate")
+    handle Feedback.HOL_ERR holerr =>
+      let val observed = Feedback.message_of holerr
+      in
+        assert (SmtResource.is_resource_gate holerr,
+          "oversized proof raised a non-resource diagnostic: " ^ observed);
+        assert (observed = expected,
+          "proof pre-gate diagnostic mismatch\nexpected: " ^ expected ^
+          "\nobserved: " ^ observed);
+        assert (not (!parser_invoked),
+          "Z3 proof parser callback ran before the proof-size gate")
+      end
+in
+  Portable.finally remove run ()
+end
+
 fun z3_reconstructed_theorem_contract_success () =
   ignore (Z3.check_reconstructed_theorem "unit-test"
     (([], boolSyntax.T), boolTheory.TRUTH))
@@ -9354,6 +9459,10 @@ let
       z3_proof_replay_malformed_premise_diagnostics),
     ("z3_tac_oracle_tag_gate_rejects_oracle_thm",
       z3_tac_oracle_tag_gate_rejects_oracle_thm),
+    ("smt_resource_diagnostic_contract",
+      smt_resource_diagnostic_contract),
+    ("smt_resource_proof_pre_gate_precedes_parser",
+      smt_resource_proof_pre_gate_precedes_parser),
     ("z3_reconstructed_theorem_contract_success",
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",

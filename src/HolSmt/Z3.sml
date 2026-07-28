@@ -4,23 +4,33 @@
 
 structure Z3 = struct
 
+  (* Returns Z3's result and the number of bytes consumed before proof text.
+     Z3's status lines are ASCII, so String.size is also their byte count. *)
+  fun is_sat_stream_with_consumed instream =
+    let
+      fun scan consumed =
+        case TextIO.inputLine instream of
+          NONE => (SolverSpec.UNKNOWN NONE, consumed)
+        | SOME line =>
+            let
+              val consumed = consumed + String.size line
+              val trimmed = Substring.string
+                (Substring.dropl Char.isSpace (Substring.full line))
+            in
+              if String.isPrefix "(error" trimmed then
+                (SolverSpec.UNKNOWN (SOME line), consumed)
+              else
+                case String.tokens Char.isSpace line of
+                  ["sat"] => (SolverSpec.SAT NONE, consumed)
+                | ["unsat"] => (SolverSpec.UNSAT NONE, consumed)
+                | _ => scan consumed
+            end
+    in
+      scan 0
+    end
+
   (* returns SAT if Z3 reported "sat", UNSAT if Z3 reported "unsat" *)
-  fun is_sat_stream instream =
-    case TextIO.inputLine instream of
-      NONE => SolverSpec.UNKNOWN NONE
-    | SOME line =>
-        let
-          val trimmed = Substring.string
-            (Substring.dropl Char.isSpace (Substring.full line))
-        in
-          if String.isPrefix "(error" trimmed then
-            SolverSpec.UNKNOWN (SOME line)
-          else
-            case String.tokens Char.isSpace line of
-              ["sat"] => SolverSpec.SAT NONE
-            | ["unsat"] => SolverSpec.UNSAT NONE
-            | _ => is_sat_stream instream
-        end
+  fun is_sat_stream instream = Lib.fst (is_sat_stream_with_consumed instream)
 
   fun is_sat_file path =
     let
@@ -247,26 +257,36 @@ structure Z3 = struct
         fn outfile =>
           let
             val instream = TextIO.openIn outfile
-            val result = is_sat_stream instream
+            val (result, proof_start) = is_sat_stream_with_consumed instream
           in
             case result of
               SolverSpec.UNSAT NONE =>
               let
                 val (ty_dict, tm_dict) =
                   SmtLib.parser_dicts_for_translation translation
-                (* parse the proof and check it in HOL *)
-                val proof = Z3_ProofParser.parse_stream_with_version
-                  (ty_dict, tm_dict) (version_string ()) instream
+                (* Reject oversized proof text before the untrusted proof
+                   parser reads even its first token. *)
+                val proof =
+                  SmtResource.with_z3_proof_size_gate "z3-proof-text"
+                    outfile proof_start instream
+                    (Z3_ProofParser.parse_stream_with_version
+                      (ty_dict, tm_dict) (version_string ()))
                   handle Feedback.HOL_ERR holerr =>
                     (TextIO.closeIn instream;
-                     raise_with_context "Z3_SMT_Prover" "proof parse"
-                       (current_proof_cmd_stem ()) holerr)
+                     if SmtResource.is_resource_gate holerr then
+                       raise Feedback.HOL_ERR holerr
+                     else
+                       raise_with_context "Z3_SMT_Prover" "proof parse"
+                         (current_proof_cmd_stem ()) holerr)
                 val _ = TextIO.closeIn instream
                 val (As, g) = goal
                 val thm = Z3_ProofReplay.check_proof (As, g, proof)
                   handle Feedback.HOL_ERR holerr =>
-                    raise_with_context "Z3_SMT_Prover" "proof replay"
-                      (current_proof_cmd_stem ()) holerr
+                    if SmtResource.is_resource_gate holerr then
+                      raise Feedback.HOL_ERR holerr
+                    else
+                      raise_with_context "Z3_SMT_Prover" "proof replay"
+                        (current_proof_cmd_stem ()) holerr
                 val thm = Thm.CCONTR g thm
                 val thm = validation [thm]
                 val thm = check_reconstructed_theorem "Z3_SMT_Prover"

@@ -19,6 +19,7 @@ SmtLib_Logics.sml       SMT-LIB 2 logics.
 SmtLib_Parser.sml       Parsing of SMT-LIB 2 benchmarks.
 SmtLib_Theories.sml     SMT-LIB 2 theories.
 SmtLib.sml              Translation of HOL terms into SMT-LIB 2 format.
+SmtResource.sml         Fixed checked-replay resource budget and diagnostics.
 SolverSpec.sml          Definition of SMT solvers.
 TRUSTED_CODE_BASE.md    Higher-order trusted-translation note.
 Unittest.{sig,sml}      Unit tests for HolSmtLib.
@@ -389,6 +390,13 @@ subterm, parsed HOL conclusion and a replay-state summary of asserted
 hypotheses, definition hypotheses and Z3-created variables.  Unknown proof
 rules are reported by Z3_ProofParser.sml with the missing rule name and local
 proof subterm.
+
+SmtResource.sml is the single source of truth for the checked FloatingPoint
+bit-blast budget.  Z3 proof text is size-gated before Z3_ProofParser runs;
+future bit-blast rungs use the same module's term-size and per-step time caps.
+A breach starts with `resource-gated: fp-bitblast;`, carries a
+`resource-gate:FloatingPoint:<case>` feature, and the command-line driver
+reports `Z3_TAC_RESOURCE_GATED` rather than a replay failure.
 
 Z3 th-lemma replay coverage:
 

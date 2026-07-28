@@ -294,16 +294,21 @@ in
         val result =
           z3_tac_checked_result goal
           handle Feedback.HOL_ERR holerr =>
-            (case
-               SmtLib_Logics.checked_replay_unsupported_diagnostic
-                 observed_logic (z3_tac_query_fragment_terms queries)
-             of
-               SOME diagnostic =>
-                 z3_tac_die "Z3_TAC_UNSUPPORTED"
-                   ["logic=" ^ observed_logic,
-                    "diagnostic=" ^ diagnostic ^ ": " ^
-                      Feedback.message_of holerr]
-             | NONE => raise Feedback.HOL_ERR holerr)
+            if SmtResource.is_resource_gate holerr then
+              z3_tac_die "Z3_TAC_RESOURCE_GATED"
+                ["logic=" ^ observed_logic,
+                 "diagnostic=" ^ Feedback.message_of holerr]
+            else
+              (case
+                 SmtLib_Logics.checked_replay_unsupported_diagnostic
+                   observed_logic (z3_tac_query_fragment_terms queries)
+               of
+                 SOME diagnostic =>
+                   z3_tac_die "Z3_TAC_UNSUPPORTED"
+                     ["logic=" ^ observed_logic,
+                      "diagnostic=" ^ diagnostic ^ ": " ^
+                        Feedback.message_of holerr]
+               | NONE => raise Feedback.HOL_ERR holerr)
         val common_fields =
           ["logic=" ^ observed_logic,
            "assertions=" ^ Int.toString (List.length (#assertions state)),
