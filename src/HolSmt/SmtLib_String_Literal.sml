@@ -189,14 +189,16 @@ struct
     loop 0 []
   end
 
-  (* The HOL image of an SMT-LIB string literal: the list of its code
-     points.  Raises 'InvalidStringLiteral'; callers wrap that in their own
-     diagnostic. *)
+  (* The HOL image of an SMT-LIB string literal: the dedicated String
+     wrapper around its code-point list.  Raises 'InvalidStringLiteral';
+     callers wrap that in their own diagnostic. *)
   fun mk_string_term text =
-    listSyntax.mk_list
-      (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
-        (decode_string_literal text),
-       numSyntax.num)
+    Term.mk_comb
+      (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+       listSyntax.mk_list
+         (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
+           (decode_string_literal text),
+          numSyntax.num))
 
   fun encode_code_point value =
     if value < 0 orelse max_code_point < value then

@@ -10,26 +10,32 @@ Ancestors[qualified]
    the sequence boundary. *)
 
 Definition seq_unit_def:
-  seq_unit (c : num) = [c]
+  seq_unit (c : num) = SmtStr [c]
 End
 
 (* Z3 numbers the tail after position i, so tail s 0 drops the head. *)
 Definition seq_tail_def:
-  seq_tail (s : num list) i = DROP (SUC i) s
+  seq_tail s i = SmtStr (DROP (SUC i) (smtstr_rep s))
 End
 
 Definition seq_eq_def:
-  seq_eq (s : num list) t <=> s = t
+  seq_eq (s : smtstr) t <=> s = t
 End
 
 (* nth_i is deliberately specified only in range.  Z3 leaves its value
    outside the sequence unspecified, so no out-of-range equation may be
    added here. *)
 Theorem seq_nth_i_exists[local]:
-  ?f : num list -> num -> num.
-    !s i. i < LENGTH s ==> f s i = EL i s
+  ?f : smtstr -> num -> num.
+    !s i.
+      i < LENGTH (smtstr_rep s) ==>
+      f s i = EL i (smtstr_rep s)
 Proof
-  qexists `\s i. if i < LENGTH s then EL i s else 0` >>
+  qexists
+    `\s i.
+       if i < LENGTH (smtstr_rep s) then
+         EL i (smtstr_rep s)
+       else 0` >>
   simp []
 QED
 
@@ -53,8 +59,8 @@ End
 
 (* seq.stoi s i is Z3's value for the prefix ending at position i. *)
 Definition seq_stoi_def:
-  seq_stoi (s : num list) i =
-    smtstr_to_int (TAKE (SUC i) s)
+  seq_stoi s i =
+    smtstr_to_int (SmtStr (TAKE (SUC i) (smtstr_rep s)))
 End
 
 Definition char_bit_def:
@@ -65,11 +71,11 @@ End
    number: k is the cursor in the original string, while the regex argument
    already denotes the residual language. *)
 Definition aut_state_def:
-  aut_state (s : num list) k = DROP k s
+  aut_state s k = SmtStr (DROP k (smtstr_rep s))
 End
 
 Definition aut_accept_def:
-  aut_accept (s : num list) k r <=>
+  aut_accept s k r <=>
     smt_in_re (aut_state s k) r
 End
 
@@ -77,67 +83,15 @@ End
    TASK_17 must introduce them through the existing z3name!k
    definition-recording machinery. *)
 
-val _ = computeLib.add_funs
-  [seq_unit_def, seq_tail_def, seq_eq_def, seq_nth_i_def,
-   char_is_digit_def, seq_digit2int_def, seq_digit_def,
-   seq_stoi_def, char_bit_def, aut_state_def, aut_accept_def];
-
 (* Evaluation equations consumed by the character and regex replay rungs. *)
 
-Theorem seq_unit_compute[compute]:
-  seq_unit c = [c]
-Proof
-  simp [seq_unit_def]
-QED
-
-Theorem seq_tail_compute[compute]:
-  seq_tail s i = DROP (SUC i) s
-Proof
-  simp [seq_tail_def]
-QED
-
-Theorem seq_eq_compute[compute]:
-  seq_eq s t <=> s = t
-Proof
-  simp [seq_eq_def]
-QED
-
 Theorem seq_nth_i_compute[compute]:
-  (seq_nth_i (h::s) 0 = h) /\
+  (seq_nth_i (SmtStr (h::s)) 0 = h) /\
   (i < LENGTH s ==>
-   seq_nth_i (h::s) (SUC i) = seq_nth_i s i)
+   seq_nth_i (SmtStr (h::s)) (SUC i) =
+     seq_nth_i (SmtStr s) i)
 Proof
-  simp [seq_nth_i_def]
-QED
-
-Theorem char_is_digit_compute[compute]:
-  char_is_digit c <=> 48 <= c /\ c <= 57
-Proof
-  simp [char_is_digit_def]
-QED
-
-Theorem seq_digit2int_compute[compute]:
-  seq_digit2int c = &c - 48
-Proof
-  simp [seq_digit2int_def]
-QED
-
-Theorem seq_digit_compute[compute]:
-  seq_digit c = seq_digit2int c
-Proof
-  simp [seq_digit_def]
-QED
-
-Theorem seq_stoi_compute[compute]:
-  seq_stoi s i = smtstr_to_int (TAKE (SUC i) s)
-Proof
-  simp [seq_stoi_def]
-QED
-
-Theorem char_bit_compute[compute]:
-  char_bit k c <=> BIT k c
-Proof
-  simp [char_bit_def]
+  simp [seq_nth_i_def, smtstringTheory.smtstr_rep_def]
 QED
 
 (* Proof parsing represents Z3's internal Char sort by an 18-bit word.
@@ -168,14 +122,9 @@ Proof
         wordsTheory.w2n_lt]
 QED
 
-Theorem aut_state_compute[compute]:
-  aut_state s k = DROP k s
-Proof
-  simp [aut_state_def]
-QED
-
 Theorem aut_accept_compute[compute]:
-  aut_accept s k r <=> smt_in_re (DROP k s) r
+  aut_accept s k r <=>
+    smt_in_re (SmtStr (DROP k (smtstr_rep s))) r
 Proof
   simp [aut_accept_def, aut_state_def]
 QED
@@ -187,18 +136,20 @@ Proof
 QED
 
 Theorem aut_accept_nonnullable_length:
-  aut_accept s k r /\ ~re_nullable r ==> SUC k <= LENGTH s
+  aut_accept s k r /\ ~re_nullable r ==>
+  SUC k <= LENGTH (smtstr_rep s)
 Proof
   rw [aut_accept_compute, smtstringTheory.re_nullable_correct] >>
-  Cases_on `k < LENGTH s`
+  Cases_on `k < LENGTH (smtstr_rep s)`
   >- decide_tac
-  >> `LENGTH s <= k` by decide_tac >>
-  fs [listTheory.DROP_LENGTH_TOO_LONG]
+  >> `LENGTH (smtstr_rep s) <= k` by decide_tac >>
+  fs [listTheory.DROP_LENGTH_TOO_LONG,
+      smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem aut_accept_nonnullable_length_int:
   aut_accept s k r /\ ~re_nullable r ==>
-  (&(SUC k) : int) <= &(smtstr_len s)
+  (&(SUC k) : int) <= smtstr_len s
 Proof
   strip_tac >>
   drule aut_accept_nonnullable_length >>
@@ -207,7 +158,7 @@ QED
 
 Theorem aut_accept_range_length_int:
   aut_accept s k (reglan_range lo hi) ==>
-  (&(SUC k) : int) <= &(smtstr_len s)
+  (&(SUC k) : int) <= smtstr_len s
 Proof
   metis_tac [aut_accept_nonnullable_length_int,
              smtstringTheory.re_nullable_def]
@@ -215,7 +166,7 @@ QED
 
 Theorem aut_accept_range_length_zero:
   aut_accept s 0 (reglan_range lo hi) ==>
-  (&(smtstr_len s) : int) >= 1
+  smtstr_len s >= 1
 Proof
   strip_tac >>
   drule aut_accept_range_length_int >>
@@ -223,17 +174,17 @@ Proof
 QED
 
 Theorem aut_accept_loop_positive_length_zero:
-  aut_accept s 0 (reglan_loop (reglan_to_re [c]) (SUC i) n) ==>
-  (&(smtstr_len s) : int) >= 1
+  aut_accept s 0 (reglan_loop (reglan_to_re (SmtStr [c])) (SUC i) n) ==>
+  smtstr_len s >= 1
 Proof
   strip_tac >>
   `~re_nullable
-      (reglan_loop (reglan_to_re [c]) (SUC i) n)` by
+      (reglan_loop (reglan_to_re (SmtStr [c])) (SUC i) n)` by
     simp [smtstringTheory.re_nullable_def] >>
   `aut_accept s 0
-      (reglan_loop (reglan_to_re [c]) (SUC i) n) /\
+      (reglan_loop (reglan_to_re (SmtStr [c])) (SUC i) n) /\
    ~re_nullable
-      (reglan_loop (reglan_to_re [c]) (SUC i) n)` by
+      (reglan_loop (reglan_to_re (SmtStr [c])) (SUC i) n)` by
     simp [] >>
   drule aut_accept_nonnullable_length_int >>
   simp [integerTheory.INT_GE, integerTheory.INT_OF_NUM_LE]
@@ -242,12 +193,13 @@ QED
 Theorem aut_accept_loop_positive_length_seq_unit:
   aut_accept s 0
     (reglan_loop (reglan_to_re (seq_unit c)) 1 n) ==>
-  (&(smtstr_len s) : int) >= 1
+  smtstr_len s >= 1
 Proof
   strip_tac >>
   `~re_nullable
       (reglan_loop (reglan_to_re (seq_unit c)) 1 n)` by
-    simp [smtstringTheory.re_nullable_def, seq_unit_compute] >>
+    simp [smtstringTheory.re_nullable_def, seq_unit_def,
+          smtstringTheory.smtstr_rep_def] >>
   `aut_accept s 0
       (reglan_loop (reglan_to_re (seq_unit c)) 1 n) /\
    ~re_nullable
@@ -259,7 +211,7 @@ QED
 
 Theorem aut_accept_plus_allchar_length_one:
   aut_accept s 1 (reglan_plus reglan_allchar) ==>
-  (&(smtstr_len s) : int) >= 2
+  smtstr_len s >= 2
 Proof
   strip_tac >>
   `aut_accept s 1 (reglan_plus reglan_allchar) /\
@@ -270,33 +222,35 @@ Proof
 QED
 
 Theorem aut_accept_step:
-  k < LENGTH s ==>
+  k < LENGTH (smtstr_rep s) ==>
   (aut_accept s k r <=>
-   aut_accept s (SUC k)
+  aut_accept s (SUC k)
      (re_deriv (seq_nth_i s k) r))
 Proof
   strip_tac >>
-  `DROP k s = EL k s::DROP (SUC k) s` by
+  `DROP k (smtstr_rep s) =
+     EL k (smtstr_rep s)::DROP (SUC k) (smtstr_rep s)` by
     simp [rich_listTheory.DROP_CONS_EL] >>
-  `seq_nth_i s k = EL k s` by
+  `seq_nth_i s k = EL k (smtstr_rep s)` by
     simp [seq_nth_i_def] >>
-  simp [aut_accept_compute, smtstringTheory.re_deriv_correct]
+  simp [aut_accept_compute, smtstringTheory.smtstr_rep_def,
+        smtstringTheory.re_deriv_correct]
 QED
 
 Theorem aut_accept_transition:
   aut_accept s k r ==>
-  LENGTH s <= k \/
+  LENGTH (smtstr_rep s) <= k \/
   aut_accept s (SUC k)
     (re_deriv (seq_nth_i s k) r)
 Proof
-  Cases_on `k < LENGTH s`
+  Cases_on `k < LENGTH (smtstr_rep s)`
   >- simp [aut_accept_step]
   >> decide_tac
 QED
 
 Theorem aut_accept_transition_int:
   ~aut_accept s k r \/
-  (&(smtstr_len s) : int) <= &k \/
+  smtstr_len s <= &k \/
   aut_accept s (SUC k)
     (re_deriv (seq_nth_i s k) r)
 Proof
@@ -307,23 +261,25 @@ QED
 
 Theorem aut_accept_range_deriv:
   aut_accept s k
-      (re_deriv d (reglan_range [97] [122])) <=>
+      (re_deriv d (reglan_range (SmtStr [97]) (SmtStr [122]))) <=>
   d <= 122 /\ 97 <= d /\
-  aut_accept s k (reglan_to_re [])
+  aut_accept s k (reglan_to_re (SmtStr []))
 Proof
   Cases_on `97 <= d /\ d <= 122`
   >- (`d <= 196607` by decide_tac >>
       fs [smtstringTheory.re_deriv_def, aut_accept_compute,
-          smtstringTheory.smt_in_re_def])
+          smtstringTheory.smt_in_re_def,
+          smtstringTheory.smtstr_rep_def])
   >> fs [smtstringTheory.re_deriv_def, aut_accept_compute,
-         smtstringTheory.smt_in_re_def]
+         smtstringTheory.smt_in_re_def,
+         smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem aut_accept_loop_deriv_1_3:
   aut_accept s k
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 1 3)) <=>
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 1 3)) <=>
   d = c /\
-  aut_accept s k (reglan_loop (reglan_to_re [c]) 0 2)
+  aut_accept s k (reglan_loop (reglan_to_re (SmtStr [c])) 0 2)
 Proof
   simp [aut_accept_compute,
         smtstringTheory.re_deriv_loop_singleton_1_3]
@@ -331,9 +287,9 @@ QED
 
 Theorem aut_accept_loop_deriv_0_2:
   aut_accept s k
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 2)) <=>
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 0 2)) <=>
   d = c /\
-  aut_accept s k (reglan_loop (reglan_to_re [c]) 0 1)
+  aut_accept s k (reglan_loop (reglan_to_re (SmtStr [c])) 0 1)
 Proof
   simp [aut_accept_compute,
         smtstringTheory.re_deriv_loop_singleton_0_2]
@@ -341,8 +297,8 @@ QED
 
 Theorem aut_accept_loop_deriv_0_1:
   aut_accept s k
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 1)) <=>
-  d = c /\ aut_accept s k (reglan_to_re [])
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 0 1)) <=>
+  d = c /\ aut_accept s k (reglan_to_re (SmtStr []))
 Proof
   simp [aut_accept_compute,
         smtstringTheory.re_deriv_loop_singleton_0_1]
@@ -352,12 +308,12 @@ Theorem aut_accept_loop_nullable_deriv_1_2:
   aut_accept s k
       (re_deriv d
         (reglan_loop
-          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
           1 2)) <=>
   d = c /\
   aut_accept s k
     (reglan_loop
-      (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+      (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
       0 1)
 Proof
   simp [aut_accept_compute,
@@ -368,23 +324,23 @@ Theorem aut_accept_loop_nullable_deriv_0_1:
   aut_accept s k
       (re_deriv d
         (reglan_loop
-          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
           0 1)) <=>
-  d = c /\ aut_accept s k (reglan_to_re [])
+  d = c /\ aut_accept s k (reglan_to_re (SmtStr []))
 Proof
   simp [aut_accept_compute,
         smtstringTheory.re_deriv_loop_nullable_singleton_0_1]
 QED
 
 Theorem aut_accept_range_transition_zero:
-  ~aut_accept s 0 (reglan_range [97] [122]) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  ~aut_accept s 0 (reglan_range (SmtStr [97]) (SmtStr [122])) \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 <= 122 /\ 97 <= seq_nth_i s 0 /\
-   aut_accept s 1 (reglan_to_re []))
+   aut_accept s 1 (reglan_to_re (SmtStr [])))
 Proof
   PURE_REWRITE_TAC [GSYM aut_accept_range_deriv] >>
   PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
-  Cases_on `aut_accept s 0 (reglan_range [97] [122])` >>
+  Cases_on `aut_accept s 0 (reglan_range (SmtStr [97]) (SmtStr [122]))` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
   simp []
@@ -392,17 +348,17 @@ QED
 
 Theorem aut_accept_loop_transition_zero:
   ~aut_accept s 0
-      (reglan_loop (reglan_to_re [c]) 1 3) \/
-  (&(smtstr_len s) : int) <= 0 \/
+      (reglan_loop (reglan_to_re (SmtStr [c])) 1 3) \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 = c /\
    aut_accept s 1
-     (reglan_loop (reglan_to_re [c]) 0 2))
+     (reglan_loop (reglan_to_re (SmtStr [c])) 0 2))
 Proof
   PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_1_3] >>
   PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
   Cases_on
     `aut_accept s 0
-       (reglan_loop (reglan_to_re [c]) 1 3)` >>
+       (reglan_loop (reglan_to_re (SmtStr [c])) 1 3)` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
   simp []
@@ -410,17 +366,17 @@ QED
 
 Theorem aut_accept_loop_transition_one:
   ~aut_accept s 1
-      (reglan_loop (reglan_to_re [c]) 0 2) \/
-  (&(smtstr_len s) : int) <= 1 \/
+      (reglan_loop (reglan_to_re (SmtStr [c])) 0 2) \/
+  smtstr_len s <= 1 \/
   (seq_nth_i s 1 = c /\
    aut_accept s 2
-     (reglan_loop (reglan_to_re [c]) 0 1))
+     (reglan_loop (reglan_to_re (SmtStr [c])) 0 1))
 Proof
   PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_0_2] >>
   PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
   Cases_on
     `aut_accept s 1
-       (reglan_loop (reglan_to_re [c]) 0 2)` >>
+       (reglan_loop (reglan_to_re (SmtStr [c])) 0 2)` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
   simp []
@@ -428,30 +384,32 @@ QED
 
 Theorem aut_accept_loop_transition_two:
   ~aut_accept s 2
-      (reglan_loop (reglan_to_re [c]) 0 1) \/
-  (&(smtstr_len s) : int) <= 2 \/
+      (reglan_loop (reglan_to_re (SmtStr [c])) 0 1) \/
+  smtstr_len s <= 2 \/
   (seq_nth_i s 2 = c /\
-   aut_accept s 3 (reglan_to_re []))
+   aut_accept s 3 (reglan_to_re (SmtStr [])))
 Proof
   PURE_REWRITE_TAC [GSYM aut_accept_loop_deriv_0_1] >>
   PURE_REWRITE_TAC [integerTheory.INT_OF_NUM_LE] >>
   Cases_on
     `aut_accept s 2
-       (reglan_loop (reglan_to_re [c]) 0 1)` >>
+       (reglan_loop (reglan_to_re (SmtStr [c])) 0 1)` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
   simp []
 QED
 
 Theorem aut_accept_empty:
-  aut_accept s k (reglan_to_re []) <=> LENGTH s <= k
+  aut_accept s k (reglan_to_re (SmtStr [])) <=>
+  LENGTH (smtstr_rep s) <= k
 Proof
-  simp [aut_accept_compute, smtstringTheory.smt_in_re_def]
+  simp [aut_accept_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem aut_accept_empty_terminal_int:
-  ~aut_accept s k (reglan_to_re []) \/
-  (&(smtstr_len s) : int) <= &k \/ F
+  ~aut_accept s k (reglan_to_re (SmtStr [])) \/
+  smtstr_len s <= &k \/ F
 Proof
   simp [aut_accept_empty, smtstringTheory.smtstr_len_def,
         integerTheory.INT_OF_NUM_LE]
@@ -459,15 +417,17 @@ QED
 
 Theorem aut_accept_comp_singleton_transition:
   ~aut_accept s 0
-      (reglan_comp (reglan_to_re [c])) \/
-  (&(smtstr_len s) : int) <= 0 \/
+      (reglan_comp (reglan_to_re (SmtStr [c]))) \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 <> c \/
    aut_accept s 1 (reglan_plus reglan_allchar))
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
         seq_nth_i_compute, smtstringTheory.smt_in_re_def,
         smtstringTheory.smt_in_re_plus_allchar,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.wfstr_compute] >>
   Cases_on `t` >>
   simp [smtstringTheory.wfstr_compute] >>
@@ -476,15 +436,17 @@ QED
 
 Theorem aut_accept_comp_range_transition:
   ~aut_accept s 0
-      (reglan_comp (reglan_range [lo] [hi])) \/
-  (&(smtstr_len s) : int) <= 0 \/
+      (reglan_comp (reglan_range (SmtStr [lo]) (SmtStr [hi]))) \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 < lo \/ hi < seq_nth_i s 0 \/
    aut_accept s 1 (reglan_plus reglan_allchar))
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
         seq_nth_i_compute, smtstringTheory.smt_in_re_def,
         smtstringTheory.smt_in_re_plus_allchar,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.wfstr_compute] >>
   Cases_on `t` >>
   simp [smtstringTheory.wfstr_compute] >>
@@ -494,16 +456,18 @@ QED
 Theorem aut_accept_inter_range_comp_transition:
   ~aut_accept s 0
       (reglan_inter
-        (reglan_range [97] [122])
-        (reglan_comp (reglan_to_re [109]))) \/
-  (&(smtstr_len s) : int) <= 0 \/
+        (reglan_range (SmtStr [97]) (SmtStr [122]))
+        (reglan_comp (reglan_to_re (SmtStr [109])))) \/
+  smtstr_len s <= 0 \/
   (97 <= seq_nth_i s 0 /\ seq_nth_i s 0 <= 122 /\
    seq_nth_i s 0 <> 109 /\
-   aut_accept s 1 (reglan_to_re []))
+   aut_accept s 1 (reglan_to_re (SmtStr [])))
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [aut_accept_compute, smtstringTheory.smtstr_len_def,
         seq_nth_i_compute, smtstringTheory.smt_in_re_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.wfstr_compute] >>
   metis_tac []
 QED
@@ -511,13 +475,13 @@ QED
 Theorem aut_accept_loop_nullable_transition_zero:
   ~aut_accept s 0
       (reglan_loop
-        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
         1 2) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 = c /\
    aut_accept s 1
      (reglan_loop
-       (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+       (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
        0 1))
 Proof
   PURE_REWRITE_TAC
@@ -526,7 +490,7 @@ Proof
   Cases_on
     `aut_accept s 0
        (reglan_loop
-         (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+         (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
          1 2)` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
@@ -536,11 +500,11 @@ QED
 Theorem aut_accept_loop_nullable_transition_one:
   ~aut_accept s 1
       (reglan_loop
-        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
         0 1) \/
-  (&(smtstr_len s) : int) <= 1 \/
+  smtstr_len s <= 1 \/
   (seq_nth_i s 1 = c /\
-   aut_accept s 2 (reglan_to_re []))
+   aut_accept s 2 (reglan_to_re (SmtStr [])))
 Proof
   PURE_REWRITE_TAC
     [GSYM aut_accept_loop_nullable_deriv_0_1] >>
@@ -548,7 +512,7 @@ Proof
   Cases_on
     `aut_accept s 1
        (reglan_loop
-         (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+         (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
          0 1)` >>
   simp [smtstringTheory.smtstr_len_def] >>
   drule aut_accept_transition >>
@@ -558,57 +522,57 @@ QED
 Theorem aut_accept_range_transition_seq_unit:
   ~aut_accept s 0
       (reglan_range (seq_unit 97) (seq_unit 122)) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 <= 122 /\ 97 <= seq_nth_i s 0 /\
-   aut_accept s 1 (reglan_to_re []))
+   aut_accept s 1 (reglan_to_re (SmtStr [])))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_range_transition_zero
 QED
 
 Theorem aut_accept_loop_transition_seq_unit_zero:
   ~aut_accept s 0
       (reglan_loop (reglan_to_re (seq_unit c)) 1 3) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 = c /\
    aut_accept s 1
      (reglan_loop (reglan_to_re (seq_unit c)) 0 2))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_loop_transition_zero
 QED
 
 Theorem aut_accept_loop_transition_seq_unit_one:
   ~aut_accept s 1
       (reglan_loop (reglan_to_re (seq_unit c)) 0 2) \/
-  (&(smtstr_len s) : int) <= 1 \/
+  smtstr_len s <= 1 \/
   (seq_nth_i s 1 = c /\
    aut_accept s 2
      (reglan_loop (reglan_to_re (seq_unit c)) 0 1))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_loop_transition_one
 QED
 
 Theorem aut_accept_loop_transition_seq_unit_two:
   ~aut_accept s 2
       (reglan_loop (reglan_to_re (seq_unit c)) 0 1) \/
-  (&(smtstr_len s) : int) <= 2 \/
+  smtstr_len s <= 2 \/
   (seq_nth_i s 2 = c /\
-   aut_accept s 3 (reglan_to_re []))
+   aut_accept s 3 (reglan_to_re (SmtStr [])))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_loop_transition_two
 QED
 
 Theorem aut_accept_comp_transition_seq_unit:
   ~aut_accept s 0
       (reglan_comp (reglan_to_re (seq_unit c))) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 <> c \/
    aut_accept s 1 (reglan_plus reglan_allchar))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_comp_singleton_transition
 QED
 
@@ -616,11 +580,11 @@ Theorem aut_accept_comp_range_transition_seq_unit:
   ~aut_accept s 0
       (reglan_comp
         (reglan_range (seq_unit lo) (seq_unit hi))) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 < lo \/ hi < seq_nth_i s 0 \/
    aut_accept s 1 (reglan_plus reglan_allchar))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_comp_range_transition
 QED
 
@@ -629,12 +593,12 @@ Theorem aut_accept_inter_transition_seq_unit:
       (reglan_inter
         (reglan_range (seq_unit 97) (seq_unit 122))
         (reglan_comp (reglan_to_re (seq_unit 109)))) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (97 <= seq_nth_i s 0 /\ seq_nth_i s 0 <= 122 /\
    seq_nth_i s 0 <> 109 /\
-   aut_accept s 1 (reglan_to_re []))
+   aut_accept s 1 (reglan_to_re (SmtStr [])))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_inter_range_comp_transition
 QED
 
@@ -642,17 +606,17 @@ Theorem aut_accept_loop_nullable_transition_seq_unit_zero:
   ~aut_accept s 0
       (reglan_loop
         (reglan_union
-          (reglan_to_re (seq_unit c)) (reglan_to_re []))
+          (reglan_to_re (seq_unit c)) (reglan_to_re (SmtStr [])))
         1 2) \/
-  (&(smtstr_len s) : int) <= 0 \/
+  smtstr_len s <= 0 \/
   (seq_nth_i s 0 = c /\
    aut_accept s 1
      (reglan_loop
        (reglan_union
-         (reglan_to_re (seq_unit c)) (reglan_to_re []))
+         (reglan_to_re (seq_unit c)) (reglan_to_re (SmtStr [])))
        0 1))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_loop_nullable_transition_zero
 QED
 
@@ -660,13 +624,13 @@ Theorem aut_accept_loop_nullable_transition_seq_unit_one:
   ~aut_accept s 1
       (reglan_loop
         (reglan_union
-          (reglan_to_re (seq_unit c)) (reglan_to_re []))
+          (reglan_to_re (seq_unit c)) (reglan_to_re (SmtStr [])))
         0 1) \/
-  (&(smtstr_len s) : int) <= 1 \/
+  smtstr_len s <= 1 \/
   (seq_nth_i s 1 = c /\
-   aut_accept s 2 (reglan_to_re []))
+   aut_accept s 2 (reglan_to_re (SmtStr [])))
 Proof
-  PURE_REWRITE_TAC [seq_unit_compute] >>
+  PURE_REWRITE_TAC [seq_unit_def] >>
   ACCEPT_TAC aut_accept_loop_nullable_transition_one
 QED
 
@@ -676,29 +640,35 @@ QED
 Theorem seq_unit_length:
   smtstr_len (seq_unit c) = 1
 Proof
-  simp [seq_unit_def, smtstringTheory.smtstr_len_def]
+  simp [seq_unit_def, smtstringTheory.smtstr_len_def,
+        smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem seq_split_at:
-  i < LENGTH s ==>
+  i < LENGTH (smtstr_rep s) ==>
     s =
-      TAKE i s ++
-      smtstr_concat (seq_unit (seq_nth_i s i)) (seq_tail s i)
+      smtstr_concat (SmtStr (TAKE i (smtstr_rep s)))
+        (smtstr_concat
+          (seq_unit (seq_nth_i s i)) (seq_tail s i))
 Proof
+  Cases_on `s` >>
   strip_tac >>
-  simp [seq_unit_def, seq_tail_def,
-        smtstringTheory.smtstr_concat_def,
-        seq_nth_i_def] >>
+  fs [seq_unit_def, seq_tail_def,
+      smtstringTheory.smtstr_rep_def,
+      smtstringTheory.smtstr_concat_def,
+      seq_nth_i_def] >>
   metis_tac [rich_listTheory.TAKE_DROP_SUC]
 QED
 
 Theorem seq_head_tail:
-  s = [] \/
+  s = SmtStr [] \/
   seq_eq s
     (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.smtstr_concat_def, seq_nth_i_def]
 QED
 
@@ -706,18 +676,20 @@ QED
    this integer-length form of the head/tail alternative. *)
 
 Theorem seq_head_tail_int:
-  &(smtstr_len s) = 0 \/
+  smtstr_len s = 0 \/
   seq_eq s
     (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.smtstr_concat_def,
         smtstringTheory.smtstr_len_def, seq_nth_i_def]
 QED
 
 Theorem seq_head_tail_int_zero_left:
-  0 = &(smtstr_len s) \/
+  0 = smtstr_len s \/
   seq_eq s
     (smtstr_concat (seq_unit (seq_nth_i s 0)) (seq_tail s 0))
 Proof
@@ -734,7 +706,9 @@ Theorem seq_prefixof_singleton:
   s = seq_unit c
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.smtstr_concat_def,
         smtstringTheory.smtstr_prefixof_singleton,
         seq_nth_i_def]
@@ -747,7 +721,9 @@ Theorem seq_prefixof_head:
   c = seq_nth_i s 0
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [seq_eq_def, seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.smtstr_concat_def,
         smtstringTheory.smtstr_prefixof_singleton,
         seq_nth_i_def]
@@ -758,8 +734,9 @@ Theorem seq_concat_middle_singleton:
     (smtstr_concat p (smtstr_concat (seq_unit c) q)) ==>
   c = d
 Proof
-  simp [seq_eq_def, seq_unit_def] >>
-  metis_tac [smtstringTheory.smtstr_concat_middle_singleton]
+  rw [seq_eq_def] >>
+  metis_tac [seq_unit_def,
+             smtstringTheory.smtstr_concat_middle_singleton]
 QED
 
 Theorem seq_concat_middle_singleton_result:
@@ -774,8 +751,8 @@ Theorem seq_concat_middle_singleton_right:
   smtstr_concat p (smtstr_concat (seq_unit c) q) = seq_unit d ==>
   d = c
 Proof
-  simp [seq_unit_def] >>
-  metis_tac [smtstringTheory.smtstr_concat_middle_singleton]
+  metis_tac [seq_unit_def,
+             smtstringTheory.smtstr_concat_middle_singleton]
 QED
 
 Theorem seq_concat_middle_singleton_left:
@@ -793,11 +770,14 @@ Theorem seq_head_shared_singleton_prefix:
     seq_unit d = smtstr_concat p (smtstr_concat (seq_unit e) r) ==>
   seq_nth_i s 0 = c
 Proof
-  Cases_on `p`
-  >- (Cases_on `s` >>
+  Cases_on `p` >>
+  Cases_on `l`
+  >- (Cases_on `smtstr_rep s` >>
       simp [seq_unit_def, seq_tail_def, seq_nth_i_def,
+            smtstringTheory.smtstr_rep_def,
             smtstringTheory.smtstr_concat_def])
-  >> simp [seq_unit_def, smtstringTheory.smtstr_concat_def]
+  >> simp [seq_unit_def, smtstringTheory.smtstr_rep_def,
+           smtstringTheory.smtstr_concat_def]
 QED
 
 Theorem seq_head_shared_singleton_prefix_right:
@@ -809,11 +789,13 @@ Theorem seq_head_shared_singleton_prefix_right:
   seq_nth_i s 0 = c
 Proof
   rpt strip_tac >>
-  Cases_on `p`
-  >- (Cases_on `s` >>
+  Cases_on `p` >>
+  Cases_on `l`
+  >- (Cases_on `smtstr_rep s` >>
       fs [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+          smtstringTheory.smtstr_rep_def,
           smtstringTheory.smtstr_concat_def])
-  >> fs [seq_eq_def, seq_unit_def,
+  >> fs [seq_eq_def, seq_unit_def, smtstringTheory.smtstr_rep_def,
          smtstringTheory.smtstr_concat_def]
 QED
 
@@ -826,15 +808,20 @@ Theorem seq_length_two:
     (smtstr_concat
       (seq_unit (seq_nth_i s 0)) (seq_unit (seq_nth_i s 1))) s
 Proof
-  Cases_on `s`
-  >- simp [smtstringTheory.smtstr_len_def]
+  Cases_on `s` >>
+  Cases_on `l`
+  >- simp [smtstringTheory.smtstr_len_def,
+           smtstringTheory.smtstr_rep_def]
   >> Cases_on `t`
-  >- simp [smtstringTheory.smtstr_len_def]
+  >- simp [smtstringTheory.smtstr_len_def,
+           smtstringTheory.smtstr_rep_def]
   >> Cases_on `t'`
   >- simp [seq_eq_def, seq_unit_def, seq_nth_i_def,
+           smtstringTheory.smtstr_rep_def,
            smtstringTheory.smtstr_concat_def,
            smtstringTheory.smtstr_len_def]
-  >> simp [smtstringTheory.smtstr_len_def]
+  >> simp [smtstringTheory.smtstr_len_def,
+           smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem seq_two_two_concat_not_three:
@@ -865,17 +852,19 @@ Proof
     smtstr_len (smtstr_concat x y)` by
       (AP_TERM_TAC >> first_assum ACCEPT_TAC) >>
   fs [seq_unit_length, smtstringTheory.smtstr_len_concat] >>
-  decide_tac
+  intLib.ARITH_TAC
 QED
 
 Theorem seq_tail_step:
-  SUC i < LENGTH s ==>
+  SUC i < LENGTH (smtstr_rep s) ==>
     seq_tail s i =
       smtstr_concat
         (seq_unit (seq_nth_i s (SUC i))) (seq_tail s (SUC i))
 Proof
+  Cases_on `s` >>
   strip_tac >>
   simp [seq_unit_def, seq_tail_def,
+        smtstringTheory.smtstr_rep_def,
         smtstringTheory.smtstr_concat_def,
         seq_nth_i_def, rich_listTheory.DROP_EL_CONS,
         arithmeticTheory.ADD1]
@@ -889,41 +878,50 @@ Theorem seq_tail_zero_step:
   seq_tail s 0 =
     smtstr_concat (seq_unit (seq_nth_i s 1)) (seq_tail s 1)
 Proof
-  Cases_on `s`
+  Cases_on `s` >>
+  Cases_on `l`
   >- simp [seq_eq_def, seq_unit_def, seq_tail_def,
+           smtstringTheory.smtstr_rep_def,
            smtstringTheory.smtstr_concat_def,
            smtstringTheory.smtstr_at_def,
            smtstringTheory.smtstr_substr_def]
   >> Cases_on `t`
   >- simp [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+           smtstringTheory.smtstr_rep_def,
            smtstringTheory.smtstr_concat_def,
            smtstringTheory.smtstr_at_def,
            smtstringTheory.smtstr_substr_def]
   >> simp [seq_eq_def, seq_unit_def, seq_tail_def, seq_nth_i_def,
+           smtstringTheory.smtstr_rep_def,
            smtstringTheory.smtstr_concat_def,
            smtstringTheory.smtstr_at_def,
            smtstringTheory.smtstr_substr_def]
 QED
 
 Theorem seq_tail_length:
-  smtstr_len (seq_tail s i) = LENGTH s - SUC i
+  smtstr_len (seq_tail s i) =
+    &(LENGTH (smtstr_rep s) - SUC i)
 Proof
-  simp [seq_tail_def, smtstringTheory.smtstr_len_def]
+  simp [seq_tail_def, smtstringTheory.smtstr_len_def,
+        smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem seq_at_nth:
-  i < LENGTH s ==>
+  i < LENGTH (smtstr_rep s) ==>
     smtstr_at s (&i) = seq_unit (seq_nth_i s i)
 Proof
   simp [smtstringTheory.smtstr_at_in_range, seq_unit_def,
-        seq_nth_i_def]
+        seq_nth_i_def, smtstringTheory.smtstr_rep_def]
 QED
 
 Theorem seq_at_zero:
-  s = [] \/ seq_eq (smtstr_at s 0) (seq_unit (seq_nth_i s 0))
+  s = SmtStr [] \/
+  seq_eq (smtstr_at s 0) (seq_unit (seq_nth_i s 0))
 Proof
   Cases_on `s` >>
-  simp [seq_eq_def, seq_at_nth]
+  Cases_on `l` >>
+  simp [seq_eq_def, seq_at_nth,
+        smtstringTheory.smtstr_rep_def]
 QED
 
 (* TASK_02 draft_str_to_int records char.is_digit, digit2int values 0--9,
@@ -980,32 +978,33 @@ Proof
 QED
 
 (* Ground EVAL checks for TASK_03's cursor interpretation. *)
-Theorem aut_accept_catalog_eval:
-  aut_state [97; 98] 0 = [97; 98] /\
-  aut_state [97; 98] 1 = [98] /\
-  aut_state [97; 98] 2 = [] /\
-  aut_accept [97] 0 (reglan_range [97] [122]) /\
-  aut_accept [97] 1 (reglan_to_re []) /\
-  ~aut_accept [97; 98] 1 (reglan_to_re []) /\
-  aut_accept [97; 98] 1 reglan_allchar
+Triviality aut_accept_catalog_eval:
+  aut_state (SmtStr [97; 98]) 0 = SmtStr [97; 98] /\
+  aut_state (SmtStr [97; 98]) 1 = SmtStr [98] /\
+  aut_state (SmtStr [97; 98]) 2 = SmtStr [] /\
+  aut_accept (SmtStr [97]) 0
+    (reglan_range (SmtStr [97]) (SmtStr [122])) /\
+  aut_accept (SmtStr [97]) 1 (reglan_to_re (SmtStr [])) /\
+  ~aut_accept (SmtStr [97; 98]) 1 (reglan_to_re (SmtStr [])) /\
+  aut_accept (SmtStr [97; 98]) 1 reglan_allchar
 Proof
   EVAL_TAC
 QED
 
-Theorem z3_internal_eval:
-  seq_unit 97 = [97] /\
-  seq_tail [10; 20; 30] 0 = [20; 30] /\
-  seq_tail [10; 20; 30] 1 = [30] /\
-  seq_eq [1; 2] [1; 2] /\
-  seq_nth_i [10; 20; 30] 1 = 20 /\
+Triviality z3_internal_eval:
+  seq_unit 97 = SmtStr [97] /\
+  seq_tail (SmtStr [10; 20; 30]) 0 = SmtStr [20; 30] /\
+  seq_tail (SmtStr [10; 20; 30]) 1 = SmtStr [30] /\
+  seq_eq (SmtStr [1; 2]) (SmtStr [1; 2]) /\
+  seq_nth_i (SmtStr [10; 20; 30]) 1 = 20 /\
   char_is_digit 48 /\ char_is_digit 57 /\
   ~char_is_digit 47 /\ ~char_is_digit 58 /\
   seq_digit2int 48 = 0 /\ seq_digit2int 57 = 9 /\
   seq_digit 53 = 5 /\
-  seq_stoi [52; 50] 0 = 4 /\
-  seq_stoi [52; 50] 1 = 42 /\
+  seq_stoi (SmtStr [52; 50]) 0 = 4 /\
+  seq_stoi (SmtStr [52; 50]) 1 = 42 /\
   char_bit 0 3 /\ char_bit 1 3 /\ ~char_bit 2 3
 Proof
-  simp [seq_nth_i_def] >>
+  simp [seq_nth_i_def, smtstringTheory.smtstr_rep_def] >>
   EVAL_TAC
 QED

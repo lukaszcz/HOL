@@ -1,42 +1,71 @@
 (* Copyright (c) 2026 The HOL4 contributors. *)
 
-(* SMT-LIB Unicode strings represented as lists of Unicode code points. *)
+(* SMT-LIB Unicode strings wrap lists of Unicode code points so the SMT sort
+   is carried by the HOL type rather than reconstructed from wfstr guards. *)
 Theory smtstring
 Ancestors[qualified]
   ASCIInumbers integer rich_list
 
+Datatype:
+  smtstr = SmtStr (num list)
+End
+
+Definition smtstr_rep_def:
+  smtstr_rep (SmtStr s) = s
+End
+
+Theorem SmtStr_smtstr_rep[simp]:
+  SmtStr (smtstr_rep s) = s
+Proof
+  Cases_on `s` >>
+  simp [smtstr_rep_def]
+QED
+
+Theorem smtstr_eq_SmtStr[simp]:
+  (s = SmtStr l <=> smtstr_rep s = l) /\
+  (SmtStr l = s <=> l = smtstr_rep s)
+Proof
+  Cases_on `s` >>
+  simp [smtstr_rep_def]
+QED
+
 Definition wfstr_def:
-  wfstr (s : num list) <=> EVERY (\c. c <= 196607) s
+  wfstr s <=> EVERY (\c. c <= 196607) (smtstr_rep s)
 End
 
 Definition smtstr_concat_def:
-  smtstr_concat (s : num list) t = s ++ t
+  smtstr_concat s t = SmtStr (smtstr_rep s ++ smtstr_rep t)
 End
 
 Definition smtstr_len_def:
-  smtstr_len (s : num list) = LENGTH s
+  smtstr_len s : int = &(LENGTH (smtstr_rep s))
 End
 
 Definition smtstr_substr_def:
-  smtstr_substr (s : num list) (i : int) (n : int) =
-    if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then []
-    else TAKE (Num n) (DROP (Num i) s)
+  smtstr_substr s (i : int) (n : int) =
+    if i < 0 \/ n <= 0 \/ LENGTH (smtstr_rep s) <= Num i then
+      SmtStr []
+    else
+      SmtStr (TAKE (Num n) (DROP (Num i) (smtstr_rep s)))
 End
 
 Definition smtstr_at_def:
-  smtstr_at (s : num list) (i : int) = smtstr_substr s i 1
+  smtstr_at s (i : int) = smtstr_substr s i 1
 End
 
 Definition smtstr_prefixof_def:
-  smtstr_prefixof (s : num list) t <=> IS_PREFIX t s
+  smtstr_prefixof s t <=>
+    IS_PREFIX (smtstr_rep t) (smtstr_rep s)
 End
 
 Definition smtstr_suffixof_def:
-  smtstr_suffixof (s : num list) t <=> IS_SUFFIX t s
+  smtstr_suffixof s t <=>
+    IS_SUFFIX (smtstr_rep t) (smtstr_rep s)
 End
 
 Definition smtstr_contains_def:
-  smtstr_contains (s : num list) t <=> IS_SUBLIST s t
+  smtstr_contains s t <=>
+    IS_SUBLIST (smtstr_rep s) (smtstr_rep t)
 End
 
 Definition smtstr_indexof_aux_def:
@@ -48,28 +77,29 @@ Definition smtstr_indexof_aux_def:
 End
 
 Definition smtstr_indexof_def:
-  smtstr_indexof (s : num list) t (i : int) =
-    if i < 0 \/ LENGTH s < Num i then -1
+  smtstr_indexof s t (i : int) =
+    if i < 0 \/ LENGTH (smtstr_rep s) < Num i then -1
     else
-      case smtstr_indexof_aux t (Num i) (DROP (Num i) s) of
+      case smtstr_indexof_aux (smtstr_rep t) (Num i)
+        (DROP (Num i) (smtstr_rep s)) of
         NONE => -1
       | SOME n => &n
 End
 
 Definition smtstr_lt_def:
-  smtstr_lt (s : num list) t <=> LLEX $< s t
+  smtstr_lt s t <=> LLEX $< (smtstr_rep s) (smtstr_rep t)
 End
 
 Definition smtstr_le_def:
-  smtstr_le (s : num list) t <=> smtstr_lt s t \/ s = t
+  smtstr_le s t <=> smtstr_lt s t \/ s = t
 End
 
 Definition smtstr_char_def:
-  smtstr_char (c : num) = [c]
+  smtstr_char (c : num) = SmtStr [c]
 End
 
 Definition str_inj_def:
-  str_inj (s : string) = MAP ORD (EXPLODE s)
+  str_inj (s : string) = SmtStr (MAP ORD (EXPLODE s))
 End
 
 (* SMT-LIB regular languages over Unicode code points. *)
@@ -79,8 +109,8 @@ Datatype:
     = reglan_none
     | reglan_all
     | reglan_allchar
-    | reglan_to_re (num list)
-    | reglan_range (num list) (num list)
+    | reglan_to_re smtstr
+    | reglan_range smtstr smtstr
     | reglan_concat reglan reglan
     | reglan_union reglan reglan
     | reglan_inter reglan reglan
@@ -123,14 +153,17 @@ Definition smt_in_re_def:
   (smt_in_re s reglan_none <=> F) /\
   (smt_in_re s reglan_all <=> wfstr s) /\
   (smt_in_re s reglan_allchar <=>
-     ?c. c <= 196607 /\ s = [c]) /\
+     ?c. c <= 196607 /\ s = SmtStr [c]) /\
   (smt_in_re s (reglan_to_re t) <=> s = t) /\
   (smt_in_re s (reglan_range lo hi) <=>
      ?a b c.
-       lo = [a] /\ hi = [b] /\ a <= c /\ c <= b /\
-       c <= 196607 /\ s = [c]) /\
+       lo = SmtStr [a] /\ hi = SmtStr [b] /\ a <= c /\ c <= b /\
+       c <= 196607 /\ s = SmtStr [c]) /\
   (smt_in_re s (reglan_concat r1 r2) <=>
-     reglan_dot (\u. smt_in_re u r1) (\v. smt_in_re v r2) s) /\
+     reglan_dot
+       (\u. smt_in_re (SmtStr u) r1)
+       (\v. smt_in_re (SmtStr v) r2)
+       (smtstr_rep s)) /\
   (smt_in_re s (reglan_union r1 r2) <=>
      smt_in_re s r1 \/ smt_in_re s r2) /\
   (smt_in_re s (reglan_inter r1 r2) <=>
@@ -140,23 +173,27 @@ Definition smt_in_re_def:
   (smt_in_re s (reglan_comp r) <=>
      wfstr s /\ ~smt_in_re s r) /\
   (smt_in_re s (reglan_star r) <=>
-     reglan_kstar (\u. smt_in_re u r) s) /\
+     reglan_kstar (\u. smt_in_re (SmtStr u) r) (smtstr_rep s)) /\
   (smt_in_re s (reglan_plus r) <=>
      reglan_dot
-       (\u. smt_in_re u r)
-       (reglan_kstar (\u. smt_in_re u r)) s) /\
-  (smt_in_re s (reglan_opt r) <=> s = [] \/ smt_in_re s r) /\
+       (\u. smt_in_re (SmtStr u) r)
+       (reglan_kstar (\u. smt_in_re (SmtStr u) r))
+       (smtstr_rep s)) /\
+  (smt_in_re s (reglan_opt r) <=>
+     s = SmtStr [] \/ smt_in_re s r) /\
   (smt_in_re s (reglan_power r n) <=>
-     reglan_repeat (\u. smt_in_re u r) n s) /\
+     reglan_repeat
+       (\u. smt_in_re (SmtStr u) r) n (smtstr_rep s)) /\
   (smt_in_re s (reglan_loop r i n) <=>
-     reglan_loop_lang (\u. smt_in_re u r) i n s)
+     reglan_loop_lang
+       (\u. smt_in_re (SmtStr u) r) i n (smtstr_rep s))
 End
 
 Definition re_nullable_def:
   (re_nullable reglan_none = F) /\
   (re_nullable reglan_all = T) /\
   (re_nullable reglan_allchar = F) /\
-  (re_nullable (reglan_to_re s) <=> s = []) /\
+  (re_nullable (reglan_to_re s) <=> s = SmtStr []) /\
   (re_nullable (reglan_range lo hi) = F) /\
   (re_nullable (reglan_concat r1 r2) <=>
      re_nullable r1 /\ re_nullable r2) /\
@@ -200,18 +237,19 @@ Definition re_deriv_def:
   (re_deriv c reglan_all =
      if c <= 196607 then reglan_all else reglan_none) /\
   (re_deriv c reglan_allchar =
-     if c <= 196607 then reglan_to_re [] else reglan_none) /\
+     if c <= 196607 then reglan_to_re (SmtStr []) else reglan_none) /\
   (re_deriv c (reglan_to_re s) =
-     case s of
+     case smtstr_rep s of
        [] => reglan_none
-     | h::t => if c = h then reglan_to_re t else reglan_none) /\
+     | h::t =>
+         if c = h then reglan_to_re (SmtStr t) else reglan_none) /\
   (re_deriv c (reglan_range lo hi) =
-     case lo of
+     case smtstr_rep lo of
        [a] =>
-         (case hi of
+         (case smtstr_rep hi of
             [b] =>
               if a <= c /\ c <= b /\ c <= 196607 then
-                reglan_to_re []
+                reglan_to_re (SmtStr [])
               else reglan_none
           | _ => reglan_none)
      | _ => reglan_none) /\
@@ -241,113 +279,48 @@ Definition re_deriv_def:
      reglan_loop_deriv (re_deriv c r) (re_nullable r) r i n)
 End
 
-val _ = computeLib.add_funs
-  [re_nullable_def, reglan_power_deriv_def,
-   reglan_loop_deriv_def, re_deriv_def];
-
 (* Evaluation-ready characterizations for the persistent compute set. *)
 
 Theorem wfstr_compute[compute]:
-  (wfstr [] <=> T) /\
-  (wfstr (c::s) <=> c <= 196607 /\ wfstr s)
+  (wfstr (SmtStr []) <=> T) /\
+  (wfstr (SmtStr (c::s)) <=> c <= 196607 /\ wfstr (SmtStr s))
 Proof
-  simp [wfstr_def]
+  simp [wfstr_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_concat_compute[compute]:
-  (smtstr_concat [] t = t) /\
-  (smtstr_concat (h::s) t = h::smtstr_concat s t)
+  (smtstr_concat (SmtStr []) t = t) /\
+  (smtstr_concat (SmtStr (h::s)) t =
+     SmtStr (h::smtstr_rep (smtstr_concat (SmtStr s) t)))
 Proof
-  simp [smtstr_concat_def]
+  Cases_on `t` >>
+  simp [smtstr_concat_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_len_compute[compute]:
-  (smtstr_len [] = 0) /\
-  (smtstr_len (h::s) = SUC (smtstr_len s))
+  (smtstr_len (SmtStr []) = 0) /\
+  (smtstr_len (SmtStr (h::s)) = 1 + smtstr_len (SmtStr s))
 Proof
-  simp [smtstr_len_def]
-QED
-
-Theorem smtstr_substr_compute[compute]:
-  smtstr_substr s i n =
-    if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then []
-    else TAKE (Num n) (DROP (Num i) s)
-Proof
-  simp [smtstr_substr_def]
-QED
-
-Theorem smtstr_at_compute[compute]:
-  smtstr_at s i = smtstr_substr s i 1
-Proof
-  simp [smtstr_at_def]
-QED
-
-Theorem smtstr_prefixof_compute[compute]:
-  smtstr_prefixof s t <=> IS_PREFIX t s
-Proof
-  simp [smtstr_prefixof_def]
-QED
-
-Theorem smtstr_suffixof_compute[compute]:
-  smtstr_suffixof s t <=> IS_SUFFIX t s
-Proof
-  simp [smtstr_suffixof_def]
-QED
-
-Theorem smtstr_contains_compute[compute]:
-  smtstr_contains s t <=> IS_SUBLIST s t
-Proof
-  simp [smtstr_contains_def]
-QED
-
-Theorem smtstr_indexof_aux_compute[compute]:
-  (smtstr_indexof_aux t n [] =
-     if t = [] then SOME n else NONE) /\
-  (smtstr_indexof_aux t n (h::s) =
-     if IS_PREFIX (h::s) t then SOME n
-     else smtstr_indexof_aux t (SUC n) s)
-Proof
-  simp [smtstr_indexof_aux_def]
-QED
-
-Theorem smtstr_indexof_compute[compute]:
-  smtstr_indexof s t i =
-    if i < 0 \/ LENGTH s < Num i then -1
-    else
-      case smtstr_indexof_aux t (Num i) (DROP (Num i) s) of
-        NONE => -1
-      | SOME n => &n
-Proof
-  simp [smtstr_indexof_def]
+  simp [smtstr_len_def, arithmeticTheory.ADD1,
+        integerTheory.INT_OF_NUM_ADD, smtstr_rep_def]
 QED
 
 Theorem smtstr_lt_compute[compute]:
-  (~smtstr_lt [] []) /\
-  (smtstr_lt [] (h::t)) /\
-  (~smtstr_lt (h::s) []) /\
-  (smtstr_lt (h1::t1) (h2::t2) <=>
-     h1 < h2 \/ h1 = h2 /\ smtstr_lt t1 t2)
+  (~smtstr_lt (SmtStr []) (SmtStr [])) /\
+  (smtstr_lt (SmtStr []) (SmtStr (h::t))) /\
+  (~smtstr_lt (SmtStr (h::s)) (SmtStr [])) /\
+  (smtstr_lt (SmtStr (h1::t1)) (SmtStr (h2::t2)) <=>
+     h1 < h2 \/ h1 = h2 /\ smtstr_lt (SmtStr t1) (SmtStr t2))
 Proof
-  simp [smtstr_lt_def, listTheory.LLEX_THM]
-QED
-
-Theorem smtstr_le_compute[compute]:
-  smtstr_le s t <=> smtstr_lt s t \/ s = t
-Proof
-  simp [smtstr_le_def]
-QED
-
-Theorem smtstr_char_compute[compute]:
-  smtstr_char c = [c]
-Proof
-  simp [smtstr_char_def]
+  simp [smtstr_lt_def, smtstr_rep_def, listTheory.LLEX_THM]
 QED
 
 Theorem str_inj_compute[compute]:
-  (str_inj "" = []) /\
-  (str_inj (STRING c s) = ORD c::str_inj s)
+  (str_inj "" = SmtStr []) /\
+  (str_inj (STRING c s) =
+     SmtStr (ORD c::smtstr_rep (str_inj s)))
 Proof
-  simp [str_inj_def]
+  simp [str_inj_def, smtstr_rep_def]
 QED
 
 (* Wellformedness algebra for every string-valued operator above. *)
@@ -355,13 +328,15 @@ QED
 Theorem wfstr_concat:
   wfstr s /\ wfstr t ==> wfstr (smtstr_concat s t)
 Proof
-  simp [wfstr_def, smtstr_concat_def, listTheory.EVERY_APPEND]
+  simp [wfstr_def, smtstr_concat_def, smtstr_rep_def,
+        listTheory.EVERY_APPEND]
 QED
 
 Theorem wfstr_substr:
   wfstr s ==> wfstr (smtstr_substr s i n)
 Proof
   rw [wfstr_def, smtstr_substr_def] >>
+  simp [smtstr_rep_def] >>
   irule rich_listTheory.EVERY_TAKE >>
   irule rich_listTheory.EVERY_DROP >>
   fs []
@@ -376,7 +351,7 @@ QED
 Theorem wfstr_char:
   c <= 196607 ==> wfstr (smtstr_char c)
 Proof
-  simp [wfstr_def, smtstr_char_def]
+  simp [wfstr_def, smtstr_char_def, smtstr_rep_def]
 QED
 
 (* Injection from native HOL strings. *)
@@ -391,31 +366,45 @@ QED
 Theorem wfstr_str_inj:
   wfstr (str_inj s)
 Proof
-  simp [wfstr_def, str_inj_def, listTheory.EVERY_MAP,
+  simp [wfstr_def, str_inj_def, smtstr_rep_def,
+        listTheory.EVERY_MAP,
         ORD_unicode_bound]
+QED
+
+Theorem smtstr_rep_str_inj[simp]:
+  smtstr_rep (str_inj s) = MAP ORD (EXPLODE s)
+Proof
+  simp [str_inj_def, smtstr_rep_def]
+QED
+
+Theorem MAP_ORD_11:
+  MAP ORD s = MAP ORD t <=> s = t
+Proof
+  qid_spec_tac `t` >>
+  Induct_on `s` >>
+  Cases_on `t` >>
+  simp [stringTheory.ORD_11]
 QED
 
 Theorem str_inj_11[simp]:
   str_inj s = str_inj t <=> s = t
 Proof
-  qid_spec_tac `t` >>
-  Induct_on `s` >>
-  Cases_on `t` >>
-  simp [str_inj_compute, stringTheory.ORD_11]
+  simp [str_inj_def, MAP_ORD_11]
 QED
 
 Theorem str_inj_STRCAT:
   str_inj (STRCAT s t) =
     smtstr_concat (str_inj s) (str_inj t)
 Proof
-  simp [str_inj_def, smtstr_concat_def,
+  simp [str_inj_def, smtstr_concat_def, smtstr_rep_def,
         stringTheory.IMPLODE_EXPLODE_I]
 QED
 
 Theorem str_inj_STRLEN:
-  STRLEN s = LENGTH (str_inj s)
+  smtstr_len (str_inj s) = &(STRLEN s)
 Proof
-  simp [str_inj_def, stringTheory.IMPLODE_EXPLODE_I]
+  simp [smtstr_len_def, str_inj_def, smtstr_rep_def,
+        stringTheory.IMPLODE_EXPLODE_I]
 QED
 
 Theorem str_inj_isPREFIX:
@@ -426,6 +415,7 @@ Proof
   Induct_on `s` >>
   Cases_on `t` >>
   simp [str_inj_compute, smtstr_prefixof_def,
+        smtstr_rep_def,
         rich_listTheory.IS_PREFIX, stringTheory.ORD_11]
 QED
 
@@ -445,6 +435,7 @@ Theorem str_inj_string_lt:
     smtstr_lt (str_inj s) (str_inj t)
 Proof
   simp [stringTheory.string_lt_LLEX, smtstr_lt_def, str_inj_def,
+        smtstr_rep_def,
         stringTheory.IMPLODE_EXPLODE_I, LLEX_MAP_ORD]
 QED
 
@@ -497,29 +488,32 @@ Proof
 QED
 
 Theorem smt_in_re_loop_singleton_0_1:
-  smt_in_re s (reglan_loop (reglan_to_re [c]) 0 1) <=>
-  s = [] \/ s = [c]
+  smt_in_re s (reglan_loop (reglan_to_re (SmtStr [c])) 0 1) <=>
+  s = SmtStr [] \/ s = SmtStr [c]
 Proof
+  Cases_on `s` >>
   simp [smt_in_re_def, reglan_loop_lang_compute_thm,
-        reglan_repeat_singleton, REPLICATE_small] >>
+        reglan_repeat_singleton, REPLICATE_small, smtstr_rep_def] >>
   metis_tac []
 QED
 
 Theorem smt_in_re_loop_singleton_0_2:
-  smt_in_re s (reglan_loop (reglan_to_re [c]) 0 2) <=>
-  s = [] \/ s = [c] \/ s = [c; c]
+  smt_in_re s (reglan_loop (reglan_to_re (SmtStr [c])) 0 2) <=>
+  s = SmtStr [] \/ s = SmtStr [c] \/ s = SmtStr [c; c]
 Proof
+  Cases_on `s` >>
   simp [smt_in_re_def, reglan_loop_lang_compute_thm,
-        reglan_repeat_singleton, REPLICATE_small] >>
+        reglan_repeat_singleton, REPLICATE_small, smtstr_rep_def] >>
   metis_tac []
 QED
 
 Theorem smt_in_re_loop_singleton_1_3:
-  smt_in_re s (reglan_loop (reglan_to_re [c]) 1 3) <=>
-  s = [c] \/ s = [c; c] \/ s = [c; c; c]
+  smt_in_re s (reglan_loop (reglan_to_re (SmtStr [c])) 1 3) <=>
+  s = SmtStr [c] \/ s = SmtStr [c; c] \/ s = SmtStr [c; c; c]
 Proof
+  Cases_on `s` >>
   simp [smt_in_re_def, reglan_loop_lang_compute_thm,
-        reglan_repeat_singleton, REPLICATE_small] >>
+        reglan_repeat_singleton, REPLICATE_small, smtstr_rep_def] >>
   metis_tac []
 QED
 
@@ -554,25 +548,28 @@ QED
 Theorem smt_in_re_loop_nullable_singleton_0_1:
   smt_in_re s
       (reglan_loop
-        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
         0 1) <=>
-  s = [] \/ s = [c]
+  s = SmtStr [] \/ s = SmtStr [c]
 Proof
+  Cases_on `s` >>
   simp [smt_in_re_def, reglan_loop_lang_compute_thm,
-        reglan_repeat_zero, reglan_repeat_nullable_singleton_one] >>
+        reglan_repeat_zero, reglan_repeat_nullable_singleton_one,
+        smtstr_rep_def] >>
   metis_tac []
 QED
 
 Theorem smt_in_re_loop_nullable_singleton_1_2:
   smt_in_re s
       (reglan_loop
-        (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+        (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
         1 2) <=>
-  s = [] \/ s = [c] \/ s = [c; c]
+  s = SmtStr [] \/ s = SmtStr [c] \/ s = SmtStr [c; c]
 Proof
+  Cases_on `s` >>
   simp [smt_in_re_def, reglan_loop_lang_compute_thm,
         reglan_repeat_nullable_singleton_one,
-        reglan_repeat_nullable_singleton_two] >>
+        reglan_repeat_nullable_singleton_two, smtstr_rep_def] >>
   metis_tac []
 QED
 
@@ -650,115 +647,139 @@ Proof
 QED
 
 Theorem re_nullable_correct:
-  re_nullable r <=> smt_in_re [] r
+  re_nullable r <=> smt_in_re (SmtStr []) r
 Proof
   Induct_on `r` >>
   simp [re_nullable_def, smt_in_re_def, wfstr_def,
+        smtstr_rep_def,
         reglan_dot_def, reglan_kstar_nil, reglan_repeat_nil,
         reglan_loop_lang_nil] >>
   metis_tac []
 QED
 
 Theorem reglan_power_deriv_correct:
-  (!t. smt_in_re t dr <=> smt_in_re (c::t) r) /\
-  (nullable <=> smt_in_re [] r) ==>
-  (smt_in_re s (reglan_power_deriv dr nullable r n) <=>
-   reglan_repeat (\u. smt_in_re u r) n (c::s))
+  (!t. smt_in_re (SmtStr t) dr <=>
+       smt_in_re (SmtStr (c::t)) r) /\
+  (nullable <=> smt_in_re (SmtStr []) r) ==>
+  (smt_in_re (SmtStr s) (reglan_power_deriv dr nullable r n) <=>
+   reglan_repeat (\u. smt_in_re (SmtStr u) r) n (c::s))
 Proof
   strip_tac >>
   qid_spec_tac `s` >>
   Induct_on `n`
   >- simp [reglan_power_deriv_def, smt_in_re_def,
-           reglan_repeat_zero]
+           smtstr_rep_def, reglan_repeat_zero]
   >> rpt strip_tac >>
   Cases_on `nullable` >>
   fs [reglan_power_deriv_def, smt_in_re_def,
-      reglan_repeat_suc, reglan_dot_cons_unfold] >>
+      smtstr_rep_def, reglan_repeat_suc, reglan_dot_cons_unfold] >>
   metis_tac []
 QED
 
 Theorem reglan_loop_deriv_correct:
-  (!t. smt_in_re t dr <=> smt_in_re (c::t) r) /\
-  (nullable <=> smt_in_re [] r) ==>
-  (smt_in_re s (reglan_loop_deriv dr nullable r i n) <=>
-   reglan_loop_lang (\u. smt_in_re u r) i n (c::s))
+  (!t. smt_in_re (SmtStr t) dr <=>
+       smt_in_re (SmtStr (c::t)) r) /\
+  (nullable <=> smt_in_re (SmtStr []) r) ==>
+  (smt_in_re (SmtStr s) (reglan_loop_deriv dr nullable r i n) <=>
+   reglan_loop_lang (\u. smt_in_re (SmtStr u) r) i n (c::s))
 Proof
   strip_tac >>
   fs [] >>
   qid_spec_tac `s` >>
   Induct_on `n`
   >- simp [reglan_loop_deriv_def, smt_in_re_def,
-           reglan_loop_lang_def, reglan_repeat_zero]
+           smtstr_rep_def, reglan_loop_lang_def, reglan_repeat_zero]
   >> rpt strip_tac >>
   Cases_on `i <= SUC n`
-  >- (`smt_in_re s
-         (reglan_power_deriv dr (smt_in_re [] r) r (SUC n)) <=>
-       reglan_repeat (\u. smt_in_re u r) (SUC n) (c::s)` by
+  >- (`smt_in_re (SmtStr s)
+         (reglan_power_deriv dr (smt_in_re (SmtStr []) r) r (SUC n)) <=>
+       reglan_repeat
+         (\u. smt_in_re (SmtStr u) r) (SUC n) (c::s)` by
         (irule reglan_power_deriv_correct >>
          simp []) >>
       simp [reglan_loop_deriv_def, smt_in_re_def,
-            reglan_loop_lang_def])
+            smtstr_rep_def, reglan_loop_lang_def])
   >- (`n < i` by fs [] >>
       simp [reglan_loop_deriv_def, smt_in_re_def,
-            reglan_loop_lang_def, reglan_loop_lang_too_large])
+            smtstr_rep_def, reglan_loop_lang_def,
+            reglan_loop_lang_too_large])
 QED
 
 Theorem re_deriv_correct:
-  smt_in_re (c::s) r <=> smt_in_re s (re_deriv c r)
+  smt_in_re (SmtStr (c::s)) r <=>
+  smt_in_re (SmtStr s) (re_deriv c r)
 Proof
   qid_spec_tac `s` >>
   Induct_on `r` >>
   rpt strip_tac
-  >- simp [re_deriv_def, smt_in_re_def]
+  >- simp [re_deriv_def, smt_in_re_def, smtstr_rep_def]
   >- (Cases_on `c <= 196607` >>
-      simp [re_deriv_def, smt_in_re_def, wfstr_def])
+      simp [re_deriv_def, smt_in_re_def, wfstr_def,
+            smtstr_rep_def])
   >- (Cases_on `c <= 196607` >>
-      simp [re_deriv_def, smt_in_re_def] >>
+      simp [re_deriv_def, smt_in_re_def, smtstr_rep_def] >>
       metis_tac [])
-  >- (Cases_on `l` >>
-      simp [re_deriv_def, smt_in_re_def] >>
+  >- (Cases_on `smtstr_rep s` >>
+      simp [re_deriv_def, smt_in_re_def, smtstr_rep_def] >>
       Cases_on `c = h` >>
-      simp [smt_in_re_def])
-  >- (Cases_on `l` >>
-      simp [re_deriv_def, smt_in_re_def] >>
+      simp [smt_in_re_def, smtstr_rep_def])
+  >- (Cases_on `smtstr_rep s` >>
+      simp [re_deriv_def, smt_in_re_def, smtstr_rep_def] >>
       Cases_on `t` >>
-      simp [smt_in_re_def] >>
-      Cases_on `l0` >>
-      simp [smt_in_re_def] >>
+      simp [smt_in_re_def, smtstr_rep_def] >>
+      Cases_on `smtstr_rep s0` >>
+      simp [smt_in_re_def, smtstr_rep_def] >>
       Cases_on `t` >>
-      simp [smt_in_re_def] >>
+      simp [smt_in_re_def, smtstr_rep_def] >>
       Cases_on `h <= c /\ c <= h' /\ c <= 196607` >>
-      simp [smt_in_re_def])
-  >- (simp [re_deriv_def, smt_in_re_def,
-            re_nullable_correct, reglan_dot_cons_unfold] >>
-      Cases_on `smt_in_re [] r` >>
-      simp [smt_in_re_def])
-  >- simp [re_deriv_def, smt_in_re_def]
-  >- simp [re_deriv_def, smt_in_re_def]
-  >- simp [re_deriv_def, smt_in_re_def]
+      simp [smt_in_re_def, smtstr_rep_def])
+  >- (`reglan_dot
+         (\u. smt_in_re (SmtStr u) r)
+         (\v. smt_in_re (SmtStr v) r') (c::s) <=>
+       reglan_dot
+         (\u. smt_in_re (SmtStr u) (re_deriv c r))
+         (\v. smt_in_re (SmtStr v) r') s \/
+       smt_in_re (SmtStr []) r /\
+       smt_in_re (SmtStr s) (re_deriv c r')` by
+        (rw [reglan_dot_def] >>
+         metis_tac [listTheory.APPEND_EQ_CONS]) >>
+      PURE_REWRITE_TAC
+        [re_deriv_def, smt_in_re_def, smtstr_rep_def,
+         re_nullable_correct] >>
+      Cases_on `smt_in_re (SmtStr []) r` >>
+      fs [smt_in_re_def, smtstr_rep_def])
+  >- simp [re_deriv_def, smt_in_re_def, smtstr_rep_def]
+  >- simp [re_deriv_def, smt_in_re_def, smtstr_rep_def]
+  >- simp [re_deriv_def, smt_in_re_def, smtstr_rep_def]
   >- (Cases_on `c <= 196607` >>
-      simp [re_deriv_def, smt_in_re_def, wfstr_def])
+      simp [re_deriv_def, smt_in_re_def, wfstr_def,
+            smtstr_rep_def])
   >- simp [re_deriv_def, smt_in_re_def,
-           reglan_kstar_cons_unfold, reglan_dot_def]
+            smtstr_rep_def, reglan_kstar_cons_unfold,
+            reglan_dot_def]
   >- (simp [re_deriv_def, smt_in_re_def,
+            smtstr_rep_def,
             reglan_dot_cons_unfold,
-            reglan_kstar_cons_unfold, reglan_dot_def] >>
+            reglan_kstar_cons_unfold] >>
+      simp [reglan_dot_def] >>
       metis_tac [])
-  >- simp [re_deriv_def, smt_in_re_def]
+  >- simp [re_deriv_def, smt_in_re_def, smtstr_rep_def]
   >- simp [re_deriv_def, smt_in_re_def,
-           re_nullable_correct, reglan_power_deriv_correct]
+            smtstr_rep_def, re_nullable_correct,
+            reglan_power_deriv_correct]
   >- simp [re_deriv_def, smt_in_re_def,
-           re_nullable_correct, reglan_loop_deriv_correct]
+            smtstr_rep_def, re_nullable_correct,
+            reglan_loop_deriv_correct]
 QED
 
 Theorem reglan_kstar_allchar:
-  reglan_kstar (\u. smt_in_re u reglan_allchar) s <=>
-  wfstr s
+  reglan_kstar (\u. smt_in_re (SmtStr u) reglan_allchar) s <=>
+  wfstr (SmtStr s)
 Proof
   Induct_on `s`
-  >- simp [wfstr_def, reglan_kstar_nil]
+  >- simp [wfstr_def, smtstr_rep_def, reglan_kstar_nil]
   >> rpt strip_tac >>
-  `!t. smt_in_re (h::t) reglan_allchar <=>
+  `!t. smt_in_re (SmtStr (h::t)) reglan_allchar <=>
            h <= 196607 /\ t = []` by
        simp [smt_in_re_def] >>
   PURE_REWRITE_TAC [reglan_kstar_cons_unfold] >>
@@ -773,19 +794,29 @@ QED
 
 Theorem smt_in_re_plus_allchar:
   smt_in_re s (reglan_plus reglan_allchar) <=>
-  wfstr s /\ s <> []
+  wfstr s /\ s <> SmtStr []
 Proof
   Cases_on `s` >>
+  Cases_on `l` >>
   simp [smt_in_re_def, reglan_kstar_allchar,
-        wfstr_compute, reglan_dot_cons_unfold,
+        wfstr_compute, smtstr_rep_def, reglan_dot_cons_unfold,
         reglan_dot_def]
+  >- (eq_tac
+      >- (strip_tac >>
+          fs [] >>
+          rfs [])
+      >- (strip_tac >>
+          qexists `[h]` >>
+          qexists `t` >>
+          simp []))
 QED
 
 Theorem re_deriv_loop_singleton_1_3:
   smt_in_re s
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 1 3)) <=>
-  d = c /\ smt_in_re s (reglan_loop (reglan_to_re [c]) 0 2)
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 1 3)) <=>
+  d = c /\ smt_in_re s (reglan_loop (reglan_to_re (SmtStr [c])) 0 2)
 Proof
+  Cases_on `s` >>
   simp [GSYM re_deriv_correct, smt_in_re_loop_singleton_0_2,
         smt_in_re_loop_singleton_1_3] >>
   metis_tac []
@@ -793,9 +824,10 @@ QED
 
 Theorem re_deriv_loop_singleton_0_2:
   smt_in_re s
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 2)) <=>
-  d = c /\ smt_in_re s (reglan_loop (reglan_to_re [c]) 0 1)
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 0 2)) <=>
+  d = c /\ smt_in_re s (reglan_loop (reglan_to_re (SmtStr [c])) 0 1)
 Proof
+  Cases_on `s` >>
   simp [GSYM re_deriv_correct, smt_in_re_loop_singleton_0_1,
         smt_in_re_loop_singleton_0_2] >>
   metis_tac []
@@ -803,9 +835,10 @@ QED
 
 Theorem re_deriv_loop_singleton_0_1:
   smt_in_re s
-      (re_deriv d (reglan_loop (reglan_to_re [c]) 0 1)) <=>
-  d = c /\ smt_in_re s (reglan_to_re [])
+      (re_deriv d (reglan_loop (reglan_to_re (SmtStr [c])) 0 1)) <=>
+  d = c /\ smt_in_re s (reglan_to_re (SmtStr []))
 Proof
+  Cases_on `s` >>
   simp [GSYM re_deriv_correct, smt_in_re_def,
         smt_in_re_loop_singleton_0_1] >>
   metis_tac []
@@ -815,14 +848,15 @@ Theorem re_deriv_loop_nullable_singleton_1_2:
   smt_in_re s
       (re_deriv d
         (reglan_loop
-          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
           1 2)) <=>
   d = c /\
   smt_in_re s
     (reglan_loop
-      (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+      (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
       0 1)
 Proof
+  Cases_on `s` >>
   simp [GSYM re_deriv_correct,
         smt_in_re_loop_nullable_singleton_0_1,
         smt_in_re_loop_nullable_singleton_1_2] >>
@@ -833,10 +867,11 @@ Theorem re_deriv_loop_nullable_singleton_0_1:
   smt_in_re s
       (re_deriv d
         (reglan_loop
-          (reglan_union (reglan_to_re [c]) (reglan_to_re []))
+          (reglan_union (reglan_to_re (SmtStr [c])) (reglan_to_re (SmtStr [])))
           0 1)) <=>
-  d = c /\ smt_in_re s (reglan_to_re [])
+  d = c /\ smt_in_re s (reglan_to_re (SmtStr []))
 Proof
+  Cases_on `s` >>
   simp [GSYM re_deriv_correct, smt_in_re_def,
         smt_in_re_loop_nullable_singleton_0_1] >>
   metis_tac []
@@ -844,21 +879,29 @@ QED
 
 Theorem smt_in_re_deriv[compute]:
   smt_in_re s r <=>
-    re_nullable (FOLDL (\r c. re_deriv c r) r s)
+    re_nullable (FOLDL (\r c. re_deriv c r) r (smtstr_rep s))
 Proof
+  Cases_on `s` >>
   qid_spec_tac `r` >>
-  Induct_on `s` >>
-  simp [re_nullable_correct, re_deriv_correct]
+  Induct_on `l` >>
+  simp [smtstr_rep_def, re_nullable_correct, re_deriv_correct]
 QED
 
 (* Leftmost string and regular-language replacement. *)
 
-Definition smtstr_replace_def:
-  smtstr_replace (s : num list) t u =
+Definition smtstr_replace_raw_def:
+  smtstr_replace_raw (s : num list) t u =
     case smtstr_indexof_aux t 0 s of
       NONE => s
     | SOME n =>
         TAKE n s ++ u ++ DROP (n + LENGTH t) s
+End
+
+Definition smtstr_replace_def:
+  smtstr_replace s t u =
+    SmtStr
+      (smtstr_replace_raw
+         (smtstr_rep s) (smtstr_rep t) (smtstr_rep u))
 End
 
 Definition smtstr_replace_all_aux_def:
@@ -872,16 +915,19 @@ Definition smtstr_replace_all_aux_def:
 End
 
 Definition smtstr_replace_all_def:
-  smtstr_replace_all (s : num list) t u =
-    if t = [] then s
-    else smtstr_replace_all_aux (LENGTH s) s t u
+  smtstr_replace_all s t u =
+    if smtstr_rep t = [] then s
+    else
+      SmtStr
+        (smtstr_replace_all_aux (LENGTH (smtstr_rep s))
+           (smtstr_rep s) (smtstr_rep t) (smtstr_rep u))
 End
 
 Definition smtstr_shortest_re_aux_def:
   (smtstr_shortest_re_aux r s n 0 =
-     if smt_in_re (TAKE n s) r then SOME n else NONE) /\
+     if smt_in_re (SmtStr (TAKE n s)) r then SOME n else NONE) /\
   (smtstr_shortest_re_aux r s n (SUC k) =
-     if smt_in_re (TAKE n s) r then SOME n
+     if smt_in_re (SmtStr (TAKE n s)) r then SOME n
      else smtstr_shortest_re_aux r s (SUC n) k)
 End
 
@@ -911,11 +957,18 @@ Definition smtstr_find_re_def:
     smtstr_find_re_aux allow_empty r 0 s
 End
 
-Definition smtstr_replace_re_def:
-  smtstr_replace_re (s : num list) r u =
+Definition smtstr_replace_re_raw_def:
+  smtstr_replace_re_raw (s : num list) r u =
     case smtstr_find_re T r s of
       NONE => s
     | SOME (i, n) => TAKE i s ++ u ++ DROP (i + n) s
+End
+
+Definition smtstr_replace_re_def:
+  smtstr_replace_re s r u =
+    SmtStr
+      (smtstr_replace_re_raw
+         (smtstr_rep s) r (smtstr_rep u))
 End
 
 Theorem smtstr_shortest_re_aux_lower:
@@ -967,153 +1020,89 @@ Definition smtstr_replace_re_all_aux_def:
 End
 
 Definition smtstr_replace_re_all_def:
-  smtstr_replace_re_all (s : num list) r u =
-    smtstr_replace_re_all_aux (LENGTH s) s r u
+  smtstr_replace_re_all s r u =
+    SmtStr
+      (smtstr_replace_re_all_aux (LENGTH (smtstr_rep s))
+         (smtstr_rep s) r (smtstr_rep u))
 End
 
 (* SMT-LIB character and decimal conversions. *)
 
 Definition smtstr_is_digit_def:
-  smtstr_is_digit (s : num list) <=>
-    ?c. s = [c] /\ 48 <= c /\ c <= 57
+  smtstr_is_digit s <=>
+    ?c. smtstr_rep s = [c] /\ 48 <= c /\ c <= 57
 End
 
 Definition smtstr_to_code_def:
-  smtstr_to_code (s : num list) =
-    case s of
+  smtstr_to_code s =
+    case smtstr_rep s of
       [c] => &c
     | _ => -1
 End
 
 Definition smtstr_from_code_def:
   smtstr_from_code (n : int) =
-    if n < 0 \/ 196607 < Num n then [] else [Num n]
+    if n < 0 \/ 196607 < Num n then SmtStr []
+    else SmtStr [Num n]
 End
 
 Definition smtstr_digits_def:
-  smtstr_digits (s : num list) <=>
-    EVERY (\c. 48 <= c /\ c <= 57) s
+  smtstr_digits s <=>
+    EVERY (\c. 48 <= c /\ c <= 57) (smtstr_rep s)
 End
 
 Definition smtstr_to_int_def:
-  smtstr_to_int (s : num list) =
-    if s = [] \/ ~smtstr_digits s then -1
+  smtstr_to_int s =
+    if s = SmtStr [] \/ ~smtstr_digits s then -1
     else
-      &ASCIInumbers$num_from_dec_string (MAP CHR s)
+      &ASCIInumbers$num_from_dec_string (MAP CHR (smtstr_rep s))
 End
 
 Definition smtstr_from_int_def:
   smtstr_from_int (n : int) =
-    if n < 0 then []
-    else MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
+    if n < 0 then SmtStr []
+    else
+      SmtStr (MAP ORD (ASCIInumbers$num_to_dec_string (Num n)))
 End
-
-val _ = computeLib.add_funs
-  [smtstr_replace_def, smtstr_replace_all_aux_def,
-   smtstr_replace_all_def,
-   smtstr_shortest_re_aux_def, smtstr_shortest_re_def,
-   smtstr_find_re_aux_def, smtstr_find_re_def,
-   smtstr_replace_re_def, smtstr_replace_re_all_aux_def,
-   smtstr_replace_re_all_def,
-   smtstr_is_digit_def, smtstr_to_code_def,
-   smtstr_from_code_def, smtstr_digits_def,
-   smtstr_to_int_def, smtstr_from_int_def];
 
 (* Public computation equations. *)
 
-Theorem smtstr_replace_compute[compute]:
-  smtstr_replace s t u =
-    case smtstr_indexof_aux t 0 s of
-      NONE => s
-    | SOME n =>
-        TAKE n s ++ u ++ DROP (n + LENGTH t) s
-Proof
-  simp [smtstr_replace_def]
-QED
-
-Theorem smtstr_replace_all_compute[compute]:
-  smtstr_replace_all s t u =
-    if t = [] then s
-    else smtstr_replace_all_aux (LENGTH s) s t u
-Proof
-  simp [smtstr_replace_all_def]
-QED
-
-Theorem smtstr_replace_re_compute[compute]:
-  smtstr_replace_re s r u =
-    case smtstr_find_re T r s of
-      NONE => s
-    | SOME (i, n) => TAKE i s ++ u ++ DROP (i + n) s
-Proof
-  simp [smtstr_replace_re_def]
-QED
-
-Theorem smtstr_replace_re_all_compute[compute]:
-  smtstr_replace_re_all s r u =
-    smtstr_replace_re_all_aux (LENGTH s) s r u
-Proof
-  simp [smtstr_replace_re_all_def]
-QED
-
 Theorem smtstr_is_digit_compute[compute]:
-  (~smtstr_is_digit []) /\
-  (smtstr_is_digit [c] <=> 48 <= c /\ c <= 57) /\
-  (~smtstr_is_digit (c1::c2::s))
+  (~smtstr_is_digit (SmtStr [])) /\
+  (smtstr_is_digit (SmtStr [c]) <=> 48 <= c /\ c <= 57) /\
+  (~smtstr_is_digit (SmtStr (c1::c2::s)))
 Proof
-  simp [smtstr_is_digit_def]
+  simp [smtstr_is_digit_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_to_code_compute[compute]:
-  (smtstr_to_code [] = -1) /\
-  (smtstr_to_code [c] = &c) /\
-  (smtstr_to_code (c1::c2::s) = -1)
+  (smtstr_to_code (SmtStr []) = -1) /\
+  (smtstr_to_code (SmtStr [c]) = &c) /\
+  (smtstr_to_code (SmtStr (c1::c2::s)) = -1)
 Proof
-  simp [smtstr_to_code_def]
-QED
-
-Theorem smtstr_from_code_compute[compute]:
-  smtstr_from_code n =
-    if n < 0 \/ 196607 < Num n then [] else [Num n]
-Proof
-  simp [smtstr_from_code_def]
+  simp [smtstr_to_code_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_digits_compute[compute]:
-  (smtstr_digits [] <=> T) /\
-  (smtstr_digits (c::s) <=>
-     48 <= c /\ c <= 57 /\ smtstr_digits s)
+  (smtstr_digits (SmtStr []) <=> T) /\
+  (smtstr_digits (SmtStr (c::s)) <=>
+     48 <= c /\ c <= 57 /\ smtstr_digits (SmtStr s))
 Proof
-  simp [smtstr_digits_def, CONJ_ASSOC]
-QED
-
-Theorem smtstr_to_int_compute[compute]:
-  smtstr_to_int s =
-    if s = [] \/ ~smtstr_digits s then -1
-    else &ASCIInumbers$num_from_dec_string (MAP CHR s)
-Proof
-  simp [smtstr_to_int_def]
-QED
-
-Theorem smtstr_from_int_compute[compute]:
-  smtstr_from_int n =
-    if n < 0 then []
-    else MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
-Proof
-  simp [smtstr_from_int_def]
+  simp [smtstr_digits_def, smtstr_rep_def, CONJ_ASSOC]
 QED
 
 (* The ASCIInumbers bridge and SMT-LIB's divergent error cases. *)
 
 Theorem smtstr_to_int_ascii:
-  s <> [] /\ smtstr_digits s ==>
+  s <> SmtStr [] /\ smtstr_digits s ==>
   smtstr_to_int s =
-    &ASCIInumbers$num_from_dec_string (MAP CHR s)
+    &ASCIInumbers$num_from_dec_string (MAP CHR (smtstr_rep s))
 Proof
   simp [smtstr_to_int_def]
 QED
 
 Theorem smtstr_to_int_empty:
-  smtstr_to_int [] = -1
+  smtstr_to_int (SmtStr []) = -1
 Proof
   simp [smtstr_to_int_def]
 QED
@@ -1127,25 +1116,26 @@ QED
 Theorem smtstr_from_int_ascii:
   0 <= n ==>
   smtstr_from_int n =
-    MAP ORD (ASCIInumbers$num_to_dec_string (Num n))
+    SmtStr (MAP ORD (ASCIInumbers$num_to_dec_string (Num n)))
 Proof
   strip_tac >>
   Cases_on `n < 0` >>
-  simp [smtstr_from_int_def] >>
+  fs [smtstr_from_int_def, smtstr_rep_def] >>
   intLib.ARITH_TAC
 QED
 
 Theorem smtstr_from_int_negative:
-  n < 0 ==> smtstr_from_int n = []
+  n < 0 ==> smtstr_from_int n = SmtStr []
 Proof
-  simp [smtstr_from_int_def]
+  simp [smtstr_from_int_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_digits_num_to_dec_string:
   smtstr_digits
-    (MAP ORD (ASCIInumbers$num_to_dec_string n))
+    (SmtStr (MAP ORD (ASCIInumbers$num_to_dec_string n)))
 Proof
-  rw [smtstr_digits_def, listTheory.EVERY_MAP] >>
+  rw [smtstr_digits_def, smtstr_rep_def,
+      listTheory.EVERY_MAP] >>
   mp_tac
     (ASCIInumbersTheory.EVERY_isDigit_num_to_dec_string
        |> Q.SPEC `n`) >>
@@ -1153,11 +1143,11 @@ Proof
 QED
 
 Theorem smtstr_from_int_nonempty:
-  0 <= n ==> smtstr_from_int n <> []
+  0 <= n ==> smtstr_from_int n <> SmtStr []
 Proof
   strip_tac >>
   Cases_on `n < 0` >>
-  fs [smtstr_from_int_def,
+  fs [smtstr_from_int_def, smtstr_rep_def,
       ASCIInumbersTheory.num_to_dec_string_nil] >>
   intLib.COOPER_TAC
 QED
@@ -1167,13 +1157,14 @@ Theorem smtstr_to_int_from_int:
 Proof
   strip_tac >>
   `smtstr_from_int n =
-     MAP ORD (ASCIInumbers$num_to_dec_string (Num n))` by
+     SmtStr (MAP ORD (ASCIInumbers$num_to_dec_string (Num n)))` by
     metis_tac [smtstr_from_int_ascii] >>
   `smtstr_digits (smtstr_from_int n)` by
     simp [smtstr_digits_num_to_dec_string] >>
-  `smtstr_from_int n <> []` by
+  `smtstr_from_int n <> SmtStr []` by
     metis_tac [smtstr_from_int_nonempty] >>
-  simp [smtstr_to_int_def, listTheory.MAP_MAP_o,
+  simp [smtstr_to_int_def, smtstr_rep_def,
+        listTheory.MAP_MAP_o,
         combinTheory.o_DEF, ASCIInumbersTheory.toNum_toString,
         integerTheory.INT_OF_NUM]
 QED
@@ -1183,16 +1174,21 @@ QED
 Theorem wfstr_replace:
   wfstr s /\ wfstr u ==> wfstr (smtstr_replace s t u)
 Proof
-  rw [smtstr_replace_def] >>
+  Cases_on `s` >>
+  Cases_on `t` >>
+  Cases_on `u` >>
+  rw [smtstr_replace_def, smtstr_replace_raw_def,
+      smtstr_rep_def] >>
   BasicProvers.every_case_tac >>
-  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  fs [wfstr_def, smtstr_rep_def,
+      listTheory.EVERY_APPEND] >>
   metis_tac [rich_listTheory.EVERY_TAKE,
              rich_listTheory.EVERY_DROP]
 QED
 
 Theorem wfstr_replace_all_aux:
-  wfstr s /\ wfstr u ==>
-  wfstr (smtstr_replace_all_aux fuel s t u)
+  wfstr (SmtStr s) /\ wfstr (SmtStr u) ==>
+  wfstr (SmtStr (smtstr_replace_all_aux fuel s t u))
 Proof
   qid_spec_tac `u` >>
   qid_spec_tac `t` >>
@@ -1200,40 +1196,48 @@ Proof
   qid_spec_tac `fuel` >>
   recInduct smtstr_replace_all_aux_ind >>
   rw [smtstr_replace_all_aux_def]
-  >- (fs [wfstr_def] >>
+  >- (fs [wfstr_def, smtstr_rep_def] >>
       first_x_assum irule >>
       irule rich_listTheory.EVERY_DROP >>
       simp [])
-  >- fs [wfstr_def]
+  >- fs [wfstr_def, smtstr_rep_def]
 QED
 
 Theorem wfstr_replace_all:
   wfstr s /\ wfstr u ==> wfstr (smtstr_replace_all s t u)
 Proof
-  rw [smtstr_replace_all_def] >>
+  Cases_on `s` >>
+  Cases_on `t` >>
+  Cases_on `u` >>
+  rw [smtstr_replace_all_def, smtstr_rep_def] >>
   metis_tac [wfstr_replace_all_aux]
 QED
 
 Theorem wfstr_replace_re:
   wfstr s /\ wfstr u ==> wfstr (smtstr_replace_re s r u)
 Proof
-  rw [smtstr_replace_re_def] >>
+  Cases_on `s` >>
+  Cases_on `u` >>
+  rw [smtstr_replace_re_def, smtstr_replace_re_raw_def,
+      smtstr_rep_def] >>
   BasicProvers.every_case_tac >>
-  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  fs [wfstr_def, smtstr_rep_def,
+      listTheory.EVERY_APPEND] >>
   metis_tac [rich_listTheory.EVERY_TAKE,
              rich_listTheory.EVERY_DROP]
 QED
 
 Theorem wfstr_replace_re_all_aux:
-  wfstr s /\ wfstr u ==>
-  wfstr (smtstr_replace_re_all_aux fuel s r u)
+  wfstr (SmtStr s) /\ wfstr (SmtStr u) ==>
+  wfstr (SmtStr (smtstr_replace_re_all_aux fuel s r u))
 Proof
   qid_spec_tac `s` >>
   Induct_on `fuel` >>
   simp [smtstr_replace_re_all_aux_def] >>
   rpt gen_tac >>
   BasicProvers.every_case_tac >>
-  fs [wfstr_def, listTheory.EVERY_APPEND] >>
+  fs [wfstr_def, smtstr_rep_def,
+      listTheory.EVERY_APPEND] >>
   metis_tac [rich_listTheory.EVERY_TAKE,
              rich_listTheory.EVERY_DROP]
 QED
@@ -1241,14 +1245,16 @@ QED
 Theorem wfstr_replace_re_all:
   wfstr s /\ wfstr u ==> wfstr (smtstr_replace_re_all s r u)
 Proof
-  rw [smtstr_replace_re_all_def] >>
+  Cases_on `s` >>
+  Cases_on `u` >>
+  rw [smtstr_replace_re_all_def, smtstr_rep_def] >>
   metis_tac [wfstr_replace_re_all_aux]
 QED
 
 Theorem wfstr_from_code:
   wfstr (smtstr_from_code n)
 Proof
-  rw [smtstr_from_code_def, wfstr_def] >>
+  rw [smtstr_from_code_def, wfstr_def, smtstr_rep_def] >>
   fs []
 QED
 
@@ -1256,6 +1262,7 @@ Theorem wfstr_from_int:
   wfstr (smtstr_from_int n)
 Proof
   rw [smtstr_from_int_def, wfstr_def,
+      smtstr_rep_def,
       listTheory.EVERY_MAP, listTheory.EVERY_MEM] >>
   fs [listTheory.MEM_MAP] >>
   metis_tac
@@ -1270,34 +1277,41 @@ Theorem smtstr_concat_assoc:
   smtstr_concat (smtstr_concat s t) u =
     smtstr_concat s (smtstr_concat t u)
 Proof
-  simp [smtstr_concat_def, listTheory.APPEND_ASSOC]
+  simp [smtstr_concat_def, smtstr_rep_def,
+        listTheory.APPEND_ASSOC]
 QED
 
 Theorem smtstr_concat_nil_left:
-  smtstr_concat [] s = s
+  smtstr_concat (SmtStr []) s = s
 Proof
-  simp [smtstr_concat_def]
+  Cases_on `s` >>
+  simp [smtstr_concat_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_concat_nil_right:
-  smtstr_concat s [] = s
+  smtstr_concat s (SmtStr []) = s
 Proof
-  simp [smtstr_concat_def]
+  Cases_on `s` >>
+  simp [smtstr_concat_def, smtstr_rep_def]
 QED
 
 (* TASK_02 draft_regex_membership compares a concat with a singleton and
    concludes that the distinguished middle character is that singleton. *)
 
 Theorem smtstr_concat_middle_singleton:
-  smtstr_concat p (smtstr_concat [c] q) = [d] ==> c = d
+  smtstr_concat p (smtstr_concat (SmtStr [c]) q) =
+    SmtStr [d] ==> c = d
 Proof
-  Cases_on `p`
-  >- (Cases_on `q` >> simp [smtstr_concat_def])
-  >> simp [smtstr_concat_def]
+  Cases_on `p` >>
+  Cases_on `q` >>
+  Cases_on `l` >>
+  Cases_on `l'` >>
+  simp [smtstr_concat_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_singleton_concat_middle:
-  [d] = smtstr_concat p (smtstr_concat [c] q) ==> d = c
+  SmtStr [d] =
+    smtstr_concat p (smtstr_concat (SmtStr [c]) q) ==> d = c
 Proof
   metis_tac [smtstr_concat_middle_singleton]
 QED
@@ -1306,48 +1320,47 @@ Theorem smtstr_len_concat:
   smtstr_len (smtstr_concat s t) =
     smtstr_len s + smtstr_len t
 Proof
-  simp [smtstr_concat_def, smtstr_len_def]
-QED
-
-Theorem smtstr_len_concat_int:
-  &(smtstr_len (smtstr_concat s t)) =
-    &(smtstr_len s) + &(smtstr_len t)
-Proof
-  simp [smtstr_len_concat, integerTheory.INT_OF_NUM_ADD]
+  simp [smtstr_concat_def, smtstr_len_def,
+        smtstr_rep_def,
+        integerTheory.INT_OF_NUM_ADD]
 QED
 
 (* TASK_02 draft_regex_membership, draft_substr, and draft_re_comp use
    zero length as the empty-string branch of their sequence clauses. *)
 
 Theorem smtstr_len_nonnegative:
-  0 <= &(smtstr_len s)
+  0 <= smtstr_len s
 Proof
-  simp []
+  simp [smtstr_len_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_len_eq_zero:
-  smtstr_len s = 0 <=> s = []
+  smtstr_len s = 0 <=> s = SmtStr []
 Proof
-  simp [smtstr_len_def]
+  Cases_on `s` >>
+  simp [smtstr_len_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_len_char:
   smtstr_len (smtstr_char c) = 1
 Proof
-  simp [smtstr_len_def, smtstr_char_def]
+  simp [smtstr_len_def, smtstr_char_def,
+        smtstr_rep_def]
 QED
 
 Theorem smtstr_unit_concat:
-  smtstr_concat (smtstr_char c) s = c::s
+  smtstr_concat (smtstr_char c) s =
+    SmtStr (c::smtstr_rep s)
 Proof
-  simp [smtstr_concat_def, smtstr_char_def]
+  simp [smtstr_concat_def, smtstr_char_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_literal3_units:
   smtstr_concat (smtstr_char a)
-    (smtstr_concat (smtstr_char b) (smtstr_char c)) = [a; b; c]
+    (smtstr_concat (smtstr_char b) (smtstr_char c)) =
+      SmtStr [a; b; c]
 Proof
-  simp [smtstr_concat_def, smtstr_char_def]
+  simp [smtstr_concat_def, smtstr_char_def, smtstr_rep_def]
 QED
 
 (* TASK_02 draft_regex_membership uses prefix witnesses; the contains and
@@ -1357,24 +1370,54 @@ Theorem smtstr_prefixof_decompose:
   smtstr_prefixof s t <=>
     ?u. t = smtstr_concat s u
 Proof
+  Cases_on `s` >>
+  Cases_on `t` >>
   simp [smtstr_prefixof_def, smtstr_concat_def,
-        rich_listTheory.IS_PREFIX_APPEND]
+        smtstr_rep_def,
+        rich_listTheory.IS_PREFIX_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      qexists `SmtStr l''` >>
+      simp [smtstr_rep_def])
+  >- (strip_tac >>
+      qexists `smtstr_rep u` >>
+      fs [])
 QED
 
 Theorem smtstr_suffixof_decompose:
   smtstr_suffixof s t <=>
     ?u. t = smtstr_concat u s
 Proof
+  Cases_on `s` >>
+  Cases_on `t` >>
   simp [smtstr_suffixof_def, smtstr_concat_def,
-        rich_listTheory.IS_SUFFIX_APPEND]
+        smtstr_rep_def,
+        rich_listTheory.IS_SUFFIX_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      qexists `SmtStr l''` >>
+      simp [smtstr_rep_def])
+  >- (strip_tac >>
+      qexists `smtstr_rep u` >>
+      fs [])
 QED
 
 Theorem smtstr_contains_decompose:
   smtstr_contains s t <=>
     ?u v. s = smtstr_concat u (smtstr_concat t v)
 Proof
+  Cases_on `s` >>
+  Cases_on `t` >>
   simp [smtstr_contains_def, smtstr_concat_def,
-        rich_listTheory.IS_SUBLIST_APPEND]
+        smtstr_rep_def,
+        rich_listTheory.IS_SUBLIST_APPEND] >>
+  eq_tac
+  >- (strip_tac >>
+      qexistsl [`SmtStr l''`, `SmtStr l'''`] >>
+      simp [smtstr_rep_def])
+  >- (strip_tac >>
+      qexistsl [`smtstr_rep u`, `smtstr_rep v`] >>
+      fs [])
 QED
 
 (* TASK_02 draft_regex_membership records reflexive prefix clauses.  The
@@ -1385,7 +1428,7 @@ Theorem smtstr_prefixof_refl:
   smtstr_prefixof s s
 Proof
   simp [smtstr_prefixof_decompose] >>
-  qexists `[]` >>
+  qexists `SmtStr []` >>
   simp [smtstr_concat_nil_right]
 QED
 
@@ -1393,7 +1436,7 @@ Theorem smtstr_suffixof_refl:
   smtstr_suffixof s s
 Proof
   simp [smtstr_suffixof_decompose] >>
-  qexists `[]` >>
+  qexists `SmtStr []` >>
   simp [smtstr_concat_nil_left]
 QED
 
@@ -1401,7 +1444,7 @@ Theorem smtstr_contains_refl:
   smtstr_contains s s
 Proof
   simp [smtstr_contains_decompose] >>
-  qexistsl [`[]`, `[]`] >>
+  qexistsl [`SmtStr []`, `SmtStr []`] >>
   simp [smtstr_concat_nil_left, smtstr_concat_nil_right]
 QED
 
@@ -1410,10 +1453,12 @@ QED
    TASK_02 prefix/suffix recordings to their contains consequences. *)
 
 Theorem smtstr_prefixof_singleton:
-  smtstr_prefixof s [c] <=> s = [] \/ s = [c]
+  smtstr_prefixof s (SmtStr [c]) <=>
+    s = SmtStr [] \/ s = SmtStr [c]
 Proof
   Cases_on `s` >>
-  simp [smtstr_prefixof_def]
+  Cases_on `l` >>
+  simp [smtstr_prefixof_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_prefixof_imp_contains:
@@ -1460,7 +1505,8 @@ QED
 Theorem smtstr_lt_irrefl:
   ~smtstr_lt s s
 Proof
-  Induct_on `s` >>
+  Cases_on `s` >>
+  Induct_on `l` >>
   simp [smtstr_lt_compute]
 QED
 
@@ -1478,11 +1524,20 @@ QED
 Theorem smtstr_lt_trichotomy:
   smtstr_lt s t \/ s = t \/ smtstr_lt t s
 Proof
-  qid_spec_tac `t` >>
-  Induct_on `s` >>
+  Cases_on `s` >>
   Cases_on `t` >>
+  qid_spec_tac `l'` >>
+  Induct_on `l` >>
+  Cases_on `l'` >>
   simp [smtstr_lt_compute] >>
-  metis_tac [arithmeticTheory.LT_CASES]
+  gen_tac >>
+  Cases_on `h' < h`
+  >- simp []
+  >> Cases_on `h < h'`
+  >- simp []
+  >> `h' = h` by decide_tac >>
+  first_x_assum (qspec_then `t` mp_tac) >>
+  simp [smtstr_rep_def]
 QED
 
 Theorem smtstr_le_refl:
@@ -1516,10 +1571,11 @@ QED
 
 Theorem smtstr_len_substr:
   smtstr_len (smtstr_substr s i n) =
-    if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then 0
-    else MIN (Num n) (LENGTH s - Num i)
+    if i < 0 \/ n <= 0 \/ LENGTH (smtstr_rep s) <= Num i then 0
+    else &(MIN (Num n) (LENGTH (smtstr_rep s) - Num i))
 Proof
   rw [smtstr_len_def, smtstr_substr_def,
+      smtstr_rep_def,
       listTheory.LENGTH_TAKE_EQ] >>
   simp [arithmeticTheory.MIN_DEF]
 QED
@@ -1532,30 +1588,31 @@ Proof
 QED
 
 Theorem smtstr_len_substr_count_bound:
-  smtstr_len (smtstr_substr s i n) <= Num n
+  smtstr_len (smtstr_substr s i n) <= &(Num n)
 Proof
   rw [smtstr_len_substr] >>
   simp [arithmeticTheory.MIN_DEF]
 QED
 
 Theorem smtstr_at_in_range:
-  0 <= i /\ Num i < LENGTH s ==>
-    smtstr_at s i = [EL (Num i) s]
+  0 <= i /\ Num i < LENGTH (smtstr_rep s) ==>
+    smtstr_at s i = SmtStr [EL (Num i) (smtstr_rep s)]
 Proof
   strip_tac >>
   `~(i < 0)` by intLib.ARITH_TAC >>
   fs [smtstr_at_def, smtstr_substr_def,
+      smtstr_rep_def,
       listTheory.TAKE1_DROP]
 QED
 
 Theorem smtstr_len_at:
   smtstr_len (smtstr_at s i) =
-    if i < 0 \/ LENGTH s <= Num i then 0 else 1
+    if i < 0 \/ LENGTH (smtstr_rep s) <= Num i then 0 else 1
 Proof
-  Cases_on `i < 0 \/ LENGTH s <= Num i`
+  Cases_on `i < 0 \/ LENGTH (smtstr_rep s) <= Num i`
   >- simp [smtstr_at_def, smtstr_len_substr]
   >> fs [] >>
-  `0 < LENGTH s - Num i` by decide_tac >>
+  `0 < LENGTH (smtstr_rep s) - Num i` by decide_tac >>
   simp [smtstr_at_def, smtstr_len_substr,
         arithmeticTheory.MIN_DEF]
 QED
@@ -1567,10 +1624,12 @@ Proof
 QED
 
 Theorem smtstr_at_zero:
-  s = [] \/ smtstr_at s 0 = [EL 0 s]
+  s = SmtStr [] \/
+  smtstr_at s 0 = SmtStr [EL 0 (smtstr_rep s)]
 Proof
   Cases_on `s` >>
-  simp [smtstr_at_in_range]
+  Cases_on `l` >>
+  simp [smtstr_at_in_range, smtstr_rep_def]
 QED
 
 Theorem smtstr_substr_zero_one:
@@ -1602,7 +1661,7 @@ QED
 
 Theorem smtstr_indexof_upper_bound:
   0 <= smtstr_indexof s t i ==>
-    smtstr_indexof s t i <= &(smtstr_len s)
+    smtstr_indexof s t i <= smtstr_len s
 Proof
   rw [smtstr_indexof_def, smtstr_len_def] >>
   BasicProvers.every_case_tac >>
@@ -1626,23 +1685,27 @@ QED
 Theorem smtstr_is_digit_wfstr:
   smtstr_is_digit s ==> wfstr s
 Proof
+  Cases_on `s` >>
   strip_tac >>
-  fs [smtstr_is_digit_def, wfstr_def]
+  fs [smtstr_is_digit_def, wfstr_def, smtstr_rep_def]
 QED
 
 Theorem smtstr_is_digit_to_code_bounds:
   smtstr_is_digit s ==>
     48 <= smtstr_to_code s /\ smtstr_to_code s <= 57
 Proof
+  Cases_on `s` >>
   strip_tac >>
-  fs [smtstr_is_digit_def, smtstr_to_code_def]
+  fs [smtstr_is_digit_def, smtstr_to_code_def,
+      smtstr_rep_def]
 QED
 
 Theorem smtstr_from_code_to_code:
   0 <= n /\ Num n <= 196607 ==>
     smtstr_to_code (smtstr_from_code n) = n
 Proof
-  rw [smtstr_from_code_def, smtstr_to_code_def] >>
+  rw [smtstr_from_code_def, smtstr_to_code_def,
+      smtstr_rep_def] >>
   intLib.ARITH_TAC
 QED
 
@@ -1652,23 +1715,34 @@ QED
 
 Theorem smt_in_re_concat:
   smt_in_re s (reglan_concat r1 r2) <=>
-    ?u v. smt_in_re u r1 /\ smt_in_re v r2 /\ s = u ++ v
+    ?u v.
+      smt_in_re u r1 /\ smt_in_re v r2 /\
+      s = smtstr_concat u v
 Proof
-  simp [smt_in_re_def, reglan_dot_def]
+  Cases_on `s` >>
+  simp [smt_in_re_def, reglan_dot_def,
+        smtstr_rep_def, smtstr_concat_def] >>
+  eq_tac
+  >- (strip_tac >>
+      qexistsl [`SmtStr u`, `SmtStr v`] >>
+      simp [smtstr_rep_def])
+  >- (strip_tac >>
+      qexistsl [`smtstr_rep u`, `smtstr_rep v`] >>
+      fs [])
 QED
 
 Theorem smt_in_re_concat_cons:
-  smt_in_re (c::s) (reglan_concat r1 r2) <=>
-    smt_in_re s (reglan_concat (re_deriv c r1) r2) \/
-    re_nullable r1 /\ smt_in_re s (re_deriv c r2)
+  smt_in_re (SmtStr (c::s)) (reglan_concat r1 r2) <=>
+    smt_in_re (SmtStr s) (reglan_concat (re_deriv c r1) r2) \/
+    re_nullable r1 /\ smt_in_re (SmtStr s) (re_deriv c r2)
 Proof
   Cases_on `re_nullable r1` >>
   simp [re_deriv_correct, re_deriv_def, smt_in_re_def]
 QED
 
 Theorem smt_in_re_star_cons:
-  smt_in_re (c::s) (reglan_star r) <=>
-    smt_in_re s
+  smt_in_re (SmtStr (c::s)) (reglan_star r) <=>
+    smt_in_re (SmtStr s)
       (reglan_concat (re_deriv c r) (reglan_star r))
 Proof
   simp [re_deriv_correct, re_deriv_def]
@@ -1676,128 +1750,147 @@ QED
 
 (* Ground checks pin the SMT-LIB totalization and empty-string cases. *)
 
-Theorem smtstr_core_eval:
-  smtstr_concat [1; 2] [3] = [1; 2; 3] /\
-  smtstr_len [10; 20; 30] = 3 /\
-  smtstr_at [10; 20] (-1) = [] /\
-  smtstr_at [10; 20] 0 = [10] /\
-  smtstr_at [10; 20] 2 = [] /\
-  smtstr_at [] 0 = [] /\
-  smtstr_substr [10; 20; 30] (-1) 2 = [] /\
-  smtstr_substr [10; 20; 30] 1 0 = [] /\
-  smtstr_substr [10; 20; 30] 1 (-1) = [] /\
-  smtstr_substr [10; 20; 30] 3 1 = [] /\
-  smtstr_substr [10; 20; 30] 1 5 = [20; 30] /\
-  smtstr_prefixof [] [1; 2] /\
-  smtstr_prefixof [1] [1; 2] /\
-  smtstr_suffixof [] [1; 2] /\
-  smtstr_suffixof [2] [1; 2] /\
-  smtstr_contains [1; 2; 3] [2; 3] /\
-  smtstr_contains [1; 2; 3] [] /\
-  smtstr_indexof [1; 2; 1; 2] [1; 2] 1 = 2 /\
-  smtstr_indexof [1; 2] [3] 0 = -1 /\
-  smtstr_indexof [1; 2] [1] (-1) = -1 /\
-  smtstr_indexof [1; 2] [] 2 = 2 /\
-  smtstr_indexof [1; 2] [] 3 = -1 /\
-  smtstr_indexof [] [] 0 = 0 /\
-  smtstr_lt [1; 2] [1; 3] /\
-  ~smtstr_lt [1; 2] [1; 2] /\
-  smtstr_le [1; 2] [1; 2] /\
-  smtstr_char 196607 = [196607] /\
-  str_inj "Az" = [65; 122] /\
-  wfstr [196607] /\
-  ~wfstr [196608]
+Triviality smtstr_core_eval:
+  smtstr_concat (SmtStr [1; 2]) (SmtStr [3]) =
+    SmtStr [1; 2; 3] /\
+  smtstr_len (SmtStr [10; 20; 30]) = 3 /\
+  smtstr_at (SmtStr [10; 20]) (-1) = SmtStr [] /\
+  smtstr_at (SmtStr [10; 20]) 0 = SmtStr [10] /\
+  smtstr_at (SmtStr [10; 20]) 2 = SmtStr [] /\
+  smtstr_at (SmtStr []) 0 = SmtStr [] /\
+  smtstr_substr (SmtStr [10; 20; 30]) (-1) 2 = SmtStr [] /\
+  smtstr_substr (SmtStr [10; 20; 30]) 1 0 = SmtStr [] /\
+  smtstr_substr (SmtStr [10; 20; 30]) 1 (-1) = SmtStr [] /\
+  smtstr_substr (SmtStr [10; 20; 30]) 3 1 = SmtStr [] /\
+  smtstr_substr (SmtStr [10; 20; 30]) 1 5 =
+    SmtStr [20; 30] /\
+  smtstr_prefixof (SmtStr []) (SmtStr [1; 2]) /\
+  smtstr_prefixof (SmtStr [1]) (SmtStr [1; 2]) /\
+  smtstr_suffixof (SmtStr []) (SmtStr [1; 2]) /\
+  smtstr_suffixof (SmtStr [2]) (SmtStr [1; 2]) /\
+  smtstr_contains (SmtStr [1; 2; 3]) (SmtStr [2; 3]) /\
+  smtstr_contains (SmtStr [1; 2; 3]) (SmtStr []) /\
+  smtstr_indexof (SmtStr [1; 2; 1; 2]) (SmtStr [1; 2]) 1 = 2 /\
+  smtstr_indexof (SmtStr [1; 2]) (SmtStr [3]) 0 = -1 /\
+  smtstr_indexof (SmtStr [1; 2]) (SmtStr [1]) (-1) = -1 /\
+  smtstr_indexof (SmtStr [1; 2]) (SmtStr []) 2 = 2 /\
+  smtstr_indexof (SmtStr [1; 2]) (SmtStr []) 3 = -1 /\
+  smtstr_indexof (SmtStr []) (SmtStr []) 0 = 0 /\
+  smtstr_lt (SmtStr [1; 2]) (SmtStr [1; 3]) /\
+  ~smtstr_lt (SmtStr [1; 2]) (SmtStr [1; 2]) /\
+  smtstr_le (SmtStr [1; 2]) (SmtStr [1; 2]) /\
+  smtstr_char 196607 = SmtStr [196607] /\
+  str_inj "Az" = SmtStr [65; 122] /\
+  wfstr (SmtStr [196607]) /\
+  ~wfstr (SmtStr [196608])
 Proof
   EVAL_TAC
 QED
 
-Theorem smtstr_a2_eval:
-  smtstr_replace [97; 98; 99; 97; 98; 99] [98; 99] [88] =
-    [97; 88; 97; 98; 99] /\
-  smtstr_replace [97; 98] [] [88] = [88; 97; 98] /\
-  smtstr_replace [97; 98] [99] [88] = [97; 98] /\
-  smtstr_replace_all [97; 98; 97] [97] [99] = [99; 98; 99] /\
-  smtstr_replace_all [97; 98] [] [99] = [97; 98] /\
-  smtstr_replace_all [97; 97; 97] [97; 97] [98] = [98; 97] /\
-  smtstr_replace_re [97; 98]
-    (reglan_union (reglan_to_re [97])
-                  (reglan_to_re [97; 98])) [120] =
-    [120; 98] /\
-  smtstr_replace_re [97; 98]
-    (reglan_union (reglan_to_re [98])
-                  (reglan_to_re [97; 98])) [120] =
-    [120] /\
-  smtstr_replace_re [97; 98] (reglan_to_re []) [120] =
-    [120; 97; 98] /\
-  smtstr_replace_re_all [97; 98; 97]
-    (reglan_union (reglan_to_re [])
-                  (reglan_to_re [97])) [120] =
-    [120; 98; 120] /\
-  smtstr_replace_re_all [97; 98] (reglan_to_re []) [120] =
-    [97; 98] /\
-  smtstr_replace_re_all [97; 98] reglan_allchar [120] =
-    [120; 120] /\
-  smtstr_is_digit [48] /\
-  smtstr_is_digit [57] /\
-  ~smtstr_is_digit [] /\
-  ~smtstr_is_digit [48; 49] /\
-  ~smtstr_is_digit [47] /\
-  smtstr_to_code [196607] = 196607 /\
-  smtstr_to_code [] = -1 /\
-  smtstr_to_code [1; 2] = -1 /\
-  smtstr_from_code 0 = [0] /\
-  smtstr_from_code 196607 = [196607] /\
-  smtstr_from_code (-1) = [] /\
-  smtstr_from_code 196608 = [] /\
-  smtstr_to_int [48; 48; 49; 50; 51] = 123 /\
-  smtstr_to_int [] = -1 /\
-  smtstr_to_int [45; 49] = -1 /\
-  smtstr_from_int 0 = [48] /\
-  smtstr_from_int 123 = [49; 50; 51] /\
-  smtstr_from_int (-123) = [] /\
+Triviality smtstr_a2_eval:
+  smtstr_replace (SmtStr [97; 98; 99; 97; 98; 99])
+    (SmtStr [98; 99]) (SmtStr [88]) =
+      SmtStr [97; 88; 97; 98; 99] /\
+  smtstr_replace (SmtStr [97; 98]) (SmtStr []) (SmtStr [88]) =
+    SmtStr [88; 97; 98] /\
+  smtstr_replace (SmtStr [97; 98]) (SmtStr [99]) (SmtStr [88]) =
+    SmtStr [97; 98] /\
+  smtstr_replace_all (SmtStr [97; 98; 97]) (SmtStr [97])
+    (SmtStr [99]) = SmtStr [99; 98; 99] /\
+  smtstr_replace_all (SmtStr [97; 98]) (SmtStr [])
+    (SmtStr [99]) = SmtStr [97; 98] /\
+  smtstr_replace_all (SmtStr [97; 97; 97]) (SmtStr [97; 97])
+    (SmtStr [98]) = SmtStr [98; 97] /\
+  smtstr_replace_re (SmtStr [97; 98])
+    (reglan_union (reglan_to_re (SmtStr [97]))
+                  (reglan_to_re (SmtStr [97; 98]))) (SmtStr [120]) =
+    SmtStr [120; 98] /\
+  smtstr_replace_re (SmtStr [97; 98])
+    (reglan_union (reglan_to_re (SmtStr [98]))
+                  (reglan_to_re (SmtStr [97; 98]))) (SmtStr [120]) =
+    SmtStr [120] /\
+  smtstr_replace_re (SmtStr [97; 98])
+    (reglan_to_re (SmtStr [])) (SmtStr [120]) =
+      SmtStr [120; 97; 98] /\
+  smtstr_replace_re_all (SmtStr [97; 98; 97])
+    (reglan_union (reglan_to_re (SmtStr []))
+                  (reglan_to_re (SmtStr [97]))) (SmtStr [120]) =
+    SmtStr [120; 98; 120] /\
+  smtstr_replace_re_all (SmtStr [97; 98])
+    (reglan_to_re (SmtStr [])) (SmtStr [120]) =
+      SmtStr [97; 98] /\
+  smtstr_replace_re_all (SmtStr [97; 98]) reglan_allchar
+    (SmtStr [120]) = SmtStr [120; 120] /\
+  smtstr_is_digit (SmtStr [48]) /\
+  smtstr_is_digit (SmtStr [57]) /\
+  ~smtstr_is_digit (SmtStr []) /\
+  ~smtstr_is_digit (SmtStr [48; 49]) /\
+  ~smtstr_is_digit (SmtStr [47]) /\
+  smtstr_to_code (SmtStr [196607]) = 196607 /\
+  smtstr_to_code (SmtStr []) = -1 /\
+  smtstr_to_code (SmtStr [1; 2]) = -1 /\
+  smtstr_from_code 0 = SmtStr [0] /\
+  smtstr_from_code 196607 = SmtStr [196607] /\
+  smtstr_from_code (-1) = SmtStr [] /\
+  smtstr_from_code 196608 = SmtStr [] /\
+  smtstr_to_int (SmtStr [48; 48; 49; 50; 51]) = 123 /\
+  smtstr_to_int (SmtStr []) = -1 /\
+  smtstr_to_int (SmtStr [45; 49]) = -1 /\
+  smtstr_from_int 0 = SmtStr [48] /\
+  smtstr_from_int 123 = SmtStr [49; 50; 51] /\
+  smtstr_from_int (-123) = SmtStr [] /\
   smtstr_to_int (smtstr_from_int 9876) = 9876
 Proof
   EVAL_TAC
 QED
 
-Theorem reglan_eval:
-  ~smt_in_re [] reglan_none /\
-  smt_in_re [1; 196607] reglan_all /\
-  ~smt_in_re [196608] reglan_all /\
-  smt_in_re [65] reglan_allchar /\
-  ~smt_in_re [65; 66] reglan_allchar /\
-  smt_in_re [1; 2] (reglan_to_re [1; 2]) /\
-  smt_in_re [66] (reglan_range [65] [67]) /\
-  ~smt_in_re [68] (reglan_range [65] [67]) /\
-  ~smt_in_re [66] (reglan_range [65; 66] [67]) /\
-  smt_in_re [1; 2]
-    (reglan_concat (reglan_to_re [1]) (reglan_to_re [2])) /\
-  smt_in_re [2]
-    (reglan_union (reglan_to_re [1]) (reglan_to_re [2])) /\
-  smt_in_re [2]
+Triviality reglan_eval:
+  ~smt_in_re (SmtStr []) reglan_none /\
+  smt_in_re (SmtStr [1; 196607]) reglan_all /\
+  ~smt_in_re (SmtStr [196608]) reglan_all /\
+  smt_in_re (SmtStr [65]) reglan_allchar /\
+  ~smt_in_re (SmtStr [65; 66]) reglan_allchar /\
+  smt_in_re (SmtStr [1; 2]) (reglan_to_re (SmtStr [1; 2])) /\
+  smt_in_re (SmtStr [66])
+    (reglan_range (SmtStr [65]) (SmtStr [67])) /\
+  ~smt_in_re (SmtStr [68])
+    (reglan_range (SmtStr [65]) (SmtStr [67])) /\
+  ~smt_in_re (SmtStr [66])
+    (reglan_range (SmtStr [65; 66]) (SmtStr [67])) /\
+  smt_in_re (SmtStr [1; 2])
+    (reglan_concat (reglan_to_re (SmtStr [1])) (reglan_to_re (SmtStr [2]))) /\
+  smt_in_re (SmtStr [2])
+    (reglan_union (reglan_to_re (SmtStr [1])) (reglan_to_re (SmtStr [2]))) /\
+  smt_in_re (SmtStr [2])
     (reglan_inter
-       (reglan_range [1] [3]) (reglan_range [2] [4])) /\
-  smt_in_re [1]
-    (reglan_diff (reglan_range [1] [3]) (reglan_to_re [2])) /\
-  ~smt_in_re [2]
-    (reglan_diff (reglan_range [1] [3]) (reglan_to_re [2])) /\
-  smt_in_re [2] (reglan_comp (reglan_to_re [1])) /\
-  ~smt_in_re [1] (reglan_comp (reglan_to_re [1])) /\
-  ~smt_in_re [196608] (reglan_comp reglan_none) /\
-  smt_in_re [1; 1] (reglan_star (reglan_to_re [1])) /\
-  smt_in_re [] (reglan_star (reglan_to_re [1])) /\
-  smt_in_re [1] (reglan_plus (reglan_to_re [1])) /\
-  ~smt_in_re [] (reglan_plus (reglan_to_re [1])) /\
-  smt_in_re [] (reglan_opt (reglan_to_re [1])) /\
-  smt_in_re [1] (reglan_opt (reglan_to_re [1])) /\
-  smt_in_re [1; 1] (reglan_power (reglan_to_re [1]) 2) /\
-  ~smt_in_re [1] (reglan_power (reglan_to_re [1]) 2) /\
-  smt_in_re [] (reglan_loop (reglan_to_re [1]) 0 0) /\
-  ~smt_in_re [] (reglan_loop (reglan_to_re [1]) 1 0) /\
-  smt_in_re [1] (reglan_loop (reglan_to_re [1]) 1 3) /\
-  smt_in_re [1; 1; 1] (reglan_loop (reglan_to_re [1]) 1 3) /\
-  ~smt_in_re [1; 1; 1; 1]
-    (reglan_loop (reglan_to_re [1]) 1 3)
+       (reglan_range (SmtStr [1]) (SmtStr [3])) (reglan_range (SmtStr [2]) (SmtStr [4]))) /\
+  smt_in_re (SmtStr [1])
+    (reglan_diff (reglan_range (SmtStr [1]) (SmtStr [3])) (reglan_to_re (SmtStr [2]))) /\
+  ~smt_in_re (SmtStr [2])
+    (reglan_diff (reglan_range (SmtStr [1]) (SmtStr [3])) (reglan_to_re (SmtStr [2]))) /\
+  smt_in_re (SmtStr [2]) (reglan_comp (reglan_to_re (SmtStr [1]))) /\
+  ~smt_in_re (SmtStr [1]) (reglan_comp (reglan_to_re (SmtStr [1]))) /\
+  ~smt_in_re (SmtStr [196608]) (reglan_comp reglan_none) /\
+  smt_in_re (SmtStr [1; 1]) (reglan_star (reglan_to_re (SmtStr [1]))) /\
+  smt_in_re (SmtStr []) (reglan_star (reglan_to_re (SmtStr [1]))) /\
+  smt_in_re (SmtStr [1]) (reglan_plus (reglan_to_re (SmtStr [1]))) /\
+  ~smt_in_re (SmtStr []) (reglan_plus (reglan_to_re (SmtStr [1]))) /\
+  smt_in_re (SmtStr []) (reglan_opt (reglan_to_re (SmtStr [1]))) /\
+  smt_in_re (SmtStr [1]) (reglan_opt (reglan_to_re (SmtStr [1]))) /\
+  smt_in_re (SmtStr [1; 1])
+    (reglan_power (reglan_to_re (SmtStr [1])) 2) /\
+  ~smt_in_re (SmtStr [1])
+    (reglan_power (reglan_to_re (SmtStr [1])) 2) /\
+  smt_in_re (SmtStr [])
+    (reglan_loop (reglan_to_re (SmtStr [1])) 0 0) /\
+  ~smt_in_re (SmtStr [])
+    (reglan_loop (reglan_to_re (SmtStr [1])) 1 0) /\
+  smt_in_re (SmtStr [1])
+    (reglan_loop (reglan_to_re (SmtStr [1])) 1 3) /\
+  smt_in_re (SmtStr [1; 1; 1])
+    (reglan_loop (reglan_to_re (SmtStr [1])) 1 3) /\
+  ~smt_in_re (SmtStr [1; 1; 1; 1])
+    (reglan_loop (reglan_to_re (SmtStr [1])) 1 3)
 Proof
   EVAL_TAC
 QED

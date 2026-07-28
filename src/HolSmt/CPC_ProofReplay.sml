@@ -1020,6 +1020,12 @@ local
         (smt_ediv_total_tm, [a, b])
       fun smt_emod_total (a, b) = Term.list_mk_comb
         (smt_emod_total_tm, [a, b])
+      fun smtstring_app constant arguments =
+        Term.list_mk_comb
+          (Term.prim_mk_const {Thy = "smtstring", Name = constant},
+           arguments)
+      fun int_literal n =
+        intSyntax.term_of_int (Arbint.fromInt n)
       fun guard_not_zero term = boolSyntax.mk_neg
         (boolSyntax.mk_eq (term, intSyntax.zero_tm))
       fun guarded name guard target tactic =
@@ -1117,6 +1123,29 @@ local
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)),
            boolSyntax.mk_eq (boolSyntax.mk_neg left, right)))
+    | ("str-lt-elim", [left, right]) =>
+        let
+          val lt = smtstring_app "smtstr_lt" [left, right]
+          val le = smtstring_app "smtstr_le" [left, right]
+          val target =
+            boolSyntax.mk_eq
+              (lt, boolSyntax.mk_conj
+                (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)), le))
+        in
+          SmtStringProve.string_rewrite_prove target
+        end
+    | ("str-is-digit-elim", [string]) =>
+        let
+          val is_digit = smtstring_app "smtstr_is_digit" [string]
+          val code = smtstring_app "smtstr_to_code" [string]
+          val target =
+            boolSyntax.mk_eq
+              (is_digit, boolSyntax.mk_conj
+                (intSyntax.mk_leq (int_literal 48, code),
+                 intSyntax.mk_leq (code, int_literal 57)))
+        in
+          SmtStringProve.string_rewrite_prove target
+        end
     | ("distinct-elim", [target]) => distinct_lemma target
     | ("distinct-false", [target]) => distinct_lemma target
     | ("eq-ite-lift", [condition, then_term, else_term, right]) =>
@@ -3350,35 +3379,9 @@ local
 
   fun replay_string state name prems conclusion args =
     let
-      fun smtstring_app constant arguments =
-        Term.list_mk_comb
-          (Term.prim_mk_const {Thy = "smtstring", Name = constant},
-           arguments)
-      fun int_literal n =
-        intSyntax.term_of_int (Arbint.fromInt n)
       fun inferred_target () =
         case (name, args) of
-          ("str-lt-elim", [left, right]) =>
-            let
-              val lt = smtstring_app "smtstr_lt" [left, right]
-              val le = smtstring_app "smtstr_le" [left, right]
-            in
-              boolSyntax.mk_eq
-                (lt, boolSyntax.mk_conj
-                  (boolSyntax.mk_neg (boolSyntax.mk_eq (left, right)), le))
-            end
-        | ("str-is-digit-elim", [string]) =>
-            let
-              val is_digit =
-                smtstring_app "smtstr_is_digit" [string]
-              val code = smtstring_app "smtstr_to_code" [string]
-            in
-              boolSyntax.mk_eq
-                (is_digit, boolSyntax.mk_conj
-                  (intSyntax.mk_leq (int_literal 48, code),
-                   intSyntax.mk_leq (code, int_literal 57)))
-            end
-        | (_, [target]) =>
+          (_, [target]) =>
             if Type.compare (Term.type_of target, Type.bool) = EQUAL then
               target
             else raise ERR "string"
@@ -3391,31 +3394,11 @@ local
         case conclusion of
           SOME target => target
         | NONE => inferred_target ()
-      fun semantic_prove target =
-      let
-        (* Only this rung needs the assertion set, and it is reached only
-           after the cheaper string rungs have failed. *)
-        val context =
-          HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
-          List.map Thm.concl prems
-      in
-        Tactical.TAC_PROOF ((context, target),
-          bossLib.ASM_SIMP_TAC
-            (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
-            [smtstringTheory.wfstr_def,
-             smtstringTheory.smtstr_concat_def,
-             smtstringTheory.smtstr_len_def,
-             smtstringTheory.smtstr_substr_def,
-             smtstringTheory.smtstr_at_def,
-             smtstringTheory.smtstr_contains_def,
-             smtstringTheory.smtstr_lt_def,
-             smtstringTheory.smtstr_is_digit_def,
-             smtstringTheory.smt_in_re_def,
-             smtstringTheory.reglan_dot_def,
-             smtstringTheory.reglan_kstar_def,
-             smtstringTheory.reglan_repeat_def,
-             smtstringTheory.reglan_loop_lang_def])
-      end
+      (* Only this rung needs the assertion set, and it is reached only after
+         the cheaper string rungs have failed. *)
+      val context =
+        HOLset.listItems (#asserted_hyps state) @ #scope_hyps state @
+        List.map Thm.concl prems
       fun fail () =
         raise ERR "string"
           ("unsupported CPC string step: rule=" ^ name ^
@@ -3428,7 +3411,8 @@ local
       profile "CPC(rung:string/theory)"
         (SmtStringProve.string_prove arith_prove) target
       handle Feedback.HOL_ERR _ =>
-      profile "CPC(rung:string/contextual)" semantic_prove target
+      profile "CPC(rung:string/contextual)"
+        (SmtStringProve.string_contextual_prove context) target
       handle Feedback.HOL_ERR _ =>
       profile "CPC(rung:string/unsupported)" fail ()
     end

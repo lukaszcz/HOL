@@ -246,13 +246,17 @@ For a theorem-producing result, the trusted path is:
 - `SmtLib.sml`: translates the HOL goal to SMT-LIB and records the selected
   logic, emitted symbols and HOL theory encodings.
 - `smtstringTheory` fixes the HOL definitions used for the SMT-LIB
-  UnicodeStrings and RegLan meanings.  HOL checks those definitions and all
-  derivative, matching, and correspondence theorems; the trusted translation
-  choice is that these definitions faithfully represent the SMT-LIB theory.
-- `SmtLib_String_Literal.sml` decodes input literals to code-point lists and
-  encodes native string literals for the printer.  The decoder/encoder and
-  their choice of SMT-LIB escape representation are trusted translation
-  code, with deterministic round-trip and range checks in `Unittest.sml`.
+  UnicodeStrings and RegLan meanings.  SMT strings use the dedicated HOL
+  carrier `smtstr = SmtStr (num list)`, so the SMT `String` sort is distinct
+  from ordinary HOL lists; `wfstr` separately records the SMT-LIB code-point
+  range.  HOL checks those definitions and all derivative, matching, and
+  correspondence theorems; the trusted translation choice is that these
+  definitions faithfully represent the SMT-LIB theory.
+- `SmtLib_String_Literal.sml` decodes input literals to code-point payloads,
+  wraps them with `SmtStr`, and encodes native string literals for the
+  printer.  The decoder/encoder and their choice of SMT-LIB escape
+  representation are trusted translation code, with deterministic round-trip
+  and range checks in `Unittest.sml`.
 - Native HOL strings are first rewritten through the proved `str_inj`
   injectivity and operator-transfer theorems.  Each resulting injection image
   is generalized to an unconstrained SMT-LIB `String` value.  A solver result

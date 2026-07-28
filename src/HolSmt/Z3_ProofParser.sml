@@ -157,7 +157,8 @@ local
   (* Z3-internal Unicode-string symbols                                      *)
   (***************************************************************************)
 
-  val z3_string_ty = listSyntax.mk_list_type numSyntax.num
+  val z3_string_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
   val z3_char_width = Arbnum.fromInt 18
   val z3_char_index_ty = fcpLib.index_type z3_char_width
   val z3_char_ty = wordsSyntax.mk_word_type z3_char_index_ty

@@ -1932,16 +1932,19 @@ local
       (state, thms, t) =
   let
     val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    val context = HOLset.listItems (#asserted_hyps state)
     val thm =
       prover t'
       handle Feedback.HOL_ERR holerr =>
         if String.isSubstring "theory:Z3_Extensions:seq-set-bag"
             (Feedback.message_of holerr)
         then raise Feedback.HOL_ERR holerr
-        else
+        else (profile ("Z3(rung:string/contextual:" ^ dispatch_theory ^ ")")
+          (SmtStringProve.string_contextual_prove context) t'
+          handle Feedback.HOL_ERR _ =>
           raise ERR ("z3_th_lemma_" ^ dispatch_theory)
             (unsupported_string_th_lemma_message dispatch_theory
-              state metadata t')
+              state metadata t'))
   in
     (state_cache_thm state thm, Drule.LIST_MP thms thm)
   end

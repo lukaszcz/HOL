@@ -61,17 +61,33 @@ struct
     Lib.total listSyntax.dest_list_type (Term.type_of tm)
 
   (* Z3 uses the seq rule for both String and its polymorphic Seq extension.
-     Phase 4 owns num-list strings only; every other element type must retain
-     the Phase-6 sequence/set/bag gate. *)
+     Phase 4 String has its own type.  Its constructor payload is an
+     implementation detail, while every other HOL list belongs to the
+     still-gated Phase-6 sequence/set/bag extension. *)
   fun check_seq_type t =
-    if List.exists
-      (fn tm =>
-        case list_element_type tm of
-          SOME ty => Type.compare (ty, numSyntax.num) <> EQUAL
-        | NONE => false)
-      (subterms t)
-    then phase6_seq_gate t
-    else ()
+    let
+      fun is_smtstr_value tm =
+        case boolSyntax.strip_comb tm of
+          (head, [_]) =>
+            Term.is_const head andalso
+            let val {Thy, Name, ...} = Term.dest_thy_const head
+            in Thy = "smtstring" andalso Name = "SmtStr" end
+        | _ => false
+      fun contains_sequence tm =
+        if is_smtstr_value tm then
+          false
+        else if Option.isSome (list_element_type tm) then
+          true
+        else
+          (let val (rator, rand) = Term.dest_comb tm
+           in contains_sequence rator orelse contains_sequence rand end
+           handle Feedback.HOL_ERR _ =>
+             (let val (_, body) = Term.dest_abs tm
+              in contains_sequence body end
+              handle Feedback.HOL_ERR _ => false))
+    in
+      if contains_sequence t then phase6_seq_gate t else ()
+    end
 
   fun proforma_prove t =
     Z3_ProformaThms.prove Z3_ProformaThms.string_thms t
@@ -82,36 +98,36 @@ struct
     smtstringTheory.wfstr_compute,
     smtstringTheory.smtstr_concat_compute,
     smtstringTheory.smtstr_len_compute,
-    smtstringTheory.smtstr_substr_compute,
-    smtstringTheory.smtstr_at_compute,
-    smtstringTheory.smtstr_prefixof_compute,
-    smtstringTheory.smtstr_suffixof_compute,
-    smtstringTheory.smtstr_contains_compute,
-    smtstringTheory.smtstr_indexof_aux_compute,
-    smtstringTheory.smtstr_indexof_compute,
+    smtstringTheory.smtstr_substr_def,
+    smtstringTheory.smtstr_at_def,
+    smtstringTheory.smtstr_prefixof_def,
+    smtstringTheory.smtstr_suffixof_def,
+    smtstringTheory.smtstr_contains_def,
+    smtstringTheory.smtstr_indexof_aux_def,
+    smtstringTheory.smtstr_indexof_def,
     smtstringTheory.smtstr_lt_compute,
-    smtstringTheory.smtstr_le_compute,
-    smtstringTheory.smtstr_char_compute,
+    smtstringTheory.smtstr_le_def,
+    smtstringTheory.smtstr_char_def,
     smtstringTheory.smt_in_re_deriv,
-    smtstringTheory.smtstr_replace_compute,
-    smtstringTheory.smtstr_replace_all_compute,
-    smtstringTheory.smtstr_replace_re_compute,
-    smtstringTheory.smtstr_replace_re_all_compute,
+    smtstringTheory.smtstr_replace_def,
+    smtstringTheory.smtstr_replace_all_def,
+    smtstringTheory.smtstr_replace_re_def,
+    smtstringTheory.smtstr_replace_re_all_def,
     smtstringTheory.smtstr_is_digit_compute,
     smtstringTheory.smtstr_to_code_compute,
-    smtstringTheory.smtstr_from_code_compute,
+    smtstringTheory.smtstr_from_code_def,
     smtstringTheory.smtstr_digits_compute,
-    smtstringTheory.smtstr_to_int_compute,
-    smtstringTheory.smtstr_from_int_compute,
-    smtstringz3Theory.seq_unit_compute,
-    smtstringz3Theory.seq_tail_compute,
-    smtstringz3Theory.seq_eq_compute,
+    smtstringTheory.smtstr_to_int_def,
+    smtstringTheory.smtstr_from_int_def,
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_tail_def,
+    smtstringz3Theory.seq_eq_def,
     smtstringz3Theory.seq_nth_i_compute,
-    smtstringz3Theory.char_is_digit_compute,
-    smtstringz3Theory.seq_digit2int_compute,
-    smtstringz3Theory.seq_digit_compute,
-    smtstringz3Theory.seq_stoi_compute,
-    smtstringz3Theory.aut_state_compute,
+    smtstringz3Theory.char_is_digit_def,
+    smtstringz3Theory.seq_digit2int_def,
+    smtstringz3Theory.seq_digit_def,
+    smtstringz3Theory.seq_stoi_def,
+    smtstringz3Theory.aut_state_def,
     smtstringz3Theory.aut_accept_compute
   ]
 
@@ -129,14 +145,16 @@ struct
         ("ground evaluation failed: " ^ message)
 
   val length_arith_rewrites = [
-    smtstringTheory.smtstr_len_concat_int,
+    smtstringTheory.smtstr_len_concat,
     smtstringTheory.smtstr_len_substr,
     smtstringTheory.smtstr_len_at,
     smtstringTheory.smtstr_len_nonnegative,
     smtstringTheory.smtstr_len_char,
     smtstringz3Theory.seq_unit_length,
     smtstringz3Theory.seq_tail_length,
-    smtstringz3Theory.seq_eq_compute
+    smtstringz3Theory.seq_eq_def,
+    integerTheory.int_ge,
+    integerTheory.INT_LE_ADDR
   ]
 
   fun length_arith_prove arith_prove t =
@@ -151,7 +169,13 @@ struct
             "length normalization did not change the conclusion"
         else ()
     in
-      Thm.EQ_MP (Thm.SYM normalized) (arith_prove t')
+      Thm.EQ_MP (Thm.SYM normalized)
+        (arith_prove t'
+         handle Feedback.HOL_ERR holerr =>
+           raise ERR "length_arith_prove"
+             ("arithmetic prover rejected normalized conclusion " ^
+              Parse.term_to_string t' ^ ": " ^
+              Feedback.message_of holerr))
     end
     handle Conv.UNCHANGED =>
       raise ERR "length_arith_prove"
@@ -160,16 +184,7 @@ struct
       raise ERR "length_arith_prove"
         ("length/arithmetic replay failed: " ^ message)
 
-  val symbolic_normalizations = [
-    smtstringTheory.smtstr_concat_assoc,
-    smtstringTheory.smtstr_concat_nil_left,
-    smtstringTheory.smtstr_concat_nil_right,
-    smtstringTheory.smtstr_concat_middle_singleton,
-    smtstringTheory.smtstr_singleton_concat_middle,
-    smtstringTheory.smtstr_prefixof_refl,
-    smtstringTheory.smtstr_suffixof_refl,
-    smtstringTheory.smtstr_contains_refl,
-    smtstringTheory.smtstr_prefixof_singleton,
+  val seq_shape_rules = [
     smtstringz3Theory.seq_head_tail_int,
     smtstringz3Theory.seq_head_tail_int_zero_left,
     smtstringz3Theory.seq_prefixof_singleton,
@@ -182,9 +197,22 @@ struct
     smtstringz3Theory.seq_head_shared_singleton_prefix_right,
     smtstringz3Theory.seq_length_two,
     smtstringz3Theory.seq_two_two_concat_not_three,
-    smtstringz3Theory.seq_tail_zero_step,
-    smtstringz3Theory.seq_unit_compute,
-    smtstringz3Theory.seq_eq_compute
+    smtstringz3Theory.seq_tail_zero_step
+  ]
+
+  val symbolic_normalizations = [
+    smtstringTheory.smtstr_concat_assoc,
+    smtstringTheory.smtstr_concat_nil_left,
+    smtstringTheory.smtstr_concat_nil_right,
+    smtstringTheory.smtstr_concat_middle_singleton,
+    smtstringTheory.smtstr_singleton_concat_middle,
+    smtstringTheory.smtstr_prefixof_refl,
+    smtstringTheory.smtstr_suffixof_refl,
+    smtstringTheory.smtstr_contains_refl,
+    smtstringTheory.smtstr_prefixof_singleton
+  ] @ seq_shape_rules @ [
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_eq_def
   ]
 
   val symbolic_lemmas = [
@@ -202,21 +230,8 @@ struct
     smtstringTheory.smtstr_suffixof_imp_contains,
     smtstringTheory.smtstr_prefixof_trans,
     smtstringTheory.smtstr_suffixof_trans,
-    smtstringTheory.smtstr_contains_trans,
-    smtstringz3Theory.seq_head_tail_int,
-    smtstringz3Theory.seq_head_tail_int_zero_left,
-    smtstringz3Theory.seq_prefixof_singleton,
-    smtstringz3Theory.seq_prefixof_head,
-    smtstringz3Theory.seq_concat_middle_singleton,
-    smtstringz3Theory.seq_concat_middle_singleton_result,
-    smtstringz3Theory.seq_concat_middle_singleton_right,
-    smtstringz3Theory.seq_concat_middle_singleton_left,
-    smtstringz3Theory.seq_head_shared_singleton_prefix,
-    smtstringz3Theory.seq_head_shared_singleton_prefix_right,
-    smtstringz3Theory.seq_length_two,
-    smtstringz3Theory.seq_two_two_concat_not_three,
-    smtstringz3Theory.seq_tail_zero_step
-  ]
+    smtstringTheory.smtstr_contains_trans
+  ] @ seq_shape_rules
 
   val symbolic_string_names =
     const_name_set
@@ -248,8 +263,25 @@ struct
                symbolic_normalizations,
              bossLib.METIS_TAC symbolic_lemmas))) ()
 
+  val aut_transition_rules = [
+    smtstringz3Theory.aut_accept_range_deriv,
+    smtstringz3Theory.aut_accept_loop_deriv_1_3,
+    smtstringz3Theory.aut_accept_loop_deriv_0_2,
+    smtstringz3Theory.aut_accept_loop_deriv_0_1,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
+    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
+    smtstringz3Theory.aut_accept_range_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_zero,
+    smtstringz3Theory.aut_accept_loop_transition_one,
+    smtstringz3Theory.aut_accept_loop_transition_two,
+    smtstringz3Theory.aut_accept_range_transition_seq_unit,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
+    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two
+  ]
+
   val regex_normalizations = [
-    smtstringz3Theory.seq_unit_compute,
+    smtstringz3Theory.seq_unit_def,
     smtstringTheory.re_nullable_def,
     smtstringTheory.re_deriv_def,
     smtstringTheory.reglan_power_deriv_def,
@@ -264,21 +296,8 @@ struct
     smtstringTheory.smt_in_re_def,
     smtstringTheory.smtstr_len_def,
     smtstringz3Theory.aut_accept_zero,
-    smtstringz3Theory.aut_accept_transition_int,
-    smtstringz3Theory.aut_accept_range_deriv,
-    smtstringz3Theory.aut_accept_loop_deriv_1_3,
-    smtstringz3Theory.aut_accept_loop_deriv_0_2,
-    smtstringz3Theory.aut_accept_loop_deriv_0_1,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
-    smtstringz3Theory.aut_accept_range_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_one,
-    smtstringz3Theory.aut_accept_loop_transition_two,
-    smtstringz3Theory.aut_accept_range_transition_seq_unit,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two,
+    smtstringz3Theory.aut_accept_transition_int
+  ] @ aut_transition_rules @ [
     smtstringz3Theory.aut_accept_comp_transition_seq_unit,
     smtstringz3Theory.aut_accept_inter_transition_seq_unit,
     smtstringz3Theory.aut_accept_loop_nullable_transition_seq_unit_zero,
@@ -307,21 +326,8 @@ struct
     smtstringz3Theory.aut_accept_plus_allchar_length_one,
     smtstringz3Theory.aut_accept_step,
     smtstringz3Theory.aut_accept_transition,
-    smtstringz3Theory.aut_accept_transition_int,
-    smtstringz3Theory.aut_accept_range_deriv,
-    smtstringz3Theory.aut_accept_loop_deriv_1_3,
-    smtstringz3Theory.aut_accept_loop_deriv_0_2,
-    smtstringz3Theory.aut_accept_loop_deriv_0_1,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_1_2,
-    smtstringz3Theory.aut_accept_loop_nullable_deriv_0_1,
-    smtstringz3Theory.aut_accept_range_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_zero,
-    smtstringz3Theory.aut_accept_loop_transition_one,
-    smtstringz3Theory.aut_accept_loop_transition_two,
-    smtstringz3Theory.aut_accept_range_transition_seq_unit,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_zero,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_one,
-    smtstringz3Theory.aut_accept_loop_transition_seq_unit_two,
+    smtstringz3Theory.aut_accept_transition_int
+  ] @ aut_transition_rules @ [
     smtstringz3Theory.aut_accept_comp_singleton_transition,
     smtstringz3Theory.aut_accept_comp_range_transition,
     smtstringz3Theory.aut_accept_inter_range_comp_transition,
@@ -395,7 +401,6 @@ struct
     smtstringTheory.smtstr_concat_nil_left,
     smtstringTheory.smtstr_concat_nil_right,
     smtstringTheory.smtstr_len_concat,
-    smtstringTheory.smtstr_len_concat_int,
     smtstringTheory.smtstr_len_eq_zero,
     smtstringTheory.smtstr_prefixof_refl,
     smtstringTheory.smtstr_suffixof_refl,
@@ -404,16 +409,28 @@ struct
     smtstringTheory.smtstr_le_refl,
     smtstringTheory.smtstr_lt_imp_le,
     smtstringTheory.smt_in_re_deriv,
-    smtstringz3Theory.seq_unit_compute,
-    smtstringz3Theory.seq_tail_compute,
-    smtstringz3Theory.seq_eq_compute,
+    smtstringz3Theory.seq_unit_def,
+    smtstringz3Theory.seq_tail_def,
+    smtstringz3Theory.seq_eq_def,
     smtstringz3Theory.seq_nth_i_compute,
-    smtstringz3Theory.char_is_digit_compute,
-    smtstringz3Theory.seq_digit_compute,
-    smtstringz3Theory.seq_stoi_compute,
-    smtstringz3Theory.aut_state_compute,
+    smtstringz3Theory.char_is_digit_def,
+    smtstringz3Theory.seq_digit_def,
+    smtstringz3Theory.seq_stoi_def,
+    smtstringz3Theory.aut_state_def,
     smtstringz3Theory.aut_accept_compute
   ]
+
+  val contextual_normalizations =
+    ground_eval_thms @ rewrite_normalizations @ regex_normalizations
+
+  (* Contextual rung: the recorded conclusion follows from the assertion
+     context by simplification with the shared string-theory rule sets.
+     Callers order this after the rewrite and theory rungs. *)
+  fun string_contextual_prove context target =
+    Tactical.TAC_PROOF ((context, target),
+      bossLib.ASM_SIMP_TAC
+        (simpLib.++ (bossLib.srw_ss(), intSimps.INT_REDUCE_ss))
+        contextual_normalizations)
 
   fun rewrite_simp_prove t =
     simpLib.SIMP_PROVE

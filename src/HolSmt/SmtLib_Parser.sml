@@ -2687,7 +2687,6 @@ local
     tydict: Type.hol_type dict,
     tmdict: Term.term dict,
     sigdict: function_signature_dict,
-    wf_hypotheses: Term.term list,
     assertions: Term.term list,
     named_assertions: (string * Term.term) list,
     local_definitions: Term.term list
@@ -2937,8 +2936,6 @@ local
   fun typecheck_frame_tydict ({tydict, ...}: typecheck_frame) = tydict
   fun typecheck_frame_tmdict ({tmdict, ...}: typecheck_frame) = tmdict
   fun typecheck_frame_sigdict ({sigdict, ...}: typecheck_frame) = sigdict
-  fun typecheck_frame_wf_hypotheses
-      ({wf_hypotheses, ...}: typecheck_frame) = wf_hypotheses
   fun typecheck_frame_assertions ({assertions, ...}: typecheck_frame) = assertions
   fun typecheck_frame_named_assertions ({named_assertions, ...}: typecheck_frame) =
     named_assertions
@@ -2952,7 +2949,6 @@ local
     tydict = tydict,
     tmdict = tmdict,
     sigdict = sigdict,
-    wf_hypotheses = [],
     assertions = [],
     named_assertions = [],
     local_definitions = []
@@ -2984,7 +2980,6 @@ local
         tydict = tydict,
         tmdict = tmdict,
         sigdict = sigdict,
-        wf_hypotheses = typecheck_frame_wf_hypotheses frame,
         assertions = typecheck_frame_assertions frame,
         named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = typecheck_frame_local_definitions frame
@@ -2996,25 +2991,11 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        wf_hypotheses = typecheck_frame_wf_hypotheses frame,
         assertions = assertion :: typecheck_frame_assertions frame,
         named_assertions =
           (case name of
              NONE => typecheck_frame_named_assertions frame
            | SOME n => (n, assertion) :: typecheck_frame_named_assertions frame),
-        local_definitions = typecheck_frame_local_definitions frame
-      }) state
-
-  fun add_typechecked_wf_hypothesis hypothesis state =
-    update_current_typecheck_frame
-      (fn frame => {
-        tydict = typecheck_frame_tydict frame,
-        tmdict = typecheck_frame_tmdict frame,
-        sigdict = typecheck_frame_sigdict frame,
-        wf_hypotheses =
-          hypothesis :: typecheck_frame_wf_hypotheses frame,
-        assertions = typecheck_frame_assertions frame,
-        named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = typecheck_frame_local_definitions frame
       }) state
 
@@ -3024,7 +3005,6 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        wf_hypotheses = typecheck_frame_wf_hypotheses frame,
         assertions = typecheck_frame_assertions frame,
         named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = assertion :: typecheck_frame_local_definitions frame
@@ -3038,16 +3018,7 @@ local
   fun active_typechecked_assertions ({frames, ...}: typecheck_state) =
     List.concat
       (List.map
-        (fn frame =>
-          List.rev (typecheck_frame_wf_hypotheses frame) @
-          List.rev (typecheck_frame_assertions frame))
-        (List.rev frames))
-
-  fun active_typechecked_wf_hypotheses
-      ({frames, ...}: typecheck_state) =
-    List.concat
-      (List.map
-        (List.rev o typecheck_frame_wf_hypotheses)
+        (List.rev o typecheck_frame_assertions)
         (List.rev frames))
 
   fun active_typechecked_named_assertions ({frames, ...}: typecheck_state) =
@@ -3152,13 +3123,10 @@ local
       val frame = current_typecheck_frame
         {logic = logic, frames = frames, queries = queries,
          surface_flags = surface_flags}
-      val wf_hypotheses =
-        List.rev (active_typechecked_wf_hypotheses state)
       val reset_frame = {
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
-        wf_hypotheses = wf_hypotheses,
         assertions = [],
         named_assertions = [],
         local_definitions = []
@@ -3219,61 +3187,6 @@ local
   fun add_value_signature name domain range env =
     add_value_signature_with_surface name domain (List.map RigidSort domain)
       range (RigidSort range) env
-
-  val smt_string_ty = listSyntax.mk_list_type numSyntax.num
-
-  fun is_smt_string_ty ty =
-    Type.compare (ty, smt_string_ty) = EQUAL
-
-  val wfstr_const =
-    Term.prim_mk_const {Thy = "smtstring", Name = "wfstr"}
-
-  fun mk_wfstr tm = Term.mk_comb (wfstr_const, tm)
-
-  (* SMT String shares the num-list representation of ordinary HOL lists, so
-     the sort is carried by an explicit wellformedness guard on every String
-     variable; 'SmtLib.guard_signature' reads them back. *)
-  fun wfstr_guards vars =
-    List.mapPartial
-      (fn var =>
-        if is_smt_string_ty (Term.type_of var) then SOME (mk_wfstr var)
-        else NONE)
-      vars
-
-  fun relativize_by combine guards body =
-    if List.null guards then body
-    else combine (boolSyntax.list_mk_conj guards, body)
-
-  fun string_declaration_hypothesis tm domain range =
-    if is_smt_string_ty range orelse List.exists is_smt_string_ty domain then
-      let
-        fun mk_vars _ [] = []
-          | mk_vars n (ty :: tys) =
-              Term.mk_var ("_wfarg" ^ Int.toString n, ty) ::
-              mk_vars (n + 1) tys
-        val vars = mk_vars 0 domain
-        val application = Term.list_mk_comb (tm, vars)
-        val result =
-          if is_smt_string_ty range then mk_wfstr application
-          else boolSyntax.mk_eq (application, application)
-        val body =
-          relativize_by boolSyntax.mk_imp (wfstr_guards vars) result
-      in
-        SOME (boolSyntax.list_mk_forall (vars, body))
-      end
-    else
-      NONE
-
-  fun add_string_declaration_hypothesis tm domain range state =
-    case string_declaration_hypothesis tm domain range of
-      SOME hypothesis => add_typechecked_wf_hypothesis hypothesis state
-    | NONE => state
-
-  fun add_named_string_declaration_hypothesis name sigdict state =
-    case peek_signatures (sigdict, name) of
-      SOME ({tm, domain, range, ...} :: _) =>
-        add_string_declaration_hypothesis tm domain range state
-    | _ => state
 
   fun add_value_term_signature_with_surface name tm domain domain_surface range
       range_surface (tmdict, sigdict) =
@@ -4209,7 +4122,7 @@ local
       term_ast vars body mk_binder relativize
 
   and typecheck_binder_with_options elaborate_datatypes context
-      (tydict, tmdict, sigdict) term_ast vars body mk_binder relativize =
+      (tydict, tmdict, sigdict) term_ast vars body mk_binder _ =
     let
       val vars = List.map (checked_sorted_var context tydict) vars
       val (tmdict, sigdict) =
@@ -4223,9 +4136,6 @@ local
           (tydict, tmdict, sigdict) body
       val body = expect_checked_sort "typecheck_binder" context (loc_of body)
         Type.bool body_checked
-      val body =
-        relativize_by relativize
-          (wfstr_guards (List.map (fn (_, var, _) => var) vars)) body
     in
       checked_term_of
         (mk_binder (List.map (fn (_, var, _) => var) vars, body))
@@ -4709,10 +4619,8 @@ local
       val vars = List.map #2 vars
       val equation =
         boolSyntax.mk_eq (Term.list_mk_comb (tm, vars), definiens)
-      val body =
-        relativize_by boolSyntax.mk_imp (wfstr_guards vars) equation
     in
-      boolSyntax.list_mk_forall (vars, body)
+      boolSyntax.list_mk_forall (vars, equation)
     end
 
   fun define_typechecked_fun context loc name vars range_type range_surface
@@ -4960,7 +4868,6 @@ local
         SmtLib_Logics.parsedicts_of_logic (dictionary_logic logic)
       fun typecheck_define_fun_command command_name name vars range body state =
         let
-          val name_text = located_string_node name
           val command_state = dest_typecheck_state command_name state
           val (tydict, tmdict, sigdict) =
             current_typecheck_dicts command_state
@@ -4969,9 +4876,6 @@ local
               name vars range body (tydict, tmdict, sigdict)
           val command_state = update_current_typecheck_dicts
             (tydict, tmdict, sigdict) command_state
-          val command_state =
-            add_named_string_declaration_hypothesis
-              name_text sigdict command_state
         in
           finish (add_typechecked_definition def command_state)
         end
@@ -5045,15 +4949,14 @@ local
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-const")
               (loc_of name) name_text [] range sigdict
-            val (tm, tmdict, sigdict) =
+            val (_, tmdict, sigdict) =
               add_value_signature_with_surface name_text [] [] range
                 (surface_sort_of_ast (context "declare-const") tydict sort)
                 (tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
           in
-            finish
-              (add_string_declaration_hypothesis tm [] range command_state)
+            finish command_state
           end
       | CmdDeclareFun (name, domain, range) =>
           let
@@ -5071,19 +4974,16 @@ local
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-fun")
               (loc_of name) name_text domain range sigdict
-            val (tm, tmdict, sigdict) =
+            val (_, tmdict, sigdict) =
               add_value_signature_with_surface name_text domain domain_surface
                 range range_surface (tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
           in
-            finish
-              (add_string_declaration_hypothesis
-                tm domain range command_state)
+            finish command_state
           end
       | CmdDefineConst (name, sort, body) =>
           let
-            val name_text = located_string_node name
             val command_state =
               dest_typecheck_state "define-const" state
             val (tydict, tmdict, sigdict) =
@@ -5094,9 +4994,6 @@ local
                 (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
-            val command_state =
-              add_named_string_declaration_hypothesis
-                name_text sigdict command_state
           in
             finish (add_typechecked_definition def command_state)
           end
@@ -5104,7 +5001,6 @@ local
           typecheck_define_fun_command "define-fun" name vars range body state
       | CmdDefineFunRec (name, vars, range, body) =>
           let
-            val name_text = located_string_node name
             val command_state = dest_typecheck_state "define-fun-rec" state
             val (tydict, tmdict, sigdict) =
               current_typecheck_dicts command_state
@@ -5114,9 +5010,6 @@ local
                 name vars range body (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
-            val command_state =
-              add_named_string_declaration_hypothesis
-                name_text sigdict command_state
           in
             finish (add_typechecked_definition def command_state)
           end
@@ -5131,15 +5024,6 @@ local
                 sigs bodies (tydict, tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
-            fun signature_name sig_ast =
-              case node_of sig_ast of
-                FunctionSignature (name, _, _) => located_string_node name
-            val command_state =
-              List.foldl
-                (fn (name, state) =>
-                  add_named_string_declaration_hypothesis
-                    name sigdict state)
-                command_state (List.map signature_name sigs)
           in
             finish (add_definitions definitions command_state)
           end

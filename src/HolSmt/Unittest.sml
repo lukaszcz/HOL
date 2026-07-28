@@ -695,10 +695,15 @@ let
        "\"A\\u{42}\\u{1F642}\"))")
   val (left, right) = boolSyntax.dest_eq assertion
   fun dest_code_points term =
-    let val (elements, ty) = listSyntax.dest_list term
+    let
+      val (constructor, payload) = Term.dest_comb term
+      val () = assert
+        (#Name (Term.dest_thy_const constructor) = "SmtStr",
+         "SMT-LIB string literal did not use the smtstr wrapper")
+      val (elements, ty) = listSyntax.dest_list payload
     in
       assert (ty = numSyntax.num,
-        "SMT-LIB string literal did not produce a num list");
+        "SMT-LIB string literal payload was not a num list");
       List.map
         (Arbnum.toInt o numSyntax.dest_numeral)
         elements
@@ -814,19 +819,15 @@ in
   | _ => die "stream proof tokenizer returned unexpected tokens"
 end
 
-val smt_string_ty = listSyntax.mk_list_type numSyntax.num
-
-val wfstr_const =
-  Term.prim_mk_const {Thy = "smtstring", Name = "wfstr"}
-
-fun mk_wfstr tm = Term.mk_comb (wfstr_const, tm)
+val smt_string_ty =
+  Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
 
 fun assert_term_alpha label expected actual =
   assert (expected ~~ actual,
     label ^ " mismatch\nexpected: " ^ term_with_types expected ^
     "\nactual: " ^ term_with_types actual)
 
-fun smtlib_string_wf_declaration_elaboration_success () =
+fun smtlib_string_typed_declaration_success () =
 let
   val state =
     SmtLib_Parser.typecheck_script_string
@@ -837,56 +838,30 @@ let
        "(declare-fun g (String) Int)\n" ^
        "(assert (distinct s t))\n" ^
        "(check-sat)\n")
-  val (s_guard, t_guard, f_guard, g_guard, user_assertion) =
+  val user_assertion =
     case #assertions state of
-      [s_guard, t_guard, f_guard, g_guard, user_assertion] =>
-        (s_guard, t_guard, f_guard, g_guard, user_assertion)
+      [assertion] => assertion
     | assertions =>
-        die ("String declaration elaboration produced " ^
+        die ("String declarations produced " ^
           Int.toString (List.length assertions) ^
-          " assertions, expected five")
+          " assertions, expected one")
   val s = Term.mk_var ("s", smt_string_ty)
   val t = Term.mk_var ("t", smt_string_ty)
-  val f = Term.mk_var
-    ("f", Type.--> (smt_string_ty,
-      Type.--> (intSyntax.int_ty, smt_string_ty)))
-  val g = Term.mk_var ("g", Type.--> (smt_string_ty, intSyntax.int_ty))
-  val string_arg = Term.mk_var ("string_arg", smt_string_ty)
-  val int_arg = Term.mk_var ("int_arg", intSyntax.int_ty)
-  val f_expected =
-    boolSyntax.list_mk_forall
-      ([string_arg, int_arg],
-       boolSyntax.mk_imp
-         (mk_wfstr string_arg,
-          mk_wfstr (Term.list_mk_comb (f, [string_arg, int_arg]))))
-  val g_application = Term.mk_comb (g, string_arg)
-  val g_expected =
-    boolSyntax.mk_forall
-      (string_arg,
-       boolSyntax.mk_imp
-         (mk_wfstr string_arg,
-          boolSyntax.mk_eq (g_application, g_application)))
   val query_assertions =
     case #queries state of
       [SmtLib_Parser.QueryCheckSat {assertions, ...}] => assertions
     | _ => die "String declaration elaboration lost check-sat query"
 in
-  assert_term_alpha "declare-const String wfstr hypothesis"
-    (mk_wfstr s) s_guard;
-  assert_term_alpha "nullary declare-fun String wfstr hypothesis"
-    (mk_wfstr t) t_guard;
-  assert_term_alpha "String-returning declare-fun wfstr hypothesis"
-    f_expected f_guard;
-  assert_term_alpha "String-domain declare-fun signature hypothesis"
-    g_expected g_guard;
-  assert (List.length (Term.free_vars user_assertion) = 2,
-    "String declaration test lost its user assertion");
+  assert_term_alpha "typed String declaration assertion"
+    (listSyntax.mk_all_distinct
+      (listSyntax.mk_list ([s, t], smt_string_ty)))
+    user_assertion;
   assert (ListPair.allEq (fn (x, y) => x ~~ y)
       (query_assertions, #assertions state),
-    "check-sat query did not carry String declaration hypotheses")
+    "check-sat query changed typed String assertions")
 end
 
-fun smtlib_string_wf_binder_elaboration_success () =
+fun smtlib_string_typed_binder_success () =
 let
   val assertion =
     case #assertions
@@ -902,18 +877,15 @@ let
   val j = Term.mk_var ("j", intSyntax.int_ty)
   val equality = boolSyntax.mk_eq (t, s)
   val existential =
-    boolSyntax.list_mk_exists
-      ([t, j], boolSyntax.mk_conj (mk_wfstr t, equality))
+    boolSyntax.list_mk_exists ([t, j], equality)
   val expected =
-    boolSyntax.list_mk_forall
-      ([s, i],
-       boolSyntax.mk_imp (mk_wfstr s, existential))
+    boolSyntax.list_mk_forall ([s, i], existential)
 in
-  assert_term_alpha "nested String forall/exists relativization"
+  assert_term_alpha "nested typed String forall/exists"
     expected assertion
 end
 
-fun smtlib_string_wf_reset_assertions_success () =
+fun smtlib_string_typed_reset_assertions_success () =
 let
   val state =
     SmtLib_Parser.typecheck_script_string
@@ -926,18 +898,15 @@ let
   val s = Term.mk_var ("s", smt_string_ty)
 in
   case #assertions state of
-    [guard, assertion] =>
-      (assert_term_alpha
-         "reset-assertions preserved String declaration hypothesis"
-         (mk_wfstr s) guard;
-       assert (assertion ~~ boolSyntax.mk_eq (s, s),
-         "reset-assertions retained an old assertion"))
+    [assertion] =>
+      assert (assertion ~~ boolSyntax.mk_eq (s, s),
+        "reset-assertions retained an old assertion")
   | assertions =>
-      die ("reset-assertions String elaboration produced " ^
-        Int.toString (List.length assertions) ^ " assertions, expected two")
+      die ("reset-assertions String typing produced " ^
+        Int.toString (List.length assertions) ^ " assertions, expected one")
 end
 
-fun smtlib_string_definition_relativization_success () =
+fun smtlib_string_typed_definitions_success () =
 let
   val {assertions, local_definitions, ...} =
     SmtLib_Parser.typecheck_script_string
@@ -954,15 +923,14 @@ let
       (assertions @ local_definitions, boolSyntax.T)
   val text = String.concat strings
 in
-  assert (List.length assertions = 6 andalso
-      List.all SmtLib.is_native_string_guard assertions,
-    "String definitions did not register all native signatures");
+  assert (List.null assertions,
+    "String definitions introduced synthetic assertions");
   assert (List.length local_definitions = 6,
     "String definition family lost a local definition");
-  assert (contains "(String) Int)" text,
+  assert (contains "(Array String Int)" text,
     "String-domain definition was declared with a non-String domain:\n" ^
     text);
-  assert (contains "(Int) String)" text,
+  assert (contains "(Array Int String)" text,
     "String-valued definition was declared with a non-String range:\n" ^
     text);
   assert (not (contains "List_Num" text),
@@ -3165,6 +3133,10 @@ fun smtlib_logic_fragment_diagnostics () =
       (script "QF_S"
        "(declare-const s String)\n" ^
        "(assert (= s s))\n");
+    expect_no_fragment "SMT String literal payload is not a datatype sort"
+      "QF_S"
+      (script "QF_S"
+       "(assert (= \"a\" \"a\"))\n");
     expect_fragment "RegLan operator unavailable" "QF_UF"
       (script_for_checker "ALL"
        "(declare-const s String)\n" ^
@@ -3671,8 +3643,8 @@ let
         String.isPrefix "'smtlib_RegLan" (Type.dest_vartype ty))
       (Term.type_of tm)
 in
-  assert (List.length assertions = 4,
-    "string/regex signature script did not include three wfstr hypotheses");
+  assert (List.length assertions = 1,
+    "string/regex signature script introduced synthetic assertions");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "string/regex signature assertion did not parse as Bool");
   List.app
@@ -4561,15 +4533,18 @@ let
     "re.diff", "re.comp", "re.*", "re.+", "re.opt", "re.range",
     "(_ re.^ 2)", "(_ re.loop 1 3)"
   ]
-  val string_ty = listSyntax.mk_list_type numSyntax.num
+  val string_ty = smt_string_ty
   val s = Term.mk_var ("literal_s", string_ty)
-  val literal = listSyntax.mk_list
-    (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
-      [0, 31, 32, 34, 65, 127, 128512, 196607],
-     numSyntax.num)
+  val literal =
+    Term.mk_comb
+      (Term.prim_mk_const {Thy = "smtstring", Name = "SmtStr"},
+       listSyntax.mk_list
+         (List.map (numSyntax.mk_numeral o Arbnum.fromInt)
+           [0, 31, 32, 34, 65, 127, 128512, 196607],
+          numSyntax.num))
   val literal_result =
     SmtLib.goal_to_SmtLib_translation NONE
-      ([mk_wfstr s], boolSyntax.mk_eq (s, literal))
+      ([], boolSyntax.mk_eq (s, literal))
   val literal_text = text_of literal_result
   val binder_result =
     translate_script
@@ -4606,14 +4581,9 @@ in
     "declare-datatypes";
   assert_has "native string literal" literal_text
     "\"\\u{0}\\u{1f} \\u{22}A\\u{7f}\\u{1f600}\\u{2ffff}\"";
-  assert (SmtLib.is_native_string_guard (mk_wfstr s),
-    "native String declaration guard was not recognized");
-  assert (not (SmtLib.is_native_string_guard
-      (boolSyntax.mk_eq (s, literal))),
-    "ordinary native String assertion was mistaken for a declaration guard");
-  assert_has "relativized String binder" binder_text
+  assert_has "typed String binder" binder_text
     "(forall ((b0 String)) (= (str.++ b0 \"\") b0))";
-  assert_lacks "relativized String binder" binder_text "wfstr";
+  assert_lacks "typed String binder" binder_text "wfstr";
   assert
     (SmtLib.translation_logic (Lib.fst binder_result) = "ALL",
      "quantified native string goal did not select conservative ALL");
@@ -4661,26 +4631,26 @@ in
     "(lambda ((b0 String)) (str.++ b0 \"a\"))"
 end
 
-fun smtlib_native_string_missing_guard_diagnostic () =
+fun smtlib_native_string_carrier_success () =
 let
-  val _ =
+  val s = Term.mk_var ("typed_s", smt_string_ty)
+  val t = Term.mk_var ("typed_t", smt_string_ty)
+  val concat =
+    Term.list_mk_comb
+      (Term.prim_mk_const
+        {Thy = "smtstring", Name = "smtstr_concat"},
+       [s, t])
+  val (_, strings) =
     SmtLib.goal_to_SmtLib_translation NONE
-      ([], ``smtstring$smtstr_concat
-        (unguarded_s:num list) unguarded_t = unguarded_s``)
+      ([], boolSyntax.mk_eq (concat, s))
+  val text = String.concat strings
 in
-  die "unguarded native smtstring goal translated successfully"
+  assert (contains "(str.++ v0 v1)" text,
+    "typed SMT String carrier did not emit str.++:\n" ^ text);
+  assert (not (contains "List_Num" text) andalso
+      not (contains "wfstr" text),
+    "typed SMT String carrier leaked representation machinery:\n" ^ text)
 end
-handle Feedback.HOL_ERR holerr =>
-  let
-    val message = Feedback.message_of holerr
-  in
-    assert
-      (Feedback.top_structure_of holerr = "SmtLib" andalso
-       Feedback.top_function_of holerr = "translate_native_string" andalso
-       contains "missing wfstr guard" message andalso
-       contains "unguarded_s" message,
-       "native smtstring missing-guard diagnostic mismatch: " ^ message)
-  end
 
 (* P3.4 leaves this function-valued argument on the byte-identical FO route:
    nested Arrays preserve it without encountering an HO-trigger shape. *)
@@ -5864,23 +5834,31 @@ let
      "str-replace-re-all-eval", "str-replace-re-eval",
      "str-substr-empty-range", "str-substr-empty-str",
      "str-substr-eq-empty"]
-  fun check namespace name =
+  fun check namespace handler name =
     case CPC_Proof.lookup_rule "1.3.4" name of
       SOME rule =>
         assert (#namespace rule = namespace andalso
-                #replay_handler rule = "string",
+                #replay_handler rule = handler,
           "CPC string registry metadata is wrong for " ^ name)
     | NONE => die ("FAIL: CPC string registry omitted " ^ name)
+  fun check_rare name =
+    check CPC_Proof.RareRewrite
+      (if name = "str-is-digit-elim" orelse name = "str-lt-elim" then
+         "rewrite"
+       else
+         "string")
+      name
 in
-  assert (Thm.concl theorem ~~ ``([]:num list) = []``,
+  assert (Thm.concl theorem ~~
+      ``smtstring$SmtStr [] = smtstring$SmtStr []``,
     "CPC empty string literal was not preserved");
   (case CPC_Proof.proof_commands concat_proof of
      [CPC_Proof.ASSUME (_, equality)] =>
        assert (boolSyntax.lhs equality ~~ boolSyntax.rhs equality,
          "CPC unary str.++ annotation did not preserve its payload")
    | _ => die "FAIL: CPC unary str.++ annotation did not parse");
-  List.app (check CPC_Proof.ProofRule) proof_rules;
-  List.app (check CPC_Proof.RareRewrite) rare_rules;
+  List.app (check CPC_Proof.ProofRule "string") proof_rules;
+  List.app check_rare rare_rules;
   Library.check_oracle_tags "CPC string literal parser" theorem
 end
 
@@ -6983,9 +6961,8 @@ let
         assert (HOLset.member (Z3_Proof.proof_vars proof,
             Term.mk_var ("seq.p.suffix",
               boolSyntax.list_mk_fun
-                ([listSyntax.mk_list_type numSyntax.num,
-                  listSyntax.mk_list_type numSyntax.num],
-                 listSyntax.mk_list_type numSyntax.num))),
+                ([smt_string_ty, smt_string_ty],
+                 smt_string_ty))),
           "Z3 4.15.3 did not register seq.p.suffix as proof-local")
       else ();
       case ch of
@@ -7891,13 +7868,14 @@ fun string_prove_ladder_rungs_success () =
        smtstr_concat s (smtstr_concat t u)``;
    assert_string_prover "string_prove ground evaluation rung"
      SmtStringProve.ground_eval_prove
-     ``smtstr_lt [97; 98] [97; 99] /\
-       smtstr_to_int [49; 50] = 12 /\
-       smt_in_re [97; 97] (reglan_star (reglan_to_re [97]))``;
+     ``smtstr_lt (SmtStr [97; 98]) (SmtStr [97; 99]) /\
+       smtstr_to_int (SmtStr [49; 50]) = 12 /\
+       smt_in_re (SmtStr [97; 97])
+         (reglan_star (reglan_to_re (SmtStr [97])))``;
    assert_string_prover "string_prove length arithmetic rung"
      (SmtStringProve.length_arith_prove intLib.ARITH_PROVE)
-     ``(&(smtstr_len (smtstr_concat s t)) : int) >=
-       &(smtstr_len s)``)
+     ``smtstr_len (smtstr_concat s t) >=
+       smtstr_len s``)
 
 fun string_prove_symbolic_rung_success () =
   let
@@ -7963,91 +7941,93 @@ fun string_prove_regex_rung_success () =
     val nullable =
       ``reglan_loop
           (reglan_union
-            (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+            (reglan_to_re (seq_unit 97)) (reglan_to_re (SmtStr [])))
           1 2``
   in
     direct "regex membership bridge"
       ``~smt_in_re x ^range \/ aut_accept x 0 ^range``;
     direct "regex range length"
       ``aut_accept x 0 ^range ==>
-        (&(smtstr_len x) : int) >= 1``;
+        smtstr_len x >= 1``;
     direct "regex range transition"
       ``~aut_accept x 0 ^range \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (seq_nth_i x 0 <= 122 /\ 97 <= seq_nth_i x 0 /\
-         aut_accept x 1 (reglan_to_re []))``;
+         aut_accept x 1 (reglan_to_re (SmtStr [])))``;
     direct "regex bounded-loop transition zero"
       ``~aut_accept x 0 ^loop13 \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (seq_nth_i x 0 = 97 /\
          aut_accept x 1
            (reglan_loop (reglan_to_re (seq_unit 97)) 0 2))``;
     direct "regex bounded-loop length"
       ``aut_accept x 0 ^loop13 ==>
-        (&(smtstr_len x) : int) >= 1``;
+        smtstr_len x >= 1``;
     direct "regex bounded-loop transition one"
       ``~aut_accept x 1
           (reglan_loop (reglan_to_re (seq_unit 97)) 0 2) \/
-        (&(smtstr_len x) : int) <= 1 \/
+        smtstr_len x <= 1 \/
         (seq_nth_i x 1 = 97 /\
          aut_accept x 2
            (reglan_loop (reglan_to_re (seq_unit 97)) 0 1))``;
     direct "regex bounded-loop transition two"
       ``~aut_accept x 2
           (reglan_loop (reglan_to_re (seq_unit 97)) 0 1) \/
-        (&(smtstr_len x) : int) <= 2 \/
+        smtstr_len x <= 2 \/
         (seq_nth_i x 2 = 97 /\
-         aut_accept x 3 (reglan_to_re []))``;
+         aut_accept x 3 (reglan_to_re (SmtStr [])))``;
     direct "regex empty terminal"
-      ``~aut_accept x 3 (reglan_to_re []) \/
-        (&(smtstr_len x) : int) <= 3 \/ F``;
+      ``~aut_accept x 3 (reglan_to_re (SmtStr [])) \/
+        smtstr_len x <= 3 \/ F``;
     direct "regex complement transition"
       ``~aut_accept x 0 ^comp \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (seq_nth_i x 0 <> 97 \/
          aut_accept x 1 (reglan_plus reglan_allchar))``;
     direct "regex complement residual length"
       ``aut_accept x 1 (reglan_plus reglan_allchar) ==>
-        (&(smtstr_len x) : int) >= 2``;
+        smtstr_len x >= 2``;
     direct "regex complement-range transition"
       ``~aut_accept x 0
           (reglan_comp
             (reglan_range (seq_unit 97) (seq_unit 122))) \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (seq_nth_i x 0 < 97 \/ 122 < seq_nth_i x 0 \/
          aut_accept x 1 (reglan_plus reglan_allchar))``;
     direct "regex intersection transition"
       ``~aut_accept x 0 ^inter \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (97 <= seq_nth_i x 0 /\ seq_nth_i x 0 <= 122 /\
          seq_nth_i x 0 <> 109 /\
-         aut_accept x 1 (reglan_to_re []))``;
+         aut_accept x 1 (reglan_to_re (SmtStr [])))``;
     direct "regex nullable-loop transition zero"
       ``~aut_accept x 0 ^nullable \/
-        (&(smtstr_len x) : int) <= 0 \/
+        smtstr_len x <= 0 \/
         (seq_nth_i x 0 = 97 /\
          aut_accept x 1
            (reglan_loop
              (reglan_union
-               (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+               (reglan_to_re (seq_unit 97))
+               (reglan_to_re (SmtStr [])))
              0 1))``;
     direct "regex nullable-loop transition one"
       ``~aut_accept x 1
           (reglan_loop
             (reglan_union
-              (reglan_to_re (seq_unit 97)) (reglan_to_re []))
+              (reglan_to_re (seq_unit 97))
+              (reglan_to_re (SmtStr [])))
             0 1) \/
-        (&(smtstr_len x) : int) <= 1 \/
+        smtstr_len x <= 1 \/
         (seq_nth_i x 1 = 97 /\
-         aut_accept x 2 (reglan_to_re []))``;
+         aut_accept x 2 (reglan_to_re (SmtStr [])))``;
     direct "regex nullable-loop terminal"
-      ``~aut_accept x 2 (reglan_to_re []) \/
-        (&(smtstr_len x) : int) <= 2 \/ F``;
+      ``~aut_accept x 2 (reglan_to_re (SmtStr [])) \/
+        smtstr_len x <= 2 \/ F``;
     assert_string_prover "regex ground derivative evaluation"
       (SmtStringProve.string_prove intLib.ARITH_PROVE)
-      ``smt_in_re [97] ^range /\
-        smt_in_re [97; 97] ^nullable /\
-        smt_in_re [98] ^comp``;
+      ``smt_in_re (SmtStr [97]) ^range /\
+        smt_in_re (SmtStr [97; 97]) ^nullable /\
+        smt_in_re (SmtStr [98]) ^comp``;
     Profile.reset_all ();
     assert_string_prover "regex full ladder"
       (SmtStringProve.string_prove intLib.ARITH_PROVE)
@@ -8075,7 +8055,7 @@ fun string_prove_structured_failures () =
     expect_message "corpus-shaped string th-lemma" "theory=seq"
       (fn () =>
         SmtStringProve.string_prove intLib.ARITH_PROVE
-          ``~((&(smtstr_len x) : int) <= 1) \/
+          ``~(smtstr_len x <= 1) \/
             smtstr_to_int x = seq_stoi x 0``);
     expect_message "proof-local prefix witness" "theory=seq"
       (fn () =>
@@ -8108,7 +8088,7 @@ in
         smtstr_concat x (smtstr_concat y z)``,
     "th-lemma-seq did not route through the proforma rung");
   assert (Thm.concl ground ~~
-      ``smtstr_to_int [49; 50] = 12``,
+      ``smtstr_to_int (SmtStr [49; 50]) = 12``,
     "th-lemma-string alias did not route through ground evaluation");
   assert (Thm.concl alias ~~ ``T``,
     "th-lemma-regexp alias did not route through the seq handler");
@@ -8157,13 +8137,15 @@ let
     expect_hol_error_contains name
       "unsupported th-lemma shape: theory=char"
       (fn () => ignore (replay_z3_proof_string proof))
+  val comparison =
+    replay_z3_proof_string
+      "((proof ((_ th-lemma char) \
+      \(char.<= (_ Char 0) (_ Char 127)))))"
 in
   expect "char bit outside 18-bit decomposition"
     "((proof ((_ th-lemma char) \
     \(not ((_ char.bit char.bit 18) (_ Char 0))))))";
-  expect "char comparison without decomposition"
-    "((proof ((_ th-lemma char) \
-    \(char.<= (_ Char 0) (_ Char 127)))))"
+  Library.check_oracle_tags "ground char comparison" comparison
 end
 
 fun z3_char_th_lemma_false_diagnostic () =
@@ -8209,29 +8191,32 @@ let
     ("((proof (rewrite (= (re.diff re.all (str.to_re \"a\")) " ^
      "(re.comp (str.to_re \"a\"))))))")
   val direct_ground = SmtStringProve.string_rewrite_prove
-    ``smtstr_len [97; 98; 99] = 3``
+    ``smtstr_len (SmtStr [97; 98; 99]) = 3``
 in
   assert (Thm.concl literal ~~
-      ``smtstr_concat (smtstr_concat [97] [98]) [99] = [97; 98; 99]``,
+      ``smtstr_concat
+          (smtstr_concat (SmtStr [97]) (SmtStr [98]))
+          (SmtStr [99]) = SmtStr [97; 98; 99]``,
     "string literal rewrite returned the wrong equality");
   assert (Thm.concl length ~~
-      ``(&(smtstr_len [97; 98; 99]) : int) = 3``,
+      ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "string ground rewrite returned the wrong equality: " ^
     Library.thm_to_string length);
   assert (profile_call_count "rewrite(03.1)(string-ground-eval)" > 0,
     "string rewrite ladder did not use ground evaluation");
   assert (Thm.concl regex_literal ~~
-      ``reglan_to_re (smtstr_concat [97] [98]) =
-        reglan_to_re [97; 98]``,
+      ``reglan_to_re
+          (smtstr_concat (SmtStr [97]) (SmtStr [98])) =
+        reglan_to_re (SmtStr [97; 98])``,
     "regex literal rewrite returned the wrong equality: " ^
     Library.thm_to_string regex_literal);
   assert (Thm.concl re_comp ~~
-      ``reglan_comp (reglan_to_re [97]) =
-        reglan_comp (reglan_to_re [97])``,
+      ``reglan_comp (reglan_to_re (SmtStr [97])) =
+        reglan_comp (reglan_to_re (SmtStr [97]))``,
     "re.comp rewrite returned the wrong equality: " ^
     Library.thm_to_string re_comp);
   assert (Thm.concl direct_ground ~~
-      ``smtstr_len [97; 98; 99] = 3``,
+      ``smtstr_len (SmtStr [97; 98; 99]) = 3``,
     "direct string ground rewrite returned the wrong equality");
   Library.check_oracle_tags "Z3 string literal rewrite" literal;
   Library.check_oracle_tags "Z3 string length rewrite" length;
@@ -8242,7 +8227,8 @@ fun z3_rewrite_string_rung_shaped_failure () =
   expect_hol_error_contains "string rewrite shaped failure"
     "string rewrite normalization did not close"
     (fn () => ignore (SmtStringProve.string_rewrite_prove
-      ``smtstr_concat x [97] = smtstr_concat x [98]``))
+      ``smtstr_concat x (SmtStr [97]) =
+        smtstr_concat x (SmtStr [98])``))
 
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
@@ -8701,14 +8687,14 @@ let
       smtlib_indexed_char_outbound_range_diagnostic),
     ("smtlib_proof_stream_tokenizer_success",
       smtlib_proof_stream_tokenizer_success),
-    ("smtlib_string_wf_declaration_elaboration_success",
-      smtlib_string_wf_declaration_elaboration_success),
-    ("smtlib_string_wf_binder_elaboration_success",
-      smtlib_string_wf_binder_elaboration_success),
-    ("smtlib_string_wf_reset_assertions_success",
-      smtlib_string_wf_reset_assertions_success),
-    ("smtlib_string_definition_relativization_success",
-      smtlib_string_definition_relativization_success),
+    ("smtlib_string_typed_declaration_success",
+      smtlib_string_typed_declaration_success),
+    ("smtlib_string_typed_binder_success",
+      smtlib_string_typed_binder_success),
+    ("smtlib_string_typed_reset_assertions_success",
+      smtlib_string_typed_reset_assertions_success),
+    ("smtlib_string_typed_definitions_success",
+      smtlib_string_typed_definitions_success),
     ("num_binder_transfer_lemmas_success",
       num_binder_transfer_lemmas_success),
     ("num_binder_relativization_forall_success",
@@ -8894,8 +8880,8 @@ let
       smtlib_native_string_translation_success),
     ("smtlib_native_string_sort_propagation_success",
       smtlib_native_string_sort_propagation_success),
-    ("smtlib_native_string_missing_guard_diagnostic",
-      smtlib_native_string_missing_guard_diagnostic),
+    ("smtlib_native_string_carrier_success",
+      smtlib_native_string_carrier_success),
     ("smtlib_higher_order_translation_abstraction_success",
       smtlib_higher_order_translation_abstraction_success),
     ("smtlib_ho_parser_dict_currying_success",

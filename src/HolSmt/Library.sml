@@ -611,12 +611,12 @@ struct
     type_contains (fn ty => Type.compare (ty, stringSyntax.string_ty) = EQUAL)
       ty
 
-  (* Inbound SMT-LIB String is the smtstringTheory num-list representation. *)
-  val smt_string_ty = listSyntax.mk_list_type numSyntax.num
-
   fun type_contains_string ty =
     type_contains
-      (fn candidate => Type.compare (candidate, smt_string_ty) = EQUAL)
+      (fn candidate =>
+        case Lib.total Type.dest_thy_type candidate of
+          SOME {Thy = "smtstring", Tyop = "smtstr", Args = []} => true
+        | _ => false)
       ty
 
   (* 'tm' is exactly the constant 'c' (same name and theory) *)

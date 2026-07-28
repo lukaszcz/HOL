@@ -806,7 +806,8 @@ in
   structure UnicodeStrings =
   struct
 
-    val string_ty = listSyntax.mk_list_type numSyntax.num
+    val string_ty =
+      Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
 
     val tyentries = [
       official_entry "String" no_attributes ["(String 0)"]
@@ -839,8 +840,7 @@ in
           (fn (x, y) => smtstring_app "smtstr_concat" [x, y])),
       official_entry "str.len" no_attributes ["(str.len String Int)"]
         (K_zero_one
-          (intSyntax.mk_injected o
-           (fn s => smtstring_app "smtstr_len" [s]))),
+          (fn s => smtstring_app "smtstr_len" [s])),
       official_entry "str.<" chainable_attributes
         ["(str.< String String Bool :chainable)"]
         (chainable (fn (x, y) => smtstring_app "smtstr_lt" [x, y])),

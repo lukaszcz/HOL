@@ -375,7 +375,8 @@ in
   val type_contains_word = Library.type_contains_word
   val type_contains_string = Library.type_contains_string
   val type_contains_native_string = Library.type_contains_native_string
-  val smt_string_ty = listSyntax.mk_list_type numSyntax.num
+  val smt_string_ty =
+    Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
   val reglan_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
   val same_const = Library.same_const
@@ -539,6 +540,14 @@ in
       SOME name => String.isPrefix prefix name
     | NONE => false
 
+  (* String operators are genuine theory constants.  Other prefix tests below
+     remain for parser encodings whose operators are intentionally variables. *)
+  fun term_mentions_smtstring_theory tm =
+    case Lib.total Term.dest_thy_const
+      (Lib.fst (boolSyntax.strip_comb tm)) of
+      SOME {Thy, ...} => Thy = "smtstring" orelse Thy = "smtstringz3"
+    | NONE => false
+
   fun type_contains_vartype_prefix prefix =
     type_contains (fn ty =>
       Type.is_vartype ty andalso
@@ -547,9 +556,7 @@ in
   fun term_mentions_reglan tm =
     term_type_contains
       (type_contains (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) tm
-    orelse symbol_name_is_prefix "reglan_" tm
-    orelse symbol_name_is_prefix "smt_in_re" tm
-    orelse symbol_name_is_prefix "smtstr_replace_re" tm
+    orelse term_mentions_smtstring_theory tm
 
   fun term_mentions_z3_sequence_set_bag tm =
     symbol_name_is_prefix "smtlib_seq_" tm orelse
@@ -595,8 +602,7 @@ in
 
   fun type_is_native_datatype_sort ty =
     Type.compare (ty, oneSyntax.one_ty) = EQUAL orelse
-    (not (type_contains_string ty) andalso
-     not (type_contains_native_string ty) andalso
+    (not (type_contains_native_string ty) andalso
      Lib.can listSyntax.dest_list_type ty)
 
   fun type_is_datatype_sort ty =
@@ -610,11 +616,23 @@ in
 
   (* Core.distinct is represented by HOL's ALL_DISTINCT over an internal list.
      The list is an encoding detail, not an SMT datatype sort.  Inspect the
-     encoded elements, but do not classify the wrapper list itself. *)
+     encoded elements, but do not classify the wrapper list itself.  Likewise,
+     the payload of SmtStr is the private representation of SMT String, not a
+     user-visible SMT datatype. *)
   fun assertion_mentions_datatype_sort tm =
     let
+      fun is_smtstr_value tm =
+        case boolSyntax.strip_comb tm of
+          (rator, [_]) =>
+            (case Lib.total Term.dest_thy_const rator of
+               SOME {Thy, Name, ...} =>
+                 Thy = "smtstring" andalso Name = "SmtStr"
+             | NONE => false)
+        | _ => false
+
       fun walk tm =
-        if listSyntax.is_all_distinct tm then
+        if is_smtstr_value tm then false
+        else if listSyntax.is_all_distinct tm then
           let
             val (elements, _) =
               listSyntax.dest_list (listSyntax.dest_all_distinct tm)
@@ -636,8 +654,7 @@ in
   fun term_mentions_string_theory tm =
     term_type_contains type_contains_string tm
     orelse term_mentions_reglan tm
-    orelse symbol_name_is_prefix "smtstr_" tm
-    orelse symbol_name_is_prefix "reglan_" tm
+    orelse term_mentions_smtstring_theory tm
 
   (* Unlike the string and floating-point theories, no bitvector symbol is
      parsed into an abstract constant, so there is no bare-name rung here: the

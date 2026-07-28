@@ -59,7 +59,7 @@ struct
       smtstr_concat_assoc,
       smtstr_concat_nil_left,
       smtstr_concat_nil_right,
-      smtstr_len_concat_int,
+      smtstr_len_concat,
       smtstr_len_nonnegative,
       smtstr_len_char,
       smtstr_unit_concat,
