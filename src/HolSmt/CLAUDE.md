@@ -140,3 +140,7 @@ generated coverage report in the `holsmt-validation` checkout is the source
 of truth for per-logic/per-theory status — never claim more support than it
 records, and surface every unsupported case as an enumerated diagnostic row,
 never a silent skip.
+
+## Instructions
+
+- ALL code should be the SIMPLEST design required to adhere to the SIMPLEST POSSIBLE INTERPRETATION OF THE INTENT, but preserving correctness and efficiency
