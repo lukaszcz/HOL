@@ -350,6 +350,45 @@ in
      boolSyntax.mk_eq (binder_input, binder_expected))
 end
 
+(* The raw binary_ieee carrier has many NaN payloads.  In particular the
+   statement below is false (a sign-one NaN is a counterexample), and must
+   not become provable merely because SMT-LIB has one NaN.  The smtfp
+   universe check is the positive direction: its representation is
+   canonical, injective, and onto exactly the canonical records. *)
+fun smtfp_carrier_universe_direction_success () =
+let
+  val exact_universe_goal =
+    ``!x : (2,3) smtfloat$smtfp.
+        smtfloat$smtfp_canonical (smtfloat$smtfp_rep x)``
+  val exact_universe = Tactical.TAC_PROOF
+    (([], exact_universe_goal),
+     simp [smtfloatTheory.smtfp_rep_canonical])
+  val wider_universe_goal =
+    ``!x : (2,3) binary_ieee$float.
+        binary_ieee$float_is_nan x ==>
+        x = (smtfloat$float_canon_qnan : (2,3) binary_ieee$float)``
+  fun oracle_rejects () =
+    ((ignore (Tactical.TAC_PROOF
+        (([], wider_universe_goal), HolSmtLib.Z3_ORACLE_TAC));
+      false)
+     handle Feedback.HOL_ERR _ => true)
+in
+  Library.check_oracle_tags "smtfp exact universe goal" exact_universe;
+  assert_concl_alpha
+    ("smtfp exact universe goal", exact_universe, exact_universe_goal);
+  Library.check_oracle_tags "smtfp representation canonical"
+    smtfloatTheory.smtfp_rep_canonical;
+  Library.check_oracle_tags "smtfp representation injective"
+    smtfloatTheory.smtfp_rep_11;
+  Library.check_oracle_tags "smtfp representation surjective"
+    smtfloatTheory.smtfp_rep_surjective;
+  if Z3.is_configured () then
+    assert (oracle_rejects (),
+      "Z3 oracle proved a NaN-unique claim over the wider raw carrier")
+  else
+    ()
+end
+
 fun hol_string_to_smt_conversion_success () =
 let
   val input =
@@ -9063,6 +9102,8 @@ let
       num_to_int_under_abstraction_success),
     ("hol_string_to_smt_conversion_success",
       hol_string_to_smt_conversion_success),
+    ("smtfp_carrier_universe_direction_success",
+      smtfp_carrier_universe_direction_success),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",
