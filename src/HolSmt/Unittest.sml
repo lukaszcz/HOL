@@ -389,6 +389,87 @@ in
     ()
 end
 
+fun smtfloat_replay_proforma_shapes_success () =
+let
+  fun check (label, tm) =
+    (let
+       val thm = Z3_ProformaThms.prove Z3_ProformaThms.fp_thms tm
+     in
+       assert_no_hyps (label, thm);
+       assert_concl_alpha (label, thm, tm);
+       Library.check_oracle_tags label thm
+     end
+     handle Feedback.HOL_ERR holerr =>
+       die (label ^ " did not match fp_thm_list: " ^
+         Feedback.message_of holerr))
+  val x = ``x : (4,3) smtfp``
+  val y = ``y : (4,3) smtfp``
+  val rounding_distinct =
+    [``RNE <> RNA``, ``RNE <> RTP``, ``RNE <> RTN``, ``RNE <> RTZ``,
+     ``RNA <> RTP``, ``RNA <> RTN``, ``RNA <> RTZ``, ``RTP <> RTN``,
+     ``RTP <> RTZ``, ``RTN <> RTZ``]
+in
+  assert (not (List.null Z3_ProformaThms.fp_thm_list),
+    "floating-point proforma list was not installed");
+  List.app check
+    [(* TASK_02 literal_positive_zero: rewrite triple -> +zero and the
+        asserted equality supplies the reverse orientation. *)
+     ("literal_positive_zero forward",
+      ``(smtfp_bits 0w 0w 0w : (4,3) smtfp) = smtfp_pzero``),
+     ("literal_positive_zero reverse",
+      ``(smtfp_pzero : (4,3) smtfp) = smtfp_bits 0w 0w 0w``),
+     (* TASK_02 literal_negative_zero. *)
+     ("literal_negative_zero forward",
+      ``(smtfp_bits 1w 0w 0w : (4,3) smtfp) = smtfp_nzero``),
+     ("literal_negative_zero reverse",
+      ``(smtfp_nzero : (4,3) smtfp) = smtfp_bits 1w 0w 0w``),
+     (* TASK_02 literal_positive_infinity. *)
+     ("literal_positive_infinity forward",
+      ``(smtfp_bits 0w 7w 0w : (4,3) smtfp) = smtfp_pinf``),
+     ("literal_positive_infinity reverse",
+      ``(smtfp_pinf : (4,3) smtfp) = smtfp_bits 0w 7w 0w``),
+     (* TASK_02 literal_negative_infinity. *)
+     ("literal_negative_infinity forward",
+      ``(smtfp_bits 1w 7w 0w : (4,3) smtfp) = smtfp_ninf``),
+     ("literal_negative_infinity reverse",
+      ``(smtfp_ninf : (4,3) smtfp) = smtfp_bits 1w 7w 0w``),
+     (* TASK_02 literal_nan. *)
+     ("literal_nan forward",
+      ``(smtfp_bits 0w 7w 1w : (4,3) smtfp) = smtfp_nan``),
+     ("literal_nan reverse",
+      ``(smtfp_nan : (4,3) smtfp) = smtfp_bits 0w 7w 1w``),
+     (* TASK_02 nan_payload_equality uses sign 1, exponent 31, payload 1. *)
+     ("nan_payload_equality forward",
+      ``(smtfp_bits 1w 31w 1w : (10,5) smtfp) = smtfp_nan``),
+     ("nan_payload_equality reverse",
+      ``(smtfp_nan : (10,5) smtfp) = smtfp_bits 1w 31w 1w``),
+     (* TASK_02 symbolic_classification_nan_positive. *)
+     ("symbolic NaN identification",
+      ``smtfp_is_nan (smtfp_bits s e m : (4,3) smtfp) <=>
+        smtfp_nan_pattern e m``),
+     (* TASK_02 ground rewrites and the symm rule occurrences. *)
+     ("floating-point equality reflexivity", boolSyntax.mk_eq (x, x)),
+     ("floating-point equality symmetry",
+      boolSyntax.mk_imp
+        (boolSyntax.mk_eq (x, y), boolSyntax.mk_eq (y, x))),
+     (* TASK_02 symbolic_comparison_eq atom and the signed-zero literals. *)
+     ("fp.eq reflexivity bridge",
+      ``smtfp_eq (x : (4,3) smtfp) x <=> ~smtfp_is_nan x``),
+     ("fp.eq equality bridge",
+      ``(x : (4,3) smtfp) = y ==>
+        (smtfp_eq x y <=> ~smtfp_is_nan x)``),
+     ("fp.eq signed-zero bridge",
+      ``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``),
+     (* TASK_02 ground_add and conversion proofs contain enum-self
+        rewrites for RNE/RNA/RTZ. *)
+     ("rounding enum reflexivity", ``(RNE : smt_rounding) = RNE``),
+     ("rounding enum exhaustion",
+      ``(mode : smt_rounding) = RNE \/ mode = RNA \/ mode = RTP \/
+        mode = RTN \/ mode = RTZ``)];
+  List.app (fn tm => check ("rounding enum distinctness", tm))
+    rounding_distinct
+end
+
 fun smtfloat_rounding_conversions_success () =
 let
   fun check (label, conv, input, expected) =
@@ -9437,6 +9518,8 @@ let
       hol_string_to_smt_conversion_success),
     ("smtfp_carrier_universe_direction_success",
       smtfp_carrier_universe_direction_success),
+    ("smtfloat_replay_proforma_shapes_success",
+      smtfloat_replay_proforma_shapes_success),
     ("smtfloat_rounding_conversions_success",
       smtfloat_rounding_conversions_success),
     ("smtfloat_ground_evaluation_success",

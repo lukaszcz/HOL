@@ -1712,6 +1712,139 @@ Proof
         smtfp_nan_pattern_def]
 QED
 
+(* Proforma forms for the literal-normalization rewrites in the Phase-5
+   Z3 corpus.  Variables are retained in the triples so the replay net can
+   match numeral spellings first and discharge these ground side conditions
+   afterwards. *)
+Theorem smtfp_bits_pzero:
+  s = 0w /\ e = 0w /\ m = 0w ==>
+  smtfp_bits s e m = (smtfp_pzero : ('t,'w) smtfp)
+Proof
+  simp [smtfp_bits_def, smtfp_pzero_def, canon_def,
+        smtfp_nan_pattern_def, binary_ieeeTheory.float_plus_zero_def]
+QED
+
+Theorem smtfp_pzero_bits:
+  s = 0w /\ e = 0w /\ m = 0w ==>
+  (smtfp_pzero : ('t,'w) smtfp) = smtfp_bits s e m
+Proof
+  metis_tac [smtfp_bits_pzero]
+QED
+
+Theorem smtfp_bits_nzero:
+  s = 1w /\ e = 0w /\ m = 0w ==>
+  smtfp_bits s e m = (smtfp_nzero : ('t,'w) smtfp)
+Proof
+  simp [smtfp_bits_def, smtfp_nzero_def, canon_def,
+        smtfp_nan_pattern_def, binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_negate_def] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_nzero_bits:
+  s = 1w /\ e = 0w /\ m = 0w ==>
+  (smtfp_nzero : ('t,'w) smtfp) = smtfp_bits s e m
+Proof
+  metis_tac [smtfp_bits_nzero]
+QED
+
+Theorem smtfp_bits_pinf:
+  s = 0w /\ e = UINT_MAXw /\ m = 0w ==>
+  smtfp_bits s e m = (smtfp_pinf : ('t,'w) smtfp)
+Proof
+  simp [smtfp_bits_def, smtfp_pinf_def, canon_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_plus_infinity_def]
+QED
+
+Theorem smtfp_pinf_bits:
+  s = 0w /\ e = UINT_MAXw /\ m = 0w ==>
+  (smtfp_pinf : ('t,'w) smtfp) = smtfp_bits s e m
+Proof
+  metis_tac [smtfp_bits_pinf]
+QED
+
+Theorem smtfp_bits_ninf:
+  s = 1w /\ e = UINT_MAXw /\ m = 0w ==>
+  smtfp_bits s e m = (smtfp_ninf : ('t,'w) smtfp)
+Proof
+  simp [smtfp_bits_def, smtfp_ninf_def, canon_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_minus_infinity_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        binary_ieeeTheory.float_negate_def] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_ninf_bits:
+  s = 1w /\ e = UINT_MAXw /\ m = 0w ==>
+  (smtfp_ninf : ('t,'w) smtfp) = smtfp_bits s e m
+Proof
+  metis_tac [smtfp_bits_ninf]
+QED
+
+Theorem smtfp_nan_bits:
+  e = UINT_MAXw /\ m <> 0w ==>
+  (smtfp_nan : ('t,'w) smtfp) = smtfp_bits s e m
+Proof
+  metis_tac [smtfp_bits_nan]
+QED
+
+Theorem smtfp_is_nan_bits:
+  smtfp_is_nan (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  smtfp_nan_pattern e m
+Proof
+  rewrite_tac [smtfp_is_nan_def] >>
+  `smtfp_rep (smtfp_bits s e m : ('t,'w) smtfp) =
+   canon <| Sign := s; Exponent := e; Significand := m |>` by
+    simp [smtfp_bits_def] >>
+  pop_assum (rewrite_tac o single) >>
+  Cases_on `smtfp_nan_pattern e m` >> simp [canon_def] >> fs []
+QED
+
+(* Equality rewrites and the fp.eq boundary observed around symbolic
+   comparison atoms.  Unlike HOL equality, fp.eq is false on NaN and treats
+   the two signed zero encodings as equal. *)
+Theorem smtfp_equality_refl:
+  (x : ('t,'w) smtfp) = x
+Proof
+  simp []
+QED
+
+Theorem smtfp_equality_symm:
+  (x : ('t,'w) smtfp) = y ==> y = x
+Proof
+  simp []
+QED
+
+Theorem smtfp_eq_refl:
+  smtfp_eq x x <=> ~smtfp_is_nan x
+Proof
+  simp [smtfp_eq_def, smtfp_is_nan_def,
+        binary_ieeeTheory.float_is_nan_impl]
+QED
+
+Theorem smtfp_eq_of_equality:
+  (x : ('t,'w) smtfp) = y ==>
+  (smtfp_eq x y <=> ~smtfp_is_nan x)
+Proof
+  simp [smtfp_eq_refl]
+QED
+
+Theorem smtfp_eq_signed_zero:
+  smtfp_eq (smtfp_pzero : ('t,'w) smtfp) smtfp_nzero
+Proof
+  simp [smtfp_eq_def, smtfp_pzero_def, smtfp_nzero_def] >>
+  simp [canon_def, GSYM binary_ieeeTheory.float_is_zero_impl]
+QED
+
+Theorem smt_rounding_refl:
+  (mode : smt_rounding) = mode
+Proof
+  simp []
+QED
+
 Theorem smtfp_bits_surjective:
   !x : ('t,'w) smtfp. ?s e m. x = smtfp_bits s e m
 Proof

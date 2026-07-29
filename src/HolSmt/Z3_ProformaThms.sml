@@ -103,6 +103,41 @@ struct
 
   val array_thms = thm_net_from_list array_thm_list
 
+  (* Floating-point rewrite seed.  The literal facts are stored with their
+     side conditions in the sequent: the net first matches the concrete
+     triple printed by Z3, then [prove] discharges its numeral conditions.
+     Each group names its Phase-5 proof-corpus case(s). *)
+  local
+    open smtfloatTheory
+
+    val literal_normalization_thms =
+      List.map Drule.UNDISCH
+        [smtfp_bits_pzero, smtfp_pzero_bits,
+         smtfp_bits_nzero, smtfp_nzero_bits,
+         smtfp_bits_pinf, smtfp_pinf_bits,
+         smtfp_bits_ninf, smtfp_ninf_bits,
+         smtfp_bits_nan, smtfp_nan_bits]
+
+    val rounding_distinct_thms = Drule.CONJUNCTS smt_rounding_distinctness
+  in
+    val fp_thm_list =
+      (* literal_positive/negative_zero, literal_positive/negative_infinity,
+         literal_nan, and nan_payload_equality *)
+      literal_normalization_thms @
+      (* symbolic_classification_nan_positive *)
+      [smtfp_is_nan_bits] @
+      (* Ground rewrites use reflexivity; symbolic comparisons contain
+         equality/symmetry transport and an fp.eq atom. *)
+      [smtfp_equality_refl, smtfp_equality_symm,
+       smtfp_eq_refl, smtfp_eq_of_equality, smtfp_eq_signed_zero] @
+      (* ground_add/ground_div and conversions print RNE/RNA/RTZ literals;
+         constructor distinctness and exhaustion are their enum boundary. *)
+      [smt_rounding_refl, Drule.SPEC_ALL smt_rounding_cases] @
+      rounding_distinct_thms
+
+    val fp_thms = thm_net_from_list fp_thm_list
+  end
+
   (* Datatype replay facts are type-specific and are harvested from TypeBase
      by SmtDatatypeProve.  There is no shared schematic layer yet. *)
   val datatype_thm_list = []
@@ -213,8 +248,10 @@ end  (* local *)
             let
               val hyp_th = prove prove_hyp_thms hyp
                 handle Feedback.HOL_ERR _ =>
-                  simpLib.SIMP_PROVE (simpLib.++ (bossLib.std_ss,
-                    wordsLib.SIZES_ss)) [] hyp
+                  simpLib.SIMP_PROVE
+                    (simpLib.++
+                      (simpLib.++ (bossLib.std_ss, wordsLib.SIZES_ss),
+                       wordsLib.WORD_GROUND_ss)) [] hyp
             in
               Drule.PROVE_HYP hyp_th th
             end
