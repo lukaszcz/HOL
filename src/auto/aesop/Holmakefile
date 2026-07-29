@@ -8,9 +8,9 @@ INCLUDES = $(HOLDIR)/src/auto/rules \
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-selftest.uo: aesopData.uo
+selftest.uo: aesopData.uo aesopRule.uo
 
-selftest.exe: selftest.uo aesopData.uo
+selftest.exe: selftest.uo aesopData.uo aesopRule.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
