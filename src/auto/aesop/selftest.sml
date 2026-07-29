@@ -654,6 +654,7 @@ fun pop_expected tree =
 fun install_tree_rapp tree parent phase name store children records =
   aesopTree.install_rapp parent
     {rule = name, phase = phase, records = records,
+     forwarded = NONE,
      node =
        tree_node store
          (#level (aesopTree.goal tree parent) + 1) children}
@@ -1675,6 +1676,8 @@ fun search_source norm safe unsafe
 fun search_tree outcome =
   case outcome of
       aesopSearch.SafeSaturated tree => tree
+    | aesopSearch.SafeDepthLimit _ =>
+        raise Fail "unexpected aesop search depth limit"
     | aesopSearch.SafeNormalisationLimit _ =>
         raise Fail "unexpected aesop search normalisation limit"
 
@@ -1924,3 +1927,271 @@ val _ =
              aconv assumption search_frontier_p andalso
              aconv w search_frontier_q
          | _ => false)
+
+val _ =
+  test
+    ("aesop search defaults bound rapps and depth",
+     fn () =>
+       aesopSearch.default_config =
+         {max_rapps = 200, max_depth = 30})
+
+val search_unsafe_alternatives : aesopRule.rule =
+  {name = "unsafe-alternatives", phase = aesopRule.RUnsafe 70,
+   apply = aesopRule.EngineStep duplicate_search_step, once = false}
+val search_unsafe_alternative_outcome =
+  aesopSearch.search aesopSearch.default_config
+    (search_source [] (fn _ => []) [search_unsafe_alternatives])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] boolSyntax.T) [])
+
+val _ =
+  test
+    ("aesop unsafe multi-rules install every alternative as sibling rapps",
+     fn () =>
+       case search_unsafe_alternative_outcome of
+           aesopSearch.SearchProved tree =>
+             let val root = aesopTree.root tree
+             in
+               case aesopTree.child_rapps tree root of
+                   [first, second] =>
+                     #rule (aesopTree.rapp tree first) =
+                       "unsafe-alternatives" andalso
+                     #rule (aesopTree.rapp tree second) =
+                       "unsafe-alternatives" andalso
+                     #prob (aesopTree.rapp tree first) = 70 andalso
+                     #prob (aesopTree.rapp tree second) = 70
+                 | _ => false
+             end
+         | _ => false)
+
+val search_reoffer_unsafe =
+  aesopRule.apply_rule
+    {name = "unsafe-eighty", phase = aesopRule.RUnsafe 80,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Unify}
+val search_reoffer_outcome =
+  aesopSearch.search aesopSearch.default_config
+    (search_source []
+      (fn clasetUnify.Match => []
+        | clasetUnify.Unify => [hd (aesopRule.closers ())])
+      [search_reoffer_unsafe])
+    (new_tree search_postpone_store
+      (tree_cgoal [] [boolSyntax.T] search_postpone_meta) [])
+
+val _ =
+  test
+    ("aesop re-offers postponed safe results as ninety-percent rapps",
+     fn () =>
+       case search_reoffer_outcome of
+           aesopSearch.SearchProved tree =>
+             let val root = aesopTree.root tree
+             in
+               case aesopTree.child_rapps tree root of
+                   [rid] =>
+                     #rule (aesopTree.rapp tree rid) = "assumption" andalso
+                     #prob (aesopTree.rapp tree rid) = 90 andalso
+                     (case #unsafe_cursor (aesopTree.goal tree root) of
+                          [{name = "unsafe-eighty", ...}] => true
+                        | _ => false)
+                 | _ => false
+             end
+         | _ => false)
+
+val transitivity_x =
+  Term.mk_var ("aesop_transitivity_x", numSyntax.num)
+val transitivity_a =
+  Term.mk_var ("aesop_transitivity_a", numSyntax.num)
+val transitivity_z =
+  Term.mk_var ("aesop_transitivity_z", numSyntax.num)
+val transitivity_xa =
+  numSyntax.mk_leq (transitivity_x, transitivity_a)
+val transitivity_az =
+  numSyntax.mk_leq (transitivity_a, transitivity_z)
+val transitivity_xz =
+  numSyntax.mk_leq (transitivity_x, transitivity_z)
+
+fun transitivity_source
+      ({mode, cgoal = {w, ...}, ...} :
+       {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
+        store : clasetMeta.store}) =
+  let
+    val reflexivity =
+      aesopRule.apply_rule
+        {name = "le-reflexivity", phase = aesopRule.RSafe,
+         theorem = arithmeticTheory.LESS_EQ_REFL, mode = mode}
+    val transitivity =
+      aesopRule.apply_rule
+        {name = "le-transitivity", phase = aesopRule.RUnsafe 60,
+         theorem = arithmeticTheory.LESS_EQ_TRANS, mode = mode}
+  in
+    {norm = [],
+     safe =
+       {closers = [hd (aesopRule.closers ()), reflexivity],
+        safe0_claset = [], safe_forward = [], safep_claset = [],
+        conclusion_splits = [], assumption_splits = []},
+     unsafe = if aconv w transitivity_xz then [transitivity] else []}
+  end
+
+val transitivity_outcome =
+  aesopSearch.search aesopSearch.default_config transitivity_source
+    (new_tree clasetMeta.empty
+      (tree_cgoal []
+        [transitivity_xa, transitivity_az] transitivity_xz) [])
+
+fun rapp_named name ({rule, ...} : aesopTree.rapp) =
+  rule = name
+
+val _ =
+  test
+    ("aesop proves a transitivity chain through both witness choices",
+     fn () =>
+       case transitivity_outcome of
+           aesopSearch.SearchProved tree =>
+             let
+               val root = aesopTree.root tree
+               val trans_rapps =
+                 List.filter (rapp_named "le-transitivity")
+                   (aesopTree.rapps tree)
+               val trans_children =
+                 case trans_rapps of
+                     [rapp] =>
+                       List.concat
+                         (map
+                           (fn cid =>
+                             #goals (aesopTree.cluster tree cid))
+                           (#clusters rapp))
+                   | _ => []
+               val first =
+                 case trans_children of child :: _ => SOME child | _ => NONE
+               val choices =
+                 case first of
+                     NONE => []
+                   | SOME child =>
+                       map (aesopTree.rapp tree)
+                         (aesopTree.child_rapps tree child)
+             in
+               #state (aesopTree.goal tree root) =
+                 aesopTree.Proved andalso
+               List.exists (rapp_named "assumption") choices andalso
+               List.exists (rapp_named "le-reflexivity") choices andalso
+               List.all
+                 (fn rapp =>
+                   not (aesopTree.dependencies_empty (#assigned rapp)))
+                 choices
+             end
+         | _ => false)
+
+val search_limit_goal = boolSyntax.T
+val search_limit_close =
+  aesopRule.apply_rule
+    {name = "limit-close", phase = aesopRule.RUnsafe 50,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Unify}
+val search_rapp_limit_outcome =
+  aesopSearch.search {max_rapps = 0, max_depth = 10}
+    (search_source [] (fn _ => []) [search_limit_close])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] search_limit_goal) [])
+
+val _ =
+  test
+    ("aesop max_rapps stops cleanly on the failure path",
+     fn () =>
+       case search_rapp_limit_outcome of
+           aesopSearch.SearchFailed
+             {tree, reason = aesopSearch.RappLimitReached,
+              safe_goals = [(_, {w, ...})]} =>
+                null (aesopTree.rapps tree) andalso
+                aconv w search_limit_goal
+         | _ => false)
+
+val search_depth_split =
+  aesopRule.tactic_rule
+    {name = "depth-split", phase = aesopRule.RUnsafe 50,
+     tactic = NTactical.LIFT Tactic.CONJ_TAC, index = NONE}
+val search_depth_target =
+  boolSyntax.mk_conj (search_limit_goal, search_limit_goal)
+val search_depth_limit_outcome =
+  aesopSearch.search {max_rapps = 10, max_depth = 1}
+    (search_source [] (fn _ => []) [search_depth_split])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] search_depth_target) [])
+
+val _ =
+  test
+    ("aesop max_depth exhausts only the offending branch and fails cleanly",
+     fn () =>
+       case search_depth_limit_outcome of
+           aesopSearch.SearchFailed
+             {tree, reason = aesopSearch.DepthLimitReached,
+              safe_goals = [(_, {w, ...})]} =>
+                length (aesopTree.rapps tree) = 1 andalso
+                aconv w search_depth_target
+         | _ => false)
+
+val search_safe_goal_p =
+  Term.mk_var ("aesop_safe_goal_p", Type.bool)
+val search_safe_goal_q =
+  Term.mk_var ("aesop_safe_goal_q", Type.bool)
+val search_safe_goal_target =
+  boolSyntax.mk_conj
+    (boolSyntax.F,
+     boolSyntax.mk_conj (search_safe_goal_p, search_safe_goal_q))
+val search_safe_goal_outcome =
+  aesopSearch.search aesopSearch.default_config
+    (search_source [] (fn _ => [search_split_rule]) [])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] search_safe_goal_target) [])
+
+fun contains_target target =
+  List.exists
+    (fn (_, ({w, ...} : clasetGoal.cgoal)) => aconv w target)
+
+val _ =
+  test
+    ("aesop failure completes and reports the exhaustive safe goals",
+     fn () =>
+       case search_safe_goal_outcome of
+           aesopSearch.SearchFailed
+             {reason = aesopSearch.SearchExhausted, safe_goals, ...} =>
+               length safe_goals = 3 andalso
+               contains_target boolSyntax.F safe_goals andalso
+               contains_target search_safe_goal_p safe_goals andalso
+               contains_target search_safe_goal_q safe_goals
+         | _ => false)
+
+val _ =
+  test
+    ("aesop trace levels report outcomes expansions and full nodes",
+     fn () =>
+       let
+         val old_trace = Feedback.current_trace "aesop"
+         val notices = ref ([] : string list)
+         fun remember message = notices := message :: !notices
+         val _ = Feedback.set_trace "aesop" 3
+         val _ =
+           Lib.with_flag
+             (Feedback.MESG_outstream, remember)
+             (fn () =>
+               (ignore
+                  (aesopSearch.search aesopSearch.default_config
+                    transitivity_source
+                    (new_tree clasetMeta.empty
+                      (tree_cgoal []
+                        [transitivity_xa, transitivity_az]
+                        transitivity_xz) []));
+                ignore
+                  (aesopSearch.search aesopSearch.default_config
+                    (search_source [] (fn _ => []) [])
+                    (new_tree clasetMeta.empty
+                      (tree_cgoal [] [] search_limit_goal) [])))) ()
+         val _ = Feedback.set_trace "aesop" old_trace
+       in
+         List.exists (String.isSubstring "search exhausted") (!notices)
+         andalso
+         List.exists (String.isSubstring "safe goal") (!notices)
+         andalso
+         List.exists (String.isSubstring "expanding goal") (!notices)
+         andalso
+         List.exists (String.isSubstring "copied") (!notices)
+         andalso
+         List.exists (String.isSubstring "candidate goal") (!notices)
+       end)

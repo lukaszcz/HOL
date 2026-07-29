@@ -24,7 +24,8 @@ sig
 
   type rapp_data =
     {rule : string, phase : aesopRule.rphase,
-     records : step_record list, node : clasetGoal.node}
+     records : step_record list, node : clasetGoal.node,
+     forwarded : term option}
 
   type goal =
     {id : gid, cgoal : cgoal, store : store, level : int,
@@ -72,7 +73,9 @@ sig
   val is_normalised : goal -> bool
 
   (* Installation creates ordinary children.  Copying extends this single
-     boundary in aesopTree without requiring search clients to change. *)
+     boundary in aesopTree without requiring search clients to change.
+     Sibling alternatives may still be installed after one has proved the
+     parent; a stuck parent cannot be extended. *)
   val install_rapp :
     gid -> rapp_data -> tree ->
     {rapp : rid, goals : gid list, tree : tree}
@@ -93,6 +96,9 @@ sig
 
   val enqueue_goal : gid -> tree -> tree
   val pop_goal : tree -> gid option * tree
+  (* Safe-goal completion must drain siblings even after another sibling
+     makes their common unsafe search branch irrelevant. *)
+  val pop_goal_including_irrelevant : tree -> gid option * tree
 
   val goal_irrelevant : tree -> gid -> bool
   val rapp_irrelevant : tree -> rid -> bool

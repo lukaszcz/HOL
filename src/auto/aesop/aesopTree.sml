@@ -27,7 +27,8 @@ datatype norm_state =
 
 type rapp_data =
   {rule : string, phase : aesopRule.rphase,
-   records : step_record list, node : clasetGoal.node}
+   records : step_record list, node : clasetGoal.node,
+   forwarded : term option}
 
 type goal =
   {id : gid, cgoal : cgoal, store : store, level : int,
@@ -597,17 +598,17 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
   end
 
 fun install_rapp parent_id
-      ({rule, phase, records, node} : rapp_data)
+      ({rule, phase, records, node, forwarded} : rapp_data)
       (tree as
        Tree {goals, rapps, clusters, queue, next_gid, next_rid,
              next_cid, next_insertion, ...}) =
   let
     val parent = goal tree parent_id
     val _ =
-      if #state parent = Unknown then ()
+      if #state parent <> Stuck then ()
       else
         raise ERR "install_rapp"
-          "a rapp can only be installed below an unknown goal"
+          "a rapp cannot be installed below a stuck goal"
     val rid = next_rid
     val child_store = clasetGoal.store node
     val child_priority = extend_priority (#prio parent) phase
@@ -618,7 +619,11 @@ fun install_rapp parent_id
       copying_sources tree parent_id assigned child_store child_cgoals
     val child_specs =
       map
-        (fn cgoal => (cgoal, NONE, #forwarded parent))
+        (fn cgoal =>
+          (cgoal, NONE,
+           case forwarded of
+               NONE => #forwarded parent
+             | SOME hypothesis => hypothesis :: #forwarded parent))
         child_cgoals
     val copy_specs =
       map
@@ -848,7 +853,7 @@ fun cluster_irrelevant tree id =
     rapp_irrelevant tree (#parent current)
   end
 
-fun pop_goal tree =
+fun pop_goal_with skip tree =
   let
     fun pop
           (current as
@@ -871,11 +876,16 @@ fun pop_goal tree =
                next_insertion = next_insertion}
           val id = #goal entry
         in
-          if goal_irrelevant rest id then pop rest
+          if skip rest id then pop rest
           else (SOME id, rest)
         end
   in
     pop tree
   end
+
+fun pop_goal tree = pop_goal_with goal_irrelevant tree
+
+fun pop_goal_including_irrelevant tree =
+  pop_goal_with (fn _ => fn _ => false) tree
 
 end
