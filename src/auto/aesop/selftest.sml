@@ -1017,3 +1017,249 @@ val _ =
        HOLset.equal
          (#types (#assigned bookkeeping_rapp),
           HOLset.singleton Type.compare assigned_type))
+
+fun tree_creation_record terms types =
+  let
+    val result = Tactical.ALL_TAC ([], boolSyntax.T)
+  in
+    clasetReplay.make_record
+      {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
+       created = {terms = terms, types = types},
+       eigenvariables = [], validation = #2 result,
+       action = clasetReplay.fixed_action result, children = []}
+  end
+
+fun bind_tree_meta meta value store =
+  case clasetMeta.bind (meta, value) store of
+      SOME result => result
+    | NONE => raise Fail "expected aesop tree metavariable binding"
+
+fun original_goal tree id =
+  case #copy_of (aesopTree.goal tree id) of
+      NONE => id
+    | SOME original => original
+
+val (copy_meta, copy_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val copy_creator_record =
+  tree_creation_record [copy_meta] []
+val copy_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (copy_root, copy_tree1) =
+  pop_expected copy_tree0
+val copy_created =
+  install_tree_rapp copy_tree1 copy_root aesopRule.RSafe
+    "copy_creator" copy_store1
+    [tree_cgoal [] [] copy_meta, tree_cgoal [] [] copy_meta]
+    [copy_creator_record]
+val [copy_path, copy_sibling] =
+  #goals copy_created
+val copy_explored =
+  install_tree_rapp (#tree copy_created) copy_sibling aesopRule.RSafe
+    "copy_existing_subtree" copy_store1
+    [tree_cgoal [] [] copy_meta] []
+val copy_store2 =
+  bind_tree_meta copy_meta boolSyntax.T copy_store1
+val copy_assigned =
+  install_tree_rapp (#tree copy_explored) copy_path aesopRule.RSafe
+    "copy_assign" copy_store2 [] []
+val [copied_sibling] =
+  #goals copy_assigned
+val copied_sibling_node =
+  aesopTree.goal (#tree copy_assigned) copied_sibling
+
+val _ =
+  test
+    ("aesop copying instantiates coupled siblings without their subtrees",
+     fn () =>
+       #copy_of copied_sibling_node = SOME copy_sibling andalso
+       aconv (#w (#cgoal copied_sibling_node)) boolSyntax.T andalso
+       not
+         (null
+           (aesopTree.child_rapps
+             (#tree copy_assigned) copy_sibling)) andalso
+       null
+         (aesopTree.child_rapps
+           (#tree copy_assigned) copied_sibling))
+
+val (transitive_x, transitive_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val (transitive_y, transitive_store2) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} transitive_store1
+val (transitive_z, transitive_store3) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} transitive_store2
+val transitive_g1 =
+  tree_cgoal [] [] transitive_x
+val transitive_g2 =
+  tree_cgoal [] []
+    (boolSyntax.mk_conj (transitive_x, transitive_y))
+val transitive_g3 =
+  tree_cgoal [] [] transitive_y
+val transitive_g4 =
+  tree_cgoal [] [] transitive_z
+val transitive_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (transitive_root, transitive_tree1) =
+  pop_expected transitive_tree0
+val transitive_created =
+  install_tree_rapp transitive_tree1 transitive_root aesopRule.RSafe
+    "transitive_creator" transitive_store3
+    [transitive_g1, transitive_g2, transitive_g3, transitive_g4]
+    [tree_creation_record
+       [transitive_x, transitive_y, transitive_z] []]
+val [transitive_id1, transitive_id2, transitive_id3,
+     transitive_id4] =
+  #goals transitive_created
+val transitive_store4 =
+  bind_tree_meta transitive_y boolSyntax.T transitive_store3
+val transitive_first =
+  install_tree_rapp (#tree transitive_created) transitive_id3
+    aesopRule.RSafe "transitive_assign_y" transitive_store4 [] []
+val [transitive_copy2] =
+  #goals transitive_first
+val transitive_store5 =
+  bind_tree_meta transitive_x boolSyntax.F transitive_store4
+val transitive_second =
+  install_tree_rapp (#tree transitive_first) transitive_copy2
+    aesopRule.RSafe "transitive_assign_x" transitive_store5 [] []
+val [transitive_copy1] =
+  #goals transitive_second
+
+val _ =
+  test
+    ("aesop copying follows transitive G1-G2-G3 coupling",
+     fn () =>
+       #copy_of
+         (aesopTree.goal
+           (#tree transitive_first) transitive_copy2) =
+         SOME transitive_id2 andalso
+       #copy_of
+         (aesopTree.goal
+           (#tree transitive_second) transitive_copy1) =
+         SOME transitive_id1 andalso
+       aconv
+         (#w
+           (#cgoal
+             (aesopTree.goal
+               (#tree transitive_second) transitive_copy1)))
+         boolSyntax.F andalso
+       original_goal (#tree transitive_second) transitive_copy2 =
+         transitive_id2 andalso
+       transitive_id4 <> transitive_copy1)
+
+val (duplicate_x, duplicate_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val (duplicate_y, duplicate_store2) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} duplicate_store1
+val duplicate_path_goal =
+  tree_cgoal [] []
+    (boolSyntax.mk_conj (duplicate_x, duplicate_y))
+val duplicate_sibling_goal =
+  tree_cgoal [] []
+    (boolSyntax.mk_disj (duplicate_x, duplicate_y))
+val duplicate_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (duplicate_root, duplicate_tree1) =
+  pop_expected duplicate_tree0
+val duplicate_created =
+  install_tree_rapp duplicate_tree1 duplicate_root aesopRule.RSafe
+    "duplicate_creator" duplicate_store2
+    [duplicate_path_goal, duplicate_sibling_goal]
+    [tree_creation_record [duplicate_x, duplicate_y] []]
+val [duplicate_path, duplicate_original] =
+  #goals duplicate_created
+val duplicate_store3 =
+  bind_tree_meta duplicate_x boolSyntax.T duplicate_store2
+val duplicate_first =
+  install_tree_rapp (#tree duplicate_created) duplicate_path
+    aesopRule.RSafe "duplicate_assign_x" duplicate_store3
+    [tree_cgoal [] [] duplicate_y] []
+val [duplicate_next, duplicate_first_copy] =
+  #goals duplicate_first
+val duplicate_store4 =
+  bind_tree_meta duplicate_y boolSyntax.F duplicate_store3
+val duplicate_second =
+  install_tree_rapp (#tree duplicate_first) duplicate_next
+    aesopRule.RSafe "duplicate_assign_y" duplicate_store4 [] []
+val [duplicate_only_copy] =
+  #goals duplicate_second
+
+val _ =
+  test
+    ("aesop copying suppresses duplicate copies of one original",
+     fn () =>
+       #copy_of
+         (aesopTree.goal
+           (#tree duplicate_first) duplicate_first_copy) =
+         SOME duplicate_original andalso
+       #copy_of
+         (aesopTree.goal
+           (#tree duplicate_second) duplicate_only_copy) =
+         SOME duplicate_original andalso
+       aconv
+         (#w
+           (#cgoal
+             (aesopTree.goal
+               (#tree duplicate_second) duplicate_only_copy)))
+         (clasetMeta.norm duplicate_store4
+           (#w duplicate_sibling_goal)))
+
+val dropped_homo =
+  Term.mk_var
+    ("aesop_dropped_homo",
+     Type.bool --> Type.bool)
+val dropped_bound =
+  Term.mk_var ("aesop_dropped_bound", Type.bool)
+val dropped_all =
+  boolSyntax.mk_forall
+    (dropped_bound, Term.mk_comb (dropped_homo, dropped_bound))
+val dropped_root_goal =
+  tree_cgoal [] []
+    (boolSyntax.mk_exists
+      (dropped_bound, Term.mk_comb (dropped_homo, dropped_bound)))
+val (dropped_meta, dropped_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val dropped_homo_goal =
+  tree_cgoal [] [dropped_all]
+    (Term.mk_comb (dropped_homo, dropped_meta))
+val dropped_related_goal =
+  tree_cgoal [] [] dropped_meta
+val dropped_tree0 =
+  new_tree clasetMeta.empty dropped_root_goal []
+val (dropped_root, dropped_tree1) =
+  pop_expected dropped_tree0
+val dropped_created =
+  install_tree_rapp dropped_tree1 dropped_root aesopRule.RSafe
+    "dropped_exists_intro" dropped_store1
+    [dropped_homo_goal, dropped_related_goal]
+    [tree_creation_record [dropped_meta] []]
+val [dropped_path, dropped_related] =
+  #goals dropped_created
+val dropped_closed =
+  install_tree_rapp (#tree dropped_created) dropped_path
+    aesopRule.RSafe "dropped_witness_independent" dropped_store1 [] []
+val [dropped_copy] =
+  #goals dropped_closed
+val dropped_grounded =
+  clasetMeta.ground dropped_store1
+val dropped_kernel_proof =
+  SPEC (boolSyntax.mk_arb Type.bool) (ASSUME dropped_all)
+
+val _ =
+  test
+    ("aesop dropped metas copy related goals without synthesis subgoals",
+     fn () =>
+       #copy_of
+         (aesopTree.goal (#tree dropped_closed) dropped_copy) =
+         SOME dropped_related andalso
+       aconv
+         (concl dropped_kernel_proof)
+         (clasetMeta.norm dropped_grounded
+           (Term.mk_comb (dropped_homo, dropped_meta))))

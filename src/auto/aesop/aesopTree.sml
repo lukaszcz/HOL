@@ -107,6 +107,27 @@ fun dependencies_overlap
     (HOLset.isEmpty
        (HOLset.intersection (left_types, right_types)))
 
+fun dependencies_union
+      ({terms = left_terms, types = left_types} : dependencies)
+      ({terms = right_terms, types = right_types} : dependencies) =
+  {terms = HOLset.union (left_terms, right_terms),
+   types = HOLset.union (left_types, right_types)}
+
+fun dependencies_intersection
+      ({terms = left_terms, types = left_types} : dependencies)
+      ({terms = right_terms, types = right_types} : dependencies) =
+  {terms = HOLset.intersection (left_terms, right_terms),
+   types = HOLset.intersection (left_types, right_types)}
+
+fun dependencies_difference
+      ({terms = left_terms, types = left_types} : dependencies)
+      ({terms = right_terms, types = right_types} : dependencies) =
+  {terms = HOLset.difference (left_terms, right_terms),
+   types = HOLset.difference (left_types, right_types)}
+
+fun dependencies_empty ({terms, types} : dependencies) =
+  HOLset.isEmpty terms andalso HOLset.isEmpty types
+
 fun extend_priority priority aesopRule.RSafe = priority
   | extend_priority priority (aesopRule.RNorm _) = priority
   | extend_priority priority (aesopRule.RUnsafe percent) =
@@ -364,6 +385,11 @@ fun add_created
 fun created_of records =
   List.foldl add_created (empty_dependencies ()) records
 
+fun cgoal_under store ({params, asl, w} : cgoal) : cgoal =
+  {params = map (clasetMeta.norm store) params,
+   asl = map (clasetMeta.norm store) asl,
+   w = clasetMeta.norm store w}
+
 fun term_bound bindings meta =
   List.exists
     (fn (redex, _) => Term.compare (redex, meta) = EQUAL)
@@ -448,6 +474,128 @@ fun phase_probability aesopRule.RSafe = 100
   | phase_probability (aesopRule.RNorm _) =
       raise ERR "install_rapp" "normalisation does not create rapp nodes"
 
+fun rapp_goals tree id =
+  let val current = rapp tree id
+  in
+    List.concat
+      (map (fn cluster_id => #goals (cluster tree cluster_id))
+        (#clusters current))
+  end
+
+fun ancestry tree start =
+  let
+    fun walk seen id =
+      if List.exists (fn known => known = id) seen then
+        raise ERR "ancestry" "cycle in goal ancestry"
+      else
+        case #parent (goal tree id) of
+            NONE => []
+          | SOME parent =>
+              (id, parent) ::
+              walk (id :: seen) (#parent (rapp tree parent))
+  in
+    walk [] start
+  end
+
+fun original_goal tree start =
+  let
+    fun walk seen id =
+      if List.exists (fn known => known = id) seen then
+        raise ERR "original_goal" "cycle in copy links"
+      else
+        case #copy_of (goal tree id) of
+            NONE => id
+          | SOME source => walk (id :: seen) source
+  in
+    walk [] start
+  end
+
+fun take_through_rapp wanted [] = []
+  | take_through_rapp wanted (entry :: rest) =
+      let val (_, current) = entry
+      in
+        entry ::
+        (if current = wanted then []
+         else take_through_rapp wanted rest)
+      end
+
+fun copying_sources tree parent_id assigned child_store child_cgoals =
+  let
+    val parent = goal tree parent_id
+    val path = ancestry tree parent_id
+    val ancestor_created =
+      List.foldl
+        (fn ((_, rid), dependencies) =>
+          dependencies_union
+            dependencies (#created (rapp tree rid)))
+        (empty_dependencies ()) path
+    val child_dependencies =
+      List.foldl
+        (fn (cgoal, dependencies) =>
+          dependencies_union
+            dependencies (dependencies_of child_store cgoal))
+        (empty_dependencies ()) child_cgoals
+    val relevant_assigned =
+      dependencies_intersection assigned (#deps parent)
+    (* HOL types are inhabited, so a dropped metavariable needs no
+       synthesis goal.  It still drives copying exactly like an
+       assignment. *)
+    val dropped =
+      #deps parent
+      |> (fn dependencies =>
+            dependencies_difference dependencies relevant_assigned)
+      |> (fn dependencies =>
+            dependencies_difference dependencies child_dependencies)
+      |> (fn dependencies =>
+            dependencies_intersection dependencies ancestor_created)
+    val copying =
+      dependencies_union relevant_assigned dropped
+    val not_created =
+      dependencies_difference copying ancestor_created
+    val creating_path =
+      List.filter
+        (fn (_, rid) =>
+          dependencies_overlap copying (#created (rapp tree rid)))
+        path
+    val bounded_path =
+      if dependencies_empty copying then []
+      else if not (dependencies_empty not_created) then path
+      else
+        case List.rev creating_path of
+            [] => path
+          | (_, topmost) :: _ =>
+              take_through_rapp topmost path
+    val path_originals =
+      map (fn (id, _) => original_goal tree id) bounded_path
+
+    fun is_path_origin id =
+      List.exists (fn path_id => path_id = id) path_originals
+
+    fun sibling_sources (path_goal, parent_rapp) =
+      List.filter
+        (fn id =>
+          id <> path_goal andalso
+          dependencies_overlap copying (#deps (goal tree id)))
+        (rapp_goals tree parent_rapp)
+
+    fun add_source (id, (seen, sources)) =
+      let val original = original_goal tree id
+      in
+        (* Canonical origins both skip copies of path goals and collapse
+           multiple candidates copied from the same goal. *)
+        if is_path_origin original orelse
+           List.exists (fn known => known = original) seen
+        then (seen, sources)
+        else (original :: seen, id :: sources)
+      end
+
+    val (_, reversed_sources) =
+      List.foldl add_source ([], [])
+        (List.concat (map sibling_sources bounded_path))
+  in
+    List.rev reversed_sources
+  end
+
 fun install_rapp parent_id
       ({rule, phase, records, node} : rapp_data)
       (tree as
@@ -464,23 +612,43 @@ fun install_rapp parent_id
     val child_store = clasetGoal.store node
     val child_priority = extend_priority (#prio parent) phase
     val child_cgoals = clasetGoal.goals node
+    val assigned =
+      assigned_between (active_store parent) child_store
+    val copy_sources =
+      copying_sources tree parent_id assigned child_store child_cgoals
+    val child_specs =
+      map
+        (fn cgoal => (cgoal, NONE, #forwarded parent))
+        child_cgoals
+    val copy_specs =
+      map
+        (fn source =>
+          let val source_goal = goal tree source
+          in
+            (cgoal_under child_store (#cgoal source_goal),
+             SOME (original_goal tree source),
+             #forwarded source_goal)
+          end)
+        copy_sources
+    val all_specs = child_specs @ copy_specs
 
-    fun make_child (cgoal, (id, entries, ids)) =
+    fun make_child
+          ((cgoal, copy_of, forwarded), (id, entries, ids)) =
       let
         val child : goal =
           {id = id, cgoal = cgoal, store = child_store,
            level = clasetGoal.level node, prio = child_priority,
-           deps = dependencies_of child_store cgoal, copy_of = NONE,
+           deps = dependencies_of child_store cgoal, copy_of = copy_of,
            parent = SOME rid, cluster = root_cluster,
            norm = Unnormalised, safe_done = false,
            unsafe_cursor = [], postponed = [],
-           forwarded = #forwarded parent, state = Unknown}
+           forwarded = forwarded, state = Unknown}
       in
         (id + 1, (id, child) :: entries, id :: ids)
       end
 
     val (next_gid', child_entries, reversed_child_ids) =
-      List.foldl make_child (next_gid, [], []) child_cgoals
+      List.foldl make_child (next_gid, [], []) all_specs
     val child_ids = List.rev reversed_child_ids
     val goals_with_children =
       Redblackmap.insertList (goals, List.rev child_entries)
@@ -517,7 +685,7 @@ fun install_rapp parent_id
       {id = rid, parent = parent_id, rule = rule,
        prob = phase_probability phase, records = records,
        store = child_store, created = created_of records,
-       assigned = assigned_between (active_store parent) child_store,
+       assigned = assigned,
        clusters = cluster_ids, state = Unknown}
     val installed =
       Tree
