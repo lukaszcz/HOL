@@ -635,3 +635,385 @@ val _ =
          List.all (is_phase aesopRule.RSafe)
            (aesopRule.safe_rules safe)
        end)
+
+fun tree_cgoal params assumptions target : clasetGoal.cgoal =
+  {params = params, asl = assumptions, w = target}
+
+fun tree_node store level goals =
+  clasetGoal.create {goals = goals, store = store, level = level}
+
+fun new_tree store cgoal unsafe =
+  aesopTree.create
+    {node = tree_node store 0 [cgoal], unsafe_cursor = unsafe}
+
+fun pop_expected tree =
+  case aesopTree.pop_goal tree of
+      (SOME id, rest) => (id, rest)
+    | _ => raise Fail "expected a queued aesop tree goal"
+
+fun install_tree_rapp tree parent phase name store children records =
+  aesopTree.install_rapp parent
+    {rule = name, phase = phase, records = records,
+     node =
+       tree_node store
+         (#level (aesopTree.goal tree parent) + 1) children}
+    tree
+
+fun close_tree_goal tree id =
+  #tree
+    (install_tree_rapp tree id aesopRule.RSafe "close"
+      (aesopTree.active_store (aesopTree.goal tree id)) [] [])
+
+fun near expected actual =
+  Real.abs (expected - actual) < 0.000000001
+
+val _ =
+  test
+    ("aesop tree priorities multiply in the log domain",
+     fn () =>
+       let
+         val first =
+           aesopTree.extend_priority 0.0 (aesopRule.RUnsafe 50)
+         val second =
+           aesopTree.extend_priority first (aesopRule.RUnsafe 20)
+       in
+         near (Math.ln 0.1) second andalso
+         near second
+           (aesopTree.extend_priority second aesopRule.RSafe)
+       end)
+
+val fifo_goal =
+  tree_cgoal [] [] boolSyntax.T
+val fifo_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (fifo_root, fifo_tree1) =
+  pop_expected fifo_tree0
+val fifo_install =
+  install_tree_rapp fifo_tree1 fifo_root
+    (aesopRule.RUnsafe 50) "fifo" clasetMeta.empty
+    [fifo_goal, fifo_goal] []
+val (fifo_first, fifo_tree2) =
+  pop_expected (#tree fifo_install)
+val (fifo_second, _) =
+  pop_expected fifo_tree2
+
+val _ =
+  test
+    ("aesop tree queue uses FIFO order for equal priorities",
+     fn () =>
+       #goals fifo_install = [fifo_first, fifo_second] andalso
+       near
+         (#prio (aesopTree.goal (#tree fifo_install) fifo_first))
+         (Math.ln 0.5))
+
+val priority_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (priority_root, priority_tree1) =
+  pop_expected priority_tree0
+val priority_low =
+  install_tree_rapp priority_tree1 priority_root
+    (aesopRule.RUnsafe 20) "low_priority" clasetMeta.empty
+    [fifo_goal] []
+val priority_high =
+  install_tree_rapp (#tree priority_low) priority_root
+    (aesopRule.RUnsafe 80) "high_priority" clasetMeta.empty
+    [fifo_goal] []
+val (priority_first, _) =
+  pop_expected (#tree priority_high)
+
+val _ =
+  test
+    ("aesop tree queue pops higher log priorities first",
+     fn () => #goals priority_high = [priority_first])
+
+val proved_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (proved_root, proved_tree1) =
+  pop_expected proved_tree0
+val proved_install =
+  install_tree_rapp proved_tree1 proved_root aesopRule.RSafe
+    "two_children" clasetMeta.empty [fifo_goal, fifo_goal] []
+val [proved_left, proved_right] = #goals proved_install
+val proved_tree2 =
+  close_tree_goal (#tree proved_install) proved_left
+val proved_rapp =
+  #rapp proved_install
+
+val _ =
+  test
+    ("aesop tree proved states wait for every independent cluster",
+     fn () =>
+       #state (aesopTree.goal proved_tree2 proved_left) =
+         aesopTree.Proved andalso
+       #state (aesopTree.rapp proved_tree2 proved_rapp) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.goal proved_tree2 proved_root) =
+         aesopTree.Unknown)
+
+val proved_tree3 =
+  close_tree_goal proved_tree2 proved_right
+
+val _ =
+  test
+    ("aesop tree proved states cascade from clusters to the root",
+     fn () =>
+       #state (aesopTree.rapp proved_tree3 proved_rapp) =
+         aesopTree.Proved andalso
+       #state (aesopTree.goal proved_tree3 proved_root) =
+         aesopTree.Proved)
+
+val stuck_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (stuck_root, stuck_tree1) =
+  pop_expected stuck_tree0
+val stuck_install =
+  install_tree_rapp stuck_tree1 stuck_root aesopRule.RSafe
+    "stuck_children" clasetMeta.empty [fifo_goal, fifo_goal] []
+val [stuck_left, stuck_right] = #goals stuck_install
+val stuck_tree2 =
+  aesopTree.exhaust_goal stuck_left (#tree stuck_install)
+val stuck_rapp =
+  #rapp stuck_install
+
+val _ =
+  test
+    ("aesop tree rapps stick when any child cluster sticks",
+     fn () =>
+       #state (aesopTree.goal stuck_tree2 stuck_left) =
+         aesopTree.Stuck andalso
+       #state (aesopTree.rapp stuck_tree2 stuck_rapp) =
+         aesopTree.Stuck andalso
+       #state (aesopTree.goal stuck_tree2 stuck_root) =
+         aesopTree.Unknown)
+
+val stuck_tree3 =
+  aesopTree.exhaust_goal stuck_root stuck_tree2
+
+val _ =
+  test
+    ("aesop tree stuck states cascade and make descendants irrelevant",
+     fn () =>
+       #state (aesopTree.goal stuck_tree3 stuck_root) =
+         aesopTree.Stuck andalso
+       #state (aesopTree.goal stuck_tree3 stuck_right) =
+         aesopTree.Unknown andalso
+       aesopTree.goal_irrelevant stuck_tree3 stuck_right)
+
+val unfinished_rule =
+  hd (aesopRule.closers ())
+val completion_tree0 =
+  new_tree clasetMeta.empty fifo_goal [unfinished_rule]
+val completion_root =
+  aesopTree.root completion_tree0
+val completion_tree1 =
+  completion_tree0
+  |> aesopTree.set_normalised completion_root
+       {records = [], cgoal = fifo_goal, store = clasetMeta.empty}
+  |> aesopTree.set_safe_done completion_root true
+
+val _ =
+  test
+    ("aesop goals stick only after every search phase is exhausted",
+     fn () =>
+       #state (aesopTree.goal completion_tree1 completion_root) =
+         aesopTree.Unknown andalso
+       #state
+         (aesopTree.goal
+           (aesopTree.set_unsafe_cursor completion_root []
+             completion_tree1)
+           completion_root) =
+         aesopTree.Stuck)
+
+val (cluster_m1, cluster_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val (cluster_m2, cluster_store2) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} cluster_store1
+val (cluster_m3, cluster_store3) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} cluster_store2
+val cluster_g1 =
+  tree_cgoal [] [] cluster_m1
+val cluster_g2 =
+  tree_cgoal [] []
+    (boolSyntax.mk_conj (cluster_m1, cluster_m2))
+val cluster_g3 =
+  tree_cgoal [] [] cluster_m2
+val cluster_g4 =
+  tree_cgoal [] [] cluster_m3
+val cluster_tree0 =
+  new_tree cluster_store3 fifo_goal []
+val (cluster_root, cluster_tree1) =
+  pop_expected cluster_tree0
+val cluster_install =
+  install_tree_rapp cluster_tree1 cluster_root aesopRule.RSafe
+    "clusters" cluster_store3
+    [cluster_g1, cluster_g2, cluster_g3, cluster_g4] []
+val [cluster_id1, cluster_id2] =
+  #clusters (aesopTree.rapp (#tree cluster_install)
+    (#rapp cluster_install))
+
+val _ =
+  test
+    ("aesop tree clusters close transitive metavariable overlap",
+     fn () =>
+       #goals (aesopTree.cluster (#tree cluster_install) cluster_id1) =
+         List.take (#goals cluster_install, 3) andalso
+       #goals (aesopTree.cluster (#tree cluster_install) cluster_id2) =
+         [List.nth (#goals cluster_install, 3)])
+
+val coupled_tree0 =
+  new_tree cluster_store1 fifo_goal []
+val (coupled_root, coupled_tree1) =
+  pop_expected coupled_tree0
+val coupled_goal =
+  tree_cgoal [] [] cluster_m1
+val coupled_install =
+  install_tree_rapp coupled_tree1 coupled_root aesopRule.RSafe
+    "coupled" cluster_store1 [coupled_goal, coupled_goal] []
+val [coupled_left, coupled_right] =
+  #goals coupled_install
+val coupled_tree2 =
+  close_tree_goal (#tree coupled_install) coupled_left
+val coupled_closer =
+  hd (aesopTree.child_rapps coupled_tree2 coupled_left)
+val coupled_cluster =
+  #cluster (aesopTree.goal coupled_tree2 coupled_right)
+val coupled_pop =
+  aesopTree.pop_goal coupled_tree2
+
+val _ =
+  test
+    ("aesop proof lazily removes every kind of irrelevant queued node",
+     fn () =>
+       #state (aesopTree.goal coupled_tree2 coupled_root) =
+         aesopTree.Proved andalso
+       #state (aesopTree.goal coupled_tree2 coupled_right) =
+         aesopTree.Unknown andalso
+       aesopTree.goal_irrelevant coupled_tree2 coupled_right andalso
+       aesopTree.rapp_irrelevant coupled_tree2 coupled_closer andalso
+       aesopTree.cluster_irrelevant coupled_tree2 coupled_cluster andalso
+       #1 coupled_pop = NONE)
+
+val coupled_stuck_tree0 =
+  new_tree cluster_store1 fifo_goal []
+val (coupled_stuck_root, coupled_stuck_tree1) =
+  pop_expected coupled_stuck_tree0
+val coupled_stuck_install =
+  install_tree_rapp coupled_stuck_tree1 coupled_stuck_root
+    aesopRule.RSafe "coupled_stuck" cluster_store1
+    [coupled_goal, coupled_goal] []
+val [coupled_stuck_left, coupled_stuck_right] =
+  #goals coupled_stuck_install
+val coupled_stuck_rapp =
+  #rapp coupled_stuck_install
+val coupled_stuck_tree2 =
+  aesopTree.exhaust_goal coupled_stuck_left
+    (#tree coupled_stuck_install)
+val coupled_stuck_tree3 =
+  aesopTree.exhaust_goal coupled_stuck_right coupled_stuck_tree2
+
+val _ =
+  test
+    ("aesop clusters stick only after every coupled goal sticks",
+     fn () =>
+       #state
+         (aesopTree.rapp coupled_stuck_tree2 coupled_stuck_rapp) =
+         aesopTree.Unknown andalso
+       #state
+         (aesopTree.rapp coupled_stuck_tree3 coupled_stuck_rapp) =
+         aesopTree.Stuck)
+
+val (dependency_m1, dependency_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val (dependency_m2, dependency_store2) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} dependency_store1
+val dependency_store3 =
+  valOf (clasetMeta.bind
+    (dependency_m1, dependency_m2) dependency_store2)
+val (dependency_ty1, dependency_store4) =
+  clasetMeta.new_tymeta dependency_store3
+val (dependency_ty2, dependency_store5) =
+  clasetMeta.new_tymeta dependency_store4
+val dependency_store6 =
+  valOf (clasetMeta.bind_ty
+    (dependency_ty1, dependency_ty2) dependency_store5)
+val dependency_param =
+  Term.mk_var ("aesop_dependency_param", dependency_ty1)
+val dependency_goal =
+  tree_cgoal [dependency_param] [] dependency_m1
+val dependency_deps =
+  aesopTree.dependencies_of dependency_store6 dependency_goal
+
+val _ =
+  test
+    ("aesop goal dependencies follow term and type binding residues",
+     fn () =>
+       HOLset.equal
+         (#terms dependency_deps,
+          HOLset.singleton Term.compare dependency_m2) andalso
+       HOLset.equal
+         (#types dependency_deps,
+          HOLset.singleton Type.compare dependency_ty2))
+
+val (assigned_meta, bookkeeping_store1) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val (assigned_type, bookkeeping_store2) =
+  clasetMeta.new_tymeta bookkeeping_store1
+val (created_meta, bookkeeping_store3) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} bookkeeping_store2
+val (created_type, bookkeeping_store4) =
+  clasetMeta.new_tymeta bookkeeping_store3
+val bookkeeping_store5 =
+  valOf
+    (clasetMeta.bind (assigned_meta, boolSyntax.T)
+      bookkeeping_store4)
+val bookkeeping_store6 =
+  valOf
+    (clasetMeta.bind_ty (assigned_type, Type.bool)
+      bookkeeping_store5)
+val bookkeeping_result =
+  Tactical.ALL_TAC ([], boolSyntax.T)
+val bookkeeping_record =
+  clasetReplay.make_record
+    {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
+     created = {terms = [created_meta], types = [created_type]},
+     eigenvariables = [], validation = #2 bookkeeping_result,
+     action = clasetReplay.fixed_action bookkeeping_result,
+     children = []}
+val bookkeeping_root_goal =
+  tree_cgoal
+    [Term.mk_var ("aesop_assigned_type", assigned_type)]
+    [] assigned_meta
+val bookkeeping_tree0 =
+  new_tree bookkeeping_store2 bookkeeping_root_goal []
+val (bookkeeping_root, bookkeeping_tree1) =
+  pop_expected bookkeeping_tree0
+val bookkeeping_install =
+  install_tree_rapp bookkeeping_tree1 bookkeeping_root aesopRule.RSafe
+    "bookkeeping" bookkeeping_store6 [] [bookkeeping_record]
+val bookkeeping_rapp =
+  aesopTree.rapp (#tree bookkeeping_install)
+    (#rapp bookkeeping_install)
+
+val _ =
+  test
+    ("aesop rapps cache created records and parent-to-child assignments",
+     fn () =>
+       HOLset.equal
+         (#terms (#created bookkeeping_rapp),
+          HOLset.singleton Term.compare created_meta) andalso
+       HOLset.equal
+         (#types (#created bookkeeping_rapp),
+          HOLset.singleton Type.compare created_type) andalso
+       HOLset.equal
+         (#terms (#assigned bookkeeping_rapp),
+          HOLset.singleton Term.compare assigned_meta) andalso
+       HOLset.equal
+         (#types (#assigned bookkeeping_rapp),
+          HOLset.singleton Type.compare assigned_type))
