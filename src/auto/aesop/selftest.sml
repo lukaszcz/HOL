@@ -2080,6 +2080,215 @@ val _ =
              end
          | _ => false)
 
+fun kernel_replays tree (goal as (_, target)) =
+  case Tactical.VALID (aesopSearch.REPLAY_TAC tree) goal of
+      ([], validation) => aconv (concl (validation [])) target
+    | _ => false
+
+val _ =
+  test
+    ("aesop extracts copied transitivity branches positionally",
+     fn () =>
+       case transitivity_outcome of
+           aesopSearch.SearchProved tree =>
+             kernel_replays tree
+               ([transitivity_xa, transitivity_az],
+                transitivity_xz)
+         | _ => false)
+
+val replay_norm_p =
+  Term.mk_var ("aesop_replay_norm_p", Type.bool)
+val replay_norm_target =
+  boolSyntax.mk_imp (replay_norm_p, replay_norm_p)
+val replay_norm_outcome =
+  aesopSearch.search aesopSearch.default_config
+    (search_source [search_disch_rule]
+      (fn _ => aesopRule.closers ()) [])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] replay_norm_target) [])
+
+val _ =
+  test
+    ("aesop replays each norm chain before its winning rapp",
+     fn () =>
+       case replay_norm_outcome of
+           aesopSearch.SearchProved tree =>
+             kernel_replays tree ([], replay_norm_target)
+         | _ => false)
+
+val replay_wrapper_target =
+  boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+fun replay_wrapper_rules mode =
+  aesopRule.closers () @
+  [aesopRule.apply_rule
+     {name = "replay-truth", phase = aesopRule.RSafe,
+      theorem = boolTheory.TRUTH, mode = mode},
+   search_split_rule]
+val replay_wrapper_outcome =
+  aesopSearch.search aesopSearch.default_config
+    (search_source []
+      replay_wrapper_rules [])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] replay_wrapper_target) [])
+
+val _ =
+  test
+    ("aesop replays recorded rendered-tactic actions exactly",
+     fn () =>
+       case replay_wrapper_outcome of
+           aesopSearch.SearchProved tree =>
+             kernel_replays tree ([], replay_wrapper_target)
+         | _ => false)
+
+val replay_dropped_pred =
+  Term.mk_var
+    ("aesop_replay_dropped_pred", Type.bool --> Type.bool)
+val replay_dropped_bound =
+  Term.mk_var ("aesop_replay_dropped_bound", Type.bool)
+val replay_dropped_body =
+  Term.mk_comb (replay_dropped_pred, replay_dropped_bound)
+val replay_dropped_all =
+  boolSyntax.mk_forall
+    (replay_dropped_bound, replay_dropped_body)
+val replay_dropped_exists =
+  boolSyntax.mk_exists
+    (replay_dropped_bound, replay_dropped_body)
+val replay_exists_intro =
+  GEN replay_dropped_pred
+    (GEN replay_dropped_bound
+      (DISCH replay_dropped_body
+        (EXISTS
+          (replay_dropped_exists, replay_dropped_bound)
+          (ASSUME replay_dropped_body))))
+val replay_all_elim =
+  GEN replay_dropped_pred
+    (GEN replay_dropped_bound
+      (DISCH replay_dropped_all
+        (SPEC replay_dropped_bound
+          (ASSUME replay_dropped_all))))
+
+fun replay_dropped_source
+      ({mode, ...} :
+       {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
+        store : clasetMeta.store}) =
+  let
+    val all_elim =
+      aesopRule.apply_rule
+        {name = "dropped-all-elim", phase = aesopRule.RSafe,
+         theorem = replay_all_elim, mode = mode}
+    val exists_intro =
+      aesopRule.apply_rule
+        {name = "dropped-exists-intro",
+         phase = aesopRule.RUnsafe 50,
+         theorem = replay_exists_intro, mode = mode}
+  in
+    {norm = [],
+     safe =
+       {closers = aesopRule.closers (),
+        safe0_claset = [all_elim], safe_forward = [],
+        safep_claset = [], conclusion_splits = [],
+        assumption_splits = []},
+     unsafe = [exists_intro]}
+  end
+
+val replay_dropped_goal =
+  ([replay_dropped_all], replay_dropped_exists)
+val replay_dropped_outcome =
+  aesopSearch.search aesopSearch.default_config
+    replay_dropped_source
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [replay_dropped_all]
+        replay_dropped_exists) [])
+
+val _ =
+  test
+    ("aesop grounds a dropped witness to ARB and verifies it kernel-side",
+     fn () =>
+       case replay_dropped_outcome of
+           aesopSearch.SearchProved tree =>
+             let
+               val root = aesopTree.root tree
+               val rid =
+                 valOf
+                   (List.find
+                     (fn id =>
+                       #rule (aesopTree.rapp tree id) =
+                         "dropped-exists-intro")
+                     (aesopTree.child_rapps tree root))
+               val witness =
+                 valOf
+                   (List.find
+                     (fn meta =>
+                       Type.compare (type_of meta, Type.bool) = EQUAL)
+                     (HOLset.listItems
+                       (#terms (#created
+                         (aesopTree.rapp tree rid)))))
+               val grounded =
+                 clasetReplay.grounded_store
+                   (aesopSearch.extract tree)
+             in
+               aconv
+                 (clasetMeta.norm grounded witness)
+                 (boolSyntax.mk_arb Type.bool) andalso
+               kernel_replays tree replay_dropped_goal
+             end
+         | _ => false)
+
+fun replay_wrapper_record (goals, validation) =
+  clasetReplay.make_record
+    {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
+     created = {terms = [], types = []},
+     eigenvariables = map (fn _ => []) goals,
+     validation = validation,
+     action = clasetReplay.fixed_action (goals, validation),
+     children = map (fn _ => NONE) goals}
+
+val (corrupt_meta, corrupt_store0) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val corrupt_store_true =
+  bind_tree_meta corrupt_meta boolSyntax.T corrupt_store0
+val corrupt_store_false =
+  bind_tree_meta corrupt_meta boolSyntax.F corrupt_store0
+val corrupt_goal : Abbrev.goal =
+  ([], boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T))
+val corrupt_split_result =
+  Tactic.CONJ_TAC corrupt_goal
+val corrupt_tree0 =
+  new_tree corrupt_store0
+    (tree_cgoal [] (#1 corrupt_goal) (#2 corrupt_goal)) []
+val (corrupt_root, corrupt_tree1) =
+  pop_expected corrupt_tree0
+val corrupt_split =
+  install_tree_rapp corrupt_tree1 corrupt_root aesopRule.RSafe
+    "corrupt-split" corrupt_store0
+    (map
+      (fn (asl, w) => tree_cgoal [] asl w)
+      (#1 corrupt_split_result))
+    [replay_wrapper_record corrupt_split_result]
+val [corrupt_left, corrupt_right] =
+  #goals corrupt_split
+val corrupt_close_result =
+  Tactic.ACCEPT_TAC boolTheory.TRUTH ([], boolSyntax.T)
+val corrupt_left_closed =
+  install_tree_rapp (#tree corrupt_split) corrupt_left
+    aesopRule.RSafe "corrupt-left" corrupt_store_true []
+    [replay_wrapper_record corrupt_close_result]
+val corrupt_tree =
+  #tree
+    (install_tree_rapp (#tree corrupt_left_closed) corrupt_right
+      aesopRule.RSafe "corrupt-right" corrupt_store_false []
+      [replay_wrapper_record corrupt_close_result])
+
+val _ =
+  test
+    ("aesop treats conflicting winning stores as a hard replay error",
+     fn () =>
+       ((ignore (aesopSearch.REPLAY_TAC corrupt_tree corrupt_goal);
+         false)
+        handle HOL_ERR error =>
+          String.isSubstring "engine bug" (Feedback.message_of error)))
+
 val search_limit_goal = boolSyntax.T
 val search_limit_close =
   aesopRule.apply_rule

@@ -68,6 +68,8 @@ sig
   val clusters : tree -> cluster list
 
   val child_rapps : tree -> gid -> rid list
+  (* Creation order: action-emitted goals first, then copied obligations. *)
+  val rapp_goals : tree -> rid -> gid list
   val active_cgoal : goal -> cgoal
   val active_store : goal -> store
   val is_normalised : goal -> bool

@@ -630,4 +630,186 @@ fun search
       loop false initial
     end
 
+fun proved_rapp tree id =
+  case
+    List.find
+      (fn rid => #state (aesopTree.rapp tree rid) = aesopTree.Proved)
+      (aesopTree.child_rapps tree id)
+  of
+      SOME rid => rid
+    | NONE =>
+        raise ERR "extract"
+          ("proved goal " ^ Int.toString id ^
+           " has no proved rule application")
+
+fun proved_cluster_goal tree id =
+  let val current = aesopTree.cluster tree id
+  in
+    case
+      List.find
+        (fn gid => #state (aesopTree.goal tree gid) = aesopTree.Proved)
+        (#goals current)
+    of
+        SOME gid => gid
+      | NONE =>
+          raise ERR "extract"
+            ("proved cluster " ^ Int.toString id ^
+             " has no proved goal")
+  end
+
+fun direct_children tree rid =
+  List.filter
+    (fn id =>
+      not (Option.isSome (#copy_of (aesopTree.goal tree id))))
+    (aesopTree.rapp_goals tree rid)
+
+(* A copied goal discharges the corresponding original sibling, but it is
+   not a child emitted by the rule action that caused the copy.  First
+   select the complete winning forest and record this redirection.  The
+   later linearisation can then replay only real action children, in their
+   original positional order. *)
+fun winning_forest tree =
+  let
+    type selection = (gid, gid) Redblackmap.dict
+    val empty_selection : selection = Redblackmap.mkDict Int.compare
+
+    fun select actual (selection, stores) =
+      let
+        val current = aesopTree.goal tree actual
+        val original =
+          case #copy_of current of
+              NONE => actual
+            | SOME id => id
+        val selection' =
+          case Redblackmap.peek (selection, original) of
+              NONE =>
+                Redblackmap.insert (selection, original, actual)
+            | SOME previous =>
+                if previous = actual then selection
+                else
+                  raise ERR "extract"
+                    ("winning forest selects goal " ^
+                     Int.toString original ^ " twice")
+      in
+        case #norm current of
+            aesopTree.NormProved {store, ...} =>
+              (selection', store :: stores)
+          | _ =>
+              let
+                val rid = proved_rapp tree actual
+                val application = aesopTree.rapp tree rid
+                fun select_cluster
+                      (cid, accumulated) =
+                  let
+                    val cluster = aesopTree.cluster tree cid
+                    val _ =
+                      if #state cluster = aesopTree.Proved then ()
+                      else
+                        raise ERR "extract"
+                          ("winning rule application contains unproved " ^
+                           "cluster " ^ Int.toString cid)
+                  in
+                    select (proved_cluster_goal tree cid) accumulated
+                  end
+              in
+                if null (#clusters application) then
+                  (selection', #store application :: stores)
+                else
+                  List.foldl select_cluster
+                    (selection', stores) (#clusters application)
+              end
+      end
+
+    val root = aesopTree.root tree
+    val root_goal = aesopTree.goal tree root
+    val _ =
+      if #state root_goal = aesopTree.Proved then ()
+      else raise ERR "extract" "the root goal is not proved"
+  in
+    select root (empty_selection, [])
+  end
+
+fun selected_goal selection original =
+  case Redblackmap.peek (selection, original) of
+      SOME actual => actual
+    | NONE =>
+        raise ERR "extract"
+          ("winning forest has no proof of goal " ^
+           Int.toString original)
+
+fun append_records records script =
+  List.foldl
+    (fn (record, current) =>
+      if clasetReplay.target_of record = 1 then
+        clasetReplay.append current record
+      else
+        raise ERR "extract"
+          "a recorded single-goal action does not target position 1")
+    script records
+
+fun extract tree =
+  let
+    val (selection, final_stores) = winning_forest tree
+    val root = aesopTree.root tree
+    val root_store = #store (aesopTree.goal tree root)
+    val covering_store =
+      clasetMeta.absorb
+        {base = root_store, extensions = final_stores}
+
+    fun linearise original ancestors script =
+      let
+        val actual = selected_goal selection original
+        val _ =
+          if List.exists (fn id => id = actual) ancestors then
+            raise ERR "extract" "cycle in the winning forest"
+          else ()
+        val current = aesopTree.goal tree actual
+        val with_norm =
+          case #norm current of
+              aesopTree.Unnormalised => script
+            | aesopTree.Normalised {records, ...} =>
+                append_records records script
+            | aesopTree.NormProved {records, ...} =>
+                append_records records script
+      in
+        case #norm current of
+            aesopTree.NormProved _ => with_norm
+          | _ =>
+              let
+                val rid = proved_rapp tree actual
+                val application = aesopTree.rapp tree rid
+                val with_application =
+                  append_records (#records application) with_norm
+              in
+                List.foldl
+                  (fn (child, accumulated) =>
+                    linearise child (actual :: ancestors) accumulated)
+                  with_application (direct_children tree rid)
+              end
+      end
+
+    val script =
+      linearise root [] (clasetReplay.empty 1)
+  in
+    clasetReplay.ground covering_store script
+  end
+
+fun REPLAY_TAC tree goal =
+  let
+    val grounded = extract tree
+    val result as (goals, _) =
+      Tactical.VALID (clasetReplay.REPLAY_TAC grounded) goal
+    val _ =
+      if null goals then ()
+      else
+        raise ERR "REPLAY_TAC"
+          "kernel replay of a proved search tree left open goals"
+  in
+    result
+  end
+  handle error =>
+    raise ERR "REPLAY_TAC"
+      ("kernel replay of a proved search tree failed; this is an " ^
+       "aesop engine bug: " ^ Feedback.exn_to_string error)
+
 end

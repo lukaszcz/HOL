@@ -185,6 +185,13 @@ fun child_rapps tree parent =
       (fn ({parent = candidate, ...} : rapp) => candidate = parent)
       (rapps tree))
 
+fun rapp_goals tree parent =
+  map #id
+    (List.filter
+      (fn ({parent = candidate, ...} : goal) =>
+        candidate = SOME parent)
+      (goals tree))
+
 fun active_cgoal ({cgoal, norm, ...} : goal) =
   case norm of
       Unnormalised => cgoal
@@ -474,14 +481,6 @@ fun phase_probability aesopRule.RSafe = 100
           "an unsafe rule percentage must be in the range 1--100"
   | phase_probability (aesopRule.RNorm _) =
       raise ERR "install_rapp" "normalisation does not create rapp nodes"
-
-fun rapp_goals tree id =
-  let val current = rapp tree id
-  in
-    List.concat
-      (map (fn cluster_id => #goals (cluster tree cluster_id))
-        (#clusters current))
-  end
 
 fun ancestry tree start =
   let

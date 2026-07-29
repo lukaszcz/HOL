@@ -4,6 +4,7 @@ sig
   type store = clasetMeta.store
   type tree = aesopTree.tree
   type gid = aesopTree.gid
+  type tactic = Abbrev.tactic
 
   type aesop_config = {max_rapps : int, max_depth : int}
   val default_config : aesop_config
@@ -51,4 +52,9 @@ sig
      the exhaustive normalisation-and-safe frontier of the initial tree. *)
   val search :
     aesop_config -> rule_source -> tree -> search_outcome
+
+  (* Select the winning forest of a proved tree and merge its final stores.
+     Replay is exact: a failure after search success is an engine error. *)
+  val extract : tree -> clasetReplay.grounded_script
+  val REPLAY_TAC : tree -> tactic
 end
