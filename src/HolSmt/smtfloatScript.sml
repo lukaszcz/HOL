@@ -9,7 +9,8 @@
    Canonicalization audit for the core surface (P5.5): every FP-valued
    definition post-composes [canon].  This applies to smtfp_intro,
    smtfp_bits, nan/pinf/ninf/pzero/nzero, abs/neg, add/sub/mul/div/sqrt/fma,
-   and round_to_integral.  The classification predicates (nan, signalling,
+   round_to_integral, min/max, and rem.  The classification predicates
+   (nan, signalling,
    infinite, normal, subnormal, zero, finite, integral, negative, positive)
    and comparisons (lt/le/gt/ge/eq/unordered) are Bool-valued: they inspect
    smtfp_rep directly, so canonicalization is not applicable. *)
@@ -529,6 +530,42 @@ Proof
   simp []
 QED
 
+(* SMT-LIB FloatingPoint (version 2021-05-12) deliberately leaves the
+   result of fp.min/fp.max on opposite-signed zero arguments unspecified:
+   either zero is permitted.  Each operation therefore gets one fixed
+   per-format choice, rather than an input-dependent ARB or a concrete
+   ordering of the two zero encodings.  See
+   https://smt-lib.org/theories-FloatingPoint.shtml, fp.min/fp.max. *)
+Theorem float_min_zero_choice_exists[local]:
+  ?f : ('t # 'w) itself -> ('t,'w) float.
+    !index.
+      f index = float_plus_zero (:'t # 'w) \/
+      f index = float_minus_zero (:'t # 'w)
+Proof
+  qexists_tac `\index. float_plus_zero (:'t # 'w)` >>
+  simp []
+QED
+
+val float_min_zero_choice_spec =
+  new_specification
+    ("float_min_zero_choice_spec", ["float_min_zero_choice"],
+     float_min_zero_choice_exists);
+
+Theorem float_max_zero_choice_exists[local]:
+  ?f : ('t # 'w) itself -> ('t,'w) float.
+    !index.
+      f index = float_plus_zero (:'t # 'w) \/
+      f index = float_minus_zero (:'t # 'w)
+Proof
+  qexists_tac `\index. float_minus_zero (:'t # 'w)` >>
+  simp []
+QED
+
+val float_max_zero_choice_spec =
+  new_specification
+    ("float_max_zero_choice_spec", ["float_max_zero_choice"],
+     float_max_zero_choice_exists);
+
 (* -------------------------------------------------------------------------
    Core SMT floating-point operation surface
    ------------------------------------------------------------------------- *)
@@ -688,6 +725,66 @@ Definition smt_float_round_to_integral_def[nocompute]:
         | _ => x
 End
 
+(* This is the official SMT-LIB minNum/maxNum dispatch: one NaN is ignored,
+   two NaNs produce a NaN (the second argument here), ordinary arguments are
+   ordered numerically, and only the opposite-signed-zero case consults the
+   fixed underspecified choices above. *)
+Definition float_min_def[nocompute]:
+  float_min (x : ('t,'w) float) (y : ('t,'w) float) =
+    if float_is_nan x then y
+    else if float_is_nan y then x
+    else if float_is_zero x /\ float_is_zero y /\ x.Sign <> y.Sign then
+      float_min_zero_choice (:'t # 'w)
+    else if float_less_than x y then x
+    else y
+End
+
+Definition float_max_def[nocompute]:
+  float_max (x : ('t,'w) float) (y : ('t,'w) float) =
+    if float_is_nan x then y
+    else if float_is_nan y then x
+    else if float_is_zero x /\ float_is_zero y /\ x.Sign <> y.Sign then
+      float_max_zero_choice (:'t # 'w)
+    else if float_greater_than x y then x
+    else y
+End
+
+(* The unbounded counterpart of TASK_07's RNE integral rounding.  fp.rem's
+   quotient integer is mathematical, not restricted to the operand format:
+   rounding it through [('t,'w) float] would overflow for, e.g., max-finite
+   divided by min-subnormal.  This is binary_ieee.float_to_int's exact RNE
+   floor/ceiling dispatch, including the ties-to-even predicate. *)
+Definition smt_nearest_integer_def[nocompute]:
+  smt_nearest_integer (r : real) : int =
+    let f = INT_FLOOR r in
+    let df = abs (r - real_of_int f) in
+      if df < 1 / 2 \/
+         df = 1 / 2 /\ EVEN (Num (ABS f))
+      then f
+      else INT_CEILING r
+End
+
+(* SMT-LIB FloatingPoint, fp.rem: NaN is returned for a NaN operand, an
+   infinite dividend, or a zero divisor; a finite dividend is returned for
+   an infinite divisor.  Otherwise r = x - y*n, where n is the nearest
+   mathematical integer to x/y with ties to even.  IEEE remainder is exact;
+   applying RNE to r returns that representable result.  [smt_float_round]'s
+   zero branch preserves the sign of the dividend, as required by the same
+   spec passage. *)
+Definition float_rem_def[nocompute]:
+  float_rem (x : ('t,'w) float) (y : ('t,'w) float) =
+    case float_value x, float_value y of
+      NaN, _ => float_canon_qnan
+    | _, NaN => float_canon_qnan
+    | Infinity, _ => float_canon_qnan
+    | _, Infinity => x
+    | Float r1, Float r2 =>
+        if r2 = 0 then float_canon_qnan
+        else
+          let n = real_of_int (smt_nearest_integer (r1 / r2)) in
+            smt_float_round RNE (x.Sign = 1w) (r1 - r2 * n)
+End
+
 Definition smtfp_bits_def:
   smtfp_bits (s : word1) (e : 'w word) (m : 't word) =
     SmtFp (canon <| Sign := s; Exponent := e; Significand := m |>)
@@ -842,12 +939,184 @@ Definition smtfp_round_to_integral_def:
     SmtFp (canon (smt_float_round_to_integral mode (smtfp_rep x)))
 End
 
+Definition smtfp_min_def:
+  smtfp_min (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    SmtFp (canon (float_min (smtfp_rep x) (smtfp_rep y)))
+End
+
+Definition smtfp_max_def:
+  smtfp_max (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    SmtFp (canon (float_max (smtfp_rep x) (smtfp_rep y)))
+End
+
+Definition smtfp_rem_def:
+  smtfp_rem (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    SmtFp (canon (float_rem (smtfp_rep x) (smtfp_rep y)))
+End
+
 (* One proof covers the canonicalization obligation of every result-valued
    operation above: a NaN result is always the sole SMT-LIB NaN value. *)
 Theorem smtfp_op_nan:
   float_is_nan r ==> SmtFp (canon r) = (smtfp_nan : ('t,'w) smtfp)
 Proof
   simp [canon_def, smtfp_nan_def]
+QED
+
+Theorem smtfp_min_op_nan:
+  float_is_nan (float_min (smtfp_rep x) (smtfp_rep y)) ==>
+  smtfp_min x y = (smtfp_nan : ('t,'w) smtfp)
+Proof
+  simp [smtfp_min_def, smtfp_op_nan]
+QED
+
+Theorem smtfp_max_op_nan:
+  float_is_nan (float_max (smtfp_rep x) (smtfp_rep y)) ==>
+  smtfp_max x y = (smtfp_nan : ('t,'w) smtfp)
+Proof
+  simp [smtfp_max_def, smtfp_op_nan]
+QED
+
+Theorem smtfp_rem_op_nan:
+  float_is_nan (float_rem (smtfp_rep x) (smtfp_rep y)) ==>
+  smtfp_rem x y = (smtfp_nan : ('t,'w) smtfp)
+Proof
+  simp [smtfp_rem_def, smtfp_op_nan]
+QED
+
+(* Away from NaN and the one underspecified signed-zero case, min/max agree
+   directly with the strict floating-point order. *)
+Theorem float_min_max_lt:
+  ~float_is_nan x /\ ~float_is_nan y /\
+  ~(float_is_zero x /\ float_is_zero y) /\
+  float_less_than x y ==>
+  float_min x y = x /\ float_max x y = y
+Proof
+  strip_tac >>
+  fs [float_min_def, float_max_def,
+      binary_ieeeTheory.float_less_than_def,
+      binary_ieeeTheory.float_greater_than_def]
+QED
+
+Theorem float_min_max_gt:
+  ~float_is_nan x /\ ~float_is_nan y /\
+  ~(float_is_zero x /\ float_is_zero y) /\
+  float_greater_than x y ==>
+  float_min x y = y /\ float_max x y = x
+Proof
+  strip_tac >>
+  fs [float_min_def, float_max_def,
+      binary_ieeeTheory.float_less_than_def,
+      binary_ieeeTheory.float_greater_than_def]
+QED
+
+(* minNum/maxNum ignore a sole NaN.  If both arguments are NaN these
+   equations still return a NaN, which the smtfp wrappers canonicalize. *)
+Theorem float_min_max_nan_left:
+  float_is_nan x ==>
+  float_min x y = y /\ float_max x y = y
+Proof
+  simp [float_min_def, float_max_def]
+QED
+
+Theorem float_min_max_nan_right:
+  ~float_is_nan x /\ float_is_nan y ==>
+  float_min x y = x /\ float_max x y = x
+Proof
+  simp [float_min_def, float_max_def]
+QED
+
+Theorem smtfp_min_max_nan_left:
+  smtfp_is_nan x ==>
+  smtfp_min x y = y /\ smtfp_max x y = y
+Proof
+  rw [smtfp_is_nan_def, smtfp_min_def, smtfp_max_def,
+      float_min_def, float_max_def]
+QED
+
+Theorem smtfp_min_max_nan_right:
+  ~smtfp_is_nan x /\ smtfp_is_nan y ==>
+  smtfp_min x y = x /\ smtfp_max x y = x
+Proof
+  rw [smtfp_is_nan_def, smtfp_min_def, smtfp_max_def,
+      float_min_def, float_max_def]
+QED
+
+Theorem float_min_opposite_zero:
+  float_min (float_plus_zero (:'t # 'w))
+    (float_minus_zero (:'t # 'w)) =
+  float_min_zero_choice (:'t # 'w)
+Proof
+  simp [float_min_def]
+QED
+
+Theorem float_max_opposite_zero:
+  float_max (float_plus_zero (:'t # 'w))
+    (float_minus_zero (:'t # 'w)) =
+  float_max_zero_choice (:'t # 'w)
+Proof
+  simp [float_max_def]
+QED
+
+Theorem smt_nearest_integer_basic[simp]:
+  smt_nearest_integer 0 = 0 /\ smt_nearest_integer 1 = 1
+Proof
+  simp [smt_nearest_integer_def]
+QED
+
+Theorem smt_nearest_integer_ties_even[simp]:
+  smt_nearest_integer (5 / 2) = 2 /\
+  smt_nearest_integer (7 / 2) = 4
+Proof
+  `INT_FLOOR (5 / 2) = 2` by
+    (rw [intrealTheory.INT_FLOOR] >> realLib.REAL_ARITH_TAC) >>
+  `INT_FLOOR (7 / 2) = 3` by
+    (rw [intrealTheory.INT_FLOOR] >> realLib.REAL_ARITH_TAC) >>
+  `INT_CEILING (7 / 2) = 4` by
+    (rw [intrealTheory.INT_CEILING] >> realLib.REAL_ARITH_TAC) >>
+  simp [smt_nearest_integer_def] >>
+  realLib.REAL_ARITH_TAC
+QED
+
+(* Definitional ground sanity instances.  TASK_12 adds the full literal
+   evaluator, including further ordinary finite remainder examples. *)
+Theorem float_rem_self:
+  float_value x = Float r /\ r <> 0 ==>
+  float_rem x x =
+    if x.Sign = 1w then float_minus_zero (:'t # 'w)
+    else float_plus_zero (:'t # 'w)
+Proof
+  rw [float_rem_def] >>
+  imp_res_tac realTheory.REAL_DIV_REFL >>
+  simp [smt_float_round_def, smt_round_def,
+        binary_ieeeTheory.float_is_zero_to_real]
+QED
+
+Theorem float_rem_zero_infinity[simp]:
+  float_rem (float_plus_zero (:'t # 'w))
+    (float_plus_infinity (:'t # 'w)) =
+      float_plus_zero (:'t # 'w) /\
+  float_rem (float_minus_zero (:'t # 'w))
+    (float_minus_infinity (:'t # 'w)) =
+      float_minus_zero (:'t # 'w)
+Proof
+  simp [float_rem_def]
+QED
+
+Theorem float_rem_infinity_zero_is_nan[simp]:
+  float_is_nan
+    (float_rem (float_plus_infinity (:'t # 'w))
+      (float_plus_zero (:'t # 'w)))
+Proof
+  simp [float_rem_def]
+QED
+
+Theorem smtfp_rem_zero_infinity[simp]:
+  smtfp_rem (smtfp_pzero : ('t,'w) smtfp) smtfp_pinf = smtfp_pzero /\
+  smtfp_rem (smtfp_nzero : ('t,'w) smtfp) smtfp_ninf = smtfp_nzero
+Proof
+  simp [smtfp_rem_def, smtfp_pzero_def, smtfp_nzero_def,
+        smtfp_pinf_def, smtfp_ninf_def, smtfp_rep_def,
+        smtfp_canonical_def, float_rem_def, canon_def]
 QED
 
 Definition smtfp_nan_pattern_def:
