@@ -29,6 +29,11 @@ sig
   val step : clasetLib.claset -> step
   val slow_step : clasetLib.claset -> step
 
+  (* Wrapper-free application of one supplied rule through the ordinary
+     child policy.  Each sequence result is one application alternative. *)
+  val rule_step :
+    {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
+
   (* Exact, wrapper-free engine transitions used by blast reconstruction.
      Rule application uses the supplied canonical source rather than doing
      another claset lookup. *)

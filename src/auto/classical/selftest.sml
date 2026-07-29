@@ -3020,9 +3020,20 @@ fun valid_open_replay goal (record, node) =
     same_goals actual expected
   end
 
+fun same_rule_alternatives goal left right =
+  length left = length right andalso
+  ListPair.allEq
+    (fn ((left_record, left_node), (right_record, right_node)) =>
+      clasetStep.consumed_of left_record =
+        clasetStep.consumed_of right_record andalso
+      same_goals (rendered_goals left_node) (rendered_goals right_node)
+      andalso valid_open_replay goal (left_record, left_node)
+      andalso valid_open_replay goal (right_record, right_node))
+    (left, right)
+
 val _ =
   test
-    ("exact intro keeps a newly exposed implication intact",
+    ("rule_step uses standard children while blast keeps prefixes intact",
      fn () =>
        let
          val schema = Term.mk_var ("bounded_intro_schema", bool_ty)
@@ -3037,6 +3048,11 @@ val _ =
          fun input () = (clasetGoal.from_goal goal, 1)
          val variants =
            exact_rule_api_variants cs specification selected input
+         val standard =
+           drain_exact
+             (clasetStep.rule_step
+               {theorem = theorem, elim = false,
+                mode = clasetUnify.Match} (input ()))
          val (ordinary_children, ordinary_validation) =
            clasetReplay.RULE_TAC
              {theorem = SPEC target theorem, elim = false,
@@ -3052,9 +3068,81 @@ val _ =
              | _ => false
        in
          List.all exact variants andalso
+         (case standard of
+              [(record, node)] =>
+                same_goals (rendered_goals node) [([atom], atom)]
+                andalso valid_open_replay goal (record, node)
+            | _ => false) andalso
          same_goals ordinary_children [([atom], atom)] andalso
          let val result = ordinary_validation [ASSUME atom]
          in Term.aconv (concl result) target end
+       end)
+
+val _ =
+  test
+    ("rule_step agrees with blast on plain intro and elim rules",
+     fn () =>
+       let
+         val p = Term.mk_var ("rule_step_diff_p", bool_ty)
+         val q = Term.mk_var ("rule_step_diff_q", bool_ty)
+         val conjunction = boolSyntax.mk_conj (p, q)
+         val intro_goal = ([p, q], conjunction)
+         val elim_goal = ([p, p], boolSyntax.T)
+         val elim_theorem = DISCH p boolTheory.TRUTH
+
+         fun standard theorem elim goal =
+           drain_exact
+             (clasetStep.rule_step
+               {theorem = theorem, elim = elim,
+                mode = clasetUnify.Unify}
+               (clasetGoal.from_goal goal, 1))
+         fun blast theorem elim goal =
+           drain_exact
+             (clasetStep.blast_rule_step clasetLib.empty_cs
+               {theorem = theorem, elim = elim}
+               (clasetGoal.from_goal goal, 1))
+
+         val standard_intro =
+           standard boolTheory.AND_INTRO_THM false intro_goal
+         val blast_intro =
+           blast boolTheory.AND_INTRO_THM false intro_goal
+         val standard_elim = standard elim_theorem true elim_goal
+         val blast_elim = blast elim_theorem true elim_goal
+       in
+         same_rule_alternatives intro_goal standard_intro blast_intro
+         andalso
+         same_rule_alternatives elim_goal standard_elim blast_elim
+         andalso
+         map (clasetStep.consumed_of o #1) standard_elim =
+           [SOME 1, SOME 2]
+       end)
+
+val _ =
+  test
+    ("nonconsuming elim replay retains its selected major assumption",
+     fn () =>
+       let
+         val p = Term.mk_var ("nonconsuming_replay_p", bool_ty)
+         val theorem = DISCH p (DISCH p (ASSUME p))
+         val goal = ([p], p)
+         val (consuming_children, _) =
+           clasetReplay.RULE_TAC
+             {theorem = theorem, elim = true, consumed = SOME 1,
+              parameters = [], eigenvariables = [[]]} goal
+         val action =
+           clasetReplay.nonconsuming_elim_rule_action
+             (fn _ =>
+               {theorem = theorem, major = 1, parameters = [],
+                eigenvariables = [[]]})
+         val (children, validation) =
+           Tactical.VALID (action clasetMeta.empty) goal
+         val result = validation [ASSUME p]
+       in
+         same_goals consuming_children [([], p)] andalso
+         same_goals children [([p], p)] andalso
+         Term.aconv (concl result) p andalso
+         HOLset.equal
+           (Thm.hypset result, HOLset.fromList Term.compare [p])
        end)
 
 val _ =

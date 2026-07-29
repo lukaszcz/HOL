@@ -327,7 +327,7 @@ fun theorem_hypothesis normalized_asl hypothesis =
         raise mk_HOL_ERR "clasetReplay" "RULE_TAC"
           "a theorem hypothesis is absent from the goal"
 
-fun rule_tac_with function_name make_children
+fun rule_tac_with function_name make_children retain_major
     {theorem, elim, consumed, parameters, eigenvariables} (asl, w) =
   let
     val rule0 = normalize_rule_thm theorem
@@ -386,7 +386,8 @@ fun rule_tac_with function_name make_children
                 "the selected assumption misses the major premise"
         in
           ([major_thm], tl premises0,
-           delete_nth "RULE_TAC" asl major_pos)
+           if retain_major then asl
+           else delete_nth function_name asl major_pos)
         end
       else ([], premises0, asl)
     val _ =
@@ -422,16 +423,21 @@ fun rule_tac_with function_name make_children
     raise mk_HOL_ERR "clasetReplay" function_name
       "an elimination rule has no major premise"
 
+fun ordinary_rule_children parent_asl premises eigenvariables =
+  ListPair.map
+    (fn (premise, names) =>
+      rule_child parent_asl premise names)
+    (premises, eigenvariables)
+
 fun RULE_TAC fields =
-  rule_tac_with "RULE_TAC"
-    (fn parent_asl =>
-      fn premises =>
-        fn eigenvariables =>
-          ListPair.map
-            (fn (premise, names) =>
-              rule_child parent_asl premise names)
-            (premises, eigenvariables))
-    fields
+  rule_tac_with "RULE_TAC" ordinary_rule_children false fields
+
+fun NONCONSUMING_ELIM_RULE_TAC
+      {theorem, major, parameters, eigenvariables} =
+  rule_tac_with "NONCONSUMING_ELIM_RULE_TAC"
+    ordinary_rule_children true
+    {theorem = theorem, elim = true, consumed = SOME major,
+     parameters = parameters, eigenvariables = eigenvariables}
 
 fun BLAST_RULE_TAC
     {theorem, elim, consumed, parameters, eigenvariables, prefixes} =
@@ -446,7 +452,7 @@ fun BLAST_RULE_TAC
         raise mk_HOL_ERR "clasetReplay" "BLAST_RULE_TAC"
           "recorded prefix-descriptor arity is corrupt"
   in
-    rule_tac_with "BLAST_RULE_TAC" make_children
+    rule_tac_with "BLAST_RULE_TAC" make_children false
       {theorem = theorem, elim = elim, consumed = consumed,
        parameters = parameters, eigenvariables = eigenvariables}
   end
@@ -728,6 +734,8 @@ fun contradiction_action positions store =
   CONTRADICTION_TAC store positions
 fun mp_action positions store = MP_TAC store positions
 fun rule_action make store = RULE_TAC (make store)
+fun nonconsuming_elim_rule_action make store =
+  NONCONSUMING_ELIM_RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC

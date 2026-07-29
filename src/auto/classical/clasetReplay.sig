@@ -77,6 +77,11 @@ sig
   val RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
      parameters : string list, eigenvariables : string list list} -> tactic
+  (* Select [major] for elimination without deleting that assumption from
+     the replay children. *)
+  val NONCONSUMING_ELIM_RULE_TAC :
+    {theorem : thm, major : int, parameters : string list,
+     eigenvariables : string list list} -> tactic
   val BLAST_RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
      parameters : string list, eigenvariables : string list list,
@@ -110,6 +115,11 @@ sig
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,
        parameters : string list,
+       eigenvariables : string list list}) -> replay_action
+  (* Replay-action form of [NONCONSUMING_ELIM_RULE_TAC]. *)
+  val nonconsuming_elim_rule_action :
+    (clasetMeta.store ->
+      {theorem : thm, major : int, parameters : string list,
        eigenvariables : string list list}) -> replay_action
   val blast_rule_action :
     (clasetMeta.store ->

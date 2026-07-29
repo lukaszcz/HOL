@@ -798,7 +798,8 @@ fun exact_rule_attempts attempt selector elim node pos =
         end
     | _ => seq.empty
 
-fun exact_rule_results_with selector cs {theorem, elim} (node, pos) =
+fun supplied_rule_results_with selector policy mode cs
+    {theorem, elim} (node, pos) =
   let
     val tag : clasetLib.tag = {weight = 0, index = 0}
     val entry = (tag, (elim, theorem))
@@ -808,8 +809,7 @@ fun exact_rule_results_with selector cs {theorem, elim} (node, pos) =
         (fn () =>
           case total
             (fn () =>
-              try_rule ExactBlastPrefixes clasetUnify.Unify cs false
-                node pos entry assumption) ()
+              try_rule policy mode cs false node pos entry assumption) ()
           of
               SOME direct => seq.result direct
             | NONE => seq.empty)
@@ -817,6 +817,10 @@ fun exact_rule_results_with selector cs {theorem, elim} (node, pos) =
   in
     exact_rule_attempts attempt selector elim node pos
   end
+
+fun exact_rule_results_with selector cs specification =
+  supplied_rule_results_with selector ExactBlastPrefixes
+    clasetUnify.Unify cs specification
 
 fun exact_rule_results cs specification =
   exact_rule_results_with AllMajors cs specification
@@ -1655,6 +1659,10 @@ fun direct_step results (node, pos) =
 val blast_assumption_step = direct_step unifying_assumption_results
 val blast_contradiction_step =
   direct_step unifying_contradiction_results
+fun rule_step {theorem, elim, mode} =
+  direct_step
+    (supplied_rule_results_with AllMajors LegacyPrefixes mode
+      clasetLib.empty_cs {theorem = theorem, elim = elim})
 fun blast_assumption_step_at position =
   direct_step (unifying_assumption_results_at position)
 fun blast_contradiction_step_at positions =
