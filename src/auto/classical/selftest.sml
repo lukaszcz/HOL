@@ -180,6 +180,87 @@ val _ =
 
 val _ =
   test
+    ("absorb merges all store tables and preserves eigen allow-sets",
+     fn () =>
+       let
+         val left_eigen =
+           Term.mk_var ("absorb_left_eigen", bool_ty)
+         val right_eigen =
+           Term.mk_var ("absorb_right_eigen", bool_ty)
+         val (base_meta, base0) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val (base_tymeta, base) = clasetMeta.new_tymeta base0
+
+         val (left_probe, left0) =
+           clasetMeta.new_meta {allow = [left_eigen], ty = bool_ty}
+             base
+         val (left_bound, left1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} left0
+         val left2 =
+           the_store (clasetMeta.bind (left_bound, boolSyntax.T) left1)
+         val (left_tymeta, left3) = clasetMeta.new_tymeta left2
+         val left =
+           the_store (clasetMeta.bind_ty (left_tymeta, bool_ty) left3)
+
+         val (right_probe, right0) =
+           clasetMeta.new_meta {allow = [right_eigen], ty = bool_ty}
+             base
+         val (right_bound, right1) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty} right0
+         val right2 =
+           the_store
+             (clasetMeta.bind (right_bound, boolSyntax.F) right1)
+         val (right_tymeta, right3) = clasetMeta.new_tymeta right2
+         val right =
+           the_store
+             (clasetMeta.bind_ty (right_tymeta, Type.ind) right3)
+
+         val merged =
+           clasetMeta.absorb {base = base, extensions = [left, right]}
+       in
+         length (clasetMeta.metas_of merged base_meta) = 1 andalso
+         Option.isSome
+           (clasetMeta.bind_ty (base_tymeta, bool_ty) merged) andalso
+         clasetMeta.is_eigen merged left_eigen andalso
+         clasetMeta.is_eigen merged right_eigen andalso
+         Option.isSome (clasetMeta.bind (left_probe, left_eigen) merged)
+         andalso
+         not (Option.isSome
+           (clasetMeta.bind (left_probe, right_eigen) merged)) andalso
+         Option.isSome
+           (clasetMeta.bind (right_probe, right_eigen) merged) andalso
+         not (Option.isSome
+           (clasetMeta.bind (right_probe, left_eigen) merged)) andalso
+         Term.aconv (clasetMeta.walk merged left_bound) boolSyntax.T
+         andalso
+         Term.aconv (clasetMeta.walk merged right_bound) boolSyntax.F
+         andalso clasetMeta.norm_type merged left_tymeta = bool_ty
+         andalso clasetMeta.norm_type merged right_tymeta = Type.ind
+       end)
+
+val _ =
+  test
+    ("absorb reports conflicting store entries",
+     fn () =>
+       let
+         val (m, base) =
+           clasetMeta.new_meta {allow = [], ty = bool_ty}
+             clasetMeta.empty
+         val left = the_store (clasetMeta.bind (m, boolSyntax.T) base)
+         val right = the_store (clasetMeta.bind (m, boolSyntax.F) base)
+       in
+         (ignore
+            (clasetMeta.absorb
+              {base = base, extensions = [left, right]});
+          false)
+         handle HOL_ERR error =>
+           String.isSubstring "conflicting term binding entry"
+             (Feedback.message_of error)
+       end)
+
+val _ =
+  test
     ("stores reject forged and foreign metavariables",
      fn () =>
        let

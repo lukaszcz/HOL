@@ -46,6 +46,50 @@ val empty =
    tymetas = Redblackmap.mkDict string_compare,
    ty_bindings = Redblackmap.mkDict string_compare}
 
+fun same_terms left right =
+  ListPair.allEq (fn (tm1, tm2) => aconv tm1 tm2) (left, right)
+
+fun same_type left right = Type.compare (left, right) = EQUAL
+
+fun same_type_binding (redex1, residue1) (redex2, residue2) =
+  same_type redex1 redex2 andalso same_type residue1 residue2
+
+fun merge_table table equal (left, right) =
+  let
+    fun merge (key, value1, value2) =
+      if equal value1 value2 then value1
+      else
+        raise mk_HOL_ERR "clasetMeta" "absorb"
+          ("conflicting " ^ table ^ " entry for key " ^ key)
+  in
+    Redblackmap.unionWithi merge (left, right)
+  end
+
+fun absorb {base, extensions} =
+  let
+    fun merge (extension : store, store : store) =
+      {allows =
+         merge_table "allow-set" same_terms
+           (#allows store, #allows extension),
+       eigens =
+         merge_table "eigenvariable" same_terms
+           (#eigens store, #eigens extension),
+       metas =
+         merge_table "term metavariable" aconv
+           (#metas store, #metas extension),
+       tm_bindings =
+         merge_table "term binding" aconv
+           (#tm_bindings store, #tm_bindings extension),
+       tymetas =
+         merge_table "type metavariable" same_type
+           (#tymetas store, #tymetas extension),
+       ty_bindings =
+         merge_table "type binding" same_type_binding
+           (#ty_bindings store, #ty_bindings extension)}
+  in
+    List.foldl merge base extensions
+  end
+
 fun fresh_meta ty =
   let
     val generated = genvar ty

@@ -9,6 +9,10 @@ sig
   type store
 
   val empty : store
+  (* Sibling proof-search subtrees extend a common store on disjoint
+     domains.  Proof replay uses [absorb] to recover one covering store;
+     unequal entries at a shared key report an engine invariant failure. *)
+  val absorb : {base : store, extensions : store list} -> store
   val new_meta : {allow : term list, ty : hol_type} -> store ->
                  meta * store
   val new_tymeta : store -> tymeta * store
