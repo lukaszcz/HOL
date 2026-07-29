@@ -426,8 +426,8 @@ fun order_unsafe declarations =
     map #2 (Listsort.sort compare positioned)
   end
 
-fun claset_rules
-      {claset, mode, conclusion, assumptions, qvars, simp_args} =
+fun claset_rules_core
+      {claset, mode, conclusion, assumptions, qvars, simp} =
   let
     val candidates =
       candidate_declarations claset conclusion assumptions qvars
@@ -464,9 +464,36 @@ fun claset_rules
        assumption_splits = #assumption splits @ safe_tactics}
   in
     {norm =
-       norm_builtins simp_args @ norm_declarations @ norm_tactics,
+       [{name = "disch", phase = RNorm 0,
+         apply = EngineStep clasetStep.blast_disch_step,
+         once = false},
+        {name = "gen", phase = RNorm 0,
+         apply = EngineStep clasetStep.blast_gen_step,
+         once = false},
+        {name = "hyp-subst", phase = RNorm 0,
+         apply = EngineStep clasetStep.blast_hyp_subst_step,
+         once = false},
+        simp] @ norm_declarations @ norm_tactics,
      safe = safe,
      unsafe = unsafe @ unsafe_tactics}
   end
+
+fun claset_rules
+      {claset, mode, conclusion, assumptions, qvars, simp_args} =
+  claset_rules_core
+    {claset = claset, mode = mode, conclusion = conclusion,
+     assumptions = assumptions, qvars = qvars,
+     simp = simp_rule simp_args}
+
+fun claset_rules_with
+      {claset, mode, conclusion, assumptions, qvars,
+       simpset, simp_controls} =
+  claset_rules_core
+    {claset = claset, mode = mode, conclusion = conclusion,
+     assumptions = assumptions, qvars = qvars,
+     simp =
+       simp_rule_with
+         {name = "simp", simpset = simpset,
+          controls = simp_controls}}
 
 end

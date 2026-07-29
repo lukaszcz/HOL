@@ -108,4 +108,16 @@ sig
      assumptions : term list,
      qvars : term HOLset.set,
      simp_args : thm list} -> ruleset
+
+  (* Explicit-context callers have already assembled their invocation
+     simpset.  This form preserves that simpset and forwards only the
+     generic simplifier controls to the built-in normalisation rule. *)
+  val claset_rules_with :
+    {claset : clasetLib.claset,
+     mode : clasetUnify.mode,
+     conclusion : term,
+     assumptions : term list,
+     qvars : term HOLset.set,
+     simpset : simpLib.simpset,
+     simp_controls : thm list} -> ruleset
 end

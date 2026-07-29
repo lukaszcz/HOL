@@ -2404,3 +2404,254 @@ val _ =
          andalso
          List.exists (String.isSubstring "candidate goal") (!notices)
        end)
+
+val _ =
+  test
+    ("aesopLib exposes the search defaults and TypeBase cases builder",
+     fn () =>
+       aesopLib.default_config =
+         {max_rapps = 200, max_depth = 30} andalso
+       String.isPrefix "cases "
+         (#name
+           (aesopLib.cases_rule_for Type.bool : aesopLib.rule)))
+
+val surface_p = Term.mk_var ("aesop_surface_p", Type.bool)
+val surface_q = Term.mk_var ("aesop_surface_q", Type.bool)
+val surface_r = Term.mk_var ("aesop_surface_r", Type.bool)
+
+val _ =
+  test
+    ("AESOP_TAC has close-or-fail semantics",
+     fn () =>
+       ((ignore (aesopLib.AESOP_TAC [] ([], surface_p)); false)
+        handle HOL_ERR _ => true))
+
+val surface_global_rules =
+  map (fn (_, (name, _)) => name)
+    (clasetLib.rules_of (clasetLib.the_claset ()))
+
+val surface_fact =
+  DISJ1 (ASSUME surface_q) surface_r
+val surface_inserted =
+  residual
+    (aesopLib.AESOP_SAFE_TAC [surface_fact, markerLib.NoAsms])
+    ([surface_q], surface_p)
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC counts fact insertion as progress and retains facts",
+     fn () =>
+       case surface_inserted of
+           [([left, left_original], left_target),
+            ([right, right_original], right_target)] =>
+             aconv left surface_q andalso
+             aconv left_original surface_q andalso
+             aconv right surface_r andalso
+             aconv right_original surface_q andalso
+             aconv left_target surface_p andalso
+             aconv right_target surface_p
+         | _ => false)
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC fails when insertion and safe search change nothing",
+     fn () =>
+       ((ignore (aesopLib.AESOP_SAFE_TAC [] ([], surface_p)); false)
+        handle HOL_ERR _ => true))
+
+val surface_conj_intro =
+  DISCH surface_p
+    (DISCH surface_q
+      (CONJ (ASSUME surface_p) (ASSUME surface_q)))
+val surface_safe_residue =
+  residual
+    (aesopLib.AESOP_SAFE_TAC
+      [clasetLib.SIntro surface_conj_intro])
+    ([], boolSyntax.mk_conj (surface_p, surface_q))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC consumes claset markers and returns exact residues",
+     fn () =>
+       case surface_safe_residue of
+           [([], left), ([], right)] =>
+             aconv left surface_p andalso aconv right surface_q
+         | _ => false)
+
+val surface_norm_rule =
+  DISCH surface_p
+    (DISJ1 (ASSUME surface_p) surface_q)
+val surface_norm_residue =
+  residual
+    (aesopLib.AESOP_SAFE_TAC
+      [clasetLib.Norm surface_norm_rule, markerLib.NoAsms])
+    ([], boolSyntax.mk_disj (surface_p, surface_q))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC consumes Norm markers through the norm builder",
+     fn () =>
+       case surface_norm_residue of
+           [([], target)] => aconv target surface_p
+         | _ => false)
+
+val surface_implication =
+  boolSyntax.mk_imp (surface_p, surface_q)
+val surface_forward_rule = ASSUME surface_implication
+
+val _ =
+  test
+    ("AESOP_TAC consumes unsafe Forward markers",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_TAC
+             [clasetLib.Forward surface_forward_rule,
+              markerLib.NoAsms])
+           ([surface_p, surface_implication], surface_q)))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC consumes SForward markers",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_SAFE_TAC
+             [clasetLib.SForward surface_forward_rule,
+              markerLib.NoAsms])
+           ([surface_p, surface_implication], surface_q)))
+
+val surface_function =
+  Term.mk_var
+    ("aesop_surface_function", Type.bool --> Type.bool)
+val surface_application =
+  Term.mk_comb (surface_function, surface_p)
+val surface_rewrite =
+  ASSUME (boolSyntax.mk_eq (surface_application, surface_p))
+
+val _ =
+  test
+    ("AESOP_TAC installs Simp arguments in the invocation simpset",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_TAC
+             [clasetLib.Simp surface_rewrite, markerLib.NoAsms])
+           ([surface_p, concl surface_rewrite],
+            surface_application)))
+
+val surface_iff_function =
+  Term.mk_var
+    ("aesop_surface_iff_function", Type.bool --> Type.bool)
+val surface_iff_application =
+  Term.mk_comb (surface_iff_function, surface_p)
+val surface_iff =
+  ASSUME (boolSyntax.mk_eq (surface_iff_application, surface_p))
+
+val _ =
+  test
+    ("AESOP_TAC installs Iff arguments as rules and rewrites",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_TAC
+             [clasetLib.Iff surface_iff, markerLib.NoAsms])
+           ([surface_p, concl surface_iff],
+            surface_iff_application)))
+
+val surface_control_function =
+  Term.mk_var
+    ("aesop_surface_control_function", Type.bool --> Type.bool)
+val surface_control_application =
+  Term.mk_comb (surface_control_function, surface_p)
+val surface_control_equality =
+  boolSyntax.mk_eq (surface_control_application, boolSyntax.T)
+
+val surface_with_asms =
+  residual
+    (aesopLib.AESOP_SAFE_TAC [])
+    ([surface_control_equality], surface_control_application)
+val surface_without_asms =
+  SOME
+    (residual
+      (aesopLib.AESOP_SAFE_TAC [markerLib.NoAsms])
+      ([surface_control_equality], surface_control_application))
+  handle HOL_ERR _ => NONE
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC forwards generic simplifier controls",
+     fn () =>
+       null surface_with_asms andalso
+       (case surface_without_asms of
+            SOME [(_, target)] =>
+              aconv target surface_control_application
+          | _ => false))
+
+val surface_explicit_simpset =
+  simpLib.++
+    (simpLib.empty_ss, simpLib.rewrites [surface_rewrite])
+
+val _ =
+  test
+    ("CS_AESOP_TAC uses its explicit claset and simpset",
+     fn () =>
+       null
+         (residual
+           (aesopLib.CS_AESOP_TAC
+             aesopLib.default_config clasetLib.empty_cs
+             surface_explicit_simpset)
+           ([surface_p, concl surface_rewrite],
+            surface_application)))
+
+val surface_explicit_claset =
+  clasetLib.add_rule
+    {kind = clasetRules.Intro, safe = true, prio = NONE}
+    ("aesop-selftest-explicit-safe", surface_conj_intro)
+    clasetLib.empty_cs
+val surface_explicit_residue =
+  residual
+    (aesopLib.CS_AESOP_SAFE_TAC
+      aesopLib.default_config surface_explicit_claset
+      simpLib.empty_ss)
+    ([], boolSyntax.mk_conj (surface_p, surface_q))
+
+val _ =
+  test
+    ("CS_AESOP_SAFE_TAC saturates its explicit safe context",
+     fn () =>
+       case surface_explicit_residue of
+           [([], left), ([], right)] =>
+             aconv left surface_p andalso aconv right surface_q
+         | _ => false)
+
+val _ =
+  test
+    ("aesop invocation arguments do not leak into the global claset",
+     fn () =>
+       map (fn (_, (name, _)) => name)
+         (clasetLib.rules_of (clasetLib.the_claset ())) =
+       surface_global_rules)
+
+val surface_augmented =
+  Term.mk_var ("aesop_surface_augmented", Type.bool)
+val surface_augmented_called = ref false
+val _ =
+  aesopLib.augment_aesop
+    {name = "aesop-selftest-session-tactic",
+     phase = aesopRule.RNorm ~1,
+     tactic =
+       NTactical.LIFT
+         (fn goal =>
+           (surface_augmented_called := true;
+            Tactic.ACCEPT_TAC (ASSUME surface_augmented) goal))}
+
+val _ =
+  test
+    ("augment_aesop wires session-only tactics into public search",
+     fn () =>
+       null
+         (residual
+           (aesopLib.AESOP_TAC [])
+           ([surface_augmented], surface_augmented)) andalso
+       !surface_augmented_called)

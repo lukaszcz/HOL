@@ -10,14 +10,16 @@ all: $(DEFAULT_TARGETS) selftest.exe
 
 aesopNorm.uo: aesopRule.uo aesopTree.uo
 aesopSearch.uo: aesopNorm.uo aesopRule.uo aesopTree.uo
+aesopLib.uo: aesopData.uo aesopRule.uo aesopSearch.uo aesopTree.uo
 
-selftest.uo: aesopData.uo aesopRule.uo aesopNorm.uo aesopSearch.uo
+selftest.uo: aesopData.uo aesopRule.uo aesopNorm.uo aesopSearch.uo \
+             aesopLib.uo
 aesopTree.uo: aesopRule.uo
 
 selftest.uo: aesopTree.uo
 
 selftest.exe: selftest.uo aesopData.uo aesopRule.uo aesopTree.uo \
-             aesopNorm.uo aesopSearch.uo
+             aesopNorm.uo aesopSearch.uo aesopLib.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
