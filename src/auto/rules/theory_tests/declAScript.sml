@@ -17,6 +17,24 @@ Proof
   BasicProvers.PROVE_TAC []
 QED
 
+Theorem declA_intro_priority[intro=75]:
+  !p q. p ==> p \/ q
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem declA_elim_priority[elim=50]:
+  !p q. p /\ q ==> q /\ p
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
+Theorem declA_dest_priority[dest=25]:
+  !p q. p /\ q ==> p
+Proof
+  BasicProvers.PROVE_TAC []
+QED
+
 Theorem declA_export:
   !p q. p ==> q ==> p
 Proof

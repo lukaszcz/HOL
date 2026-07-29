@@ -1568,14 +1568,42 @@ val _ =
 
 val _ =
   test
-    ("claset attributes reject arguments until priorities are implemented",
+    ("claset unsafe attributes reject invalid priorities cleanly",
      fn () =>
-       Option.isSome
-         (hol_err_msg
-           (fn () =>
-             ThmAttribute.local_attribute
-               {attrname = "intro", name = "bad-priority", args = ["10"],
-                thm = state_rule})))
+       let
+         val cases =
+           [("intro", ["0"]), ("elim", ["101"]), ("dest", ["75x"]),
+            ("intro", ["25", "50"])]
+         fun rejected (attrname, args) =
+           hol_err_msg
+             (fn () =>
+               ThmAttribute.local_attribute
+                 {attrname = attrname, name = "bad-priority", args = args,
+                  thm = state_rule}) =
+           SOME
+             ("Invalid priority for attribute " ^ attrname ^
+              "; expected one integer from 1 to 100")
+       in
+         List.all rejected cases
+       end)
+
+val _ =
+  test
+    ("claset safe attributes reject priorities",
+     fn () =>
+       let
+         fun rejected attrname =
+           hol_err_msg
+             (fn () =>
+               ThmAttribute.local_attribute
+                 {attrname = attrname, name = "bad-safe-priority",
+                  args = ["10"], thm = state_rule}) =
+           SOME
+             ("Arguments not allowed for attribute " ^ attrname ^
+              "; safe-rule priorities are not supported")
+       in
+         List.all rejected ["sintro", "selim", "sdest"]
+       end)
 
 
 (* clasetLib: TypeBase hook and contribution registry. *)

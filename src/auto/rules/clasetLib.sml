@@ -820,18 +820,40 @@ fun merge_clasets thys =
   Option.map (catch_up_typebase o #1) (#merge adresult thys)
 fun with_claset cs = AncestryData.with_temp_value adresult (cs, true, [])
 
-fun attribute_error attrname =
+fun priority_error attrname =
+  raise mk_HOL_ERR "clasetLib" "attribute"
+    ("Invalid priority for attribute " ^ attrname ^
+     "; expected one integer from 1 to 100")
+
+fun safe_priority_error attrname =
   raise mk_HOL_ERR "clasetLib" "attribute"
     ("Arguments not allowed for attribute " ^ attrname ^
-     "; priorities arrive in a later phase")
+     "; safe-rule priorities are not supported")
+
+fun priority_spec attrname (spec : rulespec) args =
+  case args of
+      [] => spec
+    | [arg] =>
+        (case Int.fromString arg of
+             SOME priority =>
+               if CharVector.all Char.isDigit arg andalso
+                  1 <= priority andalso priority <= 100
+               then
+                 {kind = #kind spec, safe = false, prio = SOME priority}
+               else priority_error attrname
+           | NONE => priority_error attrname)
+    | _ => priority_error attrname
 
 fun register_rule_attribute (attrname, spec) =
   let
+    fun checked_spec args =
+      if #safe spec then
+        if List.null args then spec else safe_priority_error attrname
+      else priority_spec attrname spec args
     fun storedf {name, args, ...} =
-      if List.null args then export_rule spec name else attribute_error attrname
+      export_rule (checked_spec args) name
     fun localf {name, args, thm, ...} =
-      if List.null args then temp_add_rule spec (name, thm)
-      else attribute_error attrname
+      temp_add_rule (checked_spec args) (name, thm)
   in
     ThmAttribute.register_attribute
       (attrname, {storedf = storedf, localf = localf})

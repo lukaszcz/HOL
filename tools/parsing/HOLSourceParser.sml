@@ -323,11 +323,20 @@ fun parseSML file read parseError: scope -> result = let
     (_, "") => rev acc
   | id => parseIdentifiers' f (id :: acc)
   val parseIdentifiers = parseIdentifiers' (fn _ => false)
-  val parseIdentifiersOrKws = parseIdentifiers' (fn _ => true)
+
+  fun parseAttributeValue force =
+    case token () of
+        (start, IntTk) => (start, ident start)
+      | tk => (unread tk; parseIdentifierOrKw force)
+
+  fun parseAttributeValues acc =
+    case parseAttributeValue false of
+        (_, "") => rev acc
+      | value => parseAttributeValues (value :: acc)
 
   fun parseKVals (): kvals = {
     key = parseIdentifierOrKw true,
-    bind = Option.map (fn eq_ => {eq_ = eq_, vals = parseIdentifiersOrKws []})
+    bind = Option.map (fn eq_ => {eq_ = eq_, vals = parseAttributeValues []})
       (parseKeyword "=" NONE) }
 
   fun parseAttrs f: 'a attrs = case parseSymbol #"[" NONE of
