@@ -1660,3 +1660,267 @@ val _ =
          (concl dropped_kernel_proof)
          (clasetMeta.norm dropped_grounded
            (Term.mk_comb (dropped_homo, dropped_meta))))
+
+fun search_source norm safe unsafe
+      ({mode, ...} :
+       {mode : clasetUnify.mode, cgoal : clasetGoal.cgoal,
+        store : clasetMeta.store}) : aesopRule.ruleset =
+  {norm = norm,
+   safe =
+     {closers = safe mode, safe0_claset = [], safe_forward = [],
+      safep_claset = [], conclusion_splits = [],
+      assumption_splits = []},
+   unsafe = unsafe}
+
+fun search_tree outcome =
+  case outcome of
+      aesopSearch.SafeSaturated tree => tree
+    | aesopSearch.SafeNormalisationLimit _ =>
+        raise Fail "unexpected aesop search normalisation limit"
+
+val search_first_rule =
+  aesopRule.apply_rule
+    {name = "first-safe", phase = aesopRule.RSafe,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
+val search_second_rule =
+  aesopRule.apply_rule
+    {name = "second-safe", phase = aesopRule.RSafe,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
+val search_commit_tree0 =
+  new_tree clasetMeta.empty (tree_cgoal [] [] boolSyntax.T) []
+val search_commit_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source []
+           (fn clasetUnify.Match =>
+                 [search_first_rule, search_second_rule]
+             | clasetUnify.Unify => [search_second_rule])
+           []}
+      search_commit_tree0)
+val search_commit_root =
+  aesopTree.root search_commit_tree
+
+val _ =
+  test
+    ("aesop safe search uses Match mode and commits the first rule",
+     fn () =>
+       case aesopTree.child_rapps search_commit_tree search_commit_root of
+           [rid] =>
+             #rule (aesopTree.rapp search_commit_tree rid) =
+               "first-safe" andalso
+             #state
+               (aesopTree.goal search_commit_tree search_commit_root) =
+               aesopTree.Proved
+         | _ => false)
+
+fun duplicate_search_step input =
+  case
+    seq.cases
+      ((clasetStep.rule_step
+         {theorem = boolTheory.TRUTH, elim = false,
+          mode = clasetUnify.Match}) input)
+  of
+      NONE => seq.empty
+    | SOME (result, _) => seq.fromList [result, result]
+
+val search_multi_rule : aesopRule.rule =
+  {name = "multi-step", phase = aesopRule.RSafe,
+   apply =
+     aesopRule.MultiStep
+       [clasetStep.rule_step
+          {theorem = boolTheory.TRUTH, elim = false,
+           mode = clasetUnify.Match},
+        clasetStep.rule_step
+          {theorem = boolTheory.TRUTH, elim = false,
+           mode = clasetUnify.Match}],
+   once = false}
+val search_alternative_rule : aesopRule.rule =
+  {name = "alternatives", phase = aesopRule.RSafe,
+   apply = aesopRule.EngineStep duplicate_search_step, once = false}
+val search_fallback_rule =
+  aesopRule.apply_rule
+    {name = "fallback", phase = aesopRule.RSafe,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
+val search_multi_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source []
+           (fn _ =>
+             [search_multi_rule, search_alternative_rule,
+              search_fallback_rule])
+           []}
+      (new_tree clasetMeta.empty
+        (tree_cgoal [] [] boolSyntax.T) []))
+val search_multi_root =
+  aesopTree.root search_multi_tree
+
+val _ =
+  test
+    ("aesop safe search dynamically rejects multi-rule alternatives",
+     fn () =>
+       case aesopTree.child_rapps search_multi_tree search_multi_root of
+           [rid] =>
+             #rule (aesopTree.rapp search_multi_tree rid) = "fallback"
+         | _ => false)
+
+val (search_postpone_meta, search_postpone_store) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val search_postpone_tree0 =
+  new_tree search_postpone_store
+    (tree_cgoal [] [boolSyntax.T] search_postpone_meta) []
+val search_postpone_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source []
+           (fn clasetUnify.Match => []
+             | clasetUnify.Unify => [hd (aesopRule.closers ())])
+           []}
+      search_postpone_tree0)
+val search_postpone_root =
+  aesopTree.root search_postpone_tree
+
+val _ =
+  test
+    ("aesop safe search postpones assumption close that assigns a meta",
+     fn () =>
+       let val root = aesopTree.goal search_postpone_tree
+                        search_postpone_root
+       in
+         #safe_done root andalso
+         null (aesopTree.child_rapps search_postpone_tree
+           search_postpone_root) andalso
+         (case #postponed root of
+              [{rule = "assumption", node, ...}] =>
+                null (clasetGoal.goals node) andalso
+                not
+                  (null
+                    (#terms
+                      (clasetMeta.bindings
+                        (clasetGoal.store node))))
+            | _ => false)
+       end)
+
+val (search_drop_meta, search_drop_store) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val search_drop_target =
+  boolSyntax.mk_conj (search_drop_meta, boolSyntax.T)
+val search_drop_assumption =
+  boolSyntax.mk_conj (boolSyntax.T, boolSyntax.T)
+val search_split_rule =
+  aesopRule.tactic_rule
+    {name = "split", phase = aesopRule.RSafe,
+     tactic = NTactical.LIFT Tactic.CONJ_TAC, index = NONE}
+val search_drop_tree0 =
+  new_tree search_drop_store
+    (tree_cgoal [] [search_drop_assumption] search_drop_target) []
+val search_drop_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source []
+           (fn clasetUnify.Match => [search_split_rule]
+             | clasetUnify.Unify =>
+                 [hd (aesopRule.closers ()), search_split_rule])
+           []}
+      search_drop_tree0)
+val search_drop_root =
+  aesopTree.root search_drop_tree
+
+val _ =
+  test
+    ("aesop installed safe result drops earlier postponed results",
+     fn () =>
+       case aesopTree.child_rapps search_drop_tree search_drop_root of
+           [rid] =>
+             null
+               (#postponed
+                 (aesopTree.goal search_drop_tree search_drop_root))
+             andalso
+             #rule (aesopTree.rapp search_drop_tree rid) = "split"
+         | _ => false)
+
+val search_forward_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] [forward_p, forward_q] forward_target) []
+fun search_forward_rules mode =
+  [aesopRule.default_forward_rule
+    {name = "safe-forward", phase = aesopRule.RSafe,
+     theorem = forward_theorem, mode = mode}]
+val search_forward_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source [] search_forward_rules []}
+      search_forward_tree0)
+val search_forward_root =
+  aesopTree.root search_forward_tree
+val [search_forward_rapp] =
+  aesopTree.child_rapps search_forward_tree search_forward_root
+val [search_forward_child] =
+  List.concat
+    (map
+      (fn cluster =>
+        #goals (aesopTree.cluster search_forward_tree cluster))
+      (#clusters
+        (aesopTree.rapp search_forward_tree search_forward_rapp)))
+
+val _ =
+  test
+    ("aesop safe search prevents repeated forward hypotheses",
+     fn () =>
+       length (aesopTree.rapps search_forward_tree) = 1 andalso
+       (case
+          #forwarded
+            (aesopTree.goal search_forward_tree search_forward_child)
+        of
+            [added] => aconv added forward_conclusion
+          | _ => false) andalso
+       (case aesopSearch.safe_frontier search_forward_tree of
+            [(id, {asl = added :: _, w, ...})] =>
+              id = search_forward_child andalso
+              aconv added forward_conclusion andalso
+              aconv w forward_target
+          | _ => false))
+
+val search_frontier_p =
+  Term.mk_var ("aesop_search_frontier_p", Type.bool)
+val search_frontier_q =
+  Term.mk_var ("aesop_search_frontier_q", Type.bool)
+val search_frontier_goal =
+  boolSyntax.mk_imp
+    (search_frontier_p,
+     boolSyntax.mk_conj (search_frontier_p, search_frontier_q))
+val search_disch_rule : aesopRule.rule =
+  {name = "disch", phase = aesopRule.RNorm 0,
+   apply = aesopRule.EngineStep clasetStep.blast_disch_step,
+   once = false}
+val search_frontier_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules =
+         search_source [search_disch_rule]
+           (fn _ => aesopRule.closers () @ [search_split_rule])
+           []}
+      (new_tree clasetMeta.empty
+        (tree_cgoal [] [] search_frontier_goal) []))
+
+val _ =
+  test
+    ("aesop safe saturation returns the exact normalised frontier",
+     fn () =>
+       case aesopSearch.safe_frontier search_frontier_tree of
+           [(_, {asl = [assumption], w, ...})] =>
+             aconv assumption search_frontier_p andalso
+             aconv w search_frontier_q
+         | _ => false)

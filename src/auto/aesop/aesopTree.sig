@@ -48,6 +48,8 @@ sig
   val empty_dependencies : unit -> dependencies
   val dependencies_of : store -> cgoal -> dependencies
   val dependencies_overlap : dependencies -> dependencies -> bool
+  val dependencies_empty : dependencies -> bool
+  val assigned_between : store -> store -> dependencies
 
   (* Priorities are log probabilities.  Norm and safe rules have cost zero. *)
   val extend_priority : real -> aesopRule.rphase -> real

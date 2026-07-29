@@ -9,14 +9,15 @@ all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 aesopNorm.uo: aesopRule.uo aesopTree.uo
+aesopSearch.uo: aesopNorm.uo aesopRule.uo aesopTree.uo
 
-selftest.uo: aesopData.uo aesopRule.uo aesopNorm.uo
+selftest.uo: aesopData.uo aesopRule.uo aesopNorm.uo aesopSearch.uo
 aesopTree.uo: aesopRule.uo
 
 selftest.uo: aesopTree.uo
 
 selftest.exe: selftest.uo aesopData.uo aesopRule.uo aesopTree.uo \
-             aesopNorm.uo
+             aesopNorm.uo aesopSearch.uo
 	$(HOLMOSMLC) -o $@ $<
 
 ifdef HOLSELFTESTLEVEL
