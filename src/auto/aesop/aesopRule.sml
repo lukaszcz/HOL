@@ -13,6 +13,10 @@ datatype rapply =
   | RenderedTactic of NTactical.ntactic
   | MultiStep of clasetStep.step list
 
+datatype tactic_index =
+    TargetPattern of term
+  | HypPattern of term
+
 type rule =
   {name : string, phase : rphase, apply : rapply, once : bool}
 
@@ -83,6 +87,187 @@ fun constructors_rule {name, theorems, percent, mode} =
 fun safe_constructors_rule {name, theorems, mode} =
   constructors_rule_with RSafe "safe_constructors_rule"
     {name = name, theorems = theorems, mode = mode}
+
+fun forward_rule {name, phase, theorem, immediate, mode} : rule =
+  {name = name, phase = phase,
+   apply =
+     EngineStep
+       (clasetStep.forward_rule_step
+         {theorem = theorem, immediate = immediate, mode = mode}),
+   once = true}
+
+fun default_forward_rule {name, phase, theorem, mode} =
+  let
+    val immediate =
+      length
+        (clasetRules.rule_premises_of clasetRules.Forward theorem)
+  in
+    forward_rule
+      {name = name, phase = phase, theorem = theorem,
+       immediate = immediate, mode = mode}
+  end
+
+fun forward_duplicate store previous candidate =
+  let
+    val candidate' = clasetMeta.instantiate store candidate
+  in
+    List.exists
+      (fn earlier =>
+        aconv (clasetMeta.instantiate store earlier) candidate')
+      previous
+  end
+
+fun pattern_matches patterns store assumptions =
+  null patterns orelse
+  List.exists
+    (fn pattern =>
+      List.exists
+        (fn assumption =>
+          can (Term.match_term pattern)
+            (clasetMeta.instantiate store assumption))
+        assumptions)
+    patterns
+
+fun gated_engine_step patterns step (node, pos) =
+  let
+    val {asl, ...} = clasetGoal.goal_at node pos
+  in
+    if pattern_matches patterns (clasetGoal.store node) asl then
+      step (node, pos)
+    else
+      seq.empty
+  end
+
+fun cases_rule {name, phase, theorem, patterns, mode} : rule =
+  {name = name, phase = phase,
+   apply =
+     EngineStep
+       (gated_engine_step patterns
+         (clasetStep.rule_step
+           {theorem = theorem, elim = true, mode = mode})),
+   once = false}
+
+fun goal_matches_index NONE _ = true
+  | goal_matches_index (SOME (TargetPattern pattern)) (_, target) =
+      can (Term.match_term pattern) target
+  | goal_matches_index (SOME (HypPattern pattern)) (assumptions, _) =
+      List.exists (can (Term.match_term pattern)) assumptions
+
+fun indexed_changed index tactic goal =
+  if goal_matches_index index goal then
+    NTactical.NCHANGED tactic goal
+  else
+    seq.empty
+
+(* Rendering exposes engine metavariables as rigid marked frees.  Keeping
+   tactic rules in this representation makes their inability to create or
+   assign engine metavariables structural rather than a run-time convention. *)
+fun tactic_rule {name, phase, tactic, index} : rule =
+  {name = name, phase = phase,
+   apply = RenderedTactic (indexed_changed index tactic),
+   once = false}
+
+val tactic_registry =
+  Sref.new ([] : (rule * tactic_index option) list)
+
+fun register_tactic_rule
+      (registration as {index, ...}) =
+  Sref.update tactic_registry
+    (fn rules => rules @ [(tactic_rule registration, index)])
+
+fun registered_tactic_rules () =
+  map #1 (Sref.value tactic_registry)
+
+fun registry_index_matches conclusion assumptions NONE = true
+  | registry_index_matches conclusion _
+      (SOME (TargetPattern pattern)) =
+      can (Term.match_term pattern) conclusion
+  | registry_index_matches _ assumptions
+      (SOME (HypPattern pattern)) =
+      List.exists (can (Term.match_term pattern)) assumptions
+
+fun applicable_tactic_rules conclusion assumptions =
+  map #1
+    (List.filter
+      (fn (_, index) =>
+        registry_index_matches conclusion assumptions index)
+      (Sref.value tactic_registry))
+
+fun norm_phase_rule ({phase, ...} : rule) =
+  case phase of RNorm _ => true | _ => false
+
+fun safe_phase_rule ({phase, ...} : rule) =
+  phase = RSafe
+
+fun unsafe_phase_rule ({phase, ...} : rule) =
+  case phase of RUnsafe _ => true | _ => false
+
+fun type_candidate ty variable =
+  can (Type.match_type ty) (type_of variable)
+
+fun cases_rule_for ty =
+  let
+    val nchotomy = TypeBase.nchotomy_of ty
+
+    fun cases_tac (assumptions, target) =
+      let
+        val candidates =
+          List.filter (type_candidate ty)
+            (free_varsl (target :: assumptions))
+        val variable =
+          case candidates of
+              candidate :: _ => candidate
+            | [] =>
+                raise ERR "cases_rule_for"
+                  "the goal has no free variable of the requested type"
+      in
+        Tactic.STRUCT_CASES_TAC (Drule.ISPEC variable nchotomy)
+          (assumptions, target)
+      end
+  in
+    tactic_rule
+      {name = "cases " ^ Parse.type_to_string ty,
+       phase = RUnsafe default_percent,
+       tactic = NTactical.LIFT cases_tac, index = NONE}
+  end
+
+fun split_rule_pair {name, theorem} =
+  let
+    val (conclusion_theorem, assumption_theorem) =
+      if splitLib.is_asm_split theorem then
+        (splitLib.mk_asm_split theorem, theorem)
+      else
+        (theorem, splitLib.mk_asm_split theorem)
+    val conclusion =
+      tactic_rule
+        {name = name ^ " (conclusion split)", phase = RSafe,
+         tactic =
+           NTactical.LIFT
+             (Tactic.CONV_TAC
+               (splitLib.SPLIT_CONV [conclusion_theorem])),
+         index = NONE}
+    val assumption =
+      tactic_rule
+        {name = name ^ " (assumption split)", phase = RSafe,
+         tactic =
+           NTactical.LIFT
+             (splitLib.SPLIT_ASM_TAC [assumption_theorem]),
+         index = NONE}
+  in
+    {conclusion = conclusion, assumption = assumption}
+  end
+
+fun split_rules () =
+  let
+    val pairs =
+      map
+        (fn (name, theorem) =>
+          split_rule_pair {name = name, theorem = theorem})
+        (splitLib.named_split_thms ())
+  in
+    {conclusion = map #conclusion pairs,
+     assumption = map #assumption pairs}
+  end
 
 fun simp_rule_with {name, simpset, controls} : rule =
   {name = name, phase = RNorm 0,
@@ -160,15 +345,22 @@ fun declaration_rule mode
       (spec, (name, theorem)) : rule =
   let
     val kind = #kind spec
-    val source = canonical_source spec theorem
   in
-    {name = name, phase = phase_of_spec spec,
-     apply =
-       EngineStep
-         (clasetStep.rule_step
-           {theorem = source, elim = kind <> clasetRules.Intro,
-            mode = mode}),
-     once = false}
+    if kind = clasetRules.Forward then
+      default_forward_rule
+        {name = name, phase = phase_of_spec spec,
+         theorem = theorem, mode = mode}
+    else
+      let val source = canonical_source spec theorem
+      in
+        {name = name, phase = phase_of_spec spec,
+         apply =
+           EngineStep
+             (clasetStep.rule_step
+               {theorem = source, elim = kind <> clasetRules.Intro,
+                mode = mode}),
+         once = false}
+      end
   end
 
 fun safe_class wanted (spec, (_, theorem)) =
@@ -178,7 +370,12 @@ fun safe_class wanted (spec, (_, theorem)) =
     SOME wanted
 
 fun unsafe_declaration (spec, _) =
-  ordinary_kind (#kind spec) andalso not (#safe spec)
+  (ordinary_kind (#kind spec) orelse
+   #kind spec = clasetRules.Forward) andalso
+  not (#safe spec)
+
+fun safe_forward_declaration (spec, _) =
+  #kind spec = clasetRules.Forward andalso #safe spec
 
 fun unsafe_percent (spec, _) =
   case phase_of_spec spec of
@@ -208,18 +405,31 @@ fun claset_rules
     val safep =
       map (declaration_rule mode)
         (List.filter (safe_class clasetRules.SafeP) candidates)
+    val forwards =
+      map (declaration_rule mode)
+        (List.filter safe_forward_declaration candidates)
     val unsafe =
       map (declaration_rule mode)
         (order_unsafe (List.filter unsafe_declaration candidates))
+    val splits = split_rules ()
+    val tactics =
+      applicable_tactic_rules conclusion assumptions
+    val norm_tactics =
+      List.filter norm_phase_rule tactics
+    val safe_tactics =
+      List.filter safe_phase_rule tactics
+    val unsafe_tactics =
+      List.filter unsafe_phase_rule tactics
     val safe =
       {closers = closers (),
        safe0_claset = safe0,
-       safe_forward = [],
+       safe_forward = forwards,
        safep_claset = safep,
-       conclusion_splits = [],
-       assumption_splits = []}
+       conclusion_splits = #conclusion splits,
+       assumption_splits = #assumption splits @ safe_tactics}
   in
-    {norm = [simp_rule simp_args], safe = safe, unsafe = unsafe}
+    {norm = norm_tactics @ [simp_rule simp_args], safe = safe,
+     unsafe = unsafe @ unsafe_tactics}
   end
 
 end

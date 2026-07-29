@@ -340,10 +340,14 @@ fun illformed_rule fname kind =
     ("Ill-formed " ^ kind_name kind ^ " rule")
 
 fun rule_index_of (Intro | Norm) (form : canonical) = #concl form
-  | rule_index_of (kind as (Elim | Dest | Forward)) form =
+  | rule_index_of (kind as (Elim | Dest)) form =
       (case #prems form of
           prem :: _ => prem
         | [] => illformed_rule "rule_index" kind)
+  | rule_index_of (kind as Forward) form =
+      (case #prems form of
+          [] => illformed_rule "rule_index" kind
+        | prems => List.last prems)
 
 fun rule_index kind th = rule_index_of kind (canonical_form_of kind th)
 

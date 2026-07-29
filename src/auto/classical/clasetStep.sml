@@ -717,6 +717,159 @@ fun try_rule policy mode cs duplicated node pos
        | HOL_ERR _ => raise Match
        | Empty => raise Match
 
+fun try_forward mode theorem immediate node pos
+    (major_pos, major) =
+  let
+    val (asl, w) = clasetGoal.render node pos
+    val fresh = freshen_rule node pos false theorem
+    val all_premises = #premises fresh
+    val _ =
+      if immediate > 0 andalso immediate <= length all_premises then ()
+      else raise Match
+    val immediate_premises = List.take (all_premises, immediate)
+    val major_premise = List.last immediate_premises
+    val config = {mode = mode, rule_metas = #metas fresh}
+    val major_store =
+      case clasetUnify.unify (#store fresh) config
+        (major_premise, major)
+      of
+          NONE => raise Match
+        | SOME store => store
+    val positioned = position_map (fn value => value) asl
+
+    fun select premise store =
+      case List.find
+        (fn (_, assumption) =>
+          closing_equal store premise assumption) positioned
+      of
+          SOME (position, _) => (position, store)
+        | NONE =>
+            (case List.mapPartial
+                    (fn (position, assumption) =>
+                      Option.map
+                        (fn next => (position, next))
+                        (clasetUnify.unify store config
+                          (premise, assumption)))
+                    positioned
+             of
+                 selected :: _ => selected
+               | [] => raise Match)
+
+    fun select_earlier
+          (premise, (rev_positions, store)) =
+      let val (position, next) = select premise store
+      in (position :: rev_positions, next) end
+
+    val earlier = List.take (immediate_premises, immediate - 1)
+    val (rev_earlier_positions, matched_store) =
+      List.foldl select_earlier ([], major_store) earlier
+    val positions =
+      List.rev rev_earlier_positions @ [major_pos]
+    val residual_terms =
+      List.drop (all_premises, immediate) @
+      [#conclusion fresh] @ hyp (#core fresh)
+    val _ =
+      case mode of
+          clasetUnify.Match =>
+            if unresolved_in_premises matched_store (#metas fresh)
+                 residual_terms
+            then raise Match
+            else ()
+        | clasetUnify.Unify => ()
+    val final_store =
+      case mode of
+          clasetUnify.Match =>
+            ground_created matched_store (#metas fresh)
+        | clasetUnify.Unify => matched_store
+    val (type_substitution, term_substitution) =
+      clasetMeta.collapse final_store
+    val instantiated =
+      Drule.INST_TY_TERM
+        (term_substitution, type_substitution) (#core fresh)
+    val normalized_rule0 = normalize_rule_thm instantiated
+
+    fun align_hypothesis (hypothesis, current) =
+      case List.find
+        (fn assumption =>
+          closing_equal final_store hypothesis assumption) asl
+      of
+          NONE => raise Match
+        | SOME assumption =>
+            Drule.PROVE_HYP
+              (assumption_thm assumption hypothesis) current
+
+    val normalized_rule =
+      List.foldl align_hypothesis normalized_rule0
+        (hyp normalized_rule0)
+    val (normalized_premises, _) =
+      strip_imp_only (concl normalized_rule)
+    val supplied =
+      ListPair.map
+        (fn (premise, position) =>
+          supplied_major_thm final_store
+            (nth1 asl position) premise)
+        (List.take (normalized_premises, immediate), positions)
+    val forward = Drule.LIST_MP supplied normalized_rule
+    val added = concl forward
+    val parent = clasetGoal.goal_at node pos
+    val child = clasetGoal.cons_assumption added parent
+    val child_goal = cgoal_render final_store child
+    val target = normalize_term final_store w
+
+    fun validation [child_thm] =
+          let val result = Drule.PROVE_HYP forward child_thm
+          in EQ_MP (ALPHA (concl result) target) result end
+      | validation _ =
+          raise mk_HOL_ERR "clasetStep" "try_forward"
+            "forward validation arity"
+
+    fun replay_theorem store =
+      let
+        val (type_substitution, term_substitution) =
+          clasetMeta.collapse store
+      in
+        Drule.INST_TY_TERM
+          (term_substitution, type_substitution) normalized_rule
+      end
+
+    fun replay_instance store =
+      {theorem = replay_theorem store, immediate = immediate,
+       assumptions = positions}
+  in
+    Direct
+      {kind =
+         RuleApplication
+           {original = theorem, theorem = theorem,
+            variant = MakeElim, elim = true},
+       consumed = NONE, created = #metas fresh,
+       eigenvariables = [[]],
+       result = ([child_goal], validation),
+       children = SOME [child],
+       action = clasetReplay.forward_rule_action replay_instance,
+       closed = [NONE], store = final_store}
+  end
+  handle Match => raise Match
+       | HOL_ERR _ => raise Match
+       | Empty => raise Match
+
+fun forward_rule_results mode theorem immediate (node, pos) =
+  let
+    fun attempts _ [] = seq.empty
+      | attempts position (major :: rest) =
+          seq.delay
+            (fn () =>
+              case total
+                (fn () =>
+                  try_forward mode theorem immediate node pos
+                    (position, major)) ()
+              of
+                  SOME direct =>
+                    seq.cons direct (attempts (position + 1) rest)
+                | NONE => attempts (position + 1) rest)
+  in
+    attempts 1 (#asl (clasetGoal.goal_at node pos))
+  end
+
 fun rule_results mode cs duplicated part weight_filter (node, pos) =
   seq.delay
     (fn () =>
@@ -1663,6 +1816,19 @@ fun rule_step {theorem, elim, mode} =
   direct_step
     (supplied_rule_results_with AllMajors LegacyPrefixes mode
       clasetLib.empty_cs {theorem = theorem, elim = elim})
+fun forward_rule_step {theorem, immediate, mode} =
+  let
+    val premise_count =
+      length
+        (clasetRules.rule_premises_of clasetRules.Forward theorem)
+    val _ =
+      if immediate > 0 andalso immediate <= premise_count then ()
+      else
+        raise mk_HOL_ERR "clasetStep" "forward_rule_step"
+          "the immediate-premise count is out of range"
+  in
+    direct_step (forward_rule_results mode theorem immediate)
+  end
 fun blast_assumption_step_at position =
   direct_step (unifying_assumption_results_at position)
 fun blast_contradiction_step_at positions =

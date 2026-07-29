@@ -439,6 +439,55 @@ fun NONCONSUMING_ELIM_RULE_TAC
     {theorem = theorem, elim = true, consumed = SOME major,
      parameters = parameters, eigenvariables = eigenvariables}
 
+fun FORWARD_RULE_TAC {theorem, immediate, assumptions} (asl, w) =
+  let
+    val function_name = "FORWARD_RULE_TAC"
+    val rule0 = normalize_rule_thm theorem
+    val (premises, _) = strip_imp_only (concl rule0)
+    val _ =
+      if immediate > 0 andalso immediate <= length premises then ()
+      else
+        raise mk_HOL_ERR "clasetReplay" function_name
+          "the immediate-premise count is out of range"
+    val _ =
+      if length assumptions = immediate then ()
+      else
+        raise mk_HOL_ERR "clasetReplay" function_name
+          "the recorded assumption arity is corrupt"
+    val normalized_asl = map normalize_assumption asl
+    val rule =
+      List.foldl
+        (fn (hypothesis, current) =>
+          Drule.PROVE_HYP
+            (theorem_hypothesis normalized_asl hypothesis) current)
+        rule0 (hyp rule0)
+
+    fun premise_thm (premise, position) =
+      let
+        val assumption = nth1 function_name asl position
+        val (normalized, theorem) = normalize_assumption assumption
+      in
+        if aconv normalized premise then theorem
+        else
+          raise mk_HOL_ERR "clasetReplay" function_name
+            "a selected assumption misses its immediate premise"
+      end
+
+    val supplied =
+      ListPair.map premise_thm
+        (List.take (premises, immediate), assumptions)
+    val forward = Drule.LIST_MP supplied rule
+    val added = concl forward
+    val child = (added :: asl, w)
+
+    fun validation [child_thm] = Drule.PROVE_HYP forward child_thm
+      | validation _ =
+          raise mk_HOL_ERR "clasetReplay" function_name
+            "validation received the wrong number of theorems"
+  in
+    ([child], validation)
+  end
+
 fun BLAST_RULE_TAC
     {theorem, elim, consumed, parameters, eigenvariables, prefixes} =
   let
@@ -736,6 +785,8 @@ fun mp_action positions store = MP_TAC store positions
 fun rule_action make store = RULE_TAC (make store)
 fun nonconsuming_elim_rule_action make store =
   NONCONSUMING_ELIM_RULE_TAC (make store)
+fun forward_rule_action make store =
+  FORWARD_RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
 val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC

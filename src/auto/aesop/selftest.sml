@@ -325,3 +325,313 @@ val _ =
                 not (seq.null (tactic ([], boolSyntax.T)))
             | _ => false)
        end)
+
+fun first_engine_result rule goal =
+  case #apply (rule : aesopRule.rule) of
+      aesopRule.EngineStep step =>
+        (case seq.cases (step (clasetGoal.from_goal goal, 1)) of
+             SOME (result, _) => SOME result
+           | NONE => NONE)
+    | _ => NONE
+
+fun rendered_succeeds rule goal =
+  case #apply (rule : aesopRule.rule) of
+      aesopRule.RenderedTactic tactic =>
+        not (seq.null (tactic goal))
+    | _ => false
+
+val forward_p = Term.mk_var ("aesop_forward_p", Type.bool)
+val forward_q = Term.mk_var ("aesop_forward_q", Type.bool)
+val forward_target =
+  Term.mk_var ("aesop_forward_target", Type.bool)
+val forward_conclusion =
+  boolSyntax.mk_conj (forward_p, forward_q)
+val forward_theorem =
+  DISCH forward_p
+    (DISCH forward_q
+      (CONJ (ASSUME forward_p) (ASSUME forward_q)))
+val reverse_forward_theorem =
+  DISCH forward_p
+    (DISCH forward_q
+      (CONJ (ASSUME forward_q) (ASSUME forward_p)))
+
+val _ =
+  test
+    ("aesop forward is all-immediate and retains matched assumptions",
+     fn () =>
+       let
+         val rule =
+           aesopRule.default_forward_rule
+             {name = "forward", phase = aesopRule.RSafe,
+              theorem = forward_theorem, mode = clasetUnify.Match}
+       in
+         case first_engine_result rule
+           ([forward_p, forward_q], forward_target)
+         of
+             SOME (record, node) =>
+               #once rule andalso
+               clasetStep.consumed_of record = NONE andalso
+               (case clasetGoal.render node 1 of
+                    ([added, retained_p, retained_q], target) =>
+                      aconv added forward_conclusion andalso
+                      aconv retained_p forward_p andalso
+                      aconv retained_q forward_q andalso
+                      aconv target forward_target
+                  | _ => false)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("aesop forward keeps a non-immediate suffix in the new hypothesis",
+     fn () =>
+       let
+         val rule =
+           aesopRule.forward_rule
+             {name = "partial_forward", phase = aesopRule.RUnsafe 60,
+              theorem = forward_theorem, immediate = 1,
+              mode = clasetUnify.Unify}
+         val expected =
+           boolSyntax.mk_imp (forward_q, forward_conclusion)
+       in
+         case first_engine_result rule
+           ([forward_p, forward_q], forward_target)
+         of
+             SOME (record, node) =>
+               clasetStep.consumed_of record = NONE andalso
+               (case clasetGoal.render node 1 of
+                    (added :: retained, target) =>
+                      aconv added expected andalso
+                      ListPair.allEq (fn (left, right) =>
+                        aconv left right)
+                        (retained, [forward_p, forward_q]) andalso
+                      aconv target forward_target
+                  | _ => false)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("aesop forward records a replayable non-consuming transition",
+     fn () =>
+       let
+         val original = ([forward_p, forward_q], forward_target)
+         val rule =
+           aesopRule.default_forward_rule
+             {name = "forward_replay", phase = aesopRule.RSafe,
+              theorem = forward_theorem, mode = clasetUnify.Match}
+       in
+         case first_engine_result rule original of
+             SOME (_, node) =>
+               let
+                 val grounded =
+                   clasetReplay.ground (clasetGoal.store node)
+                     (clasetGoal.replay node)
+               in
+                 case clasetReplay.replay grounded original of
+                     clasetReplay.Replayed
+                       ([(added :: retained, target)], _) =>
+                         aconv added forward_conclusion andalso
+                         ListPair.allEq (fn (left, right) =>
+                           aconv left right)
+                           (retained, [forward_p, forward_q]) andalso
+                         aconv target forward_target
+                   | _ => false
+               end
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("aesop forward duplicate check instantiates before alpha comparison",
+     fn () =>
+       let
+         val (meta, store0) =
+           clasetMeta.new_meta
+             {allow = [], ty = Type.bool} clasetMeta.empty
+       in
+         case clasetMeta.bind (meta, forward_p) store0 of
+             SOME store =>
+               aesopRule.forward_duplicate store [meta] forward_p
+           | NONE => false
+       end)
+
+val forward_cs =
+  clasetLib.empty_cs
+  |> clasetLib.add_rule
+       {kind = clasetRules.Forward, safe = true, prio = NONE}
+       ("safe_forward", forward_theorem)
+  |> clasetLib.add_rule
+       {kind = clasetRules.Forward, safe = false, prio = SOME 77}
+       ("unsafe_forward", reverse_forward_theorem)
+
+val forward_assembled =
+  aesopRule.claset_rules
+    {claset = forward_cs, mode = clasetUnify.Match,
+     conclusion = forward_target, assumptions = [forward_q],
+     qvars = HOLset.empty Term.compare, simp_args = []}
+
+val _ =
+  test
+    ("aesop claset assembly puts forward declarations in their phases",
+     fn () =>
+       let val safe = #safe forward_assembled
+       in
+         rule_names (#safe_forward safe) = ["safe_forward"] andalso
+         (case #unsafe forward_assembled of
+              [{name = "unsafe_forward",
+                phase = aesopRule.RUnsafe 77, once = true, ...}] => true
+            | _ => false)
+       end)
+
+val cases_theorem =
+  DISCH boolSyntax.T
+    (DISCH forward_q (ASSUME forward_q))
+
+val _ =
+  test
+    ("aesop cases consumes its major assumption and honours patterns",
+     fn () =>
+       let
+         val allowed =
+           aesopRule.cases_rule
+             {name = "cases", phase = aesopRule.RUnsafe 50,
+              theorem = cases_theorem, patterns = [boolSyntax.T],
+              mode = clasetUnify.Match}
+         val blocked =
+           aesopRule.cases_rule
+             {name = "blocked_cases", phase = aesopRule.RUnsafe 50,
+              theorem = cases_theorem, patterns = [boolSyntax.F],
+              mode = clasetUnify.Match}
+       in
+         (case first_engine_record allowed ([boolSyntax.T], forward_q) of
+              SOME record =>
+                clasetStep.consumed_of record = SOME 1
+            | NONE => false) andalso
+         not (engine_step_succeeds blocked
+           ([boolSyntax.T], forward_q))
+       end)
+
+val _ =
+  test
+    ("aesop TypeBase cases builder constructs a changing rendered rule",
+     fn () =>
+       let
+         val variable =
+           Term.mk_var ("aesop_cases_bool", Type.bool)
+         val target = boolSyntax.mk_eq (variable, boolSyntax.T)
+       in
+         rendered_succeeds
+           (aesopRule.cases_rule_for Type.bool) ([], target)
+       end)
+
+val _ =
+  test
+    ("aesop tactic builder rejects no-op results and applies indexes",
+     fn () =>
+       let
+         val no_op =
+           aesopRule.tactic_rule
+             {name = "no_op", phase = aesopRule.RSafe,
+              tactic = NTactical.NALL_TAC, index = NONE}
+         val target_rule =
+           aesopRule.tactic_rule
+             {name = "target", phase = aesopRule.RSafe,
+              tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+              index =
+                SOME (aesopRule.TargetPattern boolSyntax.T)}
+         val hyp_rule =
+           aesopRule.tactic_rule
+             {name = "hyp", phase = aesopRule.RSafe,
+              tactic = NTactical.LIFT Tactic.DISCH_TAC,
+              index = SOME (aesopRule.HypPattern boolSyntax.T)}
+       in
+         not (rendered_succeeds no_op ([], boolSyntax.T)) andalso
+         rendered_succeeds target_rule ([], boolSyntax.T) andalso
+         not (rendered_succeeds target_rule ([], boolSyntax.F)) andalso
+         rendered_succeeds hyp_rule
+           ([boolSyntax.T],
+            boolSyntax.mk_imp (forward_p, forward_p)) andalso
+         not (rendered_succeeds hyp_rule
+           ([], boolSyntax.mk_imp (forward_p, forward_p)))
+       end)
+
+val registered_before =
+  length (aesopRule.registered_tactic_rules ())
+val _ =
+  aesopRule.register_tactic_rule
+    {name = "registered_target", phase = aesopRule.RUnsafe 42,
+     tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+     index = SOME (aesopRule.TargetPattern boolSyntax.T)}
+val registered_matching =
+  aesopRule.claset_rules
+    {claset = clasetLib.empty_cs, mode = clasetUnify.Match,
+     conclusion = boolSyntax.T, assumptions = [],
+     qvars = HOLset.empty Term.compare, simp_args = []}
+val registered_blocked =
+  aesopRule.claset_rules
+    {claset = clasetLib.empty_cs, mode = clasetUnify.Match,
+     conclusion = boolSyntax.F, assumptions = [],
+     qvars = HOLset.empty Term.compare, simp_args = []}
+
+val _ =
+  test
+    ("aesop tactic registry retains rules and applies its index",
+     fn () =>
+       length (aesopRule.registered_tactic_rules ()) =
+         registered_before + 1 andalso
+       List.exists
+         (fn ({name, ...} : aesopRule.rule) =>
+           name = "registered_target")
+         (#unsafe registered_matching) andalso
+       not
+         (List.exists
+           (fn ({name, ...} : aesopRule.rule) =>
+             name = "registered_target")
+           (#unsafe registered_blocked)))
+
+val split_theorem = TypeBase.case_pred_disj_of Type.bool
+val split_pair =
+  aesopRule.split_rule_pair
+    {name = "bool_case_split", theorem = split_theorem}
+val assumption_split_pair =
+  aesopRule.split_rule_pair
+    {name = "bool_assumption_split",
+     theorem = splitLib.mk_asm_split split_theorem}
+val split_goal : Term.term list * Term.term =
+  ([],
+   ``aesop_split_pred
+       (if aesop_split_test then aesop_split_left:'a
+        else aesop_split_right) : bool``)
+val split_assumption_goal =
+  (#2 split_goal :: [], forward_target)
+
+val _ =
+  test
+    ("aesop split builders change conclusions and assumptions",
+     fn () =>
+       rendered_succeeds (#conclusion split_pair) split_goal andalso
+       rendered_succeeds (#assumption split_pair)
+         split_assumption_goal andalso
+       rendered_succeeds (#conclusion assumption_split_pair)
+         split_goal andalso
+       rendered_succeeds (#assumption assumption_split_pair)
+         split_assumption_goal)
+
+val _ =
+  test
+    ("aesop split builders occupy conclusion before assumption slots",
+     fn () =>
+       let
+         val safe =
+           {closers = [], safe0_claset = [], safe_forward = [],
+            safep_claset = [],
+            conclusion_splits = [#conclusion split_pair],
+            assumption_splits = [#assumption split_pair]}
+       in
+         rule_names (aesopRule.safe_rules safe) =
+           ["bool_case_split (conclusion split)",
+            "bool_case_split (assumption split)"] andalso
+         List.all (is_phase aesopRule.RSafe)
+           (aesopRule.safe_rules safe)
+       end)

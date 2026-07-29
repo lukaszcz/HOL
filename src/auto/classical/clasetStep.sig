@@ -34,6 +34,13 @@ sig
   val rule_step :
     {theorem : thm, elim : bool, mode : clasetUnify.mode} -> step
 
+  (* Engine-native forward application.  The first [immediate] premises are
+     discharged from assumptions without consuming them; the residual
+     theorem is added as a new head assumption of the sole child. *)
+  val forward_rule_step :
+    {theorem : thm, immediate : int,
+     mode : clasetUnify.mode} -> step
+
   (* Exact, wrapper-free engine transitions used by blast reconstruction.
      Rule application uses the supplied canonical source rather than doing
      another claset lookup. *)

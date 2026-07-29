@@ -82,6 +82,11 @@ sig
   val NONCONSUMING_ELIM_RULE_TAC :
     {theorem : thm, major : int, parameters : string list,
      eigenvariables : string list list} -> tactic
+  (* Apply the first [immediate] premises using the recorded assumptions,
+     retain those assumptions, and add the residual theorem as a new head
+     assumption. *)
+  val FORWARD_RULE_TAC :
+    {theorem : thm, immediate : int, assumptions : int list} -> tactic
   val BLAST_RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
      parameters : string list, eigenvariables : string list list,
@@ -121,6 +126,10 @@ sig
     (clasetMeta.store ->
       {theorem : thm, major : int, parameters : string list,
        eigenvariables : string list list}) -> replay_action
+  val forward_rule_action :
+    (clasetMeta.store ->
+      {theorem : thm, immediate : int,
+       assumptions : int list}) -> replay_action
   val blast_rule_action :
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,

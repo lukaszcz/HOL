@@ -514,6 +514,20 @@ val _ =
      fn () =>
        not (can (rule_index clasetRules.Elim) boolTheory.TRUTH))
 
+val _ =
+  test
+    ("forward rules index their last immediate premise",
+     fn () =>
+       let
+         val theorem =
+           DISCH p
+             (DISCH q
+               (CONJ (ASSUME p) (ASSUME q)))
+       in
+         Term.aconv
+           (rule_index clasetRules.Forward theorem) q
+       end)
+
 fun info_of th = {rl = (th, NONE), dup_rl = (th, NONE)}
 val safe_intro = {kind = clasetRules.Intro, safe = true, prio = NONE}
 val safe_elim = {kind = clasetRules.Elim, safe = true, prio = NONE}

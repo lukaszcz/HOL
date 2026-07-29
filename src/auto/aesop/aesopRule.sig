@@ -2,6 +2,7 @@ signature aesopRule =
 sig
   type term = Term.term
   type thm = Thm.thm
+  type hol_type = Type.hol_type
 
   datatype rphase =
       RNorm of int
@@ -43,6 +44,46 @@ sig
   val safe_constructors_rule :
     {name : string, theorems : thm list,
      mode : clasetUnify.mode} -> rule
+
+  (* [immediate] is a nonempty prefix of theorem premises.  Those premises
+     are discharged from assumptions without consuming them; any remaining
+     premise suffix stays as an implication in the added hypothesis. *)
+  val forward_rule :
+    {name : string, phase : rphase, theorem : thm, immediate : int,
+     mode : clasetUnify.mode} -> rule
+  val default_forward_rule :
+    {name : string, phase : rphase, theorem : thm,
+     mode : clasetUnify.mode} -> rule
+
+  (* The search layer keeps the branch history.  This predicate performs
+     its instantiate-then-alpha-equivalence duplicate check. *)
+  val forward_duplicate :
+    clasetMeta.store -> term list -> term -> bool
+
+  val cases_rule :
+    {name : string, phase : rphase, theorem : thm,
+     patterns : term list, mode : clasetUnify.mode} -> rule
+  val cases_rule_for : hol_type -> rule
+
+  datatype tactic_index =
+      TargetPattern of term
+    | HypPattern of term
+
+  (* Rendered tactic rules see engine metavariables as rigid marked frees.
+     Consequently they can neither create nor assign engine metavariables. *)
+  val tactic_rule :
+    {name : string, phase : rphase, tactic : NTactical.ntactic,
+     index : tactic_index option} -> rule
+  val register_tactic_rule :
+    {name : string, phase : rphase, tactic : NTactical.ntactic,
+     index : tactic_index option} -> unit
+  val registered_tactic_rules : unit -> rule list
+
+  val split_rule_pair :
+    {name : string, theorem : thm} ->
+    {conclusion : rule, assumption : rule}
+  val split_rules :
+    unit -> {conclusion : rule list, assumption : rule list}
 
   val simp_rule_with :
     {name : string, simpset : simpLib.simpset,
