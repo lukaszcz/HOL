@@ -15,10 +15,11 @@ derives consequences from a major premise matched against an assumption and
 is converted internally to elimination-rule form. This marker gives it the
 unsafe proof-search classification.
 
-The safe classical tactics do not apply unsafe rules. Use `SDest th` to make a
-rule available to those tactics. The corresponding argument-free theorem
-attribute is `[dest]`; despite its plain spelling it is unsafe. `[sdest]`
-registers the safe classification.
+The safe classical tactics do not apply unsafe rules. Use `SDest th` to
+make a rule available to those tactics. The corresponding theorem
+attribute is `[dest]`, optionally with an Aesop success percentage such as
+`[dest=75]`; despite its plain spelling it is unsafe. `[sdest]` registers
+the safe classification.
 
 ### Failure
 

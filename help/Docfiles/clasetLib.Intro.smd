@@ -20,8 +20,9 @@ classification explicitly. The safe classical tactics accept the marker
 but do not apply unsafe rules. Use `SIntro th` when `SAFE_TAC`,
 `CLARIFY_TAC`, or a safe step tactic should use the rule.
 
-The corresponding persistent attribute is argument-free `[intro]`. Despite
-its plain spelling it is unsafe; `[sintro]` denotes the safe classification.
+The corresponding persistent attribute is `[intro]`, optionally with an
+Aesop success percentage such as `[intro=75]`. Despite its plain spelling
+it is unsafe; `[sintro]` denotes the safe classification.
 
 ### Failure
 

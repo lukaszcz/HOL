@@ -16,8 +16,9 @@ against the goal. It is classified as unsafe for proof search.
 
 The safe classical tactics do not apply unsafe rules. Use `SElim th` to make a
 rule available to `SAFE_TAC`, `CLARIFY_TAC`, and their safe step variants.
-The argument-free `[elim]` theorem attribute persistently registers an
-unsafe elimination rule; `[selim]` registers a safe one.
+The `[elim]` theorem attribute persistently registers an unsafe elimination
+rule and optionally accepts an Aesop success percentage, as in
+`[elim=75]`; `[selim]` registers a safe one.
 
 ### Failure
 
