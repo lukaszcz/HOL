@@ -12,11 +12,13 @@
    round_to_integral, min/max, rem, and every to_fp-family operation.  The
    classification predicates (nan, signalling, infinite, normal, subnormal,
    zero, finite, integral, negative, positive), comparisons
-   (lt/le/gt/ge/eq/unordered), and BV/real/IEEE-BV-valued conversions inspect
-   smtfp_rep directly, so canonicalization is not applicable. *)
+   (lt/le/gt/ge/eq/unordered), and BV/real-valued conversions inspect
+   smtfp_rep directly, so canonicalization is not applicable.  The internal
+   IEEE packing helper is not part of the SMT-LIB surface. *)
 Theory smtfloat
 Ancestors[qualified]
   binary_ieee
+  binary_ieeeProps
   integer_word
 
 Datatype:
@@ -859,8 +861,8 @@ Definition float_to_ubv_def[nocompute]:
       Float r =>
         let i = smt_real_to_int mode r in
           if 0 <= i /\ i < &(dimword(:'m)) then n2w (Num i)
-          else float_to_ubv_unspecified mode x
-    | _ => float_to_ubv_unspecified mode x
+          else float_to_ubv_unspecified mode (canon x)
+    | _ => float_to_ubv_unspecified mode (canon x)
 End
 
 Definition float_to_sbv_def[nocompute]:
@@ -871,15 +873,15 @@ Definition float_to_sbv_def[nocompute]:
           if integer_word$INT_MIN(:'m) <= i /\
              i <= integer_word$INT_MAX(:'m)
           then i2w i
-          else float_to_sbv_unspecified mode x
-    | _ => float_to_sbv_unspecified mode x
+          else float_to_sbv_unspecified mode (canon x)
+    | _ => float_to_sbv_unspecified mode (canon x)
 End
 
 Definition smt_float_to_real_def[nocompute]:
   smt_float_to_real (x : ('t,'w) float) =
     case float_value x of
       Float r => r
-    | _ => float_to_real_unspecified x
+    | _ => float_to_real_unspecified (canon x)
 End
 
 (* Re-encoding a finite value rounds its mathematical value once in the
@@ -912,11 +914,11 @@ Definition smt_sbv_to_fp_def[nocompute]:
 End
 
 (* The one-argument indexed to_fp is a bit-exact IEEE interchange unpack.
-   The dictionary enforces that its argument has width 1 + eb + (sb - 1).
-   The input remains polymorphic here so ordinary numeral word types can be
-   used; the inverse packing utility records the width with an FCP sum. *)
+   Its argument type enforces the SMT-LIB width eb + sb, namely
+   1 + eb + (sb - 1). *)
 Definition float_from_ieee_bv_def:
-  float_from_ieee_bv (v : 'v word) : ('t,'w) float =
+  float_from_ieee_bv
+    (v : (1 + ('w + 't)) word) : ('t,'w) float =
     let em : ('w + 't) word =
       (dimindex(:'w) + dimindex(:'t) - 1 >< 0) v in
       <| Sign :=
@@ -927,8 +929,11 @@ Definition float_from_ieee_bv_def:
          Significand := (dimindex(:'t) - 1 >< 0) em |>
 End
 
-Definition float_to_ieee_bv_def:
-  float_to_ieee_bv (x : ('t,'w) float) : (1 + ('w + 't)) word =
+(* SMT-LIB deliberately has no FP-to-IEEE-BV operation because its unique
+   NaN has many IEEE encodings.  This exact packing function is only an
+   internal inverse used by the sanity theorems below. *)
+Definition float_pack_ieee_bv_def:
+  float_pack_ieee_bv (x : ('t,'w) float) : (1 + ('w + 't)) word =
     x.Sign @@ ((x.Exponent @@ x.Significand) : ('w + 't) word)
 End
 
@@ -1137,20 +1142,25 @@ Definition smtfp_from_sbv_def:
 End
 
 Definition smtfp_from_ieee_bv_def:
-  smtfp_from_ieee_bv (v : 'v word) : ('t,'w) smtfp =
+  smtfp_from_ieee_bv
+    (v : (1 + ('w + 't)) word) : ('t,'w) smtfp =
     SmtFp (canon (float_from_ieee_bv v))
 End
 
-Definition smtfp_to_ieee_bv_def:
-  smtfp_to_ieee_bv (x : ('t,'w) smtfp) : (1 + ('w + 't)) word =
-    float_to_ieee_bv (smtfp_rep x)
+(* Internal inverse for round-trip checks; this is not an SMT-LIB symbol. *)
+Definition smtfp_pack_ieee_bv_def:
+  smtfp_pack_ieee_bv
+    (x : ('t,'w) smtfp) : (1 + ('w + 't)) word =
+    float_pack_ieee_bv (smtfp_rep x)
 End
 
-(* Invalid branches expose only the corresponding specified choice. *)
+(* Invalid branches expose only the corresponding specified choice.  The
+   argument is canonicalized so all raw IEEE NaN payloads represent the one
+   SMT-LIB NaN argument and therefore receive a function-consistent result. *)
 Theorem float_to_ubv_special:
   float_value x = NaN \/ float_value x = Infinity ==>
   (float_to_ubv mode x : 'm word) =
-    float_to_ubv_unspecified mode x
+    float_to_ubv_unspecified mode (canon x)
 Proof
   strip_tac >> fs [float_to_ubv_def]
 QED
@@ -1158,16 +1168,43 @@ QED
 Theorem float_to_sbv_special:
   float_value x = NaN \/ float_value x = Infinity ==>
   (float_to_sbv mode x : 'm word) =
-    float_to_sbv_unspecified mode x
+    float_to_sbv_unspecified mode (canon x)
 Proof
   strip_tac >> fs [float_to_sbv_def]
 QED
 
 Theorem smt_float_to_real_special:
   float_value x = NaN \/ float_value x = Infinity ==>
-  smt_float_to_real x = float_to_real_unspecified x
+  smt_float_to_real x = float_to_real_unspecified (canon x)
 Proof
   strip_tac >> fs [smt_float_to_real_def]
+QED
+
+Theorem float_to_ubv_valid:
+  float_value x = Float r /\
+  (let i = smt_real_to_int mode r in
+     0 <= i /\ i < &(dimword(:'m))) ==>
+  (float_to_ubv mode x : 'm word) =
+    n2w (Num (smt_real_to_int mode r))
+Proof
+  strip_tac >> fs [float_to_ubv_def]
+QED
+
+Theorem float_to_sbv_valid:
+  float_value x = Float r /\
+  (let i = smt_real_to_int mode r in
+     integer_word$INT_MIN(:'m) <= i /\
+     i <= integer_word$INT_MAX(:'m)) ==>
+  (float_to_sbv mode x : 'm word) =
+    i2w (smt_real_to_int mode r)
+Proof
+  strip_tac >> fs [float_to_sbv_def]
+QED
+
+Theorem smt_float_to_real_valid:
+  float_value x = Float r ==> smt_float_to_real x = r
+Proof
+  simp [smt_float_to_real_def]
 QED
 
 Theorem float_to_ubv_out_of_range:
@@ -1175,7 +1212,7 @@ Theorem float_to_ubv_out_of_range:
   (let i = smt_real_to_int mode r in
      ~(0 <= i /\ i < &(dimword(:'m)))) ==>
   (float_to_ubv mode x : 'm word) =
-    float_to_ubv_unspecified mode x
+    float_to_ubv_unspecified mode (canon x)
 Proof
   strip_tac >> fs [float_to_ubv_def]
 QED
@@ -1186,9 +1223,36 @@ Theorem float_to_sbv_out_of_range:
      ~(integer_word$INT_MIN(:'m) <= i /\
        i <= integer_word$INT_MAX(:'m))) ==>
   (float_to_sbv mode x : 'm word) =
-    float_to_sbv_unspecified mode x
+    float_to_sbv_unspecified mode (canon x)
 Proof
   strip_tac >> fs [float_to_sbv_def]
+QED
+
+Theorem smtfp_to_ubv_valid:
+  float_value (smtfp_rep x) = Float r /\
+  (let i = smt_real_to_int mode r in
+     0 <= i /\ i < &(dimword(:'m))) ==>
+  (smtfp_to_ubv mode x : 'm word) =
+    n2w (Num (smt_real_to_int mode r))
+Proof
+  simp [smtfp_to_ubv_def, float_to_ubv_valid]
+QED
+
+Theorem smtfp_to_sbv_valid:
+  float_value (smtfp_rep x) = Float r /\
+  (let i = smt_real_to_int mode r in
+     integer_word$INT_MIN(:'m) <= i /\
+     i <= integer_word$INT_MAX(:'m)) ==>
+  (smtfp_to_sbv mode x : 'm word) =
+    i2w (smt_real_to_int mode r)
+Proof
+  simp [smtfp_to_sbv_def, float_to_sbv_valid]
+QED
+
+Theorem smtfp_to_real_valid:
+  float_value (smtfp_rep x) = Float r ==> smtfp_to_real x = r
+Proof
+  simp [smtfp_to_real_def, smt_float_to_real_valid]
 QED
 
 (* The subtype lifts have no quotient respectfulness obligations.  These
@@ -1211,38 +1275,226 @@ Proof
         smtfp_from_sbv_def, smtfp_from_ieee_bv_def, smtfp_rep_def]
 QED
 
-(* The definitions are format-schematic.  This ordinary Float32 instance
-   pins the standard interchange round-trip without introducing a format
-   axiom about arbitrary (possibly infinite) HOL index types. *)
+(* For finite index types the packing utility is a two-sided inverse at the
+   raw-float level.  The smtfp unpack-pack direction remains valid after NaN
+   canonicalization; pack-unpack intentionally need not preserve a
+   noncanonical IEEE NaN bit pattern. *)
+Theorem float_ieee_bv_unpack_pack:
+  FINITE (UNIV : 'w -> bool) /\ FINITE (UNIV : 't -> bool) ==>
+  !x : ('t,'w) float.
+    float_from_ieee_bv (float_pack_ieee_bv x) = x
+Proof
+  strip_tac >> gen_tac >> fs [] >>
+  rw [float_from_ieee_bv_def, float_pack_ieee_bv_def,
+      binary_ieeeTheory.float_component_equality] >>
+  asm_simp_tac (srw_ss() ++ wordsLib.WORD_BIT_EQ_ss)
+    [wordsTheory.word_index, fcpTheory.finite_sum,
+     fcpTheory.index_sum]
+QED
+
+Theorem float_ieee_bv_pack_unpack:
+  FINITE (UNIV : 't -> bool) /\ FINITE (UNIV : 'w -> bool) ==>
+  !v : (1 + ('w + 't)) word.
+    float_pack_ieee_bv (float_from_ieee_bv v : ('t,'w) float) = v
+Proof
+  strip_tac >> gen_tac >> fs [] >>
+  rw [float_from_ieee_bv_def, float_pack_ieee_bv_def] >>
+  asm_simp_tac (srw_ss() ++ wordsLib.WORD_BIT_EQ_ss)
+    [wordsTheory.word_index, fcpTheory.finite_sum,
+     fcpTheory.index_sum] >>
+  rpt strip_tac >>
+  Cases_on `dimindex(:'t) + dimindex(:'w) <= i` >>
+  Cases_on `dimindex(:'t) <= i` >>
+  asm_simp_tac (srw_ss() ++ wordsLib.WORD_BIT_EQ_ss)
+    [wordsTheory.word_index, fcpTheory.finite_sum,
+     fcpTheory.index_sum]
+QED
+
+Theorem smtfp_ieee_bv_unpack_pack:
+  FINITE (UNIV : 'w -> bool) /\ FINITE (UNIV : 't -> bool) ==>
+  !x : ('t,'w) smtfp.
+    smtfp_from_ieee_bv (smtfp_pack_ieee_bv x) = x
+Proof
+  strip_tac >> gen_tac >>
+  simp [smtfp_from_ieee_bv_def, smtfp_pack_ieee_bv_def,
+        float_ieee_bv_unpack_pack]
+QED
+
 Theorem float_ieee_bv_roundtrip_float32[simp]:
   !x : (23,8) float.
-    float_from_ieee_bv (float_to_ieee_bv x) = x
+    float_from_ieee_bv (float_pack_ieee_bv x) = x
 Proof
-  rw [float_from_ieee_bv_def, float_to_ieee_bv_def,
-      binary_ieeeTheory.float_component_equality] >>
-  simp_tac (srw_ss() ++ wordsLib.WORD_EXTRACT_ss) []
+  simp [float_ieee_bv_unpack_pack]
 QED
 
 Theorem smtfp_ieee_bv_roundtrip_float32[simp]:
   !x : (23,8) smtfp.
-    smtfp_from_ieee_bv (smtfp_to_ieee_bv x) = x
+    smtfp_from_ieee_bv (smtfp_pack_ieee_bv x) = x
 Proof
-  simp [smtfp_from_ieee_bv_def, smtfp_to_ieee_bv_def]
+  simp [smtfp_ieee_bv_unpack_pack]
 QED
 
-Theorem smt_real_to_fp_representable:
-  smt_round mode r = x /\ ~float_is_zero x ==>
-  (smt_real_to_fp mode r : ('t,'w) float) = x
+Theorem smt_real_to_fp_shared_representable:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) /\
+  ~float_is_zero x /\ to_binary_rounding mode = SOME binary_mode ==>
+  smt_real_to_fp mode (float_to_real x) = x
 Proof
+  strip_tac >>
+  `round binary_mode (float_to_real x) = x` by
+    (irule binary_ieeePropsTheory.round_representable_nonzero >>
+     fs [binary_ieeeTheory.float_is_zero_to_real]) >>
+  `smt_round mode (float_to_real x) = x` by
+    (imp_res_tac smt_round_shared >> fs []) >>
   simp [smt_real_to_fp_def, smt_float_round_def]
 QED
 
-Theorem smt_float_to_fp_representable:
-  float_value x = Float r /\ smt_round mode r = y /\
-  ~float_is_zero y ==>
-  (smt_float_to_fp mode x : ('t,'w) float) = y
+Theorem smt_float_to_fp_shared_roundtrip:
+  2 <= dimindex(:'w) /\ float_is_finite (x : ('t,'w) float) /\
+  ~float_is_zero x /\ to_binary_rounding mode = SOME binary_mode ==>
+  smt_float_to_fp mode x = x
 Proof
+  strip_tac >>
+  `float_value x = Float (float_to_real x)` by
+    simp [binary_ieeePropsTheory.float_value_eq_float_to_real] >>
+  `round binary_mode (float_to_real x) = x` by
+    (irule binary_ieeePropsTheory.round_representable_nonzero >>
+     fs [binary_ieeeTheory.float_is_zero_to_real]) >>
+  `smt_round mode (float_to_real x) = x` by
+    (imp_res_tac smt_round_shared >> fs []) >>
   simp [smt_float_to_fp_def, smt_float_round_def]
+QED
+
+Theorem smt_float_to_fp_infinities[simp]:
+  smt_float_to_fp mode (float_plus_infinity (:'a # 'b)) =
+    (float_plus_infinity (:'t # 'w) : ('t,'w) float) /\
+  smt_float_to_fp mode (float_minus_infinity (:'a # 'b)) =
+    (float_minus_infinity (:'t # 'w) : ('t,'w) float)
+Proof
+  simp [smt_float_to_fp_def]
+QED
+
+Theorem smt_float_to_fp_nan[simp]:
+  smt_float_to_fp mode (float_canon_qnan : ('a,'b) float) =
+    (float_canon_qnan : ('t,'w) float)
+Proof
+  simp [smt_float_to_fp_def, float_canon_qnan_def,
+        binary_ieeeTheory.float_value_def, canon_qnan_msb]
+QED
+
+Theorem smt_float_to_fp_shared_zero[simp]:
+  2 <= dimindex(:'w) /\ to_binary_rounding mode = SOME binary_mode ==>
+  smt_float_to_fp mode (float_plus_zero (:'a # 'b)) =
+    (float_plus_zero (:'t # 'w) : ('t,'w) float) /\
+  smt_float_to_fp mode (float_minus_zero (:'a # 'b)) =
+    (float_minus_zero (:'t # 'w) : ('t,'w) float)
+Proof
+  strip_tac >>
+  `smt_round mode 0 = (float_plus_zero (:'t # 'w) : ('t,'w) float) \/
+   smt_round mode 0 = float_minus_zero (:'t # 'w)` by
+    (imp_res_tac smt_round_shared >>
+     metis_tac [binary_ieeePropsTheory.round_representable_zero]) >>
+  simp [smt_float_to_fp_def, smt_float_round_def] >>
+  fs []
+QED
+
+Theorem smt_real_to_fp_shared_zero[simp]:
+  2 <= dimindex(:'w) /\ to_binary_rounding mode = SOME binary_mode ==>
+  (smt_real_to_fp mode 0 : ('t,'w) float) =
+    float_plus_zero (:'t # 'w)
+Proof
+  strip_tac >>
+  `smt_round mode 0 = (float_plus_zero (:'t # 'w) : ('t,'w) float) \/
+   smt_round mode 0 = float_minus_zero (:'t # 'w)` by
+    (imp_res_tac smt_round_shared >>
+     metis_tac [binary_ieeePropsTheory.round_representable_zero]) >>
+  simp [smt_real_to_fp_def, smt_float_round_def] >>
+  fs []
+QED
+
+Theorem float32_ieee_one_ground[simp]:
+  float_from_ieee_bv
+    (0x3F800000w : (1 + (8 + 23)) word) =
+      (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+       (23,8) float) /\
+  float_pack_ieee_bv
+    (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+     (23,8) float) =
+      (0x3F800000w : (1 + (8 + 23)) word)
+Proof
+  rw [float_from_ieee_bv_def, float_pack_ieee_bv_def,
+      binary_ieeeTheory.float_component_equality] >>
+  simp_tac (srw_ss() ++ wordsLib.WORD_EXTRACT_ss) []
+QED
+
+Theorem float32_one_conversion_ground[simp]:
+  let one =
+    (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+     (23,8) float)
+  in
+    (float_to_ubv RTZ one : word8) = 1w /\
+    (float_to_sbv RTN one : word8) = 1w /\
+    smt_float_to_real one = 1
+Proof
+  simp [float_to_ubv_def, float_to_sbv_def,
+        smt_float_to_real_def, smt_real_to_int_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_to_real_def,
+        wordsTheory.INT_MAX_def, wordsTheory.dimword_def,
+        intrealTheory.INT_FLOOR, integer_wordTheory.i2w_pos]
+QED
+
+Theorem float32_one_to_fp_ground[simp]:
+  let one =
+    (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+     (23,8) float)
+  in
+    smt_real_to_fp RNE 1 = one /\
+    smt_ubv_to_fp RNE (1w : word8) = one /\
+    smt_sbv_to_fp RNE (1w : word8) = one /\
+    smt_float_to_fp RNE one = one
+Proof
+  simp [smt_ubv_to_fp_def, smt_sbv_to_fp_def,
+        integer_wordTheory.w2i_def] >>
+  rpt conj_tac
+  >- (`1 = float_to_real
+        (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+         (23,8) float)` by
+        simp [binary_ieeeTheory.float_to_real_def] >>
+      pop_assum (once_rewrite_tac o single) >>
+      irule smt_real_to_fp_shared_representable >>
+      simp [to_binary_rounding_def,
+            binary_ieeeTheory.float_is_finite_def,
+            binary_ieeeTheory.float_is_zero_def,
+            binary_ieeeTheory.float_value_def,
+            binary_ieeeTheory.float_to_real_def])
+  >- (`1 = float_to_real
+        (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+         (23,8) float)` by
+        simp [binary_ieeeTheory.float_to_real_def] >>
+      pop_assum (once_rewrite_tac o single) >>
+      irule smt_real_to_fp_shared_representable >>
+      simp [to_binary_rounding_def,
+            binary_ieeeTheory.float_is_finite_def,
+            binary_ieeeTheory.float_is_zero_def,
+            binary_ieeeTheory.float_value_def,
+            binary_ieeeTheory.float_to_real_def])
+  >- (`1 = float_to_real
+        (<| Sign := 0w; Exponent := 127w; Significand := 0w |> :
+         (23,8) float)` by
+        simp [binary_ieeeTheory.float_to_real_def] >>
+      pop_assum (once_rewrite_tac o single) >>
+      irule smt_real_to_fp_shared_representable >>
+      simp [to_binary_rounding_def,
+            binary_ieeeTheory.float_is_finite_def,
+            binary_ieeeTheory.float_is_zero_def,
+            binary_ieeeTheory.float_value_def,
+            binary_ieeeTheory.float_to_real_def])
+  >- (irule smt_float_to_fp_shared_roundtrip >>
+      simp [to_binary_rounding_def,
+            binary_ieeeTheory.float_is_finite_def,
+            binary_ieeeTheory.float_is_zero_def,
+            binary_ieeeTheory.float_value_def,
+            binary_ieeeTheory.float_to_real_def])
 QED
 
 Theorem smt_integer_ties_to_away_basic[simp]:
