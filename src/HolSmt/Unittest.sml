@@ -389,6 +389,198 @@ in
     ()
 end
 
+fun smtfloat_rounding_conversions_success () =
+let
+  fun check (label, conv, input, expected) =
+    (let
+       val thm = conv input
+     in
+       assert_no_hyps (label, thm);
+       Library.check_oracle_tags label thm;
+       assert_concl_alpha
+         (label, thm, boolSyntax.mk_eq (input, expected))
+     end
+     handle e => die (label ^ " raised " ^ General.exnMessage e))
+  val fp3_one =
+    ``(<| Sign := 0w; Exponent := 15w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_two =
+    ``(<| Sign := 0w; Exponent := 16w; Significand := 0w |> :
+       (3,5) binary_ieee$float)``
+  val fp3_eighteen =
+    ``(<| Sign := 0w; Exponent := 19w; Significand := 1w |> :
+       (3,5) binary_ieee$float)``
+  val tests =
+    [
+      ("RTP ordinary (10,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (11r / 10) :
+          (10,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 103w |> :
+          (10,5) binary_ieee$float)``),
+      ("RTN ordinary (10,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (11r / 10) :
+          (10,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 102w |> :
+          (10,5) binary_ieee$float)``),
+      ("RTP positive underflow to minimum subnormal",
+       smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (1r / 262144) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 0w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTN negative underflow to minimum subnormal",
+       smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (-1r / 262144) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 0w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTP negative ordinary (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (-33r / 32) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 15w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTN negative ordinary (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (-33r / 32) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 15w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA ordinary unique inward (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (33r / 32) :
+          (3,5) binary_ieee$float)``, fp3_one),
+      ("RNE ordinary halfway disagreement (3,5)",
+       smtfloatLib.round_CONV,
+       ``(round roundTiesToEven (17r / 16) :
+          (3,5) binary_ieee$float)``, fp3_one),
+      ("RTP ordinary halfway point (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (17r / 16) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTN ordinary halfway point (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (17r / 16) :
+          (3,5) binary_ieee$float)``, fp3_one),
+      ("RNA ordinary halfway disagreement (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (17r / 16) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA negative halfway disagreement (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (-17r / 16) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 15w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA minimum-subnormal halfway (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (1r / 262144) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 0w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA negative minimum-subnormal halfway (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (-1r / 262144) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 0w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA exact subnormal (10,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (3r / 16777216) :
+          (10,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 0w; Significand := 3w |> :
+          (10,5) binary_ieee$float)``),
+      ("RTP exponent-boundary tie (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (31r / 16) :
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("RTN exponent-boundary tie (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (31r / 16) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 7w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA exponent-boundary tie (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (31r / 16) :
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("RNA negative exponent-boundary tie (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (-31r / 16) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 16w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTP overflow (10,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive 65520r :
+          (10,5) binary_ieee$float)``,
+       ``float_plus_infinity (:10 # 5)``),
+      ("RTN negative overflow (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative (-63488r) :
+          (3,5) binary_ieee$float)``,
+       ``float_minus_infinity (:3 # 5)``),
+      ("RTP negative overflow saturates (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardPositive (-63488r) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 30w; Significand := 7w |> :
+          (3,5) binary_ieee$float)``),
+      ("RTN positive overflow saturates (3,5)", smtfloatLib.round_CONV,
+       ``(round roundTowardNegative 63488r :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 30w; Significand := 7w |> :
+          (3,5) binary_ieee$float)``),
+      ("RNA overflow midpoint (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway 63488r :
+          (3,5) binary_ieee$float)``,
+       ``float_plus_infinity (:3 # 5)``),
+      ("RNA negative overflow midpoint (3,5)",
+       smtfloatLib.round_tiesToAway_CONV,
+       ``(round_tiesToAway (-63488r) :
+          (3,5) binary_ieee$float)``,
+       ``float_minus_infinity (:3 # 5)``),
+      ("integral RNA ordinary inward",
+       smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway (6r / 5) :
+          (3,5) binary_ieee$float)``, fp3_one),
+      ("integral RNA halfway", smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway (3r / 2) :
+          (3,5) binary_ieee$float)``, fp3_two),
+      ("integral RNA avoids double rounding",
+       smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway (83r / 5) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 19w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``),
+      ("integral RNA coarse-format tie",
+       smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway 17r :
+          (3,5) binary_ieee$float)``, fp3_eighteen),
+      ("integral RNA negative halfway",
+       smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway (-3r / 2) :
+          (3,5) binary_ieee$float)``,
+       ``(<| Sign := 1w; Exponent := 16w; Significand := 0w |> :
+          (3,5) binary_ieee$float)``),
+      ("integral RNA overflow midpoint",
+       smtfloatLib.integral_round_tiesToAway_CONV,
+       ``(integral_round_tiesToAway (-63488r) :
+          (3,5) binary_ieee$float)``,
+       ``float_minus_infinity (:3 # 5)``),
+      ("smt_round RTP dispatch", smtfloatLib.smt_round_CONV,
+       ``(smt_round RTP (11r / 10) : (10,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 103w |> :
+          (10,5) binary_ieee$float)``),
+      ("smt_round RNA dispatch", smtfloatLib.smt_round_CONV,
+       ``(smt_round RNA (17r / 16) : (3,5) binary_ieee$float)``,
+       ``(<| Sign := 0w; Exponent := 15w; Significand := 1w |> :
+          (3,5) binary_ieee$float)``),
+      ("smt_integral_round RNA dispatch",
+       smtfloatLib.smt_integral_round_CONV,
+       ``(smt_integral_round RNA (3r / 2) :
+          (3,5) binary_ieee$float)``, fp3_two)
+    ]
+in
+  List.app check tests
+end
+
 fun hol_string_to_smt_conversion_success () =
 let
   val input =
@@ -9104,6 +9296,8 @@ let
       hol_string_to_smt_conversion_success),
     ("smtfp_carrier_universe_direction_success",
       smtfp_carrier_universe_direction_success),
+    ("smtfloat_rounding_conversions_success",
+      smtfloat_rounding_conversions_success),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",

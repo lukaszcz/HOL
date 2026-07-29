@@ -1747,3 +1747,833 @@ Proof
     (irule SmtFp_11 >> simp [smtfp_canonical_def]) >>
   simp [smtfp_nzero_def, smtfp_pzero_def, canon_def]
 QED
+
+(* Certifying interfaces for the rounding conversions. *)
+Theorem round_RTP_least_finite:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  x <= float_to_real y /\
+  (!b : ('t,'w) float.
+     float_is_finite b /\ x <= float_to_real b ==>
+     float_to_real y <= float_to_real b) ==>
+  round roundTowardPositive x = y
+Proof
+  rw [binary_ieeeTheory.round_def, binary_ieeeTheory.closest_def,
+      binary_ieeeTheory.closest_such_def,
+      binary_ieeeTheory.is_closest_def] >>
+  TRY realLib.REAL_ASM_ARITH_TAC >>
+  SELECT_ELIM_TAC >>
+  conj_tac
+  >- (qexists_tac `y` >> simp [] >> rpt strip_tac >>
+      TRY realLib.REAL_ASM_ARITH_TAC >>
+      qpat_x_assum `!b. _ ==> float_to_real y <= float_to_real b`
+        (qspec_then `b` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >> realLib.REAL_ASM_ARITH_TAC)
+  >- (rpt strip_tac >>
+      qpat_x_assum `!b. _ ==> float_to_real y <= float_to_real b`
+        (qspec_then `x'` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >>
+      qpat_x_assum `!b. _ ==> _ <= abs (float_to_real b - x)`
+        (qspec_then `y` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >>
+      `float_to_real x' = float_to_real y` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      fs [binary_ieeeTheory.float_to_real_eq] >> fs [])
+QED
+
+Theorem round_RTN_greatest_finite:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  float_to_real y <= x /\
+  (!b : ('t,'w) float.
+     float_is_finite b /\ float_to_real b <= x ==>
+     float_to_real b <= float_to_real y) ==>
+  round roundTowardNegative x = y
+Proof
+  rw [binary_ieeeTheory.round_def, binary_ieeeTheory.closest_def,
+      binary_ieeeTheory.closest_such_def,
+      binary_ieeeTheory.is_closest_def] >>
+  TRY realLib.REAL_ASM_ARITH_TAC >>
+  SELECT_ELIM_TAC >>
+  conj_tac
+  >- (qexists_tac `y` >> simp [] >> rpt strip_tac >>
+      TRY realLib.REAL_ASM_ARITH_TAC >>
+      qpat_x_assum `!b. _ ==> float_to_real b <= float_to_real y`
+        (qspec_then `b` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >> realLib.REAL_ASM_ARITH_TAC)
+  >- (rpt strip_tac >>
+      qpat_x_assum `!b. _ ==> float_to_real b <= float_to_real y`
+        (qspec_then `x'` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >>
+      qpat_x_assum `!b. _ ==> _ <= abs (float_to_real b - x)`
+        (qspec_then `y` mp_tac) >>
+      impl_tac
+      >- (conj_tac >- simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      strip_tac >>
+      `float_to_real x' = float_to_real y` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      fs [binary_ieeeTheory.float_to_real_eq] >> fs [])
+QED
+
+Theorem round_RNE_is_closest:
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) ==>
+  is_closest float_is_finite x
+    (round roundTiesToEven x : ('t,'w) float)
+Proof
+  strip_tac >>
+  `~(x <= -threshold (:'t # 'w)) /\
+   ~(x >= threshold (:'t # 'w))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  simp [binary_ieeeTheory.round_def] >>
+  irule (cj 1 closest_such_finite_properties)
+QED
+
+Theorem round_tiesToAway_from_closest_away:
+  x <> 0 /\
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  ~float_is_zero y /\ abs x <= abs (float_to_real y) ==>
+  round_tiesToAway x = y
+Proof
+  strip_tac >> irule round_tiesToAway_tie_away >> simp [] >>
+  rpt strip_tac >>
+  fs [binary_ieeeTheory.is_closest_def] >>
+  res_tac >>
+  qpat_x_assum
+    `!b. b IN float_is_finite ==>
+         abs (float_to_real y - x) <= _`
+    (qspec_then `float_plus_zero (:'t # 'w)` mp_tac) >>
+  simp [IN_DEF] >> strip_tac >>
+  `float_to_real a = float_to_real y` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  fs [binary_ieeeTheory.float_to_real_eq] >> fs []
+QED
+
+Theorem is_closest_finite_equal_distance:
+  is_closest float_is_finite x (a : ('t,'w) float) /\
+  float_is_finite (b : ('t,'w) float) /\
+  abs (float_to_real b - x) = abs (float_to_real a - x) ==>
+  is_closest float_is_finite x b
+Proof
+  strip_tac >> fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  rpt strip_tac >> res_tac
+QED
+
+Theorem is_integral_real_of_int:
+  binary_ieee$is_integral x <=> ?i : int. x = real_of_int i
+Proof
+  rw [binary_ieeeTheory.is_integral_def, realTheory.abs]
+  >- (eq_tac >> rpt strip_tac
+      >- (qexists_tac `&n` >> simp [])
+      >- (Cases_on `i` >> fs []))
+  >- (eq_tac >> rpt strip_tac
+      >- (qexists_tac `-&n` >> simp [] >>
+          realLib.REAL_ASM_ARITH_TAC)
+      >- (Cases_on `i` >> fs []))
+QED
+
+Theorem abs_real_of_int:
+  abs (real_of_int i) = real_of_int (ABS i)
+Proof
+  Cases_on `i` >> simp [intrealTheory.real_of_int_def,
+                         integerTheory.INT_ABS]
+QED
+
+Theorem is_integral_separated:
+  binary_ieee$is_integral x /\ binary_ieee$is_integral y /\ x <> y ==>
+  1 <= abs (x - y)
+Proof
+  rw [is_integral_real_of_int] >>
+  once_rewrite_tac [GSYM intrealTheory.real_of_int_sub] >>
+  rewrite_tac [abs_real_of_int] >>
+  once_rewrite_tac
+    [GSYM (Q.INST [`n` |-> `1`] intrealTheory.real_of_int_num)] >>
+  rewrite_tac [intrealTheory.real_of_int_le] >>
+  fs [intrealTheory.real_of_int_11] >> intLib.ARITH_TAC
+QED
+
+Theorem float_is_integral_to_real:
+  float_is_integral (a : ('t,'w) float) ==>
+  binary_ieee$is_integral (float_to_real a)
+Proof
+  fs [binary_ieeeTheory.float_is_integral_def] >>
+  Cases_on `float_value a` >>
+  fs [binary_ieeeTheory.float_value_def] >>
+  Cases_on `a.Exponent = -1w` >> fs [] >>
+  Cases_on `a.Significand = 0w` >> fs []
+QED
+
+Theorem integral_round_candidate_gap:
+  integral_round_candidate (a : ('t,'w) float) ==>
+  float_to_real a = 0 \/ 1 <= abs (float_to_real a)
+Proof
+  rw [integral_round_candidate_def]
+  >- (fs [binary_ieeeTheory.float_is_integral_def] >>
+      Cases_on `float_value a` >>
+      fs [binary_ieeeTheory.is_integral_def,
+          binary_ieeeTheory.float_value_def] >>
+      Cases_on `a.Exponent = -1w` >> fs [] >>
+      Cases_on `a.Significand = 0w` >> fs [] >>
+      Cases_on `n` >> fs [])
+  >- (`1 <= abs (float_to_real
+          (float_plus_infinity (:'t # 'w)))` by
+        (simp [binary_ieeeTheory.float_plus_infinity_def,
+               binary_ieeeTheory.float_to_real,
+               wordsTheory.w2n_minus1] >>
+         once_rewrite_tac [realTheory.REAL_MUL_COMM] >>
+         rewrite_tac [GSYM realTheory.real_div] >>
+         simp [realTheory.ABS_DIV, realTheory.REAL_LE_RDIV_EQ,
+               wordsTheory.UINT_MAX_def, wordsTheory.INT_MAX_def] >>
+         simp [DECIDE
+           ``!n : num. 0 < n ==> 1 + (n - 1) = n``] >>
+         irule arithmeticTheory.LESS_IMP_LESS_OR_EQ >>
+         irule wordsTheory.INT_MIN_LT_DIMWORD) >>
+      fs [binary_ieeeTheory.float_sets,
+          binary_ieeeTheory.float_minus_infinity_def,
+          binary_ieeeTheory.float_to_real_negate])
+QED
+
+Theorem integral_candidate_nearest:
+  float_is_integral (y : ('t,'w) float) /\
+  2 * abs (float_to_real y - x) <= 1 /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  is_closest integral_round_candidate x y
+Proof
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF,
+      integral_round_candidate_def]
+  >- (imp_res_tac float_is_integral_to_real >>
+      Cases_on `float_to_real y = float_to_real b` >> simp [] >>
+      `1 <= abs (float_to_real y - float_to_real b)` by
+        metis_tac [is_integral_separated] >>
+      `abs (float_to_real y - float_to_real b) <=
+       abs (float_to_real y - x) +
+       abs (float_to_real b - x)` by
+        (qspec_then
+           `float_to_real y - x`
+           (qspec_then `x - float_to_real b` mp_tac)
+           realTheory.ABS_TRIANGLE >>
+         simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+      realLib.REAL_ASM_ARITH_TAC)
+  >- (fs [binary_ieeeTheory.float_sets] >>
+      realLib.REAL_ASM_ARITH_TAC)
+QED
+
+Theorem integral_round_tiesToAway_nearest:
+  x <> 0 /\
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  float_is_integral (y : ('t,'w) float) /\ ~float_is_zero y /\
+  2 * abs (float_to_real y - x) <= 1 /\
+  abs x <= abs (float_to_real y) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  integral_round_tiesToAway x = y
+Proof
+  strip_tac >> irule integral_round_tiesToAway_tie_away >>
+  simp [] >>
+  conj_tac
+  >- (rpt strip_tac >>
+      `is_closest integral_round_candidate x y` by
+        (irule integral_candidate_nearest >> simp []) >>
+      fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+      qpat_x_assum
+        `!b. integral_round_candidate b ==>
+             abs (float_to_real a - x) <= _`
+        (qspec_then `y` mp_tac) >> simp [] >> strip_tac >>
+      qpat_x_assum `integral_round_candidate a`
+        (strip_assume_tac o
+         REWRITE_RULE [integral_round_candidate_def])
+      >- (`float_to_real a <> 0` by
+            (strip_tac >> fs [] >> Cases_on `0 <= x` >>
+             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+          `float_to_real y <> 0` by
+            (strip_tac >> fs [] >> Cases_on `0 <= x` >>
+             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+          `1 <= abs (float_to_real a)` by
+            (mp_tac (Q.INST [`a` |-> `a`]
+               integral_round_candidate_gap) >>
+             simp [integral_round_candidate_def]) >>
+          `1 <= abs (float_to_real y)` by
+            (mp_tac (Q.INST [`a` |-> `y`]
+               integral_round_candidate_gap) >>
+             simp [integral_round_candidate_def]) >>
+          `abs (float_to_real y - x) <=
+           abs (float_to_real a - x)` by
+            (qpat_x_assum `!b. integral_round_candidate b ==> _`
+               irule >>
+             simp [integral_round_candidate_def]) >>
+          `float_to_real a = float_to_real y` by
+            (Cases_on `0 <= x` >>
+             Cases_on `0 <= float_to_real a` >>
+             Cases_on `0 <= float_to_real y` >>
+             Cases_on `0 <= float_to_real a - x` >>
+             Cases_on `0 <= float_to_real y - x` >>
+             fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+          metis_tac [binary_ieeeTheory.float_to_real_eq])
+      >- (fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
+          qpat_x_assum `a = _` SUBST_ALL_TAC >>
+          realLib.REAL_ASM_ARITH_TAC))
+  >- (irule integral_candidate_nearest >> simp [])
+QED
+
+Theorem round_RTP_exact:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  float_to_real y = x ==>
+  round roundTowardPositive x = y
+Proof
+  strip_tac >> irule round_RTP_least_finite >> simp []
+QED
+
+Theorem round_RTN_exact:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  float_to_real y = x ==>
+  round roundTowardNegative x = y
+Proof
+  strip_tac >> irule round_RTN_greatest_finite >> simp []
+QED
+
+Theorem round_RTP_positive_next_hi:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite (next_hi lo) /\ ~float_is_zero (next_hi lo) /\
+  0 <= float_to_real lo /\ float_to_real lo < x /\
+  x <= float_to_real (next_hi lo) ==>
+  round roundTowardPositive x = next_hi lo
+Proof
+  strip_tac >> irule round_RTP_least_finite >> simp [] >>
+  rpt strip_tac >>
+  `abs (float_to_real lo) < abs (float_to_real b)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem round_RTP_negative_inward:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  float_to_real (next_hi y) < x /\ x <= float_to_real y /\
+  float_to_real y < 0 /\ float_to_real (next_hi y) < 0 ==>
+  round roundTowardPositive x = y
+Proof
+  strip_tac >> irule round_RTP_least_finite >> simp [] >>
+  rpt strip_tac >>
+  Cases_on `0 <= float_to_real b`
+  >- realLib.REAL_ASM_ARITH_TAC >>
+  Cases_on `float_to_real y <= float_to_real b`
+  >- simp [] >>
+  `abs (float_to_real y) < abs (float_to_real b)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real (next_hi y)) <= abs (float_to_real b)` by
+    metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem round_RTN_positive_inward:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (y : ('t,'w) float) /\ ~float_is_zero y /\
+  0 < float_to_real y /\ float_to_real y <= x /\
+  x < float_to_real (next_hi y) /\
+  0 < float_to_real (next_hi y) ==>
+  round roundTowardNegative x = y
+Proof
+  strip_tac >> irule round_RTN_greatest_finite >> simp [] >>
+  rpt strip_tac >>
+  Cases_on `float_to_real b <= 0`
+  >- realLib.REAL_ASM_ARITH_TAC >>
+  Cases_on `float_to_real b <= float_to_real y`
+  >- simp [] >>
+  `abs (float_to_real y) < abs (float_to_real b)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real (next_hi y)) <= abs (float_to_real b)` by
+    metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem round_RTN_negative_next_hi:
+  -largest (:'t # 'w) <= x /\ x <= largest (:'t # 'w) /\
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite (next_hi lo) /\ ~float_is_zero (next_hi lo) /\
+  float_to_real (next_hi lo) <= x /\ x < float_to_real lo /\
+  float_to_real lo < 0 /\ float_to_real (next_hi lo) < 0 ==>
+  round roundTowardNegative x = next_hi lo
+Proof
+  strip_tac >> irule round_RTN_greatest_finite >> simp [] >>
+  rpt strip_tac >>
+  `abs (float_to_real lo) < abs (float_to_real b)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem nonzero_float_at_least_ulp:
+  ~float_is_zero (y : ('t,'w) float) ==>
+  ulp (:'t # 'w) <= abs (float_to_real y)
+Proof
+  strip_tac >>
+  mp_tac (Q.SPECL [`float_plus_zero (:'t # 'w)`, `y`]
+    binary_ieeeTheory.diff_float_ULP) >>
+  simp [binary_ieeeTheory.float_is_zero_to_real,
+        binary_ieeeTheory.exponent_boundary_def,
+        binary_ieeeTheory.ulp_def] >>
+  metis_tac [binary_ieeeTheory.float_is_zero_to_real]
+QED
+
+Theorem round_RTP_small_positive:
+  0 < x /\ x <= ulp (:'t # 'w) ==>
+  round roundTowardPositive x = float_plus_min (:'t # 'w)
+Proof
+  strip_tac >> irule round_RTP_least_finite >>
+  simp [GSYM binary_ieeeTheory.ulp] >>
+  conj_tac
+  >- (rpt strip_tac >>
+      Cases_on `float_is_zero b`
+      >- (fs [binary_ieeeTheory.float_is_zero_to_real] >>
+          realLib.REAL_ASM_ARITH_TAC) >>
+      mp_tac (Q.SPEC `b` (GEN_ALL nonzero_float_at_least_ulp)) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.ulp_lt_largest) >>
+  simp [] >> realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem round_RTN_small_negative:
+  -ulp (:'t # 'w) <= x /\ x < 0 ==>
+  round roundTowardNegative x =
+    float_negate (float_plus_min (:'t # 'w))
+Proof
+  strip_tac >> irule round_RTN_greatest_finite >>
+  simp [GSYM binary_ieeeTheory.neg_ulp] >>
+  conj_tac
+  >- (rpt strip_tac >>
+      Cases_on `float_is_zero b`
+      >- (fs [binary_ieeeTheory.float_is_zero_to_real] >>
+          realLib.REAL_ASM_ARITH_TAC) >>
+      mp_tac (Q.SPEC `b` (GEN_ALL nonzero_float_at_least_ulp)) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.ulp_lt_largest) >>
+  simp [] >> realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem closest_finite_positive_inward_unique:
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  float_is_finite y /\ ~float_is_zero y /\
+  float_is_finite (next_hi y) /\
+  0 < float_to_real y /\ float_to_real y < x /\
+  x < float_to_real (next_hi y) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (next_hi y) - x) ==>
+  !a : ('t,'w) float. is_closest float_is_finite x a ==> a = y
+Proof
+  strip_tac >> rpt strip_tac >>
+  fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  `abs (float_to_real a - x) = abs (float_to_real y - x)` by
+    (qpat_x_assum
+       `!b. float_is_finite b ==>
+          abs (float_to_real y - x) <= abs (float_to_real b - x)`
+       (qspec_then `a` mp_tac) >>
+     qpat_x_assum
+       `!b. float_is_finite b ==>
+          abs (float_to_real a - x) <= abs (float_to_real b - x)`
+       (qspec_then `y` mp_tac) >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `float_to_real a <= float_to_real y`
+  >- (`abs (float_to_real a - x) = x - float_to_real a` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real y - x) = x - float_to_real y` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `float_to_real a = float_to_real y` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      metis_tac [binary_ieeeTheory.float_to_real_eq])
+  >- (`abs (float_to_real y) < abs (float_to_real a)` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real (next_hi y)) <= abs (float_to_real a)` by
+        metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+      `0 < float_to_real (next_hi y)` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `float_to_real (next_hi y) <= float_to_real a` by
+        (fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real a - x) = float_to_real a - x` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real y - x) = x - float_to_real y` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real (next_hi y) - x) =
+       float_to_real (next_hi y) - x` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      realLib.REAL_ASM_ARITH_TAC)
+QED
+
+Theorem closest_finite_negative_inward_unique:
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  float_is_finite y /\ ~float_is_zero y /\
+  float_is_finite (next_hi y) /\
+  float_to_real y < 0 /\ x < float_to_real y /\
+  float_to_real (next_hi y) < x /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (next_hi y) - x) ==>
+  !a : ('t,'w) float. is_closest float_is_finite x a ==> a = y
+Proof
+  strip_tac >> rpt strip_tac >>
+  fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  `abs (float_to_real a - x) = abs (float_to_real y - x)` by
+    (qpat_x_assum
+       `!b. float_is_finite b ==>
+          abs (float_to_real y - x) <= abs (float_to_real b - x)`
+       (qspec_then `a` mp_tac) >>
+     qpat_x_assum
+       `!b. float_is_finite b ==>
+          abs (float_to_real a - x) <= abs (float_to_real b - x)`
+       (qspec_then `y` mp_tac) >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `float_to_real y <= float_to_real a`
+  >- (`abs (float_to_real a - x) = float_to_real a - x` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real y - x) = float_to_real y - x` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `float_to_real a = float_to_real y` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      metis_tac [binary_ieeeTheory.float_to_real_eq])
+  >- (`abs (float_to_real y) < abs (float_to_real a)` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real (next_hi y)) <= abs (float_to_real a)` by
+        metis_tac [binary_ieeeTheory.next_hi_discrete] >>
+      `float_to_real (next_hi y) < 0` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `float_to_real a <= float_to_real (next_hi y)` by
+        (fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real a - x) = x - float_to_real a` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real y - x) = float_to_real y - x` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real (next_hi y) - x) =
+       x - float_to_real (next_hi y)` by
+        (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      realLib.REAL_ASM_ARITH_TAC)
+QED
+
+Theorem round_tiesToAway_positive_inward:
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  float_is_finite y /\ ~float_is_zero y /\
+  float_is_finite (next_hi y) /\
+  0 < float_to_real y /\ float_to_real y < x /\
+  x < float_to_real (next_hi y) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (next_hi y) - x) ==>
+  round_tiesToAway x = y
+Proof
+  strip_tac >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = y` by
+    metis_tac [closest_finite_positive_inward_unique] >>
+  `round roundTiesToEven x = y` by
+    (qpat_x_assum `!a. is_closest _ _ a ==> a = y` irule >>
+     irule round_RNE_is_closest >> simp []) >>
+  metis_tac [round_tiesToAway_eq_RNE_when_closest_unique]
+QED
+
+Theorem round_tiesToAway_negative_inward:
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  float_is_finite y /\ ~float_is_zero y /\
+  float_is_finite (next_hi y) /\
+  float_to_real y < 0 /\ x < float_to_real y /\
+  float_to_real (next_hi y) < x /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (next_hi y) - x) ==>
+  round_tiesToAway x = y
+Proof
+  strip_tac >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = y` by
+    metis_tac [closest_finite_negative_inward_unique] >>
+  `round roundTiesToEven x = y` by
+    (qpat_x_assum `!a. is_closest _ _ a ==> a = y` irule >>
+     irule round_RNE_is_closest >> simp []) >>
+  metis_tac [round_tiesToAway_eq_RNE_when_closest_unique]
+QED
+
+Theorem integral_candidate_from_finite_closest:
+  is_closest float_is_finite x (y : ('t,'w) float) /\
+  float_is_integral y /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  is_closest integral_round_candidate x y
+Proof
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF,
+      integral_round_candidate_def]
+  >- (qpat_x_assum `!b. float_is_finite b ==> _` irule >>
+      fs [binary_ieeeTheory.float_is_integral_def,
+          binary_ieeeTheory.float_is_finite_def] >>
+      Cases_on `float_value b` >> fs [])
+  >- (fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
+      realLib.REAL_ASM_ARITH_TAC)
+QED
+
+Theorem integral_candidate_strict_unique:
+  float_is_integral (y : ('t,'w) float) /\ ~float_is_zero y /\
+  2 * abs (float_to_real y - x) < 1 /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  !a : ('t,'w) float.
+    is_closest integral_round_candidate x a ==> a = y
+Proof
+  strip_tac >>
+  `is_closest integral_round_candidate x y` by
+    (irule integral_candidate_nearest >> simp [] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  rpt strip_tac >>
+  `abs (float_to_real y - x) <= abs (float_to_real a - x)` by
+    (qpat_x_assum `is_closest integral_round_candidate x y`
+       (mp_tac o Q.SPEC `a` o cj 2 o
+        REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+     disch_then irule >>
+     qpat_x_assum `is_closest integral_round_candidate x a` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `abs (float_to_real a - x) <= abs (float_to_real y - x)` by
+    (qpat_x_assum `is_closest integral_round_candidate x a`
+       (mp_tac o Q.SPEC `y` o cj 2 o
+        REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+     disch_then irule >>
+     qpat_x_assum `is_closest integral_round_candidate x y` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `abs (float_to_real a - x) = abs (float_to_real y - x)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `integral_round_candidate a` by
+    (qpat_x_assum `is_closest integral_round_candidate x a` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `~float_is_infinite a` by
+    (strip_tac >>
+     fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
+     qpat_x_assum `a = _` SUBST_ALL_TAC >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `float_is_integral a` by
+    fs [integral_round_candidate_def] >>
+  imp_res_tac float_is_integral_to_real >>
+  Cases_on `float_to_real a = float_to_real y`
+  >- metis_tac [binary_ieeeTheory.float_to_real_eq] >>
+  `1 <= abs (float_to_real a - float_to_real y)` by
+    metis_tac [is_integral_separated] >>
+  `abs (float_to_real a - float_to_real y) <=
+   abs (float_to_real a - x) + abs (float_to_real y - x)` by
+    (qspec_then `float_to_real a - x`
+       (qspec_then `x - float_to_real y` mp_tac)
+       realTheory.ABS_TRIANGLE >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem integral_round_tiesToAway_strict_nearest:
+  x <> 0 /\
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  float_is_integral (y : ('t,'w) float) /\ ~float_is_zero y /\
+  2 * abs (float_to_real y - x) < 1 /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  integral_round_tiesToAway x = y
+Proof
+  strip_tac >>
+  `!a : ('t,'w) float.
+     is_closest integral_round_candidate x a ==> a = y` by
+    metis_tac [integral_candidate_strict_unique] >>
+  `~(x <= -threshold (:'t # 'w)) /\
+   ~(x >= threshold (:'t # 'w))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  simp [integral_round_tiesToAway_def] >>
+  first_x_assum irule >>
+  irule (cj 1 closest_such_integral_properties)
+QED
+
+Theorem round_tiesToAway_half_ulp_positive:
+  0 < x /\ 2 * x = ulp (:'t # 'w) ==>
+  (round_tiesToAway x : ('t,'w) float) = float_plus_min (:'t # 'w)
+Proof
+  strip_tac >>
+  `-threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.ulp_lt_threshold) >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  `float_to_real
+      (round roundTiesToEven x : ('t,'w) float) = 0` by
+    (mp_tac (Q.SPEC `x`
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.round_roundTiesToEven_is_zero)) >>
+     impl_tac >- (simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+     strip_tac >> fs []) >>
+  `is_closest float_is_finite x
+      (round roundTiesToEven x : ('t,'w) float)` by
+    metis_tac [round_RNE_is_closest] >>
+  `float_is_finite (float_plus_min (:'t # 'w))` by simp [] >>
+  `abs (float_to_real (float_plus_min (:'t # 'w)) - x) =
+   abs (float_to_real
+     (round roundTiesToEven x : ('t,'w) float) - x)` by
+    (simp [GSYM binary_ieeeTheory.ulp] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `is_closest float_is_finite x
+      (float_plus_min (:'t # 'w))` by
+    metis_tac [is_closest_finite_equal_distance] >>
+  irule round_tiesToAway_from_closest_away >>
+  simp [GSYM binary_ieeeTheory.ulp] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem round_tiesToAway_half_ulp_negative:
+  x < 0 /\ 2 * -x = ulp (:'t # 'w) ==>
+  (round_tiesToAway x : ('t,'w) float) =
+  float_negate (float_plus_min (:'t # 'w))
+Proof
+  strip_tac >>
+  `-threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.ulp_lt_threshold) >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  `float_to_real
+      (round roundTiesToEven x : ('t,'w) float) = 0` by
+    (mp_tac (Q.SPEC `x`
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.round_roundTiesToEven_is_zero)) >>
+     impl_tac >- (simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+     strip_tac >> fs []) >>
+  `is_closest float_is_finite x
+      (round roundTiesToEven x : ('t,'w) float)` by
+    metis_tac [round_RNE_is_closest] >>
+  `float_is_finite
+      (float_negate (float_plus_min (:'t # 'w)))` by
+    simp [binary_ieeeTheory.float_negate_def,
+          binary_ieeeTheory.float_plus_min_def,
+          binary_ieeeTheory.float_is_finite_def,
+          binary_ieeeTheory.float_value_def] >>
+  `abs (float_to_real
+          (float_negate (float_plus_min (:'t # 'w))) - x) =
+   abs (float_to_real
+     (round roundTiesToEven x : ('t,'w) float) - x)` by
+    (simp [GSYM binary_ieeeTheory.neg_ulp] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `is_closest float_is_finite x
+      (float_negate (float_plus_min (:'t # 'w)))` by
+    metis_tac [is_closest_finite_equal_distance] >>
+  irule round_tiesToAway_from_closest_away >>
+  simp [GSYM binary_ieeeTheory.neg_ulp] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem equal_distance_same_away:
+  x <> 0 /\ abs (y - x) <= abs x /\ abs (z - x) = abs (y - x) /\
+  (abs x <= abs z <=> abs x <= abs y) ==>
+  z = y
+Proof
+  rpt strip_tac >>
+  Cases_on `0 <= x` >> Cases_on `0 <= y` >> Cases_on `0 <= z` >>
+  Cases_on `0 <= y - x` >> Cases_on `0 <= z - x` >>
+  fs [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem integral_round_tiesToAway_from_float_round:
+  x <> 0 /\
+  -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
+  (round_tiesToAway x : ('t,'w) float) = y /\
+  float_is_integral y /\ ~float_is_zero y /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_plus_infinity (:'t # 'w)) - x) /\
+  abs (float_to_real y - x) <
+    abs (float_to_real (float_minus_infinity (:'t # 'w)) - x) ==>
+  integral_round_tiesToAway x = y
+Proof
+  strip_tac >>
+  `is_closest float_is_finite x y` by
+    metis_tac [round_tiesToAway_is_closest] >>
+  `is_closest integral_round_candidate x y` by
+    (irule integral_candidate_from_finite_closest >> simp []) >>
+  `~(x <= -threshold (:'t # 'w)) /\
+   ~(x >= threshold (:'t # 'w))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  simp [integral_round_tiesToAway_def] >>
+  qabbrev_tac `z : ('t,'w) float =
+    closest_such (\a. abs x <= abs (float_to_real a))
+      integral_round_candidate x` >>
+  mp_tac (Q.INST
+    [`p` |-> `\a : ('t,'w) float. abs x <= abs (float_to_real a)`,
+     `x` |-> `x`] closest_such_integral_properties) >>
+  simp [Abbr `z`] >> strip_tac >>
+  qabbrev_tac `z : ('t,'w) float =
+    closest_such (\a. abs x <= abs (float_to_real a))
+      integral_round_candidate x` >>
+  `abs (float_to_real y - x) <= abs (float_to_real z - x)` by
+    (qpat_x_assum `is_closest integral_round_candidate x y`
+       (mp_tac o Q.SPEC `z` o cj 2 o
+        REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+     disch_then irule >>
+     qpat_x_assum `is_closest integral_round_candidate x z` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `abs (float_to_real z - x) <= abs (float_to_real y - x)` by
+    (qpat_x_assum `is_closest integral_round_candidate x z`
+       (mp_tac o Q.SPEC `y` o cj 2 o
+        REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+     disch_then irule >>
+     qpat_x_assum `is_closest integral_round_candidate x y` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `abs (float_to_real z - x) = abs (float_to_real y - x)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `integral_round_candidate z` by
+    (qpat_x_assum `is_closest integral_round_candidate x z` mp_tac >>
+     simp [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+  `~float_is_infinite z` by
+    (strip_tac >>
+     fs [GSYM IN_DEF, binary_ieeeTheory.float_sets] >>
+     qpat_x_assum `z = _` SUBST_ALL_TAC >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `float_is_integral z` by
+    fs [integral_round_candidate_def] >>
+  `is_closest float_is_finite x z` by
+    (rw [binary_ieeeTheory.is_closest_def, IN_DEF]
+     >- (fs [binary_ieeeTheory.float_is_integral_def,
+             binary_ieeeTheory.float_is_finite_def] >>
+         Cases_on `float_value z` >> fs [])
+     >- (qpat_x_assum `is_closest float_is_finite x y`
+           (mp_tac o Q.SPEC `b` o cj 2 o
+            REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+         simp [])) >>
+  `abs x <= abs (float_to_real z) <=>
+   abs x <= abs (float_to_real y)` by
+    (eq_tac >> strip_tac
+     >- metis_tac [round_tiesToAway_away]
+     >- (qpat_x_assum
+           `(?b. is_closest integral_round_candidate x b /\
+                 abs x <= abs (float_to_real b)) ==>
+            abs x <= abs (float_to_real z)` irule >>
+         qexists_tac `y` >> simp [])) >>
+  `abs (float_to_real y - x) <= abs x` by
+    (qpat_x_assum `is_closest float_is_finite x y`
+       (mp_tac o Q.SPEC `float_plus_zero (:'t # 'w)` o cj 2 o
+        REWRITE_RULE [binary_ieeeTheory.is_closest_def, IN_DEF]) >>
+     simp []) >>
+  `float_to_real z = float_to_real y` by
+    metis_tac [equal_distance_same_away] >>
+  `z = y` by
+    (fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
+  simp [Abbr `z`]
+QED
