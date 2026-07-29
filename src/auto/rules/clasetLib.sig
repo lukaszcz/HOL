@@ -99,6 +99,9 @@ sig
   val Dest : thm -> thm
   val Simp : thm -> thm
   val Iff : thm -> thm
+  val Norm : thm -> thm
+  val Forward : thm -> thm
+  val SForward : thm -> thm
   val Del : string -> thm
 
   val destSIntro : thm -> thm option
@@ -109,6 +112,9 @@ sig
   val destDest : thm -> thm option
   val destSimp : thm -> thm option
   val destIff : thm -> thm option
+  val destNorm : thm -> thm option
+  val destForward : thm -> thm option
+  val destSForward : thm -> thm option
   val destDel : thm -> string option
 
   val process_claset_tags : thm list -> claset -> claset * thm list

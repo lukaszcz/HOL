@@ -2391,7 +2391,12 @@ val simpset_marker_cases =
   [("Simp", Simp, destSimp, boolTheory.AND_CLAUSES),
    ("Iff", Iff, destIff, boolTheory.IMP_CLAUSES)]
 
-val classical_marker_theorems =
+val aesop_marker_cases =
+  [("Norm", Norm, destNorm, boolTheory.AND_CLAUSES),
+   ("Forward", Forward, destForward, boolTheory.OR_ELIM_THM),
+   ("SForward", SForward, destSForward, boolTheory.OR_ELIM_THM)]
+
+val claset_marker_theorems =
   [SIntro boolTheory.AND_INTRO_THM,
    Intro boolTheory.AND_INTRO_THM,
    SElim boolTheory.OR_ELIM_THM,
@@ -2400,6 +2405,9 @@ val classical_marker_theorems =
    Dest boolTheory.OR_ELIM_THM,
    Simp boolTheory.AND_CLAUSES,
    Iff boolTheory.IMP_CLAUSES,
+   Norm boolTheory.AND_CLAUSES,
+   Forward boolTheory.OR_ELIM_THM,
+   SForward boolTheory.OR_ELIM_THM,
    Del "claset-selftest"]
 
 val marker_prefix = "__claset_marker_"
@@ -2448,6 +2456,26 @@ val _ =
 
 val _ =
   test
+    ("aesop markers round-trip through the classical pass-through",
+     fn () =>
+       List.all
+         (fn (_, mark, dest, th) =>
+            let
+              val marked = mark th
+              val (cs, rest) = process_claset_tags [marked] empty_cs
+            in
+              (case dest marked of
+                   SOME th' => same_thm th th'
+                 | NONE => false) andalso
+              List.null (rules_of cs) andalso
+              ListPair.allEq
+                (fn (left, right) => same_thm left right)
+                (rest, [marked])
+            end)
+         aesop_marker_cases)
+
+val _ =
+  test
     ("simp argument classifier preserves every bucket's input order",
      fn () =>
        let
@@ -2480,7 +2508,7 @@ val _ =
      fn () =>
        List.all
          (not o markerLib.is_generic_simp_marker)
-         classical_marker_theorems)
+         claset_marker_theorems)
 
 val _ =
   test

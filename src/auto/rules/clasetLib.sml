@@ -1044,6 +1044,9 @@ val SDest_t = mk_marker_const "SDest"
 val Dest_t = mk_marker_const "Dest"
 val Simp_t = mk_marker_const "Simp"
 val Iff_t = mk_marker_const "Iff"
+val Norm_t = mk_marker_const "Norm"
+val Forward_t = mk_marker_const "Forward"
+val SForward_t = mk_marker_const "SForward"
 val Del_t = mk_marker_const "Del"
 
 val SIntro = markerLib.genCong clasetMarkerTheory.SIntro_def
@@ -1054,6 +1057,9 @@ val SDest = markerLib.genCong clasetMarkerTheory.SDest_def
 val Dest = markerLib.genCong clasetMarkerTheory.Dest_def
 val Simp = markerLib.genCong clasetMarkerTheory.Simp_def
 val Iff = markerLib.genCong clasetMarkerTheory.Iff_def
+val Norm = markerLib.genCong clasetMarkerTheory.Norm_def
+val Forward = markerLib.genCong clasetMarkerTheory.Forward_def
+val SForward = markerLib.genCong clasetMarkerTheory.SForward_def
 
 val destSIntro =
   markerLib.genUnCong SIntro_t clasetMarkerTheory.SIntro_def
@@ -1064,6 +1070,11 @@ val destSDest = markerLib.genUnCong SDest_t clasetMarkerTheory.SDest_def
 val destDest = markerLib.genUnCong Dest_t clasetMarkerTheory.Dest_def
 val destSimp = markerLib.genUnCong Simp_t clasetMarkerTheory.Simp_def
 val destIff = markerLib.genUnCong Iff_t clasetMarkerTheory.Iff_def
+val destNorm = markerLib.genUnCong Norm_t clasetMarkerTheory.Norm_def
+val destForward =
+  markerLib.genUnCong Forward_t clasetMarkerTheory.Forward_def
+val destSForward =
+  markerLib.genUnCong SForward_t clasetMarkerTheory.SForward_def
 
 val Del = markerLib.genmktagged clasetMarkerTheory.Del_def
 val destDel = markerLib.gendest_tagged Del_t
