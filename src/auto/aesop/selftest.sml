@@ -350,6 +350,9 @@ val forward_theorem =
   DISCH forward_p
     (DISCH forward_q
       (CONJ (ASSUME forward_p) (ASSUME forward_q)))
+val conjunctive_forward_theorem =
+  DISCH forward_conclusion
+    (CONJUNCT1 (ASSUME forward_conclusion))
 val reverse_forward_theorem =
   DISCH forward_p
     (DISCH forward_q
@@ -376,6 +379,30 @@ val _ =
                       aconv added forward_conclusion andalso
                       aconv retained_p forward_p andalso
                       aconv retained_q forward_q andalso
+                      aconv target forward_target
+                  | _ => false)
+           | NONE => false
+       end)
+
+val _ =
+  test
+    ("aesop forward preserves a conjunctive first premise",
+     fn () =>
+       let
+         val rule =
+           aesopRule.default_forward_rule
+             {name = "conjunctive-forward", phase = aesopRule.RSafe,
+              theorem = conjunctive_forward_theorem,
+              mode = clasetUnify.Match}
+       in
+         case first_engine_result rule
+           ([forward_conclusion], forward_target)
+         of
+             SOME (_, node) =>
+               (case clasetGoal.render node 1 of
+                    ([added, retained], target) =>
+                      aconv added forward_p andalso
+                      aconv retained forward_conclusion andalso
                       aconv target forward_target
                   | _ => false)
            | NONE => false
@@ -2310,6 +2337,30 @@ val _ =
               safe_goals = [(_, {w, ...})]} =>
                 null (aesopTree.rapps tree) andalso
                 aconv w search_limit_goal
+         | _ => false)
+
+val search_safe_limit_close =
+  aesopRule.apply_rule
+    {name = "safe-limit-close", phase = aesopRule.RSafe,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Match}
+val search_safe_rapp_limit_outcome =
+  aesopSearch.search {max_rapps = 0, max_depth = 10}
+    (search_source []
+      (fn _ => [search_safe_limit_close]) [])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] search_limit_goal) [])
+
+val _ =
+  test
+    ("aesop max_rapps prevents committed safe applications",
+     fn () =>
+       case search_safe_rapp_limit_outcome of
+           aesopSearch.SearchFailed
+             {tree, reason = aesopSearch.RappLimitReached, ...} =>
+               null (aesopTree.rapps tree) andalso
+               #state
+                 (aesopTree.goal tree (aesopTree.root tree)) =
+                 aesopTree.Unknown
          | _ => false)
 
 val search_depth_split =

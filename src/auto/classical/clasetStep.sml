@@ -359,11 +359,10 @@ fun type_variables th =
     (HOLset.fromList Type.compare
       (List.concat (map type_vars_in_term (concl th :: hyp th))))
 
-fun freshen_rule node pos is_elim theorem =
+fun freshen_rule node pos kind theorem =
   let
     val store0 = clasetGoal.store node
     val params = #params (clasetGoal.goal_at node pos)
-    val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
     val form = clasetRules.canonical_form_of kind theorem
     val canonical = #thm form
 
@@ -567,7 +566,8 @@ fun try_rule policy mode cs duplicated node pos
     (tag, (is_elim, theorem)) assumption =
   let
     val (asl, w) = clasetGoal.render node pos
-    val fresh = freshen_rule node pos is_elim theorem
+    val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
+    val fresh = freshen_rule node pos kind theorem
     val prefixes = minor_prefixes policy is_elim (#premises fresh)
     val config = {mode = mode, rule_metas = #metas fresh}
     val store1 =
@@ -721,7 +721,7 @@ fun try_forward mode theorem immediate node pos
     (major_pos, major) =
   let
     val (asl, w) = clasetGoal.render node pos
-    val fresh = freshen_rule node pos false theorem
+    val fresh = freshen_rule node pos clasetRules.Forward theorem
     val all_premises = #premises fresh
     val _ =
       if immediate > 0 andalso immediate <= length all_premises then ()

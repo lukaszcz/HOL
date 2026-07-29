@@ -46,6 +46,9 @@ datatype application =
 datatype safe_phase =
     Committed of tree
   | Deferred of aesopTree.rapp_data list
+  | CommitLimit of tree
+
+exception SafeRappLimitReached of tree
 
 datatype unsafe_candidate =
     Stored of aesopTree.rapp_data
@@ -235,7 +238,7 @@ fun application_assigned goal
       (aesopTree.assigned_between
         (aesopTree.active_store goal) (clasetGoal.store node)))
 
-fun safe_phase id rules tree =
+fun safe_phase max_rapps id rules tree =
   let
     val goal = aesopTree.goal tree id
     val node = make_node goal
@@ -259,6 +262,12 @@ fun safe_phase id rules tree =
                            has_dependencies andalso
                            application_assigned goal data
                          then scan (data' :: postponed) rest
+                         else if
+                           case max_rapps of
+                               NONE => false
+                             | SOME limit =>
+                                 length (aesopTree.rapps tree) >= limit
+                         then CommitLimit tree
                          else
                            Committed
                              (install_committed id data' tree)
@@ -289,7 +298,7 @@ fun prepare_unsafe id postponed source tree =
   end
 
 fun next_safe_with include_irrelevant pop_goal
-      (config as {max_depth, rules = source}) tree =
+      (config as {max_depth, max_rapps, rules = source}) tree =
   case pop_goal tree of
       (NONE, remaining) => QueueEmpty remaining
     | (SOME id, remaining) =>
@@ -333,10 +342,12 @@ fun next_safe_with include_irrelevant pop_goal
                             (source
                               (rule_input (selected_mode goal) goal)))
                     in
-                      case safe_phase id safe normalised of
+                      case safe_phase max_rapps id safe normalised of
                           Committed installed =>
                             next_safe_with include_irrelevant pop_goal
                               config installed
+                        | CommitLimit limited =>
+                            raise SafeRappLimitReached limited
                         | Deferred postponed =>
                             ReadyForUnsafe
                               {goal = id,
@@ -347,11 +358,15 @@ fun next_safe_with include_irrelevant pop_goal
                 end
         end
 
-fun next_safe config tree =
-  next_safe_with false aesopTree.pop_goal config tree
+fun next_safe {max_depth, rules} tree =
+  next_safe_with false aesopTree.pop_goal
+    {max_rapps = NONE, max_depth = max_depth, rules = rules}
+    tree
 
-fun next_safe_including_irrelevant config tree =
-  next_safe_with true aesopTree.pop_goal_including_irrelevant config tree
+fun next_safe_including_irrelevant {max_depth, rules} tree =
+  next_safe_with true aesopTree.pop_goal_including_irrelevant
+    {max_rapps = NONE, max_depth = max_depth, rules = rules}
+    tree
 
 fun safe_saturate config tree =
   let
@@ -480,6 +495,18 @@ datatype unsafe_outcome =
     UnsafeContinue of tree
   | UnsafeRappLimit of tree
 
+datatype bounded_safe_outcome =
+    BoundedSafe of next_outcome
+  | BoundedSafeRappLimit of tree
+
+fun bounded_safe_phase max_rapps max_depth rules tree =
+  BoundedSafe
+    (next_safe_with false aesopTree.pop_goal
+      {max_depth = max_depth, max_rapps = SOME max_rapps,
+       rules = rules} tree)
+  handle SafeRappLimitReached limited =>
+    BoundedSafeRappLimit limited
+
 fun unsafe_phase {max_rapps, ...} id tree =
   let val goal = aesopTree.goal tree id
   in
@@ -527,8 +554,9 @@ fun safe_completion {max_depth, rules} tree =
   let
     fun complete current =
       case
-        next_safe_including_irrelevant
-          {max_depth = max_depth, rules = rules} current
+        next_safe_with true aesopTree.pop_goal_including_irrelevant
+          {max_depth = max_depth, max_rapps = NONE, rules = rules}
+          current
       of
           QueueEmpty saturated => saturated
         | ReadyForUnsafe {tree = remaining, ...} =>
@@ -592,9 +620,11 @@ fun search
            SearchProved tree)
         else
           case
-            next_safe {max_depth = max_depth, rules = rules} tree
+            bounded_safe_phase max_rapps max_depth rules tree
           of
-              QueueEmpty exhausted =>
+              BoundedSafeRappLimit limited =>
+                failed RappLimitReached limited
+            | BoundedSafe (QueueEmpty exhausted) =>
                 if
                   #state
                     (aesopTree.goal exhausted
@@ -606,14 +636,15 @@ fun search
                     (if depth_limited then DepthLimitReached
                      else SearchExhausted)
                     exhausted
-            | DepthLimit {goal, tree = limited} =>
+            | BoundedSafe (DepthLimit {goal, tree = limited}) =>
                 (trace 2
                    (fn () =>
                      "depth limit stopped goal " ^
                      Int.toString goal);
                  loop true (aesopTree.exhaust_goal goal limited))
-            | NormalisationLimit
-                {goal, tree = limited, iterations, rule} =>
+            | BoundedSafe
+                (NormalisationLimit
+                  {goal, tree = limited, iterations, rule}) =>
                 (trace 2
                    (fn () =>
                      "normalisation limit stopped goal " ^
@@ -621,7 +652,7 @@ fun search
                      Int.toString iterations ^
                      " iteration(s), next rule " ^ rule);
                  loop true (aesopTree.exhaust_goal goal limited))
-            | ReadyForUnsafe {goal, tree = ready} =>
+            | BoundedSafe (ReadyForUnsafe {goal, tree = ready}) =>
                 (case unsafe_phase config goal ready of
                      UnsafeContinue next => loop depth_limited next
                    | UnsafeRappLimit limited =>
