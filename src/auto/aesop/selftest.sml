@@ -664,6 +664,403 @@ fun close_tree_goal tree id =
     (install_tree_rapp tree id aesopRule.RSafe "close"
       (aesopTree.active_store (aesopTree.goal tree id)) [] [])
 
+fun norm_complete outcome =
+  case outcome of
+      aesopNorm.Complete result => SOME result
+    | aesopNorm.IterationLimit _ => NONE
+
+fun norm_target tree id =
+  #w (aesopTree.active_cgoal (aesopTree.goal tree id))
+
+fun norm_records tree id =
+  case #norm (aesopTree.goal tree id) of
+      aesopTree.Normalised {records, ...} => records
+    | aesopTree.NormProved {records, ...} => records
+    | aesopTree.Unnormalised => []
+
+fun record_is_disch record =
+  case clasetStep.kind_of record of clasetStep.Disch => true | _ => false
+
+fun record_is_gen record =
+  case clasetStep.kind_of record of clasetStep.Gen => true | _ => false
+
+fun record_is_hyp_subst record =
+  case clasetStep.kind_of record of
+      clasetStep.HypSubst => true
+    | _ => false
+
+fun record_is_wrapper record =
+  case clasetStep.kind_of record of
+      clasetStep.Wrapper => true
+    | _ => false
+
+fun norm_transition name penalty equality =
+  let
+    val (_, target) = boolSyntax.dest_eq (concl equality)
+    val theorem =
+      DISCH target (EQ_MP (SYM equality) (ASSUME target))
+  in
+    aesopRule.apply_rule
+      {name = name, phase = aesopRule.RNorm penalty,
+       theorem = theorem, mode = clasetUnify.Match}
+  end
+
+val norm_state1 =
+  Term.mk_var ("aesop_norm_state1", Type.bool)
+val norm_state2 =
+  Term.mk_var ("aesop_norm_state2", Type.bool)
+val norm_state3 =
+  Term.mk_var ("aesop_norm_state3", Type.bool)
+val norm_state4 =
+  Term.mk_var ("aesop_norm_state4", Type.bool)
+val norm_state_alt =
+  Term.mk_var ("aesop_norm_state_alt", Type.bool)
+
+val norm_4_to_3 =
+  ASSUME (boolSyntax.mk_eq (norm_state4, norm_state3))
+val norm_3_to_2 =
+  ASSUME (boolSyntax.mk_eq (norm_state3, norm_state2))
+val norm_3_to_alt =
+  ASSUME (boolSyntax.mk_eq (norm_state3, norm_state_alt))
+val norm_2_to_3 =
+  SYM norm_3_to_2
+
+val norm_restart_rules =
+  [norm_transition "competing" 10 norm_3_to_alt,
+   norm_transition "unlock" 5 norm_4_to_3,
+   norm_transition "low" ~10 norm_3_to_2]
+val norm_restart_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal []
+      (map concl [norm_4_to_3, norm_3_to_2, norm_3_to_alt])
+      norm_state4) []
+val norm_restart_root =
+  aesopTree.root norm_restart_tree0
+val norm_restart_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = norm_restart_rules}
+    norm_restart_root norm_restart_tree0
+
+val _ =
+  test
+    ("aesop norm orders penalties and restarts after every success",
+     fn () =>
+       case norm_complete norm_restart_outcome of
+           SOME {tree, iterations} =>
+             iterations = 2 andalso
+             aconv (norm_target tree norm_restart_root) norm_state2
+         | NONE => false)
+
+val custom_norm_simp =
+  aesopRule.simp_rule_with
+    {name = "simp",
+     simpset =
+       simpLib.++ (simpLib.empty_ss, simpLib.rewrites [norm_3_to_2]),
+     controls = []}
+val negative_norm =
+  norm_transition "negative" ~1 norm_4_to_3
+val norm_simp_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal []
+      (map concl [norm_4_to_3, norm_3_to_2])
+      norm_state4) []
+val norm_simp_root =
+  aesopTree.root norm_simp_tree0
+val norm_simp_outcome =
+  aesopNorm.normalise
+    {max_depth = 10,
+     rules = [custom_norm_simp, negative_norm]}
+    norm_simp_root norm_simp_tree0
+
+val _ =
+  test
+    ("aesop norm runs a negative user rule before penalty-zero simp",
+     fn () =>
+       case norm_complete norm_simp_outcome of
+           SOME {tree, iterations} =>
+             iterations = 2 andalso
+             aconv (norm_target tree norm_simp_root) norm_state2 andalso
+             (case norm_records tree norm_simp_root of
+                  [first, second] =>
+                    (case clasetStep.kind_of first of
+                         clasetStep.RuleApplication _ => true
+                       | _ => false) andalso
+                    record_is_wrapper second
+                | _ => false)
+         | NONE => false)
+
+val _ =
+  test
+    ("aesop norm built-ins have their documented penalty-zero order",
+     fn () =>
+       rule_names (aesopRule.norm_builtins []) =
+         ["disch", "gen", "hyp-subst", "simp"] andalso
+       List.all (is_phase (aesopRule.RNorm 0))
+         (aesopRule.norm_builtins []))
+
+val norm_declaration_cs =
+  clasetLib.empty_cs
+  |> clasetLib.add_rule
+       {kind = clasetRules.Norm, safe = false, prio = SOME ~7}
+       ("declared_norm",
+        DISCH norm_state3
+          (EQ_MP (SYM norm_4_to_3) (ASSUME norm_state3)))
+val norm_declaration_rules =
+  aesopRule.claset_rules
+    {claset = norm_declaration_cs, mode = clasetUnify.Unify,
+     conclusion = norm_state4, assumptions = [concl norm_4_to_3],
+     qvars = HOLset.empty Term.compare, simp_args = []}
+
+val _ =
+  test
+    ("aesop norm declarations are Match-mode apply rules with penalties",
+     fn () =>
+       case
+         List.filter
+           (fn ({name, ...} : aesopRule.rule) =>
+             name = "declared_norm")
+           (#norm norm_declaration_rules)
+       of
+           [rule as {phase = aesopRule.RNorm ~7, ...}] =>
+             (case first_engine_result rule
+                ([concl norm_4_to_3], norm_state4)
+              of
+                  SOME (_, node) =>
+                    (case clasetGoal.goals node of
+                         [{w, ...}] => aconv w norm_state3
+                       | _ => false)
+                | NONE => false)
+         | _ => false)
+
+val norm_builtin_p =
+  Term.mk_var ("aesop_norm_builtin_p", Type.bool)
+val norm_builtin_x =
+  Term.mk_var ("aesop_norm_builtin_x", Type.bool)
+val norm_builtin_goal =
+  boolSyntax.mk_imp
+    (norm_builtin_p,
+     boolSyntax.mk_forall (norm_builtin_x, norm_builtin_p))
+val norm_builtin_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] [] norm_builtin_goal) []
+val norm_builtin_root =
+  aesopTree.root norm_builtin_tree0
+val norm_builtin_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = aesopRule.norm_builtins []}
+    norm_builtin_root norm_builtin_tree0
+
+val _ =
+  test
+    ("aesop norm introduces assumptions and universals before simp",
+     fn () =>
+       case norm_complete norm_builtin_outcome of
+           SOME {tree, iterations} =>
+             iterations = 3 andalso
+             #state (aesopTree.goal tree norm_builtin_root) =
+               aesopTree.Proved andalso
+             (case norm_records tree norm_builtin_root of
+                  [disch, gen, simp] =>
+                    record_is_disch disch andalso
+                    record_is_gen gen andalso
+                    record_is_wrapper simp
+                | _ => false)
+         | NONE => false)
+
+val norm_subst_variable =
+  Term.mk_var ("aesop_norm_subst_variable", Type.bool)
+val norm_subst_equality =
+  boolSyntax.mk_eq (norm_subst_variable, boolSyntax.T)
+val norm_subst_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] [norm_subst_equality] norm_subst_variable) []
+val norm_subst_root =
+  aesopTree.root norm_subst_tree0
+val norm_subst_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = aesopRule.norm_builtins []}
+    norm_subst_root norm_subst_tree0
+
+val _ =
+  test
+    ("aesop norm hypothesis substitution eliminates variables",
+     fn () =>
+       case norm_complete norm_subst_outcome of
+           SOME {tree, ...} =>
+             #state (aesopTree.goal tree norm_subst_root) =
+               aesopTree.Proved andalso
+             (case norm_records tree norm_subst_root of
+                  first :: _ =>
+                    record_is_hyp_subst first
+                | [] => false)
+         | NONE => false)
+
+val norm_function =
+  Term.mk_var
+    ("aesop_norm_function", Type.bool --> Type.bool)
+val norm_argument =
+  Term.mk_var ("aesop_norm_argument", Type.bool)
+val norm_application =
+  Term.mk_comb (norm_function, norm_argument)
+val norm_rewrite_assumption =
+  boolSyntax.mk_eq (norm_application, boolSyntax.T)
+
+fun run_simp_controls controls =
+  let
+    val tree0 =
+      new_tree clasetMeta.empty
+        (tree_cgoal [] [norm_rewrite_assumption]
+          norm_application) []
+    val root = aesopTree.root tree0
+  in
+    (root,
+     aesopNorm.normalise
+       {max_depth = 10,
+        rules = [aesopRule.simp_rule controls]} root tree0)
+  end
+
+val (norm_asms_root, norm_asms_outcome) =
+  run_simp_controls []
+val (norm_no_asms_root, norm_no_asms_outcome) =
+  run_simp_controls [markerLib.NoAsms]
+
+val _ =
+  test
+    ("aesop norm simp uses assumptions unless NoAsms disables them",
+     fn () =>
+       case
+         (norm_complete norm_asms_outcome,
+          norm_complete norm_no_asms_outcome)
+       of
+           (SOME {tree = with_asms, ...},
+            SOME {tree = without_asms, iterations = 0}) =>
+             #state (aesopTree.goal with_asms norm_asms_root) =
+               aesopTree.Proved andalso
+             aconv
+               (norm_target without_asms norm_no_asms_root)
+               norm_application
+         | _ => false)
+
+val branching_norm_theorem =
+  add_premise norm_state2
+    (add_premise norm_state1 (ASSUME norm_state4))
+val branching_norm_rule =
+  aesopRule.apply_rule
+    {name = "branching", phase = aesopRule.RNorm 0,
+     theorem = branching_norm_theorem, mode = clasetUnify.Match}
+val branching_norm_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] [norm_state4] norm_state4) []
+val branching_norm_root =
+  aesopTree.root branching_norm_tree0
+val branching_norm_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = [branching_norm_rule]}
+    branching_norm_root branching_norm_tree0
+
+val _ =
+  test
+    ("aesop norm dynamically rejects applications with two subgoals",
+     fn () =>
+       case norm_complete branching_norm_outcome of
+           SOME {tree, iterations = 0} =>
+             aconv (norm_target tree branching_norm_root) norm_state4 andalso
+             null (norm_records tree branching_norm_root)
+         | _ => false)
+
+fun duplicated_disch input =
+  case seq.cases (clasetStep.blast_disch_step input) of
+      NONE => seq.empty
+    | SOME (result, _) => seq.fromList [result, result]
+
+val alternative_norm_rule : aesopRule.rule =
+  {name = "alternatives", phase = aesopRule.RNorm 0,
+   apply = aesopRule.EngineStep duplicated_disch, once = false}
+val alternative_norm_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] []
+      (boolSyntax.mk_imp (norm_builtin_p, norm_builtin_p))) []
+val alternative_norm_root =
+  aesopTree.root alternative_norm_tree0
+val alternative_norm_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = [alternative_norm_rule]}
+    alternative_norm_root alternative_norm_tree0
+
+val _ =
+  test
+    ("aesop norm dynamically rejects multiple application alternatives",
+     fn () =>
+       case norm_complete alternative_norm_outcome of
+           SOME {tree, iterations = 0} =>
+             aconv
+               (norm_target tree alternative_norm_root)
+               (boolSyntax.mk_imp
+                 (norm_builtin_p, norm_builtin_p))
+         | _ => false)
+
+val (norm_meta, norm_meta_store) =
+  clasetMeta.new_meta
+    {allow = [], ty = Type.bool} clasetMeta.empty
+val binding_norm_rule =
+  aesopRule.apply_rule
+    {name = "bind-meta", phase = aesopRule.RNorm 0,
+     theorem = boolTheory.TRUTH, mode = clasetUnify.Unify}
+val binding_norm_tree0 =
+  new_tree norm_meta_store
+    (tree_cgoal [] [] norm_meta) []
+val binding_norm_root =
+  aesopTree.root binding_norm_tree0
+val binding_norm_outcome =
+  aesopNorm.normalise
+    {max_depth = 10, rules = [binding_norm_rule]}
+    binding_norm_root binding_norm_tree0
+
+val _ =
+  test
+    ("aesop norm dynamically rejects metavariable-binding applications",
+     fn () =>
+       case norm_complete binding_norm_outcome of
+           SOME {tree, iterations = 0} =>
+             aconv (norm_target tree binding_norm_root) norm_meta andalso
+             null
+               (#terms
+                 (clasetMeta.bindings
+                   (aesopTree.active_store
+                     (aesopTree.goal tree binding_norm_root))))
+         | _ => false)
+
+val looping_norm_rules =
+  [norm_transition "forth" 0 norm_2_to_3,
+   norm_transition "back" 0 norm_3_to_2]
+val looping_norm_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal []
+      (map concl [norm_2_to_3, norm_3_to_2])
+      norm_state2) []
+val looping_norm_root =
+  aesopTree.root looping_norm_tree0
+val looping_norm_outcome =
+  aesopNorm.normalise
+    {max_depth = 3, rules = looping_norm_rules}
+    looping_norm_root looping_norm_tree0
+
+val _ =
+  test
+    ("aesop norm iteration bound is clean and installs no partial chain",
+     fn () =>
+       case looping_norm_outcome of
+           aesopNorm.IterationLimit
+             {tree, iterations = 3, rule = "back"} =>
+               not
+                 (aesopTree.is_normalised
+                   (aesopTree.goal tree looping_norm_root)) andalso
+               aconv
+                 (#w (#cgoal
+                   (aesopTree.goal tree looping_norm_root)))
+                 norm_state2
+         | _ => false)
+
 fun near expected actual =
   Real.abs (expected - actual) < 0.000000001
 

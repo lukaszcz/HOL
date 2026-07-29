@@ -269,13 +269,29 @@ fun split_rules () =
      assumption = map #assumption pairs}
   end
 
+fun is_no_asms theorem =
+  let
+    val payload =
+      Option.getOpt
+        (markerLib.dest_generic_simp_wrapper theorem, theorem)
+  in
+    aconv (concl payload) (concl markerLib.NoAsms)
+  end
+
 fun simp_rule_with {name, simpset, controls} : rule =
-  {name = name, phase = RNorm 0,
-   apply =
-     RenderedTactic
-       (NTactical.LIFT
-         (clasimpLib.safe_asm_full_simp simpset controls)),
-   once = false}
+  let
+    (* GEN_GLOBAL_SIMP_TAC deliberately traverses assumptions.  NoAsms
+       therefore selects its safe conclusion-only counterpart. *)
+    val tactic =
+      if List.exists is_no_asms controls then
+        simpLib.GEN_SIMP_TAC {safe = true} simpset controls
+      else
+        clasimpLib.safe_asm_full_simp simpset controls
+  in
+    {name = name, phase = RNorm 0,
+     apply = RenderedTactic (NTactical.LIFT tactic),
+     once = false}
+  end
 
 fun simp_rule arguments =
   let
@@ -289,6 +305,18 @@ fun simp_rule arguments =
       {name = "simp", simpset = invocation_ss,
        controls = simp_controls}
   end
+
+fun norm_builtins simp_args : rule list =
+  [{name = "disch", phase = RNorm 0,
+    apply = EngineStep clasetStep.blast_disch_step,
+    once = false},
+   {name = "gen", phase = RNorm 0,
+    apply = EngineStep clasetStep.blast_gen_step,
+    once = false},
+   {name = "hyp-subst", phase = RNorm 0,
+    apply = EngineStep clasetStep.blast_hyp_subst_step,
+    once = false},
+   simp_rule simp_args]
 
 fun closers () : rule list =
   [{name = "assumption", phase = RSafe,
@@ -345,6 +373,8 @@ fun declaration_rule mode
       (spec, (name, theorem)) : rule =
   let
     val kind = #kind spec
+    val elim =
+      kind = clasetRules.Elim orelse kind = clasetRules.Dest
   in
     if kind = clasetRules.Forward then
       default_forward_rule
@@ -357,8 +387,7 @@ fun declaration_rule mode
          apply =
            EngineStep
              (clasetStep.rule_step
-               {theorem = source, elim = kind <> clasetRules.Intro,
-                mode = mode}),
+               {theorem = source, elim = elim, mode = mode}),
          once = false}
       end
   end
@@ -376,6 +405,9 @@ fun unsafe_declaration (spec, _) =
 
 fun safe_forward_declaration (spec, _) =
   #kind spec = clasetRules.Forward andalso #safe spec
+
+fun norm_declaration (spec, _) =
+  #kind spec = clasetRules.Norm
 
 fun unsafe_percent (spec, _) =
   case phase_of_spec spec of
@@ -411,11 +443,14 @@ fun claset_rules
     val unsafe =
       map (declaration_rule mode)
         (order_unsafe (List.filter unsafe_declaration candidates))
+    val norm_declarations =
+      map (declaration_rule clasetUnify.Match)
+        (List.filter norm_declaration (clasetLib.rules_of claset))
     val splits = split_rules ()
     val tactics =
       applicable_tactic_rules conclusion assumptions
     val norm_tactics =
-      List.filter norm_phase_rule tactics
+      List.filter norm_phase_rule (registered_tactic_rules ())
     val safe_tactics =
       List.filter safe_phase_rule tactics
     val unsafe_tactics =
@@ -428,7 +463,9 @@ fun claset_rules
        conclusion_splits = #conclusion splits,
        assumption_splits = #assumption splits @ safe_tactics}
   in
-    {norm = norm_tactics @ [simp_rule simp_args], safe = safe,
+    {norm =
+       norm_builtins simp_args @ norm_declarations @ norm_tactics,
+     safe = safe,
      unsafe = unsafe @ unsafe_tactics}
   end
 

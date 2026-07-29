@@ -90,6 +90,12 @@ sig
      controls : thm list} -> rule
   val simp_rule : thm list -> rule
 
+  (* The penalty-zero built-ins have this fixed order: implication
+     introduction, universal introduction, hypothesis substitution, simp.
+     Stable penalty ordering puts negative user rules before this chain and
+     positive user rules after it. *)
+  val norm_builtins : thm list -> rule list
+
   val closers : unit -> rule list
   val safe_rules : safe_scaffold -> rule list
 
