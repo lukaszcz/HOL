@@ -35,6 +35,10 @@ val tests =
                        smtfp_nan``),
    ("literal-positive-infinity",
     ``(smtfp_bits 0w 31w 0w : (3,5) smtfp) = smtfp_pinf``),
+   ("literal-negative-infinity",
+    ``(smtfp_bits 1w 31w 0w : (3,5) smtfp) = smtfp_ninf``),
+   ("literal-positive-zero",
+    ``(smtfp_bits 0w 0w 0w : (3,5) smtfp) = smtfp_pzero``),
    ("literal-negative-zero",
     ``(smtfp_bits 1w 0w 0w : (3,5) smtfp) = smtfp_nzero``),
    ("smallest-subnormal", ``smtfp_from_real RNA (1r / 262144) =
@@ -71,6 +75,8 @@ val tests =
     ``smtfp_round_to_integral RNA ^onehalf = ^two``),
    ("round-to-integral-rtn-tie",
     ``smtfp_round_to_integral RTN ^onehalf = ^one``),
+   ("minimum", ``smtfp_min ^one ^two = ^one``),
+   ("maximum", ``smtfp_max ^one ^two = ^two``),
    ("remainder-quotient-tie", ``smtfp_rem ^three ^two = ^none``),
    ("to-ubv-rna-tie", ``(smtfp_to_ubv RNA ^onehalf : word8) = 2w``),
    ("to-sbv-rtz", ``(smtfp_to_sbv RTZ
