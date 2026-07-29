@@ -1,5 +1,5 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
-           ../res_quan/src ../sort ../string
+           ../res_quan/src ../sort ../string ../floating-point
 
 all: $(DEFAULT_TARGETS) selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-cvc-cpc-tac
 .PHONY: all
