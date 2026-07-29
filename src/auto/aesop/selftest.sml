@@ -2633,6 +2633,88 @@ val _ =
          (clasetLib.rules_of (clasetLib.the_claset ())) =
        surface_global_rules)
 
+fun aesop_closes proposition =
+  null (residual (aesopLib.AESOP_TAC []) ([], proposition))
+
+val list_strength_ss =
+  simpLib.named_rewrites "aesop-selftest-list-strength"
+    [listTheory.APPEND, listTheory.LENGTH, listTheory.REVERSE_DEF,
+     listTheory.MEM]
+
+fun aesop_list_closes proposition =
+  BasicProvers.with_simpset_updates
+    (fn ss =>
+      simpLib.++ (ss, list_strength_ss))
+    aesop_closes proposition
+
+val list_strength_smoke =
+  [("append",
+   ``((x:'a) :: xs) ++ ys = x :: (xs ++ ys)``),
+   ("length",
+    ``LENGTH [(x:'a); y] = SUC (SUC 0)``),
+   ("reverse",
+    ``REVERSE [(x:'a); y] = [y; x]``),
+   ("membership",
+    ``MEM (x:'a) ([y] ++ xs) <=> (x = y) \/ MEM x xs``)]
+
+val _ =
+  List.app
+    (fn (name, proposition) =>
+      test
+        ("AESOP_TAC listTheory strength smoke: " ^ name,
+         fn () => aesop_list_closes proposition))
+    list_strength_smoke
+
+val pelletier_propositional_smoke =
+  [(1, ``(P ==> Q) <=> (~Q ==> ~P)``),
+   (2, ``~~P <=> P``),
+   (4, ``(~P ==> Q) <=> (~Q ==> P)``),
+   (5, ``((P \/ Q) ==> (P \/ R)) ==> (P \/ (Q ==> R))``),
+   (8, ``((P ==> Q) ==> P) ==> P``)]
+
+val _ =
+  List.app
+    (fn (number, proposition) =>
+      test
+        ("AESOP_TAC Pelletier " ^ Int.toString number ^
+         " propositional smoke",
+         fn () => aesop_closes proposition))
+    pelletier_propositional_smoke
+
+val strength_safe_imp_residue =
+  residual
+    (aesopLib.AESOP_SAFE_TAC [])
+    ([],
+     boolSyntax.mk_imp
+       (surface_p, boolSyntax.mk_conj (surface_q, surface_r)))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC returns the exact implication-conjunction frontier",
+     fn () =>
+       case strength_safe_imp_residue of
+           [([left_assumption], left), ([right_assumption], right)] =>
+             aconv left_assumption surface_p andalso
+             aconv right_assumption surface_p andalso
+             aconv left surface_q andalso
+             aconv right surface_r
+         | _ => false)
+
+val strength_safe_disj_residue =
+  residual
+    (aesopLib.AESOP_SAFE_TAC [])
+    ([], boolSyntax.mk_disj (surface_p, surface_q))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC returns the exact safe disjunction frontier",
+     fn () =>
+       case strength_safe_disj_residue of
+           [([assumption], target)] =>
+             aconv assumption (boolSyntax.mk_neg surface_q) andalso
+             aconv target surface_p
+         | _ => false)
+
 val surface_augmented =
   Term.mk_var ("aesop_surface_augmented", Type.bool)
 val surface_augmented_called = ref false
