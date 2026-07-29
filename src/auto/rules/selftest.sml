@@ -26,7 +26,7 @@ val seed_intro_spec =
 val seed_selim_spec =
   {kind = clasetRules.Elim, safe = true, prio = NONE}
 val seed_elim_spec =
-  {kind = clasetRules.Elim, safe = false, prio = NONE}
+  {kind = clasetRules.Elim, safe = false, prio = SOME 75}
 
 val seed_expected_rules =
   [(seed_sintro_spec, "bool$TRUTH"),

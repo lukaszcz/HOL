@@ -88,7 +88,7 @@ Proof
   BasicProvers.PROVE_TAC [boolTheory.EXISTS_UNIQUE_THM]
 QED
 
-Theorem FORALL_ELIM_THM[elim]:
+Theorem FORALL_ELIM_THM[elim=75]:
   !P x r. (!y. P y) ==> (P x ==> r) ==> r
 Proof
   BasicProvers.PROVE_TAC []
