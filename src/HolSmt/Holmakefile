@@ -1,9 +1,13 @@
 INCLUDES = ../hol88 ../integer ../n-bit ../rational ../real ../real/analysis \
            ../res_quan/src ../sort ../string ../floating-point
 
-all: $(DEFAULT_TARGETS) selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-cvc-cpc-tac
+all: $(DEFAULT_TARGETS) selftest.exe smtfloat-diff.exe holsmt-typecheck \
+     holsmt-z3-tac holsmt-cvc-cpc-tac
 .PHONY: all
 selftest.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+smtfloat-diff.exe: smtfloat_diff_driver.uo
 	$(HOLMOSMLC) -o $@ $<
 
 holsmt-typecheck: typecheck_driver.uo
@@ -75,7 +79,8 @@ holsmt-selftest.log: selftest.exe
 	$(tee ./selftest.exe 2>&1,$@)
 endif
 
-EXTRA_CLEANS = selftest.exe holsmt-typecheck holsmt-z3-tac holsmt-cvc-cpc-tac holsmt-selftest.log
+EXTRA_CLEANS = selftest.exe smtfloat-diff.exe holsmt-typecheck \
+               holsmt-z3-tac holsmt-cvc-cpc-tac holsmt-selftest.log
 
 ifdef HOLBUILD
 all: link-to-sigobj

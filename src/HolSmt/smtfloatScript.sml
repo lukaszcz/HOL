@@ -330,6 +330,15 @@ QED
 
 (* In an in-range tie, if an away-side closest value exists, RNA selects an
    away-side value. *)
+Theorem round_tiesToAway_zero_is_zero[simp]:
+  float_is_zero (round_tiesToAway 0 : ('t,'w) float)
+Proof
+  rewrite_tac [binary_ieeeTheory.float_is_zero_to_real] >>
+  rewrite_tac [GSYM binary_ieeePropsTheory.is_closest_0_float_to_real] >>
+  irule round_tiesToAway_is_closest >>
+  simp [binary_ieeeTheory.threshold_is_positive]
+QED
+
 Theorem round_tiesToAway_away:
   -threshold (:'t # 'w) < x /\ x < threshold (:'t # 'w) /\
   is_closest float_is_finite x (away : ('t,'w) float) /\
@@ -569,6 +578,38 @@ val float_max_zero_choice_spec =
     ("float_max_zero_choice_spec", ["float_max_zero_choice"],
      float_max_zero_choice_exists);
 
+(* The unbounded mathematical integer rounders are shared by fp.rem,
+   fp.roundToIntegral, and the BV conversions. *)
+Definition smt_nearest_integer_def[nocompute]:
+  smt_nearest_integer (r : real) : int =
+    let f = INT_FLOOR r in
+    let df = abs (r - real_of_int f) in
+      if df < 1 / 2 \/
+         df = 1 / 2 /\ EVEN (Num (ABS f))
+      then f
+      else INT_CEILING r
+End
+
+Definition smt_integer_ties_to_away_def[nocompute]:
+  smt_integer_ties_to_away (r : real) : int =
+    if r < 0 then
+      let c = INT_CEILING r in
+        if abs (r - real_of_int c) < 1 / 2 then c else INT_FLOOR r
+    else
+      let f = INT_FLOOR r in
+        if abs (r - real_of_int f) < 1 / 2 then f else INT_CEILING r
+End
+
+Definition smt_real_to_int_def[nocompute]:
+  smt_real_to_int mode (r : real) : int =
+    case mode of
+      RNE => smt_nearest_integer r
+    | RNA => smt_integer_ties_to_away r
+    | RTP => INT_CEILING r
+    | RTN => INT_FLOOR r
+    | RTZ => if r < 0 then INT_CEILING r else INT_FLOOR r
+End
+
 (* -------------------------------------------------------------------------
    Core SMT floating-point operation surface
    ------------------------------------------------------------------------- *)
@@ -584,6 +625,14 @@ End
 
 (* The four binary_ieee modes delegate to its operations.  Only the RNA
    branch below spells out the corresponding IEEE special-case dispatch. *)
+Theorem smt_float_round_RNA_zero[simp]:
+  smt_float_round RNA to_neg 0 =
+    if to_neg then float_minus_zero (:'t # 'w)
+    else float_plus_zero (:'t # 'w)
+Proof
+  simp [smt_float_round_def, smt_round_def]
+QED
+
 Definition smt_float_add_def[nocompute]:
   smt_float_add mode (x : ('t,'w) float) y =
     case to_binary_rounding mode of
@@ -715,17 +764,11 @@ End
 
 Definition smt_float_round_to_integral_def[nocompute]:
   smt_float_round_to_integral mode (x : ('t,'w) float) =
-    case to_binary_rounding mode of
-      SOME m => float_round_to_integral m x
-    | NONE =>
-        case float_value x of
-          Float r =>
-            let y = smt_integral_round RNA r in
-              if float_is_zero y then
-                if x.Sign = 1w then float_minus_zero (:'t # 'w)
-                else float_plus_zero (:'t # 'w)
-              else y
-        | _ => x
+    case float_value x of
+      Float r =>
+        let i = smt_real_to_int mode r in
+          smt_float_round mode (x.Sign = 1w) (real_of_int i)
+    | _ => x
 End
 
 (* This is the official SMT-LIB minNum/maxNum dispatch: one NaN is ignored,
@@ -752,21 +795,9 @@ Definition float_max_def[nocompute]:
     else y
 End
 
-(* The unbounded counterpart of TASK_07's RNE integral rounding.  fp.rem's
-   quotient integer is mathematical, not restricted to the operand format:
-   rounding it through [('t,'w) float] would overflow for, e.g., max-finite
-   divided by min-subnormal.  This is binary_ieee.float_to_int's exact RNE
-   floor/ceiling dispatch, including the ties-to-even predicate. *)
-Definition smt_nearest_integer_def[nocompute]:
-  smt_nearest_integer (r : real) : int =
-    let f = INT_FLOOR r in
-    let df = abs (r - real_of_int f) in
-      if df < 1 / 2 \/
-         df = 1 / 2 /\ EVEN (Num (ABS f))
-      then f
-      else INT_CEILING r
-End
-
+(* fp.rem's quotient integer is mathematical, not restricted to the operand
+   format: rounding it through [('t,'w) float] would overflow for, e.g.,
+   max-finite divided by min-subnormal. *)
 (* SMT-LIB FloatingPoint, fp.rem: NaN is returned for a NaN operand, an
    infinite dividend, or a zero divisor; a finite dividend is returned for
    an infinite divisor.  Otherwise r = x - y*n, where n is the nearest
@@ -791,30 +822,6 @@ End
 (* -------------------------------------------------------------------------
    SMT-LIB conversions
    ------------------------------------------------------------------------- *)
-
-(* The integer result before a BV range check.  RNE uses the same exact
-   mathematical rule as binary_ieee.float_to_int.  RNA chooses the nearest
-   integer and resolves a tie away from zero; the directed modes are the
-   corresponding floor/ceiling operations. *)
-Definition smt_integer_ties_to_away_def[nocompute]:
-  smt_integer_ties_to_away (r : real) : int =
-    if r < 0 then
-      let c = INT_CEILING r in
-        if abs (r - real_of_int c) < 1 / 2 then c else INT_FLOOR r
-    else
-      let f = INT_FLOOR r in
-        if abs (r - real_of_int f) < 1 / 2 then f else INT_CEILING r
-End
-
-Definition smt_real_to_int_def[nocompute]:
-  smt_real_to_int mode (r : real) : int =
-    case mode of
-      RNE => smt_nearest_integer r
-    | RNA => smt_integer_ties_to_away r
-    | RTP => INT_CEILING r
-    | RTN => INT_FLOOR r
-    | RTZ => if r < 0 then INT_CEILING r else INT_FLOOR r
-End
 
 (* SMT-LIB leaves each invalid conversion result unspecified, but it still
    denotes a function.  These constants therefore receive no constraint

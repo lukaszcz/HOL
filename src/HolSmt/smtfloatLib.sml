@@ -510,6 +510,125 @@ fun smt_integral_round_CONV tm =
   (reduce_integral_rounding_case_CONV
    THENC (integral_round_tiesToAway_CONV ORELSEC EVAL)) tm
 
-fun add_smtfloat_to_compset cs = cs
+(* Ground operation conversions.  The operation definitions are deliberately
+   [nocompute]: several contain choice-based rounding definitions which must
+   never be unfolded by the evaluator.  Each conversion exposes only the
+   outer dispatch and then lets the registered certifying conversions reduce
+   the resulting real arithmetic and IEEE operation. *)
+fun unfold_and_eval def tm =
+  (Conv.REWR_CONV def THENC EVAL) tm
+
+val float_unordered_CONV =
+  unfold_and_eval binary_ieeeTheory.float_unordered_def
+fun smt_float_round_CONV tm =
+  (Conv.REWR_CONV smtfloatTheory.smt_float_round_RNA_zero ORELSEC
+   unfold_and_eval smtfloatTheory.smt_float_round_def) tm
+val smt_float_add_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_add_def
+val smt_float_sub_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_sub_def
+val smt_float_mul_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_mul_def
+val smt_float_div_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_div_def
+val smt_float_sqrt_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_sqrt_def
+val smt_float_fma_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_fma_def
+val smt_float_round_to_integral_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_round_to_integral_def
+val float_min_CONV = unfold_and_eval smtfloatTheory.float_min_def
+val float_max_CONV = unfold_and_eval smtfloatTheory.float_max_def
+val smt_nearest_integer_CONV =
+  unfold_and_eval smtfloatTheory.smt_nearest_integer_def
+val float_rem_CONV = unfold_and_eval smtfloatTheory.float_rem_def
+val smt_integer_ties_to_away_CONV =
+  unfold_and_eval smtfloatTheory.smt_integer_ties_to_away_def
+val smt_real_to_int_CONV =
+  unfold_and_eval smtfloatTheory.smt_real_to_int_def
+val float_to_ubv_CONV =
+  unfold_and_eval smtfloatTheory.float_to_ubv_def
+val float_to_sbv_CONV =
+  unfold_and_eval smtfloatTheory.float_to_sbv_def
+val smt_float_to_real_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_to_real_def
+val smt_float_to_fp_CONV =
+  unfold_and_eval smtfloatTheory.smt_float_to_fp_def
+val smt_real_to_fp_CONV =
+  unfold_and_eval smtfloatTheory.smt_real_to_fp_def
+val smt_ubv_to_fp_CONV =
+  unfold_and_eval smtfloatTheory.smt_ubv_to_fp_def
+val smt_sbv_to_fp_CONV =
+  unfold_and_eval smtfloatTheory.smt_sbv_to_fp_def
+
+fun ground_predicate_CONV tm =
+  simpLib.SIMP_CONV (bossLib.srw_ss ())
+    [binary_ieeeTheory.float_is_integral_def,
+     binary_ieeeTheory.is_integral_def,
+     binary_ieeeTheory.float_value_def,
+     binary_ieeeTheory.float_to_real_def,
+     realTheory.abs] tm
+
+fun thy_const thy name =
+  Term.prim_mk_const {Thy = thy, Name = name}
+
+fun smtfloat_const name = thy_const "smtfloat" name
+
+fun add_smtfloat_to_compset cs =
+  let
+    open computeLib
+    val conversions =
+      [(binary_ieeeSyntax.round_tm, 2, round_CONV),
+       (binary_ieeeSyntax.float_round_tm, 3, float_round_CONV),
+       (thy_const "binary_ieee" "float_is_integral", 1,
+        ground_predicate_CONV),
+       (thy_const "binary_ieee" "float_unordered", 2,
+        float_unordered_CONV),
+       (smtfloat_const "round_tiesToAway", 1,
+        round_tiesToAway_CONV),
+       (smtfloat_const "integral_round_tiesToAway", 1,
+        integral_round_tiesToAway_CONV),
+       (smtfloat_const "smt_round", 2, smt_round_CONV),
+       (smtfloat_const "smt_integral_round", 2,
+        smt_integral_round_CONV),
+       (smtfloat_const "smt_float_round", 3,
+        smt_float_round_CONV),
+       (smtfloat_const "smt_float_add", 3, smt_float_add_CONV),
+       (smtfloat_const "smt_float_sub", 3, smt_float_sub_CONV),
+       (smtfloat_const "smt_float_mul", 3, smt_float_mul_CONV),
+       (smtfloat_const "smt_float_div", 3, smt_float_div_CONV),
+       (smtfloat_const "smt_float_sqrt", 2, smt_float_sqrt_CONV),
+       (smtfloat_const "smt_float_fma", 4, smt_float_fma_CONV),
+       (smtfloat_const "smt_float_round_to_integral", 2,
+        smt_float_round_to_integral_CONV),
+       (smtfloat_const "float_min", 2, float_min_CONV),
+       (smtfloat_const "float_max", 2, float_max_CONV),
+       (smtfloat_const "smt_nearest_integer", 1,
+        smt_nearest_integer_CONV),
+       (smtfloat_const "float_rem", 2, float_rem_CONV),
+       (smtfloat_const "smt_integer_ties_to_away", 1,
+        smt_integer_ties_to_away_CONV),
+       (smtfloat_const "smt_real_to_int", 2,
+        smt_real_to_int_CONV),
+       (smtfloat_const "float_to_ubv", 2, float_to_ubv_CONV),
+       (smtfloat_const "float_to_sbv", 2, float_to_sbv_CONV),
+       (smtfloat_const "smt_float_to_real", 1,
+        smt_float_to_real_CONV),
+       (smtfloat_const "smt_float_to_fp", 2,
+        smt_float_to_fp_CONV),
+       (smtfloat_const "smt_real_to_fp", 2,
+        smt_real_to_fp_CONV),
+       (smtfloat_const "smt_ubv_to_fp", 2,
+        smt_ubv_to_fp_CONV),
+       (smtfloat_const "smt_sbv_to_fp", 2,
+        smt_sbv_to_fp_CONV)]
+  in
+    foldl (fn (conversion, cmp) => add_conv conversion cmp)
+      cs conversions
+  end
+
+val () =
+  computeLib.the_compset :=
+    add_smtfloat_to_compset (!computeLib.the_compset)
 
 end

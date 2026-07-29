@@ -581,6 +581,147 @@ in
   List.app check tests
 end
 
+fun smtfloat_ground_evaluation_success () =
+let
+  fun check (label, tm) =
+    (let
+       val eval_thm = bossLib.EVAL tm
+       val thm =
+         Drule.EQT_ELIM eval_thm
+         handle Feedback.HOL_ERR _ =>
+           die (label ^ " stuck at " ^
+             Parse.term_to_string (boolSyntax.rhs (Thm.concl eval_thm)))
+     in
+       assert_no_hyps (label, thm);
+       Library.check_oracle_tags label thm
+     end
+     handle e => die (label ^ " raised " ^ General.exnMessage e))
+  val modes =
+    [("RNE", ``RNE``), ("RNA", ``RNA``), ("RTP", ``RTP``),
+     ("RTN", ``RTN``), ("RTZ", ``RTZ``)]
+  fun each_mode (label, mk_test) =
+    List.app (fn (name, mode) => check (label ^ " " ^ name, mk_test mode))
+      modes
+  val one = ``(smtfp_bits 0w 15w 0w : (3,5) smtfp)``
+  val none = ``(smtfp_bits 1w 15w 0w : (3,5) smtfp)``
+  val half = ``(smtfp_bits 0w 14w 0w : (3,5) smtfp)``
+  val onehalf = ``(smtfp_bits 0w 15w 4w : (3,5) smtfp)``
+  val two = ``(smtfp_bits 0w 16w 0w : (3,5) smtfp)``
+  val three = ``(smtfp_bits 0w 16w 4w : (3,5) smtfp)``
+  fun eq (l, r) = boolSyntax.mk_eq (l, r)
+in
+  List.app check
+    [("literal +infinity normalization",
+      ``(smtfp_bits 0w 31w 0w : (3,5) smtfp) = smtfp_pinf``),
+     ("literal -infinity normalization",
+      ``(smtfp_bits 1w 31w 0w : (3,5) smtfp) = smtfp_ninf``),
+     ("literal +zero normalization",
+      ``(smtfp_bits 0w 0w 0w : (3,5) smtfp) = smtfp_pzero``),
+     ("literal -zero normalization",
+      ``(smtfp_bits 1w 0w 0w : (3,5) smtfp) = smtfp_nzero``),
+     ("literal NaN normalization",
+      ``(smtfp_bits 1w 31w 3w : (3,5) smtfp) = smtfp_nan``),
+     ("classification NaN", ``smtfp_is_nan
+        (smtfp_nan : (3,5) smtfp)``),
+     ("classification signalling", ``~smtfp_is_signalling
+        (smtfp_nan : (3,5) smtfp)``),
+     ("classification infinite", ``smtfp_is_infinite
+        (smtfp_pinf : (3,5) smtfp)``),
+     ("classification normal", eq (``smtfp_is_normal ^one``, ``T``)),
+     ("classification subnormal", ``smtfp_is_subnormal
+        (smtfp_bits 0w 0w 1w : (3,5) smtfp)``),
+     ("classification zero", ``smtfp_is_zero
+        (smtfp_nzero : (3,5) smtfp)``),
+     ("classification finite", eq (``smtfp_is_finite ^one``, ``T``)),
+     ("classification integral", eq (``smtfp_is_integral ^one``, ``T``)),
+     ("classification negative", eq (``smtfp_is_negative ^none``, ``T``)),
+     ("classification positive", eq (``smtfp_is_positive ^one``, ``T``)),
+     ("absolute value", eq (``smtfp_abs ^none``, one)),
+     ("negation", eq (``smtfp_neg ^one``, none)),
+     ("less than", eq (``smtfp_lt ^one ^two``, ``T``)),
+     ("less equal", eq (``smtfp_le ^one ^one``, ``T``)),
+     ("greater than", eq (``smtfp_gt ^two ^one``, ``T``)),
+     ("greater equal", eq (``smtfp_ge ^one ^one``, ``T``)),
+     ("IEEE equality", eq (``smtfp_eq ^one ^one``, ``T``)),
+     ("unordered", ``smtfp_unordered (smtfp_nan : (3,5) smtfp) ^one``),
+     ("minimum", eq (``smtfp_min ^one ^two``, one)),
+     ("maximum", eq (``smtfp_max ^one ^two``, two)),
+     ("minimum opposite zero choice", ``smtfp_min
+        (smtfp_pzero : (3,5) smtfp) smtfp_nzero =
+        SmtFp (canon (float_min_zero_choice (:3 # 5)))``),
+     ("maximum opposite zero choice", ``smtfp_max
+        (smtfp_pzero : (3,5) smtfp) smtfp_nzero =
+        SmtFp (canon (float_max_zero_choice (:3 # 5)))``),
+     ("remainder", eq (``smtfp_rem ^three ^two``, none)),
+     ("remainder infinity NaN", ``smtfp_rem
+        (smtfp_pinf : (3,5) smtfp) ^one = smtfp_nan``),
+     ("to real", eq (``smtfp_to_real ^one``, ``1r``)),
+     ("to real unspecified", ``smtfp_to_real
+        (smtfp_pinf : (3,5) smtfp) =
+        float_to_real_unspecified
+          (float_plus_infinity (:3 # 5))``),
+     ("to unsigned BV unspecified", ``(smtfp_to_ubv RNE
+        (smtfp_nan : (3,5) smtfp) : word8) =
+        float_to_ubv_unspecified RNE
+          (float_canon_qnan : (3,5) float)``),
+     ("to signed BV unspecified", ``(smtfp_to_sbv RNE
+        (smtfp_nan : (3,5) smtfp) : word8) =
+        float_to_sbv_unspecified RNE
+          (float_canon_qnan : (3,5) float)``),
+     ("from IEEE BV", ``smtfp_from_ieee_bv
+        (120w : (1 + (5 + 3)) word) = ^one``)];
+  each_mode ("add", fn mode => eq (``smtfp_add ^mode ^one ^half``, onehalf));
+  each_mode ("sub", fn mode => eq (``smtfp_sub ^mode ^one ^half``, half));
+  each_mode ("mul", fn mode => eq (``smtfp_mul ^mode ^onehalf ^two``, three));
+  each_mode ("div", fn mode => eq (``smtfp_div ^mode ^three ^two``, onehalf));
+  each_mode ("sqrt", fn mode => eq (``smtfp_sqrt ^mode ^one``, one));
+  each_mode ("fma", fn mode => eq (``smtfp_fma ^mode ^one ^two ^one``, three));
+  List.app check
+    [("add infinities NaN", ``smtfp_add RNE
+       (smtfp_pinf : (3,5) smtfp) smtfp_ninf = smtfp_nan``),
+     ("divide zero by zero NaN", ``smtfp_div RNA
+       (smtfp_pzero : (3,5) smtfp) smtfp_nzero = smtfp_nan``),
+     ("sqrt negative zero", ``smtfp_sqrt RNA
+       (smtfp_nzero : (3,5) smtfp) = smtfp_nzero``),
+     ("fma infinity times zero NaN", ``smtfp_fma RTZ
+       (smtfp_pinf : (3,5) smtfp) smtfp_pzero ^one = smtfp_nan``)];
+  each_mode ("between-format to_fp", fn mode =>
+    ``(smtfp_to_fp ^mode ^one : (4,3) smtfp) =
+      smtfp_bits 0w 3w 0w``);
+  each_mode ("from real", fn mode => eq
+    (``(smtfp_from_real ^mode 1r : (3,5) smtfp)``, one));
+  each_mode ("from unsigned BV", fn mode => eq
+    (``(smtfp_from_ubv ^mode (1w : word8) : (3,5) smtfp)``, one));
+  each_mode ("from signed BV", fn mode => eq
+    (``(smtfp_from_sbv ^mode (255w : word8) : (3,5) smtfp)``, none));
+  List.app check
+    [("roundToIntegral RNE", eq
+       (``smtfp_round_to_integral RNE ^onehalf``, two)),
+     ("roundToIntegral RNA", eq
+       (``smtfp_round_to_integral RNA ^onehalf``, two)),
+     ("roundToIntegral RTP", eq
+       (``smtfp_round_to_integral RTP ^onehalf``, two)),
+     ("roundToIntegral RTN", eq
+       (``smtfp_round_to_integral RTN ^onehalf``, one)),
+     ("roundToIntegral RTZ", eq
+       (``smtfp_round_to_integral RTZ ^onehalf``, one)),
+     ("to unsigned BV RNE", ``(smtfp_to_ubv RNE ^onehalf : word8) = 2w``),
+     ("to unsigned BV RNA", ``(smtfp_to_ubv RNA ^onehalf : word8) = 2w``),
+     ("to unsigned BV RTP", ``(smtfp_to_ubv RTP ^onehalf : word8) = 2w``),
+     ("to unsigned BV RTN", ``(smtfp_to_ubv RTN ^onehalf : word8) = 1w``),
+     ("to unsigned BV RTZ", ``(smtfp_to_ubv RTZ ^onehalf : word8) = 1w``),
+     ("to signed BV RNE", ``(smtfp_to_sbv RNE
+         (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 254w``),
+     ("to signed BV RNA", ``(smtfp_to_sbv RNA
+         (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 254w``),
+     ("to signed BV RTP", ``(smtfp_to_sbv RTP
+         (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 255w``),
+     ("to signed BV RTN", ``(smtfp_to_sbv RTN
+         (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 254w``),
+     ("to signed BV RTZ", ``(smtfp_to_sbv RTZ
+         (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 255w``)]
+end
+
 fun hol_string_to_smt_conversion_success () =
 let
   val input =
@@ -9298,6 +9439,8 @@ let
       smtfp_carrier_universe_direction_success),
     ("smtfloat_rounding_conversions_success",
       smtfloat_rounding_conversions_success),
+    ("smtfloat_ground_evaluation_success",
+      smtfloat_ground_evaluation_success),
     ("num_transfer_literal_normalization_success",
       num_transfer_literal_normalization_success),
     ("num_transfer_operator_drive_success",
