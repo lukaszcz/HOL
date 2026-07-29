@@ -2717,3 +2717,634 @@ Proof
     (fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
   simp [Abbr `z`]
 QED
+
+(* -------------------------------------------------------------------------
+   Tier-2 word correspondence
+
+   These formulas are deliberately stated on [smtfp_bits].  Consequently
+   their right-hand sides contain only words and Booleans and can be handed
+   directly to the existing bit-vector simplifier and bit-blaster.
+   ------------------------------------------------------------------------- *)
+
+Definition smtfp_mag_lt_def:
+  smtfp_mag_lt (e : 'w word) (m : 't word) e' m' <=>
+    e <+ e' \/ (e = e' /\ m <+ m')
+End
+
+Definition smtfp_word_equal_def:
+  smtfp_word_equal (s : word1) (e : 'w word) (m : 't word)
+                   s' e' m' <=>
+    smtfp_nan_pattern e m /\ smtfp_nan_pattern e' m' \/
+    ~smtfp_nan_pattern e m /\ ~smtfp_nan_pattern e' m' /\
+    s = s' /\ e = e' /\ m = m'
+End
+
+Definition smtfp_word_fp_eq_def:
+  smtfp_word_fp_eq (s : word1) (e : 'w word) (m : 't word)
+                   s' e' m' <=>
+    ~smtfp_nan_pattern e m /\ ~smtfp_nan_pattern e' m' /\
+    ((e = 0w /\ m = 0w /\ e' = 0w /\ m' = 0w) \/
+     (s = s' /\ e = e' /\ m = m'))
+End
+
+Definition smtfp_word_lt_def:
+  smtfp_word_lt (s : word1) (e : 'w word) (m : 't word)
+                s' e' m' <=>
+    ~smtfp_nan_pattern e m /\ ~smtfp_nan_pattern e' m' /\
+    if s = s' then
+      if s = 0w then smtfp_mag_lt e m e' m'
+      else smtfp_mag_lt e' m' e m
+    else
+      s = 1w /\ ~(e = 0w /\ m = 0w /\ e' = 0w /\ m' = 0w)
+End
+
+Theorem smtfp_rep_bits[simp]:
+  smtfp_rep (smtfp_bits s e m : ('t,'w) smtfp) =
+  canon <| Sign := s; Exponent := e; Significand := m |>
+Proof
+  simp [smtfp_bits_def]
+QED
+
+Theorem smtfp_is_normal_bits:
+  smtfp_is_normal (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  e <> 0w /\ e <> UINT_MAXw
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_normal_def, canon_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_is_normal_def,
+        float_canon_qnan_def] >> fs [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_is_subnormal_bits:
+  smtfp_is_subnormal (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  e = 0w /\ m <> 0w
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_subnormal_def, canon_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_is_subnormal_def,
+        float_canon_qnan_def] >> fs [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_is_zero_bits:
+  smtfp_is_zero (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  e = 0w /\ m = 0w
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_zero_def, canon_def,
+        smtfp_nan_pattern_def, binary_ieeeTheory.float_is_zero,
+        float_canon_qnan_def] >> fs [smtfp_nan_pattern_def]
+QED
+
+Theorem float_canon_qnan_significand_nonzero[simp]:
+  (1w #>> 1 <> 0w : 't word)
+Proof
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    float_canon_qnan_is_nan) >>
+  rewrite_tac [float_canon_qnan_def, float_bits_is_nan] >>
+  simp [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_is_infinite_bits:
+  smtfp_is_infinite (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  e = UINT_MAXw /\ m = 0w
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_infinite_def, canon_def,
+        smtfp_nan_pattern_def, cj 3 binary_ieeeTheory.float_tests,
+        float_canon_qnan_def] >>
+  fs [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_is_negative_bits:
+  smtfp_is_negative (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  ~smtfp_nan_pattern e m /\ s = 1w
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_negative_def, canon_def,
+        smtfp_nan_pattern_def, float_canon_qnan_def] >>
+  fs [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_is_positive_bits:
+  smtfp_is_positive (smtfp_bits s e m : ('t,'w) smtfp) <=>
+  ~smtfp_nan_pattern e m /\ s = 0w
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_is_positive_def, canon_def,
+        smtfp_nan_pattern_def, float_canon_qnan_def] >>
+  fs [smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_abs_bits:
+  smtfp_abs (smtfp_bits s e m : ('t,'w) smtfp) =
+  smtfp_bits 0w e m
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_abs_def, smtfp_bits_def, canon_def,
+        smtfp_nan_pattern_def, binary_ieeeTheory.float_abs_def,
+        float_canon_qnan_def]
+QED
+
+Theorem smtfp_neg_bits:
+  smtfp_neg (smtfp_bits s e m : ('t,'w) smtfp) =
+  smtfp_bits (~s) e m
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  simp [smtfp_neg_def, smtfp_bits_def, canon_def,
+        smtfp_nan_pattern_def, binary_ieeeTheory.float_negate_def,
+        float_canon_qnan_def]
+QED
+
+Theorem smtfp_bits_eq_nan:
+  smtfp_nan_pattern e m /\ smtfp_nan_pattern e' m' ==>
+  (smtfp_bits s e m : ('t,'w) smtfp) = smtfp_bits s' e' m'
+Proof
+  strip_tac >>
+  `smtfp_bits s e m = (smtfp_nan : ('t,'w) smtfp)` by
+    (irule smtfp_bits_nan >> fs [smtfp_nan_pattern_def]) >>
+  `smtfp_bits s' e' m' = (smtfp_nan : ('t,'w) smtfp)` by
+    (irule smtfp_bits_nan >> fs [smtfp_nan_pattern_def]) >>
+  simp []
+QED
+
+Theorem smtfp_bits_neq_nan_left:
+  smtfp_nan_pattern e m /\ ~smtfp_nan_pattern e' m' ==>
+  (smtfp_bits s e m : ('t,'w) smtfp) <> smtfp_bits s' e' m'
+Proof
+  strip_tac >> strip_tac >>
+  qpat_x_assum `_ = _`
+    (mp_tac o AP_TERM
+      ``smtfp_is_nan : ('t,'w) smtfp -> bool``) >>
+  simp [smtfp_is_nan_bits]
+QED
+
+Theorem smtfp_bits_neq_nan_right:
+  ~smtfp_nan_pattern e m /\ smtfp_nan_pattern e' m' ==>
+  (smtfp_bits s e m : ('t,'w) smtfp) <> smtfp_bits s' e' m'
+Proof
+  metis_tac [smtfp_bits_neq_nan_left]
+QED
+
+Theorem smtfp_equality_bits:
+  ((smtfp_bits s e m : ('t,'w) smtfp) = smtfp_bits s' e' m') <=>
+  smtfp_word_equal s e m s' e' m'
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  Cases_on `smtfp_nan_pattern e' m'` >>
+  simp [smtfp_word_equal_def, smtfp_bits_eq_nan,
+        smtfp_bits_neq_nan_left, smtfp_bits_neq_nan_right,
+        smtfp_bits_11_non_nan]
+QED
+
+Theorem float_equal_components:
+  float_equal (x : ('t,'w) float) y <=>
+  ~float_is_nan x /\ ~float_is_nan y /\
+  (float_is_zero x /\ float_is_zero y \/ x = y)
+Proof
+  rw [binary_ieeeTheory.float_equal_def,
+      binary_ieeeTheory.float_is_nan_def,
+      binary_ieeeTheory.float_is_zero_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  gvs [binary_ieeeTheory.float_compare_def,
+       binary_ieeeTheory.float_value_def,
+       binary_ieeeTheory.float_to_real_eq,
+       binary_ieeeTheory.float_component_equality, AllCaseEqs()] >>
+  simp [GSYM binary_ieeeTheory.float_is_zero_to_real,
+        GSYM binary_ieeeTheory.float_component_equality,
+        binary_ieeeTheory.float_to_real_eq] >>
+  `(float_is_zero x /\ float_is_zero y \/ x = y) ==>
+   float_to_real x = float_to_real y` by
+    metis_tac [binary_ieeeTheory.float_to_real_eq] >>
+  metis_tac [realTheory.REAL_LT_REFL]
+QED
+
+Theorem smtfp_eq_bits:
+  smtfp_eq (smtfp_bits s e m : ('t,'w) smtfp)
+    (smtfp_bits s' e' m') <=>
+  smtfp_word_fp_eq s e m s' e' m'
+Proof
+  rewrite_tac [smtfp_eq_def, float_equal_components] >>
+  rewrite_tac [GSYM smtfp_is_nan_def, GSYM smtfp_is_zero_def] >>
+  simp [smtfp_is_nan_bits, smtfp_is_zero_bits,
+        smtfp_equality_bits, smtfp_word_fp_eq_def,
+        smtfp_word_equal_def] >>
+  tautLib.TAUT_TAC
+QED
+
+Theorem smtfp_positive_real_nonnegative:
+  0 <= float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> : ('t,'w) float)
+Proof
+  rw [binary_ieeeTheory.float_to_real_def] >>
+  simp [realTheory.REAL_LE_MUL, realTheory.REAL_LE_ADD]
+QED
+
+Theorem smtfp_positive_real_zero:
+  (float_to_real
+     (<| Sign := 0w; Exponent := e; Significand := m |> :
+      ('t,'w) float) = 0) <=>
+  e = 0w /\ m = 0w
+Proof
+  rewrite_tac [GSYM binary_ieeeTheory.float_is_zero_to_real] >>
+  simp [binary_ieeeTheory.float_is_zero]
+QED
+
+Theorem smtfp_positive_same_exponent_lt:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m' |> :
+     ('t,'w) float) <=>
+  m <+ m'
+Proof
+  Cases_on `e` >> Cases_on `m` >> Cases_on `m'` >>
+  Cases_on `n = 0` >>
+  simp [binary_ieeeTheory.float_to_real_def,
+        wordsTheory.word_lo_n2w, wordsTheory.dimword_def,
+        realTheory.REAL_LT_LMUL, realTheory.REAL_LT_RMUL,
+        realTheory.REAL_LT_LDIV_EQ]
+QED
+
+Theorem smtfp_positive_exponent_monotone:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) ==>
+  e <=+ e'
+Proof
+  strip_tac >>
+  `abs (float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float)) <
+   abs (float_to_real
+      (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+       ('t,'w) float))` by
+    simp [realTheory.abs, smtfp_positive_real_nonnegative] >>
+  qpat_x_assum `abs _ < abs _`
+    (ACCEPT_TAC o SIMP_RULE (srw_ss()) [] o
+     MATCH_MP binary_ieeeTheory.Exponent_monotone)
+QED
+
+Theorem smtfp_positive_mag_lt_forward:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) ==>
+  smtfp_mag_lt e m e' m'
+Proof
+  strip_tac >>
+  `e <=+ e'` by metis_tac [smtfp_positive_exponent_monotone] >>
+  fs [smtfp_mag_lt_def, wordsTheory.WORD_LOWER_OR_EQ] >>
+  metis_tac [smtfp_positive_same_exponent_lt]
+QED
+
+Theorem smtfp_mag_lt_asym:
+  smtfp_mag_lt e m e' m' ==> ~smtfp_mag_lt e' m' e m
+Proof
+  rw [smtfp_mag_lt_def] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_positive_real_eq_not_mag_lt:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) ==>
+  ~smtfp_mag_lt e m e' m'
+Proof
+  strip_tac >>
+  fs [binary_ieeeTheory.float_to_real_eq,
+      binary_ieeeTheory.float_component_equality,
+      binary_ieeeTheory.float_is_zero, smtfp_mag_lt_def] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_positive_mag_lt_backward:
+  smtfp_mag_lt e m e' m' ==>
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float)
+Proof
+  metis_tac [smtfp_positive_mag_lt_forward, smtfp_mag_lt_asym,
+             smtfp_positive_real_eq_not_mag_lt,
+             realTheory.REAL_LT_TOTAL]
+QED
+
+Theorem smtfp_positive_mag_lt:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) <=>
+  smtfp_mag_lt e m e' m'
+Proof
+  metis_tac [smtfp_positive_mag_lt_forward,
+             smtfp_positive_mag_lt_backward]
+QED
+
+Theorem float_to_real_bits_sign:
+  float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  if s = 0w then
+    float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float)
+  else
+    -float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float)
+Proof
+  wordsLib.Cases_on_word_value `s` >>
+  simp [binary_ieeeTheory.float_to_real_def] >>
+  realLib.REAL_ARITH_TAC
+QED
+
+Theorem float_to_real_negative_bits:
+  float_to_real
+    (<| Sign := 1w; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  -float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float)
+Proof
+  simp [binary_ieeeTheory.float_to_real_def] >>
+  realLib.REAL_ARITH_TAC
+QED
+
+Theorem nonnegative_lt_negative:
+  0 <= x /\ 0 <= y ==> ~(x < -y)
+Proof
+  realLib.REAL_ARITH_TAC
+QED
+
+Theorem negative_lt_nonnegative:
+  0 <= x /\ 0 <= y ==> (-x < y <=> ~(x = 0 /\ y = 0))
+Proof
+  realLib.REAL_ARITH_TAC
+QED
+
+Theorem smtfp_positive_negative_not_lt:
+  ~(
+    float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float) <
+    float_to_real
+      (<| Sign := 1w; Exponent := e'; Significand := m' |> :
+       ('t,'w) float))
+Proof
+  rewrite_tac [float_to_real_negative_bits] >>
+  irule nonnegative_lt_negative >>
+  simp [smtfp_positive_real_nonnegative]
+QED
+
+Theorem smtfp_negative_positive_lt:
+  float_to_real
+    (<| Sign := 1w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) <=>
+  ~(e = 0w /\ m = 0w /\ e' = 0w /\ m' = 0w)
+Proof
+  rewrite_tac [float_to_real_negative_bits] >>
+  `(-float_to_real
+       (<| Sign := 0w; Exponent := e; Significand := m |> :
+        ('t,'w) float) <
+     float_to_real
+       (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+        ('t,'w) float) <=>
+     ~(float_to_real
+         (<| Sign := 0w; Exponent := e; Significand := m |> :
+          ('t,'w) float) = 0 /\
+       float_to_real
+         (<| Sign := 0w; Exponent := e'; Significand := m' |> :
+          ('t,'w) float) = 0))` by
+    (irule negative_lt_nonnegative >>
+     simp [smtfp_positive_real_nonnegative]) >>
+  pop_assum (rewrite_tac o single) >>
+  simp [smtfp_positive_real_zero] >>
+  tautLib.TAUT_TAC
+QED
+
+Theorem smtfp_negative_real_lt:
+  float_to_real
+    (<| Sign := 1w; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := 1w; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) <=>
+  smtfp_mag_lt e' m' e m
+Proof
+  rewrite_tac [float_to_real_negative_bits] >>
+  simp [realTheory.REAL_LT_NEG, smtfp_positive_mag_lt]
+QED
+
+Theorem float_to_real_bits_lt:
+  float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float) <
+  float_to_real
+    (<| Sign := s'; Exponent := e'; Significand := m' |> :
+     ('t,'w) float) <=>
+  if s = s' then
+    if s = 0w then smtfp_mag_lt e m e' m'
+    else smtfp_mag_lt e' m' e m
+  else
+    s = 1w /\ ~(e = 0w /\ m = 0w /\ e' = 0w /\ m' = 0w)
+Proof
+  wordsLib.Cases_on_word_value `s` >>
+  wordsLib.Cases_on_word_value `s'` >>
+  simp [smtfp_positive_mag_lt, smtfp_positive_negative_not_lt,
+        smtfp_negative_positive_lt, smtfp_negative_real_lt]
+QED
+
+Theorem float_less_than_bits_raw:
+  float_less_than
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float)
+    (<| Sign := s'; Exponent := e'; Significand := m' |>) <=>
+  ~smtfp_nan_pattern e m /\ ~smtfp_nan_pattern e' m' /\
+  if s = s' then
+    if s = 0w then smtfp_mag_lt e m e' m'
+    else smtfp_mag_lt e' m' e m
+  else
+    s = 1w /\ ~(e = 0w /\ m = 0w /\ e' = 0w /\ m' = 0w)
+Proof
+  wordsLib.Cases_on_word_value `s` >>
+  wordsLib.Cases_on_word_value `s'` >>
+  Cases_on `e = UINT_MAXw` >> Cases_on `m = 0w` >>
+  Cases_on `e' = UINT_MAXw` >> Cases_on `m' = 0w` >>
+  simp [binary_ieeeTheory.float_less_than_def,
+        binary_ieeeTheory.float_compare_def,
+        binary_ieeeTheory.float_value_def, smtfp_nan_pattern_def,
+        float_to_real_bits_lt, smtfp_mag_lt_def,
+        wordsTheory.WORD_LOWER_OR_EQ, AllCaseEqs()] >>
+  fs [GSYM wordsTheory.WORD_NEG_1, wordsTheory.WORD_LO_word_T]
+QED
+
+Definition smtfp_word_le_def:
+  smtfp_word_le (s : word1) (e : 'w word) (m : 't word)
+                s' e' m' <=>
+    smtfp_word_lt s e m s' e' m' \/
+    smtfp_word_fp_eq s e m s' e' m'
+End
+
+Definition smtfp_word_gt_def:
+  smtfp_word_gt (s : word1) (e : 'w word) (m : 't word)
+                s' e' m' <=>
+    smtfp_word_lt s' e' m' s e m
+End
+
+Definition smtfp_word_ge_def:
+  smtfp_word_ge (s : word1) (e : 'w word) (m : 't word)
+                s' e' m' <=>
+    smtfp_word_le s' e' m' s e m
+End
+
+Theorem smtfp_lt_bits:
+  smtfp_lt (smtfp_bits s e m : ('t,'w) smtfp)
+    (smtfp_bits s' e' m') <=>
+  smtfp_word_lt s e m s' e' m'
+Proof
+  Cases_on `smtfp_nan_pattern e m` >>
+  Cases_on `smtfp_nan_pattern e' m'` >>
+  simp [smtfp_lt_def, smtfp_word_lt_def, smtfp_rep_bits,
+        canon_def, float_less_than_bits_raw, smtfp_nan_pattern_def,
+        float_canon_qnan_def]
+QED
+
+Theorem float_comparison_duals:
+  (float_less_equal x y <=> float_less_than x y \/ float_equal x y) /\
+  (float_greater_than x y <=> float_less_than y x) /\
+  (float_greater_equal x y <=> float_less_equal y x)
+Proof
+  rw [binary_ieeeTheory.float_less_equal_def,
+      binary_ieeeTheory.float_less_than_def,
+      binary_ieeeTheory.float_greater_than_def,
+      binary_ieeeTheory.float_greater_equal_def,
+      binary_ieeeTheory.float_equal_def] >>
+  Cases_on `float_compare x y` >>
+  Cases_on `float_compare y x` >>
+  gvs [binary_ieeeTheory.float_compare_def, AllCaseEqs()] >>
+  TRY (Cases_on `float_value x`) >>
+  TRY (Cases_on `float_value y`) >>
+  TRY (wordsLib.Cases_on_word_value `x.Sign`) >>
+  TRY (wordsLib.Cases_on_word_value `y.Sign`) >>
+  gvs [binary_ieeeTheory.float_compare_def, AllCaseEqs()] >>
+  TRY realLib.REAL_ASM_ARITH_TAC >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_comparison_duals:
+  (smtfp_le x y <=> smtfp_lt x y \/ smtfp_eq x y) /\
+  (smtfp_gt x y <=> smtfp_lt y x) /\
+  (smtfp_ge x y <=> smtfp_le y x)
+Proof
+  simp [smtfp_le_def, smtfp_lt_def, smtfp_eq_def,
+        smtfp_gt_def, smtfp_ge_def, float_comparison_duals]
+QED
+
+Theorem smtfp_le_bits:
+  smtfp_le (smtfp_bits s e m : ('t,'w) smtfp)
+    (smtfp_bits s' e' m') <=>
+  smtfp_word_le s e m s' e' m'
+Proof
+  rewrite_tac [cj 1 smtfp_comparison_duals, smtfp_lt_bits,
+               smtfp_eq_bits, smtfp_word_le_def]
+QED
+
+Theorem smtfp_gt_bits:
+  smtfp_gt (smtfp_bits s e m : ('t,'w) smtfp)
+    (smtfp_bits s' e' m') <=>
+  smtfp_word_gt s e m s' e' m'
+Proof
+  rewrite_tac [cj 2 smtfp_comparison_duals, smtfp_lt_bits,
+               smtfp_word_gt_def]
+QED
+
+Theorem smtfp_ge_bits:
+  smtfp_ge (smtfp_bits s e m : ('t,'w) smtfp)
+    (smtfp_bits s' e' m') <=>
+  smtfp_word_ge s e m s' e' m'
+Proof
+  rewrite_tac [cj 3 smtfp_comparison_duals, smtfp_le_bits,
+               smtfp_word_ge_def]
+QED
+
+(* These four checks exercise each Tier-2 rewrite group on hand-built
+   Float16 encodings.  Their proofs finish entirely in word/Boolean
+   reasoning after applying the correspondence interface above. *)
+Theorem smtfp_tier2_classification_example:
+  let one =
+    (smtfp_bits 0w (15w : word5) (0w : word10) : (10,5) smtfp)
+  in
+    smtfp_is_normal one /\ smtfp_is_positive one /\
+    ~smtfp_is_nan one /\ ~smtfp_is_zero one /\
+    ~smtfp_is_subnormal one /\ ~smtfp_is_infinite one /\
+    ~smtfp_is_negative one
+Proof
+  simp [smtfp_is_normal_bits, smtfp_is_positive_bits,
+        smtfp_is_nan_bits, smtfp_is_zero_bits,
+        smtfp_is_subnormal_bits, smtfp_is_infinite_bits,
+        smtfp_is_negative_bits, smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_tier2_sign_example:
+  smtfp_abs
+    (smtfp_bits 1w (15w : word5) (0w : word10) : (10,5) smtfp) =
+      smtfp_bits 0w 15w 0w /\
+  smtfp_neg
+    (smtfp_bits 0w (15w : word5) (0w : word10) : (10,5) smtfp) =
+      smtfp_bits 1w 15w 0w
+Proof
+  simp [smtfp_abs_bits, smtfp_neg_bits] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_tier2_equality_example:
+  ((smtfp_bits 1w (31w : word5) (1w : word10) : (10,5) smtfp) =
+     smtfp_bits 0w 31w 2w) /\
+  smtfp_eq
+    (smtfp_bits 0w (0w : word5) (0w : word10) : (10,5) smtfp)
+    (smtfp_bits 1w 0w 0w) /\
+  (smtfp_bits 0w (0w : word5) (0w : word10) : (10,5) smtfp) <>
+    smtfp_bits 1w 0w 0w
+Proof
+  simp [smtfp_equality_bits, smtfp_eq_bits,
+        smtfp_word_equal_def, smtfp_word_fp_eq_def,
+        smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_tier2_ordering_example:
+  smtfp_lt
+    (smtfp_bits 1w (15w : word5) (0w : word10) : (10,5) smtfp)
+    (smtfp_bits 0w 0w 0w) /\
+  smtfp_le
+    (smtfp_bits 0w (0w : word5) (0w : word10) : (10,5) smtfp)
+    (smtfp_bits 1w 0w 0w) /\
+  smtfp_gt
+    (smtfp_bits 0w (15w : word5) (0w : word10) : (10,5) smtfp)
+    (smtfp_bits 0w 0w 0w) /\
+  smtfp_ge
+    (smtfp_bits 1w (0w : word5) (0w : word10) : (10,5) smtfp)
+    (smtfp_bits 0w 0w 0w)
+Proof
+  simp [smtfp_lt_bits, smtfp_le_bits, smtfp_gt_bits, smtfp_ge_bits,
+        smtfp_word_lt_def, smtfp_word_le_def, smtfp_word_gt_def,
+        smtfp_word_ge_def, smtfp_word_fp_eq_def, smtfp_mag_lt_def,
+        smtfp_nan_pattern_def]
+QED
