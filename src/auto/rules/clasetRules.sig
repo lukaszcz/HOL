@@ -4,7 +4,11 @@ sig
   type thm = Thm.thm
   type thname = KernelSig.kernelname
 
-  datatype rulekind = Intro | Elim | Dest
+  datatype rulekind = Intro | Elim | Dest | Forward | Norm
+  (* For unsafe Intro, Elim, Dest, and Forward rules, [prio] is a
+     predicted success percentage in the range 1--100.  For Norm rules it
+     is an integer penalty (any integer, with the built-in simplifier at
+     zero).  Priorities on safe rules are reserved and currently ignored. *)
   type rulespec = {kind : rulekind, safe : bool, prio : int option}
   type tag = {weight : int, index : int}
   type brl = bool * thm

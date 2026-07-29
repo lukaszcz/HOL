@@ -90,12 +90,14 @@ fun delete_rl index netpair =
     (delete_tagged_rule (2 * index) netpair)
 
 fun add_decl (decl : decl)
-  (safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair) =
+  (nets as
+     (safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair)) =
   let
     val {spec, tag = {index, ...}, info, ...} = decl
     val kind = #kind spec
   in
-    if #safe spec then
+    if kind = Forward orelse kind = Norm then nets
+    else if #safe spec then
       (case safe_class_of spec info of
           SOME Safe0 =>
             (insert_rl kind index (#rl info) safe0_netpair,

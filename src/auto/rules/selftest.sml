@@ -562,6 +562,41 @@ val _ =
 
 val _ =
   test
+    ("dest_decls appends Forward and Norm after classical rule groups",
+     fn () =>
+       let
+         fun order_decl (name, kind, safe) =
+           let val theorem = ASSUME (mk_var (name, bool))
+           in
+             decl name {kind = kind, safe = safe, prio = NONE} theorem
+           end
+         val declarations =
+           [("safe_intro", clasetRules.Intro, true),
+            ("safe_elim", clasetRules.Elim, true),
+            ("safe_dest", clasetRules.Dest, true),
+            ("unsafe_intro", clasetRules.Intro, false),
+            ("unsafe_elim", clasetRules.Elim, false),
+            ("unsafe_dest", clasetRules.Dest, false),
+            ("safe_forward_old", clasetRules.Forward, true),
+            ("safe_forward_new", clasetRules.Forward, true),
+            ("unsafe_forward", clasetRules.Forward, false),
+            ("safe_norm", clasetRules.Norm, true),
+            ("unsafe_norm_old", clasetRules.Norm, false),
+            ("unsafe_norm_new", clasetRules.Norm, false)]
+         val ds =
+           List.foldl
+             (fn (entry, acc) => add (order_decl entry) acc)
+             empty_decls declarations
+       in
+         map #name (dest_decls ds) =
+           ["safe_intro", "safe_elim", "safe_dest",
+            "unsafe_intro", "unsafe_elim", "unsafe_dest",
+            "safe_forward_new", "safe_forward_old", "unsafe_forward",
+            "safe_norm", "unsafe_norm_new", "unsafe_norm_old"]
+       end)
+
+val _ =
+  test
     ("candidate_order prefers fewer subgoals, then recent declarations",
      fn () =>
        let
@@ -578,19 +613,54 @@ fun same_spec ({kind = kind1, safe = safe1, prio = prio1} : rulespec)
               ({kind = kind2, safe = safe2, prio = prio2} : rulespec) =
   kind1 = kind2 andalso safe1 = safe2 andalso prio1 = prio2
 
+fun delta_tag (ThyDataSexp.List (ThyDataSexp.Sym tag :: _)) = SOME tag
+  | delta_tag _ = NONE
+
 val _ =
   test
-    ("claset delta codec round-trips version-one ADD and RM deltas",
+    ("claset delta codec emits and round-trips version-one deltas",
      fn () =>
        let
          val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
-         val spec = {kind = clasetRules.Dest, safe = false, prio = SOME 75}
+         val specs =
+           [{kind = clasetRules.Intro, safe = false, prio = SOME 100},
+            {kind = clasetRules.Elim, safe = false, prio = SOME 50},
+            {kind = clasetRules.Dest, safe = false, prio = SOME 1}]
+         fun round_trip spec =
+           let val encoded = encode_delta (ADD {name = name, spec = spec})
+           in
+             delta_tag encoded = SOME "clasetADD1" andalso
+             (case decode_delta encoded of
+                  SOME (ADD {name = name', spec = spec'}) =>
+                    name = name' andalso same_spec spec spec'
+                | _ => false)
+           end
        in
-         (case decode_delta (encode_delta (ADD {name = name, spec = spec})) of
-             SOME (ADD {name = name', spec = spec'}) =>
-               name = name' andalso same_spec spec spec'
-           | _ => false)
-         andalso decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
+         List.all round_trip specs andalso
+         decode_delta (encode_delta (RM "gone")) = SOME (RM "gone")
+       end)
+
+val _ =
+  test
+    ("claset delta codec emits and round-trips version-two deltas",
+     fn () =>
+       let
+         val name = {Thy = "bool", Name = "AND_IMP_INTRO"}
+         val specs =
+           [{kind = clasetRules.Forward, safe = false, prio = SOME 75},
+            {kind = clasetRules.Norm, safe = false, prio = SOME ~17},
+            {kind = clasetRules.Norm, safe = true, prio = SOME 23}]
+         fun round_trip spec =
+           let val encoded = encode_delta (ADD {name = name, spec = spec})
+           in
+             delta_tag encoded = SOME "clasetADD2" andalso
+             (case decode_delta encoded of
+                  SOME (ADD {name = name', spec = spec'}) =>
+                    name = name' andalso same_spec spec spec'
+                | _ => false)
+           end
+       in
+         List.all round_trip specs
        end)
 
 val _ =
@@ -612,6 +682,40 @@ val _ =
 
 (* clasetRules: primitive preprocessing derived rules. *)
 fun same_thm th1 th2 = Term.aconv (concl th1) (concl th2)
+
+val _ =
+  test
+    ("Forward and Norm ext_info retain only their canonical core forms",
+     fn () =>
+       let
+         val forward = DISCH p (ASSUME p)
+         val forward_expected =
+           MAKE_ELIM_RULE
+             (canonical_rule_of clasetRules.Forward forward)
+         val norm = boolTheory.AND_INTRO_THM
+         val norm_expected = canonical_rule_of clasetRules.Norm norm
+         val forward_specs =
+           [{kind = clasetRules.Forward, safe = true, prio = NONE},
+            {kind = clasetRules.Forward, safe = false, prio = SOME 75}]
+         val norm_specs =
+           [{kind = clasetRules.Norm, safe = true, prio = SOME ~1},
+            {kind = clasetRules.Norm, safe = false, prio = SOME 2}]
+         fun plain_info expected spec =
+           let
+             val info = ext_info spec
+               (if #kind spec = clasetRules.Forward then forward else norm)
+             val (main, swapped) = #rl info
+             val (dup, dup_swapped) = #dup_rl info
+           in
+             aconv_thm main expected andalso aconv_thm dup expected andalso
+             not (Option.isSome swapped) andalso
+             not (Option.isSome dup_swapped) andalso
+             safe_class_of spec info = NONE
+           end
+       in
+         List.all (plain_info forward_expected) forward_specs andalso
+         List.all (plain_info norm_expected) norm_specs
+       end)
 
 fun specs [] th = th
   | specs (tm :: tms) th = specs tms (SPEC tm th)
@@ -1196,6 +1300,46 @@ fun same_candidates (cs1 : (tag * brl) list) (cs2 : (tag * brl) list) =
        #weight tag1 = #weight tag2 andalso #index tag1 = #index tag2 andalso
        #1 brl1 = #1 brl2 andalso same_thm (#2 brl1) (#2 brl2))
     (cs1, cs2)
+
+val _ =
+  test
+    ("Forward and Norm declarations leave all classical netpairs unchanged",
+     fn () =>
+       let
+         val baseline =
+           add_elims [("baseline_elim", boolTheory.OR_ELIM_THM)]
+             (add_intros [("baseline_intro", boolTheory.AND_INTRO_THM)]
+               (add_selims [("baseline_selim", boolTheory.FALSITY)]
+                 (add_sintros [("baseline_sintro", boolTheory.TRUTH)]
+                   empty_cs)))
+         val additions =
+           [({kind = clasetRules.Forward, safe = true, prio = NONE},
+             ("routing_sforward", DISCH p (ASSUME p))),
+            ({kind = clasetRules.Forward, safe = false, prio = SOME 67},
+             ("routing_forward", DISCH q (ASSUME q))),
+            ({kind = clasetRules.Norm, safe = true, prio = SOME ~4},
+             ("routing_snorm", boolTheory.EQ_REFL)),
+            ({kind = clasetRules.Norm, safe = false, prio = SOME 9},
+             ("routing_norm", boolTheory.IMP_ANTISYM_AX))]
+         val extended =
+           List.foldl
+             (fn ((spec, named_th), cs) => add_rule spec named_th cs)
+             baseline additions
+         fun observe cs =
+           List.concat
+             (map
+                (fn part =>
+                   unify_intro_candidates part x @
+                   unify_elim_candidates part x)
+                [safe0_part cs, safep_part cs, unsafe_part cs, dup_part cs])
+         fun named name (_, (name', _)) = name = name'
+       in
+         same_candidates (observe baseline) (observe extended) andalso
+         List.all
+           (fn name => List.exists (named name) (rules_of extended))
+           ["routing_sforward", "routing_forward",
+            "routing_snorm", "routing_norm"]
+       end)
 
 val _ =
   test

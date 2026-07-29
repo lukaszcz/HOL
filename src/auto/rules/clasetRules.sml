@@ -7,7 +7,7 @@ type term = Term.term
 type thm = Thm.thm
 type thname = KernelSig.kernelname
 
-datatype rulekind = Intro | Elim | Dest
+datatype rulekind = Intro | Elim | Dest | Forward | Norm
 type rulespec = {kind : rulekind, safe : bool, prio : int option}
 type tag = {weight : int, index : int}
 type brl = bool * thm
@@ -105,8 +105,8 @@ fun canonical_elim_rule th =
             end
     end
 
-fun canonical_rule_of Intro = canonical_rule
-  | canonical_rule_of (Elim | Dest) = canonical_elim_rule
+fun canonical_rule_of (Intro | Norm) = canonical_rule
+  | canonical_rule_of (Elim | Dest | Forward) = canonical_elim_rule
 
 fun form_of th' =
   let
@@ -210,10 +210,10 @@ fun canonical_form_of_with checkpoint kind th =
          | SOME (prem, rest) =>
              not (is_conj prem) andalso canonical_prems rest)
 
-    fun already_canonical Intro theorem =
+    fun already_canonical (Intro | Norm) theorem =
           let val (_, body) = strip_foralls (concl theorem)
           in canonical_prems body end
-      | already_canonical (Elim | Dest) theorem =
+      | already_canonical (Elim | Dest | Forward) theorem =
           let val (_, body) = strip_foralls (concl theorem)
           in
             checkpoint ();
@@ -278,7 +278,7 @@ fun canonical_form_of_with checkpoint kind th =
           val body = specl vars' theorem
         in
           case rulekind of
-              Intro =>
+              (Intro | Norm) =>
                 let
                   val body' = curry body
                   val _ = checkpoint ()
@@ -287,6 +287,7 @@ fun canonical_form_of_with checkpoint kind th =
                 end
             | Elim => canonicalize_elim theorem vars' body
             | Dest => canonicalize_elim theorem vars' body
+            | Forward => canonicalize_elim theorem vars' body
         end
 
     and canonicalize_elim theorem vars body =
@@ -331,13 +332,15 @@ fun rule_conclusion th = #concl (canonical_form th)
 fun kind_name Intro = "introduction"
   | kind_name Elim = "elimination"
   | kind_name Dest = "destruction"
+  | kind_name Forward = "forward"
+  | kind_name Norm = "normalisation"
 
 fun illformed_rule fname kind =
   raise mk_HOL_ERR "clasetRules" fname
     ("Ill-formed " ^ kind_name kind ^ " rule")
 
-fun rule_index_of Intro (form : canonical) = #concl form
-  | rule_index_of (kind as (Elim | Dest)) form =
+fun rule_index_of (Intro | Norm) (form : canonical) = #concl form
+  | rule_index_of (kind as (Elim | Dest | Forward)) form =
       (case #prems form of
           prem :: _ => prem
         | [] => illformed_rule "rule_index" kind)
@@ -600,11 +603,26 @@ fun ext_info ({kind, safe, ...} : rulespec) th =
             {rl = rl, dup_rl = (dup, NONE)}
           end
       end
+    fun forward_info () =
+      let
+        val _ = (case rule_premises_of kind th' of
+                    [] => illformed_rule "ext_info" kind
+                  | _ => ())
+        val forward = MAKE_ELIM_RULE th'
+        val rl = (forward, NONE)
+      in
+        {rl = rl, dup_rl = rl}
+      end
+    fun norm_info () =
+      let val rl = (th', NONE)
+      in {rl = rl, dup_rl = rl} end
   in
     case kind of
         Intro => intro_info ()
       | Elim => elim_info ()
       | Dest => elim_info ()
+      | Forward => forward_info ()
+      | Norm => norm_info ()
   end
 
 datatype safe_class = Safe0 | SafeP
@@ -618,7 +636,7 @@ fun subgoals_of (is_elim, th) =
   end
 
 fun safe_class_of ({kind, safe, ...} : rulespec) ({rl, ...} : info) =
-  if not safe then NONE
+  if kind = Forward orelse kind = Norm orelse not safe then NONE
   else if subgoals_of (kind <> Intro, #1 rl) = 0 then SOME Safe0
   else SOME SafeP
 
@@ -644,34 +662,25 @@ fun same_kind ({kind = kind1, safe = safe1, ...} : rulespec)
               ({kind = kind2, safe = safe2, ...} : rulespec) =
   kind1 = kind2 andalso safe1 = safe2
 
-fun is_elim Intro = false
-  | is_elim _ = true
+fun is_elim (Intro | Norm) = false
+  | is_elim (Elim | Dest | Forward) = true
 
-fun kind_index Intro = 0
-  | kind_index Elim = 1
-  | kind_index Dest = 2
+fun decl_group ({kind, safe, ...} : rulespec) =
+  case kind of
+      Intro => if safe then 0 else 3
+    | Elim => if safe then 1 else 4
+    | Dest => if safe then 2 else 5
+    | Forward => if safe then 6 else 7
+    | Norm => if safe then 8 else 9
 
 (* Match Bires.decl_ord: declarations are grouped by kind-class before
-   their decreasing insertion tags establish recency within that class. *)
+   their decreasing insertion tags establish recency within that class.
+   The six classical groups retain their established order; the new
+   Forward and Norm groups follow them. *)
 fun decl_order (d1 : decl, d2 : decl) =
-  let
-    val spec1 = #spec d1
-    val spec2 = #spec d2
-    val safe1 = #safe spec1
-    val safe2 = #safe spec2
-    val safe_order =
-      if safe1 andalso not safe2 then LESS
-      else if safe2 andalso not safe1 then GREATER
-      else EQUAL
-  in
-    case safe_order of
-        EQUAL =>
-          (case Int.compare (kind_index (#kind spec1),
-                             kind_index (#kind spec2)) of
-               EQUAL => compare_tag (#tag d1, #tag d2)
-             | order => order)
-      | order => order
-  end
+  case Int.compare (decl_group (#spec d1), decl_group (#spec d2)) of
+      EQUAL => compare_tag (#tag d1, #tag d2)
+    | order => order
 
 (* This is Bires.decl_merge_ord.  Replaying an incoming claset in this
    order gives fresh decreasing indices the same canonical relative order. *)
@@ -800,18 +809,29 @@ datatype cdelta = ADD of {name : thname, spec : rulespec} | RM of string
 fun kind_encode Intro = ThyDataSexp.String "intro"
   | kind_encode Elim = ThyDataSexp.String "elim"
   | kind_encode Dest = ThyDataSexp.String "dest"
+  | kind_encode Forward = ThyDataSexp.String "forward"
+  | kind_encode Norm = ThyDataSexp.String "norm"
 
-fun kind_decode (ThyDataSexp.String "intro") = SOME Intro
-  | kind_decode (ThyDataSexp.String "elim") = SOME Elim
-  | kind_decode (ThyDataSexp.String "dest") = SOME Dest
-  | kind_decode _ = NONE
+fun kind_decode1 (ThyDataSexp.String "intro") = SOME Intro
+  | kind_decode1 (ThyDataSexp.String "elim") = SOME Elim
+  | kind_decode1 (ThyDataSexp.String "dest") = SOME Dest
+  | kind_decode1 _ = NONE
+
+fun kind_decode2 sexp =
+  case kind_decode1 sexp of
+      SOME kind => SOME kind
+    | NONE =>
+        (case sexp of
+             ThyDataSexp.String "forward" => SOME Forward
+           | ThyDataSexp.String "norm" => SOME Norm
+           | _ => NONE)
 
 fun spec_encode ({kind, safe, prio} : rulespec) =
   ThyDataSexp.pair3_encode
     (kind_encode, ThyDataSexp.Bool,
      ThyDataSexp.option_encode ThyDataSexp.Int) (kind, safe, prio)
 
-fun spec_decode sexp =
+fun spec_decode kind_decode sexp =
   Option.map (fn (kind, safe, prio) =>
                 {kind = kind, safe = safe, prio = prio})
     (ThyDataSexp.pair3_decode
@@ -819,23 +839,35 @@ fun spec_decode sexp =
         ThyDataSexp.option_decode ThyDataSexp.int_decode) sexp)
 
 fun encode_delta (ADD {name, spec}) =
-      ThyDataSexp.tag_encode "clasetADD1"
+      ThyDataSexp.tag_encode
+        (case #kind spec of Forward => "clasetADD2"
+                          | Norm => "clasetADD2"
+                          | _ => "clasetADD1")
         (ThyDataSexp.pair_encode (ThyDataSexp.KName, spec_encode))
         (name, spec)
   | encode_delta (RM name) =
       ThyDataSexp.tag_encode "clasetRM1" ThyDataSexp.String name
 
-fun dec_add sexp =
+fun dec_add1 sexp =
   Option.map (fn (name, spec) => ADD {name = name, spec = spec})
     (ThyDataSexp.tag_decode "clasetADD1"
-       (ThyDataSexp.pair_decode (ThyDataSexp.kname_decode, spec_decode))
+       (ThyDataSexp.pair_decode
+          (ThyDataSexp.kname_decode, spec_decode kind_decode1))
+       sexp)
+
+fun dec_add2 sexp =
+  Option.map (fn (name, spec) => ADD {name = name, spec = spec})
+    (ThyDataSexp.tag_decode "clasetADD2"
+       (ThyDataSexp.pair_decode
+          (ThyDataSexp.kname_decode, spec_decode kind_decode2))
        sexp)
 
 fun dec_rm sexp =
   Option.map RM
     (ThyDataSexp.tag_decode "clasetRM1" ThyDataSexp.string_decode sexp)
 
-fun decode_delta sexp = ThyDataSexp.first [dec_add, dec_rm] sexp
+fun decode_delta sexp =
+  ThyDataSexp.first [dec_add1, dec_add2, dec_rm] sexp
 
 fun load_delta (ADD {name, spec}) =
       (SOME (name, spec, DB.fetch_knm name)
