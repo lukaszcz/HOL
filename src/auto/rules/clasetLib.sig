@@ -77,6 +77,20 @@ sig
   val unify_elim_candidates_measured :
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
 
+  (* Aesop retrieval is unification-based and retains each declaration's
+     complete rulespec.  Target candidates comprise Intro and Norm rules;
+     hypothesis candidates comprise Elim, Dest, and Forward rules.  Norm
+     rules precede safe rules, which precede unsafe rules.  Within those
+     groups the order is penalty, classical candidate order, and decreasing
+     success percentage followed by classical candidate order, respectively.
+     *)
+  val aesop_target_candidates :
+    claset -> {q : term, qvars : term HOLset.set} ->
+    (rulespec * (string * thm)) list
+  val aesop_hyp_candidates :
+    claset -> {q : term, qvars : term HOLset.set} ->
+    (rulespec * (string * thm)) list
+
   val SIntro : thm -> thm
   val Intro : thm -> thm
   val SElim : thm -> thm

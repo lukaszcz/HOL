@@ -1341,6 +1341,167 @@ val _ =
             "routing_snorm", "routing_norm"]
        end)
 
+fun aesop_names candidates =
+  map (fn (_, (name, _)) => name) candidates
+
+fun has_aesop_name name candidates =
+  List.exists (fn (_, (name', _)) => name = name') candidates
+
+fun has_aesop_entry expected_spec (expected_name, expected_th) candidates =
+  List.exists
+    (fn (spec, (name, th)) =>
+       same_spec spec expected_spec andalso name = expected_name andalso
+       same_thm th expected_th)
+    candidates
+
+val _ =
+  test
+    ("aesop index retrieves every rule kind from its designated side",
+     fn () =>
+       let
+         val forward = DISCH p (ASSUME p)
+         val declarations =
+           [({kind = clasetRules.Intro, safe = true, prio = NONE},
+             ("aesop_intro", boolTheory.AND_INTRO_THM)),
+            ({kind = clasetRules.Elim, safe = false, prio = SOME 60},
+             ("aesop_elim", boolTheory.OR_ELIM_THM)),
+            ({kind = clasetRules.Dest, safe = true, prio = NONE},
+             ("aesop_dest", clasetSeedTheory.CONJ_ELIM_THM)),
+            ({kind = clasetRules.Forward, safe = false, prio = SOME 70},
+             ("aesop_forward", forward)),
+            ({kind = clasetRules.Norm, safe = false, prio = SOME ~2},
+             ("aesop_norm", boolTheory.IMP_ANTISYM_AX))]
+         val cs =
+           List.foldl
+             (fn ((spec, named_th), acc) => add_rule spec named_th acc)
+             empty_cs declarations
+         val empty_vars = tmset []
+         val target =
+           aesop_target_candidates cs
+             {q = ``p /\ q``, qvars = empty_vars}
+         val norm =
+           aesop_target_candidates cs
+             {q = ``p = q``, qvars = empty_vars}
+         val elim =
+           aesop_hyp_candidates cs
+             {q = ``p \/ q``, qvars = empty_vars}
+         val dest =
+           aesop_hyp_candidates cs
+             {q = ``p /\ q``, qvars = empty_vars}
+         val forward_candidates =
+           aesop_hyp_candidates cs {q = p, qvars = empty_vars}
+       in
+         has_aesop_name "aesop_intro" target andalso
+         not (has_aesop_name "aesop_elim" target) andalso
+         has_aesop_entry
+           {kind = clasetRules.Norm, safe = false, prio = SOME ~2}
+           ("aesop_norm", boolTheory.IMP_ANTISYM_AX) norm andalso
+         has_aesop_name "aesop_elim" elim andalso
+         has_aesop_name "aesop_dest" dest andalso
+         has_aesop_entry
+           {kind = clasetRules.Forward, safe = false, prio = SOME 70}
+           ("aesop_forward", forward) forward_candidates
+       end)
+
+val _ =
+  test
+    ("aesop index treats query metavariables as unification wildcards",
+     fn () =>
+       let
+         val target_cs =
+           add_rule
+             {kind = clasetRules.Norm, safe = false, prio = NONE}
+             ("meta_norm", boolTheory.IMP_ANTISYM_AX)
+             (add_sintros
+                [("meta_intro", boolTheory.AND_INTRO_THM)] empty_cs)
+         val cs =
+           add_rule
+             {kind = clasetRules.Forward, safe = true, prio = NONE}
+             ("meta_forward", DISCH p (ASSUME p))
+             (add_elims [("meta_elim", boolTheory.OR_ELIM_THM)] target_cs)
+         val query = {q = x, qvars = tmset [x]}
+         val targets = aesop_names (aesop_target_candidates cs query)
+         val hyps = aesop_names (aesop_hyp_candidates cs query)
+       in
+         List.all (fn name => mem name targets) ["meta_intro", "meta_norm"]
+           andalso
+         List.all (fn name => mem name hyps) ["meta_elim", "meta_forward"]
+       end)
+
+fun disj_intro vars left right =
+  GENL vars
+    (DISCH left
+      (DISCH right (DISJ1 (ASSUME left) right)))
+
+val _ =
+  test
+    ("aesop unsafe candidates use percent, weight, and recency order",
+     fn () =>
+       let
+         val high_old = refl_intro [q] ``p \/ q``
+         val high_heavy = disj_intro [q] q p
+         val high_new = refl_intro [x, y] ``x \/ y``
+         val default = refl_intro [x, y] ``y \/ x``
+         val declarations =
+           [({kind = clasetRules.Intro, safe = false, prio = SOME 25},
+             ("low", refl_intro [] ``p \/ p``)),
+            ({kind = clasetRules.Intro, safe = false, prio = SOME 75},
+             ("high_old", high_old)),
+            ({kind = clasetRules.Intro, safe = false, prio = SOME 75},
+             ("high_heavy", high_heavy)),
+            ({kind = clasetRules.Intro, safe = false, prio = SOME 75},
+             ("high_new", high_new)),
+            ({kind = clasetRules.Intro, safe = false, prio = NONE},
+             ("default", default))]
+         val cs =
+           List.foldl
+             (fn ((spec, named_th), acc) => add_rule spec named_th acc)
+             empty_cs declarations
+         val names =
+           aesop_names
+             (aesop_target_candidates cs
+                {q = ``p \/ p``, qvars = tmset []})
+       in
+         names =
+           ["high_new", "high_old", "high_heavy", "default", "low"]
+       end)
+
+val _ =
+  test
+    ("aesop safe and norm candidates retain their phase orders",
+     fn () =>
+       let
+         val safe_declarations =
+           [({kind = clasetRules.Intro, safe = true, prio = SOME 100},
+             ("safe_heavy", disj_intro [q] q p)),
+            ({kind = clasetRules.Intro, safe = true, prio = SOME 1},
+             ("safe_old", refl_intro [q] ``p \/ q``)),
+            ({kind = clasetRules.Intro, safe = true, prio = NONE},
+             ("safe_new", refl_intro [x, y] ``x \/ y``))]
+         val norm_declarations =
+           [({kind = clasetRules.Norm, safe = false, prio = SOME 4},
+             ("norm_late", refl_intro [] ``p /\ p``)),
+            ({kind = clasetRules.Norm, safe = false, prio = NONE},
+             ("norm_zero", refl_intro [q] ``p /\ q``)),
+            ({kind = clasetRules.Norm, safe = false, prio = SOME ~3},
+             ("norm_early", refl_intro [x, y] ``x /\ y``))]
+         fun install declarations =
+           List.foldl
+             (fn ((spec, named_th), acc) => add_rule spec named_th acc)
+             empty_cs declarations
+         val safe_query = {q = ``p \/ p``, qvars = tmset []}
+         val norm_query = {q = ``p /\ p``, qvars = tmset []}
+       in
+         aesop_names
+           (aesop_target_candidates
+              (install safe_declarations) safe_query) =
+           ["safe_new", "safe_old", "safe_heavy"] andalso
+         aesop_names
+           (aesop_target_candidates
+              (install norm_declarations) norm_query) =
+           ["norm_early", "norm_zero", "norm_late"]
+       end)
+
 val _ =
   test
     ("measured candidate FVL preserves a free variable beside its shadow",
@@ -1508,6 +1669,53 @@ val _ =
          same_rules (rules_of merged) (rules_of incremented) andalso
          map (fn (_, (name, _)) => name) (rules_of removed) =
            ["a", "falseE", "orE", "andI"]
+       end)
+
+val _ =
+  test
+    ("aesop index follows add, remove, and merge maintenance",
+     fn () =>
+       let
+         val intro =
+           ({kind = clasetRules.Intro, safe = false, prio = SOME 40},
+            ("maintenance_intro", boolTheory.AND_INTRO_THM))
+         val norm =
+           ({kind = clasetRules.Norm, safe = false, prio = SOME 2},
+            ("maintenance_norm", boolTheory.IMP_ANTISYM_AX))
+         val forward =
+           ({kind = clasetRules.Forward, safe = true, prio = NONE},
+            ("maintenance_forward", DISCH p (ASSUME p)))
+         fun install (spec, named_th) cs = add_rule spec named_th cs
+         val left = install intro empty_cs
+         val right = install forward (install norm empty_cs)
+         val merged = merge_cs (left, right)
+         val incremented = install forward (install norm left)
+         val target_query = {q = x, qvars = tmset [x]}
+         val hyp_query = {q = x, qvars = tmset [x]}
+         val removed = remove_rule "maintenance_forward" merged
+         val target_removed =
+           remove_rule "maintenance_norm" removed
+       in
+         same_rules
+           (aesop_target_candidates merged target_query)
+           (aesop_target_candidates incremented target_query) andalso
+         same_rules
+           (aesop_hyp_candidates merged hyp_query)
+           (aesop_hyp_candidates incremented hyp_query) andalso
+         has_aesop_name "maintenance_forward"
+           (aesop_hyp_candidates merged hyp_query) andalso
+         not
+           (has_aesop_name "maintenance_forward"
+              (aesop_hyp_candidates removed hyp_query)) andalso
+         has_aesop_name "maintenance_intro"
+           (aesop_target_candidates removed target_query) andalso
+         has_aesop_name "maintenance_norm"
+           (aesop_target_candidates removed target_query) andalso
+         not
+           (has_aesop_name "maintenance_norm"
+              (aesop_target_candidates target_removed target_query)) andalso
+         has_aesop_name "maintenance_intro"
+           (aesop_target_candidates target_removed target_query)
        end)
 
 val _ =
