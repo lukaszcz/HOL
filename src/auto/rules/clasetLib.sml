@@ -161,6 +161,9 @@ val selim_spec = {kind = Elim, safe = true, prio = NONE}
 val elim_spec = {kind = Elim, safe = false, prio = NONE}
 val sdest_spec = {kind = Dest, safe = true, prio = NONE}
 val dest_spec = {kind = Dest, safe = false, prio = NONE}
+val forward_spec = {kind = Forward, safe = false, prio = NONE}
+val sforward_spec = {kind = Forward, safe = true, prio = NONE}
+val norm_spec = {kind = Norm, safe = false, prio = NONE}
 
 fun add_rules spec rules cs =
   List.foldl (fn (rule, acc) => add_rule spec rule acc) cs rules
@@ -832,6 +835,11 @@ fun safe_priority_error attrname =
     ("Arguments not allowed for attribute " ^ attrname ^
      "; safe-rule priorities are not supported")
 
+fun penalty_error attrname =
+  raise mk_HOL_ERR "clasetLib" "attribute"
+    ("Invalid penalty for attribute " ^ attrname ^
+     "; expected one integer")
+
 fun priority_spec attrname (spec : rulespec) args =
   case args of
       [] => spec
@@ -846,12 +854,29 @@ fun priority_spec attrname (spec : rulespec) args =
            | NONE => priority_error attrname)
     | _ => priority_error attrname
 
-fun register_rule_attribute (attrname, spec) =
+fun signed_decimal arg =
   let
-    fun checked_spec args =
-      if #safe spec then
-        if List.null args then spec else safe_priority_error attrname
-      else priority_spec attrname spec args
+    val first = if String.isPrefix "~" arg then 1 else 0
+    val digits = String.extract (arg, first, NONE)
+  in
+    size digits > 0 andalso CharVector.all Char.isDigit digits
+  end
+
+fun penalty_spec attrname (spec : rulespec) args =
+  case args of
+      [] => spec
+    | [arg] =>
+        (case Int.fromString arg of
+             SOME penalty =>
+               if signed_decimal arg then
+                 {kind = #kind spec, safe = #safe spec,
+                  prio = SOME penalty}
+               else penalty_error attrname
+           | NONE => penalty_error attrname)
+    | _ => penalty_error attrname
+
+fun register_checked_rule_attribute (attrname, checked_spec) =
+  let
     fun storedf {name, args, ...} =
       export_rule (checked_spec args) name
     fun localf {name, args, thm, ...} =
@@ -861,10 +886,23 @@ fun register_rule_attribute (attrname, spec) =
       (attrname, {storedf = storedf, localf = localf})
   end
 
+fun register_rule_attribute (attrname, spec) =
+  register_checked_rule_attribute
+    (attrname,
+     fn args =>
+       if #safe spec then
+         if List.null args then spec else safe_priority_error attrname
+       else priority_spec attrname spec args)
+
 val _ = List.app register_rule_attribute
   [("intro", intro_spec), ("sintro", sintro_spec),
    ("elim", elim_spec), ("selim", selim_spec),
-   ("dest", dest_spec), ("sdest", sdest_spec)]
+   ("dest", dest_spec), ("sdest", sdest_spec),
+   ("forward", forward_spec), ("sforward", sforward_spec)]
+
+val _ =
+  register_checked_rule_attribute
+    ("norm", penalty_spec "norm" norm_spec)
 
 (* Structural node count used only to weight rules: each leaf counts 1, an
    application sums its parts, an abstraction adds 1 for the binder.  This is

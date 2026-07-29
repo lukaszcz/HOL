@@ -1606,6 +1606,9 @@ val state_export_rule = DISCH r (ASSUME r)
 val state_temp_rule = DISCH ``p /\ q`` (ASSUME ``p /\ q``)
 val state_elim_rule = DISCH ``p \/ q`` (ASSUME ``p \/ q``)
 val state_dest_rule = DISCH ``~p`` (ASSUME ``~p``)
+val state_forward_rule = DISCH ``p ==> q`` (ASSUME ``p ==> q``)
+val state_sforward_rule = DISCH ``q ==> r`` (ASSUME ``q ==> r``)
+val state_norm_rule = ASSUME ``p <=> q``
 val state_pending_name = "claset_state_pending"
 val state_sintro_name = "claset_state_sintro"
 val state_intro_name = "claset_state_intro"
@@ -1641,7 +1644,13 @@ val state_attribute_cases =
    ("dest", {kind = clasetRules.Dest, safe = false, prio = NONE},
     state_elim_rule),
    ("sdest", {kind = clasetRules.Dest, safe = true, prio = NONE},
-    state_dest_rule)]
+    state_dest_rule),
+   ("forward", {kind = clasetRules.Forward, safe = false, prio = NONE},
+    state_forward_rule),
+   ("sforward", {kind = clasetRules.Forward, safe = true, prio = NONE},
+    state_sforward_rule),
+   ("norm", {kind = clasetRules.Norm, safe = false, prio = NONE},
+    state_norm_rule)]
 
 val _ =
   test
@@ -1747,6 +1756,78 @@ val _ =
               "; safe-rule priorities are not supported")
        in
          List.all rejected ["sintro", "selim", "sdest"]
+       end)
+
+val _ =
+  test
+    ("new claset attributes accept percentages and integer penalties",
+     fn () =>
+       let
+         fun mk_rule clasetRules.Forward stem =
+               let val tm = mk_var (stem, bool)
+               in DISCH tm (ASSUME tm) end
+           | mk_rule _ stem = ASSUME (mk_var (stem, bool))
+         val cases =
+           [("forward", [], clasetRules.Forward, false, NONE),
+            ("forward", ["1"], clasetRules.Forward, false, SOME 1),
+            ("forward", ["100"], clasetRules.Forward, false, SOME 100),
+            ("sforward", [], clasetRules.Forward, true, NONE),
+            ("norm", [], clasetRules.Norm, false, NONE),
+            ("norm", ["0"], clasetRules.Norm, false, SOME 0),
+            ("norm", ["~11"], clasetRules.Norm, false, SOME ~11),
+            ("norm", ["23"], clasetRules.Norm, false, SOME 23)]
+         fun check (index, (attrname, args, kind, safe, prio)) =
+           let
+             val stem = "new_attribute_" ^ Int.toString index
+             val name = stem ^ "_" ^ attrname
+             val th = mk_rule kind stem
+             val _ =
+               ThmAttribute.local_attribute
+                 {attrname = attrname, name = name, args = args, thm = th}
+             val found =
+               List.find (fn (_, (name', _)) => name = name')
+                 (rules_of (the_claset ()))
+             val _ = temp_delrule name
+           in
+             case found of
+                 SOME (spec, (_, th')) =>
+                   same_spec spec
+                     {kind = kind, safe = safe, prio = prio} andalso
+                   same_thm (canonical_rule_of kind th) th'
+               | NONE => false
+           end
+       in
+         List.all check (ListPair.zip (List.tabulate (length cases, I), cases))
+       end)
+
+val _ =
+  test
+    ("new claset attributes reject malformed arguments cleanly",
+     fn () =>
+       let
+         val priority_message =
+           "Invalid priority for attribute forward; expected one integer " ^
+           "from 1 to 100"
+         val penalty_message =
+           "Invalid penalty for attribute norm; expected one integer"
+         val safe_message =
+           "Arguments not allowed for attribute sforward; safe-rule " ^
+           "priorities are not supported"
+         fun rejected attrname args message =
+           hol_err_msg
+             (fn () =>
+               ThmAttribute.local_attribute
+                 {attrname = attrname, name = "bad-new-attribute",
+                  args = args, thm = state_forward_rule}) =
+           SOME message
+       in
+         List.all
+           (fn args => rejected "forward" args priority_message)
+           [["0"], ["101"], ["75x"], ["25", "50"]] andalso
+         List.all
+           (fn args => rejected "norm" args penalty_message)
+           [[""], ["~"], ["1x"], ["1", "2"]] andalso
+         rejected "sforward" ["10"] safe_message
        end)
 
 
