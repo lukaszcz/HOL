@@ -3200,34 +3200,6 @@ val _ =
 
 val _ =
   test
-    ("nonconsuming elim replay retains its selected major assumption",
-     fn () =>
-       let
-         val p = Term.mk_var ("nonconsuming_replay_p", bool_ty)
-         val theorem = DISCH p (DISCH p (ASSUME p))
-         val goal = ([p], p)
-         val (consuming_children, _) =
-           clasetReplay.RULE_TAC
-             {theorem = theorem, elim = true, consumed = SOME 1,
-              parameters = [], eigenvariables = [[]]} goal
-         val action =
-           clasetReplay.nonconsuming_elim_rule_action
-             (fn _ =>
-               {theorem = theorem, major = 1, parameters = [],
-                eigenvariables = [[]]})
-         val (children, validation) =
-           Tactical.VALID (action clasetMeta.empty) goal
-         val result = validation [ASSUME p]
-       in
-         same_goals consuming_children [([], p)] andalso
-         same_goals children [([p], p)] andalso
-         Term.aconv (concl result) p andalso
-         HOLset.equal
-           (Thm.hypset result, HOLset.fromList Term.compare [p])
-       end)
-
-val _ =
-  test
     ("exact elim keeps a newly exposed implication intact",
      fn () =>
        let

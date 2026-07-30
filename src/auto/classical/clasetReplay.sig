@@ -77,11 +77,6 @@ sig
   val RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
      parameters : string list, eigenvariables : string list list} -> tactic
-  (* Select [major] for elimination without deleting that assumption from
-     the replay children. *)
-  val NONCONSUMING_ELIM_RULE_TAC :
-    {theorem : thm, major : int, parameters : string list,
-     eigenvariables : string list list} -> tactic
   (* Apply the first [immediate] premises using the recorded assumptions,
      retain those assumptions, and add the residual theorem as a new head
      assumption. *)
@@ -120,11 +115,6 @@ sig
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,
        parameters : string list,
-       eigenvariables : string list list}) -> replay_action
-  (* Replay-action form of [NONCONSUMING_ELIM_RULE_TAC]. *)
-  val nonconsuming_elim_rule_action :
-    (clasetMeta.store ->
-      {theorem : thm, major : int, parameters : string list,
        eigenvariables : string list list}) -> replay_action
   val forward_rule_action :
     (clasetMeta.store ->
