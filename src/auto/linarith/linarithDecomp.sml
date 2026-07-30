@@ -1,0 +1,290 @@
+structure linarithDecomp :> linarithDecomp =
+struct
+
+open Abbrev HolKernel
+
+type polynomial = (term * Arbrat.rat) list * Arbrat.rat
+
+val rat_zero = Arbrat.zero
+val rat_one = Arbrat.one
+
+fun same_type left right = Type.compare (left, right) = EQUAL
+
+fun binary_parts tm =
+  let
+    val (rator, right) = Term.dest_comb tm
+    val (operator, left) = Term.dest_comb rator
+  in
+    (operator, left, right)
+  end
+
+fun unary_parts tm = Term.dest_comb tm
+
+fun mk_binary operator left right =
+  Term.list_mk_comb (operator, [left, right])
+
+fun instance_of tm = linarithData.instance_for (Term.type_of tm)
+
+fun injection_arg tm =
+  case Lib.total unary_parts tm of
+      NONE => NONE
+    | SOME (operator, arg) =>
+        (case linarithData.injection_by_const operator of
+             NONE => NONE
+           | SOME injection =>
+               if same_type (Term.type_of arg) (#from_ty injection) andalso
+                  same_type (Term.type_of tm) (#to_ty injection)
+               then SOME arg
+               else NONE)
+
+fun dest_mult tm =
+  case instance_of tm of
+      NONE => NONE
+    | SOME instance => Lib.total (#dest_mult (#dest instance)) tm
+
+fun dest_div tm =
+  case instance_of tm of
+      NONE => NONE
+    | SOME instance =>
+        (case #dest_div (#dest instance) of
+             NONE => NONE
+           | SOME dest => Lib.total dest tm)
+
+fun dest_neg tm =
+  case instance_of tm of
+      NONE => NONE
+    | SOME instance =>
+        (case #dest_neg (#dest instance) of
+             NONE => NONE
+           | SOME dest => Lib.total dest tm)
+
+fun dest_lit tm =
+  case instance_of tm of
+      NONE => NONE
+    | SOME instance => Lib.total (#dest_lit (#dest instance)) tm
+
+fun try_product operator left right =
+  Lib.total (fn () => mk_binary operator left right) ()
+
+fun rebuild_product original operator left right =
+  case try_product operator left right of
+      SOME product => product
+    | NONE => original
+
+(* Products are normalized to right-associated form while their literal
+   factors are accumulated in the Arbrat multiplier. *)
+fun demult (tm, multiplier) =
+  case dest_mult tm of
+      SOME (left, right) =>
+        (case dest_mult left of
+             SOME (left1, left2) =>
+               let
+                 val (operator, _, _) = binary_parts tm
+               in
+                 case try_product operator left2 right of
+                     NONE => (SOME tm, multiplier)
+                   | SOME nested =>
+                       (case try_product operator left1 nested of
+                            NONE => (SOME tm, multiplier)
+                          | SOME rotated =>
+                              demult (rotated, multiplier))
+               end
+           | NONE =>
+               let
+                 val (operator, _, _) = binary_parts tm
+                 val (left_atom, multiplier') =
+                   demult (left, multiplier)
+               in
+                 case left_atom of
+                     SOME left' =>
+                       let
+                         val (right_atom, multiplier'') =
+                           demult (right, multiplier')
+                       in
+                         case right_atom of
+                             SOME right' =>
+                               (SOME
+                                  (rebuild_product tm operator left' right'),
+                                multiplier'')
+                           | NONE => (SOME left', multiplier'')
+                       end
+                   | NONE => demult (right, multiplier')
+               end)
+    | NONE =>
+        (case dest_div tm of
+             SOME (numerator, denominator) =>
+               (case demult (denominator, rat_one) of
+                    (NONE, divisor) =>
+                      if divisor = rat_zero then (SOME tm, multiplier)
+                      else
+                        let
+                          val (atom, numerator_multiplier) =
+                            demult (numerator, multiplier)
+                        in
+                          (atom,
+                           Arbrat.*
+                             (numerator_multiplier,
+                              Arbrat.inv divisor))
+                        end
+                  | (SOME _, _) => (SOME tm, multiplier))
+           | NONE =>
+               (case dest_neg tm of
+                    SOME arg =>
+                      demult (arg, Arbrat.negate multiplier)
+                  | NONE =>
+                      (case dest_lit tm of
+                           SOME literal =>
+                             (NONE, Arbrat.* (multiplier, literal))
+                         | NONE =>
+                             (case injection_arg tm of
+                                  SOME arg => demult (arg, multiplier)
+                                | NONE => (SOME tm, multiplier)))))
+
+fun add_atom atom coefficient (atoms, constant) =
+  let
+    fun add [] =
+          if coefficient = rat_zero then [] else [(atom, coefficient)]
+      | add ((item as (old_atom, old_coefficient)) :: rest) =
+          if Term.aconv old_atom atom then
+            let
+              val coefficient' =
+                Arbrat.+ (old_coefficient, coefficient)
+            in
+              if coefficient' = rat_zero then rest
+              else (old_atom, coefficient') :: rest
+            end
+          else item :: add rest
+  in
+    (add atoms, constant)
+  end
+
+fun add_constant multiplier literal (atoms, constant) =
+  (atoms, Arbrat.+ (constant, Arbrat.* (multiplier, literal)))
+
+fun poly_acc (tm, multiplier, polynomial) =
+  case instance_of tm of
+      NONE =>
+        (case injection_arg tm of
+             SOME arg => poly_acc (arg, multiplier, polynomial)
+           | NONE => add_atom tm multiplier polynomial)
+    | SOME instance =>
+        let
+          val dest = #dest instance
+        in
+          case Lib.total (#dest_plus dest) tm of
+              SOME (left, right) =>
+                poly_acc
+                  (left, multiplier,
+                   poly_acc (right, multiplier, polynomial))
+            | NONE =>
+                (case #dest_minus dest of
+                     SOME dest_minus =>
+                       (case Lib.total dest_minus tm of
+                            SOME (left, right) =>
+                              poly_acc
+                                (left, multiplier,
+                                 poly_acc
+                                   (right, Arbrat.negate multiplier,
+                                    polynomial))
+                          | NONE => poly_other (tm, multiplier, polynomial))
+                   | NONE => poly_other (tm, multiplier, polynomial))
+        end
+and poly_other (tm, multiplier, polynomial) =
+  case dest_neg tm of
+      SOME arg => poly_acc (arg, Arbrat.negate multiplier, polynomial)
+    | NONE =>
+        (case dest_lit tm of
+             SOME literal => add_constant multiplier literal polynomial
+           | NONE =>
+               (case dest_mult tm of
+                    SOME _ =>
+                      let
+                        val (atom, coefficient) = demult (tm, multiplier)
+                      in
+                        case atom of
+                            SOME atom' =>
+                              add_atom atom' coefficient polynomial
+                          | NONE =>
+                              add_constant rat_one coefficient polynomial
+                      end
+                  | NONE =>
+                      (case dest_div tm of
+                           SOME _ =>
+                             let
+                               val (atom, coefficient) =
+                                 demult (tm, multiplier)
+                             in
+                               case atom of
+                                   SOME atom' =>
+                                     add_atom atom' coefficient polynomial
+                                 | NONE =>
+                                     add_constant rat_one coefficient
+                                       polynomial
+                             end
+                         | NONE =>
+                             (case injection_arg tm of
+                                  SOME arg =>
+                                    poly_acc (arg, multiplier, polynomial)
+                                | NONE =>
+                                    add_atom tm multiplier polynomial))))
+
+fun poly tm = poly_acc (tm, rat_one, ([], rat_zero))
+
+fun relation tm =
+  case Lib.total boolSyntax.dest_eq tm of
+      SOME (left, right) => SOME (linarithSolve.REL_EQ, left, right)
+    | NONE =>
+        (case Lib.total binary_parts tm of
+             NONE => NONE
+           | SOME (_, left, _) =>
+               (case linarithData.instance_for (Term.type_of left) of
+                    NONE => NONE
+                  | SOME instance =>
+                      let
+                        val dest = #dest instance
+                      in
+                        case Lib.total (#dest_less dest) tm of
+                            SOME (lhs, rhs) =>
+                              SOME (linarithSolve.REL_LT, lhs, rhs)
+                          | NONE =>
+                              (case Lib.total (#dest_leq dest) tm of
+                                   SOME (lhs, rhs) =>
+                                     SOME
+                                       (linarithSolve.REL_LE, lhs, rhs)
+                                 | NONE => NONE)
+                      end))
+
+fun decomp tm =
+  let
+    val (negated, body) =
+      case Lib.total boolSyntax.dest_neg tm of
+          SOME inner => (true, inner)
+        | NONE => (false, tm)
+  in
+    case relation body of
+        NONE => NONE
+      | SOME (rel, lhs, rhs) =>
+          (case linarithData.instance_for (Term.type_of lhs) of
+               NONE => NONE
+             | SOME instance =>
+                 let
+                   val (lhs_atoms, lhs_const) = poly lhs
+                   val (rhs_atoms, rhs_const) = poly rhs
+                   val (rel', negated') =
+                     if rel = linarithSolve.REL_EQ andalso negated then
+                       (linarithSolve.REL_NEQ, false)
+                     else (rel, negated)
+                 in
+                   SOME
+                     (linarithSolve.Decomp
+                        {lhs = lhs_atoms, lhs_const = lhs_const,
+                         rel = rel', rhs = rhs_atoms,
+                         rhs_const = rhs_const,
+                         discrete = #discrete instance,
+                         negated = negated'})
+                 end)
+  end
+
+fun is_relevant tm = Option.isSome (decomp tm)
+
+end

@@ -61,6 +61,285 @@ val _ =
            SOME instance => #discrete instance
          | NONE => false)
 
+fun function_ty domain range = Type.mk_type ("fun", [domain, range])
+fun binary_ty domain range =
+  function_ty domain (function_ty domain range)
+
+val synth_plus =
+  Term.mk_var ("linarith_synth_plus", binary_ty registry_ty registry_ty)
+val synth_minus =
+  Term.mk_var ("linarith_synth_minus", binary_ty registry_ty registry_ty)
+val synth_neg =
+  Term.mk_var
+    ("linarith_synth_neg", function_ty registry_ty registry_ty)
+val synth_mult =
+  Term.mk_var ("linarith_synth_mult", binary_ty registry_ty registry_ty)
+val synth_div =
+  Term.mk_var ("linarith_synth_div", binary_ty registry_ty registry_ty)
+val synth_less =
+  Term.mk_var ("linarith_synth_less", binary_ty registry_ty Type.bool)
+val synth_leq =
+  Term.mk_var ("linarith_synth_leq", binary_ty registry_ty Type.bool)
+val synth_inj =
+  Term.mk_var
+    ("linarith_synth_inj", function_ty Type.bool registry_ty)
+
+val synth_zero = Term.mk_var ("linarith_synth_zero", registry_ty)
+val synth_one = Term.mk_var ("linarith_synth_one", registry_ty)
+val synth_two = Term.mk_var ("linarith_synth_two", registry_ty)
+val synth_x = Term.mk_var ("linarith_synth_x", registry_ty)
+val synth_y = Term.mk_var ("linarith_synth_y", registry_ty)
+val synth_z = Term.mk_var ("linarith_synth_z", registry_ty)
+val synth_bool_atom =
+  Term.mk_var ("linarith_synth_bool_atom", Type.bool)
+
+fun mk_binary operator left right =
+  Term.list_mk_comb (operator, [left, right])
+
+fun dest_binary operator tm =
+  let
+    val (rator, right) = Term.dest_comb tm
+    val (actual, left) = Term.dest_comb rator
+  in
+    if Term.aconv actual operator then (left, right) else decline tm
+  end
+
+fun dest_unary operator tm =
+  let
+    val (actual, arg) = Term.dest_comb tm
+  in
+    if Term.aconv actual operator then arg else decline tm
+  end
+
+fun synth_lit tm =
+  if Term.aconv tm synth_zero then Arbrat.zero
+  else if Term.aconv tm synth_one then Arbrat.one
+  else if Term.aconv tm synth_two then Arbrat.two
+  else decline tm
+
+fun make_decomp_instance dest_minus :
+    linarithData.linarith_instance =
+  {ty = registry_ty,
+   discrete = false,
+   dest =
+     {dest_plus = dest_binary synth_plus,
+      dest_minus = dest_minus,
+      dest_neg = SOME (dest_unary synth_neg),
+      dest_mult = dest_binary synth_mult,
+      dest_div = SOME (dest_binary synth_div),
+      dest_suc = NONE,
+      dest_lit = synth_lit,
+      mk_lit = decline,
+      dest_less = dest_binary synth_less,
+      dest_leq = dest_binary synth_leq},
+   kit =
+     {add_mono = [],
+      mult_mono = [],
+      lessD = [],
+      not_less = boolTheory.TRUTH,
+      not_le = boolTheory.TRUTH,
+      neqE = boolTheory.TRUTH,
+      nonneg = (fn _ => NONE)},
+   norm_conv = Conv.ALL_CONV,
+   pre_split = [],
+   divmod_facts = NONE}
+
+val decomp_instance =
+  make_decomp_instance (SOME (dest_binary synth_minus))
+
+val _ = linarithData.register_instance decomp_instance
+val _ =
+  linarithData.register_injection
+    {from_ty = Type.bool,
+     to_ty = registry_ty,
+     inj = synth_inj,
+     hom =
+       {le = boolTheory.TRUTH,
+        lt = boolTheory.TRUTH,
+        eq = boolTheory.TRUTH,
+        add = boolTheory.TRUTH,
+        mul = boolTheory.TRUTH}}
+
+fun coefficient atoms atom =
+  case List.find (fn (tm, _) => Term.aconv tm atom) atoms of
+      SOME (_, value) => value
+    | NONE => Arbrat.zero
+
+val synth_linear_lhs =
+  mk_binary synth_plus
+    (mk_binary synth_mult synth_two synth_x) synth_one
+val synth_linear_rhs =
+  mk_binary synth_plus synth_x synth_y
+val synth_linear_relation =
+  mk_binary synth_leq synth_linear_lhs synth_linear_rhs
+
+val _ =
+  check
+    ("decomp uses synthetic plus, mult, literal, and atom destructors",
+     fn () =>
+       case linarithDecomp.decomp synth_linear_relation of
+           SOME
+             (Decomp
+                {lhs, lhs_const, rel = REL_LE, rhs, rhs_const,
+                 discrete = false, negated = false}) =>
+               List.length lhs = 1 andalso List.length rhs = 2 andalso
+               coefficient lhs synth_x = Arbrat.two andalso
+               coefficient rhs synth_x = Arbrat.one andalso
+               coefficient rhs synth_y = Arbrat.one andalso
+               lhs_const = Arbrat.one andalso
+               rhs_const = Arbrat.zero
+         | _ => false)
+
+val synth_signed_expression =
+  mk_binary synth_minus
+    (Term.mk_comb (synth_neg, synth_x)) synth_y
+val synth_signed_relation =
+  mk_binary synth_leq synth_signed_expression synth_zero
+val synth_cancelled_relation =
+  mk_binary synth_leq
+    (mk_binary synth_plus synth_x
+       (Term.mk_comb (synth_neg, synth_x))) synth_zero
+
+val _ =
+  check
+    ("poly handles subtraction, negation, and coefficient cancellation",
+     fn () =>
+       (case linarithDecomp.decomp synth_signed_relation of
+            SOME (Decomp {lhs, lhs_const, ...}) =>
+              List.length lhs = 2 andalso
+              coefficient lhs synth_x = Arbrat.negate Arbrat.one andalso
+              coefficient lhs synth_y = Arbrat.negate Arbrat.one andalso
+              lhs_const = Arbrat.zero
+          | NONE => false) andalso
+       (case linarithDecomp.decomp synth_cancelled_relation of
+            SOME (Decomp {lhs, lhs_const, ...}) =>
+              null lhs andalso lhs_const = Arbrat.zero
+          | NONE => false))
+
+val _ =
+  linarithData.register_instance (make_decomp_instance NONE)
+
+val _ =
+  check
+    ("poly keeps subtraction atomic when the instance declines it",
+     fn () =>
+       case linarithDecomp.decomp synth_signed_relation of
+           SOME (Decomp {lhs, lhs_const, ...}) =>
+             List.length lhs = 1 andalso
+             coefficient lhs synth_signed_expression = Arbrat.one andalso
+             lhs_const = Arbrat.zero
+         | NONE => false)
+
+val _ = linarithData.register_instance decomp_instance
+
+val synth_left_product =
+  mk_binary synth_mult
+    (mk_binary synth_mult synth_x synth_y) synth_z
+val synth_right_product =
+  mk_binary synth_mult synth_x
+    (mk_binary synth_mult synth_y synth_z)
+
+val _ =
+  check
+    ("demult normalizes products to right-associated form",
+     fn () =>
+       case linarithDecomp.demult
+              (synth_left_product, Arbrat.one) of
+           (SOME atom, multiplier) =>
+             Term.aconv atom synth_right_product andalso
+             multiplier = Arbrat.one
+         | _ => false)
+
+val _ =
+  check
+    ("demult scales division only by a nonzero literal divisor",
+     fn () =>
+       let
+         val literal_division =
+           mk_binary synth_div synth_x synth_two
+         val atom_division = mk_binary synth_div synth_x synth_y
+         val zero_division = mk_binary synth_div synth_x synth_zero
+       in
+         (case linarithDecomp.demult
+                 (literal_division, Arbrat.one) of
+              (SOME atom, multiplier) =>
+                Term.aconv atom synth_x andalso
+                multiplier = Arbrat./ (Arbrat.one, Arbrat.two)
+            | _ => false) andalso
+         (case linarithDecomp.demult (atom_division, Arbrat.one) of
+              (SOME atom, multiplier) =>
+                Term.aconv atom atom_division andalso
+                multiplier = Arbrat.one
+            | _ => false) andalso
+         (case linarithDecomp.demult (zero_division, Arbrat.one) of
+              (SOME atom, multiplier) =>
+                Term.aconv atom zero_division andalso
+                multiplier = Arbrat.one
+            | _ => false)
+       end)
+
+val synth_injected = Term.mk_comb (synth_inj, synth_bool_atom)
+val synth_injected_relation =
+  mk_binary synth_leq synth_injected synth_zero
+
+val _ =
+  check
+    ("poly and demult unwrap registered injections",
+     fn () =>
+       (case linarithDecomp.decomp synth_injected_relation of
+            SOME (Decomp {lhs, lhs_const, ...}) =>
+              List.length lhs = 1 andalso
+              coefficient lhs synth_bool_atom = Arbrat.one andalso
+              lhs_const = Arbrat.zero
+          | NONE => false) andalso
+       (case linarithDecomp.demult
+               (mk_binary synth_mult synth_injected synth_two,
+                Arbrat.one) of
+            (SOME atom, multiplier) =>
+              Term.aconv atom synth_bool_atom andalso
+              multiplier = Arbrat.two
+          | _ => false))
+
+val synth_negated_less =
+  boolSyntax.mk_neg (mk_binary synth_less synth_x synth_y)
+val synth_negated_leq =
+  boolSyntax.mk_neg (mk_binary synth_leq synth_x synth_y)
+val synth_negated_eq =
+  boolSyntax.mk_neg (boolSyntax.mk_eq (synth_x, synth_y))
+
+fun relation_flags tm =
+  case linarithDecomp.decomp tm of
+      SOME (Decomp {rel, negated, ...}) => SOME (rel, negated)
+    | NONE => NONE
+
+val _ =
+  check
+    ("decomp handles positive and negated synthetic relations",
+     fn () =>
+       relation_flags (mk_binary synth_less synth_x synth_y) =
+         SOME (REL_LT, false) andalso
+       relation_flags (boolSyntax.mk_eq (synth_x, synth_y)) =
+         SOME (REL_EQ, false) andalso
+       relation_flags synth_negated_less = SOME (REL_LT, true) andalso
+       relation_flags synth_negated_leq = SOME (REL_LE, true) andalso
+       relation_flags synth_negated_eq = SOME (REL_NEQ, false))
+
+val _ =
+  check
+    ("unregistered relation carriers are declined",
+     fn () =>
+       case linarithDecomp.decomp
+              (boolSyntax.mk_eq (synth_bool_atom, boolSyntax.T)) of
+           NONE => true
+         | SOME _ => false)
+
+val _ =
+  check
+    ("is_relevant is exactly successful decomposition",
+     fn () =>
+       linarithDecomp.is_relevant synth_linear_relation andalso
+       not (linarithDecomp.is_relevant synth_bool_atom))
+
 val bad_split_name =
   {Thy = "bool", Name = "TRUTH"}
 
