@@ -7,7 +7,7 @@ struct
 
 local
 
-  local open HolSmtTheory smtstringTheory in end
+  local open HolSmtTheory smtfloatTheory smtstringTheory in end
 
   val ERR = Feedback.mk_HOL_ERR "SmtLib_Theories"
 
@@ -310,11 +310,12 @@ in
   handle Feedback.HOL_ERR _ =>
     raise ERR "real_of_decimal" "not a decimal"
 
-  (* The parser turns every numeric index -- decimal as well as the '#b'
-     and '#x' literals used for character indices -- into an Int term, so
-     an index that is not one here is a genuinely symbolic index. *)
+  (* The legacy parser represents numeric indices as Int terms.  The checked
+     sort elaborator may preserve decimal indices as Num terms; accept both.
+     An index that is neither form is genuinely symbolic. *)
   fun natural_of_index n_tm =
-    Arbint.toNat (intSyntax.int_of_term n_tm)
+    (Arbint.toNat (intSyntax.int_of_term n_tm)
+     handle Feedback.HOL_ERR _ => numSyntax.dest_numeral n_tm)
     handle Feedback.HOL_ERR _ =>
       raise ERR "natural_of_index"
         ("numeric index expected, but '" ^ Hol_pp.term_to_string n_tm ^
@@ -535,15 +536,70 @@ in
     official_entry sort_name no_attributes ["(" ^ sort_name ^ " 0)"]
       (K_zero_zero (abstract_type sort_name))
 
+  fun smtfp_type (eb, sb) =
+    let
+      val two = Arbnum.fromInt 2
+      val _ =
+        if Arbnum.compare (eb, two) = LESS then
+          raise ERR "smtfp_type"
+            "exponent width eb must be at least 2"
+        else
+          ()
+      val _ =
+        if Arbnum.compare (sb, two) = LESS then
+          raise ERR "smtfp_type"
+            "significand width sb must be at least 2; sb - 1 must be nonzero"
+        else
+          ()
+    in
+      Type.mk_thy_type {
+        Thy = "smtfloat",
+        Tyop = "smtfp",
+        Args = [fcpLib.index_type (Arbnum.- (sb, Arbnum.one)),
+          fcpLib.index_type eb]
+      }
+    end
+
   fun fp_type_from_indices [eb, sb] =
-        abstract_type
-          ("FloatingPoint_" ^ Arbnum.toString (natural_of_index eb) ^ "_" ^
-           Arbnum.toString (natural_of_index sb))
+        smtfp_type (natural_of_index eb, natural_of_index sb)
     | fp_type_from_indices _ =
         raise ERR "fp_type_from_indices"
           "FloatingPoint forms expect exponent and significand indices"
 
-  val rounding_mode_ty = abstract_type "RoundingMode"
+  val rounding_mode_ty =
+    Type.mk_thy_type {Thy = "smtfloat", Tyop = "smt_rounding", Args = []}
+
+  fun smtfloat_const name =
+    Term.prim_mk_const {Thy = "smtfloat", Name = name}
+
+  fun apply_native_const const args =
+    let
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+          val subst = Type.match_type domain (Term.type_of arg)
+        in
+          Term.mk_comb (Term.inst subst rator, arg)
+        end
+    in
+      List.foldl apply_one const args
+    end
+
+  fun smtfloat_app name args =
+    apply_native_const (smtfloat_const name) args
+
+  fun smtfloat_const_result name result_ty =
+    let
+      val const = smtfloat_const name
+      val (_, range) = boolSyntax.strip_fun (Term.type_of const)
+      val subst = Type.match_type range result_ty
+    in
+      Term.inst subst const
+    end
+
+  fun smtfloat_app_result name result_ty args =
+    apply_native_const (smtfloat_const_result name result_ty) args
+
   val reglan_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
 
@@ -625,13 +681,17 @@ in
           if List.null args then fp_type_from_indices indices
           else raise ERR "<FloatingPoint>" "no arguments expected"),
       official_entry "Float16" no_attributes ["(Float16 0)"]
-        (K_zero_zero (abstract_type "FloatingPoint_5_11")),
+        (K_zero_zero (smtfp_type
+          (Arbnum.fromInt 5, Arbnum.fromInt 11))),
       official_entry "Float32" no_attributes ["(Float32 0)"]
-        (K_zero_zero (abstract_type "FloatingPoint_8_24")),
+        (K_zero_zero (smtfp_type
+          (Arbnum.fromInt 8, Arbnum.fromInt 24))),
       official_entry "Float64" no_attributes ["(Float64 0)"]
-        (K_zero_zero (abstract_type "FloatingPoint_11_53")),
+        (K_zero_zero (smtfp_type
+          (Arbnum.fromInt 11, Arbnum.fromInt 53))),
       official_entry "Float128" no_attributes ["(Float128 0)"]
-        (K_zero_zero (abstract_type "FloatingPoint_15_113"))
+        (K_zero_zero (smtfp_type
+          (Arbnum.fromInt 15, Arbnum.fromInt 113)))
     ]
 
     val rounding_modes = [
@@ -642,47 +702,140 @@ in
       "roundTowardZero", "RTZ"
     ]
 
+    fun rounding_const name =
+      case name of
+        "roundNearestTiesToEven" => smtfloat_const "RNE"
+      | "RNE" => smtfloat_const "RNE"
+      | "roundNearestTiesToAway" => smtfloat_const "RNA"
+      | "RNA" => smtfloat_const "RNA"
+      | "roundTowardPositive" => smtfloat_const "RTP"
+      | "RTP" => smtfloat_const "RTP"
+      | "roundTowardNegative" => smtfloat_const "RTN"
+      | "RTN" => smtfloat_const "RTN"
+      | "roundTowardZero" => smtfloat_const "RTZ"
+      | "RTZ" => smtfloat_const "RTZ"
+      | _ => raise ERR "rounding_const" "unknown rounding mode"
+
     fun rounding_entry name =
       official_entry name no_attributes ["(" ^ name ^ " RoundingMode)"]
-        (K_zero_zero (Term.mk_var (name, rounding_mode_ty)))
+        (K_zero_zero (rounding_const name))
+
+    fun special_const name =
+      case name of
+        "+zero" => "smtfp_pzero"
+      | "-zero" => "smtfp_nzero"
+      | "+oo" => "smtfp_pinf"
+      | "-oo" => "smtfp_ninf"
+      | "NaN" => "smtfp_nan"
+      | _ => raise ERR "special_const" "unknown floating-point special"
 
     fun indexed_fp_constant name =
       official_entry name (indexed_attributes ["eb", "sb"])
         ["((_ " ^ name ^ " eb sb) (_ FloatingPoint eb sb))"]
         (fn _ => fn indices => fn args =>
           if List.null args then
-            abstract_indexed_const ("fp." ^ name) indices
-              (fp_type_from_indices indices) []
+            smtfloat_const_result (special_const name)
+              (fp_type_from_indices indices)
           else
             raise ERR ("<" ^ name ^ ">") "no arguments expected")
 
-    fun fp_unary name =
-      official_entry name no_attributes
-        [unary_decl name "(_ FloatingPoint eb sb)" "(_ FloatingPoint eb sb)"]
-        (K_zero_one (fn x => abstract_const name (Term.type_of x) [x]))
+    fun fp_unary smt_name hol_name =
+      official_entry smt_name no_attributes
+        [unary_decl smt_name "(_ FloatingPoint eb sb)"
+          "(_ FloatingPoint eb sb)"]
+        (K_zero_one (fn x => smtfloat_app hol_name [x]))
 
-    fun fp_binary name =
-      official_entry name no_attributes
-        ["(" ^ name ^ " (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+    fun fp_binary smt_name hol_name =
+      official_entry smt_name no_attributes
+        ["(" ^ smt_name ^
+         " (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
          "(_ FloatingPoint eb sb))"]
-        (K_zero_two (fn (x, y) => abstract_const name (Term.type_of x) [x, y]))
+        (K_zero_two (fn (x, y) => smtfloat_app hol_name [x, y]))
 
-    fun fp_rounding_binary name =
-      official_entry name no_attributes
-        ["(" ^ name ^ " RoundingMode (_ FloatingPoint eb sb) " ^
+    fun fp_rounding_binary smt_name hol_name =
+      official_entry smt_name no_attributes
+        ["(" ^ smt_name ^ " RoundingMode (_ FloatingPoint eb sb) " ^
          "(_ FloatingPoint eb sb))"]
-        (K_zero_two (fn (rm, x) => abstract_const name (Term.type_of x) [rm, x]))
+        (K_zero_two (fn (rm, x) => smtfloat_app hol_name [rm, x]))
 
-    fun fp_rounding_ternary name =
-      official_entry name no_attributes
-        ["(" ^ name ^ " RoundingMode (_ FloatingPoint eb sb) " ^
-         "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
-        (K_zero_three (fn (rm, x, y) =>
-          abstract_const name (Term.type_of x) [rm, x, y]))
+    fun fp_pred smt_name hol_name =
+      official_entry smt_name no_attributes
+        [unary_decl smt_name "(_ FloatingPoint eb sb)" "Bool"]
+        (K_zero_one (fn x => smtfloat_app hol_name [x]))
 
-    fun fp_pred name =
-      official_entry name no_attributes [unary_decl name "(_ FloatingPoint eb sb)" "Bool"]
-        (K_zero_one (fn x => abstract_bool name [x]))
+    fun is_smtfp_type ty =
+      let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+      in Thy = "smtfloat" andalso Tyop = "smtfp" end
+      handle Feedback.HOL_ERR _ => false
+
+    fun ieee_bv_to_fp fp_ty x =
+      let
+        val _ = wordsSyntax.dest_word_type (Term.type_of x)
+        val const = smtfloat_const_result "smtfp_from_ieee_bv" fp_ty
+        val (domains, _) = boolSyntax.strip_fun (Term.type_of const)
+        val domain =
+          Lib.singleton_of_list domains
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "ieee_bv_to_fp" "unexpected native constant type"
+        val input_width =
+          fcpLib.index_to_num (wordsSyntax.dim_of x)
+        val domain_dim = wordsSyntax.dest_word_type domain
+        val expected_width = fcpLib.index_to_num domain_dim
+        val _ =
+          if input_width = expected_width then ()
+          else
+            raise ERR "<to_fp>"
+              ("IEEE bit-vector width " ^ Arbnum.toString input_width ^
+               " does not match target floating-point width " ^
+               Arbnum.toString expected_width)
+        val x =
+          if Type.compare (Term.type_of x, domain) = EQUAL then x
+          else wordsSyntax.mk_w2w (x, domain_dim)
+      in
+        apply_native_const const [x]
+      end
+
+    fun to_fp indices args =
+      let val fp_ty = fp_type_from_indices indices in
+        case args of
+          [x] => ieee_bv_to_fp fp_ty x
+        | [rm, x] =>
+            if is_smtfp_type (Term.type_of x) then
+              smtfloat_app_result "smtfp_to_fp" fp_ty [rm, x]
+            else if Type.compare
+                (Term.type_of x, realSyntax.real_ty) = EQUAL then
+              smtfloat_app_result "smtfp_from_real" fp_ty [rm, x]
+            else if Type.compare
+                (Term.type_of x, intSyntax.int_ty) = EQUAL then
+              smtfloat_app_result "smtfp_from_real" fp_ty
+                [rm, intrealSyntax.mk_real_of_int x]
+            else if wordsSyntax.is_word_type (Term.type_of x) then
+              smtfloat_app_result "smtfp_from_sbv" fp_ty [rm, x]
+            else
+              raise ERR "<to_fp>"
+                "expected an IEEE bit-vector, FP, Real, or signed BV operand"
+        | _ => raise ERR "<to_fp>" "one or two arguments expected"
+      end
+
+    fun to_fp_unsigned indices args =
+      let val fp_ty = fp_type_from_indices indices in
+        case args of
+          [rm, x] =>
+            if wordsSyntax.is_word_type (Term.type_of x) then
+              smtfloat_app_result "smtfp_from_ubv" fp_ty [rm, x]
+            else
+              raise ERR "<to_fp_unsigned>" "bit-vector operand expected"
+        | _ => raise ERR "<to_fp_unsigned>" "two arguments expected"
+      end
+
+    fun fp_to_bv smt_name hol_name indices args =
+      case (indices, args) of
+        ([width], [rm, x]) =>
+          smtfloat_app_result hol_name
+            (wordsSyntax.mk_word_type (word_index_type width)) [rm, x]
+      | ([_], _) =>
+          raise ERR ("<" ^ smt_name ^ ">") "two arguments expected"
+      | _ => raise ERR ("<" ^ smt_name ^ ">") "one index expected"
 
     val tmentries =
       List.map rounding_entry rounding_modes @
@@ -696,93 +849,92 @@ in
               val eb = fcpLib.index_to_num (wordsSyntax.dim_of exponent)
               val sb = Arbnum.plus1
                 (fcpLib.index_to_num (wordsSyntax.dim_of significand))
+              val fp_ty = smtfp_type (eb, sb)
             in
-              abstract_const "fp"
-                (abstract_type ("FloatingPoint_" ^ Arbnum.toString eb ^ "_" ^
-                  Arbnum.toString sb))
+              smtfloat_app_result "smtfp_bits" fp_ty
                 [sign, exponent, significand]
             end)),
         official_entry "fp.add" no_attributes
           ["(fp.add RoundingMode (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
           (K_zero_three (fn (rm, x, y) =>
-            abstract_const "fp.add" (Term.type_of x) [rm, x, y])),
+            smtfloat_app "smtfp_add" [rm, x, y])),
         official_entry "fp.sub" no_attributes
           ["(fp.sub RoundingMode (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
           (K_zero_three (fn (rm, x, y) =>
-            abstract_const "fp.sub" (Term.type_of x) [rm, x, y])),
+            smtfloat_app "smtfp_sub" [rm, x, y])),
         official_entry "fp.mul" no_attributes
           ["(fp.mul RoundingMode (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
           (K_zero_three (fn (rm, x, y) =>
-            abstract_const "fp.mul" (Term.type_of x) [rm, x, y])),
+            smtfloat_app "smtfp_mul" [rm, x, y])),
         official_entry "fp.div" no_attributes
           ["(fp.div RoundingMode (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb))"]
           (K_zero_three (fn (rm, x, y) =>
-            abstract_const "fp.div" (Term.type_of x) [rm, x, y])),
+            smtfloat_app "smtfp_div" [rm, x, y])),
         official_entry "fp.fma" no_attributes
           ["(fp.fma RoundingMode (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
            "(_ FloatingPoint eb sb))"]
           (Lib.K (zero_args (fn args =>
             case args of
-              [rm, x, y, z] => abstract_const "fp.fma" (Term.type_of x)
-                [rm, x, y, z]
+              [rm, x, y, z] => smtfloat_app "smtfp_fma" [rm, x, y, z]
             | _ => raise ERR "<fp.fma>" "four arguments expected"))),
-        fp_rounding_binary "fp.sqrt",
-        fp_rounding_binary "fp.roundToIntegral",
-        fp_binary "fp.rem",
-        fp_binary "fp.min",
-        fp_binary "fp.max",
-        fp_unary "fp.abs",
-        fp_unary "fp.neg",
+        fp_rounding_binary "fp.sqrt" "smtfp_sqrt",
+        fp_rounding_binary "fp.roundToIntegral"
+          "smtfp_round_to_integral",
+        fp_binary "fp.rem" "smtfp_rem",
+        fp_binary "fp.min" "smtfp_min",
+        fp_binary "fp.max" "smtfp_max",
+        fp_unary "fp.abs" "smtfp_abs",
+        fp_unary "fp.neg" "smtfp_neg",
         official_entry "fp.leq" chainable_attributes
-          ["(fp.leq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
-          (chainable (fn (x, y) => abstract_bool "fp.leq" [x, y])),
+          ["(fp.leq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+           "Bool :chainable)"]
+          (chainable (fn (x, y) => smtfloat_app "smtfp_le" [x, y])),
         official_entry "fp.lt" chainable_attributes
-          ["(fp.lt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
-          (chainable (fn (x, y) => abstract_bool "fp.lt" [x, y])),
+          ["(fp.lt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+           "Bool :chainable)"]
+          (chainable (fn (x, y) => smtfloat_app "smtfp_lt" [x, y])),
         official_entry "fp.geq" chainable_attributes
-          ["(fp.geq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
-          (chainable (fn (x, y) => abstract_bool "fp.geq" [x, y])),
+          ["(fp.geq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+           "Bool :chainable)"]
+          (chainable (fn (x, y) => smtfloat_app "smtfp_ge" [x, y])),
         official_entry "fp.gt" chainable_attributes
-          ["(fp.gt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool :chainable)"]
-          (chainable (fn (x, y) => abstract_bool "fp.gt" [x, y])),
+          ["(fp.gt (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) " ^
+           "Bool :chainable)"]
+          (chainable (fn (x, y) => smtfloat_app "smtfp_gt" [x, y])),
         official_entry "fp.eq" no_attributes
           ["(fp.eq (_ FloatingPoint eb sb) (_ FloatingPoint eb sb) Bool)"]
-          (K_zero_two (fn (x, y) => abstract_bool "fp.eq" [x, y])),
-        fp_pred "fp.isNormal",
-        fp_pred "fp.isSubnormal",
-        fp_pred "fp.isZero",
-        fp_pred "fp.isInfinite",
-        fp_pred "fp.isNaN",
-        fp_pred "fp.isNegative",
-        fp_pred "fp.isPositive",
+          (K_zero_two (fn (x, y) => smtfloat_app "smtfp_eq" [x, y])),
+        fp_pred "fp.isNormal" "smtfp_is_normal",
+        fp_pred "fp.isSubnormal" "smtfp_is_subnormal",
+        fp_pred "fp.isZero" "smtfp_is_zero",
+        fp_pred "fp.isInfinite" "smtfp_is_infinite",
+        fp_pred "fp.isNaN" "smtfp_is_nan",
+        fp_pred "fp.isNegative" "smtfp_is_negative",
+        fp_pred "fp.isPositive" "smtfp_is_positive",
         official_entry "to_fp" (indexed_attributes ["eb", "sb"])
           ["((_ to_fp eb sb) ... (_ FloatingPoint eb sb))"]
-          (fn _ => fn indices => fn args =>
-            abstract_indexed_const "to_fp" indices (fp_type_from_indices indices)
-              args),
+          (fn _ => fn indices => fn args => to_fp indices args),
         official_entry "to_fp_unsigned" (indexed_attributes ["eb", "sb"])
           ["((_ to_fp_unsigned eb sb) ... (_ FloatingPoint eb sb))"]
-          (fn _ => fn indices => fn args =>
-            abstract_indexed_const "to_fp_unsigned" indices
-              (fp_type_from_indices indices) args),
+          (fn _ => fn indices => fn args => to_fp_unsigned indices args),
         official_entry "fp.to_ubv" (indexed_attributes ["m"])
-          ["((_ fp.to_ubv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))"]
-          (K_one_one (fn n => fn x =>
-            abstract_indexed_const "fp.to_ubv" [n]
-              (wordsSyntax.mk_word_type (word_index_type n)) [x])),
+          ["((_ fp.to_ubv m) RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ BitVec m))"]
+          (fn _ => fn indices => fn args =>
+            fp_to_bv "fp.to_ubv" "smtfp_to_ubv" indices args),
         official_entry "fp.to_sbv" (indexed_attributes ["m"])
-          ["((_ fp.to_sbv m) RoundingMode (_ FloatingPoint eb sb) (_ BitVec m))"]
-          (K_one_one (fn n => fn x =>
-            abstract_indexed_const "fp.to_sbv" [n]
-              (wordsSyntax.mk_word_type (word_index_type n)) [x])),
+          ["((_ fp.to_sbv m) RoundingMode (_ FloatingPoint eb sb) " ^
+           "(_ BitVec m))"]
+          (fn _ => fn indices => fn args =>
+            fp_to_bv "fp.to_sbv" "smtfp_to_sbv" indices args),
         official_entry "fp.to_real" no_attributes
           ["(fp.to_real (_ FloatingPoint eb sb) Real)"]
-          (K_zero_one (fn x => abstract_const "fp.to_real" realSyntax.real_ty [x]))
+          (K_zero_one (fn x => smtfloat_app "smtfp_to_real" [x]))
       ]
 
     val tydict = dictionary_of_entries tyentries

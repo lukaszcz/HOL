@@ -3812,6 +3812,64 @@ fun smtlib_checked_replay_gap_diagnostics () =
        "(check-sat)\n")
   end
 
+fun smtlib_floatingpoint_recognizer_gates_success () =
+let
+  val state = parse_smtlib_state
+    ("(set-logic QF_FP)\n" ^
+     "(declare-const x Float32)\n" ^
+     "(assert (fp.isNaN x))\n" ^
+     "(assert (= roundNearestTiesToEven RNE))\n" ^
+     "(check-sat)\n")
+  val assertions = #assertions state
+  val fp_assertion = List.nth (assertions, 0)
+  val rounding_assertion = List.nth (assertions, 1)
+  val user_prefix_terms = [
+    Term.mk_var ("fp.isNaN", Type.bool),
+    Term.mk_var ("smtlib_fp_user", Type.bool),
+    Term.mk_var ("to_fp_user", Type.bool)
+  ]
+  val fp_named_user_app = Term.mk_comb
+    (Term.mk_var ("smtlib_fp_user", Type.--> (Type.bool, Type.bool)),
+     boolSyntax.T)
+  fun fragment logic terms =
+    SmtLib_Logics.fragment_violation_diagnostic logic
+      SmtLib_Logics.empty_surface_flags terms
+  fun replay_gap terms =
+    SmtLib_Logics.checked_replay_unsupported_diagnostic "QF_FP" terms
+  fun expect_fp_fragment (label, term) =
+    case fragment "QF_UF" [term] of
+      SOME msg =>
+        assert (contains "floating-point term sort" msg,
+          label ^ " reported the wrong fragment diagnostic: " ^ msg)
+    | NONE => die (label ^ " did not trigger the floating-point recognizer")
+in
+  expect_fp_fragment ("native smtfp term", fp_assertion);
+  expect_fp_fragment ("native smt_rounding term", rounding_assertion);
+  assert (fragment "QF_FP" assertions = NONE,
+    "native smtfloat terms were rejected from QF_FP");
+  (case replay_gap [fp_assertion] of
+     SOME msg =>
+       (assert (contains "FloatingPoint" msg,
+          "FP replay family gate omitted its family: " ^ msg);
+        assert (contains "theory:FloatingPoint:checked-replay" msg,
+          "FP replay family gate omitted its feature row: " ^ msg))
+   | NONE => die "native smtfp term did not retain the FP replay family gate");
+  List.app
+    (fn term =>
+      (assert (fragment "QF_UF" [term] = NONE,
+         "user symbol with an FP-like name triggered the fragment recognizer");
+       assert (replay_gap [term] = NONE,
+         "user symbol with an FP-like name triggered the replay family gate")))
+    user_prefix_terms;
+  (case fragment "QF_FP" [fp_named_user_app] of
+     SOME msg => assert (contains "uninterpreted function application" msg,
+       "FP-like user function reported the wrong diagnostic: " ^ msg)
+   | NONE =>
+       die "FP-like user function bypassed QF_FP's uninterpreted-family gate");
+  assert (replay_gap [fp_named_user_app] = NONE,
+    "FP-like user function application triggered the FP replay family gate")
+end
+
 fun smtlib_typecheck_overloaded_and_indexed_success () =
 let
   val assertions =
@@ -4103,21 +4161,130 @@ let
   val assertions =
     parse_smtlib_assertions
       ("(set-logic QF_FP)\n" ^
-       "(declare-const a Float32)\n" ^
-       "(declare-const b Float32)\n" ^
+       "(declare-const h Float16)\n" ^
+       "(declare-const x Float32)\n" ^
+       "(declare-const y Float32)\n" ^
+       "(declare-const z Float32)\n" ^
+       "(declare-const d Float64)\n" ^
+       "(declare-const q Float128)\n" ^
+       "(declare-const tiny (_ FloatingPoint 3 5))\n" ^
+       "(declare-const rm RoundingMode)\n" ^
        "(assert (and " ^
-       "(= (fp.add RNE a b) a) " ^
-       "(= (fp.sub RTZ a b) b) " ^
-       "(= (fp.sqrt RTP a) b) " ^
-       "(fp.eq (_ +zero 8 24) (_ -zero 8 24)) " ^
-       "(fp.isNaN (_ NaN 8 24)) " ^
-       "(= ((_ fp.to_ubv 8) a) #x00)))\n" ^
+       "(= roundNearestTiesToEven RNE) " ^
+       "(= roundNearestTiesToAway RNA) " ^
+       "(= roundTowardPositive RTP) " ^
+       "(= roundTowardNegative RTN) " ^
+       "(= roundTowardZero RTZ) (= rm RNA) " ^
+       "(= h h) (= x x) (= d d) (= q q) (= tiny tiny) " ^
+       "(= (_ +zero 8 24) (_ -zero 8 24)) " ^
+       "(= (_ +oo 8 24) (_ -oo 8 24)) " ^
+       "(= (_ NaN 8 24) (_ NaN 8 24)) " ^
+       "(= (fp #b0 #x7f #b00000000000000000000000) x) " ^
+       "(= (fp #b1 #xff #b00000000000000000000001) " ^
+       "(_ NaN 8 24)) " ^
+       "(= (fp.add RNA x y) x) (= (fp.sub RTZ x y) y) " ^
+       "(= (fp.mul RNE x y) z) (= (fp.div RTP x y) z) " ^
+       "(= (fp.fma RTN x y z) x) (= (fp.sqrt RNA x) y) " ^
+       "(= (fp.roundToIntegral RNA x) x) (= (fp.rem x y) z) " ^
+       "(= (fp.min x y) x) (= (fp.max x y) y) " ^
+       "(= (fp.abs x) y) (= (fp.neg x) y) " ^
+       "(fp.leq x y z) (fp.lt x y z) (fp.geq z y x) " ^
+       "(fp.gt z y x) (fp.eq x y) " ^
+       "(fp.isNormal x) (fp.isSubnormal x) (fp.isZero x) " ^
+       "(fp.isInfinite x) (fp.isNaN x) (fp.isNegative x) " ^
+       "(fp.isPositive x) " ^
+       "(= ((_ to_fp 8 24) #x3f800000) x) " ^
+       "(= ((_ to_fp 11 53) RNA x) d) " ^
+       "(= ((_ to_fp 15 113) RNA d) q) " ^
+       "(= ((_ to_fp 8 24) RTP 1.0) x) " ^
+       "(= ((_ to_fp 8 24) RTN #xff) x) " ^
+       "(= ((_ to_fp_unsigned 8 24) RNA #xff) x) " ^
+       "(= ((_ fp.to_ubv 8) RNA x) #x00) " ^
+       "(= ((_ fp.to_sbv 8) RNA x) #x00) " ^
+       "(= (fp.to_real x) 0.0)))\n" ^
        "(exit)\n")
+  val expected_constants = [
+    "RNE", "RNA", "RTP", "RTN", "RTZ", "smtfp_pzero",
+    "smtfp_nzero", "smtfp_pinf", "smtfp_ninf", "smtfp_nan",
+    "smtfp_bits", "smtfp_add", "smtfp_sub", "smtfp_mul",
+    "smtfp_div", "smtfp_fma", "smtfp_sqrt",
+    "smtfp_round_to_integral", "smtfp_rem", "smtfp_min",
+    "smtfp_max", "smtfp_abs", "smtfp_neg", "smtfp_le",
+    "smtfp_lt", "smtfp_ge", "smtfp_gt", "smtfp_eq",
+    "smtfp_is_normal", "smtfp_is_subnormal", "smtfp_is_zero",
+    "smtfp_is_infinite", "smtfp_is_nan", "smtfp_is_negative",
+    "smtfp_is_positive", "smtfp_from_ieee_bv", "smtfp_to_fp",
+    "smtfp_from_real", "smtfp_from_sbv", "smtfp_from_ubv",
+    "smtfp_to_ubv", "smtfp_to_sbv", "smtfp_to_real"
+  ]
+  fun is_smtfloat_const name tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Thy = "smtfloat" andalso Name = name end
+  fun has_smtfloat_const name =
+    List.exists (term_has_subterm (is_smtfloat_const name)) assertions
+  fun has_old_fp_type tm =
+    Library.type_contains
+      (fn ty =>
+        Type.is_vartype ty andalso
+        let val name = Type.dest_vartype ty
+        in
+          String.isPrefix "'smtlib_FloatingPoint" name orelse
+          name = "'smtlib_RoundingMode"
+        end)
+      (Term.type_of tm)
+  fun has_smtfloat_type ty =
+    Library.type_contains
+      (fn candidate =>
+        let val {Thy, Tyop, ...} = Type.dest_thy_type candidate
+        in
+          Thy = "smtfloat" andalso
+          (Tyop = "smtfp" orelse Tyop = "smt_rounding")
+        end
+        handle Feedback.HOL_ERR _ => false)
+      ty
 in
   assert (List.length assertions = 1,
     "floating-point signature script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
-    "floating-point signature assertion did not parse as Bool")
+    "floating-point signature assertion did not parse as Bool");
+  List.app
+    (fn name =>
+      assert (has_smtfloat_const name,
+        "floating-point surface did not produce smtfloatTheory." ^ name))
+    expected_constants;
+  assert (List.exists
+      (has_smtfloat_type o Term.type_of)
+      (Library.subterms (List.hd assertions)),
+    "floating-point surface did not retain native smtfloat types");
+  assert (not (List.exists
+      (fn assertion =>
+        List.exists has_old_fp_type (Library.subterms assertion))
+      assertions),
+    "floating-point surface retained an abstract smtlib FP type")
+end
+
+fun smtlib_floatingpoint_invalid_format_diagnostics () =
+let
+  fun expect label sort expected =
+    let
+      val _ = parse_smtlib_assertions
+        ("(set-logic QF_FP)\n" ^
+         "(declare-const bad " ^ sort ^ ")\n" ^
+         "(assert (= bad bad))\n")
+    in
+      die ("accepted invalid floating-point format " ^ label)
+    end
+    handle Feedback.HOL_ERR holerr =>
+      let val msg = Feedback.message_of holerr in
+        assert (contains expected msg,
+          label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
+      end
+in
+  expect "exponent width" "(_ FloatingPoint 1 24)"
+    "exponent width eb must be at least 2";
+  expect "significand width" "(_ FloatingPoint 8 1)"
+    "significand width sb must be at least 2"
 end
 
 fun smtlib_string_regex_parse_signatures_success () =
@@ -6352,6 +6519,70 @@ let
   val instream = TextIO.openString contents
 in
   Z3_ProofParser.parse_stream_with_version dicts version instream
+end
+
+fun z3_proof_parser_floatingpoint_decomposition_success () =
+let
+  (* Assembled from TASK_02's arbitrary_format_float32 decomposition and
+     its ground-arithmetic/scale mode spellings.  Keep the exact extract
+     boundaries and Z3's long mode names emitted by fpa2bv. *)
+  val fragment =
+    "((set-logic QF_FP)\n\
+    \(declare-fun x () Float32)\n\
+    \(declare-fun k!00 () (_ BitVec 32))\n\
+    \(proof\n\
+    \(asserted\n\
+    \(and\n\
+    \ (= x (fp ((_ extract 31 31) k!00)\n\
+    \          ((_ extract 30 23) k!00)\n\
+    \          ((_ extract 22 0) k!00)))\n\
+    \ (= (fp.add roundNearestTiesToEven x x) (fp.add RNE x x))\n\
+    \ (= (fp.add roundNearestTiesToAway x x) (fp.add RNA x x))\n\
+    \ (= (fp.add roundTowardPositive x x) (fp.add RTP x x))\n\
+    \ (= (fp.add roundTowardNegative x x) (fp.add RTN x x))\n\
+    \ (= (fp.add roundTowardZero x x) (fp.add RTZ x x)))))))"
+  val proof = parse_z3_proof_string "4.15.3" fragment
+  val conclusion =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.ASSERTED concl) => concl
+    | SOME _ => die "FAIL: FP proof fragment parsed to the wrong proof rule"
+    | NONE => die "FAIL: FP proof fragment has no root proof step"
+  fun is_smtfloat_const name tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Thy = "smtfloat" andalso Name = name end
+  fun has_smtfloat_const name =
+    term_has_subterm (is_smtfloat_const name) conclusion
+  fun find_proof_var name =
+    List.find (fn tm =>
+      Term.is_var tm andalso Lib.fst (Term.dest_var tm) = name)
+      (HOLset.listItems (Z3_Proof.proof_vars proof))
+  val k = find_proof_var "k!00"
+  val x = find_proof_var "x"
+  val expected_names =
+    ["smtfp_bits", "smtfp_add", "RNE", "RNA", "RTP", "RTN", "RTZ"]
+  fun type_is_smtfp ty =
+    let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+    in Thy = "smtfloat" andalso Tyop = "smtfp" end
+    handle Feedback.HOL_ERR _ => false
+in
+  List.app (fn name => assert (has_smtfloat_const name,
+      "FP proof dictionary did not resolve smtfloatTheory." ^ name))
+    expected_names;
+  (case k of
+     SOME tm =>
+       assert (wordsSyntax.is_word_type (Term.type_of tm) andalso
+           fcpLib.index_to_num (wordsSyntax.dim_of tm) = Arbnum.fromInt 32,
+         "proof-local k!00 did not retain its declared 32-bit sort")
+   | NONE => die "FAIL: proof declaration did not register k!00");
+  (case x of
+     SOME tm => assert (type_is_smtfp (Term.type_of tm),
+       "proof Float32 declaration did not resolve to smtfp")
+   | NONE => die "FAIL: proof declaration did not register x");
+  expect_hol_error_contains "benchmark proof-skolem leakage" "k!00"
+    (fn () => ignore (parse_smtlib_assertions
+      ("(set-logic QF_FP)\n" ^
+       "(assert (= k!00 k!00))\n")))
 end
 
 fun parse_cpc_proof_string contents =
@@ -9649,6 +9880,8 @@ let
       smtlib_logic_fragment_diagnostics),
     ("smtlib_checked_replay_gap_diagnostics",
       smtlib_checked_replay_gap_diagnostics),
+    ("smtlib_floatingpoint_recognizer_gates_success",
+      smtlib_floatingpoint_recognizer_gates_success),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
     ("smtlib_and_or_right_assoc_parse_shape_success",
@@ -9667,6 +9900,8 @@ let
       smtlib_bitvector_parse_signatures_success),
     ("smtlib_floatingpoint_parse_signatures_success",
       smtlib_floatingpoint_parse_signatures_success),
+    ("smtlib_floatingpoint_invalid_format_diagnostics",
+      smtlib_floatingpoint_invalid_format_diagnostics),
     ("smtlib_string_regex_parse_signatures_success",
       smtlib_string_regex_parse_signatures_success),
     ("smtlib_z3_extension_parse_signatures_success",
@@ -9836,6 +10071,8 @@ let
       z3_proof_parser_rule_name_term_boundary),
     ("z3_proof_parser_is_int_translation_collision_success",
       z3_proof_parser_is_int_translation_collision_success),
+    ("z3_proof_parser_floatingpoint_decomposition_success",
+      z3_proof_parser_floatingpoint_decomposition_success),
     ("z3_proof_parser_string_internal_symbols_success",
       z3_proof_parser_string_internal_symbols_success),
     ("z3_proof_parser_char_th_lemma_index_success",

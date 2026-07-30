@@ -548,11 +548,6 @@ in
       SOME {Thy, ...} => Thy = "smtstring" orelse Thy = "smtstringz3"
     | NONE => false
 
-  fun type_contains_vartype_prefix prefix =
-    type_contains (fn ty =>
-      Type.is_vartype ty andalso
-      String.isPrefix prefix (Type.dest_vartype ty))
-
   fun term_mentions_reglan tm =
     term_type_contains
       (type_contains (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) tm
@@ -563,13 +558,23 @@ in
     symbol_name_is_prefix "smtlib_set_" tm orelse
     symbol_name_is_prefix "smtlib_bag_" tm
 
+  fun type_is_smtfloat ty =
+    let val {Thy, Tyop, ...} = Type.dest_thy_type ty
+    in
+      Thy = "smtfloat" andalso
+      (Tyop = "smtfp" orelse Tyop = "smt_rounding")
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun term_mentions_smtfloat_theory tm =
+    case Lib.total Term.dest_thy_const
+      (Lib.fst (boolSyntax.strip_comb tm)) of
+      SOME {Thy, ...} => Thy = "smtfloat"
+    | NONE => false
+
   fun term_mentions_floatingpoint tm =
-    term_type_contains (type_contains_vartype_prefix "'smtlib_FloatingPoint") tm
-    orelse term_type_contains
-      (type_contains_vartype_prefix "'smtlib_RoundingMode") tm
-    orelse symbol_name_is_prefix "smtlib_fp" tm
-    orelse symbol_name_is_prefix "fp." tm
-    orelse symbol_name_is_prefix "to_fp" tm
+    term_type_contains type_is_smtfloat tm orelse
+    term_mentions_smtfloat_theory tm
 
   fun free_datatype_tyinfo tyinfo =
     not (List.null (TypeBasePure.constructors_of tyinfo)) andalso
@@ -585,6 +590,7 @@ in
     Type.compare (ty, stringSyntax.string_ty) = EQUAL orelse
     Type.compare (ty, smt_string_ty) = EQUAL orelse
     Type.compare (ty, reglan_ty) = EQUAL orelse
+    type_is_smtfloat ty orelse
     Lib.can fcpSyntax.dest_numeric_type ty orelse
     (case Lib.total Type.dest_type ty of
        SOME ("itself", [_]) => true
@@ -671,8 +677,6 @@ in
         Type.is_vartype ty andalso
         let val name = Type.dest_vartype ty
         in
-          not (String.isPrefix "'smtlib_FloatingPoint" name) andalso
-          not (String.isPrefix "'smtlib_RoundingMode" name) andalso
           not (String.isPrefix "'smtlib_RegLan" name) andalso
           not (String.isPrefix "'smtlib_dt_" name)
         end)
@@ -787,8 +791,8 @@ in
         some_subterm
           (fn tm =>
             is_uninterpreted_operator_application tm andalso
-            not ((#floatingpoint fragment orelse #strings fragment orelse
-                  #bitvectors fragment) andalso
+            not (not (#floatingpoint fragment) andalso
+                 (#strings fragment orelse #bitvectors fragment) andalso
                  symbol_name_is_prefix "smtlib_" tm) andalso
             not (#floatingpoint fragment andalso
                  term_mentions_floatingpoint tm) andalso
