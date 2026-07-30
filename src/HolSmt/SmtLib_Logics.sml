@@ -75,6 +75,13 @@ local
       BV_extension_metadata]
   end
 
+  structure FP_Arrays =
+  struct
+    val tydict = union_dicts [FP_Core.tydict, ArraysEx.tydict]
+    val tmdict = union_dicts [FP_Core.tmdict, ArraysEx.tmdict]
+    val metadata = union_metadata [FP_Core.metadata, ArraysEx.metadata]
+  end
+
   structure ALL =
   struct
     val tydict = union_dicts [Core.tydict, Ints.tydict, Reals.tydict,
@@ -301,11 +308,29 @@ in
   structure QF_S = Strings_Ints
   structure QF_SLIA = Strings_Ints
   structure QF_SNIA = Strings_Ints
+  (* The FP logic packets all include the complete FloatingPoint theory.
+     The names carrying an A prefix additionally include ArraysEx; UF and
+     LRA only constrain the fragment and add no symbols beyond FP_Core. *)
+  structure FP = FP_Core
+  structure FPLRA = FP_Core
+  structure BVFP = FP_Core
+  structure BVFPLRA = FP_Core
+  structure UFFP = FP_Core
+  structure UFBVFP = FP_Core
+  structure ABVFP = FP_Arrays
+  structure ABVFPLRA = FP_Arrays
+  structure AUFBVFP = FP_Arrays
+
   structure QF_FP = FP_Core
+  structure QF_FPLRA = FP_Core
   structure QF_FPBV = FP_Core
   structure QF_BVFP = FP_Core
+  structure QF_BVFPLRA = FP_Core
   structure QF_UFFP = FP_Core
   structure QF_UFBVFP = FP_Core
+  structure QF_ABVFP = FP_Arrays
+  structure QF_ABVFPLRA = FP_Arrays
+  structure QF_AUFBVFP = FP_Arrays
 
   structure ALIA = AUFLIA
   structure ANIA = AUFLIA
@@ -896,16 +921,44 @@ in
       (QF_SLIA.tydict, QF_SLIA.tmdict)
     | "QF_SNIA" =>
       (QF_SNIA.tydict, QF_SNIA.tmdict)
+    | "FP" =>
+      (FP.tydict, FP.tmdict)
+    | "FPLRA" =>
+      (FPLRA.tydict, FPLRA.tmdict)
+    | "BVFP" =>
+      (BVFP.tydict, BVFP.tmdict)
+    | "BVFPLRA" =>
+      (BVFPLRA.tydict, BVFPLRA.tmdict)
+    | "UFFP" =>
+      (UFFP.tydict, UFFP.tmdict)
+    | "UFBVFP" =>
+      (UFBVFP.tydict, UFBVFP.tmdict)
+    | "ABVFP" =>
+      (ABVFP.tydict, ABVFP.tmdict)
+    | "ABVFPLRA" =>
+      (ABVFPLRA.tydict, ABVFPLRA.tmdict)
+    | "AUFBVFP" =>
+      (AUFBVFP.tydict, AUFBVFP.tmdict)
     | "QF_FP" =>
       (QF_FP.tydict, QF_FP.tmdict)
+    | "QF_FPLRA" =>
+      (QF_FPLRA.tydict, QF_FPLRA.tmdict)
     | "QF_FPBV" =>
       (QF_FPBV.tydict, QF_FPBV.tmdict)
     | "QF_BVFP" =>
       (QF_BVFP.tydict, QF_BVFP.tmdict)
+    | "QF_BVFPLRA" =>
+      (QF_BVFPLRA.tydict, QF_BVFPLRA.tmdict)
     | "QF_UFFP" =>
       (QF_UFFP.tydict, QF_UFFP.tmdict)
     | "QF_UFBVFP" =>
       (QF_UFBVFP.tydict, QF_UFBVFP.tmdict)
+    | "QF_ABVFP" =>
+      (QF_ABVFP.tydict, QF_ABVFP.tmdict)
+    | "QF_ABVFPLRA" =>
+      (QF_ABVFPLRA.tydict, QF_ABVFPLRA.tmdict)
+    | "QF_AUFBVFP" =>
+      (QF_AUFBVFP.tydict, QF_AUFBVFP.tmdict)
     | "ALIA" =>
       (ALIA.tydict, ALIA.tmdict)
     | "ALIRA" =>
@@ -1057,11 +1110,25 @@ in
     | "QF_S" => QF_S.metadata
     | "QF_SLIA" => QF_SLIA.metadata
     | "QF_SNIA" => QF_SNIA.metadata
+    | "FP" => FP.metadata
+    | "FPLRA" => FPLRA.metadata
+    | "BVFP" => BVFP.metadata
+    | "BVFPLRA" => BVFPLRA.metadata
+    | "UFFP" => UFFP.metadata
+    | "UFBVFP" => UFBVFP.metadata
+    | "ABVFP" => ABVFP.metadata
+    | "ABVFPLRA" => ABVFPLRA.metadata
+    | "AUFBVFP" => AUFBVFP.metadata
     | "QF_FP" => QF_FP.metadata
+    | "QF_FPLRA" => QF_FPLRA.metadata
     | "QF_FPBV" => QF_FPBV.metadata
     | "QF_BVFP" => QF_BVFP.metadata
+    | "QF_BVFPLRA" => QF_BVFPLRA.metadata
     | "QF_UFFP" => QF_UFFP.metadata
     | "QF_UFBVFP" => QF_UFBVFP.metadata
+    | "QF_ABVFP" => QF_ABVFP.metadata
+    | "QF_ABVFPLRA" => QF_ABVFPLRA.metadata
+    | "QF_AUFBVFP" => QF_AUFBVFP.metadata
     | "ALIA" => ALIA.metadata
     | "ALIRA" => ALIRA.metadata
     | "ANIA" => ANIA.metadata

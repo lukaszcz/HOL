@@ -4490,8 +4490,31 @@ let
     "QF_RDL", "QF_UF", "QF_UFBV", "QF_UFDT", "QF_UFDTLIA",
     "QF_UFDTLIRA", "QF_UFDTNIA", "QF_UFIDL", "QF_UFLIA",
     "QF_UFLIRA", "QF_UFLRA", "QF_UFNIRA", "QF_UFNRA",
-    "QF_S", "QF_SLIA", "QF_SNIA", "QF_FP", "QF_FPBV",
-    "QF_BVFP", "QF_UFFP", "QF_UFBVFP"
+    "QF_S", "QF_SLIA", "QF_SNIA",
+    "FP", "FPLRA", "BVFP", "BVFPLRA", "UFFP", "UFBVFP",
+    "ABVFP", "ABVFPLRA", "AUFBVFP",
+    "QF_FP", "QF_FPLRA", "QF_FPBV", "QF_BVFP", "QF_BVFPLRA",
+    "QF_UFFP", "QF_UFBVFP", "QF_ABVFP", "QF_ABVFPLRA",
+    "QF_AUFBVFP"
+  ]
+  val fp_logics = [
+    "FP", "FPLRA", "BVFP", "BVFPLRA", "UFFP", "UFBVFP",
+    "ABVFP", "ABVFPLRA", "AUFBVFP",
+    "QF_FP", "QF_FPLRA", "QF_FPBV", "QF_BVFP", "QF_BVFPLRA",
+    "QF_UFFP", "QF_UFBVFP", "QF_ABVFP", "QF_ABVFPLRA",
+    "QF_AUFBVFP"
+  ]
+  val fp_array_logics = [
+    "ABVFP", "ABVFPLRA", "AUFBVFP",
+    "QF_ABVFP", "QF_ABVFPLRA", "QF_AUFBVFP"
+  ]
+  val fp_uf_logics = [
+    "UFFP", "UFBVFP", "AUFBVFP",
+    "QF_UFFP", "QF_UFBVFP", "QF_AUFBVFP"
+  ]
+  val fp_lra_logics = [
+    "FPLRA", "BVFPLRA", "ABVFPLRA",
+    "QF_FPLRA", "QF_BVFPLRA", "QF_ABVFPLRA"
   ]
   val legacy_linear_logics = [
     "ALIA", "ALIRA", "AUFLIA", "AUFLIRA", "LIA", "LRA",
@@ -4500,17 +4523,17 @@ let
     "QF_UFIDL", "QF_UFLIA", "QF_UFLIRA", "QF_UFLRA",
     "UFIDL", "UFLIA", "UFLRA"
   ]
+  fun member xs logic = List.exists (fn candidate => logic = candidate) xs
   fun require_logic logic =
     let
       val _ = SmtLib_Logics.parsedicts_of_logic logic
       val metadata = SmtLib_Logics.metadata_of_logic logic
       val fragment = SmtLib_Logics.logic_fragment_of_logic logic
-      val was_legacy_linear =
-        List.exists (fn linear_logic => logic = linear_logic)
-          legacy_linear_logics
+      val was_legacy_linear = member legacy_linear_logics logic
       val has_dt = String.isSubstring "DT"
         (if String.isPrefix "QF_" logic then String.extract (logic, 3, NONE)
          else logic)
+      val is_fp = member fp_logics logic
     in
       assert (not (List.null metadata),
         "logic metadata was empty for " ^ logic);
@@ -4521,10 +4544,28 @@ let
       assert (#datatypes fragment = (logic = "ALL" orelse has_dt),
         "datatype fragment bit was wrong for " ^ logic);
       assert (#higher_order fragment = (logic = "ALL"),
-        "higher-order fragment bit was wrong for " ^ logic)
+        "higher-order fragment bit was wrong for " ^ logic);
+      assert (not is_fp orelse
+          (#floatingpoint fragment andalso #bitvectors fragment andalso
+           #ints fragment andalso #reals fragment andalso
+           #quantifiers fragment = not (String.isPrefix "QF_" logic) andalso
+           #arrays fragment = member fp_array_logics logic andalso
+           #uninterpreted fragment = member fp_uf_logics logic andalso
+           SmtLib_Logics.is_linear_arith_logic logic =
+             member fp_lra_logics logic),
+        "FloatingPoint fragment metadata was wrong for " ^ logic)
     end
+  val fplra_state = SmtLib_Parser.typecheck_script_string
+    ("(set-logic QF_FPLRA)\n" ^
+     "(assert (= (fp.to_real (fp #b0 #b011 #b1000)) " ^
+     "(/ 3.0 2.0)))\n")
 in
   List.app require_logic logics;
+  assert (List.length (#assertions fplra_state) = 1,
+    "QF_FPLRA fp.to_real benchmark did not typecheck");
+  assert (SmtLib_Logics.fragment_violation_diagnostic "QF_FPLRA"
+      (#surface_flags fplra_state) (#assertions fplra_state) = NONE,
+    "QF_FPLRA fp.to_real benchmark violated its fragment");
   assert (#higher_order (SmtLib_Logics.logic_fragment_of_logic "HO_QF_UF")
       andalso
       not (#quantifiers
