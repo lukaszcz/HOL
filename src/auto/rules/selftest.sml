@@ -1370,7 +1370,8 @@ fun has_aesop_entry expected_spec (expected_name, expected_th) candidates =
 
 val _ =
   test
-    ("aesop index retrieves every rule kind from its designated side",
+    ("aesop index retrieves every indexed rule kind from its designated \
+     \side",
      fn () =>
        let
          val forward = DISCH p (ASSUME p)
@@ -1393,7 +1394,9 @@ val _ =
          val target =
            aesop_target_candidates cs
              {q = ``p /\ q``, qvars = empty_vars}
-         val norm =
+         (* The Norm rule's conclusion; it would be retrieved here if Norm
+            were indexed at all. *)
+         val norm_shaped =
            aesop_target_candidates cs
              {q = ``p = q``, qvars = empty_vars}
          val elim =
@@ -1407,9 +1410,8 @@ val _ =
        in
          has_aesop_name "aesop_intro" target andalso
          not (has_aesop_name "aesop_elim" target) andalso
-         has_aesop_entry
-           {kind = clasetRules.Norm, safe = false, prio = SOME ~2}
-           ("aesop_norm", boolTheory.IMP_ANTISYM_AX) norm andalso
+         not (has_aesop_name "aesop_norm" target) andalso
+         not (has_aesop_name "aesop_norm" norm_shaped) andalso
          has_aesop_name "aesop_elim" elim andalso
          has_aesop_name "aesop_dest" dest andalso
          has_aesop_entry
@@ -1423,11 +1425,8 @@ val _ =
      fn () =>
        let
          val target_cs =
-           add_rule
-             {kind = clasetRules.Norm, safe = false, prio = NONE}
-             ("meta_norm", boolTheory.IMP_ANTISYM_AX)
-             (add_sintros
-                [("meta_intro", boolTheory.AND_INTRO_THM)] empty_cs)
+           add_sintros
+             [("meta_intro", boolTheory.AND_INTRO_THM)] empty_cs
          val cs =
            add_rule
              {kind = clasetRules.Forward, safe = true, prio = NONE}
@@ -1437,8 +1436,7 @@ val _ =
          val targets = aesop_names (aesop_target_candidates cs query)
          val hyps = aesop_names (aesop_hyp_candidates cs query)
        in
-         List.all (fn name => mem name targets) ["meta_intro", "meta_norm"]
-           andalso
+         List.all (fn name => mem name targets) ["meta_intro"] andalso
          List.all (fn name => mem name hyps) ["meta_elim", "meta_forward"]
        end)
 
@@ -1482,7 +1480,7 @@ val _ =
 
 val _ =
   test
-    ("aesop safe and norm candidates retain their phase orders",
+    ("aesop safe candidates retain their phase order",
      fn () =>
        let
          val safe_declarations =
@@ -1492,6 +1490,24 @@ val _ =
              ("safe_old", refl_intro [q] ``p \/ q``)),
             ({kind = clasetRules.Intro, safe = true, prio = NONE},
              ("safe_new", refl_intro [x, y] ``x \/ y``))]
+         val cs =
+           List.foldl
+             (fn ((spec, named_th), acc) => add_rule spec named_th acc)
+             empty_cs safe_declarations
+         val safe_query = {q = ``p \/ p``, qvars = tmset []}
+       in
+         aesop_names (aesop_target_candidates cs safe_query) =
+           ["safe_new", "safe_old", "safe_heavy"]
+       end)
+
+(* [norm_rules_of] is the precomputed equivalent of filtering [rules_of],
+   so pin the agreement rather than a hardcoded order: the penalty sort in
+   the normalisation phase relies on that incoming order as its tiebreak. *)
+val _ =
+  test
+    ("claset norm declarations agree with filtering rules_of",
+     fn () =>
+       let
          val norm_declarations =
            [({kind = clasetRules.Norm, safe = false, prio = SOME 4},
              ("norm_late", refl_intro [] ``p /\ p``)),
@@ -1499,21 +1515,28 @@ val _ =
              ("norm_zero", refl_intro [q] ``p /\ q``)),
             ({kind = clasetRules.Norm, safe = false, prio = SOME ~3},
              ("norm_early", refl_intro [x, y] ``x /\ y``))]
-         fun install declarations =
+         fun install cs =
            List.foldl
              (fn ((spec, named_th), acc) => add_rule spec named_th acc)
-             empty_cs declarations
-         val safe_query = {q = ``p \/ p``, qvars = tmset []}
-         val norm_query = {q = ``p /\ p``, qvars = tmset []}
+             cs norm_declarations
+         fun expected cs =
+           List.filter
+             (fn ({kind, ...} : clasetRules.rulespec, _) =>
+               kind = clasetRules.Norm)
+             (rules_of cs)
+         fun agrees cs =
+           map (fn (_, (name, _)) => name) (norm_rules_of cs) =
+           map (fn (_, (name, _)) => name) (expected cs)
+         val incremental = install empty_cs
+         val merged = merge_cs (empty_cs, incremental)
+         val removed = remove_rule "norm_zero" incremental
        in
-         aesop_names
-           (aesop_target_candidates
-              (install safe_declarations) safe_query) =
-           ["safe_new", "safe_old", "safe_heavy"] andalso
-         aesop_names
-           (aesop_target_candidates
-              (install norm_declarations) norm_query) =
-           ["norm_early", "norm_zero", "norm_late"]
+         agrees incremental andalso agrees merged andalso
+         agrees removed andalso
+         not
+           (List.exists
+             (fn (_, (name, _)) => name = "norm_zero")
+             (norm_rules_of removed))
        end)
 
 val _ =
@@ -1716,6 +1739,14 @@ val _ =
          same_rules
            (aesop_hyp_candidates merged hyp_query)
            (aesop_hyp_candidates incremented hyp_query) andalso
+         (* Norm is kept beside the index, not inside it, so its
+            maintenance is observed through [norm_rules_of]. *)
+         same_rules (norm_rules_of merged) (norm_rules_of incremented)
+           andalso
+         not (has_aesop_name "maintenance_norm"
+                (aesop_target_candidates merged target_query)) andalso
+         not (has_aesop_name "maintenance_norm"
+                (aesop_hyp_candidates merged hyp_query)) andalso
          has_aesop_name "maintenance_forward"
            (aesop_hyp_candidates merged hyp_query) andalso
          not
@@ -1723,11 +1754,10 @@ val _ =
               (aesop_hyp_candidates removed hyp_query)) andalso
          has_aesop_name "maintenance_intro"
            (aesop_target_candidates removed target_query) andalso
-         has_aesop_name "maintenance_norm"
-           (aesop_target_candidates removed target_query) andalso
+         has_aesop_name "maintenance_norm" (norm_rules_of removed) andalso
          not
            (has_aesop_name "maintenance_norm"
-              (aesop_target_candidates target_removed target_query)) andalso
+              (norm_rules_of target_removed)) andalso
          has_aesop_name "maintenance_intro"
            (aesop_target_candidates target_removed target_query)
        end)

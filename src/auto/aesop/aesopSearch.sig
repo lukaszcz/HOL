@@ -34,7 +34,7 @@ sig
   datatype search_outcome =
       SearchProved of tree
     | SearchFailed of
-        {tree : tree, safe_goals : (gid * cgoal) list,
+        {tree : tree, safe_goals : unit -> (gid * cgoal) list,
          reason : failure_reason}
 
   (* Process queued goals through normalisation and committed safe
@@ -48,8 +48,11 @@ sig
     {max_depth : int, rules : rule_source} -> tree -> safe_outcome
   val safe_frontier : tree -> (gid * cgoal) list
 
-  (* Best-first normalisation/safe/unsafe search.  A failed result contains
-     the exhaustive normalisation-and-safe frontier of the initial tree. *)
+  (* Best-first normalisation/safe/unsafe search.  [safe_goals] runs a
+     fresh safe-only saturation of the original goal and returns its exact
+     residual frontier, as [safe_frontier] would.  That is a second search,
+     so it is deferred: a caller that only needs to know the search failed
+     never pays for it.  Not memoised -- each application recomputes. *)
   val search :
     aesop_config -> rule_source -> tree -> search_outcome
 

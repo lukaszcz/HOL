@@ -208,6 +208,54 @@ fun active_store ({store, norm, ...} : goal) =
 fun is_normalised ({norm = Unnormalised, ...} : goal) = false
   | is_normalised _ = true
 
+(* Normalisation rewrites a goal in place, so its node keeps the goal's
+   level; a rule application descends one level. *)
+fun node_at level (goal : goal) =
+  clasetGoal.create
+    {goals = [active_cgoal goal], store = active_store goal,
+     level = level}
+
+fun goal_node (goal : goal) = node_at (#level goal) goal
+fun child_node (goal : goal) = node_at (#level goal + 1) goal
+
+fun changed node next =
+  null (clasetGoal.goals next) orelse
+  not (clasetGoal.equal (node, next))
+
+fun new_free_names (asl, w) goals =
+  let
+    val old_frees = free_varsl (w :: asl)
+    fun is_new variable =
+      not (List.exists (fn old => aconv variable old) old_frees)
+    fun names (child_asl, child_w) =
+      map (fst o dest_var)
+        (List.filter is_new (free_varsl (child_w :: child_asl)))
+  in
+    map names goals
+  end
+
+(* One rendered-tactic alternative, as the single-goal replay record that
+   reproduces it.  [rendered] is the parent goal the tactic ran on. *)
+fun rendered_record node rendered (result as (goals, validation)) =
+  Option.map
+    (fn next =>
+      (clasetReplay.make_record
+         {kind = clasetReplay.Wrapper, target = 1, consumed = NONE,
+          created = {terms = [], types = []},
+          eigenvariables = new_free_names rendered goals,
+          validation = validation,
+          action = clasetReplay.fixed_action result,
+          children = map (fn _ => NONE) goals},
+       next))
+    (clasetGoal.unrender node 1 result)
+
+(* A copied goal discharges its original sibling but is not a child the
+   rule action emitted, so replay never descends into one. *)
+fun direct_children tree rid =
+  List.filter
+    (fn id => not (Option.isSome (#copy_of (goal tree id))))
+    (rapp_goals tree rid)
+
 fun goal_with_state state
       ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
         norm, safe_done, unsafe_cursor, postponed, forwarded, ...} :
@@ -227,8 +275,6 @@ fun rapp_with_state state
 fun cluster_with_state state
       ({id, parent, goals, ...} : cluster) : cluster =
   {id = id, parent = parent, goals = goals, state = state}
-
-fun states_of items get_state = map get_state items
 
 fun same_states left right =
   ListPair.allEq (fn (x, y) => x = y) (left, right)
@@ -315,9 +361,9 @@ fun refresh_once
   end
 
 fun node_states tree =
-  (states_of (goals tree) #state,
-   states_of (rapps tree) #state,
-   states_of (clusters tree) #state)
+  (map #state (goals tree),
+   map #state (rapps tree),
+   map #state (clusters tree))
 
 fun states_equal
       ((left_goals, left_rapps, left_clusters),
@@ -749,53 +795,36 @@ fun set_norm_proved id {records, store} tree =
           (#deps current) current)
       tree)
 
-fun replace_safe_done safe_done
+fun replace_search_state {safe_done, unsafe_cursor, postponed}
       ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, unsafe_cursor, postponed, forwarded, state, ...} :
-       goal) : goal =
+        norm, forwarded, state, ...} : goal) : goal =
   {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
    deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
    norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
    postponed = postponed, forwarded = forwarded, state = state}
+
+(* The whole safe-phase transition costs one refresh.  Field updates never
+   change a derived state by themselves, and the state equations have a
+   unique solution for given structural fields, so refreshing after each
+   field separately would only repeat the same fixpoint. *)
+fun set_search_state id fields tree =
+  refresh (map_goal id (replace_search_state fields) tree)
 
 fun set_safe_done id value tree =
-  refresh (map_goal id (replace_safe_done value) tree)
-
-fun replace_unsafe_cursor unsafe_cursor
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, safe_done, postponed, forwarded, state, ...} : goal) :
-      goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
+  let val {unsafe_cursor, postponed, ...} = goal tree id
+  in
+    set_search_state id
+      {safe_done = value, unsafe_cursor = unsafe_cursor,
+       postponed = postponed} tree
+  end
 
 fun set_unsafe_cursor id value tree =
-  refresh (map_goal id (replace_unsafe_cursor value) tree)
-
-fun replace_postponed postponed
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, safe_done, unsafe_cursor, forwarded, state, ...} : goal) :
-      goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
-
-fun set_postponed id value tree =
-  refresh (map_goal id (replace_postponed value) tree)
-
-fun replace_forwarded forwarded
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, safe_done, unsafe_cursor, postponed, state, ...} : goal) :
-      goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
-
-fun set_forwarded id value tree =
-  map_goal id (replace_forwarded value) tree
+  let val {safe_done, postponed, ...} = goal tree id
+  in
+    set_search_state id
+      {safe_done = safe_done, unsafe_cursor = value,
+       postponed = postponed} tree
+  end
 
 fun exhaust_goal id tree =
   let
@@ -807,10 +836,8 @@ fun exhaust_goal id tree =
           {records = [], cgoal = #cgoal current, store = #store current}
           tree
   in
-    tree'
-    |> set_safe_done id true
-    |> set_unsafe_cursor id []
-    |> set_postponed id []
+    set_search_state id
+      {safe_done = true, unsafe_cursor = [], postponed = []} tree'
   end
 
 fun nonterminal state = state = Unknown

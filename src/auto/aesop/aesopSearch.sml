@@ -36,7 +36,7 @@ datatype failure_reason =
 datatype search_outcome =
     SearchProved of tree
   | SearchFailed of
-      {tree : tree, safe_goals : (gid * cgoal) list,
+      {tree : tree, safe_goals : unit -> (gid * cgoal) list,
        reason : failure_reason}
 
 datatype application =
@@ -57,9 +57,10 @@ datatype unsafe_candidate =
 val ERR = mk_HOL_ERR "aesopSearch"
 val postponed_percent = 90
 
+fun traced level = level <= Feedback.current_trace "aesop"
+
 fun trace level message =
-  if level <= Feedback.current_trace "aesop" then
-    Feedback.HOL_MESG ("Aesop: " ^ message ())
+  if traced level then Feedback.HOL_MESG ("Aesop: " ^ message ())
   else ()
 
 fun cgoal_string ({params, asl, w} : cgoal) =
@@ -86,55 +87,22 @@ fun trace_goal label tree id =
         cgoal_string (aesopTree.active_cgoal goal))
   end
 
-fun make_node (goal as {level, ...} : aesopTree.goal) =
-  clasetGoal.create
-    {goals = [aesopTree.active_cgoal goal],
-     store = aesopTree.active_store goal, level = level + 1}
-
-fun new_free_names (asl, w) goals =
-  let
-    val old_frees = free_varsl (w :: asl)
-    fun is_new variable =
-      not (List.exists (fn old => aconv variable old) old_frees)
-    fun names (child_asl, child_w) =
-      map (fst o dest_var)
-        (List.filter is_new (free_varsl (child_w :: child_asl)))
-  in
-    map names goals
-  end
-
-fun rendered_result node (result as (goals, validation)) =
-  case clasetGoal.unrender node 1 result of
-      NONE => NONE
-    | SOME next =>
-        let
-          val rendered = clasetGoal.render node 1
-          val record =
-            clasetReplay.make_record
-              {kind = clasetReplay.Wrapper, target = 1,
-               consumed = NONE,
-               created = {terms = [], types = []},
-               eigenvariables = new_free_names rendered goals,
-               validation = validation,
-               action = clasetReplay.fixed_action result,
-               children = map (fn _ => NONE) goals}
-        in
-          SOME ([record], next)
-        end
-
 fun engine_results step node =
   seq.map
     (fn (record, next) => ([record], next))
     (step (node, 1))
 
 fun rendered_results tactic node =
-  seq.mapPartial (rendered_result node)
-    (tactic (clasetGoal.render node 1))
-
-fun append_sequences [] = seq.empty
-  | append_sequences (first :: rest) =
-      seq.append first
-        (seq.delay (fn () => append_sequences rest))
+  let
+    val rendered = clasetGoal.render node 1
+  in
+    seq.mapPartial
+      (fn result =>
+        Option.map
+          (fn (record, next) => ([record], next))
+          (aesopTree.rendered_record node rendered result))
+      (tactic rendered)
+  end
 
 fun application_results
       ({apply, ...} : aesopRule.rule) node =
@@ -143,11 +111,8 @@ fun application_results
     | aesopRule.RenderedTactic tactic =>
         rendered_results tactic node
     | aesopRule.MultiStep steps =>
-        append_sequences (map (fn step => engine_results step node) steps)
-
-fun changed node next =
-  null (clasetGoal.goals next) orelse
-  not (clasetGoal.equal (node, next))
+        seq.flatten
+          (seq.fromList (map (fn step => engine_results step node) steps))
 
 (* Safe applications are committed only when the rule has exactly one
    alternative.  Looking at two results is sufficient and does not force
@@ -155,7 +120,7 @@ fun changed node next =
 fun deterministic_application rule node =
   (case seq.take 2 (application_results rule node) of
        [(records, next)] =>
-         if changed node next then
+         if aesopTree.changed node next then
            Applied
              {rule = #name rule, phase = #phase rule,
               records = records, node = next, forwarded = NONE}
@@ -190,23 +155,22 @@ fun copies_in tree ids =
       (fn id => Option.isSome (#copy_of (aesopTree.goal tree id))) ids)
 
 fun trace_install data result =
-  let
-    val count = copies_in (#tree result) (#goals result)
-  in
-    trace 2
-      (fn () =>
-        "installed " ^ #rule data ^ " below goal " ^
-        Int.toString
-        (#parent (aesopTree.rapp (#tree result) (#rapp result))) ^
-        " with " ^ Int.toString (length (#goals result)) ^
-        " child goal(s)");
-    if count = 0 then ()
-    else
-      trace 2
-        (fn () =>
-          "copied " ^ Int.toString count ^
-          " metavariable-coupled goal(s)")
-  end
+  (trace 2
+     (fn () =>
+       "installed " ^ #rule data ^ " below goal " ^
+       Int.toString
+       (#parent (aesopTree.rapp (#tree result) (#rapp result))) ^
+       " with " ^ Int.toString (length (#goals result)) ^
+       " child goal(s)");
+   if not (traced 2) then ()
+   else
+     case copies_in (#tree result) (#goals result) of
+         0 => ()
+       | count =>
+           trace 2
+             (fn () =>
+               "copied " ^ Int.toString count ^
+               " metavariable-coupled goal(s)"))
 
 fun data_with_forwarded
       ({rule, phase, records, node, ...} : aesopTree.rapp_data)
@@ -225,10 +189,9 @@ fun install_committed id data tree =
     val installed = aesopTree.install_rapp id data tree
     val _ = trace_install data installed
   in
-    #tree installed
-    |> aesopTree.set_postponed id []
-    |> aesopTree.set_unsafe_cursor id []
-    |> aesopTree.set_safe_done id true
+    aesopTree.set_search_state id
+      {safe_done = true, unsafe_cursor = [], postponed = []}
+      (#tree installed)
   end
 
 fun application_assigned goal
@@ -241,7 +204,7 @@ fun application_assigned goal
 fun safe_phase max_rapps id rules tree =
   let
     val goal = aesopTree.goal tree id
-    val node = make_node goal
+    val node = aesopTree.child_node goal
     val has_dependencies =
       not (aesopTree.dependencies_empty (#deps goal))
 
@@ -291,10 +254,9 @@ fun prepare_unsafe id postponed source tree =
     val current = aesopTree.goal tree id
     val unsafe = #unsafe (source (rule_input clasetUnify.Unify current))
   in
-    tree
-    |> aesopTree.set_postponed id postponed
-    |> aesopTree.set_unsafe_cursor id unsafe
-    |> aesopTree.set_safe_done id true
+    aesopTree.set_search_state id
+      {safe_done = true, unsafe_cursor = unsafe, postponed = postponed}
+      tree
   end
 
 fun next_safe_with include_irrelevant pop_goal
@@ -404,16 +366,11 @@ fun frontier_goal tree (goal : aesopTree.goal) =
        aesopTree.NormProved _ => false
      | _ => true)
 
-fun cgoal_under store ({params, asl, w} : cgoal) : cgoal =
-  {params = map (clasetMeta.norm store) params,
-   asl = map (clasetMeta.norm store) asl,
-   w = clasetMeta.norm store w}
-
 fun safe_frontier tree =
   map
     (fn goal =>
       (#id goal,
-       cgoal_under (aesopTree.active_store goal)
+       aesopTree.cgoal_under (aesopTree.active_store goal)
          (aesopTree.active_cgoal goal)))
     (List.filter (frontier_goal tree) (aesopTree.goals tree))
 
@@ -447,10 +404,10 @@ fun drain sequence =
 
 fun unsafe_applications goal rule =
   let
-    val node = make_node goal
+    val node = aesopTree.child_node goal
 
     fun prepare (records, next) =
-      if not (changed node next) then NONE
+      if not (aesopTree.changed node next) then NONE
       else
         let
           val data : aesopTree.rapp_data =
@@ -534,10 +491,12 @@ fun unsafe_phase {max_rapps, ...} id tree =
               UnsafeRappLimit tree
             else
               let
+                val extended = install_alternatives id applications tree
                 val installed =
-                  install_alternatives id applications tree
-                  |> aesopTree.set_unsafe_cursor id unsafe
-                  |> aesopTree.set_postponed id postponed
+                  aesopTree.set_search_state id
+                    {safe_done = #safe_done (aesopTree.goal extended id),
+                     unsafe_cursor = unsafe, postponed = postponed}
+                    extended
                 val current = aesopTree.goal installed id
                 val queued =
                   if #state current = aesopTree.Unknown andalso
@@ -573,18 +532,26 @@ fun reason_string SearchExhausted = "search exhausted"
   | reason_string RappLimitReached = "rapp limit reached"
   | reason_string DepthLimitReached = "depth limit reached"
 
-fun report_failure reason safe_goals =
-  (trace 1
-     (fn () =>
-       reason_string reason ^ "; " ^
-       Int.toString (length safe_goals) ^ " safe goal(s)");
-   List.app
-     (fn (id, cgoal) =>
-       trace 1
-         (fn () =>
-           "safe goal " ^ Int.toString id ^ ": " ^
-           cgoal_string cgoal))
-     safe_goals)
+(* The frontier is a whole second search, so do not force the thunk unless
+   the trace that consumes it will actually print. *)
+fun report_failure reason frontier =
+  if not (traced 1) then ()
+  else
+    let
+      val safe_goals = frontier ()
+    in
+      trace 1
+        (fn () =>
+          reason_string reason ^ "; " ^
+          Int.toString (length safe_goals) ^ " safe goal(s)");
+      List.app
+        (fn (id, cgoal) =>
+          trace 1
+            (fn () =>
+              "safe goal " ^ Int.toString id ^ ": " ^
+              cgoal_string cgoal))
+        safe_goals
+    end
 
 fun search
       (config as {max_rapps, max_depth} : aesop_config)
@@ -595,16 +562,19 @@ fun search
     raise ERR "search" "max_depth must not be negative"
   else
     let
+      (* [initial], not [tree]: the report is deliberately the safe-only
+         frontier of the original goal, unpolluted by unsafe rapps and
+         exhausted branches. *)
       fun failed reason tree =
         let
-          val safe_tree =
-            safe_completion {max_depth = max_depth, rules = rules}
-              initial
-          val safe_goals = safe_frontier safe_tree
-          val _ = report_failure reason safe_goals
+          fun frontier () =
+            safe_frontier
+              (safe_completion {max_depth = max_depth, rules = rules}
+                 initial)
+          val _ = report_failure reason frontier
         in
           SearchFailed
-            {tree = tree, safe_goals = safe_goals, reason = reason}
+            {tree = tree, safe_goals = frontier, reason = reason}
         end
 
       fun loop depth_limited tree =
@@ -687,12 +657,6 @@ fun proved_cluster_goal tree id =
             ("proved cluster " ^ Int.toString id ^
              " has no proved goal")
   end
-
-fun direct_children tree rid =
-  List.filter
-    (fn id =>
-      not (Option.isSome (#copy_of (aesopTree.goal tree id))))
-    (aesopTree.rapp_goals tree rid)
 
 (* A copied goal discharges the corresponding original sibling, but it is
    not a child emitted by the rule action that caused the copy.  First
@@ -815,7 +779,7 @@ fun extract tree =
                 List.foldl
                   (fn (child, accumulated) =>
                     linearise child (actual :: ancestors) accumulated)
-                  with_application (direct_children tree rid)
+                  with_application (aesopTree.direct_children tree rid)
               end
       end
 

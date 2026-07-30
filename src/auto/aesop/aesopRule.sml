@@ -178,19 +178,11 @@ fun register_tactic_rule
 fun registered_tactic_rules () =
   map #1 (Sref.value tactic_registry)
 
-fun registry_index_matches conclusion assumptions NONE = true
-  | registry_index_matches conclusion _
-      (SOME (TargetPattern pattern)) =
-      can (Term.match_term pattern) conclusion
-  | registry_index_matches _ assumptions
-      (SOME (HypPattern pattern)) =
-      List.exists (can (Term.match_term pattern)) assumptions
-
 fun applicable_tactic_rules conclusion assumptions =
   map #1
     (List.filter
       (fn (_, index) =>
-        registry_index_matches conclusion assumptions index)
+        goal_matches_index index (assumptions, conclusion))
       (Sref.value tactic_registry))
 
 fun norm_phase_rule ({phase, ...} : rule) =
@@ -257,16 +249,47 @@ fun split_rule_pair {name, theorem} =
     {conclusion = conclusion, assumption = assumption}
   end
 
-fun split_rules () =
+type split_ruleset =
+  {conclusion : rule list, assumption : rule list}
+
+val split_cache =
+  Sref.new
+    (NONE :
+      {source : (string * thm) list, rules : split_ruleset} option)
+
+fun same_split_source left right =
+  ListPair.allEq
+    (fn ((name1, theorem1), (name2, theorem2)) =>
+      name1 = name2 andalso aconv (concl theorem1) (concl theorem2))
+    (left, right)
+
+(* Each pair derives its assumption-split theorem, so rebuilding these on
+   every rule-set assembly would repeat that derivation for every declared
+   split theorem at every goal.  The registered theorems change rarely, so
+   cache the built rules against them. *)
+fun split_rules () : split_ruleset =
   let
-    val pairs =
-      map
-        (fn (name, theorem) =>
-          split_rule_pair {name = name, theorem = theorem})
-        (splitLib.named_split_thms ())
+    val source = splitLib.named_split_thms ()
+    fun build () =
+      let
+        val pairs =
+          map
+            (fn (name, theorem) =>
+              split_rule_pair {name = name, theorem = theorem})
+            source
+        val rules =
+          {conclusion = map #conclusion pairs,
+           assumption = map #assumption pairs}
+      in
+        Sref.update split_cache
+          (fn _ => SOME {source = source, rules = rules});
+        rules
+      end
   in
-    {conclusion = map #conclusion pairs,
-     assumption = map #assumption pairs}
+    case Sref.value split_cache of
+        SOME {source = cached, rules} =>
+          if same_split_source cached source then rules else build ()
+      | NONE => build ()
   end
 
 fun is_no_asms theorem =
@@ -306,7 +329,7 @@ fun simp_rule arguments =
        controls = simp_controls}
   end
 
-fun norm_builtins simp_args : rule list =
+fun norm_builtins_with simp : rule list =
   [{name = "disch", phase = RNorm 0,
     apply = EngineStep clasetStep.blast_disch_step,
     once = false},
@@ -316,7 +339,9 @@ fun norm_builtins simp_args : rule list =
    {name = "hyp-subst", phase = RNorm 0,
     apply = EngineStep clasetStep.blast_hyp_subst_step,
     once = false},
-   simp_rule simp_args]
+   simp]
+
+fun norm_builtins simp_args = norm_builtins_with (simp_rule simp_args)
 
 fun closers () : rule list =
   [{name = "assumption", phase = RSafe,
@@ -332,20 +357,18 @@ fun safe_rules
   closers @ safe0_claset @ safe_forward @ safep_claset @
   conclusion_splits @ assumption_splits
 
-fun same_name
-      ((_, (left, _)) :
-        clasetRules.rulespec * (string * thm))
-      ((_, (right, _)) :
-        clasetRules.rulespec * (string * thm)) =
-  left = right
-
+(* Retrieval may offer one declaration through several index entries.  Keep
+   the first occurrence of each name, in retrieval order. *)
 fun unique_declarations declarations =
   let
-    fun add (declaration, kept) =
-      if List.exists (same_name declaration) kept then kept
-      else kept @ [declaration]
+    fun add (declaration as (_, (name, _)), (seen, kept)) =
+      if Redblackset.member (seen, name) then (seen, kept)
+      else (Redblackset.add (seen, name), declaration :: kept)
+    val (_, reversed) =
+      List.foldl add
+        (Redblackset.empty String.compare, []) declarations
   in
-    List.foldl add [] declarations
+    List.rev reversed
   end
 
 fun candidate_declarations claset conclusion assumptions qvars =
@@ -406,9 +429,6 @@ fun unsafe_declaration (spec, _) =
 fun safe_forward_declaration (spec, _) =
   #kind spec = clasetRules.Forward andalso #safe spec
 
-fun norm_declaration (spec, _) =
-  #kind spec = clasetRules.Norm
-
 fun unsafe_percent (spec, _) =
   case phase_of_spec spec of
       RUnsafe percent => percent
@@ -445,7 +465,7 @@ fun claset_rules_core
         (order_unsafe (List.filter unsafe_declaration candidates))
     val norm_declarations =
       map (declaration_rule clasetUnify.Match)
-        (List.filter norm_declaration (clasetLib.rules_of claset))
+        (clasetLib.norm_rules_of claset)
     val splits = split_rules ()
     val tactics =
       applicable_tactic_rules conclusion assumptions
@@ -463,17 +483,7 @@ fun claset_rules_core
        conclusion_splits = #conclusion splits,
        assumption_splits = #assumption splits @ safe_tactics}
   in
-    {norm =
-       [{name = "disch", phase = RNorm 0,
-         apply = EngineStep clasetStep.blast_disch_step,
-         once = false},
-        {name = "gen", phase = RNorm 0,
-         apply = EngineStep clasetStep.blast_gen_step,
-         once = false},
-        {name = "hyp-subst", phase = RNorm 0,
-         apply = EngineStep clasetStep.blast_hyp_subst_step,
-         once = false},
-        simp] @ norm_declarations @ norm_tactics,
+    {norm = norm_builtins_with simp @ norm_declarations @ norm_tactics,
      safe = safe,
      unsafe = unsafe @ unsafe_tactics}
   end

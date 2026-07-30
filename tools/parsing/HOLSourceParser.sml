@@ -319,18 +319,19 @@ fun parseSML file read parseError: scope -> result = let
   val parseIdentifierOrKw = parseIdentifier' (fn _ => true)
   val parseIdentifierOrEq = parseIdentifier' (fn s => s = "=")
 
-  fun parseIdentifiers' f acc = case parseIdentifier' f false of
+  fun parseIdentifiers acc = case parseIdentifier false of
     (_, "") => rev acc
-  | id => parseIdentifiers' f (id :: acc)
-  val parseIdentifiers = parseIdentifiers' (fn _ => false)
+  | id => parseIdentifiers (id :: acc)
 
-  fun parseAttributeValue force =
+  (* An attribute value may also be a numeral, as in [elim=75] or the
+     signed penalty [norm=~3]. *)
+  fun parseAttributeValue () =
     case token () of
         (start, IntTk) => (start, ident start)
-      | tk => (unread tk; parseIdentifierOrKw force)
+      | tk => (unread tk; parseIdentifierOrKw false)
 
   fun parseAttributeValues acc =
-    case parseAttributeValue false of
+    case parseAttributeValue () of
         (_, "") => rev acc
       | value => parseAttributeValues (value :: acc)
 

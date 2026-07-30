@@ -8,15 +8,13 @@ INCLUDES = $(HOLDIR)/src/auto/rules \
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
+aesopTree.uo: aesopRule.uo
 aesopNorm.uo: aesopRule.uo aesopTree.uo
 aesopSearch.uo: aesopNorm.uo aesopRule.uo aesopTree.uo
 aesopLib.uo: aesopData.uo aesopRule.uo aesopSearch.uo aesopTree.uo
 
-selftest.uo: aesopData.uo aesopRule.uo aesopNorm.uo aesopSearch.uo \
-             aesopLib.uo
-aesopTree.uo: aesopRule.uo
-
-selftest.uo: aesopTree.uo
+selftest.uo: aesopData.uo aesopRule.uo aesopTree.uo aesopNorm.uo \
+             aesopSearch.uo aesopLib.uo
 
 selftest.exe: selftest.uo aesopData.uo aesopRule.uo aesopTree.uo \
              aesopNorm.uo aesopSearch.uo aesopLib.uo

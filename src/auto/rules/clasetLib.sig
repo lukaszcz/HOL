@@ -61,6 +61,11 @@ sig
   val app_unsafe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
 
   val rules_of : claset -> (rulespec * (string * thm)) list
+  (* The claset's Norm declarations, in [rules_of] order.  The aesop
+     normalisation phase applies all of them to every goal rather than
+     retrieving by goal shape, so they are kept as a list; this is the
+     precomputed equivalent of filtering [rules_of] by kind. *)
+  val norm_rules_of : claset -> (rulespec * (string * thm)) list
   val pp_claset : claset Parse.pprinter
 
   val claset_part : part -> claset -> claset_part
@@ -78,12 +83,11 @@ sig
     (unit -> unit) -> claset_part -> term -> (tag * brl) list
 
   (* Aesop retrieval is unification-based and retains each declaration's
-     complete rulespec.  Target candidates comprise Intro and Norm rules;
-     hypothesis candidates comprise Elim, Dest, and Forward rules.  Norm
-     rules precede safe rules, which precede unsafe rules.  Within those
-     groups the order is penalty, classical candidate order, and decreasing
-     success percentage followed by classical candidate order, respectively.
-     *)
+     complete rulespec.  Target candidates comprise Intro rules;
+     hypothesis candidates comprise Elim, Dest, and Forward rules.  Safe
+     rules precede unsafe rules.  Within those groups the order is
+     classical candidate order, and decreasing success percentage followed
+     by classical candidate order, respectively. *)
   val aesop_target_candidates :
     claset -> {q : term, qvars : term HOLset.set} ->
     (rulespec * (string * thm)) list
@@ -118,6 +122,12 @@ sig
   val destDel : thm -> string option
 
   val process_claset_tags : thm list -> claset -> claset * thm list
+
+  (* A name of the form "<prefix><n>", with n at least [from], that no
+     declaration in the claset uses.  Engines name invocation-scoped rules
+     -- those coming from marker arguments -- this way, so that such a rule
+     can never collide with a user declaration. *)
+  val fresh_rule_name : {prefix : string, from : int} -> claset -> string
 
   type simp_arg_split =
     {simp_rules : thm list,

@@ -73,6 +73,26 @@ sig
   val active_cgoal : goal -> cgoal
   val active_store : goal -> store
   val is_normalised : goal -> bool
+  (* Action-emitted children of a rule application, excluding the copied
+     obligations, which replay discharges through their originals. *)
+  val direct_children : tree -> rid -> gid list
+
+  (* The goal's engine node.  Normalisation rewrites a goal in place and
+     uses [goal_node]; a rule application descends, so it uses
+     [child_node]. *)
+  val goal_node : goal -> clasetGoal.node
+  val child_node : goal -> clasetGoal.node
+  (* An application makes progress when it closes the node or leaves a
+     different one. *)
+  val changed : clasetGoal.node -> clasetGoal.node -> bool
+  val cgoal_under : store -> cgoal -> cgoal
+
+  (* The single-goal replay record reproducing one rendered-tactic
+     alternative, given the parent goal the tactic ran on.  NONE when the
+     result cannot be lifted back onto the engine node. *)
+  val rendered_record :
+    clasetGoal.node -> Abbrev.goal -> NTactical.nresult ->
+    (step_record * clasetGoal.node) option
 
   (* Installation creates ordinary children.  Copying extends this single
      boundary in aesopTree without requiring search clients to change.
@@ -89,8 +109,11 @@ sig
     gid -> {records : step_record list, store : store} -> tree -> tree
   val set_safe_done : gid -> bool -> tree -> tree
   val set_unsafe_cursor : gid -> rule list -> tree -> tree
-  val set_postponed : gid -> rapp_data list -> tree -> tree
-  val set_forwarded : gid -> term list -> tree -> tree
+  (* The safe phase's whole outcome for a goal, applied as one update. *)
+  val set_search_state :
+    gid ->
+    {safe_done : bool, unsafe_cursor : rule list,
+     postponed : rapp_data list} -> tree -> tree
 
   (* Marks every search phase complete without asserting a state directly.
      The ordinary state equations then decide whether the goal is stuck. *)

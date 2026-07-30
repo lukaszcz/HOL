@@ -2334,9 +2334,11 @@ val _ =
        case search_rapp_limit_outcome of
            aesopSearch.SearchFailed
              {tree, reason = aesopSearch.RappLimitReached,
-              safe_goals = [(_, {w, ...})]} =>
+              safe_goals} =>
                 null (aesopTree.rapps tree) andalso
-                aconv w search_limit_goal
+                (case safe_goals () of
+                     [(_, {w, ...})] => aconv w search_limit_goal
+                   | _ => false)
          | _ => false)
 
 val search_safe_limit_close =
@@ -2382,9 +2384,11 @@ val _ =
        case search_depth_limit_outcome of
            aesopSearch.SearchFailed
              {tree, reason = aesopSearch.DepthLimitReached,
-              safe_goals = [(_, {w, ...})]} =>
+              safe_goals} =>
                 length (aesopTree.rapps tree) = 1 andalso
-                aconv w search_depth_target
+                (case safe_goals () of
+                     [(_, {w, ...})] => aconv w search_depth_target
+                   | _ => false)
          | _ => false)
 
 val search_safe_goal_p =
@@ -2412,10 +2416,33 @@ val _ =
        case search_safe_goal_outcome of
            aesopSearch.SearchFailed
              {reason = aesopSearch.SearchExhausted, safe_goals, ...} =>
-               length safe_goals = 3 andalso
-               contains_target boolSyntax.F safe_goals andalso
-               contains_target search_safe_goal_p safe_goals andalso
-               contains_target search_safe_goal_q safe_goals
+               let
+                 val goals = safe_goals ()
+               in
+                 length goals = 3 andalso
+                 contains_target boolSyntax.F goals andalso
+                 contains_target search_safe_goal_p goals andalso
+                 contains_target search_safe_goal_q goals
+               end
+         | _ => false)
+
+val _ =
+  test
+    ("aesop failure defers its safe-goal report until applied",
+     fn () =>
+       case search_safe_goal_outcome of
+           aesopSearch.SearchFailed {safe_goals, ...} =>
+             let
+               val first = safe_goals ()
+               val second = safe_goals ()
+             in
+               length first = 3 andalso
+               ListPair.allEq
+                 (fn ((_, {w = w1, ...} : clasetGoal.cgoal),
+                      (_, {w = w2, ...} : clasetGoal.cgoal)) =>
+                   aconv w1 w2)
+                 (first, second)
+             end
          | _ => false)
 
 val _ =

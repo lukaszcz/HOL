@@ -57,6 +57,10 @@ sig
   val decl_name_member : decls -> string -> bool
   val get_decls : decls -> thm -> decl list
   val dest_decls : decls -> decl list
+  (* The order [dest_decls] returns: kind-class group, then tag order
+     within the group.  Exposed so that a derived list can be maintained
+     in [dest_decls] order without re-sorting. *)
+  val decl_order : decl * decl -> order
   val merge_decls : decls * decls -> decl list * decls
   val candidate_order : (tag * brl) list -> (tag * brl) list
   val candidate_order_measured :

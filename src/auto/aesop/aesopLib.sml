@@ -56,12 +56,6 @@ fun singleton_replay store record =
 fun replay_records store records =
   Tactical.EVERY (map (singleton_replay store) records)
 
-fun direct_children tree rid =
-  List.filter
-    (fn id =>
-      not (Option.isSome (#copy_of (aesopTree.goal tree id))))
-    (aesopTree.rapp_goals tree rid)
-
 (* Safe search starts from a kernel goal without engine metavariables.
    Match-mode rules therefore produce a deterministic proof tree whose open
    leaves are genuine HOL goals.  Replay each local single-goal script and
@@ -89,7 +83,7 @@ fun safe_replay tree =
             | [rid] =>
                 let
                   val rapp = aesopTree.rapp tree rid
-                  val children = direct_children tree rid
+                  val children = aesopTree.direct_children tree rid
                   val application =
                     replay_records (#store rapp) (#records rapp)
                   val descendants =
@@ -126,43 +120,27 @@ fun changed tactic =
   NTactical.DETERM
     (NTactical.NCHANGED (NTactical.LIFT tactic))
 
-fun declaration_name_member claset name =
-  List.exists
-    (fn (_, (candidate, _)) => candidate = name)
-    (clasetLib.rules_of claset)
-
-fun fresh_marker_name claset index =
-  let
-    fun find current =
-      let
-        val name = "__aesop_marker_" ^ Int.toString current
-      in
-        if declaration_name_member claset name then find (current + 1)
-        else name
-      end
-  in
-    find index
-  end
+(* The marker vocabulary aesop adds on top of the classical one that
+   clasetLib.process_claset_tags already consumes. *)
+val aesop_markers
+      : ((thm -> thm option) * clasetRules.rulespec) list =
+  [(clasetLib.destNorm,
+    {kind = clasetRules.Norm, safe = false, prio = NONE}),
+   (clasetLib.destForward,
+    {kind = clasetRules.Forward, safe = false, prio = NONE}),
+   (clasetLib.destSForward,
+    {kind = clasetRules.Forward, safe = true, prio = NONE})]
 
 fun aesop_marker theorem =
-  case clasetLib.destNorm theorem of
-      SOME rule =>
-        SOME
-          ({kind = clasetRules.Norm, safe = false, prio = NONE},
-           rule)
-    | NONE =>
-        (case clasetLib.destForward theorem of
-             SOME rule =>
-               SOME
-                 ({kind = clasetRules.Forward, safe = false,
-                   prio = NONE}, rule)
-           | NONE =>
-               (case clasetLib.destSForward theorem of
-                    SOME rule =>
-                      SOME
-                        ({kind = clasetRules.Forward, safe = true,
-                          prio = NONE}, rule)
-                  | NONE => NONE))
+  let
+    fun dispatch [] = NONE
+      | dispatch ((dest, spec) :: rest) =
+          case dest theorem of
+              SOME rule => SOME (spec, rule)
+            | NONE => dispatch rest
+  in
+    dispatch aesop_markers
+  end
 
 fun process_aesop_markers theorems claset =
   let
@@ -173,7 +151,9 @@ fun process_aesop_markers theorems claset =
                 process index current (theorem :: rest) remaining
             | SOME (spec, rule) =>
                 let
-                  val name = fresh_marker_name current index
+                  val name =
+                    clasetLib.fresh_rule_name
+                      {prefix = "__aesop_marker_", from = index} current
                   val current' =
                     clasetLib.add_rule spec (name, rule) current
                 in

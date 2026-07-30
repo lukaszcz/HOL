@@ -66,43 +66,19 @@ fun singleton_result sequence =
     | SOME (result, rest) =>
         if seq.null rest then SOME result else NONE
 
-fun new_free_names (asl, w) goals =
-  let
-    val old_frees = free_varsl (w :: asl)
-    fun is_new variable =
-      not (List.exists (fn old => aconv variable old) old_frees)
-    fun names (child_asl, child_w) =
-      map (fst o dest_var)
-        (List.filter is_new (free_varsl (child_w :: child_asl)))
-  in
-    map names goals
-  end
-
 fun rendered_application tactic node =
   let
     val rendered = clasetGoal.render node 1
   in
     case singleton_result (tactic rendered) of
         NONE => Inapplicable
-      | SOME (result as (goals, validation)) =>
+      | SOME (result as (goals, _)) =>
           if length goals > 1 then Inapplicable
           else
-            case clasetGoal.unrender node 1 result of
+            case aesopTree.rendered_record node rendered result of
                 NONE => Inapplicable
-              | SOME next =>
-                  let
-                    val record =
-                      clasetReplay.make_record
-                        {kind = clasetReplay.Wrapper, target = 1,
-                         consumed = NONE,
-                         created = {terms = [], types = []},
-                         eigenvariables = new_free_names rendered goals,
-                         validation = validation,
-                         action = clasetReplay.fixed_action result,
-                         children = map (fn _ => NONE) goals}
-                  in
-                    Applied {record = record, node = next}
-                  end
+              | SOME (record, next) =>
+                  Applied {record = record, node = next}
   end
 
 fun engine_application step node =
@@ -120,10 +96,6 @@ fun raw_application ({apply, ...} : rule) node =
         rendered_application tactic node
     | aesopRule.MultiStep _ => Inapplicable
 
-fun changed node next =
-  null (clasetGoal.goals next) orelse
-  not (clasetGoal.equal (node, next))
-
 fun application rule node =
   case raw_application rule node of
       Inapplicable => Inapplicable
@@ -131,16 +103,11 @@ fun application rule node =
         if
           new_binding (clasetReplay.created_of record)
             (clasetGoal.store node) (clasetGoal.store next) orelse
-          not (changed node next)
+          not (aesopTree.changed node next)
         then Inapplicable
         else Applied {record = record, node = next}
   handle HOL_ERR _ => Inapplicable
        | Match => Inapplicable
-
-fun make_node (goal as {level, ...} : aesopTree.goal) =
-  clasetGoal.create
-    {goals = [aesopTree.active_cgoal goal],
-     store = aesopTree.active_store goal, level = level}
 
 fun finish id reversed_records iterations node tree =
   let val records = List.rev reversed_records
@@ -196,7 +163,7 @@ fun normalise {max_depth, rules} id tree =
       if aesopTree.is_normalised goal then
         Complete {tree = tree, iterations = 0}
       else
-        scan tree [] 0 (make_node goal) ordered
+        scan tree [] 0 (aesopTree.goal_node goal) ordered
     end
 
 end
