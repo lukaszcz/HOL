@@ -259,6 +259,8 @@ val _ =
            mk_binary synth_div synth_x synth_two
          val atom_division = mk_binary synth_div synth_x synth_y
          val zero_division = mk_binary synth_div synth_x synth_zero
+         val division_relation =
+           mk_binary synth_leq literal_division synth_zero
        in
          (case linarithDecomp.demult
                  (literal_division, Arbrat.one) of
@@ -275,12 +277,24 @@ val _ =
               (SOME atom, multiplier) =>
                 Term.aconv atom zero_division andalso
                 multiplier = Arbrat.one
-            | _ => false)
+            | _ => false) andalso
+         (case linarithDecomp.decomp division_relation of
+              SOME (Decomp {lhs, lhs_const, ...}) =>
+                List.length lhs = 1 andalso
+                coefficient lhs synth_x =
+                  Arbrat./ (Arbrat.one, Arbrat.two) andalso
+                lhs_const = Arbrat.zero
+            | NONE => false)
        end)
 
 val synth_injected = Term.mk_comb (synth_inj, synth_bool_atom)
 val synth_injected_relation =
   mk_binary synth_leq synth_injected synth_zero
+val synth_mixed_product =
+  mk_binary synth_mult synth_injected synth_x
+val synth_scaled_mixed_product =
+  mk_binary synth_mult synth_injected
+    (mk_binary synth_mult synth_x synth_two)
 
 val _ =
   check
@@ -297,6 +311,12 @@ val _ =
                 Arbrat.one) of
             (SOME atom, multiplier) =>
               Term.aconv atom synth_bool_atom andalso
+              multiplier = Arbrat.two
+          | _ => false) andalso
+       (case linarithDecomp.demult
+               (synth_scaled_mixed_product, Arbrat.one) of
+            (SOME atom, multiplier) =>
+              Term.aconv atom synth_mixed_product andalso
               multiplier = Arbrat.two
           | _ => false))
 

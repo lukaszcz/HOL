@@ -66,10 +66,18 @@ fun dest_lit tm =
 fun try_product operator left right =
   Lib.total (fn () => mk_binary operator left right) ()
 
-fun rebuild_product original operator left right =
-  case try_product operator left right of
-      SOME product => product
-    | NONE => original
+fun restore_factor_type original atom =
+  let
+    val original_ty = Term.type_of original
+    val atom_ty = Term.type_of atom
+  in
+    if same_type original_ty atom_ty then SOME atom
+    else
+      case linarithData.injection_for atom_ty original_ty of
+          NONE => NONE
+        | SOME injection =>
+            Lib.total (fn () => Term.mk_comb (#inj injection, atom)) ()
+  end
 
 (* Products are normalized to right-associated form while their literal
    factors are accumulated in the Arbrat multiplier. *)
@@ -103,9 +111,18 @@ fun demult (tm, multiplier) =
                        in
                          case right_atom of
                              SOME right' =>
-                               (SOME
-                                  (rebuild_product tm operator left' right'),
-                                multiplier'')
+                               (case
+                                  (restore_factor_type left left',
+                                   restore_factor_type right right')
+                                of
+                                    (SOME left'', SOME right'') =>
+                                      (case
+                                         try_product operator left'' right''
+                                       of
+                                           SOME product =>
+                                             (SOME product, multiplier'')
+                                         | NONE => (SOME tm, multiplier))
+                                  | _ => (SOME tm, multiplier))
                            | NONE => (SOME left', multiplier'')
                        end
                    | NONE => demult (right, multiplier')
