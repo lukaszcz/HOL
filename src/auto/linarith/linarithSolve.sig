@@ -30,7 +30,7 @@ sig
   type history = (int * lineq list) list
   datatype result = Success of injust | Failure of history
 
-  type linarith_config = {neq_limit : int, split_limit : int}
+  type linarith_config = linarithData.linarith_config
 
   type int_decomp = {
     lhs : (Term.term * Arbint.int) list,

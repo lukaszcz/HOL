@@ -20,7 +20,7 @@ datatype lineq =
 type history = (int * lineq list) list
 datatype result = Success of injust | Failure of history
 
-type linarith_config = {neq_limit : int, split_limit : int}
+type linarith_config = linarithData.linarith_config
 
 (* Relations and negation are structured rather than upstream strings
    (fast_lin_arith.ML:510-541). *)
@@ -183,13 +183,7 @@ fun choose_blowup coeff_lists =
     loop 0 NONE
   end
 
-(* The trace is deliberately looked up lazily.  linarithData registers it in
-   the next layer; this core therefore also compiles and runs on its own. *)
-fun trace msg =
-  ((if Feedback.get_tracefn "linarith" () > 1 then
-      print ("linarith: " ^ msg ^ "\n")
-    else ())
-   handle Feedback.HOL_ERR _ => ())
+fun trace message = linarithData.trace 2 message
 
 fun elim (ineqs, hist) =
   let

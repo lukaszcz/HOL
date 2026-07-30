@@ -13,6 +13,75 @@ fun check (name, predicate) =
 
 fun last xs = hd (rev xs)
 
+val _ =
+  check
+    ("linarith theorem sets initially ship empty",
+     fn () =>
+       null (linarithData.arith_facts ()) andalso
+       null (linarithData.arith_split_thms ()))
+
+val registry_ty = Type.mk_type ("fun", [Type.bool, Type.bool])
+
+fun decline _ = raise Fail "synthetic linarith instance declined"
+
+fun synthetic_instance discrete : linarithData.linarith_instance =
+  {ty = registry_ty,
+   discrete = discrete,
+   dest =
+     {dest_plus = decline,
+      dest_minus = NONE,
+      dest_neg = NONE,
+      dest_mult = decline,
+      dest_div = NONE,
+      dest_suc = NONE,
+      dest_lit = decline,
+      mk_lit = decline,
+      dest_less = decline,
+      dest_leq = decline},
+   kit =
+     {add_mono = [],
+      mult_mono = [],
+      lessD = [],
+      not_less = boolTheory.TRUTH,
+      not_le = boolTheory.TRUTH,
+      neqE = boolTheory.TRUTH,
+      nonneg = (fn _ => NONE)},
+   norm_conv = Conv.ALL_CONV,
+   pre_split = [],
+   divmod_facts = NONE}
+
+val _ = linarithData.register_instance (synthetic_instance false)
+val _ = linarithData.register_instance (synthetic_instance true)
+
+val _ =
+  check
+    ("instance registration replaces an existing same-type entry",
+     fn () =>
+       case linarithData.instance_for registry_ty of
+           SOME instance => #discrete instance
+         | NONE => false)
+
+val bad_split_name =
+  {Thy = "bool", Name = "TRUTH"}
+
+fun bad_split_rejected () =
+  case ThmSetData.data_exportfns {settype = "arith_split"} of
+      NONE => false
+    | SOME export =>
+        ((#add export
+            {thy = "bool",
+             named_thm = (bad_split_name, boolTheory.TRUTH)};
+          false)
+         handle Feedback.HOL_ERR error =>
+           String.isSubstring
+             "Malformed [arith_split] theorem bool$TRUTH"
+             (Feedback.message_of error))
+
+val _ =
+  check
+    ("arith_split rejects a named theorem outside the P-form",
+     bad_split_rejected)
+
 fun first_pivot rows =
   case elim (rows, []) of
       Failure hist => SOME (#1 (last hist))

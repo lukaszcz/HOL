@@ -1,0 +1,60 @@
+Theory linarithRoundTripBase
+Ancestors
+  bool
+Libs
+  linarithData
+
+fun fail message =
+  raise Fail ("linarith round-trip base test: " ^ message)
+
+fun contains theorem theorems =
+  List.exists (fn candidate => aconv (concl candidate) (concl theorem))
+    theorems
+
+Definition arith_round_trip_def:
+  arith_round_trip (p : bool) = p
+End
+
+Theorem arith_round_trip_fact[arith]:
+  !p. arith_round_trip p <=> p
+Proof
+  simp[arith_round_trip_def]
+QED
+
+Definition arith_split_round_trip_def:
+  arith_split_round_trip (p : bool) = p
+End
+
+Theorem arith_split_round_trip_rule[arith_split]:
+  !P p. P (arith_split_round_trip p) <=> P p
+Proof
+  simp[arith_split_round_trip_def]
+QED
+
+val _ =
+  if contains arith_round_trip_fact (linarithData.arith_facts ()) andalso
+     contains arith_split_round_trip_rule
+       (linarithData.arith_split_thms ())
+  then ()
+  else fail "attributes did not immediately update their theorem sets"
+
+Theorem arith_round_trip_removed[arith]:
+  arith_round_trip T
+Proof
+  simp[arith_round_trip_def]
+QED
+
+val removed_name =
+  "linarithRoundTripBase.arith_round_trip_removed"
+val _ = linarithData.remove_arith removed_name
+
+val has_remove_delta =
+  List.exists
+    (fn ThmSetData.REMOVE name => name = removed_name | _ => false)
+    (ThmSetData.current_data {settype = "arith"})
+
+val _ =
+  if has_remove_delta andalso
+     not (contains arith_round_trip_removed (linarithData.arith_facts ()))
+  then ()
+  else fail "remove_arith did not write and apply its REMOVE delta"
