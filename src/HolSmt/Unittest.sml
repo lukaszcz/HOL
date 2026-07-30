@@ -4590,14 +4590,16 @@ let
     SmtLib.LogicFeatures {
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
-      reals = reals, strings = strings, datatypes = false,
+      reals = reals, floating_point = false, strings = strings,
+      datatypes = false,
       nonlinear = nonlinear, higher_order = false}
   fun mk_datatype_features (quantifiers, uninterpreted, arrays, bitvectors,
                             integers, reals, strings, nonlinear) =
     SmtLib.LogicFeatures {
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
-      reals = reals, strings = strings, datatypes = true,
+      reals = reals, floating_point = false, strings = strings,
+      datatypes = true,
       nonlinear = nonlinear, higher_order = false}
   fun expect_features expected (name, feature_tuple) =
     let
@@ -4830,8 +4832,9 @@ fun z3_414_logic_policy_success () =
 let
   fun features arrays = SmtLib.LogicFeatures {
     quantifiers = true, uninterpreted = false, arrays = arrays,
-    bitvectors = false, integers = true, reals = false, strings = false,
-    datatypes = true, nonlinear = false, higher_order = false}
+    bitvectors = false, integers = true, reals = false,
+    floating_point = false, strings = false, datatypes = true,
+    nonlinear = false, higher_order = false}
   fun selection version logic arrays =
     Z3.z3_414_logic_policy version {
       features = features arrays, inferred_logic = logic,
@@ -5142,9 +5145,11 @@ let
   val has_fp_matrix_row =
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
-            smt_theory = "FloatingPoint", translate = false,
-            replay = false, proof_obligation, ...} =>
-            contains "NaN" proof_obligation
+            smt_theory = "FloatingPoint", mode = SmtLib.NativeSMTLIB,
+            translate = true, replay = false, notes,
+            proof_obligation, ...} =>
+            contains "canonical-NaN smtfp" notes andalso
+            contains "correspondence lemmas" proof_obligation
         | _ => false) records
   val has_datatype_matrix_row =
     List.exists
@@ -5724,8 +5729,8 @@ let
     SmtLib.LogicFeatures {
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
-      reals = reals, strings = strings, datatypes = datatypes,
-      nonlinear = nonlinear, higher_order = true}
+      reals = reals, floating_point = false, strings = strings,
+      datatypes = datatypes, nonlinear = nonlinear, higher_order = true}
   fun expect_ho_logic expected name fields =
     let
       val (logic, _) = SmtLib.infer_logic_from_features_with_regime
@@ -6165,6 +6170,46 @@ let
        "(assert (not (= (bvand v0 (_ bv3 8)) " ^
          "(bvor v1 (_ bv1 8)))))\n",
        "(check-sat)\n"]},
+    {name = "fp-literal-and-special",
+     goal = ([],
+       ``(smtfp_bits 0w 3w 4w : (4,3) smtfp) = smtfp_pzero``),
+     body = prelude "QF_BVFP" @ [
+       "(assert (not (= (fp (_ bv0 1) (_ bv3 3) (_ bv4 4)) " ^
+         "(_ +zero 3 5))))\n",
+       "(check-sat)\n"]},
+    {name = "fp-mode-operator-and-sort",
+     goal = ([],
+       ``smtfp_add RNE (x:(4,3) smtfp) (smtfp_neg x) = smtfp_nan``),
+     body = prelude "QF_FP" @ [
+       "(declare-fun v0 () (_ FloatingPoint 3 5))\n",
+       "(assert (not (= (fp.add roundNearestTiesToEven v0 " ^
+         "(fp.neg v0)) (_ NaN 3 5))))\n",
+       "(check-sat)\n"]},
+    {name = "fp-indexed-conversion",
+     goal = ([],
+       ``(smtfp_to_fp RNA (x:(4,3) smtfp) : (7,5) smtfp) =
+         smtfp_ninf``),
+     body = prelude "QF_FP" @ [
+       "(declare-fun v0 () (_ FloatingPoint 3 5))\n",
+       "(assert (not (= ((_ to_fp 5 8) roundNearestTiesToAway v0) " ^
+         "(_ -oo 5 8))))\n",
+       "(check-sat)\n"]},
+    {name = "fp-long-directed-modes",
+     goal = ([],
+       ``smtfp_add RTP (x:(4,3) smtfp) x =
+         smtfp_sub RTN (smtfp_sqrt RTZ x) x``),
+     body = prelude "QF_FP" @ [
+       "(declare-fun v0 () (_ FloatingPoint 3 5))\n",
+       "(assert (not (= (fp.add roundTowardPositive v0 v0) " ^
+         "(fp.sub roundTowardNegative " ^
+         "(fp.sqrt roundTowardZero v0) v0))))\n",
+       "(check-sat)\n"]},
+    {name = "fp-remaining-specials",
+     goal = ([],
+       ``(smtfp_nzero:(4,3) smtfp) = smtfp_pinf``),
+     body = prelude "QF_FP" @ [
+       "(assert (not (= (_ -zero 3 5) (_ +oo 3 5))))\n",
+       "(check-sat)\n"]},
     {name = "native-string-concat",
      goal = ([],
        ``smtstring$smtstr_concat
@@ -6235,6 +6280,158 @@ let
   ]
 in
   List.app check cases
+end
+
+fun smtlib_fp_outbound_translation_success () =
+let
+  fun translate tm =
+    SmtLib.goal_to_SmtLib_translation NONE ([], tm)
+  fun text_of tm = String.concat (Lib.snd (translate tm))
+  fun expect_logic expected tm =
+    let val (translation, _) = translate tm in
+      assert (SmtLib.translation_logic translation = expected,
+        "FP outbound logic expected " ^ expected ^ ", got " ^
+        SmtLib.translation_logic translation)
+    end
+  fun expect_snippets (name, tm, snippets) =
+    let val text = text_of tm in
+      List.app
+        (fn snippet => assert (contains snippet text,
+          "FP outbound case '" ^ name ^ "' missed '" ^ snippet ^
+          "'\nSMT-LIB:\n" ^ text))
+        snippets
+    end
+  fun emitted_assertion strings =
+    case List.mapPartial assert_body strings of
+      [body] => body
+    | _ => die "FAIL: FP outbound round-trip expected one assertion"
+  fun expect_roundtrip (name, tm) =
+    let
+      val (translation, strings) = translate tm
+      val dictionaries = SmtLib.parser_dicts_for_translation translation
+      val parsed = parse_roundtrip_term name (emitted_assertion strings)
+        dictionaries
+      val expected = boolSyntax.mk_neg tm
+    in
+      assert (Term.aconv parsed expected,
+        "FP outbound round-trip changed the HOL term for '" ^ name ^ "'")
+    end
+  fun fp_features {quantifiers, uninterpreted, arrays, bitvectors, reals} =
+    SmtLib.LogicFeatures {
+      quantifiers = quantifiers, uninterpreted = uninterpreted,
+      arrays = arrays, bitvectors = bitvectors, integers = false,
+      reals = reals, floating_point = true, strings = false,
+      datatypes = false, nonlinear = false, higher_order = false}
+  fun expect_feature_logic expected fields =
+    let
+      val (actual, _) =
+        SmtLib.infer_logic_from_features (fp_features fields)
+    in
+      assert (actual = expected,
+        "FP feature inference expected " ^ expected ^ ", got " ^ actual)
+    end
+  val x = ``x:(4,3) smtfp``
+  val y = ``y:(4,3) smtfp``
+  val z = ``z:(4,3) smtfp``
+  val direct_cases = [
+    ("rounding-sort", ``(rm:smt_rounding) = RNE``,
+      ["(declare-fun v0 () RoundingMode)", "roundNearestTiesToEven"]),
+    ("arithmetic", ``smtfp_add RNE ^x ^y = smtfp_sub RNA ^y ^x``,
+      ["fp.add", "fp.sub", "roundNearestTiesToEven",
+       "roundNearestTiesToAway"]),
+    ("multiply-divide-fma", ``smtfp_mul RTP ^x ^y =
+       smtfp_div RTN (smtfp_fma RTZ ^x ^y ^z) ^z``,
+      ["fp.mul", "fp.div", "fp.fma", "roundTowardPositive",
+       "roundTowardNegative", "roundTowardZero"]),
+    ("sqrt-round-rem", ``smtfp_sqrt RNE ^x =
+       smtfp_round_to_integral RNA (smtfp_rem ^x ^y)``,
+      ["fp.sqrt", "fp.roundToIntegral", "fp.rem"]),
+    ("min-max-abs-neg", ``smtfp_min (smtfp_abs ^x) ^y =
+       smtfp_max (smtfp_neg ^x) ^y``,
+      ["fp.min", "fp.max", "fp.abs", "fp.neg"]),
+    ("comparisons", ``smtfp_le ^x ^y /\ smtfp_lt ^x ^y /\
+       smtfp_ge ^y ^x /\ smtfp_gt ^y ^x /\ smtfp_eq ^x ^y``,
+      ["fp.leq", "fp.lt", "fp.geq", "fp.gt", "fp.eq"]),
+    ("classifiers", ``smtfp_is_normal ^x /\ smtfp_is_subnormal ^x /\
+       smtfp_is_zero ^x /\ smtfp_is_infinite ^x /\ smtfp_is_nan ^x /\
+       smtfp_is_negative ^x /\ smtfp_is_positive ^x``,
+      ["fp.isNormal", "fp.isSubnormal", "fp.isZero", "fp.isInfinite",
+       "fp.isNaN", "fp.isNegative", "fp.isPositive"]),
+    ("specials", ``(smtfp_pzero:(4,3) smtfp) = smtfp_nzero /\
+       (smtfp_pinf:(4,3) smtfp) = smtfp_ninf /\
+       (smtfp_nan:(4,3) smtfp) = smtfp_nan``,
+      ["(_ +zero 3 5)", "(_ -zero 3 5)", "(_ +oo 3 5)",
+       "(_ -oo 3 5)", "(_ NaN 3 5)"]),
+    ("from-conversions", ``
+       smtfp_from_ieee_bv (0w:(1 + (3 + 4)) word) = ^x /\
+       (smtfp_to_fp RNE ^x : (7,5) smtfp) = smtfp_nan /\
+       (smtfp_from_real RNA 1r : (4,3) smtfp) = ^x /\
+       (smtfp_from_sbv RTP (1w:word8) : (4,3) smtfp) = ^x /\
+       (smtfp_from_ubv RTN (1w:word8) : (4,3) smtfp) = ^x``,
+      ["((_ to_fp 3 5) (_ bv0 8))", "((_ to_fp 5 8)",
+       "((_ to_fp 3 5) roundNearestTiesToAway 1.0)",
+       "((_ to_fp 3 5) roundTowardPositive (_ bv1 8))",
+       "((_ to_fp_unsigned 3 5) roundTowardNegative (_ bv1 8))"]),
+    ("to-conversions", ``
+       (smtfp_to_ubv RNE ^x : word8) = 0w /\
+       (smtfp_to_sbv RTZ ^x : word9) = 1w /\
+       smtfp_to_real ^x = 1r``,
+      ["((_ fp.to_ubv 8)", "((_ fp.to_sbv 9)", "fp.to_real"])
+  ]
+  val literal = ``(smtfp_bits 0w 3w 4w : (4,3) smtfp) = smtfp_pzero``
+  val mixed_real_bv = ``
+    (smtfp_from_real RNE 1r : (4,3) smtfp) =
+      smtfp_bits 0w 3w 0w``
+  val raw_float = ``(a:(4,3) binary_ieee$float) = b``
+  val raw_float_text = text_of raw_float
+  val roundtrip_cases = [literal,
+    ``smtfp_add RNA ^x ^y = smtfp_mul RTZ ^y ^x``,
+    ``(smtfp_to_fp RTP ^x : (7,5) smtfp) = smtfp_ninf``,
+    ``(smtfp_to_sbv RTN ^x : word9) = 3w``]
+in
+  List.app expect_snippets direct_cases;
+  List.app (fn tm => expect_roundtrip (Hol_pp.term_to_string tm, tm))
+    roundtrip_cases;
+  expect_logic "QF_FP" ``(^x = ^y)``;
+  expect_logic "QF_BVFP" literal;
+  expect_logic "QF_FPLRA"
+    ``(smtfp_from_real RNE 1r : (4,3) smtfp) = ^x``;
+  expect_logic "QF_BVFPLRA" mixed_real_bv;
+  expect_logic "FP" ``!a:(4,3) smtfp. a = a``;
+  expect_logic "QF_UFFP" ``smtfp_unordered ^x ^y``;
+  expect_logic "QF_ABVFP"
+    ``(f:(4,3) smtfp -> (4,3) smtfp) ^x = ^x``;
+  expect_logic "QF_AUFBVFP"
+    ``(f:(4,3) smtfp -> (4,3) smtfp) ^x = ^x /\
+      smtfp_unordered ^x ^y``;
+  expect_logic "ALL"
+    ``(xs:(4,3) smtfp list) = ys``;
+  List.app (Lib.uncurry expect_feature_logic) [
+    ("QF_FP", {quantifiers = false, uninterpreted = false,
+      arrays = false, bitvectors = false, reals = false}),
+    ("FP", {quantifiers = true, uninterpreted = false,
+      arrays = false, bitvectors = false, reals = false}),
+    ("QF_BVFP", {quantifiers = false, uninterpreted = false,
+      arrays = false, bitvectors = true, reals = false}),
+    ("QF_FPLRA", {quantifiers = false, uninterpreted = false,
+      arrays = false, bitvectors = false, reals = true}),
+    ("QF_BVFPLRA", {quantifiers = false, uninterpreted = false,
+      arrays = false, bitvectors = true, reals = true}),
+    ("QF_UFFP", {quantifiers = false, uninterpreted = true,
+      arrays = false, bitvectors = false, reals = false}),
+    ("QF_UFBVFP", {quantifiers = false, uninterpreted = true,
+      arrays = false, bitvectors = true, reals = false}),
+    ("QF_ABVFP", {quantifiers = false, uninterpreted = false,
+      arrays = true, bitvectors = false, reals = false}),
+    ("QF_ABVFPLRA", {quantifiers = false, uninterpreted = false,
+      arrays = true, bitvectors = false, reals = true}),
+    ("QF_AUFBVFP", {quantifiers = false, uninterpreted = true,
+      arrays = true, bitvectors = false, reals = false}),
+    ("ALL", {quantifiers = false, uninterpreted = true,
+      arrays = false, bitvectors = false, reals = true})];
+  assert (not (contains "FloatingPoint" raw_float_text) andalso
+      not (contains "RoundingMode" raw_float_text),
+    "raw binary_ieee float was mapped to the SMT FloatingPoint surface")
 end
 
 fun smtlib_translation_shape_matrix_success () =
@@ -9991,6 +10188,8 @@ let
       smtlib_z3_lambda_array_translation_success),
     ("smtlib_fo_emission_golden_success",
       smtlib_fo_emission_golden_success),
+    ("smtlib_fp_outbound_translation_success",
+      smtlib_fp_outbound_translation_success),
     ("smtlib_translation_shape_matrix_success",
       smtlib_translation_shape_matrix_success),
     ("smtlib_term_translation_branch_matrix_success",

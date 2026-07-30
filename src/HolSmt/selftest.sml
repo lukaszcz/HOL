@@ -1692,6 +1692,11 @@ in
     (``x IN P INTER (Q INTER R) <=> x IN (P INTER Q) INTER R``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
+    (* Native smtfp reaches the official FP surface; the oracle path checks
+       the emitted benchmark with a supported Z3 4.x. *)
+    (``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``,
+      [thm_Z3_v4]),
+
     (* prove that `ediv` and `emod` match Boute's Euclidean definition, i.e.
        that they match SMT-LIB's `Ints` theory's definition of integer div and
        mod *)

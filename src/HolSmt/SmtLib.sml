@@ -11,6 +11,7 @@ datatype logic_features = LogicFeatures of {
   bitvectors : bool,
   integers : bool,
   reals : bool,
+  floating_point : bool,
   strings : bool,
   datatypes : bool,
   nonlinear : bool,
@@ -78,9 +79,53 @@ local
     Type.mk_thy_type {Thy = "smtstring", Tyop = "reglan", Args = []}
   val smtstr_ty =
     Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+  val smtfp_ty =
+    Type.mk_thy_type {
+      Thy = "smtfloat", Tyop = "smtfp", Args = [Type.alpha, Type.beta]}
+  val smt_rounding_ty =
+    Type.mk_thy_type {
+      Thy = "smtfloat", Tyop = "smt_rounding", Args = []}
 
   fun smtstring_const name =
     Term.prim_mk_const {Thy = "smtstring", Name = name}
+
+  fun numeric_type_width ty = fcpSyntax.dest_numeric_type ty
+
+  fun smtfp_format ty =
+    let
+      val {Thy, Tyop, Args, ...} = Type.dest_thy_type ty
+      val (significand_ty, exponent_ty) =
+        case Args of
+          [significand_ty, exponent_ty] =>
+            (significand_ty, exponent_ty)
+        | _ => raise ERR "smtfp_format" "smtfp must have two type arguments"
+      val _ =
+        if Thy = "smtfloat" andalso Tyop = "smtfp" then ()
+        else raise ERR "smtfp_format" "not an smtfp type"
+      val eb = numeric_type_width exponent_ty
+      val sb = Arbnum.plus1 (numeric_type_width significand_ty)
+      val two = Arbnum.fromInt 2
+      val _ =
+        if Arbnum.compare (eb, two) = LESS then
+          raise ERR "smtfp_format"
+            "exponent width eb must be at least 2"
+        else
+          ()
+      val _ =
+        if Arbnum.compare (sb, two) = LESS then
+          raise ERR "smtfp_format"
+            "significand width sb must be at least 2"
+        else
+          ()
+    in
+      (eb, sb)
+    end
+
+  fun smtfp_sort ty =
+    let val (eb, sb) = smtfp_format ty in
+      "(_ FloatingPoint " ^ Arbnum.toString eb ^ " " ^
+      Arbnum.toString sb ^ ")"
+    end
 
   (* (HOL type, a function that maps the type to its SMT-LIB sort name) *)
   val builtin_types = List.foldl
@@ -93,6 +138,10 @@ local
        HOL_STRING_TO_SMT_CONV produces, and those have type smtstr. *)
     (smtstr_ty, Lib.K "String"),
     (reglan_ty, Lib.K "(RegLan String)"),
+    (* The canonical-NaN subtype has exactly the SMT FloatingPoint universe.
+       Raw binary_ieee float records deliberately have no entry here. *)
+    (smtfp_ty, smtfp_sort),
+    (smt_rounding_ty, Lib.K "RoundingMode"),
     (* bit-vector types *)
     (wordsSyntax.mk_word_type Type.alpha, fn ty =>
       "(_ BitVec " ^ Arbnum.toString
@@ -107,6 +156,67 @@ local
   val smtstr_prefixof_tm = smtstring_const "smtstr_prefixof"
   val smtstr_lt_tm = smtstring_const "smtstr_lt"
   val smtstr_le_tm = smtstring_const "smtstr_le"
+
+  fun smtfloat_const name =
+    Term.prim_mk_const {Thy = "smtfloat", Name = name}
+
+  type native_fp_info = {
+    hol_name : string,
+    smt_name : string
+  }
+
+  val native_fp_infos : native_fp_info list = [
+    {hol_name = "RNE", smt_name = "roundNearestTiesToEven"},
+    {hol_name = "RNA", smt_name = "roundNearestTiesToAway"},
+    {hol_name = "RTP", smt_name = "roundTowardPositive"},
+    {hol_name = "RTN", smt_name = "roundTowardNegative"},
+    {hol_name = "RTZ", smt_name = "roundTowardZero"},
+    {hol_name = "smtfp_bits", smt_name = "fp"},
+    {hol_name = "smtfp_add", smt_name = "fp.add"},
+    {hol_name = "smtfp_sub", smt_name = "fp.sub"},
+    {hol_name = "smtfp_mul", smt_name = "fp.mul"},
+    {hol_name = "smtfp_div", smt_name = "fp.div"},
+    {hol_name = "smtfp_fma", smt_name = "fp.fma"},
+    {hol_name = "smtfp_sqrt", smt_name = "fp.sqrt"},
+    {hol_name = "smtfp_round_to_integral",
+     smt_name = "fp.roundToIntegral"},
+    {hol_name = "smtfp_rem", smt_name = "fp.rem"},
+    {hol_name = "smtfp_min", smt_name = "fp.min"},
+    {hol_name = "smtfp_max", smt_name = "fp.max"},
+    {hol_name = "smtfp_abs", smt_name = "fp.abs"},
+    {hol_name = "smtfp_neg", smt_name = "fp.neg"},
+    {hol_name = "smtfp_le", smt_name = "fp.leq"},
+    {hol_name = "smtfp_lt", smt_name = "fp.lt"},
+    {hol_name = "smtfp_ge", smt_name = "fp.geq"},
+    {hol_name = "smtfp_gt", smt_name = "fp.gt"},
+    {hol_name = "smtfp_eq", smt_name = "fp.eq"},
+    {hol_name = "smtfp_is_normal", smt_name = "fp.isNormal"},
+    {hol_name = "smtfp_is_subnormal", smt_name = "fp.isSubnormal"},
+    {hol_name = "smtfp_is_zero", smt_name = "fp.isZero"},
+    {hol_name = "smtfp_is_infinite", smt_name = "fp.isInfinite"},
+    {hol_name = "smtfp_is_nan", smt_name = "fp.isNaN"},
+    {hol_name = "smtfp_is_negative", smt_name = "fp.isNegative"},
+    {hol_name = "smtfp_is_positive", smt_name = "fp.isPositive"},
+    {hol_name = "smtfp_to_real", smt_name = "fp.to_real"}
+  ]
+
+  val native_fp_special_infos : native_fp_info list = [
+    {hol_name = "smtfp_pzero", smt_name = "+zero"},
+    {hol_name = "smtfp_nzero", smt_name = "-zero"},
+    {hol_name = "smtfp_pinf", smt_name = "+oo"},
+    {hol_name = "smtfp_ninf", smt_name = "-oo"},
+    {hol_name = "smtfp_nan", smt_name = "NaN"}
+  ]
+
+  val native_fp_conversion_names = [
+    "smtfp_from_ieee_bv", "smtfp_to_fp", "smtfp_from_real",
+    "smtfp_from_sbv", "smtfp_from_ubv", "smtfp_to_ubv",
+    "smtfp_to_sbv"
+  ]
+
+  val native_fp_names =
+    List.map #hol_name (native_fp_infos @ native_fp_special_infos) @
+    native_fp_conversion_names
 
   type native_string_info = {
     hol_name : string,
@@ -307,6 +417,52 @@ local
          | "reglan_loop" => indexed_loop_encoding
          | _ => apfst_K smt_name))
       native_string_infos
+
+  fun instantiated_result_type tm =
+    Lib.snd (boolSyntax.strip_fun (Term.type_of tm))
+
+  fun indexed_fp_name operator tm =
+    let val (eb, sb) = smtfp_format (instantiated_result_type tm) in
+      "(_ " ^ operator ^ " " ^ Arbnum.toString eb ^ " " ^
+      Arbnum.toString sb ^ ")"
+    end
+
+  fun fp_special_encoding name (tm, args) =
+    if List.null args then
+      (indexed_fp_name name tm, [])
+    else
+      raise ERR "fp_special_encoding"
+        "floating-point special takes no arguments"
+
+  fun fp_target_encoding operator (tm, args) =
+    (indexed_fp_name operator tm, args)
+
+  fun fp_to_bv_encoding operator (tm, args) =
+    let
+      val result_ty = instantiated_result_type tm
+      val width = numeric_type_width (wordsSyntax.dest_word_type result_ty)
+    in
+      ("(_ " ^ operator ^ " " ^ Arbnum.toString width ^ ")", args)
+    end
+
+  val native_fp_encodings : (Term.term * builtin_encoding) list =
+    List.map
+      (fn {hol_name, smt_name} : native_fp_info =>
+        (smtfloat_const hol_name, apfst_K smt_name))
+      native_fp_infos @
+    List.map
+      (fn {hol_name, smt_name} : native_fp_info =>
+        (smtfloat_const hol_name, fp_special_encoding smt_name))
+      native_fp_special_infos @ [
+    (smtfloat_const "smtfp_from_ieee_bv", fp_target_encoding "to_fp"),
+    (smtfloat_const "smtfp_to_fp", fp_target_encoding "to_fp"),
+    (smtfloat_const "smtfp_from_real", fp_target_encoding "to_fp"),
+    (smtfloat_const "smtfp_from_sbv", fp_target_encoding "to_fp"),
+    (smtfloat_const "smtfp_from_ubv",
+      fp_target_encoding "to_fp_unsigned"),
+    (smtfloat_const "smtfp_to_ubv", fp_to_bv_encoding "fp.to_ubv"),
+    (smtfloat_const "smtfp_to_sbv", fp_to_bv_encoding "fp.to_sbv")
+  ]
 
   val builtin_symbol_encodings = [
     (* Core *)
@@ -587,7 +743,7 @@ local
     (wordsSyntax.word_le_tm, apfst_fixed_width "bvsle"),
     (wordsSyntax.word_gt_tm, apfst_fixed_width "bvsgt"),
     (wordsSyntax.word_ge_tm, apfst_fixed_width "bvsge")
-  ] @ native_string_encodings
+  ] @ native_fp_encodings @ native_string_encodings
 
   val builtin_symbols =
     List.foldl (Lib.uncurry Net.insert) Net.empty builtin_symbol_encodings
@@ -677,6 +833,20 @@ local
   val type_contains_word = Library.type_contains_word
   val type_contains_int = Library.type_contains_int
   val type_contains_real = Library.type_contains_real
+  fun type_has_name thy tyop ty =
+    let val {Thy, Tyop, ...} = Type.dest_thy_type ty in
+      Thy = thy andalso Tyop = tyop
+    end
+    handle Feedback.HOL_ERR _ => false
+  fun type_is_smtfp ty =
+    type_has_name "smtfloat" "smtfp" ty orelse
+    type_has_name "smtfloat" "smt_rounding" ty
+  fun type_is_binary_ieee_float ty =
+    type_has_name "binary_ieee" "float" ty
+  fun type_contains_fp ty =
+    type_is_smtfp ty orelse
+    (List.exists type_contains_fp (Lib.snd (Type.dest_type ty))
+      handle Feedback.HOL_ERR _ => false)
   (* smtstr only, which is exactly the set of types that 'builtin_types' maps
      to the SMT-LIB String sort; HOL's :string is an ordinary HOL type here. *)
   val type_contains_string = Library.type_contains_string
@@ -737,6 +907,15 @@ local
 
   fun is_string_const tm =
     same_const str_inj_tm tm orelse is_native_string_const tm
+
+  fun is_fp_const tm =
+    if Term.is_const tm then
+      let val {Thy, Name, ...} = Term.dest_thy_const tm in
+        Thy = "smtfloat" andalso
+        List.exists (fn name => name = Name) native_fp_names
+      end
+    else
+      false
 
   fun native_string_literal tm =
     let
@@ -812,7 +991,7 @@ local
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      strings, datatypes, nonlinear, higher_order}) =
+      floating_point, strings, datatypes, nonlinear, higher_order}) =
     String.concatWith "," (List.map Lib.fst (List.filter Lib.snd [
       ("quantifiers", quantifiers),
       ("uninterpreted", uninterpreted),
@@ -820,6 +999,7 @@ local
       ("bitvectors", bitvectors),
       ("integers", integers),
       ("reals", reals),
+      ("floating-point", floating_point),
       ("strings", strings),
       ("datatypes", datatypes),
       ("nonlinear", nonlinear),
@@ -829,7 +1009,7 @@ local
   fun infer_logic_from_features_for_regime regime
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      strings, datatypes, nonlinear, higher_order}) =
+      floating_point, strings, datatypes, nonlinear, higher_order}) =
     let
       val qf = if quantifiers then "" else "QF_"
       fun datatype_arith_logic () =
@@ -921,8 +1101,26 @@ local
           "AUFBVDT"
         else
           "UFBVDT"
+      fun floating_point_logic () =
+        if strings orelse datatypes orelse integers orelse nonlinear then
+          "ALL"
+        else if reals andalso uninterpreted then
+          (* SMT-LIB has no UFFPLRA or AUFBVFPLRA packet. *)
+          "ALL"
+        else if arrays then
+          if reals then qf ^ "ABVFPLRA"
+          else if uninterpreted then qf ^ "AUFBVFP"
+          else qf ^ "ABVFP"
+        else if reals then
+          qf ^ (if bitvectors then "BVFPLRA" else "FPLRA")
+        else if uninterpreted then
+          qf ^ (if bitvectors then "UFBVFP" else "UFFP")
+        else
+          qf ^ (if bitvectors then "BVFP" else "FP")
       val logic =
-        if strings then
+        if floating_point then
+          floating_point_logic ()
+        else if strings then
           (* RegLan and dedicated smtstring symbols are classified as the
              UnicodeStrings feature, not as HOL datatypes or UFs.  Only
              genuinely orthogonal theories force the conservative fallback. *)
@@ -934,7 +1132,6 @@ local
           else
             "QF_S"
         else if bitvectors then
-          (* Phase 5 will refine FloatingPoint/BV-family combinations. *)
           if datatypes then
             bitvector_datatype_logic ()
           else if integers orelse reals orelse quantifiers then
@@ -1001,7 +1198,8 @@ local
     end
 
   val smt_reserved_type_names = [
-    "Bool", "Int", "Real", "String", "Array", "BitVec"
+    "Bool", "Int", "Real", "String", "RoundingMode", "FloatingPoint",
+    "Float16", "Float32", "Float64", "Float128", "Array", "BitVec"
   ]
 
   val smt_reserved_term_names = [
@@ -1091,7 +1289,8 @@ local
      emitted symbol ever inspects; it stays an opaque sort instead. *)
   fun datatype_translation_excluded ty =
     same_type (ty, numSyntax.num) orelse
-    same_type (ty, stringSyntax.string_ty)
+    same_type (ty, stringSyntax.string_ty) orelse
+    type_is_binary_ieee_float ty
 
   fun predicate_domain_type pred =
     let
@@ -1310,6 +1509,10 @@ local
         subterm_types type_contains_real orelse
         List.exists (fn tm => is_real_arith_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val floating_point =
+        subterm_types type_contains_fp orelse
+        List.exists (fn tm => is_fp_const
+          (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val strings =
         subterm_types type_contains_string orelse
         subterm_types
@@ -1414,8 +1617,9 @@ local
     in
       LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
-        reals = reals, strings = strings, datatypes = datatypes,
-        nonlinear = nonlinear, higher_order = higher_order}
+        reals = reals, floating_point = floating_point, strings = strings,
+        datatypes = datatypes, nonlinear = nonlinear,
+        higher_order = higher_order}
     end
 
   fun advanced_encoding_records regime terms =
@@ -1471,17 +1675,21 @@ local
         }
       val fp_record =
         HOLTheoryEncoding {
-          feature = "HOL floating point",
+          feature = "SMT floating point and raw HOL binary_ieee",
           smt_theory = "FloatingPoint",
-          mode = ConservativeEmbedding,
+          mode = NativeSMTLIB,
           parse = true,
           typecheck = true,
-          translate = false,
+          translate = true,
           replay = false,
           notes =
-            "SMT-LIB floating-point symbols are parsed/typechecked; HOL binary_ieee terms are not translated to native FloatingPoint.",
+            "The canonical-NaN smtfp carrier and its native operators are " ^
+            "emitted as SMT-LIB FloatingPoint.  Raw binary_ieee float " ^
+            "records have no native sort mapping and remain uninterpreted.",
           proof_obligation =
-            "A checked soundness argument must audit NaN, infinities, signed zero, rounding modes, and underspecified conversions before replay support."
+            "The exact smtfp carrier justifies native sort equality.  " ^
+            "Checked replay and any future raw binary_ieee transfer require " ^
+            "proved operator correspondence lemmas."
         }
       val z3_ext_record =
         HOLTheoryEncoding {
