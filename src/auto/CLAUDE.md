@@ -60,9 +60,11 @@ Phased subtree layout:
     blast/       tableau prover (Paulson's blast)
     clasimp/     AUTO/FORCE/FASTFORCE/CLARSIMP, [iff]
     aesop/       best-first engine (aesop-style)
-    linarith/    generic linear arith, ARITH_TAC registry
-    presburger/  PRESBURGER_TAC front end (Omega first, Cooper fallback)
-    algebra/     instance registry, ALGEBRA_TAC/RING_TAC (Gröbner)
+    linarith/    generic linear arith, `LINARITH_TAC` (D55: no registry)
+
+`linarith/` contains the pre-boss core and num instance.  Its
+`instances/` subdirectory contains the int, real and rat instances and
+belongs to the parallel build band.
 
 ### Constraints that are easy to violate
 
@@ -70,7 +72,9 @@ Phased subtree layout:
   libraries built before `src/boss` (`portableML`, `src/1`,
   `src/parse`, `src/marker`, `src/basicProof`); `rules/` must not
   depend on `src/simp`.  This keeps eventual promotion into the core
-  build a sequence edit only.
+  build a sequence edit only.  The sole exception under `src/auto` is
+  `linarith/instances/`, whose post-boss `INCLUDES` provide the int,
+  real and rat instances.
 - **Portability**: the build entry is not `[poly]`-tagged — code must
   be Moscow-ML-compatible SML (no Poly/ML-isms).
 - **No goal metavariables in HOL4**: safe steps run as genuine tactics
