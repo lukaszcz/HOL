@@ -803,6 +803,63 @@ in
          (smtfp_bits 1w 15w 4w : (3,5) smtfp) : word8) = 255w``)]
 end
 
+fun native_float_to_smt_conversion_success () =
+let
+  val input =
+    ``float_less_than
+        (SND (float_add roundTiesToEven
+          (x:(4,3) binary_ieee$float) y))
+        (float_abs z) /\
+      float_is_nan (float_negate x)``
+  val expected =
+    ``smtfp_lt
+        (smtfp_add RNE
+          (smtfp_intro (x:(4,3) binary_ieee$float))
+          (smtfp_intro (y:(4,3) binary_ieee$float)))
+        (smtfp_abs (smtfp_intro (z:(4,3) binary_ieee$float))) /\
+      smtfp_is_nan (smtfp_neg (smtfp_intro x))``
+  val thm = SmtLib.NATIVE_FLOAT_TO_SMT_CONV input
+  val quantified_input =
+    ``!x:(4,3) binary_ieee$float. float_less_equal x x``
+  val quantified_expected =
+    ``!x:(4,3) smtfp. smtfp_le x x``
+  val quantified_thm = SmtLib.NATIVE_FLOAT_TO_SMT_CONV quantified_input
+  val existential_input =
+    ``?x:(4,3) binary_ieee$float. float_unordered x y``
+  val existential_expected =
+    ``?x:(4,3) smtfp.
+        smtfp_is_nan x \/
+        smtfp_is_nan (smtfp_intro (y:(4,3) binary_ieee$float))``
+  val existential_thm = SmtLib.NATIVE_FLOAT_TO_SMT_CONV existential_input
+  val expected_surface = [
+    "float record constructor", "universal float binder",
+    "existential float binder", "float_plus_zero", "float_minus_zero",
+    "float_plus_infinity", "float_minus_infinity", "float_some_qnan",
+    "float_is_nan", "float_is_infinite", "float_is_normal",
+    "float_is_subnormal", "float_is_zero", "negative sign predicate",
+    "positive sign predicate", "float_abs", "float_negate",
+    "float_less_than", "float_less_equal", "float_greater_than",
+    "float_greater_equal", "float_equal", "float_unordered", "float_add",
+    "float_sub", "float_mul", "float_div", "float_sqrt", "float_mul_add"
+  ]
+in
+  assert_no_hyps ("NATIVE_FLOAT_TO_SMT_CONV", thm);
+  assert_concl_alpha
+    ("NATIVE_FLOAT_TO_SMT_CONV", thm, boolSyntax.mk_eq (input, expected));
+  assert_no_hyps ("quantified NATIVE_FLOAT_TO_SMT_CONV", quantified_thm);
+  assert_concl_alpha
+    ("quantified NATIVE_FLOAT_TO_SMT_CONV", quantified_thm,
+     boolSyntax.mk_eq (quantified_input, quantified_expected));
+  assert_no_hyps ("existential NATIVE_FLOAT_TO_SMT_CONV", existential_thm);
+  assert_concl_alpha
+    ("existential NATIVE_FLOAT_TO_SMT_CONV", existential_thm,
+     boolSyntax.mk_eq (existential_input, existential_expected));
+  List.app (Library.check_oracle_tags "native float transfer theorem")
+    SmtLib.native_float_transfer_theorems;
+  assert (SmtLib.native_float_transfer_surface = expected_surface,
+    "native float transfer coverage list changed without updating its pin")
+end
+
 fun hol_string_to_smt_conversion_success () =
 let
   val input =
@@ -5149,7 +5206,8 @@ let
             translate = true, replay = false, notes,
             proof_obligation, ...} =>
             contains "canonical-NaN smtfp" notes andalso
-            contains "correspondence lemmas" proof_obligation
+            contains "native_float_transfer_infos" proof_obligation andalso
+            contains "TASK_24" proof_obligation
         | _ => false) records
   val has_datatype_matrix_row =
     List.exists
@@ -6382,8 +6440,22 @@ let
   val mixed_real_bv = ``
     (smtfp_from_real RNE 1r : (4,3) smtfp) =
       smtfp_bits 0w 3w 0w``
+  fun preprocessed_text tm =
+    let
+      val (goal, _) = SolverSpec.simplify (SmtLib.SIMP_TAC true) ([], tm)
+    in
+      String.concat (Lib.snd (SmtLib.goal_to_SmtLib_translation NONE goal))
+    end
   val raw_float = ``(a:(4,3) binary_ieee$float) = b``
-  val raw_float_text = text_of raw_float
+  val raw_float_text = preprocessed_text raw_float
+  val transferred_native =
+    ``float_less_than
+        (SND (float_add roundTiesToEven
+          (a:(4,3) binary_ieee$float) b)) a``
+  val transferred_text = preprocessed_text transferred_native
+  val quantified_native =
+    ``!a:(4,3) binary_ieee$float. float_less_equal a a``
+  val quantified_native_text = preprocessed_text quantified_native
   val roundtrip_cases = [literal,
     ``smtfp_add RNA ^x ^y = smtfp_mul RTZ ^y ^x``,
     ``(smtfp_to_fp RTP ^x : (7,5) smtfp) = smtfp_ninf``,
@@ -6429,9 +6501,29 @@ in
       arrays = true, bitvectors = false, reals = false}),
     ("ALL", {quantifiers = false, uninterpreted = true,
       arrays = false, bitvectors = false, reals = true})];
+  assert (contains "(declare-sort t0 0)" raw_float_text andalso
+      contains "(declare-fun v0 () t0)" raw_float_text andalso
+      contains "(declare-fun v1 () t0)" raw_float_text andalso
+      contains "(assert (not (= v0 v1)))" raw_float_text,
+    "raw float equality did not take the pinned uninterpreted-sort path:\n" ^
+    raw_float_text);
   assert (not (contains "FloatingPoint" raw_float_text) andalso
-      not (contains "RoundingMode" raw_float_text),
-    "raw binary_ieee float was mapped to the SMT FloatingPoint surface")
+      not (contains "RoundingMode" raw_float_text) andalso
+      not (contains "fp." raw_float_text),
+    "raw binary_ieee float was mapped to the SMT FloatingPoint surface");
+  assert (contains "(declare-fun v0 () (_ FloatingPoint 3 5))"
+        transferred_text andalso
+      contains "(fp.lt (fp.add roundNearestTiesToEven v0 v1) v0)"
+        transferred_text andalso
+      not (contains "declare-sort" transferred_text),
+    "transferred native float did not reach SMT-LIB as pure smtfp:\n" ^
+    transferred_text);
+  assert (contains
+        "(forall ((b0 (_ FloatingPoint 3 5))) (fp.leq b0 b0))"
+        quantified_native_text andalso
+      not (contains "declare-sort" quantified_native_text),
+    "quantified native float did not transfer its binder to smtfp:\n" ^
+    quantified_native_text)
 end
 
 fun smtlib_translation_shape_matrix_success () =
@@ -9983,6 +10075,8 @@ let
       num_binder_relativization_non_num_noop_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),
+    ("native_float_to_smt_conversion_success",
+      native_float_to_smt_conversion_success),
     ("hol_string_to_smt_conversion_success",
       hol_string_to_smt_conversion_success),
     ("smtfp_carrier_universe_direction_success",

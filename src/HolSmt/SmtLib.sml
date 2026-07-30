@@ -151,6 +151,8 @@ local
   val apfst_K = Lib.apfst o Lib.K
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
   val str_inj_tm = smtstring_const "str_inj"
+  val smtfp_intro_tm =
+    Term.prim_mk_const {Thy = "smtfloat", Name = "smtfp_intro"}
   val smtstr_char_tm = smtstring_const "smtstr_char"
   val smtstr_concat_tm = smtstring_const "smtstr_concat"
   val smtstr_prefixof_tm = smtstring_const "smtstr_prefixof"
@@ -339,6 +341,18 @@ local
     end
 
   fun is_injected_string tm = Lib.can dest_injected_string tm
+
+  fun dest_injected_float tm =
+    let
+      val (inject, float) = Term.dest_comb tm
+      val _ =
+        if Term.same_const inject smtfp_intro_tm then ()
+        else raise ERR "dest_injected_float" "not smtfp_intro"
+    in
+      float
+    end
+
+  fun is_injected_float tm = Lib.can dest_injected_float tm
 
   fun injected_string_operator tm =
     if Term.same_const tm smtstr_concat_tm then "str.++"
@@ -1183,11 +1197,13 @@ local
           let val (dom, rng) = Type.dom_rng ty
           in doms_rng (dom :: acc) (n - 1) rng end
       val injected_string = arity = 0 andalso is_injected_string tm
+      val injected_float = arity = 0 andalso is_injected_float tm
       val (domtys, rngty) = doms_rng [] arity (Term.type_of tm)
       val domain_sorts =
         List.map (smt_sort_of_type regime tydict) domtys
       val range_sort =
         if injected_string then "String"
+        else if injected_float then smtfp_sort rngty
         else smt_sort_of_type regime tydict rngty
       val declaration =
         term_declaration_text regime name domain_sorts range_sort
@@ -1576,6 +1592,7 @@ local
         Redblackmap.foldl (fn ((tm, arity), _, b) =>
           b orelse
           (not (is_injected_string tm) andalso
+           not (is_injected_float tm) andalso
            type_contains_datatype (Term.type_of tm))) false tmdict
       val nonlinear =
         List.exists (fn tm => is_nonlinear_arith_const
@@ -1588,7 +1605,8 @@ local
       fun term_needs_uf ((tm, arity), _) =
         if term_is_datatype_native ((tm, arity), "") then
           false
-        else if arity = 0 andalso is_injected_string tm then
+        else if arity = 0 andalso
+                (is_injected_string tm orelse is_injected_float tm) then
           false
         else
           arity > 0 orelse
@@ -1675,7 +1693,9 @@ local
         }
       val fp_record =
         HOLTheoryEncoding {
-          feature = "SMT floating point and raw HOL binary_ieee",
+          feature =
+            "SMT floating point and proved binary_ieee classification, " ^
+            "comparison, abs/neg, add/sub/mul/div/sqrt/fma transfer",
           smt_theory = "FloatingPoint",
           mode = NativeSMTLIB,
           parse = true,
@@ -1684,12 +1704,17 @@ local
           replay = false,
           notes =
             "The canonical-NaN smtfp carrier and its native operators are " ^
-            "emitted as SMT-LIB FloatingPoint.  Raw binary_ieee float " ^
-            "records have no native sort mapping and remain uninterpreted.",
+            "emitted as SMT-LIB FloatingPoint.  Native binary_ieee terms " ^
+            "on the enumerated transfer surface are rewritten through " ^
+            "smtfp_intro and proved homomorphism and binder theorems.  A " ^
+            "residual raw float, including raw record equality, is emitted " ^
+            "as an uninterpreted sort; it is never an SMT FloatingPoint sort.",
           proof_obligation =
-            "The exact smtfp carrier justifies native sort equality.  " ^
-            "Checked replay and any future raw binary_ieee transfer require " ^
-            "proved operator correspondence lemmas."
+            "The exact smtfp carrier justifies native sort equality, and " ^
+            "the native_float_transfer_infos theorem list discharges the " ^
+            "binary_ieee transfer.  replay remains false because the FP " ^
+            "checked-replay rung has not landed; current evidence is Z3 " ^
+            "4.x oracle success only, so TASK_24 owns the replay flip."
         }
       val z3_ext_record =
         HOLTheoryEncoding {
@@ -2140,6 +2165,42 @@ local
               end
           end
       end
+    fun translate_injected_float acc =
+      let
+        val float = dest_injected_float tm
+        val sort = smtfp_sort (Term.type_of tm)
+      in
+        case Redblackmap.peek (bounds, float) of
+          SOME _ =>
+            raise ERR "translate_injected_float"
+              "injected float binder was not transferred"
+        | NONE =>
+          let
+            val depends_on_bound =
+              List.exists
+                (fn v => Option.isSome (Redblackmap.peek (bounds, v)))
+                (Term.free_vars float)
+            val _ =
+              if depends_on_bound then
+                raise ERR "translate_injected_float"
+                  "non-atomic injected term depends on a bound variable"
+              else
+                ()
+          in
+            case Redblackmap.peek (tmdict, (tm, 0)) of
+              SOME name => (acc, ([], name))
+            | NONE =>
+              let
+                val name =
+                  tm_prefix ^ Int.toString (Redblackmap.numItems tmdict)
+                val tmdict = Redblackmap.insert (tmdict, (tm, 0), name)
+                val declaration =
+                  term_declaration_text regime name [] sort
+              in
+                ((tydict, tmdict), ([declaration], name))
+              end
+          end
+      end
     fun translate_injected_string_operation acc =
       let
         val (name, rands) = dest_injected_string_operation tm
@@ -2505,6 +2566,18 @@ local
        handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
      else
        raise ERR "translate_term" "not an injected string")
+    handle e as NestedTranslation _ => raise e
+         | Feedback.HOL_ERR _ =>
+
+    (* Each smtfp_intro image is generalized to an SMT FloatingPoint value.
+       The carrier theorem proves surjectivity, while the preprocessing
+       homomorphisms ensure that only intro-invariant native operations reach
+       this branch. *)
+    (if is_injected_float tm then
+       translate_injected_float acc
+       handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+     else
+       raise ERR "translate_term" "not an injected float")
     handle e as NestedTranslation _ => raise e
          | Feedback.HOL_ERR _ =>
 
@@ -3224,6 +3297,67 @@ local
        simpLib.SIMP_CONV pureSimps.pure_ss num_transfer_rewrites) tm
     handle Conv.UNCHANGED => Thm.REFL tm
 
+  type native_float_transfer_info = {
+    surface : string list,
+    theorem : Thm.thm
+  }
+
+  (* The complete audited surface of the native binary_ieee transfer kit.
+     Keep names and proofs together so extending preprocessing cannot silently
+     outrun its coverage record. *)
+  val native_float_transfer_infos : native_float_transfer_info list = [
+    {surface = ["float record constructor"],
+     theorem = smtfloatTheory.native_float_bits_transfer},
+    {surface = ["universal float binder"],
+     theorem = smtfloatTheory.native_float_forall_transfer},
+    {surface = ["existential float binder"],
+     theorem = smtfloatTheory.native_float_exists_transfer},
+    {surface = ["float_plus_zero", "float_minus_zero",
+                "float_plus_infinity", "float_minus_infinity",
+                "float_some_qnan"],
+     theorem = smtfloatTheory.native_float_special_transfer},
+    {surface = ["float_is_nan", "float_is_infinite", "float_is_normal",
+                "float_is_subnormal", "float_is_zero"],
+     theorem = smtfloatTheory.native_float_classification_transfer},
+    {surface = ["negative sign predicate", "positive sign predicate"],
+     theorem = smtfloatTheory.native_float_sign_transfer},
+    {surface = ["float_abs"],
+     theorem = smtfloatTheory.native_float_abs_transfer},
+    {surface = ["float_negate"],
+     theorem = smtfloatTheory.native_float_neg_transfer},
+    {surface = ["float_less_than", "float_less_equal",
+                "float_greater_than", "float_greater_equal",
+                "float_equal", "float_unordered"],
+     theorem = smtfloatTheory.native_float_comparison_transfer},
+    {surface = ["float_add"],
+     theorem = smtfloatTheory.native_float_add_transfer},
+    {surface = ["float_sub"],
+     theorem = smtfloatTheory.native_float_sub_transfer},
+    {surface = ["float_mul"],
+     theorem = smtfloatTheory.native_float_mul_transfer},
+    {surface = ["float_div"],
+     theorem = smtfloatTheory.native_float_div_transfer},
+    {surface = ["float_sqrt"],
+     theorem = smtfloatTheory.native_float_sqrt_transfer},
+    {surface = ["float_mul_add"],
+     theorem = smtfloatTheory.native_float_fma_transfer}
+  ]
+
+  val native_float_transfer_surface =
+    List.concat (List.map #surface native_float_transfer_infos)
+
+  val native_float_transfer_theorems =
+    List.map #theorem native_float_transfer_infos
+
+  val native_float_transfer_rewrites =
+    native_float_transfer_theorems @
+    [smtfloatTheory.smtfp_rounding_of_binary_def,
+     binary_ieeeTheory.rounding_case_def]
+
+  fun NATIVE_FLOAT_TO_SMT_CONV tm =
+    simpLib.SIMP_CONV pureSimps.pure_ss native_float_transfer_rewrites tm
+    handle Conv.UNCHANGED => Thm.REFL tm
+
   val hol_string_transfer_rewrites = [
     Conv.GSYM smtstringTheory.str_inj_11,
     smtstringTheory.str_inj_STRCAT,
@@ -3535,6 +3669,9 @@ in
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
   val HOL_STRING_TO_SMT_CONV = HOL_STRING_TO_SMT_CONV
+  val NATIVE_FLOAT_TO_SMT_CONV = NATIVE_FLOAT_TO_SMT_CONV
+  val native_float_transfer_surface = native_float_transfer_surface
+  val native_float_transfer_theorems = native_float_transfer_theorems
 
   fun type_mentions_num ty =
     Type.compare (ty, numSyntax.num) = EQUAL orelse
@@ -3632,6 +3769,11 @@ in
       (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE HOL_STRING_TO_SMT_CONV),
        Tactic.CONV_TAC HOL_STRING_TO_SMT_CONV)
 
+  val NATIVE_FLOAT_TO_SMT_TAC =
+    Tactical.THEN
+      (Tactic.RULE_ASSUM_TAC (Conv.CONV_RULE NATIVE_FLOAT_TO_SMT_CONV),
+       Tactic.CONV_TAC NATIVE_FLOAT_TO_SMT_CONV)
+
   (* This tactic calls ASSUME_TAC on theorems that are deemed necessary for SMT
      solvers to solve the goal (but only if `include_theorems` is true) *)
   fun ADD_THEOREMS_TAC g =
@@ -3686,6 +3828,7 @@ in
     open Tactical simpLib
   in
     HOL_STRING_TO_SMT_TAC THEN
+    NATIVE_FLOAT_TO_SMT_TAC THEN
     (* This must precede num transfer: the native real numeral form lets the
        closed positivity proof erase the whole pow term, including its nat
        exponent. *)

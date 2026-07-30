@@ -145,6 +145,12 @@ Proof
   metis_tac [smtfp_rep_canonical, smtfp_canonical_def]
 QED
 
+Theorem smtfp_intro_rep[simp]:
+  smtfp_intro (smtfp_rep x) = x
+Proof
+  simp [smtfp_intro_def]
+QED
+
 Definition to_binary_rounding_def:
   to_binary_rounding mode =
     case mode of
@@ -154,6 +160,25 @@ Definition to_binary_rounding_def:
     | RTN => SOME roundTowardNegative
     | RTZ => SOME roundTowardZero
 End
+
+(* The native binary_ieee surface has the four IEEE rounding modes that are
+   shared with SMT-LIB.  This total map is the mode component of the outbound
+   transfer kit; RNA has no native binary_ieee constructor. *)
+Definition smtfp_rounding_of_binary_def:
+  smtfp_rounding_of_binary mode =
+    case mode of
+      roundTiesToEven => RNE
+    | roundTowardPositive => RTP
+    | roundTowardNegative => RTN
+    | roundTowardZero => RTZ
+End
+
+Theorem to_binary_rounding_of_binary[simp]:
+  to_binary_rounding (smtfp_rounding_of_binary mode) = SOME mode
+Proof
+  Cases_on `mode` >> simp [smtfp_rounding_of_binary_def,
+                           to_binary_rounding_def]
+QED
 
 (* Among equally close finite values, this predicate selects the value on
    the side away from zero.  The threshold branches are the same as RNE's;
@@ -1160,6 +1185,231 @@ Definition smtfp_pack_ieee_bv_def:
     (x : ('t,'w) smtfp) : (1 + ('w + 't)) word =
     float_pack_ieee_bv (smtfp_rep x)
 End
+
+(* -------------------------------------------------------------------------
+   Proved outbound transfer kit for native binary_ieee terms
+   ------------------------------------------------------------------------- *)
+
+Theorem float_canon_qnan_value[simp]:
+  float_value (float_canon_qnan : ('t,'w) float) = NaN
+Proof
+  simp [float_canon_qnan_def, binary_ieeeTheory.float_value_def,
+        canon_qnan_msb]
+QED
+
+Theorem native_float_bits_transfer:
+  smtfp_intro
+    (<| Sign := s; Exponent := e; Significand := m |> : ('t,'w) float) =
+  smtfp_bits s e m
+Proof
+  simp [smtfp_intro_def, smtfp_bits_def]
+QED
+
+(* A binder transfers only after its body has factored completely through
+   smtfp_intro.  Thus quantified raw equality cannot match these theorems,
+   while a goal on the invariant operator surface gets an exact smtfp binder.
+   Surjectivity is supplied by smtfp_rep, not assumed by the serializer. *)
+Theorem native_float_forall_transfer:
+  (!x : ('t,'w) float. P (smtfp_intro x)) <=>
+  (!y : ('t,'w) smtfp. P y)
+Proof
+  metis_tac [smtfp_intro_rep]
+QED
+
+Theorem native_float_exists_transfer:
+  (?x : ('t,'w) float. P (smtfp_intro x)) <=>
+  (?y : ('t,'w) smtfp. P y)
+Proof
+  metis_tac [smtfp_intro_rep]
+QED
+
+Theorem native_float_special_transfer:
+  smtfp_intro (float_plus_zero (:'t # 'w)) = smtfp_pzero /\
+  smtfp_intro (float_minus_zero (:'t # 'w)) = smtfp_nzero /\
+  smtfp_intro (float_plus_infinity (:'t # 'w)) = smtfp_pinf /\
+  smtfp_intro (float_minus_infinity (:'t # 'w)) = smtfp_ninf /\
+  (!op. smtfp_intro (float_some_qnan op) =
+        (smtfp_nan : ('t,'w) smtfp))
+Proof
+  simp [smtfp_intro_def, smtfp_pzero_def, smtfp_nzero_def,
+        smtfp_pinf_def, smtfp_ninf_def, smtfp_nan_def,
+        binary_ieeeTheory.some_nan_properties, canon_def]
+QED
+
+Theorem native_float_classification_transfer:
+  (float_is_nan x <=> smtfp_is_nan (smtfp_intro x)) /\
+  (float_is_infinite x <=> smtfp_is_infinite (smtfp_intro x)) /\
+  (float_is_normal x <=> smtfp_is_normal (smtfp_intro x)) /\
+  (float_is_subnormal x <=> smtfp_is_subnormal (smtfp_intro x)) /\
+  (float_is_zero x <=> smtfp_is_zero (smtfp_intro x))
+Proof
+  Cases_on `float_is_nan x` >>
+  simp [canon_def, smtfp_is_nan_def, smtfp_is_infinite_def,
+        smtfp_is_normal_def, smtfp_is_subnormal_def,
+        smtfp_is_zero_def] >>
+  metis_tac [binary_ieeeTheory.float_is_distinct,
+              float_canon_qnan_is_nan]
+QED
+
+Theorem native_float_sign_transfer:
+  ((~float_is_nan x /\ x.Sign = 1w) <=>
+     smtfp_is_negative (smtfp_intro x)) /\
+  ((~float_is_nan x /\ x.Sign = 0w) <=>
+     smtfp_is_positive (smtfp_intro x))
+Proof
+  Cases_on `float_is_nan x` >>
+  simp [canon_def, smtfp_is_negative_def, smtfp_is_positive_def]
+QED
+
+Theorem float_is_nan_abs[simp]:
+  float_is_nan (float_abs x) <=> float_is_nan x
+Proof
+  Cases_on `x` >>
+  simp [binary_ieeeTheory.float_abs_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_value_def] >>
+  rpt COND_CASES_TAC >> simp []
+QED
+
+Theorem float_is_nan_negate[simp]:
+  float_is_nan (float_negate x) <=> float_is_nan x
+Proof
+  Cases_on `x` >>
+  simp [binary_ieeeTheory.float_negate_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_value_def] >>
+  rpt COND_CASES_TAC >> simp []
+QED
+
+Theorem native_float_abs_transfer:
+  smtfp_intro (float_abs x) = smtfp_abs (smtfp_intro x)
+Proof
+  simp [smtfp_intro_def, smtfp_abs_def, smtfp_rep_def] >>
+  Cases_on `float_is_nan x` >> simp [canon_def]
+QED
+
+Theorem native_float_neg_transfer:
+  smtfp_intro (float_negate x) = smtfp_neg (smtfp_intro x)
+Proof
+  simp [smtfp_intro_def, smtfp_neg_def, smtfp_rep_def] >>
+  Cases_on `float_is_nan x` >> simp [canon_def]
+QED
+
+Theorem native_float_comparison_transfer:
+  (float_less_than x y <=>
+     smtfp_lt (smtfp_intro x) (smtfp_intro y)) /\
+  (float_less_equal x y <=>
+     smtfp_le (smtfp_intro x) (smtfp_intro y)) /\
+  (float_greater_than x y <=>
+     smtfp_gt (smtfp_intro x) (smtfp_intro y)) /\
+  (float_greater_equal x y <=>
+     smtfp_ge (smtfp_intro x) (smtfp_intro y)) /\
+  (float_equal x y <=>
+     smtfp_eq (smtfp_intro x) (smtfp_intro y)) /\
+  (float_unordered x y <=>
+     smtfp_is_nan (smtfp_intro x) \/
+     smtfp_is_nan (smtfp_intro y))
+Proof
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [canon_def, binary_ieeeTheory.float_is_nan_def,
+        smtfp_lt_def, smtfp_le_def, smtfp_gt_def, smtfp_ge_def,
+        smtfp_eq_def, smtfp_unordered_def, smtfp_is_nan_def,
+        binary_ieeeTheory.float_less_than_def,
+        binary_ieeeTheory.float_less_equal_def,
+        binary_ieeeTheory.float_greater_than_def,
+        binary_ieeeTheory.float_greater_equal_def,
+        binary_ieeeTheory.float_equal_def,
+        binary_ieeeTheory.float_unordered_def,
+        binary_ieeeTheory.float_compare_def] >>
+  rpt COND_CASES_TAC >> simp []
+QED
+
+Theorem native_float_add_transfer:
+  smtfp_intro (SND (float_add mode x y)) =
+    smtfp_add (smtfp_rounding_of_binary mode)
+      (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_add_def, smtfp_rep_def,
+        smt_float_add_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [canon_def, binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_add_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem native_float_sub_transfer:
+  smtfp_intro (SND (float_sub mode x y)) =
+    smtfp_sub (smtfp_rounding_of_binary mode)
+      (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_sub_def, smtfp_rep_def,
+        smt_float_sub_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [canon_def, binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_sub_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem native_float_mul_transfer:
+  smtfp_intro (SND (float_mul mode x y)) =
+    smtfp_mul (smtfp_rounding_of_binary mode)
+      (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_mul_def, smtfp_rep_def,
+        smt_float_mul_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [canon_def, binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_mul_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem native_float_div_transfer:
+  smtfp_intro (SND (float_div mode x y)) =
+    smtfp_div (smtfp_rounding_of_binary mode)
+      (smtfp_intro x) (smtfp_intro y)
+Proof
+  simp [smtfp_intro_def, smtfp_div_def, smtfp_rep_def,
+        smt_float_div_def] >>
+  Cases_on `float_value x` >> Cases_on `float_value y` >>
+  simp [canon_def, binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_div_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem float_sqrt_nan:
+  float_is_nan x ==> float_is_nan (SND (float_sqrt mode x))
+Proof
+  rw [binary_ieeeTheory.float_sqrt_def] >>
+  Cases_on `x.Sign = 0w` >> fs [] >>
+  fs [binary_ieeeTheory.float_is_nan_def] >>
+  Cases_on `float_value x` >> fs []
+QED
+
+Theorem native_float_sqrt_transfer:
+  smtfp_intro (SND (float_sqrt mode x)) =
+    smtfp_sqrt (smtfp_rounding_of_binary mode) (smtfp_intro x)
+Proof
+  simp [smtfp_intro_def, smtfp_sqrt_def, smtfp_rep_def,
+        smt_float_sqrt_def] >>
+  Cases_on `float_is_nan x` >> simp [canon_def, float_sqrt_nan] >>
+  fs []
+QED
+
+Theorem native_float_fma_transfer:
+  smtfp_intro (SND (float_mul_add mode x y z)) =
+    smtfp_fma (smtfp_rounding_of_binary mode)
+      (smtfp_intro x) (smtfp_intro y) (smtfp_intro z)
+Proof
+  simp [smtfp_intro_def, smtfp_fma_def, smtfp_rep_def,
+        smt_float_fma_def] >>
+  Cases_on `float_is_nan x` >> Cases_on `float_is_nan y` >>
+  Cases_on `float_is_nan z` >> simp [canon_def] >>
+  simp [binary_ieeeTheory.float_mul_add_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+(* Invalid raw record equality is deliberately absent: smtfp_intro identifies
+   all NaN payloads, so no injectivity theorem can soundly join this kit. *)
 
 (* Invalid branches expose only the corresponding specified choice.  The
    argument is canonicalized so all raw IEEE NaN payloads represent the one

@@ -1697,6 +1697,15 @@ in
     (``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``,
       [thm_Z3_v4]),
 
+    (* Native comparison plus arithmetic is first rewritten by the proved
+       transfer kit, then answered by Z3 over the SMT FloatingPoint sort. *)
+    (``float_less_than
+         (SND (float_add roundTiesToEven
+           (x:(4,3) binary_ieee$float) y)) z ==>
+       ~float_less_equal z
+         (SND (float_add roundTiesToEven x y))``,
+      [thm_Z3_v4]),
+
     (* prove that `ediv` and `emod` match Boute's Euclidean definition, i.e.
        that they match SMT-LIB's `Ints` theory's definition of integer div and
        mod *)
