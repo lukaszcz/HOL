@@ -47,7 +47,9 @@ sig
 
   (* [immediate] is a nonempty prefix of theorem premises.  Those premises
      are discharged from assumptions without consuming them; any remaining
-     premise suffix stays as an implication in the added hypothesis. *)
+     premise suffix stays as an implication in the added hypothesis.
+     [default_forward_rule] leaves the count to the step, which takes every
+     premise of the canonical rule it derives anyway. *)
   val forward_rule :
     {name : string, phase : rphase, theorem : thm, immediate : int,
      mode : clasetUnify.mode} -> rule
@@ -79,6 +81,12 @@ sig
      index : tactic_index option} -> unit
   val registered_tactic_rules : unit -> rule list
 
+  (* Registration is session-global and permanent, which is what a library
+     augmenting the engine wants.  Registrations belonging to a bounded
+     scope are made inside this combinator instead: it restores the
+     registry when [f] returns and when it raises. *)
+  val with_tactic_rules : ('a -> 'b) -> ('a -> 'b)
+
   val split_rule_pair :
     {name : string, theorem : thm} ->
     {conclusion : rule, assumption : rule}
@@ -100,7 +108,10 @@ sig
   val safe_rules : safe_scaffold -> rule list
 
   (* Candidate retrieval is unification-based.  [qvars] identifies the
-     engine metavariables which the invocation permits the index to match. *)
+     engine metavariables which the invocation permits the index to match.
+     The unsafe phase holds claset candidates and the registered unsafe
+     tactic rules in one order of decreasing success percentage; at equal
+     percentage claset candidates precede tactic rules. *)
   val claset_rules :
     {claset : clasetLib.claset,
      mode : clasetUnify.mode,

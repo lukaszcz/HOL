@@ -213,24 +213,51 @@ fun CS_AESOP_SAFE_TAC config claset simpset =
     (changed
       (safe_raw "CS_AESOP_SAFE_TAC" config claset simpset []))
 
-fun AESOP_TAC theorems =
+(* The invocation context is read inside the goal abstraction, as
+   clasimpLib's entry points read theirs.  A tactic value bound before a
+   declaration -- [val TAC = AESOP_TAC []] at the head of a script -- must
+   still use the claset and the aesop simpset current where it is applied,
+   not the ones current where it was bound. *)
+fun AESOP_TAC theorems goal =
   Tactical.VALID
     (process_args
       (close_raw "AESOP_TAC" default_config)
       (clasetLib.the_claset ()) (aesopData.aesop_ss ())
       theorems)
+    goal
 
-fun AESOP_SAFE_TAC theorems =
+fun AESOP_SAFE_TAC theorems goal =
   Tactical.VALID
     (changed
       (process_args
         (safe_raw "AESOP_SAFE_TAC" default_config)
         (clasetLib.the_claset ()) (aesopData.aesop_ss ())
         theorems))
+    goal
 
 fun augment_aesop {name, phase, tactic} =
   aesopRule.register_tactic_rule
     {name = name, phase = phase, tactic = tactic, index = NONE}
+
+(* The registry holds tactic rules, so a prebuilt rule can enter it exactly
+   when its action is a rendered tactic; the theorem-derived engine steps
+   would need a rule-taking entry point of aesopRule's own.  A prebuilt
+   rule already carries its retrieval index inside that tactic, so the
+   registry entry adds none: an index here would only repeat the test the
+   rule performs on itself. *)
+fun augment_aesop_rule ({name, phase, apply, once} : rule) =
+  case apply of
+      aesopRule.RenderedTactic tactic =>
+        if once then
+          raise ERR "augment_aesop_rule"
+            "a once-only rule cannot be registered as a tactic rule"
+        else
+          aesopRule.register_tactic_rule
+            {name = name, phase = phase, tactic = tactic,
+             index = NONE}
+    | _ =>
+        raise ERR "augment_aesop_rule"
+          "only a rule whose action is a tactic can be registered"
 
 val cases_rule_for = aesopRule.cases_rule_for
 

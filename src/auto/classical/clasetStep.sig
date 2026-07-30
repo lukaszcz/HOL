@@ -19,6 +19,15 @@ sig
   val eigenvariables_of : step_record -> string list
   val validation_of : step_record -> validation
 
+  (* The declaration an applied theorem came from, and which of that
+     declaration's derived forms the theorem is -- the origin and variant a
+     RuleApplication record reports.  The boolean says the application came
+     from a duplicating net, which is what tells a rule's duplicated form
+     from its plain one where the two coincide.  A theorem no declaration
+     derived is its own origin. *)
+  val rule_origin :
+    clasetLib.claset -> bool -> thm -> thm * rule_variant
+
   val safe_step : clasetLib.claset -> step
   val clarify_step : clasetLib.claset -> step
   val inst0_step : clasetLib.claset -> step
@@ -36,9 +45,15 @@ sig
 
   (* Engine-native forward application.  The first [immediate] premises are
      discharged from assumptions without consuming them; the residual
-     theorem is added as a new head assumption of the sole child. *)
+     theorem is added as a new head assumption of the sole child.  NONE
+     asks for every premise of the canonical rule, which is the count the
+     step derives anyway: the theorem is canonicalized once here and reused
+     by every application, so no caller needs to canonicalize it to supply
+     that count.  Every combination of assumptions that discharges the
+     immediate premises is an alternative, except that no result repeats
+     an assumption the goal already has or an earlier result added. *)
   val forward_rule_step :
-    {theorem : thm, immediate : int,
+    {theorem : thm, immediate : int option,
      mode : clasetUnify.mode} -> step
 
   (* Exact, wrapper-free engine transitions used by blast reconstruction.

@@ -6,9 +6,21 @@ sig
   type rulespec = clasetRules.rulespec
   type tag = clasetRules.tag
   type brl = clasetRules.brl
+  type info = clasetRules.info
 
   type claset
   type claset_part
+
+  (* A declaration as the aesop retrieval paths return it.  [info] is the
+     canonicalisation the claset derived when the rule was declared -- the
+     classical forms clasetRules.ext_info builds with real kernel
+     inferences (CLASSICAL_RULE, MAKE_ELIM_RULE, DUP_ELIM_RULE,
+     SWAP_INTRO_RULE).  An engine needing those forms -- the aesop engine
+     needs them both to classify a rule as Safe0 or SafeP and to build its
+     step -- reads them here rather than re-deriving them from [thm] on
+     every goal expansion. *)
+  type aesop_rule =
+    {name : string, spec : rulespec, thm : thm, info : info}
 
   datatype part = Safe0Part | SafePPart | UnsafePart | DupPart
 
@@ -60,12 +72,19 @@ sig
   val app_safe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
   val app_unsafe_wrappers : claset -> NTactical.ntactic -> NTactical.ntactic
 
+  (* Every declaration of the claset, in canonical declaration order.  A
+     caller that compares a theorem against a declaration's derived forms
+     -- classical replay identifies the declaration an applied theorem came
+     from that way -- reads them here rather than deriving them again for
+     each declaration it scans. *)
+  val all_rules : claset -> aesop_rule list
+  (* The name/theorem view of [all_rules], in the same order. *)
   val rules_of : claset -> (rulespec * (string * thm)) list
   (* The claset's Norm declarations, in [rules_of] order.  The aesop
      normalisation phase applies all of them to every goal rather than
      retrieving by goal shape, so they are kept as a list; this is the
      precomputed equivalent of filtering [rules_of] by kind. *)
-  val norm_rules_of : claset -> (rulespec * (string * thm)) list
+  val norm_rules : claset -> aesop_rule list
   val pp_claset : claset Parse.pprinter
 
   val claset_part : part -> claset -> claset_part
@@ -88,12 +107,10 @@ sig
      rules precede unsafe rules.  Within those groups the order is
      classical candidate order, and decreasing success percentage followed
      by classical candidate order, respectively. *)
-  val aesop_target_candidates :
-    claset -> {q : term, qvars : term HOLset.set} ->
-    (rulespec * (string * thm)) list
-  val aesop_hyp_candidates :
-    claset -> {q : term, qvars : term HOLset.set} ->
-    (rulespec * (string * thm)) list
+  val aesop_target_rules :
+    claset -> {q : term, qvars : term HOLset.set} -> aesop_rule list
+  val aesop_hyp_rules :
+    claset -> {q : term, qvars : term HOLset.set} -> aesop_rule list
 
   val SIntro : thm -> thm
   val Intro : thm -> thm

@@ -60,41 +60,18 @@ fun new_binding created parent child =
     List.exists new_type (#types child_bindings)
   end
 
-fun singleton_result sequence =
-  case seq.cases sequence of
-      NONE => NONE
-    | SOME (result, rest) =>
-        if seq.null rest then SOME result else NONE
-
-fun rendered_application tactic node =
-  let
-    val rendered = clasetGoal.render node 1
-  in
-    case singleton_result (tactic rendered) of
-        NONE => Inapplicable
-      | SOME (result as (goals, _)) =>
-          if length goals > 1 then Inapplicable
-          else
-            case aesopTree.rendered_record node rendered result of
-                NONE => Inapplicable
-              | SOME (record, next) =>
-                  Applied {record = record, node = next}
-  end
-
-fun engine_application step node =
-  case singleton_result (step (node, 1)) of
-      NONE => Inapplicable
-    | SOME (record, next) =>
-        if length (clasetGoal.goals next) > 1 then Inapplicable
-        else
-          Applied {record = record, node = next}
-
-fun raw_application ({apply, ...} : rule) node =
-  case apply of
-      aesopRule.EngineStep step => engine_application step node
-    | aesopRule.RenderedTactic tactic =>
-        rendered_application tactic node
-    | aesopRule.MultiStep _ => Inapplicable
+(* Normalisation rewrites a goal in place, so a norm rule must be
+   deterministic and must not split the goal.  A [MultiStep] rule is a
+   choice between its steps by construction, so it never normalises. *)
+fun raw_application (rule : rule) node =
+  case #apply rule of
+      aesopRule.MultiStep _ => Inapplicable
+    | _ =>
+        (case aesopTree.unique_rule_result rule node of
+             SOME ([record], next) =>
+               if length (clasetGoal.goals next) > 1 then Inapplicable
+               else Applied {record = record, node = next}
+           | _ => Inapplicable)
 
 fun application rule node =
   case raw_application rule node of

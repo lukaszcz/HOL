@@ -424,6 +424,17 @@ fun shadowed_canonical_elim () =
     Drule.ADD_ASSUM x quantified
   end
 
+(* A forward rule's major premise is its last one, so this rule is already
+   canonical even though a premise is a conjunction. *)
+fun shadowed_canonical_forward () =
+  let
+    val x = ``x : bool``
+    val major = ``p /\ q``
+    val quantified = GEN x (DISCH r (DISCH major (ASSUME major)))
+  in
+    Drule.ADD_ASSUM x quantified
+  end
+
 val _ =
   test
     ("rule preprocessing freshens outer binders away from hypotheses",
@@ -441,7 +452,7 @@ val _ =
 
 val _ =
   test
-    ("repeated canonicalization avoids intro and elim kernel rebuilding",
+    ("repeated canonicalization avoids kernel rebuilding for each kind",
      fn () =>
        let
          fun unchanged canonicalize th =
@@ -459,7 +470,9 @@ val _ =
        in
          unchanged canonical_rule (shadowed_canonical_rule ()) andalso
          unchanged (canonical_rule_of clasetRules.Elim)
-           (shadowed_canonical_elim ())
+           (shadowed_canonical_elim ()) andalso
+         unchanged (canonical_rule_of clasetRules.Forward)
+           (shadowed_canonical_forward ())
        end)
 
 val _ =
@@ -526,6 +539,33 @@ val _ =
        in
          Term.aconv
            (rule_index clasetRules.Forward theorem) q
+       end)
+
+(* The major premise a forward rule keeps intact is the last one, so a
+   conjunctive earlier premise must still be curried: the safe phase has
+   already split such an assumption apart. *)
+val _ =
+  test
+    ("forward canonicalization curries every non-major premise",
+     fn () =>
+       let
+         val major = ``q /\ r``
+         val side = ``p /\ q``
+         val theorem =
+           DISCH side (DISCH major (CONJUNCT1 (ASSUME major)))
+         val processed = canonical_rule_of clasetRules.Forward theorem
+         val form = canonical_form_of clasetRules.Forward theorem
+         val measured =
+           canonical_form_of_measured (fn () => ())
+             clasetRules.Forward theorem
+       in
+         Term.aconv (concl processed) ``p ==> q ==> q /\ r ==> q``
+           andalso
+         same_terms (#prems form) [p, q, major] andalso
+         Term.aconv (rule_index clasetRules.Forward theorem) major
+           andalso
+         Term.aconv (concl (#thm measured)) (concl processed) andalso
+         same_terms (#prems measured) (#prems form)
        end)
 
 fun info_of th = {rl = (th, NONE), dup_rl = (th, NONE)}
@@ -1355,18 +1395,21 @@ val _ =
             "routing_snorm", "routing_norm"]
        end)
 
-fun aesop_names candidates =
-  map (fn (_, (name, _)) => name) candidates
+(* The aesop retrievals return declarations with their stored
+   canonicalisation; these helpers look only at the identifying fields. *)
+fun aesop_pair ({spec, name, thm, ...} : aesop_rule) = (spec, (name, thm))
 
-fun has_aesop_name name candidates =
-  List.exists (fn (_, (name', _)) => name = name') candidates
+fun aesop_names rules = map (fn {name, ...} : aesop_rule => name) rules
 
-fun has_aesop_entry expected_spec (expected_name, expected_th) candidates =
+fun has_aesop_name name rules =
+  List.exists (fn {name = name', ...} : aesop_rule => name = name') rules
+
+fun has_aesop_entry expected_spec (expected_name, expected_th) rules =
   List.exists
-    (fn (spec, (name, th)) =>
+    (fn {spec, name, thm, ...} : aesop_rule =>
        same_spec spec expected_spec andalso name = expected_name andalso
-       same_thm th expected_th)
-    candidates
+       same_thm thm expected_th)
+    rules
 
 val _ =
   test
@@ -1392,21 +1435,21 @@ val _ =
              empty_cs declarations
          val empty_vars = tmset []
          val target =
-           aesop_target_candidates cs
+           aesop_target_rules cs
              {q = ``p /\ q``, qvars = empty_vars}
          (* The Norm rule's conclusion; it would be retrieved here if Norm
             were indexed at all. *)
          val norm_shaped =
-           aesop_target_candidates cs
+           aesop_target_rules cs
              {q = ``p = q``, qvars = empty_vars}
          val elim =
-           aesop_hyp_candidates cs
+           aesop_hyp_rules cs
              {q = ``p \/ q``, qvars = empty_vars}
          val dest =
-           aesop_hyp_candidates cs
+           aesop_hyp_rules cs
              {q = ``p /\ q``, qvars = empty_vars}
          val forward_candidates =
-           aesop_hyp_candidates cs {q = p, qvars = empty_vars}
+           aesop_hyp_rules cs {q = p, qvars = empty_vars}
        in
          has_aesop_name "aesop_intro" target andalso
          not (has_aesop_name "aesop_elim" target) andalso
@@ -1433,8 +1476,8 @@ val _ =
              ("meta_forward", DISCH p (ASSUME p))
              (add_elims [("meta_elim", boolTheory.OR_ELIM_THM)] target_cs)
          val query = {q = x, qvars = tmset [x]}
-         val targets = aesop_names (aesop_target_candidates cs query)
-         val hyps = aesop_names (aesop_hyp_candidates cs query)
+         val targets = aesop_names (aesop_target_rules cs query)
+         val hyps = aesop_names (aesop_hyp_rules cs query)
        in
          List.all (fn name => mem name targets) ["meta_intro"] andalso
          List.all (fn name => mem name hyps) ["meta_elim", "meta_forward"]
@@ -1471,7 +1514,7 @@ val _ =
              empty_cs declarations
          val names =
            aesop_names
-             (aesop_target_candidates cs
+             (aesop_target_rules cs
                 {q = ``p \/ p``, qvars = tmset []})
        in
          names =
@@ -1496,11 +1539,11 @@ val _ =
              empty_cs safe_declarations
          val safe_query = {q = ``p \/ p``, qvars = tmset []}
        in
-         aesop_names (aesop_target_candidates cs safe_query) =
+         aesop_names (aesop_target_rules cs safe_query) =
            ["safe_new", "safe_old", "safe_heavy"]
        end)
 
-(* [norm_rules_of] is the precomputed equivalent of filtering [rules_of],
+(* [norm_rules] is the precomputed equivalent of filtering [rules_of],
    so pin the agreement rather than a hardcoded order: the penalty sort in
    the normalisation phase relies on that incoming order as its tiebreak. *)
 val _ =
@@ -1525,7 +1568,7 @@ val _ =
                kind = clasetRules.Norm)
              (rules_of cs)
          fun agrees cs =
-           map (fn (_, (name, _)) => name) (norm_rules_of cs) =
+           aesop_names (norm_rules cs) =
            map (fn (_, (name, _)) => name) (expected cs)
          val incremental = install empty_cs
          val merged = merge_cs (empty_cs, incremental)
@@ -1533,10 +1576,7 @@ val _ =
        in
          agrees incremental andalso agrees merged andalso
          agrees removed andalso
-         not
-           (List.exists
-             (fn (_, (name, _)) => name = "norm_zero")
-             (norm_rules_of removed))
+         not (has_aesop_name "norm_zero" (norm_rules removed))
        end)
 
 val _ =
@@ -1684,6 +1724,12 @@ fun same_rules xs ys =
        same_spec spec1 spec2 andalso name1 = name2 andalso same_thm th1 th2)
     (xs, ys)
 
+(* The same comparison on the info-carrying retrievals: the stored
+   canonicalisation is a function of these fields, so agreeing on them is
+   agreeing on the declaration. *)
+fun same_aesop_rules xs ys =
+  same_rules (map aesop_pair xs) (map aesop_pair ys)
+
 val _ =
   test
     ("clasetLib add, remove, and merge preserve canonical rule order",
@@ -1733,33 +1779,33 @@ val _ =
          val target_removed =
            remove_rule "maintenance_norm" removed
        in
-         same_rules
-           (aesop_target_candidates merged target_query)
-           (aesop_target_candidates incremented target_query) andalso
-         same_rules
-           (aesop_hyp_candidates merged hyp_query)
-           (aesop_hyp_candidates incremented hyp_query) andalso
+         same_aesop_rules
+           (aesop_target_rules merged target_query)
+           (aesop_target_rules incremented target_query) andalso
+         same_aesop_rules
+           (aesop_hyp_rules merged hyp_query)
+           (aesop_hyp_rules incremented hyp_query) andalso
          (* Norm is kept beside the index, not inside it, so its
-            maintenance is observed through [norm_rules_of]. *)
-         same_rules (norm_rules_of merged) (norm_rules_of incremented)
+            maintenance is observed through [norm_rules]. *)
+         same_aesop_rules (norm_rules merged) (norm_rules incremented)
            andalso
          not (has_aesop_name "maintenance_norm"
-                (aesop_target_candidates merged target_query)) andalso
+                (aesop_target_rules merged target_query)) andalso
          not (has_aesop_name "maintenance_norm"
-                (aesop_hyp_candidates merged hyp_query)) andalso
+                (aesop_hyp_rules merged hyp_query)) andalso
          has_aesop_name "maintenance_forward"
-           (aesop_hyp_candidates merged hyp_query) andalso
+           (aesop_hyp_rules merged hyp_query) andalso
          not
            (has_aesop_name "maintenance_forward"
-              (aesop_hyp_candidates removed hyp_query)) andalso
+              (aesop_hyp_rules removed hyp_query)) andalso
          has_aesop_name "maintenance_intro"
-           (aesop_target_candidates removed target_query) andalso
-         has_aesop_name "maintenance_norm" (norm_rules_of removed) andalso
+           (aesop_target_rules removed target_query) andalso
+         has_aesop_name "maintenance_norm" (norm_rules removed) andalso
          not
            (has_aesop_name "maintenance_norm"
-              (norm_rules_of target_removed)) andalso
+              (norm_rules target_removed)) andalso
          has_aesop_name "maintenance_intro"
-           (aesop_target_candidates target_removed target_query)
+           (aesop_target_rules target_removed target_query)
        end)
 
 val _ =
@@ -1976,9 +2022,12 @@ val _ =
     ("claset unsafe attributes reject invalid priorities cleanly",
      fn () =>
        let
+         (* The oversized numeral overflows a fixed-width Int rather than
+            failing to parse, so it must be rejected on its shape. *)
          val cases =
            [("intro", ["0"]), ("elim", ["101"]), ("dest", ["75x"]),
-            ("intro", ["25", "50"])]
+            ("intro", ["25", "50"]), ("elim", [""]), ("dest", ["~1"]),
+            ("intro", ["99999999999999999999999999"])]
          fun rejected (attrname, args) =
            hol_err_msg
              (fn () =>
@@ -2072,13 +2121,33 @@ val _ =
                  {attrname = attrname, name = "bad-new-attribute",
                   args = args, thm = state_forward_rule}) =
            SOME message
+         (* A numeral too large for a fixed-width Int overflows inside
+            Int.fromString instead of failing to parse.  Every penalty an
+            Int can hold is legitimate, so the outcome is either a clean
+            acceptance or the documented error -- never a foreign
+            exception escaping the attribute. *)
+         val oversized = "99999999999999999999999999"
+         fun clean_penalty args =
+           let
+             val name = "oversized-penalty"
+             fun apply () =
+               ThmAttribute.local_attribute
+                 {attrname = "norm", name = name, args = args,
+                  thm = ASSUME ``r <=> q``}
+           in
+             (apply (); temp_delrule name; true)
+             handle Interrupt => raise Interrupt
+                  | HOL_ERR e => Feedback.message_of e = penalty_message
+                  | _ => false
+           end
        in
          List.all
            (fn args => rejected "forward" args priority_message)
-           [["0"], ["101"], ["75x"], ["25", "50"]] andalso
+           [["0"], ["101"], ["75x"], ["25", "50"], [oversized]] andalso
          List.all
            (fn args => rejected "norm" args penalty_message)
-           [[""], ["~"], ["1x"], ["1", "2"]] andalso
+           [[""], ["~"], ["1x"], ["1", "2"], ["~1x"], [" 1"]] andalso
+         List.all clean_penalty [[oversized], ["~" ^ oversized]] andalso
          rejected "sforward" ["10"] safe_message
        end)
 
@@ -2517,6 +2586,38 @@ val _ =
                 (rest, [marked])
             end)
          aesop_marker_cases)
+
+(* A marker whose rule class this tactic cannot install must be reported,
+   not assumed as a fact: the marked theorem is not a usable assumption. *)
+val _ =
+  test
+    ("markers for other engines are refused as invocation facts",
+     fn () =>
+       let
+         val cases =
+           [(Simp boolTheory.AND_CLAUSES,
+             "Simp marker requires a tactic with a simpset"),
+            (Iff boolTheory.IMP_CLAUSES,
+             "Iff marker requires a tactic with a simpset"),
+            (Norm boolTheory.AND_CLAUSES,
+             "Norm marker requires an Aesop-aware tactic"),
+            (Forward boolTheory.OR_ELIM_THM,
+             "Forward marker requires an Aesop-aware tactic"),
+            (SForward boolTheory.OR_ELIM_THM,
+             "SForward marker requires an Aesop-aware tactic")]
+         fun refused (marked, message) =
+           hol_err_msg
+             (fn () => (invocation_claset empty_cs [marked]; ())) =
+           SOME message
+         (* Tactics with a simpset bucket Simp and Iff away themselves,
+            but they insert the remaining arguments directly. *)
+         fun not_inserted (marked, message) =
+           hol_err_msg (fn () => (INSERT_FACTS_TAC [marked]; ())) =
+           SOME message
+       in
+         List.all refused cases andalso
+         List.all not_inserted (List.drop (cases, 2))
+       end)
 
 val _ =
   test

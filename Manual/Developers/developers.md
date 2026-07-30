@@ -73,6 +73,24 @@ in the `tools/Holmake/poly` directory.
 It *is* necessary to specify the output path (with the `-o` option) to replace the old `Holmake` if one is going to test/use the new tool in the existing `HOL` sources.
 Without doing this, the new implementation will see that it is in a HOL source–tree and then switch to call the `Holmake` in that source-tree’s `bin` directory.
 
+## The Generated Lexer, and Why Changing It Requires Reconfiguration {#hollex}
+
+The lexer that underlies the quotation filter is written as an `mllex` specification in `tools/parsing/HolLex`.
+The SML source that is actually compiled, `tools/parsing/HolLex.sml`, is *generated* from that specification, is untracked (it is listed in `tools/.gitignore`), and is produced **only** by the configuration scripts (`tools/configure.sml` and `tools-poly/configure.sml` each invoke `mllex` on `HolLex`).
+No `Holmakefile` has a rule that regenerates it, and `build` never regenerates it either.
+(The `Holmakefile` in `tools/quote-filter` does *list* `tools/parsing/HolLex.sml` as a dependency, but it has no rule to produce it from `HolLex`, so a stale copy is silently accepted; and the quote filter’s own selftest `use`s the same generated file, so it cannot detect the staleness either.)
+
+The generated lexer is then baked into `bin/Holmake`, `bin/unquote`, `bin/build`, and — *via* `tools-poly/poly/poly-init2.ML` — into the Poly/ML REPL and the heaps.
+Consequently:
+
+> **If you change `tools/parsing/HolLex` (or pull a branch that changes it), you must re-run configuration — `poly < tools/smart-configure.sml` — before building.
+> Running `bin/build` or `Holmake` alone is not enough.**
+
+The failure mode when this is forgotten is misleading.
+The stale filter does not recognise the new syntax, passes it through as ordinary SML text, and the compiler then reports a syntax error at the *use site* rather than anywhere near the lexer.
+For a concrete example, the numeric theorem-attribute values accepted since the `attributeValue` rule in `HolLex` was widened from `{letter} …` to `({letter}|{digit}|"~") …` — as in `Theorem foo[elim=75]:` or a signed penalty such as `[norm=~3]` — will, under a stale filter, produce an SML syntax error pointing at the theorem in the `Script.sml` file.
+If you see a syntax error on syntax that the branch you just pulled has only recently introduced, reconfigure before investigating further.
+
 
 # Build
 
@@ -168,6 +186,10 @@ Otherwise, just rerun `bin/build`; on incremental changes this is fast and rebui
 It is often possible to repeat `build` to get the system to rebuild itself in the face of changed source files.
 If source files have moved directories, or disappeared entirely, `build` (more accurately `Holmake` when `build` calls it) may get confused by stale dependency information.
 In this situation, cleaning everything first with `build cleanall` may be necessary.
+
+Repeating `build` is *not* enough when the change was to something that configuration, rather than the build, is responsible for producing.
+The most easily overlooked case is the generated lexer `tools/parsing/HolLex.sml`; see [The Generated Lexer](#hollex) above.
+If a pull brought in a change to `tools/parsing/HolLex`, re-run `poly < tools/smart-configure.sml` before `bin/build`.
 
 # Things in `bin`
 
@@ -271,7 +293,8 @@ Unless otherwise noted, they are built by the configuration process.
 `unquote`
 :   The quotation filter that runs over sources before they are seen by SML implementations.
     This is used interactively (*via* a Unix filter that preprocesses all user-input under Moscow ML, or built into the Poly/ML REPL), and non-interactively (by being applied to source files).
-    The core sources are in `tools/Holmake`, but the standalone executable is built in `tools/quote-filter` and it is moved to `bin/` as part of configuration.
+    The core sources are in `tools/parsing`, but the standalone executable is built in `tools/quote-filter` and it is moved to `bin/` as part of configuration.
+    Because the lexer it is built from is generated at configuration time, edits to `tools/parsing/HolLex` only take effect after reconfiguring; see [The Generated Lexer](#hollex).
 
 `h4pedant`
 :   Our tool for enforcing code style ([as documented below](#coding-standardsrequirements)).

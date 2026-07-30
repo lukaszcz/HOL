@@ -49,12 +49,20 @@ type cluster =
 
 type queue_entry = {goal : gid, prio : real, insertion : int}
 
+(* The parent links of goals and rapps, inverted.  Both maps list their
+   entries in creation order, which is ascending id order because
+   [install_rapp] is the only place either kind of child appears. *)
+type parent_index =
+  {rapp_children : (gid, rid list) Redblackmap.dict,
+   goal_children : (rid, gid list) Redblackmap.dict}
+
 datatype tree =
   Tree of
     {root : gid,
      goals : (gid, goal) Redblackmap.dict,
      rapps : (rid, rapp) Redblackmap.dict,
      clusters : (cid, cluster) Redblackmap.dict,
+     index : parent_index,
      queue : queue_entry searchHeap.heap,
      next_gid : int, next_rid : int, next_cid : int,
      next_insertion : int}
@@ -145,17 +153,16 @@ fun queue_compare
       EQUAL => Int.compare (left_count, right_count)
     | result => result
 
-fun tree_with
-      (Tree {root, goals, rapps, clusters, queue, next_gid, next_rid,
-             next_cid, next_insertion})
-      {goals = goals', rapps = rapps', clusters = clusters',
-       queue = queue', next_gid = next_gid', next_rid = next_rid',
-       next_cid = next_cid', next_insertion = next_insertion'} =
+(* Every field but the root is replaced, so a caller that changes the goal
+   or rapp table has to say what the parent index becomes. *)
+fun tree_with (Tree {root, ...})
+      {goals, rapps, clusters, index, queue, next_gid, next_rid,
+       next_cid, next_insertion} =
   Tree
-    {root = root, goals = goals', rapps = rapps',
-     clusters = clusters', queue = queue',
-     next_gid = next_gid', next_rid = next_rid',
-     next_cid = next_cid', next_insertion = next_insertion'}
+    {root = root, goals = goals, rapps = rapps, clusters = clusters,
+     index = index, queue = queue, next_gid = next_gid,
+     next_rid = next_rid, next_cid = next_cid,
+     next_insertion = next_insertion}
 
 fun root (Tree {root, ...}) = root
 
@@ -179,18 +186,31 @@ fun goals (Tree {goals, ...}) = Redblackmap.listItems' goals
 fun rapps (Tree {rapps, ...}) = Redblackmap.listItems' rapps
 fun clusters (Tree {clusters, ...}) = Redblackmap.listItems' clusters
 
-fun child_rapps tree parent =
-  map #id
-    (List.filter
-      (fn ({parent = candidate, ...} : rapp) => candidate = parent)
-      (rapps tree))
+fun rapp_count (Tree {rapps, ...}) = Redblackmap.numItems rapps
 
-fun rapp_goals tree parent =
-  map #id
-    (List.filter
-      (fn ({parent = candidate, ...} : goal) =>
-        candidate = SOME parent)
-      (goals tree))
+fun empty_index () : parent_index =
+  {rapp_children = Redblackmap.mkDict Int.compare,
+   goal_children = Redblackmap.mkDict Int.compare}
+
+fun index_lookup table key =
+  case Redblackmap.peek (table, key) of
+      NONE => []
+    | SOME entries => entries
+
+(* [rid] is fresh and larger than every rapp already recorded under
+   [parent], so appending keeps the sibling list in id order. *)
+fun index_install {parent, rid, children}
+      ({rapp_children, goal_children} : parent_index) : parent_index =
+  {rapp_children =
+     Redblackmap.insert
+       (rapp_children, parent, index_lookup rapp_children parent @ [rid]),
+   goal_children = Redblackmap.insert (goal_children, rid, children)}
+
+fun child_rapps (Tree {index, ...}) parent =
+  index_lookup (#rapp_children index) parent
+
+fun rapp_goals (Tree {index, ...}) parent =
+  index_lookup (#goal_children index) parent
 
 fun active_cgoal ({cgoal, norm, ...} : goal) =
   case norm of
@@ -248,6 +268,40 @@ fun rendered_record node rendered (result as (goals, validation)) =
           children = map (fn _ => NONE) goals},
        next))
     (clasetGoal.unrender node 1 result)
+
+fun engine_results step node =
+  seq.map
+    (fn (record, next) => ([record], next))
+    (step (node, 1))
+
+fun rendered_results tactic node =
+  let
+    val rendered = clasetGoal.render node 1
+  in
+    seq.mapPartial
+      (fn result =>
+        Option.map
+          (fn (record, next) => ([record], next))
+          (rendered_record node rendered result))
+      (tactic rendered)
+  end
+
+(* One reading of a rule's alternatives for both engine phases: [aesopNorm]
+   takes the unique one, the safe phase of [aesopSearch] commits to one and
+   its unsafe phase installs them all. *)
+fun rule_results ({apply, ...} : rule) node =
+  case apply of
+      aesopRule.EngineStep step => engine_results step node
+    | aesopRule.RenderedTactic tactic =>
+        rendered_results tactic node
+    | aesopRule.MultiStep steps =>
+        seq.flatten
+          (seq.fromList (map (fn step => engine_results step node) steps))
+
+fun unique_rule_result rule node =
+  case seq.take 2 (rule_results rule node) of
+      [result] => SOME result
+    | _ => NONE
 
 (* A copied goal discharges its original sibling but is not a child the
    rule action emitted, so replay never descends into one. *)
@@ -316,48 +370,35 @@ fun derive_goal tree (current : goal) =
   end
 
 fun refresh_once
-      (Tree {root, goals, rapps, clusters, queue, next_gid, next_rid,
-             next_cid, next_insertion}) =
+      (tree as
+       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
+             next_cid, next_insertion, ...}) =
   let
-    val original =
-      Tree
-        {root = root, goals = goals, rapps = rapps,
-         clusters = clusters, queue = queue, next_gid = next_gid,
+    fun rebuild (new_goals, new_rapps, new_clusters) =
+      tree_with tree
+        {goals = new_goals, rapps = new_rapps, clusters = new_clusters,
+         index = index, queue = queue, next_gid = next_gid,
          next_rid = next_rid, next_cid = next_cid,
          next_insertion = next_insertion}
     val clusters' =
       Redblackmap.map
         (fn (_, current) =>
-          cluster_with_state (derive_cluster original current) current)
+          cluster_with_state (derive_cluster tree current) current)
         clusters
-    val with_clusters =
-      Tree
-        {root = root, goals = goals, rapps = rapps,
-         clusters = clusters', queue = queue, next_gid = next_gid,
-         next_rid = next_rid, next_cid = next_cid,
-         next_insertion = next_insertion}
+    val with_clusters = rebuild (goals, rapps, clusters')
     val rapps' =
       Redblackmap.map
         (fn (_, current) =>
           rapp_with_state (derive_rapp with_clusters current) current)
         rapps
-    val with_rapps =
-      Tree
-        {root = root, goals = goals, rapps = rapps',
-         clusters = clusters', queue = queue, next_gid = next_gid,
-         next_rid = next_rid, next_cid = next_cid,
-         next_insertion = next_insertion}
+    val with_rapps = rebuild (goals, rapps', clusters')
     val goals' =
       Redblackmap.map
         (fn (_, current) =>
           goal_with_state (derive_goal with_rapps current) current)
         goals
   in
-    Tree
-      {root = root, goals = goals', rapps = rapps',
-       clusters = clusters', queue = queue, next_gid = next_gid,
-       next_rid = next_rid, next_cid = next_cid,
-       next_insertion = next_insertion}
+    rebuild (goals', rapps', clusters')
   end
 
 fun node_states tree =
@@ -372,17 +413,25 @@ fun states_equal
   same_states left_rapps right_rapps andalso
   same_states left_clusters right_clusters
 
+(* The states of the input are already known to every round but the first,
+   so the fixpoint carries them instead of recomputing them. *)
 fun refresh tree =
   let
-    val next = refresh_once tree
+    fun iterate (states, current) =
+      let
+        val next = refresh_once current
+        val next_states = node_states next
+      in
+        if states_equal (states, next_states) then next
+        else iterate (next_states, next)
+      end
   in
-    if states_equal (node_states tree, node_states next) then next
-    else refresh next
+    iterate (node_states tree, tree)
   end
 
 fun enqueue_goal id
       (tree as
-       Tree {goals, rapps, clusters, queue, next_gid, next_rid,
+       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
              next_cid, next_insertion, ...}) =
   let
     val current = goal tree id
@@ -391,8 +440,8 @@ fun enqueue_goal id
   in
     tree_with tree
       {goals = goals, rapps = rapps, clusters = clusters,
-       queue = searchHeap.add entry queue, next_gid = next_gid,
-       next_rid = next_rid, next_cid = next_cid,
+       index = index, queue = searchHeap.add entry queue,
+       next_gid = next_gid, next_rid = next_rid, next_cid = next_cid,
        next_insertion = next_insertion + 1}
   end
 
@@ -421,6 +470,7 @@ fun create {node, unsafe_cursor} =
                  (Redblackmap.mkDict Int.compare, 1, initial),
              rapps = Redblackmap.mkDict Int.compare,
              clusters = Redblackmap.mkDict Int.compare,
+             index = empty_index (),
              queue = queue, next_gid = 2, next_rid = 1,
              next_cid = 1, next_insertion = 1}
         end
@@ -473,16 +523,6 @@ fun assigned_between parent_store child_store =
              (#types child)))}
   end
 
-fun split predicate values =
-  let
-    fun collect [] yes no = (List.rev yes, List.rev no)
-      | collect (value :: rest) yes no =
-          if predicate value then collect rest (value :: yes) no
-          else collect rest yes (value :: no)
-  in
-    collect values [] []
-  end
-
 fun components tree ids =
   let
     fun overlaps selected candidate =
@@ -494,7 +534,8 @@ fun components tree ids =
 
     fun close selected remaining =
       let
-        val (added, untouched) = split (overlaps selected) remaining
+        val (added, untouched) =
+          Lib.partition (overlaps selected) remaining
       in
         if null added then (selected, untouched)
         else close (selected @ added) untouched
@@ -645,7 +686,7 @@ fun copying_sources tree parent_id assigned child_store child_cgoals =
 fun install_rapp parent_id
       ({rule, phase, records, node, forwarded} : rapp_data)
       (tree as
-       Tree {goals, rapps, clusters, queue, next_gid, next_rid,
+       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
              next_cid, next_insertion, ...}) =
   let
     val parent = goal tree parent_id
@@ -702,12 +743,15 @@ fun install_rapp parent_id
     val child_ids = List.rev reversed_child_ids
     val goals_with_children =
       Redblackmap.insertList (goals, List.rev child_entries)
+    (* The rapp itself is installed below, so [provisional] keeps the old
+       index: it exists only to group the new goals by dependency
+       overlap, which reads the goal table alone. *)
     val provisional =
-      Tree
-        {root = root tree, goals = goals_with_children, rapps = rapps,
-         clusters = clusters, queue = queue, next_gid = next_gid',
-         next_rid = next_rid, next_cid = next_cid,
-         next_insertion = next_insertion}
+      tree_with tree
+        {goals = goals_with_children, rapps = rapps,
+         clusters = clusters, index = index, queue = queue,
+         next_gid = next_gid', next_rid = next_rid,
+         next_cid = next_cid, next_insertion = next_insertion}
     val groups = components provisional child_ids
 
     fun make_cluster
@@ -738,12 +782,16 @@ fun install_rapp parent_id
        assigned = assigned,
        clusters = cluster_ids, state = Unknown}
     val installed =
-      Tree
-        {root = root tree, goals = clustered_goals,
+      tree_with tree
+        {goals = clustered_goals,
          rapps = Redblackmap.insert (rapps, rid, current_rapp),
          clusters =
            Redblackmap.insertList
              (clusters, List.rev cluster_entries),
+         index =
+           index_install
+             {parent = parent_id, rid = rid, children = child_ids}
+             index,
          queue = queue, next_gid = next_gid',
          next_rid = next_rid + 1, next_cid = next_cid',
          next_insertion = next_insertion}
@@ -755,17 +803,19 @@ fun install_rapp parent_id
     {rapp = rid, goals = child_ids, tree = refresh queued}
   end
 
+(* [update] rewrites the fields of an existing goal; it neither adds nor
+   removes one, and never touches the parent link, so the index stands. *)
 fun map_goal id update
       (tree as
-       Tree {goals, rapps, clusters, queue, next_gid, next_rid,
+       Tree {goals, rapps, clusters, index, queue, next_gid, next_rid,
              next_cid, next_insertion, ...}) =
   let
     val current = goal tree id
   in
     tree_with tree
       {goals = Redblackmap.insert (goals, id, update current),
-       rapps = rapps, clusters = clusters, queue = queue,
-       next_gid = next_gid, next_rid = next_rid,
+       rapps = rapps, clusters = clusters, index = index,
+       queue = queue, next_gid = next_gid, next_rid = next_rid,
        next_cid = next_cid, next_insertion = next_insertion}
   end
 
@@ -883,8 +933,8 @@ fun pop_goal_with skip tree =
   let
     fun pop
           (current as
-           Tree {goals, rapps, clusters, queue, next_gid, next_rid,
-                 next_cid, next_insertion, ...}) =
+           Tree {goals, rapps, clusters, index, queue, next_gid,
+                 next_rid, next_cid, next_insertion, ...}) =
       if searchHeap.is_empty queue then (NONE, current)
       else
         let
@@ -897,7 +947,7 @@ fun pop_goal_with skip tree =
           val rest =
             tree_with current
               {goals = goals, rapps = rapps, clusters = clusters,
-               queue = queue'', next_gid = next_gid,
+               index = index, queue = queue'', next_gid = next_gid,
                next_rid = next_rid, next_cid = next_cid,
                next_insertion = next_insertion}
           val id = #goal entry

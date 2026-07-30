@@ -2,6 +2,13 @@ signature clasimpLib =
 sig
   include Abbrev
 
+  (* The safe side-condition solver of the clasimp simpset.  It discharges
+     only goals justified without witness instantiation or unsafe search,
+     which is what makes it usable in a normalisation phase.  Exported so
+     that simpsets derived elsewhere (aesop) share this one solver stack
+     rather than restating it. *)
+  val safe_solver : Traverse.ssolver
+
   val clasimp_ss : unit -> simpLib.simpset
   val asm_full_simp : simpLib.simpset -> thm list -> tactic
   val safe_asm_full_simp : simpLib.simpset -> thm list -> tactic

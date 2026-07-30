@@ -1841,6 +1841,87 @@ val _ =
          List.all good cases
        end)
 
+(* [rule_origin] recovers the declaration an applied theorem came from by
+   comparing the theorem against the canonicalisation the claset stored for
+   that declaration.  Probing with forms rebuilt by clasetRules.ext_info
+   pins both halves at once: the stored forms have to be exactly what
+   ext_info derives, or no probe would match and every case would take the
+   fallback; and the reported variant has to follow the scan's priority --
+   plain and swapped only for a non-duplicating application, then the two
+   duplicated forms whatever the application was, then plain regardless --
+   with an undeclared theorem its own origin. *)
+val _ =
+  test
+    ("rule_origin classifies every stored rule form and falls back",
+     fn () =>
+       let
+         open clasetStep
+         val origin_p = Term.mk_var ("origin_p", bool_ty)
+         val origin_q = Term.mk_var ("origin_q", bool_ty)
+         val conjunction = boolSyntax.mk_conj (origin_p, origin_q)
+         val intro_thm =
+           DISCH origin_p (DISJ1 (ASSUME origin_p) origin_q)
+         val dest_thm =
+           DISCH conjunction (CONJUNCT1 (ASSUME conjunction))
+         val unsafe_intro =
+           {kind = clasetRules.Intro, safe = false, prio = NONE}
+         val safe_intro =
+           {kind = clasetRules.Intro, safe = true, prio = NONE}
+         val safe_dest =
+           {kind = clasetRules.Dest, safe = true, prio = NONE}
+         fun declared spec named_th =
+           let
+             val cs = clasetLib.add_rule spec named_th clasetLib.empty_cs
+             val (_, (_, original)) = the_singleton (clasetLib.rules_of cs)
+           in
+             (cs, original, clasetRules.ext_info spec original)
+           end
+         fun reports cs duplicated theorem (origin, expected) =
+           let
+             val (reported, variant) = rule_origin cs duplicated theorem
+           in
+             Term.aconv (concl reported) (concl origin) andalso
+             variant = expected
+           end
+         val (unsafe_cs, unsafe_orig,
+              {rl = (plain, swapped), dup_rl = (dup, dup_swapped)}) =
+           declared unsafe_intro ("origin_unsafe", intro_thm)
+         val (safe_cs, safe_orig, {rl = (safe_plain, _), dup_rl = _}) =
+           declared safe_intro ("origin_safe", intro_thm)
+         val (dest_cs, dest_orig, {rl = (dest_plain, _), dup_rl = _}) =
+           declared safe_dest ("origin_dest", dest_thm)
+         (* A claset the scan has to look past its first declaration in. *)
+         val both_cs =
+           clasetLib.add_rule safe_dest ("origin_dest", dest_thm)
+             (clasetLib.add_rule unsafe_intro
+                ("origin_unsafe", intro_thm) clasetLib.empty_cs)
+       in
+         reports unsafe_cs false plain (unsafe_orig, Plain) andalso
+         reports unsafe_cs false (valOf swapped)
+           (unsafe_orig, Swapped) andalso
+         reports unsafe_cs false dup (unsafe_orig, Duplicate) andalso
+         reports unsafe_cs true dup (unsafe_orig, Duplicate) andalso
+         reports unsafe_cs true (valOf dup_swapped)
+           (unsafe_orig, Duplicate) andalso
+         (* The last resort: a duplicating application of the plain form of
+            a rule whose duplicated form differs from it. *)
+         reports unsafe_cs true plain (unsafe_orig, Plain) andalso
+         (* A safe rule duplicates to itself, so a duplicating application
+            of it reaches the duplicate test rather than the plain one. *)
+         reports safe_cs false safe_plain (safe_orig, Plain) andalso
+         reports safe_cs true safe_plain (safe_orig, Duplicate) andalso
+         (* A destruction rule is applied in its made-elimination form,
+            which is not the declared theorem. *)
+         reports dest_cs false dest_plain (dest_orig, MakeElim) andalso
+         reports both_cs false plain (unsafe_orig, Plain) andalso
+         reports both_cs false dest_plain (dest_orig, MakeElim) andalso
+         (* No declaration derived this theorem, so it is its own origin. *)
+         reports unsafe_cs false boolTheory.TRUTH
+           (boolTheory.TRUTH, Plain) andalso
+         reports unsafe_cs true boolTheory.TRUTH
+           (boolTheory.TRUTH, Duplicate)
+       end)
+
 val _ =
   test
     ("assumption closing uses shared beta-eta equality",
@@ -3284,6 +3365,114 @@ val _ =
              | _ => false
        in
          List.all exact variants
+       end)
+
+(* A forward rule discharges every immediate premise from an assumption, so
+   with more than one premise the assumptions selected for the earlier
+   premises decide the conclusion just as much as the major one does. *)
+val forward_object = Type.ind
+val forward_a = Term.mk_var ("forward_a", forward_object)
+val forward_b = Term.mk_var ("forward_b", forward_object)
+val forward_c = Term.mk_var ("forward_c", forward_object)
+val forward_d = Term.mk_var ("forward_d", forward_object)
+val forward_x = Term.mk_var ("forward_x", forward_object)
+val forward_y = Term.mk_var ("forward_y", forward_object)
+val forward_z = Term.mk_var ("forward_z", forward_object)
+val forward_edge =
+  Term.mk_var
+    ("forward_edge", forward_object --> forward_object --> bool_ty)
+val forward_node =
+  Term.mk_var ("forward_node", forward_object --> bool_ty)
+val forward_goal_target = Term.mk_var ("forward_goal_target", bool_ty)
+
+fun forward_edge_of source destination =
+  Term.list_mk_comb (forward_edge, [source, destination])
+
+fun forward_node_of value = Term.mk_comb (forward_node, value)
+
+fun forward_reach_of value =
+  boolSyntax.mk_exists
+    (forward_z,
+     boolSyntax.mk_conj
+       (forward_edge_of value forward_z, forward_node_of forward_z))
+
+(* |- !x y. Edge x y ==> Node y ==> ?z. Edge x z /\ Node z *)
+val forward_reach_rule =
+  GENL [forward_x, forward_y]
+    (DISCH (forward_edge_of forward_x forward_y)
+      (DISCH (forward_node_of forward_y)
+        (EXISTS (forward_reach_of forward_x, forward_y)
+          (CONJ
+            (ASSUME (forward_edge_of forward_x forward_y))
+            (ASSUME (forward_node_of forward_y))))))
+
+(* The conclusion each alternative adds, once it has been checked to keep
+   the assumptions it matched and to replay against the original goal. *)
+fun forward_alternatives assumptions =
+  let
+    val goal = (assumptions, forward_goal_target)
+    val results =
+      drain_exact
+        (clasetStep.forward_rule_step
+          {theorem = forward_reach_rule, immediate = NONE,
+           mode = clasetUnify.Match}
+          (clasetGoal.from_goal goal, 1))
+    fun added (record, node) =
+      case rendered_goals node of
+          [(conclusion :: retained, target)] =>
+            if clasetStep.consumed_of record = NONE andalso
+               same_goals [(retained, target)] [goal] andalso
+               valid_open_replay goal (record, node)
+            then SOME conclusion
+            else NONE
+        | _ => NONE
+  in
+    map added results
+  end
+
+val _ =
+  test
+    ("forward_rule_step derives every conclusion of a two-premise rule",
+     fn () =>
+       let
+         val alternatives =
+           forward_alternatives
+             [forward_edge_of forward_a forward_c,
+              forward_edge_of forward_b forward_c,
+              forward_node_of forward_c]
+       in
+         length alternatives = 2 andalso
+         ListPair.allEq
+           (fn (actual, expected) =>
+             case actual of
+                 SOME conclusion => Term.aconv conclusion expected
+               | NONE => false)
+           (alternatives,
+            [forward_reach_of forward_a, forward_reach_of forward_b])
+       end)
+
+val _ =
+  test
+    ("forward_rule_step drops conclusions the goal already states",
+     fn () =>
+       let
+         val shared =
+           forward_alternatives
+             [forward_edge_of forward_a forward_c,
+              forward_edge_of forward_a forward_d,
+              forward_node_of forward_c,
+              forward_node_of forward_d]
+         val stated =
+           forward_alternatives
+             [forward_reach_of forward_a,
+              forward_edge_of forward_a forward_c,
+              forward_node_of forward_c]
+       in
+         (case shared of
+              [SOME conclusion] =>
+                Term.aconv conclusion (forward_reach_of forward_a)
+            | _ => false) andalso
+         List.null stated
        end)
 
 val _ =

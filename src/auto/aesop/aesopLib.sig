@@ -23,5 +23,10 @@ sig
     {name : string, phase : rphase,
      tactic : NTactical.ntactic} -> unit
 
+  (* Registers a rule a builder returned, such as [cases_rule_for]'s.  The
+     rule keeps its own name, phase and retrieval index.  Rules whose
+     action is a theorem-derived engine step are refused. *)
+  val augment_aesop_rule : rule -> unit
+
   val cases_rule_for : hol_type -> rule
 end

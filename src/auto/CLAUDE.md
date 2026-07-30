@@ -30,6 +30,16 @@ is the routine development gate building kernel + core theories + this layer,
 with selftests. `bin/build -F -t` (full distribution) is the gate at phase
 boundaries.
 
+Numeric attribute values (`[elim=75]`, `[norm=~3]`) need a quote filter
+built from the current `tools/parsing/HolLex`.  That lexer is generated
+by configure, not by any Holmakefile rule, so after pulling run
+`poly < tools/smart-configure.sml` — a stale `bin/unquote` reports the
+mis-lex as a syntax error in the theorem, not as a stale filter.
+
+Only `rules/` and `aesop/theory_tests/` have theory scripts; in
+`classical/`, `blast/`, `clasimp/` and `aesop/` plain `Holmake` compiles
+nothing and exits 0 even on type errors.  Build `selftest.exe` there.
+
 Per-directory: plain `Holmake` inside `src/auto/rules/` works — its
 Holmakefile pins `HOLHEAP = $(HOLDIR)/bin/hol.state0` itself.  The
 selftest is `selftest.exe` (built by `Holmake`, run directly, or via

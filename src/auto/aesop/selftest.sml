@@ -193,6 +193,37 @@ val _ =
              true
          | _ => false)
 
+(* A registered tactic rule competes with the claset candidates on its
+   declared percentage: 95 outranks the eighty-percent declaration, and the
+   tie at fifty leaves the claset candidate ahead. *)
+val merged_unsafe_order =
+  aesopRule.with_tactic_rules
+    (fn () =>
+      (aesopRule.register_tactic_rule
+         {name = "tactic_ninety_five",
+          phase = aesopRule.RUnsafe 95,
+          tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+          index = SOME (aesopRule.TargetPattern boolSyntax.T)};
+       aesopRule.register_tactic_rule
+         {name = "tactic_fifty",
+          phase = aesopRule.RUnsafe 50,
+          tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+          index = SOME (aesopRule.TargetPattern boolSyntax.T)};
+       #unsafe
+         (aesopRule.claset_rules
+           {claset = assembly_cs, mode = clasetUnify.Unify,
+            conclusion = boolSyntax.T, assumptions = [],
+            qvars = HOLset.empty Term.compare, simp_args = []})))
+    ()
+
+val _ =
+  test
+    ("aesop unsafe order merges tactic rules by declared percentage",
+     fn () =>
+       rule_names merged_unsafe_order =
+         ["tactic_ninety_five", "unsafe_eighty", "unsafe_default",
+          "tactic_fifty"])
+
 val _ =
   test
     ("aesop safe-order scaffold locks closers safe0 and safep slots",
@@ -585,28 +616,39 @@ val _ =
 
 val registered_before =
   length (aesopRule.registered_tactic_rules ())
-val _ =
-  aesopRule.register_tactic_rule
-    {name = "registered_target", phase = aesopRule.RUnsafe 42,
-     tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
-     index = SOME (aesopRule.TargetPattern boolSyntax.T)}
-val registered_matching =
+
+(* Registration is session-global, so a test registers inside the scoping
+   combinator and leaves the registry as it found it. *)
+fun with_registered_target f =
+  aesopRule.with_tactic_rules
+    (fn () =>
+      (aesopRule.register_tactic_rule
+         {name = "registered_target", phase = aesopRule.RUnsafe 42,
+          tactic = NTactical.LIFT (Tactic.ACCEPT_TAC boolTheory.TRUTH),
+          index = SOME (aesopRule.TargetPattern boolSyntax.T)};
+       f ()))
+    ()
+
+fun registered_rules_for conclusion =
   aesopRule.claset_rules
     {claset = clasetLib.empty_cs, mode = clasetUnify.Match,
-     conclusion = boolSyntax.T, assumptions = [],
+     conclusion = conclusion, assumptions = [],
      qvars = HOLset.empty Term.compare, simp_args = []}
-val registered_blocked =
-  aesopRule.claset_rules
-    {claset = clasetLib.empty_cs, mode = clasetUnify.Match,
-     conclusion = boolSyntax.F, assumptions = [],
-     qvars = HOLset.empty Term.compare, simp_args = []}
+
+val (registered_during, registered_matching, registered_blocked) =
+  with_registered_target
+    (fn () =>
+      (length (aesopRule.registered_tactic_rules ()),
+       registered_rules_for boolSyntax.T,
+       registered_rules_for boolSyntax.F))
+val registered_after =
+  length (aesopRule.registered_tactic_rules ())
 
 val _ =
   test
     ("aesop tactic registry retains rules and applies its index",
      fn () =>
-       length (aesopRule.registered_tactic_rules ()) =
-         registered_before + 1 andalso
+       registered_during = registered_before + 1 andalso
        List.exists
          (fn ({name, ...} : aesopRule.rule) =>
            name = "registered_target")
@@ -616,6 +658,20 @@ val _ =
            (fn ({name, ...} : aesopRule.rule) =>
              name = "registered_target")
            (#unsafe registered_blocked)))
+
+val _ =
+  test
+    ("aesop scoped registration unwinds on return and on exception",
+     fn () =>
+       let
+         exception ScopedRegistration
+       in
+         registered_after = registered_before andalso
+         (with_registered_target (fn () => raise ScopedRegistration)
+            handle ScopedRegistration =>
+              length (aesopRule.registered_tactic_rules ()) =
+                registered_before)
+       end)
 
 val split_theorem = TypeBase.case_pred_disj_of Type.bool
 val split_pair =
@@ -1922,6 +1978,54 @@ val _ =
               aconv w forward_target
           | _ => false))
 
+val search_wide_a =
+  Term.mk_var ("aesop_search_wide_a", Type.bool)
+val search_wide_b =
+  Term.mk_var ("aesop_search_wide_b", Type.bool)
+val search_wide_c =
+  Term.mk_var ("aesop_search_wide_c", Type.bool)
+val search_wide_d =
+  Term.mk_var ("aesop_search_wide_d", Type.bool)
+val search_wide_target =
+  Term.mk_var ("aesop_search_wide_target", Type.bool)
+val search_wide_left =
+  boolSyntax.mk_conj (search_wide_a, search_wide_b)
+val search_wide_right =
+  boolSyntax.mk_conj (search_wide_c, search_wide_d)
+fun search_wide_rules mode =
+  [aesopRule.default_forward_rule
+    {name = "wide-forward", phase = aesopRule.RSafe,
+     theorem = boolTheory.AND1_THM, mode = mode}]
+val search_wide_tree =
+  search_tree
+    (aesopSearch.safe_saturate
+      {max_depth = 10,
+       rules = search_source [] search_wide_rules []}
+      (new_tree clasetMeta.empty
+        (tree_cgoal [] [search_wide_left, search_wide_right]
+          search_wide_target) []))
+
+(* A safe forward rule with several conclusions is not a choice: taking one
+   leaves the others for the child goal.  A determinism requirement would
+   silence such a rule instead. *)
+val _ =
+  test
+    ("aesop safe search installs every forward conclusion in one branch",
+     fn () =>
+       length (aesopTree.rapps search_wide_tree) = 2 andalso
+       List.all
+         (fn ({rule, ...} : aesopTree.rapp) => rule = "wide-forward")
+         (aesopTree.rapps search_wide_tree) andalso
+       (case aesopSearch.safe_frontier search_wide_tree of
+            [(id, {asl, w, ...})] =>
+              aconv w search_wide_target andalso
+              length asl = 4 andalso
+              List.exists (aconv search_wide_a) asl andalso
+              List.exists (aconv search_wide_c) asl andalso
+              length
+                (#forwarded (aesopTree.goal search_wide_tree id)) = 2
+          | _ => false))
+
 val search_frontier_p =
   Term.mk_var ("aesop_search_frontier_p", Type.bool)
 val search_frontier_q =
@@ -2316,6 +2420,31 @@ val _ =
         handle HOL_ERR error =>
           String.isSubstring "engine bug" (Feedback.message_of error)))
 
+val interrupt_goal : Abbrev.goal = ([], boolSyntax.T)
+val interrupt_result : Abbrev.goal list * Abbrev.validation =
+  ([], fn _ => raise Portable.Interrupt)
+val interrupt_tree0 =
+  new_tree clasetMeta.empty
+    (tree_cgoal [] (#1 interrupt_goal) (#2 interrupt_goal)) []
+val (interrupt_root, interrupt_tree1) =
+  pop_expected interrupt_tree0
+val interrupt_tree =
+  #tree
+    (install_tree_rapp interrupt_tree1 interrupt_root aesopRule.RSafe
+      "interrupt-close" clasetMeta.empty []
+      [replay_wrapper_record interrupt_result])
+
+(* The engine-bug diagnostic is a catch-all, so it has to make one
+   exception for the interrupt that stopped the user's proof. *)
+val _ =
+  test
+    ("aesop replay diagnostics never reinterpret an interrupt",
+     fn () =>
+       ((ignore (aesopSearch.REPLAY_TAC interrupt_tree interrupt_goal);
+         false)
+        handle Portable.Interrupt => true
+             | HOL_ERR _ => false))
+
 val search_limit_goal = boolSyntax.T
 val search_limit_close =
   aesopRule.apply_rule
@@ -2339,6 +2468,41 @@ val _ =
                 (case safe_goals () of
                      [(_, {w, ...})] => aconv w search_limit_goal
                    | _ => false)
+         | _ => false)
+
+fun triple_search_step input =
+  case
+    seq.cases
+      ((clasetStep.rule_step
+         {theorem = boolTheory.TRUTH, elim = false,
+          mode = clasetUnify.Match}) input)
+  of
+      NONE => seq.empty
+    | SOME (result, _) => seq.fromList [result, result, result]
+
+val search_wide_unsafe : aesopRule.rule =
+  {name = "unsafe-wide", phase = aesopRule.RUnsafe 70,
+   apply = aesopRule.EngineStep triple_search_step, once = false}
+val search_skip_outcome =
+  aesopSearch.search {max_rapps = 2, max_depth = 10}
+    (search_source [] (fn _ => [])
+      [search_wide_unsafe, search_limit_close])
+    (new_tree clasetMeta.empty
+      (tree_cgoal [] [] search_limit_goal) [])
+
+(* An unsafe rule whose alternatives do not fit the global budget is
+   inapplicable at that goal, not the end of the search: installing a
+   prefix of them would be order-dependent incompleteness, and failing
+   outright loses every other rule. *)
+val _ =
+  test
+    ("aesop skips over-budget unsafe rules and keeps searching",
+     fn () =>
+       case search_skip_outcome of
+           aesopSearch.SearchProved tree =>
+             (case aesopTree.rapps tree of
+                  [{rule, ...}] => rule = "limit-close"
+                | _ => false)
          | _ => false)
 
 val search_safe_limit_close =
@@ -2796,22 +2960,174 @@ val _ =
 val surface_augmented =
   Term.mk_var ("aesop_surface_augmented", Type.bool)
 val surface_augmented_called = ref false
-val _ =
-  aesopLib.augment_aesop
-    {name = "aesop-selftest-session-tactic",
-     phase = aesopRule.RNorm ~1,
-     tactic =
-       NTactical.LIFT
-         (fn goal =>
-           (surface_augmented_called := true;
-            Tactic.ACCEPT_TAC (ASSUME surface_augmented) goal))}
+val surface_registry_before =
+  length (aesopRule.registered_tactic_rules ())
+val surface_augmented_residue =
+  aesopRule.with_tactic_rules
+    (fn () =>
+      (aesopLib.augment_aesop
+         {name = "aesop-selftest-session-tactic",
+          phase = aesopRule.RNorm ~1,
+          tactic =
+            NTactical.LIFT
+              (fn goal =>
+                (surface_augmented_called := true;
+                 Tactic.ACCEPT_TAC (ASSUME surface_augmented) goal))};
+       residual
+         (aesopLib.AESOP_TAC [])
+         ([surface_augmented], surface_augmented)))
+    ()
+val surface_registry_after =
+  length (aesopRule.registered_tactic_rules ())
 
 val _ =
   test
     ("augment_aesop wires session-only tactics into public search",
      fn () =>
-       null
-         (residual
-           (aesopLib.AESOP_TAC [])
-           ([surface_augmented], surface_augmented)) andalso
+       null surface_augmented_residue andalso
        !surface_augmented_called)
+
+fun closes_goal tactic goal =
+  null (residual tactic goal) handle HOL_ERR _ => false
+
+(* A tactic value is routinely bound before the declarations its goals
+   need -- [val TAC = AESOP_TAC []] at the head of a script, then the
+   theorems and simp rules the script proves.  Both entry points are
+   therefore bound here, ahead of the rewrite and the claset rule the two
+   goals below cannot be closed without. *)
+val stale_tactic = aesopLib.AESOP_TAC [markerLib.NoAsms]
+val stale_safe_tactic = aesopLib.AESOP_SAFE_TAC [markerLib.NoAsms]
+
+(* The rewritten terms are of an uninterpreted type, so no rule of the
+   claset or the simpset can relate them on its own. *)
+val stale_element = Term.mk_var ("aesop_stale_element", Type.ind)
+val stale_f =
+  Term.mk_var ("aesop_stale_f", Type.ind --> Type.ind)
+val stale_g =
+  Term.mk_var ("aesop_stale_g", Type.ind --> Type.ind)
+val stale_predicate =
+  Term.mk_var ("aesop_stale_predicate", Type.ind --> Type.bool)
+val stale_rewrite =
+  ASSUME
+    (boolSyntax.mk_eq
+      (Term.mk_comb (stale_f, stale_element),
+       Term.mk_comb (stale_g, stale_element)))
+
+(* [NoAsms] keeps the rewrite's own hypothesis out of the simplifier, so
+   only a simpset carrying the rewrite closes this goal. *)
+val stale_simp_goal =
+  ([concl stale_rewrite,
+    Term.mk_comb
+      (stale_predicate, Term.mk_comb (stale_g, stale_element))],
+   Term.mk_comb
+     (stale_predicate, Term.mk_comb (stale_f, stale_element)))
+
+val stale_simp_closed =
+  BasicProvers.with_simpset_updates
+    (fn ss =>
+      simpLib.++
+        (ss,
+         simpLib.named_rewrites "aesop-selftest-stale-rewrite"
+           [stale_rewrite]))
+    (fn () => closes_goal stale_tactic stale_simp_goal)
+    ()
+
+val _ =
+  test
+    ("AESOP_TAC reads the aesop simpset where it is applied",
+     fn () => stale_simp_closed)
+
+val stale_p = Term.mk_var ("aesop_stale_p", Type.bool)
+val stale_q = Term.mk_var ("aesop_stale_q", Type.bool)
+val stale_norm_rule =
+  DISCH stale_p (DISJ1 (ASSUME stale_p) stale_q)
+val stale_norm_name = "aesop-selftest-stale-norm"
+val stale_claset_residue =
+  let
+    val _ =
+      clasetLib.temp_add_rule
+        {kind = clasetRules.Norm, safe = false, prio = NONE}
+        (stale_norm_name, stale_norm_rule)
+    val residue =
+      SOME
+        (residual stale_safe_tactic
+          ([], boolSyntax.mk_disj (stale_p, stale_q)))
+      handle HOL_ERR _ => NONE
+  in
+    clasetLib.temp_delrule stale_norm_name; residue
+  end
+val stale_claset_restored =
+  not
+    (List.exists (fn (_, (name, _)) => name = stale_norm_name)
+      (clasetLib.rules_of (clasetLib.the_claset ())))
+
+val _ =
+  test
+    ("AESOP_SAFE_TAC reads the claset where it is applied",
+     fn () =>
+       stale_claset_restored andalso
+       (case stale_claset_residue of
+            SOME [([], target)] => aconv target stale_p
+          | _ => false))
+
+val cases_predicate =
+  Term.mk_var ("aesop_cases_predicate", Type.bool --> Type.bool)
+val cases_variable =
+  Term.mk_var ("aesop_cases_variable", Type.bool)
+
+(* Only a case split on the boolean variable connects the goal to the two
+   assumptions. *)
+val cases_goal =
+  ([Term.mk_comb (cases_predicate, boolSyntax.T),
+    Term.mk_comb (cases_predicate, boolSyntax.F)],
+   Term.mk_comb (cases_predicate, cases_variable))
+val cases_without_rule =
+  closes_goal (aesopLib.AESOP_TAC []) cases_goal
+val cases_with_rule =
+  aesopRule.with_tactic_rules
+    (fn () =>
+      (aesopLib.augment_aesop_rule
+         (aesopLib.cases_rule_for Type.bool);
+       closes_goal (aesopLib.AESOP_TAC []) cases_goal))
+    ()
+val cases_registry_after =
+  length (aesopRule.registered_tactic_rules ())
+
+val _ =
+  test
+    ("augment_aesop_rule installs a built cases rule into public search",
+     fn () =>
+       not cases_without_rule andalso
+       cases_with_rule andalso
+       cases_registry_after = surface_registry_before)
+
+val _ =
+  test
+    ("augment_aesop_rule refuses rules the tactic registry cannot hold",
+     fn () =>
+       let
+         val engine_rule =
+           aesopRule.apply_rule
+             {name = "aesop-selftest-engine-rule",
+              phase = aesopRule.RUnsafe 50,
+              theorem = boolTheory.TRUTH,
+              mode = clasetUnify.Match}
+         val refused =
+           (aesopRule.with_tactic_rules
+              (fn () =>
+                (aesopLib.augment_aesop_rule engine_rule; false)) ()
+            handle HOL_ERR _ => true)
+       in
+         refused andalso
+         length (aesopRule.registered_tactic_rules ()) =
+           surface_registry_before
+       end)
+
+(* Every registration in this file is scoped, so nothing a test declared is
+   still visible to the goals of any later test. *)
+val _ =
+  test
+    ("aesop selftest registrations leave the session registry empty",
+     fn () =>
+       surface_registry_before = 0 andalso
+       surface_registry_after = surface_registry_before)

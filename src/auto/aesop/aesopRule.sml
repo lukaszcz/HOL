@@ -88,7 +88,7 @@ fun safe_constructors_rule {name, theorems, mode} =
   constructors_rule_with RSafe "safe_constructors_rule"
     {name = name, theorems = theorems, mode = mode}
 
-fun forward_rule {name, phase, theorem, immediate, mode} : rule =
+fun forward_rule_with immediate {name, phase, theorem, mode} : rule =
   {name = name, phase = phase,
    apply =
      EngineStep
@@ -96,16 +96,14 @@ fun forward_rule {name, phase, theorem, immediate, mode} : rule =
          {theorem = theorem, immediate = immediate, mode = mode}),
    once = true}
 
-fun default_forward_rule {name, phase, theorem, mode} =
-  let
-    val immediate =
-      length
-        (clasetRules.rule_premises_of clasetRules.Forward theorem)
-  in
-    forward_rule
-      {name = name, phase = phase, theorem = theorem,
-       immediate = immediate, mode = mode}
-  end
+fun forward_rule {name, phase, theorem, immediate, mode} =
+  forward_rule_with (SOME immediate)
+    {name = name, phase = phase, theorem = theorem, mode = mode}
+
+(* The step canonicalizes the theorem once for all of its applications and
+   takes every premise of that canonical rule when asked for NONE, so the
+   all-immediate default costs no canonicalization here. *)
+val default_forward_rule = forward_rule_with NONE
 
 fun forward_duplicate store previous candidate =
   let
@@ -174,6 +172,20 @@ fun register_tactic_rule
       (registration as {index, ...}) =
   Sref.update tactic_registry
     (fn rules => rules @ [(tactic_rule registration, index)])
+
+(* Registration is session-global and additive, which is what a library
+   augmenting the engine wants.  A caller whose registrations belong to a
+   bounded scope -- a tactic installing a rule for one invocation, a test
+   exercising one -- runs them inside this combinator instead, which
+   restores the registry afterwards whether [f] returns or raises. *)
+fun with_tactic_rules f x =
+  let
+    val saved = Sref.value tactic_registry
+    fun restore () = Sref.update tactic_registry (fn _ => saved)
+    val result = f x handle e => (restore (); raise e)
+  in
+    restore (); result
+  end
 
 fun registered_tactic_rules () =
   map #1 (Sref.value tactic_registry)
@@ -357,11 +369,13 @@ fun safe_rules
   closers @ safe0_claset @ safe_forward @ safep_claset @
   conclusion_splits @ assumption_splits
 
+type candidate = clasetLib.aesop_rule
+
 (* Retrieval may offer one declaration through several index entries.  Keep
    the first occurrence of each name, in retrieval order. *)
 fun unique_declarations declarations =
   let
-    fun add (declaration as (_, (name, _)), (seen, kept)) =
+    fun add (declaration as {name, ...} : candidate, (seen, kept)) =
       if Redblackset.member (seen, name) then (seen, kept)
       else (Redblackset.add (seen, name), declaration :: kept)
     val (_, reversed) =
@@ -371,13 +385,20 @@ fun unique_declarations declarations =
     List.rev reversed
   end
 
+(* Assembling a rule set inspects a retrieved declaration more than once:
+   once per safe-class filter, and once more when its rule is built.  Each
+   inspection wants the declaration's classical rule forms, which cost real
+   kernel derivations -- CLASSICAL_RULE, MAKE_ELIM_RULE, DUP_ELIM_RULE,
+   SWAP_INTRO_RULE.  The claset derived them once when the rule was
+   declared and hands them back with the candidate, so no goal expansion
+   derives them again. *)
 fun candidate_declarations claset conclusion assumptions qvars =
   let
     val target =
-      clasetLib.aesop_target_candidates claset
+      clasetLib.aesop_target_rules claset
         {q = conclusion, qvars = qvars}
     fun hypothesis assumption =
-      clasetLib.aesop_hyp_candidates claset
+      clasetLib.aesop_hyp_rules claset
         {q = assumption, qvars = qvars}
   in
     unique_declarations
@@ -389,11 +410,10 @@ fun ordinary_kind clasetRules.Intro = true
   | ordinary_kind clasetRules.Dest = true
   | ordinary_kind _ = false
 
-fun canonical_source spec theorem =
-  #1 (#rl (clasetRules.ext_info spec theorem))
+fun canonical_source ({info, ...} : candidate) = #1 (#rl info)
 
 fun declaration_rule mode
-      (spec, (name, theorem)) : rule =
+      (candidate as {spec, name, thm, ...} : candidate) : rule =
   let
     val kind = #kind spec
     val elim =
@@ -402,9 +422,9 @@ fun declaration_rule mode
     if kind = clasetRules.Forward then
       default_forward_rule
         {name = name, phase = phase_of_spec spec,
-         theorem = theorem, mode = mode}
+         theorem = thm, mode = mode}
     else
-      let val source = canonical_source spec theorem
+      let val source = canonical_source candidate
       in
         {name = name, phase = phase_of_spec spec,
          apply =
@@ -415,28 +435,32 @@ fun declaration_rule mode
       end
   end
 
-fun safe_class wanted (spec, (_, theorem)) =
+fun safe_class wanted ({spec, info, ...} : candidate) =
   #safe spec andalso
   ordinary_kind (#kind spec) andalso
-  clasetRules.safe_class_of spec (clasetRules.ext_info spec theorem) =
-    SOME wanted
+  clasetRules.safe_class_of spec info = SOME wanted
 
-fun unsafe_declaration (spec, _) =
+fun unsafe_declaration ({spec, ...} : candidate) =
   (ordinary_kind (#kind spec) orelse
    #kind spec = clasetRules.Forward) andalso
   not (#safe spec)
 
-fun safe_forward_declaration (spec, _) =
+fun safe_forward_declaration ({spec, ...} : candidate) =
   #kind spec = clasetRules.Forward andalso #safe spec
 
-fun unsafe_percent (spec, _) =
-  case phase_of_spec spec of
+fun unsafe_percent ({phase, ...} : rule) =
+  case phase of
       RUnsafe percent => percent
     | _ => raise ERR "unsafe_percent" "a safe rule reached unsafe ordering"
 
-fun order_unsafe declarations =
+(* Claset candidates and registered tactic rules share one ordering, so a
+   rule's declared success percentage alone decides when it is tried.  The
+   sort is stable and the tactic rules follow the claset candidates in its
+   input, so equal percentages keep claset candidates -- which arrive in
+   the claset's own candidate order -- ahead of tactic rules. *)
+fun order_unsafe rules =
   let
-    val positioned = Lib.enumerate 0 declarations
+    val positioned = Lib.enumerate 0 rules
     fun compare ((left_index, left), (right_index, right)) =
       case Int.compare
              (unsafe_percent right, unsafe_percent left) of
@@ -460,12 +484,12 @@ fun claset_rules_core
     val forwards =
       map (declaration_rule mode)
         (List.filter safe_forward_declaration candidates)
-    val unsafe =
+    val unsafe_claset =
       map (declaration_rule mode)
-        (order_unsafe (List.filter unsafe_declaration candidates))
+        (List.filter unsafe_declaration candidates)
     val norm_declarations =
       map (declaration_rule clasetUnify.Match)
-        (clasetLib.norm_rules_of claset)
+        (clasetLib.norm_rules claset)
     val splits = split_rules ()
     val tactics =
       applicable_tactic_rules conclusion assumptions
@@ -485,7 +509,7 @@ fun claset_rules_core
   in
     {norm = norm_builtins_with simp @ norm_declarations @ norm_tactics,
      safe = safe,
-     unsafe = unsafe @ unsafe_tactics}
+     unsafe = order_unsafe (unsafe_claset @ unsafe_tactics)}
   end
 
 fun claset_rules

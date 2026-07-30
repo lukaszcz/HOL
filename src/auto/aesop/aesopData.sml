@@ -45,26 +45,20 @@ val aesop_simp_data =
 fun aesop_simp_rewrites () =
   #get_global_value aesop_simp_data ()
 
-(* This is the safe side-condition solver used by clasimp.  Keeping the
-   solver safe is essential for the normalisation phase: it may discharge
-   only goals justified without witness instantiation or unsafe search. *)
-val safe_solver =
-  simpLib.mk_tactic_solver
-    ("clasimp safe",
-     Tactical.FIRST
-       [Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC,
-        Tactic.REFL_TAC,
-        Tactic.ACCEPT_TAC boolTheory.TRUTH,
-        Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
-
 type cached_simpset = {generation : int, simpset : simpLib.simpset}
 
+(* Keeping the side-condition solver safe is essential for the
+   normalisation phase: it may discharge only goals justified without
+   witness instantiation or unsafe search.  clasimp's solver is exactly
+   that stack, so it is shared rather than restated here.  The derivation
+   itself is not shared: clasimp_ss also carries split_ss, which the aesop
+   simpset deliberately leaves to the search. *)
 fun derive_aesop_ss ss _ : cached_simpset =
   {generation = Sref.value aesop_simp_generation,
    simpset =
      ss
      |> simpLib.set_cond_depth 40
-     |> simpLib.set_safe_solvers [safe_solver]
+     |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
      |> (fn ss' =>
           simpLib.++ (ss', simpLib.rewrites (aesop_simp_rewrites ())))}
 

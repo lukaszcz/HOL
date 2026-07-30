@@ -37,11 +37,6 @@ sig
         {tree : tree, safe_goals : unit -> (gid * cgoal) list,
          reason : failure_reason}
 
-  (* Process queued goals through normalisation and committed safe
-     applications until one goal is ready for unsafe search. *)
-  val next_safe :
-    {max_depth : int, rules : rule_source} -> tree -> next_outcome
-
   (* Deterministic normalisation-and-safe saturation.  Goals returned by
      [safe_frontier] are the exact residual frontier. *)
   val safe_saturate :

@@ -39,10 +39,6 @@ datatype search_outcome =
       {tree : tree, safe_goals : unit -> (gid * cgoal) list,
        reason : failure_reason}
 
-datatype application =
-    Inapplicable
-  | Applied of aesopTree.rapp_data
-
 datatype safe_phase =
     Committed of tree
   | Deferred of aesopTree.rapp_data list
@@ -87,47 +83,19 @@ fun trace_goal label tree id =
         cgoal_string (aesopTree.active_cgoal goal))
   end
 
-fun engine_results step node =
-  seq.map
-    (fn (record, next) => ([record], next))
-    (step (node, 1))
+fun application_data ({name, phase, ...} : aesopRule.rule)
+      (records, next) : aesopTree.rapp_data =
+  {rule = name, phase = phase, records = records, node = next,
+   forwarded = NONE}
 
-fun rendered_results tactic node =
-  let
-    val rendered = clasetGoal.render node 1
-  in
-    seq.mapPartial
-      (fn result =>
-        Option.map
-          (fn (record, next) => ([record], next))
-          (aesopTree.rendered_record node rendered result))
-      (tactic rendered)
-  end
-
-fun application_results
-      ({apply, ...} : aesopRule.rule) node =
-  case apply of
-      aesopRule.EngineStep step => engine_results step node
-    | aesopRule.RenderedTactic tactic =>
-        rendered_results tactic node
-    | aesopRule.MultiStep steps =>
-        seq.flatten
-          (seq.fromList (map (fn step => engine_results step node) steps))
-
-(* Safe applications are committed only when the rule has exactly one
-   alternative.  Looking at two results is sufficient and does not force
-   an otherwise lazy rule sequence. *)
-fun deterministic_application rule node =
-  (case seq.take 2 (application_results rule node) of
-       [(records, next)] =>
-         if aesopTree.changed node next then
-           Applied
-             {rule = #name rule, phase = #phase rule,
-              records = records, node = next, forwarded = NONE}
-         else Inapplicable
-     | _ => Inapplicable)
-  handle HOL_ERR _ => Inapplicable
-       | Match => Inapplicable
+(* The safe phase walks a rule's alternatives one at a time, so a rule that
+   raises where the engine expects a sequence has to be read there as
+   offering no further alternative.  Only the two exceptions the rule
+   vocabulary uses to say "inapplicable" are read that way. *)
+fun next_application alternatives =
+  seq.cases alternatives
+  handle HOL_ERR _ => NONE
+       | Match => NONE
 
 fun forward_candidate parent node =
   case clasetGoal.goals node of
@@ -201,40 +169,81 @@ fun application_assigned goal
       (aesopTree.assigned_between
         (aesopTree.active_store goal) (clasetGoal.store node)))
 
+(* A forward rule neither consumes nor rewrites what it matched, and its
+   alternatives are confluent: taking one leaves all the others available
+   at the child goal, where the [once] duplicate filter offers exactly the
+   conclusions not yet added.  Committing to the first admissible
+   alternative therefore installs every alternative, one per safe step,
+   along the single committed branch that the safe phase and its replay
+   require -- where demanding determinism would silence the rule outright.
+   For any other safe rule a second alternative is a genuine choice that
+   the safe phase must not make, so such a rule applies only when it has
+   exactly one. *)
+fun safe_alternatives (rule : aesopRule.rule) node =
+  (* Delayed, so that a rule which raises while producing its sequence at
+     all is caught by the walk over that sequence. *)
+  if #once rule then
+    seq.delay (fn () => aesopTree.rule_results rule node)
+  else
+    case
+      (aesopTree.unique_rule_result rule node
+       handle HOL_ERR _ => NONE
+            | Match => NONE)
+    of
+        NONE => seq.empty
+      | SOME result => seq.result result
+
 fun safe_phase max_rapps id rules tree =
   let
     val goal = aesopTree.goal tree id
     val node = aesopTree.child_node goal
     val has_dependencies =
       not (aesopTree.dependencies_empty (#deps goal))
+    (* The tree is fixed for the whole scan, so its budget is decided once
+       rather than once per rule. *)
+    val at_rapp_limit =
+      case max_rapps of
+          NONE => false
+        | SOME limit => aesopTree.rapp_count tree >= limit
 
     fun scan postponed [] = Deferred (List.rev postponed)
       | scan postponed (rule :: rest) =
           if #phase rule <> aesopRule.RSafe then
             scan postponed rest
           else
-            case deterministic_application rule node of
-                Inapplicable => scan postponed rest
-              | Applied data =>
-                  (case admissible_forward goal rule data of
-                       NONE => scan postponed rest
-                     | SOME added =>
-                        let val data' = data_with_forwarded data added
-                        in
-                         if
-                           has_dependencies andalso
-                           application_assigned goal data
-                         then scan (data' :: postponed) rest
-                         else if
-                           case max_rapps of
-                               NONE => false
-                             | SOME limit =>
-                                 length (aesopTree.rapps tree) >= limit
-                         then CommitLimit tree
-                         else
-                           Committed
-                             (install_committed id data' tree)
-                        end)
+            consider rule rest postponed (safe_alternatives rule node)
+
+    and consider rule rest postponed alternatives =
+          case next_application alternatives of
+              NONE => scan postponed rest
+            | SOME (result, remaining) =>
+                let
+                  val (_, next) = result
+                in
+                  if not (aesopTree.changed node next) then
+                    consider rule rest postponed remaining
+                  else
+                    let val data = application_data rule result
+                    in
+                      case admissible_forward goal rule data of
+                          NONE => consider rule rest postponed remaining
+                        | SOME added =>
+                            let
+                              val data' = data_with_forwarded data added
+                            in
+                              if
+                                has_dependencies andalso
+                                application_assigned goal data
+                              then
+                                consider rule rest (data' :: postponed)
+                                  remaining
+                              else if at_rapp_limit then CommitLimit tree
+                              else
+                                Committed
+                                  (install_committed id data' tree)
+                            end
+                    end
+                end
   in
     scan [] rules
   end
@@ -249,15 +258,24 @@ fun selected_mode goal =
   else
     clasetUnify.Unify
 
-fun prepare_unsafe id postponed source tree =
-  let
-    val current = aesopTree.goal tree id
-    val unsafe = #unsafe (source (rule_input clasetUnify.Unify current))
-  in
-    aesopTree.set_search_state id
-      {safe_done = true, unsafe_cursor = unsafe, postponed = postponed}
-      tree
-  end
+(* Building a ruleset retrieves candidates for the conclusion and for every
+   assumption, so a goal expansion shares the one build across the phases
+   whose inputs coincide.  [source] is a function of that input record, and
+   the three inputs differ: normalisation sees the goal before it is
+   normalised and always matches, the safe phase sees it afterwards and
+   unifies once the goal has dependencies, and the unsafe cursor always
+   unifies.  Normalisation leaving the goal alone is exactly [iterations =
+   0], and the safe phase then agrees with it whenever it too matches. *)
+fun phase_rules source initial_rules initial_iterations goal mode =
+  if initial_iterations = 0 andalso mode = clasetUnify.Match then
+    initial_rules
+  else
+    source (rule_input mode goal)
+
+fun unsafe_cursor_rules source rules goal mode =
+  #unsafe
+    (if mode = clasetUnify.Unify then rules
+     else source (rule_input clasetUnify.Unify goal))
 
 fun next_safe_with include_irrelevant pop_goal
       (config as {max_depth, max_rapps, rules = source}) tree =
@@ -269,61 +287,65 @@ fun next_safe_with include_irrelevant pop_goal
           val _ = trace 2
             (fn () => "expanding goal " ^ Int.toString id)
           val _ = trace_goal "candidate" remaining id
-          val norm_rules =
-            #norm (source (rule_input clasetUnify.Match initial_goal))
         in
           if #level initial_goal >= max_depth then
             DepthLimit {goal = id, tree = remaining}
-          else case
-            aesopNorm.normalise
-              {max_depth = max_depth, rules = norm_rules}
-              id remaining
-          of
-              aesopNorm.IterationLimit
-                {tree = limited, iterations, rule} =>
-                  NormalisationLimit
-                    {goal = id, tree = limited,
-                     iterations = iterations, rule = rule}
-            | aesopNorm.Complete {tree = normalised, ...} =>
-                let val goal = aesopTree.goal normalised id
-                in
-                  if
-                    #state goal <> aesopTree.Unknown orelse
-                    (not include_irrelevant andalso
-                     aesopTree.goal_irrelevant normalised id)
-                  then
-                    next_safe_with include_irrelevant pop_goal
-                      config normalised
-                  else if #safe_done goal then
-                    ReadyForUnsafe {goal = id, tree = normalised}
-                  else
-                    let
-                      val safe =
-                        aesopRule.safe_rules
-                          (#safe
-                            (source
-                              (rule_input (selected_mode goal) goal)))
+          else
+            let
+              val initial_rules =
+                source (rule_input clasetUnify.Match initial_goal)
+            in
+              case
+                aesopNorm.normalise
+                  {max_depth = max_depth, rules = #norm initial_rules}
+                  id remaining
+              of
+                  aesopNorm.IterationLimit
+                    {tree = limited, iterations, rule} =>
+                      NormalisationLimit
+                        {goal = id, tree = limited,
+                         iterations = iterations, rule = rule}
+                | aesopNorm.Complete {tree = normalised, iterations} =>
+                    let val goal = aesopTree.goal normalised id
                     in
-                      case safe_phase max_rapps id safe normalised of
-                          Committed installed =>
-                            next_safe_with include_irrelevant pop_goal
-                              config installed
-                        | CommitLimit limited =>
-                            raise SafeRappLimitReached limited
-                        | Deferred postponed =>
-                            ReadyForUnsafe
-                              {goal = id,
-                               tree =
-                                 prepare_unsafe id postponed source
-                                   normalised}
+                      if
+                        #state goal <> aesopTree.Unknown orelse
+                        (not include_irrelevant andalso
+                         aesopTree.goal_irrelevant normalised id)
+                      then
+                        next_safe_with include_irrelevant pop_goal
+                          config normalised
+                      else if #safe_done goal then
+                        ReadyForUnsafe {goal = id, tree = normalised}
+                      else
+                        let
+                          val mode = selected_mode goal
+                          val rules =
+                            phase_rules source initial_rules iterations
+                              goal mode
+                          val safe = aesopRule.safe_rules (#safe rules)
+                        in
+                          case safe_phase max_rapps id safe normalised of
+                              Committed installed =>
+                                next_safe_with include_irrelevant pop_goal
+                                  config installed
+                            | CommitLimit limited =>
+                                raise SafeRappLimitReached limited
+                            | Deferred postponed =>
+                                ReadyForUnsafe
+                                  {goal = id,
+                                   tree =
+                                     aesopTree.set_search_state id
+                                       {safe_done = true,
+                                        unsafe_cursor =
+                                          unsafe_cursor_rules source
+                                            rules goal mode,
+                                        postponed = postponed}
+                                       normalised}
+                        end
                     end
-                end
+            end
         end
-
-fun next_safe {max_depth, rules} tree =
-  next_safe_with false aesopTree.pop_goal
-    {max_rapps = NONE, max_depth = max_depth, rules = rules}
-    tree
 
 fun next_safe_including_irrelevant {max_depth, rules} tree =
   next_safe_with true aesopTree.pop_goal_including_irrelevant
@@ -406,13 +428,11 @@ fun unsafe_applications goal rule =
   let
     val node = aesopTree.child_node goal
 
-    fun prepare (records, next) =
+    fun prepare (result as (_, next)) =
       if not (aesopTree.changed node next) then NONE
       else
         let
-          val data : aesopTree.rapp_data =
-            {rule = #name rule, phase = #phase rule,
-             records = records, node = next, forwarded = NONE}
+          val data = application_data rule result
         in
           Option.map
             (fn added => data_with_forwarded data added)
@@ -420,7 +440,7 @@ fun unsafe_applications goal rule =
         end
   in
     List.mapPartial prepare
-      (drain (application_results rule node))
+      (drain (aesopTree.rule_results rule node))
   end
   handle HOL_ERR _ => []
        | Match => []
@@ -450,7 +470,7 @@ fun candidates_remain tree id =
 
 datatype unsafe_outcome =
     UnsafeContinue of tree
-  | UnsafeRappLimit of tree
+  | UnsafeRappSkipped of tree
 
 datatype bounded_safe_outcome =
     BoundedSafe of next_outcome
@@ -472,40 +492,53 @@ fun unsafe_phase {max_rapps, ...} id tree =
           UnsafeContinue (aesopTree.exhaust_goal id tree)
       | SOME (candidate, unsafe, postponed) =>
           let
-            val (name, applications) =
+            val (name, offered) =
               case candidate of
                   Stored data =>
                     (#rule data ^ " (postponed)",
                      stored_application data)
                 | Rule rule =>
                     (#name rule, unsafe_applications goal rule)
-            val count = length (aesopTree.rapps tree)
-            val needed = length applications
+            val needed = length offered
             val _ =
               trace 2
                 (fn () =>
                   "unsafe rule " ^ name ^ " produced " ^
                   Int.toString needed ^ " rapp(s)")
+            (* The cap is global and the tree only grows, so a rule whose
+               alternatives do not all fit now never fits later either.
+               Installing a prefix of them would make the search silently
+               incomplete in a way that depends on their order, so the rule
+               is skipped here as inapplicable and the next candidate is
+               tried.  The skip is reported, and the search blames the cap
+               only if no rule closes the goal. *)
+            val skipped =
+              needed > 0 andalso
+              aesopTree.rapp_count tree + needed > max_rapps
+            val _ =
+              if not skipped then ()
+              else
+                trace 2
+                  (fn () =>
+                    "unsafe rule " ^ name ^ " skipped: its " ^
+                    Int.toString needed ^ " rapp(s) exceed the limit of " ^
+                    Int.toString max_rapps)
+            val applications = if skipped then [] else offered
+            val extended = install_alternatives id applications tree
+            val installed =
+              aesopTree.set_search_state id
+                {safe_done = #safe_done (aesopTree.goal extended id),
+                 unsafe_cursor = unsafe, postponed = postponed}
+                extended
+            val current = aesopTree.goal installed id
+            val queued =
+              if #state current = aesopTree.Unknown andalso
+                 candidates_remain installed id
+              then aesopTree.enqueue_goal id installed
+              else installed
           in
-            if needed > 0 andalso count + needed > max_rapps then
-              UnsafeRappLimit tree
-            else
-              let
-                val extended = install_alternatives id applications tree
-                val installed =
-                  aesopTree.set_search_state id
-                    {safe_done = #safe_done (aesopTree.goal extended id),
-                     unsafe_cursor = unsafe, postponed = postponed}
-                    extended
-                val current = aesopTree.goal installed id
-                val queued =
-                  if #state current = aesopTree.Unknown andalso
-                     candidates_remain installed id
-                  then aesopTree.enqueue_goal id installed
-                  else installed
-              in
-                UnsafeContinue queued
-              end
+            if skipped then UnsafeRappSkipped queued
+            else UnsafeContinue queued
           end
   end
 
@@ -577,7 +610,15 @@ fun search
             {tree = tree, safe_goals = frontier, reason = reason}
         end
 
-      fun loop depth_limited tree =
+      (* An exhausted search that had to step around a limit did not
+         exhaust the rules.  The rapp cap bounds the whole search where the
+         depth limit bounds one branch, so it is reported first. *)
+      fun exhausted_reason {depth_limited, rapp_limited} =
+        if rapp_limited then RappLimitReached
+        else if depth_limited then DepthLimitReached
+        else SearchExhausted
+
+      fun loop (limits as {depth_limited, rapp_limited}) tree =
         if
           #state (aesopTree.goal tree (aesopTree.root tree)) =
           aesopTree.Proved
@@ -585,7 +626,7 @@ fun search
           (trace 1
              (fn () =>
                "search proved the root with " ^
-               Int.toString (length (aesopTree.rapps tree)) ^
+               Int.toString (aesopTree.rapp_count tree) ^
                " rapp(s)");
            SearchProved tree)
         else
@@ -600,18 +641,15 @@ fun search
                     (aesopTree.goal exhausted
                       (aesopTree.root exhausted)) =
                   aesopTree.Proved
-                then loop depth_limited exhausted
-                else
-                  failed
-                    (if depth_limited then DepthLimitReached
-                     else SearchExhausted)
-                    exhausted
+                then loop limits exhausted
+                else failed (exhausted_reason limits) exhausted
             | BoundedSafe (DepthLimit {goal, tree = limited}) =>
                 (trace 2
                    (fn () =>
                      "depth limit stopped goal " ^
                      Int.toString goal);
-                 loop true (aesopTree.exhaust_goal goal limited))
+                 loop {depth_limited = true, rapp_limited = rapp_limited}
+                   (aesopTree.exhaust_goal goal limited))
             | BoundedSafe
                 (NormalisationLimit
                   {goal, tree = limited, iterations, rule}) =>
@@ -621,14 +659,18 @@ fun search
                      Int.toString goal ^ " after " ^
                      Int.toString iterations ^
                      " iteration(s), next rule " ^ rule);
-                 loop true (aesopTree.exhaust_goal goal limited))
+                 loop {depth_limited = true, rapp_limited = rapp_limited}
+                   (aesopTree.exhaust_goal goal limited))
             | BoundedSafe (ReadyForUnsafe {goal, tree = ready}) =>
                 (case unsafe_phase config goal ready of
-                     UnsafeContinue next => loop depth_limited next
-                   | UnsafeRappLimit limited =>
-                       failed RappLimitReached limited)
+                     UnsafeContinue next => loop limits next
+                   | UnsafeRappSkipped next =>
+                       loop
+                         {depth_limited = depth_limited,
+                          rapp_limited = true}
+                         next)
     in
-      loop false initial
+      loop {depth_limited = false, rapp_limited = false} initial
     end
 
 fun proved_rapp tree id =
@@ -802,9 +844,13 @@ fun REPLAY_TAC tree goal =
   in
     result
   end
-  handle error =>
-    raise ERR "REPLAY_TAC"
-      ("kernel replay of a proved search tree failed; this is an " ^
-       "aesop engine bug: " ^ Feedback.exn_to_string error)
+  (* Every way replay can fail is an engine bug, so the diagnostic is
+     deliberately a catch-all -- except for an interrupt, which is the
+     user's and belongs to the proof they stopped, not to the engine. *)
+  handle Portable.Interrupt => raise Portable.Interrupt
+       | error =>
+           raise ERR "REPLAY_TAC"
+             ("kernel replay of a proved search tree failed; this is an " ^
+              "aesop engine bug: " ^ Feedback.exn_to_string error)
 
 end

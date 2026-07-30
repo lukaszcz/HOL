@@ -3,6 +3,7 @@
 src/parallel_builds/core
 !src/auto/rules/theory_tests
 !src/auto/clasimp/theory_tests
+!src/auto/aesop/theory_tests
 !!src/emit/ML
 !src/emit/theory_tests
 !src/emit/theory_tests1

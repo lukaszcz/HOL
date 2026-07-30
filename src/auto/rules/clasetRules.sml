@@ -105,8 +105,49 @@ fun canonical_elim_rule th =
             end
     end
 
+(* A forward rule keeps its LAST premise intact instead: that is the one
+   [rule_index_of] indexes it by.  Every earlier premise is curried, so a
+   conjunctive side premise still matches assumptions that the safe phase
+   has already split. *)
+fun has_canonical_init_premises tm =
+  case total dest_imp_only tm of
+      NONE => true
+    | SOME (prem, rest) =>
+        not (is_imp_only rest) orelse
+        (not (is_conj prem) andalso has_canonical_init_premises rest)
+
+fun is_canonical_forward th =
+  has_canonical_init_premises (snd (strip_forall (concl th)))
+
+fun curry_init_conj_premises th =
+  case total dest_imp_only (concl th) of
+      NONE => th
+    | SOME (prem, rest) =>
+        if not (is_imp_only rest) then th
+        else if is_conj prem then
+          let
+            val (left, right) = dest_conj prem
+            val curry =
+              SYM (Drule.SPECL [left, right, rest] boolTheory.AND_IMP_INTRO)
+          in
+            curry_init_conj_premises (EQ_MP curry th)
+          end
+        else DISCH prem (curry_init_conj_premises (undisch th))
+
+fun canonical_forward_rule th =
+  if is_canonical_forward th then th
+  else
+    let
+      val (vars, _) = strip_forall (concl th)
+      val vars' = fresh_forall_vars th vars
+      val body = Drule.SPECL vars' th
+    in
+      GENL vars' (curry_init_conj_premises body)
+    end
+
 fun canonical_rule_of (Intro | Norm) = canonical_rule
-  | canonical_rule_of (Elim | Dest | Forward) = canonical_elim_rule
+  | canonical_rule_of (Elim | Dest) = canonical_elim_rule
+  | canonical_rule_of Forward = canonical_forward_rule
 
 fun form_of th' =
   let
@@ -210,10 +251,22 @@ fun canonical_form_of_with checkpoint kind th =
          | SOME (prem, rest) =>
              not (is_conj prem) andalso canonical_prems rest)
 
+    (* A forward rule's major premise is its last one, so a premise is
+       exempt from currying exactly when nothing follows it. *)
+    fun more_premises rest = (checkpoint (); is_imp_only rest)
+
+    fun canonical_init_prems tm =
+      (checkpoint ();
+       case total dest_imp_only tm of
+           NONE => true
+         | SOME (prem, rest) =>
+             not (more_premises rest) orelse
+             (not (is_conj prem) andalso canonical_init_prems rest))
+
     fun already_canonical (Intro | Norm) theorem =
           let val (_, body) = strip_foralls (concl theorem)
           in canonical_prems body end
-      | already_canonical (Elim | Dest | Forward) theorem =
+      | already_canonical (Elim | Dest) theorem =
           let val (_, body) = strip_foralls (concl theorem)
           in
             checkpoint ();
@@ -221,6 +274,9 @@ fun canonical_form_of_with checkpoint kind th =
                 NONE => true
               | SOME (_, rest) => canonical_prems rest
           end
+      | already_canonical Forward theorem =
+          let val (_, body) = strip_foralls (concl theorem)
+          in canonical_init_prems body end
 
     fun fresh_vars theorem vars =
       let
@@ -268,6 +324,35 @@ fun canonical_form_of_with checkpoint kind th =
                  DISCH prem tail'
                end)
 
+    fun curry_init theorem =
+      (checkpoint ();
+       case total dest_imp_only (concl theorem) of
+           NONE => theorem
+         | SOME (prem, rest) =>
+             if not (more_premises rest) then theorem
+             else if is_conj prem then
+               let
+                 val _ = checkpoint ()
+                 val (left, right) = dest_conj prem
+                 val _ = checkpoint ()
+                 val curry_thm =
+                   SYM
+                     (Drule.SPECL [left, right, rest]
+                        boolTheory.AND_IMP_INTRO)
+                 val _ = checkpoint ()
+               in
+                 curry_init (EQ_MP curry_thm theorem)
+               end
+             else
+               let
+                 val _ = checkpoint ()
+                 val tail = MP theorem (ASSUME prem)
+                 val tail' = curry_init tail
+                 val _ = checkpoint ()
+               in
+                 DISCH prem tail'
+               end)
+
     fun canonicalize rulekind theorem =
       if already_canonical rulekind theorem then theorem
       else
@@ -287,7 +372,13 @@ fun canonical_form_of_with checkpoint kind th =
                 end
             | Elim => canonicalize_elim theorem vars' body
             | Dest => canonicalize_elim theorem vars' body
-            | Forward => canonicalize_elim theorem vars' body
+            | Forward =>
+                let
+                  val body' = curry_init body
+                  val _ = checkpoint ()
+                in
+                  genl vars' body'
+                end
         end
 
     and canonicalize_elim theorem vars body =

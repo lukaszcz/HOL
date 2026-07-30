@@ -7,6 +7,7 @@ type rulekind = clasetRules.rulekind
 type rulespec = clasetRules.rulespec
 type tag = clasetRules.tag
 type brl = clasetRules.brl
+type info = clasetRules.info
 
 local
   open clasetRules
@@ -15,7 +16,13 @@ in
 type net_entry = tag * brl
 type netpair = net_entry clasetNet.net * net_entry clasetNet.net
 
-type aentry = {name : string, spec : rulespec, tag : tag, thm : thm}
+(* [info] is the declaration's canonical rule forms, which [make_rule_decl]
+   already derived -- with real kernel inferences -- when the rule was
+   declared.  Carrying it through retrieval is what keeps an engine from
+   deriving it again for every rule that matches a goal. *)
+type aesop_rule =
+  {name : string, spec : rulespec, thm : thm, info : info}
+type aentry = {tag : tag, rule : aesop_rule}
 type aesop_index =
   {target : aentry clasetNet.net, hyp : aentry clasetNet.net}
 
@@ -34,20 +41,49 @@ type claset_part = netpair
 
 datatype part = Safe0Part | SafePPart | UnsafePart | DupPart
 
+(* Everything a claset derives from its declarations -- the four classical
+   netpairs, the aesop index and the Norm list -- travels as one record,
+   which is also what [add_decl] and [delete_decl] thread.  Clasets are
+   built through [mk_cs] alone, so a further derived component is added
+   here and in those two functions rather than at every rebuild site. *)
+type cs_index =
+  {safe0 : netpair, safep : netpair, unsafe : netpair, dup : netpair,
+   aesop_index : aesop_index, norm_decls : decl list}
+
+type cs_wrappers =
+  (string * NTactical.wrapper) list * (string * NTactical.wrapper) list
+
 val empty_netpair = (clasetNet.empty, clasetNet.empty)
 val empty_aesop_index =
   {target = clasetNet.empty, hyp = clasetNet.empty}
 
-val empty_cs =
-  CS {decls = empty_decls,
-      safe_wrappers = [],
-      unsafe_wrappers = [],
-      safe0_netpair = empty_netpair,
-      safep_netpair = empty_netpair,
-      unsafe_netpair = empty_netpair,
-      dup_netpair = empty_netpair,
-      aesop_index = empty_aesop_index,
-      norm_decls = []}
+val empty_index : cs_index =
+  {safe0 = empty_netpair, safep = empty_netpair, unsafe = empty_netpair,
+   dup = empty_netpair, aesop_index = empty_aesop_index, norm_decls = []}
+
+fun mk_cs decls ((safe_wrappers, unsafe_wrappers) : cs_wrappers)
+  ({safe0, safep, unsafe, dup, aesop_index, norm_decls} : cs_index) =
+  CS {decls = decls,
+      safe_wrappers = safe_wrappers,
+      unsafe_wrappers = unsafe_wrappers,
+      safe0_netpair = safe0,
+      safep_netpair = safep,
+      unsafe_netpair = unsafe,
+      dup_netpair = dup,
+      aesop_index = aesop_index,
+      norm_decls = norm_decls}
+
+fun decls_of (CS {decls, ...}) = decls
+
+fun wrappers_of (CS {safe_wrappers, unsafe_wrappers, ...}) =
+  (safe_wrappers, unsafe_wrappers)
+
+fun index_of (CS {safe0_netpair, safep_netpair, unsafe_netpair,
+                  dup_netpair, aesop_index, norm_decls, ...}) =
+  {safe0 = safe0_netpair, safep = safep_netpair, unsafe = unsafe_netpair,
+   dup = dup_netpair, aesop_index = aesop_index, norm_decls = norm_decls}
+
+val empty_cs = mk_cs empty_decls ([], []) empty_index
 
 fun rule_brl kind th = (is_elim kind, th)
 
@@ -100,17 +136,18 @@ fun delete_rl index netpair =
     (delete_tagged_rule (2 * index) netpair)
 
 (* Norm rules are not indexed: the normalisation phase takes the whole list
-   (see [norm_rules_of]), so an entry here would be retrieved, ordered and
+   (see [norm_rules]), so an entry here would be retrieved, ordered and
    deduplicated on every goal expansion only to be filtered out again. *)
 fun insert_aesop_decl (decl : decl)
   ({target, hyp} : aesop_index) =
   let
-    val {name, spec, tag, orig, ...} = decl
+    val {name, spec, tag, orig, info} = decl
     val kind = #kind spec
     val form = canonical_form_of kind orig
     val indexed =
       ({pat = rule_index_of kind form, patvars = #patvars form},
-       {name = name, spec = spec, tag = tag, thm = orig})
+       {tag = tag,
+        rule = {name = name, spec = spec, thm = orig, info = info}})
   in
     if kind = Intro then
       {target = clasetNet.insert indexed target, hyp = hyp}
@@ -132,7 +169,7 @@ fun delete_aesop_decl (decl : decl)
 (* Norm rules never enter the four classical netpairs, so the claset keeps
    them as an ordered list instead -- the aesop normalisation phase wants
    all of them, not the ones matching one goal.  Held in [dest_decls] order
-   so that [norm_rules_of] agrees with filtering [rules_of], which is the
+   so that [norm_rules] agrees with filtering [rules_of], which is the
    tiebreak the penalty sort relies on. *)
 fun insert_norm_decl (decl : decl) decls =
   let
@@ -182,6 +219,22 @@ fun add_decl (decl : decl)
       end
   end
 
+(* A declaration is retracted by its tag index, which is unique across the
+   claset, so every component is filtered without consulting the kind. *)
+fun delete_decl (decl : decl)
+  ({safe0, safep, unsafe, dup, aesop_index, norm_decls} : cs_index) =
+  let
+    val {index, ...} = #tag decl
+    fun keep ({tag = {index = index', ...}, ...} : decl) = index <> index'
+  in
+    {safe0 = delete_rl index safe0,
+     safep = delete_rl index safep,
+     unsafe = delete_rl index unsafe,
+     dup = delete_rl index dup,
+     aesop_index = delete_aesop_decl decl aesop_index,
+     norm_decls = List.filter keep norm_decls}
+  end
+
 fun make_rule_decl spec (name, th) =
   let
     val info = ext_info spec th
@@ -191,33 +244,15 @@ fun make_rule_decl spec (name, th) =
                info = info, orig = th}
   end
 
-fun add_rule_by extend spec named_th
-  (cs as CS {decls, safe_wrappers, unsafe_wrappers,
-             safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair,
-             aesop_index, norm_decls}) =
+fun add_rule_by extend spec named_th cs =
   let
     val decl = make_rule_decl spec named_th
   in
-    case extend decl decls of
+    case extend decl (decls_of cs) of
         (NONE, _) => cs
       | (SOME new_decl, decls') =>
-          let
-            val {safe0, safep, unsafe, dup, aesop_index, norm_decls} =
-              add_decl new_decl
-                {safe0 = safe0_netpair, safep = safep_netpair,
-                 unsafe = unsafe_netpair, dup = dup_netpair,
-                 aesop_index = aesop_index, norm_decls = norm_decls}
-          in
-            CS {decls = decls',
-                safe_wrappers = safe_wrappers,
-                unsafe_wrappers = unsafe_wrappers,
-                safe0_netpair = safe0,
-                safep_netpair = safep,
-                unsafe_netpair = unsafe,
-                dup_netpair = dup,
-                aesop_index = aesop_index,
-                norm_decls = norm_decls}
-          end
+          mk_cs decls' (wrappers_of cs)
+            (add_decl new_decl (index_of cs))
   end
 
 val add_rule = add_rule_by extend_decl
@@ -248,43 +283,14 @@ val add_elims = add_rules elim_spec
 val add_sdests = add_rules sdest_spec
 val add_dests = add_rules dest_spec
 
-fun remove_rule name
-  (CS {decls, safe_wrappers, unsafe_wrappers,
-       safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair,
-       aesop_index, norm_decls}) =
+fun remove_rule name cs =
   let
-    val (old_decls, decls') = remove_decl name decls
-    fun delete decl (safe0, safep, unsafe, dup) =
-      let val {tag = {index, ...}, ...} = decl
-      in (delete_rl index safe0, delete_rl index safep,
-          delete_rl index unsafe, delete_rl index dup)
-      end
-    val (safe0_netpair', safep_netpair', unsafe_netpair', dup_netpair') =
-      List.foldl (fn (decl, nets) => delete decl nets)
-        (safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair) old_decls
-    val aesop_index' =
-      List.foldl
-        (fn (decl, index) => delete_aesop_decl decl index)
-        aesop_index old_decls
-    fun delete_norm (decl, kept) =
-      let val {tag = {index, ...}, ...} = decl
-      in
-        List.filter
-          (fn ({tag = {index = index', ...}, ...} : decl) =>
-            index <> index')
-          kept
-      end
-    val norm_decls' = List.foldl delete_norm norm_decls old_decls
+    val (old_decls, decls') = remove_decl name (decls_of cs)
+    val index =
+      List.foldl (fn (decl, index) => delete_decl decl index)
+        (index_of cs) old_decls
   in
-    CS {decls = decls',
-        safe_wrappers = safe_wrappers,
-        unsafe_wrappers = unsafe_wrappers,
-        safe0_netpair = safe0_netpair',
-        safep_netpair = safep_netpair',
-        unsafe_netpair = unsafe_netpair',
-        dup_netpair = dup_netpair',
-        aesop_index = aesop_index',
-        norm_decls = norm_decls'}
+    mk_cs decls' (wrappers_of cs) index
   end
 
 fun merge_alists left right =
@@ -292,30 +298,22 @@ fun merge_alists left right =
     (fn (name, _) => not (List.exists (fn (name', _) => name = name') left))
     right
 
+(* The left claset's derived components are the accumulator: only the
+   declarations the merge newly admits are indexed again. *)
 fun merge_cs
-  (CS {decls, safe_wrappers, unsafe_wrappers,
-       safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair,
-       aesop_index, norm_decls},
-   CS {decls = decls2, safe_wrappers = safe_wrappers2,
-       unsafe_wrappers = unsafe_wrappers2, ...}) =
+  (cs, CS {decls = decls2, safe_wrappers = safe_wrappers2,
+           unsafe_wrappers = unsafe_wrappers2, ...}) =
   let
-    val (new_decls, decls') = merge_decls (decls, decls2)
-    val {safe0, safep, unsafe, dup, aesop_index, norm_decls} =
-      List.foldl (fn (decl, nets) => add_decl decl nets)
-        {safe0 = safe0_netpair, safep = safep_netpair,
-         unsafe = unsafe_netpair, dup = dup_netpair,
-         aesop_index = aesop_index, norm_decls = norm_decls}
-        new_decls
+    val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
+    val (new_decls, decls') = merge_decls (decls_of cs, decls2)
+    val index =
+      List.foldl (fn (decl, index) => add_decl decl index)
+        (index_of cs) new_decls
   in
-    CS {decls = decls',
-        safe_wrappers = merge_alists safe_wrappers safe_wrappers2,
-        unsafe_wrappers = merge_alists unsafe_wrappers unsafe_wrappers2,
-        safe0_netpair = safe0,
-        safep_netpair = safep,
-        unsafe_netpair = unsafe,
-        dup_netpair = dup,
-        aesop_index = aesop_index,
-        norm_decls = norm_decls}
+    mk_cs decls'
+      (merge_alists safe_wrappers safe_wrappers2,
+       merge_alists unsafe_wrappers unsafe_wrappers2)
+      index
   end
 
 (* Replace an existing entry in place; put a new entry at the front. *)
@@ -334,33 +332,17 @@ fun update_alist (entry as (key, _)) entries =
 fun delete_wrapper name wrappers =
   List.filter (fn (name', _) => name <> name') wrappers
 
-fun map_safe_wrappers f
-  (CS {decls, safe_wrappers, unsafe_wrappers,
-       safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair,
-       aesop_index, norm_decls}) =
-  CS {decls = decls,
-      safe_wrappers = f safe_wrappers,
-      unsafe_wrappers = unsafe_wrappers,
-      safe0_netpair = safe0_netpair,
-      safep_netpair = safep_netpair,
-      unsafe_netpair = unsafe_netpair,
-      dup_netpair = dup_netpair,
-      aesop_index = aesop_index,
-      norm_decls = norm_decls}
+fun map_safe_wrappers f cs =
+  let val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
+  in
+    mk_cs (decls_of cs) (f safe_wrappers, unsafe_wrappers) (index_of cs)
+  end
 
-fun map_unsafe_wrappers f
-  (CS {decls, safe_wrappers, unsafe_wrappers,
-       safe0_netpair, safep_netpair, unsafe_netpair, dup_netpair,
-       aesop_index, norm_decls}) =
-  CS {decls = decls,
-      safe_wrappers = safe_wrappers,
-      unsafe_wrappers = f unsafe_wrappers,
-      safe0_netpair = safe0_netpair,
-      safep_netpair = safep_netpair,
-      unsafe_netpair = unsafe_netpair,
-      dup_netpair = dup_netpair,
-      aesop_index = aesop_index,
-      norm_decls = norm_decls}
+fun map_unsafe_wrappers f cs =
+  let val (safe_wrappers, unsafe_wrappers) = wrappers_of cs
+  in
+    mk_cs (decls_of cs) (safe_wrappers, f unsafe_wrappers) (index_of cs)
+  end
 
 fun add_safe_wrapper wrapper = map_safe_wrappers (update_alist wrapper)
 fun add_unsafe_wrapper wrapper = map_unsafe_wrappers (update_alist wrapper)
@@ -376,11 +358,18 @@ fun app_safe_wrappers (CS {safe_wrappers, ...}) =
 fun app_unsafe_wrappers (CS {unsafe_wrappers, ...}) =
   apply_wrappers unsafe_wrappers
 
-fun rules_of (CS {decls, ...}) =
-  map (fn {spec, name, orig, ...} => (spec, (name, orig))) (dest_decls decls)
+fun rule_of_decl ({spec, name, orig, info, ...} : decl) : aesop_rule =
+  {spec = spec, name = name, thm = orig, info = info}
 
-fun norm_rules_of (CS {norm_decls, ...}) =
-  map (fn {spec, name, orig, ...} => (spec, (name, orig))) norm_decls
+fun all_rules (CS {decls, ...}) = map rule_of_decl (dest_decls decls)
+
+(* The name/theorem view of a retrieved declaration: what a caller that has
+   no use for the canonicalisation sees, in the [rules_of] shape. *)
+fun forget_info ({spec, name, thm, ...} : aesop_rule) = (spec, (name, thm))
+
+fun rules_of cs = map forget_info (all_rules cs)
+
+fun norm_rules (CS {norm_decls, ...}) = map rule_of_decl norm_decls
 
 fun pp_claset0 (CS {decls, safe_wrappers, unsafe_wrappers, ...}) =
   let
@@ -512,8 +501,8 @@ fun aesop_class ({safe = true, ...} : rulespec) = 0
   | aesop_class _ = 1
 
 fun compare_aentry
-  ({spec = spec1, tag = tag1, ...} : aentry,
-   {spec = spec2, tag = tag2, ...} : aentry) =
+  ({tag = tag1, rule = {spec = spec1, ...}} : aentry,
+   {tag = tag2, rule = {spec = spec2, ...}} : aentry) =
   case Int.compare (aesop_class spec1, aesop_class spec2) of
       EQUAL =>
         if #safe spec1 andalso #safe spec2 then
@@ -525,19 +514,13 @@ fun compare_aentry
              | order => order)
     | order => order
 
-fun aesop_candidates select (CS {aesop_index, ...}) query =
-  let
-    val entries =
-      Listsort.sort compare_aentry
-        (clasetNet.unify query (select aesop_index))
-  in
-    map
-      (fn {name, spec, thm, ...} => (spec, (name, thm)))
-      entries
-  end
+fun aesop_rules select (CS {aesop_index, ...}) query =
+  map #rule
+    (Listsort.sort compare_aentry
+      (clasetNet.unify query (select aesop_index)))
 
-val aesop_target_candidates = aesop_candidates #target
-val aesop_hyp_candidates = aesop_candidates #hyp
+val aesop_target_rules = aesop_rules #target
+val aesop_hyp_rules = aesop_rules #hyp
 
 type tyinfo_contribution =
   string * (TypeBasePure.tyinfo -> (rulespec * (string * thm)) list)
@@ -601,26 +584,13 @@ fun update_decls (ADD {name, spec}) decls =
              end)
   | update_decls (RM name) decls = #2 (remove_decl name decls)
 
-fun rebuild_claset decls
-  (CS {safe_wrappers, unsafe_wrappers, ...}) =
+fun rebuild_claset decls cs =
   let
-    val {safe0, safep, unsafe, dup, aesop_index, norm_decls} =
-      List.foldl
-        (fn (decl, nets) => add_decl decl nets)
-        {safe0 = empty_netpair, safep = empty_netpair,
-         unsafe = empty_netpair, dup = empty_netpair,
-         aesop_index = empty_aesop_index, norm_decls = []}
-        (dest_decls decls)
+    val index =
+      List.foldl (fn (decl, index) => add_decl decl index)
+        empty_index (dest_decls decls)
   in
-    CS {decls = decls,
-        safe_wrappers = safe_wrappers,
-        unsafe_wrappers = unsafe_wrappers,
-        safe0_netpair = safe0,
-        safep_netpair = safep,
-        unsafe_netpair = unsafe,
-        dup_netpair = dup,
-        aesop_index = aesop_index,
-        norm_decls = norm_decls}
+    mk_cs decls (wrappers_of cs) index
   end
 
 fun is_removal (RM _) = true
@@ -992,38 +962,41 @@ fun penalty_error attrname =
     ("Invalid penalty for attribute " ^ attrname ^
      "; expected one integer")
 
+(* Int.fromString both accepts shapes an attribute argument may not take
+   (leading whitespace, a "+" sign, trailing text) and raises Overflow
+   rather than returning NONE for a numeral too large for a fixed-width
+   Int.  The shape is therefore checked first and the conversion itself is
+   guarded, so that every malformed argument yields the documented
+   HOL_ERR. *)
+fun decimal_int arg =
+  if size arg > 0 andalso CharVector.all Char.isDigit arg then
+    Option.join (Lib.total Int.fromString arg)
+  else NONE
+
+fun signed_decimal_int arg =
+  if String.isPrefix "~" arg then
+    Option.map Int.~ (decimal_int (String.extract (arg, 1, NONE)))
+  else decimal_int arg
+
 fun priority_spec attrname (spec : rulespec) args =
   case args of
       [] => spec
     | [arg] =>
-        (case Int.fromString arg of
+        (case decimal_int arg of
              SOME priority =>
-               if CharVector.all Char.isDigit arg andalso
-                  1 <= priority andalso priority <= 100
-               then
+               if 1 <= priority andalso priority <= 100 then
                  {kind = #kind spec, safe = false, prio = SOME priority}
                else priority_error attrname
            | NONE => priority_error attrname)
     | _ => priority_error attrname
 
-fun signed_decimal arg =
-  let
-    val first = if String.isPrefix "~" arg then 1 else 0
-    val digits = String.extract (arg, first, NONE)
-  in
-    size digits > 0 andalso CharVector.all Char.isDigit digits
-  end
-
 fun penalty_spec attrname (spec : rulespec) args =
   case args of
       [] => spec
     | [arg] =>
-        (case Int.fromString arg of
+        (case signed_decimal_int arg of
              SOME penalty =>
-               if signed_decimal arg then
-                 {kind = #kind spec, safe = #safe spec,
-                  prio = SOME penalty}
-               else penalty_error attrname
+               {kind = #kind spec, safe = #safe spec, prio = SOME penalty}
            | NONE => penalty_error attrname)
     | _ => penalty_error attrname
 
@@ -1203,6 +1176,34 @@ fun classify_simp_args theorems =
      rest = bucket Plain}
   end
 
+(* Markers naming a rule class only the aesop front end installs (see its
+   own marker pass).  They survive process_claset_tags and mean nothing to
+   a plain classical tactic, so they are reported rather than assumed. *)
+val aesop_markers =
+  [(destNorm, "Norm"), (destForward, "Forward"),
+   (destSForward, "SForward")]
+
+fun aesop_marker_name theorem =
+  let
+    fun search [] = NONE
+      | search ((dest, name) :: markers) =
+          case dest theorem of
+              SOME _ => SOME name
+            | NONE => search markers
+  in
+    search aesop_markers
+  end
+
+(* Checked wherever arguments become assumptions, not only where the
+   classical engines collect them: assuming a marker would leave a
+   nonsense hypothesis on the goal with no diagnostic. *)
+fun check_aesop_markers function theorems =
+  case List.mapPartial aesop_marker_name theorems of
+      [] => ()
+    | name :: _ =>
+        raise mk_HOL_ERR "clasetLib" function
+          (name ^ " marker requires an Aesop-aware tactic")
+
 (* process_claset_tags consumes the classical marker vocabulary.  Plain
    leftovers become inserted facts; generic simplifier controls are either
    unwrapped to their theorem payload or discarded as inert here. *)
@@ -1221,7 +1222,7 @@ fun invocation_facts theorems =
     else if not (null iff_rules) then
       raise mk_HOL_ERR "clasetLib" "invocation_facts"
         "Iff marker requires a tactic with a simpset"
-    else rest
+    else (check_aesop_markers "invocation_facts" rest; rest)
   end
 
 (* ASSUME_TAC conses onto the assumption list, so the facts are assumed
@@ -1229,7 +1230,8 @@ fun invocation_facts theorems =
    it is the recency tie-break the classical engines use when scanning
    assumptions, and what FIRST_ASSUM and friends see in the residue. *)
 fun INSERT_FACTS_TAC facts =
-  Tactical.MAP_EVERY Tactic.ASSUME_TAC (List.rev facts)
+  (check_aesop_markers "INSERT_FACTS_TAC" facts;
+   Tactical.MAP_EVERY Tactic.ASSUME_TAC (List.rev facts))
 
 fun invocation_claset base theorems =
   let val (tagged, leftovers) = process_claset_tags theorems base

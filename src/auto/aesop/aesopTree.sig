@@ -66,6 +66,10 @@ sig
   val goals : tree -> goal list
   val rapps : tree -> rapp list
   val clusters : tree -> cluster list
+  (* The number of installed rule applications, without building the list
+     of them: the search consults it once per expansion to police its
+     global rapp budget. *)
+  val rapp_count : tree -> int
 
   val child_rapps : tree -> gid -> rid list
   (* Creation order: action-emitted goals first, then copied obligations. *)
@@ -93,6 +97,20 @@ sig
   val rendered_record :
     clasetGoal.node -> Abbrev.goal -> NTactical.nresult ->
     (step_record * clasetGoal.node) option
+
+  (* Every alternative one rule offers on a node, as the replay records and
+     the node each of them produces.  Normalisation and search read the same
+     alternatives under different determinism requirements, so the reading
+     lives here, beside the rendered-result lifting it needs. *)
+  val rule_results :
+    rule -> clasetGoal.node ->
+    (step_record list * clasetGoal.node) seq.seq
+  (* The one alternative of a deterministic rule; NONE when the rule offers
+     none, or offers a choice.  Looking at two results decides that without
+     forcing the tail of an otherwise lazy sequence. *)
+  val unique_rule_result :
+    rule -> clasetGoal.node ->
+    (step_record list * clasetGoal.node) option
 
   (* Installation creates ordinary children.  Copying extends this single
      boundary in aesopTree without requiring search clients to change.

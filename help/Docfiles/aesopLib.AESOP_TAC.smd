@@ -9,11 +9,13 @@ aesopLib.AESOP_TAC : thm list -> tactic
 
 Solves a goal by normalisation, safe reasoning, and best-first search.
 
-`AESOP_TAC thms` uses the current claset and Aesop simpset. It repeatedly
-normalises each goal, commits deterministic safe rules, and explores unsafe
-rules in probability order. The search keeps metavariable-dependent goals
-together, copies affected sibling goals when a metavariable is assigned,
-and replays a successful proof through kernel-checked tactics.
+`AESOP_TAC thms` uses the claset and Aesop simpset current where the
+tactic is applied, so a tactic value bound before a declaration still sees
+that declaration. It repeatedly normalises each goal, commits
+deterministic safe rules, and explores unsafe rules in probability order.
+The search keeps metavariable-dependent goals together, copies affected
+sibling goals when a metavariable is assigned, and replays a successful
+proof through kernel-checked tactics.
 
 The search design is based on Jannis Limperg and Asta Halkjær From,
 *Aesop: White-Box Best-First Proof Search for Lean*, CPP 2023. The HOL4
@@ -55,5 +57,6 @@ QED
 [`aesopLib.AESOP_SAFE_TAC`](#aesopLib.AESOP_SAFE_TAC),
 [`aesopLib.CS_AESOP_TAC`](#aesopLib.CS_AESOP_TAC),
 [`aesopLib.augment_aesop`](#aesopLib.augment_aesop),
+[`aesopLib.augment_aesop_rule`](#aesopLib.augment_aesop_rule),
 [`clasetLib`](#clasetLib),
 [`clasimpLib.FORCE_TAC`](#clasimpLib.FORCE_TAC)

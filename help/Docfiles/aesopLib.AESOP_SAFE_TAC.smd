@@ -9,10 +9,11 @@ aesopLib.AESOP_SAFE_TAC : thm list -> tactic
 
 Normalises and safely saturates a goal, leaving the safe frontier.
 
-`AESOP_SAFE_TAC thms` uses the current claset and Aesop simpset. It
-repeatedly runs normalisation and commits deterministic safe rules, but
-does not try unsafe rules. The resulting safely saturated goals are
-returned as subgoals.
+`AESOP_SAFE_TAC thms` uses the claset and Aesop simpset current where the
+tactic is applied, so a tactic value bound before a declaration still sees
+that declaration. It repeatedly runs normalisation and commits
+deterministic safe rules, but does not try unsafe rules. The resulting
+safely saturated goals are returned as subgoals.
 
 Unmarked theorems in `thms` are inserted as assumptions. Safe classical
 markers and `SForward` add temporary safe rules. `Norm` adds a temporary

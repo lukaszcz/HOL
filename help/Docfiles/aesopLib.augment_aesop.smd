@@ -50,6 +50,7 @@ val _ =
 
 ### See also
 
+[`aesopLib.augment_aesop_rule`](#aesopLib.augment_aesop_rule),
 [`aesopLib.AESOP_TAC`](#aesopLib.AESOP_TAC),
 [`aesopLib.AESOP_SAFE_TAC`](#aesopLib.AESOP_SAFE_TAC),
 [`clasetLib`](#clasetLib)
