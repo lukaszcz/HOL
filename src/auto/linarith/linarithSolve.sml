@@ -1,6 +1,8 @@
 structure linarithSolve :> linarithSolve =
 struct
 
+val ERR = Feedback.mk_HOL_ERR "linarithSolve"
+
 (* Nonneg generalizes upstream Nat (fast_lin_arith.ML:191-202). *)
 datatype lineq_type = Eq | Le | Lt
 
@@ -46,8 +48,6 @@ type int_decomp = {
   negated : bool
 }
 
-type neq_selector = Term.term -> bool option
-
 val zero = Arbint.zero
 val one = Arbint.one
 val negone = Arbint.~ one
@@ -58,14 +58,6 @@ fun ai_one x = ai_eq x one
 fun ai_neg x = Arbint.< (x, zero)
 fun ai_pos x = Arbint.> (x, zero)
 
-fun map2 f ([], []) = []
-  | map2 f (x :: xs, y :: ys) = f (x, y) :: map2 f (xs, ys)
-  | map2 _ _ = raise Fail "linarithSolve: unequal row lengths"
-
-fun nth (x :: _, 0) = x
-  | nth (_ :: xs, n) = nth (xs, n - 1)
-  | nth _ = raise Subscript
-
 fun find_add_type (Eq, ty) = ty
   | find_add_type (ty, Eq) = ty
   | find_add_type (_, Lt) = Lt
@@ -75,9 +67,9 @@ fun find_add_type (Eq, ty) = ty
 fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
   if ai_one n then ineq
   else if ai_zero n andalso ty = Lt then
-    raise Fail "linarithSolve.multiply_ineq"
+    raise ERR "multiply_ineq" "zero multiplier on a strict inequality"
   else if ai_neg n andalso (ty = Le orelse ty = Lt) then
-    raise Fail "linarithSolve.multiply_ineq"
+    raise ERR "multiply_ineq" "negative multiplier on an inequality"
   else
     Lineq (Arbint.* (n, k), ty,
            List.map (fn c => Arbint.* (n, c)) coeffs,
@@ -86,13 +78,14 @@ fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
 fun add_ineq (Lineq (k1, ty1, coeffs1, just1))
              (Lineq (k2, ty2, coeffs2, just2)) =
   Lineq (Arbint.+ (k1, k2), find_add_type (ty1, ty2),
-         map2 Arbint.+ (coeffs1, coeffs2), Added (just1, just2))
+         ListPair.mapEq Arbint.+ (coeffs1, coeffs2),
+         Added (just1, just2))
 
 fun elim_var v (ineq1 as Lineq (_, ty1, coeffs1, _))
                    (ineq2 as Lineq (_, ty2, coeffs2, _)) =
   let
-    val c1 = nth (coeffs1, v)
-    val c2 = nth (coeffs2, v)
+    val c1 = List.nth (coeffs1, v)
+    val c2 = List.nth (coeffs2, v)
     val m = Arbint.lcm (Arbint.abs c1, Arbint.abs c2)
     val m1 = Arbint.div (m, Arbint.abs c1)
     val m2 = Arbint.div (m, Arbint.abs c2)
@@ -100,7 +93,7 @@ fun elim_var v (ineq1 as Lineq (_, ty1, coeffs1, _))
       if ai_neg c1 = ai_neg c2 then
         if ty1 = Eq then (Arbint.~ m1, m2)
         else if ty2 = Eq then (m1, Arbint.~ m2)
-        else raise Fail "linarithSolve.elim_var"
+        else raise ERR "elim_var" "no eliminable coefficient pair"
       else (m1, m2)
     val (p1, p2) =
       if ty1 = Eq andalso ty2 = Eq andalso
@@ -119,14 +112,6 @@ fun is_contradictory (Lineq (k, ty, _, _)) =
     | Le => ai_pos k
     | Lt => Arbint.>= (k, zero)
 
-fun calc_blowup coeffs =
-  let
-    val nonzero = List.filter (not o ai_zero) coeffs
-    val (pos, neg) = List.partition ai_pos nonzero
-  in
-    List.length pos * List.length neg
-  end
-
 fun extract_first pred items =
   let
     fun extract _ [] = raise List.Empty
@@ -136,10 +121,6 @@ fun extract_first pred items =
   in
     extract [] items
   end
-
-fun first_some _ [] = NONE
-  | first_some pred (x :: xs) =
-      if pred x then SOME x else first_some pred xs
 
 fun distinct_coeffs rows =
   let
@@ -158,29 +139,68 @@ fun min_abs (c :: cs) =
   in
     List.foldl better c cs
   end
-  | min_abs [] = raise List.Empty
+  | min_abs [] = raise ERR "min_abs" "no coefficients"
 
-fun choose_blowup coeff_lists =
+(* One pass tallies the sign counts of every column; the pivot is the
+   column with the smallest nonzero product, favouring earlier columns. *)
+fun tally (c, (pos, neg)) =
+  if ai_pos c then (pos + 1, neg)
+  else if ai_neg c then (pos, neg + 1)
+  else (pos, neg)
+
+fun choose_blowup [] = NONE
+  | choose_blowup (first :: rest) =
+      let
+        val counts =
+          List.foldl
+            (fn (row, acc) =>
+                ListPair.mapEq tally (row, acc))
+            (List.map (fn c => tally (c, (0, 0))) first) rest
+        fun pick _ [] best = best
+          | pick i ((pos, neg) :: more) best =
+              let
+                val blow = pos * neg
+                val best' =
+                  if blow = 0 then best
+                  else
+                    case best of
+                        NONE => SOME (blow, i)
+                      | SOME (old, _) =>
+                          if blow < old then SOME (blow, i) else best
+              in
+                pick (i + 1) more best'
+              end
+      in
+        pick 0 counts NONE
+      end
+
+(* Eliminating a variable emits |pos| x |neg| rows per round, and the same
+   row is reachable along many paths; without this the set grows
+   geometrically while the distinct rows stay few. *)
+fun row_key (Lineq (k, ty, coeffs, _)) =
+  (case ty of Eq => 0 | Le => 1 | Lt => 2, k, coeffs)
+
+fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
+  case Int.compare (ty1, ty2) of
+      EQUAL =>
+        (case Arbint.compare (k1, k2) of
+             EQUAL => Lib.list_compare Arbint.compare (cs1, cs2)
+           | order => order)
+    | order => order
+
+fun distinct_rows rows =
   let
-    val width = List.length (hd coeff_lists)
-    fun loop i best =
-      if i = width then best
-      else
-        let
-          val blow = calc_blowup (List.map (fn row => nth (row, i))
-                                           coeff_lists)
-          val best' =
-            if blow = 0 then best
-            else
-              case best of
-                  NONE => SOME (blow, i)
-                | SOME (old, _) =>
-                    if blow < old then SOME (blow, i) else best
-        in
-          loop (i + 1) best'
-        end
+    fun add (row, (seen, kept)) =
+      let
+        val key = row_key row
+      in
+        if HOLset.member (seen, key) then (seen, kept)
+        else (HOLset.add (seen, key), row :: kept)
+      end
+    val (_, kept) =
+      List.foldl add (HOLset.empty compare_key, []) rows
   in
-    loop 0 NONE
+    List.rev kept
   end
 
 fun trace message = linarithData.trace 2 message
@@ -190,7 +210,7 @@ fun elim (ineqs, hist) =
     val (triv, nontriv) = List.partition is_trivial ineqs
   in
     if not (List.null triv) then
-      (case first_some is_contradictory triv of
+      (case List.find is_contradictory triv of
            SOME (Lineq (_, _, _, just)) => Success just
          | NONE => elim (nontriv, hist))
     else if List.null nontriv then Failure hist
@@ -209,13 +229,14 @@ fun elim (ineqs, hist) =
               extract_first
                 (fn Lineq (_, _, cs, _) => List.exists (ai_eq coeff) cs)
                 eqs
-            fun index _ [] = raise Fail "linarithSolve.elim: pivot"
+            fun index _ [] =
+                  raise ERR "elim" "pivot coefficient vanished"
               | index i (c :: cs) =
                   if ai_eq c coeff then i else index (i + 1) cs
             val v = index 0 eqcoeffs
             val (independent, dependent) =
               List.partition
-                (fn Lineq (_, _, cs, _) => ai_zero (nth (cs, v)))
+                (fn Lineq (_, _, cs, _) => ai_zero (List.nth (cs, v)))
                 (other_eqs @ noneqs)
             val others =
               List.map (elim_var v eq) dependent @ independent
@@ -235,17 +256,17 @@ fun elim (ineqs, hist) =
                     val (independent, dependent) =
                       List.partition
                         (fn Lineq (_, _, cs, _) =>
-                            ai_zero (nth (cs, v))) ineqs
+                            ai_zero (List.nth (cs, v))) ineqs
                     val (pos, neg) =
                       List.partition
                         (fn Lineq (_, _, cs, _) =>
-                            ai_pos (nth (cs, v))) dependent
+                            ai_pos (List.nth (cs, v))) dependent
                     fun products [] = []
                       | products (p :: ps) =
                           List.map (elim_var v p) neg @ products ps
                   in
                     trace ("inequality pivot " ^ Int.toString v);
-                    elim (independent @ products pos,
+                    elim (distinct_rows (independent @ products pos),
                           (v, nontriv) :: hist)
                   end
           end
@@ -291,7 +312,7 @@ fun mklineq atoms (item, index) =
              discrete, negated}) = integ item
     val lhs_coeffs = List.map (coeff lhs) atoms
     val rhs_coeffs = List.map (coeff rhs) atoms
-    val diff = map2 Arbint.- (rhs_coeffs, lhs_coeffs)
+    val diff = ListPair.mapEq Arbint.- (rhs_coeffs, lhs_coeffs)
     val c = Arbint.- (lhs_const, rhs_const)
     val just = Asm index
     fun lineq (constant, ty, cs, why) =
@@ -315,9 +336,9 @@ fun mklineq atoms (item, index) =
           lineq (Arbint.~ c, Le, negate diff, NotLessD just)
       | (REL_EQ, false) => lineq (c, Eq, diff, just)
       | (REL_EQ, true) =>
-          raise Fail "linarithSolve.mklineq: unsplit disequality"
+          raise ERR "mklineq" "unsplit disequality"
       | (REL_NEQ, false) =>
-          raise Fail "linarithSolve.mklineq: unsplit disequality"
+          raise ERR "mklineq" "unsplit disequality"
       | (REL_NEQ, true) => lineq (c, Eq, diff, just)
   end
 
@@ -350,9 +371,10 @@ fun swap_less (Decomp {lhs, lhs_const, rhs, rhs_const,
           rhs = lhs, rhs_const = lhs_const, discrete = discrete,
           negated = false}
 
-(* Unlike upstream's neqE-list ordering, the selector discriminates each
-   premise by its own type (fast_lin_arith.ML:574-629). *)
-fun elim_neq selector items =
+(* Unlike upstream's neqE-list ordering, each premise is discriminated by
+   the discreteness its own decomposition carries
+   (fast_lin_arith.ML:574-629). *)
+fun elim_neq items =
   let
     fun pass _ [] = [[]]
       | pass discrete_only ((item as (tm, NONE)) :: rest) =
@@ -360,10 +382,7 @@ fun elim_neq selector items =
       | pass discrete_only
           ((item as (tm, SOME decomp)) :: rest) =
           if is_neq decomp andalso
-             (case selector tm of
-                  SOME discrete =>
-                    (not discrete_only orelse discrete)
-                | NONE => false)
+             (not discrete_only orelse is_discrete decomp)
           then
             pass discrete_only
               (rest @ [(tm, SOME (less_decomp decomp))]) @
@@ -389,32 +408,34 @@ fun number_hyps items =
     number 0 items
   end
 
-fun split_items selector split_neq decompose terms =
+fun split_items split_neq items =
   let
-    val items = List.map (fn tm => (tm, decompose tm)) terms
     val cases =
-      if split_neq then elim_neq selector items
+      if split_neq then elim_neq items
       else [List.map ignore_neq items]
   in
     List.map number_hyps cases
   end
 
-fun add_atom atom atoms =
-  if List.exists (Term.aconv atom) atoms then atoms else atoms @ [atom]
-
-fun atoms_of_decomp
-      ((Decomp {lhs, rhs, ...}, _), atoms) =
-  List.foldl (fn ((tm, _), acc) => add_atom tm acc)
-    (List.foldl (fn ((tm, _), acc) => add_atom tm acc) atoms lhs) rhs
+(* Nonneg justifications index into this list, so replay must recover the
+   very same order; both sides call this one function. *)
+fun atoms_of_decomps decomps =
+  let
+    fun add ((tm, _), seen) =
+      if Lib.op_mem Term.aconv tm seen then seen else tm :: seen
+    fun add_decomp (Decomp {lhs, rhs, ...}, seen) =
+      List.foldl add (List.foldl add seen lhs) rhs
+  in
+    List.rev (List.foldl add_decomp [] decomps)
+  end
 
 fun refutes is_nonnegative systems =
   let
-    fun refute [] justs = SOME justs
+    fun refute [] justs = SOME (List.rev justs)
       | refute (items :: rest) justs =
           let
-            val atoms = List.foldl atoms_of_decomp [] items
-            val count = List.length atoms
-            val indices = List.tabulate (count, fn i => i)
+            val atoms = atoms_of_decomps (List.map #1 items)
+            val indices = List.tabulate (List.length atoms, fn i => i)
             val atom_indices = ListPair.zip (atoms, indices)
             val nonnegative =
               List.mapPartial
@@ -423,7 +444,7 @@ fun refutes is_nonnegative systems =
               List.map (mklineq atoms) items @ nonnegative
           in
             case elim (ineqs, []) of
-                Success just => refute rest (justs @ [just])
+                Success just => refute rest (just :: justs)
               | Failure _ => NONE
           end
   in
@@ -442,18 +463,12 @@ fun prove ({neq_limit, split_limit = _} : linarith_config)
     | SOME negated_conclusion =>
         let
           val terms = hypotheses @ [negated_conclusion]
-          fun neq tm =
-            case decompose tm of
-                SOME decomp => is_neq decomp
-              | NONE => false
-          val neq_count = List.length (List.filter neq terms)
+          val items = List.map (fn tm => (tm, decompose tm)) terms
+          fun neq (_, SOME decomp) = is_neq decomp
+            | neq (_, NONE) = false
+          val neq_count = List.length (List.filter neq items)
           val split_neq = neq_count <= neq_limit
-          fun selector tm =
-            case decompose tm of
-                SOME decomp => SOME (is_discrete decomp)
-              | NONE => NONE
-          val systems =
-            split_items selector split_neq decompose terms
+          val systems = split_items split_neq items
           val _ =
             if split_neq then ()
             else trace ("neq_limit exceeded (current value is " ^

@@ -152,46 +152,63 @@ fun SIMPLE_LINARITH_TAC arguments =
   end
 
 fun has_registered_subterm tm =
-  Option.isSome (linarithData.instance_for (Term.type_of tm)) orelse
-  if Term.is_abs tm then has_registered_subterm (#2 (Term.dest_abs tm))
-  else
-    case Lib.total Term.dest_comb tm of
-        NONE => false
-      | SOME (rator, rand) =>
-          has_registered_subterm rator orelse has_registered_subterm rand
+  Lib.can
+    (find_term
+       (fn sub =>
+          Option.isSome (linarithData.instance_for (Term.type_of sub))))
+    tm
+
+(* The propositional skeleton of a term, classified once for the three
+   traversals below. NEG/IMP flip polarity; FORALL/EXISTS bind. *)
+datatype shape =
+    NEG of term
+  | EQUIV of term * term
+  | CONJ of term * term
+  | DISJ of term * term
+  | IMP of term * term
+  | FORALL of term * term
+  | EXISTS of term * term
+  | ATOM
+
+fun shape_of tm =
+  case Lib.total boolSyntax.dest_neg tm of
+      SOME body => NEG body
+    | NONE =>
+  case Lib.total boolSyntax.dest_conj tm of
+      SOME sides => CONJ sides
+    | NONE =>
+  case Lib.total boolSyntax.dest_disj tm of
+      SOME sides => DISJ sides
+    | NONE =>
+  case Lib.total boolSyntax.dest_imp_only tm of
+      SOME sides => IMP sides
+    | NONE =>
+  case Lib.total boolSyntax.dest_forall tm of
+      SOME parts => FORALL parts
+    | NONE =>
+  case Lib.total boolSyntax.dest_exists tm of
+      SOME parts => EXISTS parts
+    | NONE =>
+  case Lib.total boolSyntax.dest_eq tm of
+      SOME sides => EQUIV sides
+    | NONE => ATOM
 
 fun shell_relevant tm =
   linarithDecomp.is_relevant tm orelse
-  (case Lib.total boolSyntax.dest_neg tm of
-       SOME body => shell_relevant body
-     | NONE =>
-         (case Lib.total boolSyntax.dest_eq tm of
-              SOME (left, right) =>
-                same_type (Term.type_of left) Type.bool orelse
-                shell_relevant left orelse shell_relevant right
-            | NONE =>
-                (case Lib.total boolSyntax.dest_conj tm of
-                     SOME (left, right) =>
-                       shell_relevant left orelse shell_relevant right
-                   | NONE =>
-                       (case Lib.total boolSyntax.dest_disj tm of
-                     SOME (left, right) =>
-                       shell_relevant left orelse shell_relevant right
-                   | NONE =>
-                       (case Lib.total boolSyntax.dest_imp tm of
-                            SOME (left, right) =>
-                              shell_relevant left orelse
-                              shell_relevant right
-                          | NONE =>
-                              (case Lib.total boolSyntax.dest_forall tm of
-                                   SOME (_, body) => shell_relevant body
-                                 | NONE =>
-                                     (case Lib.total
-                                             boolSyntax.dest_exists tm of
-                                          SOME (_, body) =>
-                                            shell_relevant body
-                                        | NONE =>
-                                            has_registered_subterm tm)))))))
+  (case shape_of tm of
+       NEG body => shell_relevant body
+     | EQUIV (left, right) =>
+         same_type (Term.type_of left) Type.bool orelse
+         shell_relevant left orelse shell_relevant right
+     | CONJ (left, right) =>
+         shell_relevant left orelse shell_relevant right
+     | DISJ (left, right) =>
+         shell_relevant left orelse shell_relevant right
+     | IMP (left, right) =>
+         shell_relevant left orelse shell_relevant right
+     | FORALL (_, body) => shell_relevant body
+     | EXISTS (_, body) => shell_relevant body
+     | ATOM => has_registered_subterm tm)
 
 fun filter_relevant (assumptions, conclusion) =
   let
@@ -203,16 +220,19 @@ fun filter_relevant (assumptions, conclusion) =
     ([(filtered, conclusion)], validate)
   end
 
-val nnf_rewrites =
+val propositional_nnf_rewrites =
   [boolTheory.IMP_DISJ_THM,
    boolTheory.EQ_IMP_THM,
    boolTheory.DE_MORGAN_THM,
    boolTheory.NOT_FORALL_THM,
    boolTheory.NOT_EXISTS_THM,
-   arithmeticTheory.SUB_EQ_0,
    CONJUNCT1 boolTheory.NOT_CLAUSES]
 
-fun nnf_rule theorem = Rewrite.REWRITE_RULE nnf_rewrites theorem
+(* Carrier-specific normalizations (truncated subtraction, say) arrive
+   from the registry rather than being named here. *)
+fun nnf_rewrites () =
+  propositional_nnf_rewrites @
+  List.concat (map #nnf_rules (linarithData.all_instances ()))
 
 fun opposite_tac (assumptions, conclusion) =
   let
@@ -236,12 +256,16 @@ fun opposite_tac (assumptions, conclusion) =
   end
 
 fun nnf_flatten goal =
-  Tactical.THEN
-    (Tactical.POP_ASSUM_LIST
-       (fn theorems =>
-         Tactical.MAP_EVERY (Tactic.STRIP_ASSUME_TAC o nnf_rule)
-           theorems),
-     Tactical.TRY opposite_tac) goal
+  let
+    val nnf_rule = Rewrite.REWRITE_RULE (nnf_rewrites ())
+  in
+    Tactical.THEN
+      (Tactical.POP_ASSUM_LIST
+         (fn theorems =>
+           Tactical.MAP_EVERY (Tactic.STRIP_ASSUME_TAC o nnf_rule)
+             theorems),
+       Tactical.TRY opposite_tac) goal
+  end
 
 fun limit_exceeded function limit =
   let
@@ -501,37 +525,20 @@ fun linarith_vars tm =
           SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
             add_side bound (rhs, add_side bound (lhs, atoms))
         | NONE =>
-            (case Lib.total boolSyntax.dest_neg tm of
-                 SOME body => recurse bound atoms body
-               | NONE =>
-                   (case Lib.total boolSyntax.dest_conj tm of
-                        SOME (left, right) =>
-                          recurse bound (recurse bound atoms left) right
-                      | NONE =>
-                          (case Lib.total boolSyntax.dest_disj tm of
-                               SOME (left, right) =>
-                                 recurse bound
-                                   (recurse bound atoms left) right
-                             | NONE =>
-                                 (case Lib.total boolSyntax.dest_imp tm of
-                                      SOME (left, right) =>
-                                        recurse bound
-                                          (recurse bound atoms left) right
-                                    | NONE =>
-                                        (case Lib.total
-                                                boolSyntax.dest_forall tm of
-                                             SOME (variable, body) =>
-                                               recurse (variable :: bound)
-                                                 atoms body
-                                           | NONE =>
-                                               (case Lib.total
-                                                       boolSyntax.dest_exists
-                                                       tm of
-                                                    SOME (variable, body) =>
-                                                      recurse
-                                                        (variable :: bound)
-                                                        atoms body
-                                                  | NONE => atoms))))))
+            (case shape_of tm of
+                 NEG body => recurse bound atoms body
+               | CONJ (left, right) =>
+                   recurse bound (recurse bound atoms left) right
+               | DISJ (left, right) =>
+                   recurse bound (recurse bound atoms left) right
+               | IMP (left, right) =>
+                   recurse bound (recurse bound atoms left) right
+               | FORALL (variable, body) =>
+                   recurse (variable :: bound) atoms body
+               | EXISTS (variable, body) =>
+                   recurse (variable :: bound) atoms body
+               | EQUIV _ => atoms
+               | ATOM => atoms)
   in
     List.rev (recurse [] [] tm)
   end
@@ -545,33 +552,19 @@ val (CACHED_LINARITH, linarith_cache) =
     (linarith_vars, cache_check, CTXT_LINARITH)
 
 fun contains_forall sense tm =
-  case Lib.total boolSyntax.dest_conj tm of
-      SOME (left, right) =>
+  case shape_of tm of
+      NEG body => contains_forall (not sense) body
+    | CONJ (left, right) =>
         contains_forall sense left orelse contains_forall sense right
-    | NONE =>
-        (case Lib.total boolSyntax.dest_disj tm of
-             SOME (left, right) =>
-               contains_forall sense left orelse
-               contains_forall sense right
-           | NONE =>
-               (case Lib.total boolSyntax.dest_neg tm of
-                    SOME body => contains_forall (not sense) body
-                  | NONE =>
-                      (case Lib.total boolSyntax.dest_imp tm of
-                           SOME (left, right) =>
-                             contains_forall (not sense) left orelse
-                             contains_forall sense right
-                         | NONE =>
-                             (case Lib.total boolSyntax.dest_forall tm of
-                                  SOME (_, body) =>
-                                    sense orelse contains_forall sense body
-                                | NONE =>
-                                    (case Lib.total
-                                            boolSyntax.dest_exists tm of
-                                         SOME (_, body) =>
-                                           not sense orelse
-                                           contains_forall sense body
-                                       | NONE => false)))))
+    | DISJ (left, right) =>
+        contains_forall sense left orelse contains_forall sense right
+    | IMP (left, right) =>
+        contains_forall (not sense) left orelse
+        contains_forall sense right
+    | FORALL (_, body) => sense orelse contains_forall sense body
+    | EXISTS (_, body) => not sense orelse contains_forall sense body
+    | EQUIV _ => false
+    | ATOM => false
 
 fun admissible theorem =
   let

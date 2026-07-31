@@ -17,11 +17,11 @@ strict and non-strict order, and constructs literals. Its `kit` component
 provides monotonicity, strict-order, negated-order, disequality, and
 non-negativity theorems used during replay.
 
-The remaining fields are a normalising conversion, `pre_split` rules,
-`atom_facts`, and optional `divmod_facts`. These callbacks extend the
-generic preprocessing and replay engine without adding carrier tests to
-it. Injections between carriers are installed separately with
-`register_injection`.
+The remaining fields are a normalising conversion, `nnf_rules` folded
+into the negation-normal-form pass, `pre_split` rules, `atom_facts`, and
+optional `divmod_facts`. These callbacks extend the generic preprocessing
+and replay engine without adding carrier tests to it. Injections between
+carriers are installed separately with `register_injection`.
 
 The registry is keyed by `#ty`. Registering another instance for the same
 type atomically replaces the old entry and issues a warning. Registration

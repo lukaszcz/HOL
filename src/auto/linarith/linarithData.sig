@@ -27,6 +27,7 @@ sig
       nonneg : term -> thm option
     },
     norm_conv : conv,
+    nnf_rules : thm list,
     pre_split : thm list,
     atom_facts : term -> thm list,
     divmod_facts : (term -> thm list) option

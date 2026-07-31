@@ -32,32 +32,20 @@ sig
 
   type linarith_config = linarithData.linarith_config
 
-  type int_decomp = {
-    lhs : (Term.term * Arbint.int) list,
-    lhs_const : Arbint.int,
-    rel : relation,
-    rhs : (Term.term * Arbint.int) list,
-    rhs_const : Arbint.int,
-    discrete : bool,
-    negated : bool
-  }
-
-  type neq_selector = Term.term -> bool option
-
   val elim : lineq list * history -> result
-  val integ : decomp -> Arbint.int * int_decomp
   val mklineq : Term.term list -> decomp * int -> lineq
-  val mknonneg :
-    (Term.term -> bool) -> int list -> Term.term * int -> lineq option
+
+  (* The atom ordering that Nonneg justifications index into. *)
+  val atoms_of_decomps : decomp list -> Term.term list
+
+  val negate : Term.term -> Term.term
 
   val elim_neq :
-    neq_selector ->
     (Term.term * decomp option) list ->
     (Term.term * decomp option) list list
 
   val split_items :
-    neq_selector -> bool -> (Term.term -> decomp option) ->
-    Term.term list -> (decomp * int) list list
+    bool -> (Term.term * decomp option) list -> (decomp * int) list list
 
   val prove :
     linarith_config -> (Term.term -> decomp option) ->

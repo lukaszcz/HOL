@@ -7,10 +7,6 @@ val ERR = mk_HOL_ERR "linarithData"
 
 fun same_type left right = Type.compare (left, right) = EQUAL
 
-fun find _ [] = NONE
-  | find predicate (item :: rest) =
-      if predicate item then SOME item else find predicate rest
-
 type linarith_instance = {
   ty : hol_type,
   discrete : bool,
@@ -36,6 +32,7 @@ type linarith_instance = {
     nonneg : term -> thm option
   },
   norm_conv : conv,
+  nnf_rules : thm list,
   pre_split : thm list,
   atom_facts : term -> thm list,
   divmod_facts : (term -> thm list) option
@@ -48,24 +45,17 @@ type linarith_injection = {
   hom : {le : thm, lt : thm, eq : thm, add : thm, mul : thm}
 }
 
-val instance_registry =
-  Sref.new ([] : (hol_type * linarith_instance) list)
+val instance_registry = Sref.new ([] : linarith_instance list)
 
 fun register_instance instance =
   let
     val ty = #ty instance
+    fun same_carrier entry = same_type ty (#ty entry)
     val replaced =
       Sref.gen_update instance_registry
         (fn entries =>
-          let
-            val replaced =
-              List.exists (fn (old_ty, _) => same_type ty old_ty) entries
-            val others =
-              List.filter (fn (old_ty, _) => not (same_type ty old_ty))
-                entries
-          in
-            ((ty, instance) :: others, replaced)
-          end)
+          (instance :: List.filter (not o same_carrier) entries,
+           List.exists same_carrier entries))
   in
     if replaced then
       HOL_WARNING "linarithData" "register_instance"
@@ -76,11 +66,10 @@ fun register_instance instance =
   end
 
 fun instance_for ty =
-  Option.map #2
-    (find (fn (registered_ty, _) => same_type ty registered_ty)
-      (Sref.value instance_registry))
+  List.find (fn instance => same_type ty (#ty instance))
+    (Sref.value instance_registry)
 
-fun all_instances () = map #2 (Sref.value instance_registry)
+fun all_instances () = Sref.value instance_registry
 
 val injection_registry = Sref.new ([] : linarith_injection list)
 
@@ -97,14 +86,14 @@ fun register_injection injection =
 fun injections () = Sref.value injection_registry
 
 fun injection_for from_ty to_ty =
-  find
+  List.find
     (fn injection =>
       same_type from_ty (#from_ty injection) andalso
       same_type to_ty (#to_ty injection))
     (injections ())
 
 fun injection_by_const constant =
-  find (fn injection => Term.aconv constant (#inj injection))
+  List.find (fn injection => Term.aconv constant (#inj injection))
     (injections ())
 
 val persistent_name = KernelSig.name_toString

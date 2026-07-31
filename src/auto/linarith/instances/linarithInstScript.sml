@@ -6,20 +6,6 @@ Libs
 
 open integerTheory realTheory ratTheory
 
-Theorem INT_LET_ADD2:
-  !w x y z : int. w <= x /\ y < z ==> w + y < x + z
-Proof
-  rw [INT_LE_LT] >>
-  metis_tac [integerTheory.INT_LT_ADD2, INT_LT_LADD]
-QED
-
-Theorem INT_LTE_ADD2:
-  !w x y z : int. w < x /\ y <= z ==> w + y < x + z
-Proof
-  rw [INT_LE_LT] >>
-  metis_tac [integerTheory.INT_LT_ADD2, INT_LT_RADD]
-QED
-
 Theorem INT_LE_LMUL_POS:
   !a b c : int. 0 < c /\ a <= b ==> c * a <= c * b
 Proof
@@ -37,20 +23,6 @@ Theorem INT_NEQ_E:
     x <> y ==> (x < y ==> F) ==> (y < x ==> F) ==> F
 Proof
   metis_tac [INT_LT_TOTAL]
-QED
-
-Theorem INT_MIN_LT_IFF:
-  !x y z : int. x < int_min y z <=> x < y /\ x < z
-Proof
-  rw [INT_MIN] >>
-  metis_tac [INT_LT_TOTAL, INT_LT_TRANS]
-QED
-
-Theorem INT_MAX_LT_IFF:
-  !x y z : int. int_max x y < z <=> x < z /\ y < z
-Proof
-  rw [INT_MAX] >>
-  metis_tac [INT_LT_TOTAL, INT_LT_TRANS]
 QED
 
 Theorem INT_MIN_SPLIT[arith_split]:

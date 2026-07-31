@@ -147,6 +147,7 @@ fun synthetic_instance discrete : linarithData.linarith_instance =
       neqE = boolTheory.TRUTH,
       nonneg = (fn _ => NONE)},
    norm_conv = Conv.ALL_CONV,
+   nnf_rules = [],
    pre_split = [],
    atom_facts = (fn _ => []),
    divmod_facts = NONE}
@@ -242,6 +243,7 @@ fun make_decomp_instance dest_minus :
       neqE = boolTheory.TRUTH,
       nonneg = (fn _ => NONE)},
    norm_conv = Conv.ALL_CONV,
+   nnf_rules = [],
    pre_split = [],
    atom_facts = (fn _ => []),
    divmod_facts = NONE}
@@ -609,11 +611,6 @@ fun unit_decomp tm =
   else if Term.aconv tm contradiction_tm then SOME contradiction
   else NONE
 
-fun unit_selector tm =
-  if Term.aconv tm dense_neq_tm then SOME false
-  else if Term.aconv tm discrete_neq_tm then SOME true
-  else NONE
-
 fun constants (Decomp {lhs_const, rhs_const, ...}) =
   (Arbrat.toAInt lhs_const, Arbrat.toAInt rhs_const)
 
@@ -635,7 +632,7 @@ val _ =
            [(dense_neq_tm, SOME dense_neq),
             (discrete_neq_tm, SOME discrete_neq)]
          val actual =
-           List.map case_constants (elim_neq unit_selector items)
+           List.map case_constants (elim_neq items)
          val expected =
            [[(i2, i0), (i1, i0)],
             [(i2, i0), (i0, i1)],
@@ -651,8 +648,9 @@ val _ =
      fn () =>
        let
          val cases =
-           split_items unit_selector true unit_decomp
-             [dense_neq_tm, contradiction_tm, discrete_neq_tm]
+           split_items true
+             (List.map (fn tm => (tm, unit_decomp tm))
+                [dense_neq_tm, contradiction_tm, discrete_neq_tm])
        in
          List.length cases = 4 andalso
          List.all (fn items => List.map #2 items = [0, 1, 2]) cases
@@ -842,6 +840,7 @@ fun num_instance_with_mult_mono mult_mono =
         neqE = #neqE kit,
         nonneg = #nonneg kit},
      norm_conv = #norm_conv num_instance,
+     nnf_rules = #nnf_rules num_instance,
      pre_split = #pre_split num_instance,
      atom_facts = #atom_facts num_instance,
      divmod_facts = #divmod_facts num_instance} :
@@ -1717,8 +1716,9 @@ val _ =
       check
         ("Arith_Examples core suite count and time budget",
          fn () =>
+           (* 34 num-only goals here; instances/selftest.sml runs the
+              remaining 20 of the 54-goal corpus. *)
            List.length core_arith_examples_corpus = 34 andalso
-           34 + 20 = 54 andalso
            !core_strength_succeeded = 32 andalso
            !core_strength_failed_as_expected = 2 andalso
            Time.< (elapsed, core_strength_suite_budget))

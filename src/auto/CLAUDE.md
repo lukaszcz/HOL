@@ -60,7 +60,7 @@ Phased subtree layout:
     blast/       tableau prover (Paulson's blast)
     clasimp/     AUTO/FORCE/FASTFORCE/CLARSIMP, [iff]
     aesop/       best-first engine (aesop-style)
-    linarith/    generic linear arith, `LINARITH_TAC` (D55: no registry)
+    linarith/    generic linear arith, `LINARITH_TAC`
 
 `linarith/` contains the pre-boss core and num instance.  Its
 `instances/` subdirectory contains the int, real and rat instances and

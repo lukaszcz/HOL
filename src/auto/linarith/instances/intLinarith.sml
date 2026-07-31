@@ -8,82 +8,18 @@ fun dest_lit tm =
 
 fun mk_lit value = intSyntax.term_of_int (Arbrat.toAInt value)
 
-fun remove_aconv _ [] = NONE
-  | remove_aconv tm (item :: rest) =
-      if Term.aconv tm item then SOME rest
-      else Option.map (fn rest' => item :: rest') (remove_aconv tm rest)
+val ac_ops : linarithCancel.ac_ops =
+  {dest_less = intSyntax.dest_less,
+   dest_leq = intSyntax.dest_leq,
+   strip_plus = intSyntax.strip_plus,
+   mk_plus = intSyntax.mk_plus,
+   zero = intSyntax.zero_tm,
+   assoc = integerTheory.INT_ADD_ASSOC,
+   comm = integerTheory.INT_ADD_COMM,
+   rid = integerTheory.INT_ADD_RID,
+   ac_fallback = NONE}
 
-fun common_summand [] _ = NONE
-  | common_summand (item :: rest) right =
-      case remove_aconv item right of
-          SOME right' => SOME (item, rest, right')
-        | NONE =>
-            Option.map
-              (fn (common, left, right') =>
-                  (common, item :: left, right'))
-              (common_summand rest right)
-
-fun mk_sum [] = intSyntax.zero_tm
-  | mk_sum [tm] = tm
-  | mk_sum terms = intSyntax.list_mk_plus terms
-
-fun ac_equality left right =
-  if Term.aconv left right then Thm.REFL left
-  else
-    EQT_ELIM
-      (AC_CONV
-        (integerTheory.INT_ADD_ASSOC, integerTheory.INT_ADD_COMM)
-        (boolSyntax.mk_eq (left, right)))
-
-fun cancel_common cancel tm =
-  let
-    val operator = Term.rator (Term.rator tm)
-    val (left, right) =
-      if intSyntax.is_leq tm then intSyntax.dest_leq tm
-      else if intSyntax.is_less tm then intSyntax.dest_less tm
-      else boolSyntax.dest_eq tm
-    fun summands expression =
-      case intSyntax.strip_plus expression of
-          [] => [expression]
-        | terms => terms
-    val lefts = summands left
-    val rights = summands right
-  in
-    case common_summand lefts rights of
-        NONE => raise UNCHANGED
-      | SOME (_, [], []) => raise UNCHANGED
-      | SOME (common, left', right') =>
-          let
-            fun cancellation_side original [] =
-                  let
-                    val target = intSyntax.mk_plus
-                      (common, intSyntax.zero_tm)
-                    val expanded =
-                      Thm.SYM
-                        (Thm.SPEC common integerTheory.INT_ADD_RID)
-                  in
-                    (target,
-                     Thm.TRANS (ac_equality original common) expanded)
-                  end
-              | cancellation_side original rest =
-                  let
-                    val target = intSyntax.mk_plus (common, mk_sum rest)
-                  in
-                    (target, ac_equality original target)
-                  end
-            val (left_target, left_thm) =
-              cancellation_side left left'
-            val (right_target, right_thm) =
-              cancellation_side right right'
-            val relation_thm =
-              Thm.MK_COMB (Thm.AP_TERM operator left_thm, right_thm)
-            val cancel_thm =
-              REWR_CONV cancel
-                (#2 (boolSyntax.dest_eq (Thm.concl relation_thm)))
-          in
-            Thm.TRANS relation_thm cancel_thm
-          end
-  end
+val cancel_common = linarithCancel.cancel_common ac_ops
 
 fun expression_conv tm =
   if Term.type_of tm = intSyntax.int_ty then
@@ -184,8 +120,8 @@ val instance : linarithData.linarith_instance =
      {add_mono =
         [integerTheory.INT_LE_ADD2,
          integerTheory.INT_LT_ADD2,
-         linarithInstTheory.INT_LET_ADD2,
-         linarithInstTheory.INT_LTE_ADD2],
+         integerTheory.INT_LET_ADD2,
+         integerTheory.INT_LTE_ADD2],
       mult_mono =
         [linarithInstTheory.INT_LE_LMUL_POS,
          linarithInstTheory.INT_LT_LMUL_POS],
@@ -195,6 +131,7 @@ val instance : linarithData.linarith_instance =
       neqE = linarithInstTheory.INT_NEQ_E,
       nonneg = nonneg},
    norm_conv = norm_conv,
+   nnf_rules = [],
    pre_split =
      [linarithInstTheory.INT_MIN_SPLIT,
       linarithInstTheory.INT_MAX_SPLIT,

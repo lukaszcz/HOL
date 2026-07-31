@@ -3,87 +3,20 @@ struct
 
 open Abbrev HolKernel Conv Drule Rewrite
 
-fun remove_aconv _ [] = NONE
-  | remove_aconv tm (item :: rest) =
-      if Term.aconv tm item then SOME rest
-      else Option.map (fn rest' => item :: rest') (remove_aconv tm rest)
+val ac_ops : linarithCancel.ac_ops =
+  {dest_less = realSyntax.dest_less,
+   dest_leq = realSyntax.dest_leq,
+   strip_plus = realSyntax.strip_plus,
+   mk_plus = realSyntax.mk_plus,
+   zero = realSyntax.zero_tm,
+   assoc = realTheory.REAL_ADD_ASSOC,
+   comm = realTheory.REAL_ADD_COMM,
+   rid = realTheory.REAL_ADD_RID,
+   ac_fallback = NONE}
 
-fun common_summand [] _ = NONE
-  | common_summand (item :: rest) right =
-      case remove_aconv item right of
-          SOME right' => SOME (item, rest, right')
-        | NONE =>
-            Option.map
-              (fn (common, left, right') =>
-                  (common, item :: left, right'))
-              (common_summand rest right)
+val cancel_common = linarithCancel.cancel_common ac_ops
 
-fun mk_sum [] = realSyntax.zero_tm
-  | mk_sum [tm] = tm
-  | mk_sum terms = realSyntax.list_mk_plus terms
-
-fun ac_equality left right =
-  if Term.aconv left right then Thm.REFL left
-  else
-    EQT_ELIM
-      (AC_CONV
-        (realTheory.REAL_ADD_ASSOC, realTheory.REAL_ADD_COMM)
-        (boolSyntax.mk_eq (left, right)))
-
-fun cancel_common cancel tm =
-  let
-    val operator = Term.rator (Term.rator tm)
-    val (left, right) =
-      if realSyntax.is_leq tm then realSyntax.dest_leq tm
-      else if realSyntax.is_less tm then realSyntax.dest_less tm
-      else boolSyntax.dest_eq tm
-    fun summands expression =
-      case realSyntax.strip_plus expression of
-          [] => [expression]
-        | terms => terms
-    val lefts = summands left
-    val rights = summands right
-  in
-    case common_summand lefts rights of
-        NONE => raise UNCHANGED
-      | SOME (_, [], []) => raise UNCHANGED
-      | SOME (common, left', right') =>
-          let
-            fun cancellation_side original [] =
-                  let
-                    val target = realSyntax.mk_plus
-                      (common, realSyntax.zero_tm)
-                    val expanded =
-                      Thm.SYM
-                        (Thm.SPEC common realTheory.REAL_ADD_RID)
-                  in
-                    (target,
-                     Thm.TRANS (ac_equality original common) expanded)
-                  end
-              | cancellation_side original rest =
-                  let
-                    val target = realSyntax.mk_plus (common, mk_sum rest)
-                  in
-                    (target, ac_equality original target)
-                  end
-            val (left_target, left_thm) =
-              cancellation_side left left'
-            val (right_target, right_thm) =
-              cancellation_side right right'
-            val relation_thm =
-              Thm.MK_COMB (Thm.AP_TERM operator left_thm, right_thm)
-            val cancel_thm =
-              REWR_CONV cancel
-                (#2 (boolSyntax.dest_eq (Thm.concl relation_thm)))
-          in
-            Thm.TRANS relation_thm cancel_thm
-          end
-  end
-
-fun safe_conv conversion tm =
-  conversion tm
-  handle HOL_ERR _ => Thm.REFL tm
-       | UNCHANGED => Thm.REFL tm
+val safe_conv = QCONV o TRY_CONV
 
 fun expression_conv tm =
   if Term.type_of tm = realSyntax.real_ty then
@@ -154,6 +87,7 @@ val instance : linarithData.linarith_instance =
       neqE = linarithInstTheory.REAL_NEQ_E,
       nonneg = nonneg},
    norm_conv = norm_conv,
+   nnf_rules = [],
    pre_split =
      [linarithInstTheory.REAL_MIN_SPLIT,
       linarithInstTheory.REAL_MAX_SPLIT,

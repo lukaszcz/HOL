@@ -14,21 +14,8 @@ fun nth what items index =
     raise ERR "mkthm" (what ^ " index " ^ Int.toString index ^
       " is out of range")
 
-fun add_aconv tm terms =
-  if List.exists (Term.aconv tm) terms then terms else terms @ [tm]
-
-fun add_decomp_atoms
-      (Decomp {lhs, rhs, ...}, atoms) =
-  List.foldl (fn ((tm, _), acc) => add_aconv tm acc)
-    (List.foldl (fn ((tm, _), acc) => add_aconv tm acc) atoms lhs) rhs
-
 fun atoms_of terms =
-  List.foldl
-    (fn (tm, atoms) =>
-      case linarithDecomp.decomp tm of
-          NONE => atoms
-        | SOME decomp => add_decomp_atoms (decomp, atoms))
-    [] terms
+  atoms_of_decomps (List.mapPartial linarithDecomp.decomp terms)
 
 datatype instance_env = Env of term list
 
@@ -95,19 +82,14 @@ fun implications theorem =
     end
     handle HOL_ERR _ => [theorem]
 
-fun first_result _ [] = NONE
-  | first_result f (item :: rest) =
-      case Lib.total f item of
-          SOME result => SOME result
-        | NONE => first_result f rest
+(* The first application of f that does not raise. *)
+fun first_result f items = Lib.total (Lib.tryfind f) items
 
 fun first_match rules theorem =
-  first_result
+  Lib.get_first
     (fn rule =>
-      case first_result (fn implication => MATCH_MP implication theorem)
-             (implications rule) of
-          SOME result => result
-        | NONE => raise ERR "first_match" "rule does not match")
+      first_result (fn implication => MATCH_MP implication theorem)
+        (implications rule))
     rules
 
 fun required_match operation rules theorem =
@@ -199,23 +181,21 @@ fun conversion_closure theorem =
     explore [theorem] []
   end
 
+(* The relation's operator constant, read off the first subterm of the
+   rule that the instance's destructor accepts. *)
 fun relation_operator destructor theorem =
-  let
-    fun search tm =
-      case Lib.total destructor tm of
-          SOME _ => SOME (#1 (dest_binary tm))
-        | NONE =>
-            if Term.is_abs tm then search (#2 (Term.dest_abs tm))
-            else
-              (case Lib.total Term.dest_comb tm of
-                   NONE => NONE
-                 | SOME (rator, rand) =>
-                     (case search rator of
-                          SOME operator => SOME operator
-                        | NONE => search rand))
-  in
-    search (Thm.concl theorem)
-  end
+  Option.map (#1 o dest_binary)
+    (Lib.total (find_term (Lib.can destructor)) (Thm.concl theorem))
+
+fun operator_in_rules destructor rules =
+  Lib.get_first (relation_operator destructor) rules
+
+fun required_operator function what destructor rules =
+  case operator_in_rules destructor rules of
+      SOME operator => operator
+    | NONE =>
+        raise ERR function
+          ("no " ^ what ^ " operator occurs in the instance kit")
 
 fun equality_as_le instance theorem =
   if not (boolSyntax.is_eq (relation_body (Thm.concl theorem))) then
@@ -224,16 +204,8 @@ fun equality_as_le instance theorem =
     let
       val dest = #dest instance
       val operator =
-        case first_result
-               (fn rule =>
-                 case relation_operator (#dest_leq dest) rule of
-                     SOME found => found
-                   | NONE => raise ERR "equality_as_le" "no leq operator")
-               (#add_mono (#kit instance)) of
-            SOME found => found
-          | NONE =>
-              raise ERR "equality_as_le"
-                "no leq operator occurs in the instance kit"
+        required_operator "equality_as_le" "leq" (#dest_leq dest)
+          (#add_mono (#kit instance))
       val (left, _) = boolSyntax.dest_eq (Thm.concl theorem)
       val variable = genvar (#ty instance)
       fun leq l r = Term.list_mk_comb (operator, [l, r])
@@ -248,18 +220,9 @@ fun equality_as_le instance theorem =
 
 fun add_equalities instance theorem1 theorem2 =
   let
-    val dest = #dest instance
     val operator =
-      case first_result
-             (fn rule =>
-               case relation_operator (#dest_plus dest) rule of
-                   SOME found => found
-                 | NONE => raise ERR "add_equalities" "no plus operator")
-             (#add_mono (#kit instance)) of
-          SOME found => found
-        | NONE =>
-            raise ERR "add_equalities"
-              "no plus operator occurs in the instance kit"
+      required_operator "add_equalities" "plus"
+        (#dest_plus (#dest instance)) (#add_mono (#kit instance))
   in
     MK_COMB (MK_COMB (REFL operator, theorem1), theorem2)
   end
@@ -287,13 +250,7 @@ fun add_direct theorem1 theorem2 =
   end
   handle HOL_ERR _ => NONE
 
-fun try_add theorem others =
-  first_result
-    (fn other =>
-      case add_direct theorem other of
-          SOME result => result
-        | NONE => raise ERR "try_add" "addition does not match")
-    others
+fun try_add theorem others = Lib.get_first (add_direct theorem) others
 
 fun try_add_pairs [] _ = NONE
   | try_add_pairs (theorem :: rest) others =
@@ -320,7 +277,7 @@ and add_failure theorem1 theorem2 =
 
 fun mult_by_add n theorem =
   if Arbint.< (n, Arbint.one) then
-    raise ERR "mkthm" "non-positive inequality multiplier"
+    raise ERR "mult_by_add" "non-positive inequality multiplier"
   else
     let
       fun loop i result =
@@ -331,40 +288,13 @@ fun mult_by_add n theorem =
       loop n theorem
     end
 
-fun operator_in_rules destructor rules =
-  let
-    fun search tm =
-      case Lib.total destructor tm of
-          SOME _ => SOME (#1 (dest_binary tm))
-        | NONE =>
-            if Term.is_abs tm then search (#2 (Term.dest_abs tm))
-            else
-              (case Lib.total Term.dest_comb tm of
-                   NONE => NONE
-                 | SOME (rator, rand) =>
-                     (case search rator of
-                          SOME operator => SOME operator
-                        | NONE => search rand))
-    fun find [] = NONE
-      | find (theorem :: rest) =
-          (case search (Thm.concl theorem) of
-               SOME operator => SOME operator
-             | NONE => find rest)
-  in
-    find rules
-  end
-
 fun additive_scale instance n variable =
   let
-    val kit = #kit instance
     val dest = #dest instance
     val zero = #mk_lit dest Arbrat.zero
     val operator =
-      case operator_in_rules (#dest_plus dest) (#add_mono kit) of
-          SOME operator => operator
-        | NONE =>
-            raise ERR "mkthm"
-              "no addition operator occurs in the instance kit"
+      required_operator "additive_scale" "addition" (#dest_plus dest)
+        (#add_mono (#kit instance))
     fun add left right =
       Term.list_mk_comb (operator, [left, right])
     fun sum i =
@@ -478,7 +408,7 @@ fun mult_thm n theorem =
           if negative then SYM normalized else normalized
         end
       else if negative then
-        raise ERR "mkthm" "negative multiplier on an inequality"
+        raise ERR "mult_thm" "negative multiplier on an inequality"
       else mult_positive instance n theorem
   in
     result
@@ -529,27 +459,11 @@ fun mkthm (Env atoms) assumptions justification =
                            ("instance declined nonnegative atom " ^
                             Parse.term_to_string atom))
           end
-      | one (LessD why) =
-          let
-            val theorem = one why
-            val kit = #kit (instance_of_thm theorem)
-          in
-            required_match "apply LessD to" (#lessD kit) theorem
-          end
+      | one (LessD why) = from_kit "LessD" #lessD why
       | one (NotLessD why) =
-          let
-            val theorem = one why
-            val kit = #kit (instance_of_thm theorem)
-          in
-            required_match "apply NotLessD to" [#not_less kit] theorem
-          end
+          from_kit "NotLessD" (fn kit => [#not_less kit]) why
       | one (NotLeD why) =
-          let
-            val theorem = one why
-            val kit = #kit (instance_of_thm theorem)
-          in
-            required_match "apply NotLeD to" [#not_le kit] theorem
-          end
+          from_kit "NotLeD" (fn kit => [#not_le kit]) why
       | one (NotLeDD why) =
           let
             val theorem = one why
@@ -562,6 +476,14 @@ fun mkthm (Env atoms) assumptions justification =
       | one (Multiplied (n, why)) = mult_thm n (one why)
       | one (Added (left, right)) =
           normalize_added (add_thms (one left) (one right))
+    (* Apply the rules the justification's own carrier supplies. *)
+    and from_kit name select why =
+          let
+            val theorem = one why
+            val kit = #kit (instance_of_thm theorem)
+          in
+            required_match ("apply " ^ name ^ " to") (select kit) theorem
+          end
 
     val theorem =
       (normalize_final (one justification)
@@ -668,10 +590,6 @@ fun fwdproof (Tip assumptions) (justification :: rest) =
       in
         (Thm.MP (Thm.MP split left_case) right_case, right_rest)
       end
-
-fun negate tm =
-  if boolSyntax.is_neg tm then boolSyntax.dest_neg tm
-  else boolSyntax.mk_neg tm
 
 fun finish_forward conclusion negated false_theorem =
   if boolSyntax.is_neg conclusion then
