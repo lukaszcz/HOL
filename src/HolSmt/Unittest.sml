@@ -9510,6 +9510,120 @@ fun z3_rewrite_string_rung_shaped_failure () =
       ``smtstr_concat x (SmtStr [97]) =
         smtstr_concat x (SmtStr [98])``))
 
+fun smtfp_prove_core_rungs_success () =
+let
+  val literal =
+    ``(smtfp_bits 0w 0w 0w : (4,3) smtfp) = smtfp_pzero``
+  val add =
+    ``smtfp_add RNE
+        (smtfp_bits 0w 3w 0w : (4,3) smtfp)
+        (smtfp_bits 0w 3w 0w : (4,3) smtfp) =
+      smtfp_bits 0w 4w 0w``
+  val rem =
+    ``smtfp_rem
+        (smtfp_bits 0w 5w 4w : (4,3) smtfp)
+        (smtfp_bits 0w 4w 0w : (4,3) smtfp) =
+      smtfp_bits 0w 3w 0w``
+  val round_to_integral =
+    ``smtfp_round_to_integral RNA
+        (smtfp_bits 1w 4w 4w : (4,3) smtfp) =
+      smtfp_bits 1w 4w 8w``
+  val conversion =
+    ``(smtfp_to_ubv RTZ
+        (smtfp_bits 0w 4w 8w : (4,3) smtfp) : word4) = 3w``
+  fun check label prover tm =
+    let val thm = prover tm in
+      assert_no_hyps (label, thm);
+      assert_concl_alpha (label, thm, tm);
+      Library.check_oracle_tags label thm
+    end
+in
+  check "FP rung 1 literal" SmtFpProve.proforma_prove literal;
+  check "FP rung 2 literal evaluation"
+    SmtFpProve.ground_eval_prove literal;
+  List.app (fn (label, tm) =>
+      check ("FP rung 2 " ^ label) SmtFpProve.ground_eval_prove tm)
+    [("ground_add", add), ("ground_rem", rem),
+     ("ground_round_to_integral_rna", round_to_integral),
+     ("convert_to_ubv", conversion)]
+end
+
+fun z3_rewrite_fp_ground_rungs_replay_success () =
+let
+  val rewrites = [
+    ("ground_add",
+     "((proof (rewrite (= (fp.add RNE (fp #b0 #b011 #b0000) " ^
+     "(fp #b0 #b011 #b0000)) (fp #b0 #b100 #b0000)))))"),
+    ("ground_rem",
+     "((proof (rewrite (= (fp.rem (fp #b0 #b101 #b0100) " ^
+     "(fp #b0 #b100 #b0000)) (fp #b0 #b011 #b0000)))))"),
+    ("ground_round_to_integral_rna",
+     "((proof (rewrite (= (fp.roundToIntegral RNA " ^
+     "(fp #b1 #b100 #b0100)) (fp #b1 #b100 #b1000)))))"),
+    ("convert_to_ubv",
+     "((proof (rewrite (= ((_ fp.to_ubv 4) RTZ " ^
+     "(fp #b0 #b100 #b1000)) #b0011))))")]
+  fun check (label, proof_text) =
+    let val thm = replay_z3_proof_string proof_text in
+      assert_no_hyps ("FP rewrite " ^ label, thm);
+      Library.check_oracle_tags ("FP rewrite " ^ label) thm
+    end
+in
+  List.app check rewrites
+end
+
+fun smtfp_prove_unsupported_diagnostic () =
+let
+  val unsupported =
+    ``smtfp_add RNE (x : (4,3) smtfp) y = x``
+  val type_only = ``(x : (4,3) smtfp) = y``
+  val declarations =
+    "((declare-fun x () (_ FloatingPoint 3 5)) " ^
+    "(declare-fun y () (_ FloatingPoint 3 5)) "
+  val operation_proof =
+    declarations ^ "(proof (rewrite (= (fp.add RNE x y) x))))"
+  val type_only_proof = declarations ^ "(proof (rewrite (= x y))))"
+in
+  assert (SmtFpProve.has_fp_theory_term type_only,
+    "FP rewrite detection missed type-only FP variables");
+  expect_hol_error_contains "FP rung 6 direct"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (SmtFpProve.fp_prove unsupported));
+  expect_hol_error_contains "FP rung 6 rewrite dispatch"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (replay_z3_proof_string operation_proof));
+  expect_hol_error_contains "FP type-only rewrite dispatch"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (replay_z3_proof_string type_only_proof))
+end
+
+fun z3_fp_th_lemma_defensive_route_success () =
+let
+  val aliases =
+    ["th-lemma-fp", "th-lemma[fp]", "th-lemma-fpa", "th-lemma[fpa]",
+     "th-lemma-floating-point", "th-lemma[floating-point]"]
+  val goal =
+    ``(smtfp_bits 0w 0w 0w : (4,3) smtfp) = smtfp_pzero``
+  val initial = Z3_Proof.empty_proof "4.13.0"
+  val root = Z3_Proof.TH_LEMMA_ADVANCED
+    ({theory = "fp", subkind = SOME "defensive", indices = []}, [], goal)
+  val steps = Redblackmap.insert (Z3_Proof.proof_steps initial, 0, root)
+  val proof = Z3_Proof.update_proof_steps initial steps
+  val thm = Z3_ProofReplay.replay_root_for_test proof
+  fun check_alias alias =
+    case Z3_Proof.lookup_rule "4.13.0" alias of
+      SOME ({name, replay_handler, ...} : Z3_Proof.proof_rule) =>
+        assert (name = "th-lemma-fp" andalso
+            replay_handler = "th_lemma[advanced]",
+          "FP th-lemma alias has the wrong registry route: " ^ alias)
+    | NONE => die ("FAIL: FP th-lemma alias is not registered: " ^ alias)
+in
+  List.app check_alias aliases;
+  assert_no_hyps ("defensive th-lemma-fp route", thm);
+  assert_concl_alpha ("defensive th-lemma-fp route", thm, goal);
+  Library.check_oracle_tags "defensive th-lemma-fp route" thm
+end
+
 fun expect_advanced_th_lemma_diagnostic
     (name, proof_text, theory_text, obligation_id) =
   (ignore (replay_z3_proof_string proof_text);
@@ -9556,11 +9670,15 @@ let
       "unsupported th-lemma shape: theory=seq"
       (fn () => ignore (replay_z3_proof_string proof_text))
 in
+  expect_hol_error_contains "unsupported floating-point th-lemma"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (replay_z3_proof_string
+      "((proof ((_ th-lemma fp eq-propagate 1) false)))"));
   expect_advanced_th_lemma_diagnostic
-    ("floating-point",
-      "((proof ((_ th-lemma fp eq-propagate 1) false)))",
-      "theory=fp",
-      "proof-rule:th-lemma-fp");
+    ("nonlinear arithmetic",
+     "((proof ((_ th-lemma nonlinear-arith lemma 1) false)))",
+     "theory=nonlinear-arith",
+     "proof-rule:th-lemma-nonlinear-arith");
   List.app expect_string_diagnostic string_cases
 end
 
@@ -9647,6 +9765,11 @@ let
     "resource-gated: fp-bitblast; limit=term-size; " ^
     "observed=200001 nodes; maximum=200000 nodes; " ^
     "feature=resource-gate:FloatingPoint:comparison-goal"
+  val fp_rung_diagnostic =
+    "resource-gated: fp-bitblast; limit=term-size; " ^
+    "observed=200001 nodes; maximum=200000 nodes; " ^
+    "feature=resource-gate:FloatingPoint:fp-rung"
+  val fp_continued = ref false
   fun expect_gate label expected thunk =
     (thunk ();
      die ("FAIL: " ^ label ^ " did not resource-gate"))
@@ -9675,7 +9798,15 @@ in
     SmtResource.check_term_size "comparison-goal" 200001);
   expect_gate "step-time cap" time_diagnostic (fn () =>
     SmtResource.with_bitblast_step_time "comparison-step"
-      (fn () => raise Timeout.TIMEOUT Time.zeroTime) ())
+      (fn () => raise Timeout.TIMEOUT Time.zeroTime) ());
+  expect_gate "FP ladder resource propagation" fp_rung_diagnostic (fn () =>
+    ignore (SmtFpProve.next_rung
+      (fn _ =>
+        (SmtResource.check_term_size "fp-rung" 200001;
+         boolTheory.TRUTH)) boolSyntax.T
+      (fn () => (fp_continued := true; boolTheory.TRUTH))));
+  assert (not (!fp_continued),
+    "FP ladder continued from a resource gate into another rung")
 end
 
 fun smt_resource_proof_pre_gate_precedes_parser () =
@@ -9989,6 +10120,41 @@ fun z3_direct_ground_arithmetic_unsat_success () =
     expect_unsat "int pow"
       ("(set-option :produce-proofs true)\n(set-logic QF_NIA)\n" ^
        "(assert (= (** 2 3) 9))\n(check-sat)\n(get-proof)\n")
+  end)
+
+fun z3_direct_fp_ground_replay_success () =
+  z3_direct_if_configured (fn () =>
+  let
+    val one = ``(smtfp_bits 0w 3w 0w : (4,3) smtfp)``
+    val two = ``(smtfp_bits 0w 4w 0w : (4,3) smtfp)``
+    val goals = [
+      ("ground_add", ``smtfp_add RNE ^one ^one = ^two``),
+      ("ground_rem", ``smtfp_rem
+         (smtfp_bits 0w 5w 4w : (4,3) smtfp) ^two = ^one``),
+      ("ground_round_to_integral_rna",
+       ``smtfp_round_to_integral RNA
+          (smtfp_bits 1w 4w 4w : (4,3) smtfp) =
+         smtfp_bits 1w 4w 8w``),
+      ("convert_to_ubv", ``(smtfp_to_ubv RTZ
+         (smtfp_bits 0w 4w 8w : (4,3) smtfp) : word4) = 3w``)]
+    fun check (label, goal) =
+      let
+        val thm =
+          case Z3.Z3_SMT_Prover ([], goal) of
+            SolverSpec.UNSAT (SOME thm) => thm
+          | SolverSpec.UNSAT NONE =>
+              die ("FAIL: FP " ^ label ^ " returned no theorem")
+          | SolverSpec.SAT _ =>
+              die ("FAIL: FP " ^ label ^ " was wrongly reported SAT")
+          | SolverSpec.UNKNOWN _ =>
+              die ("FAIL: FP " ^ label ^ " was not proved")
+      in
+        assert_no_hyps ("checked Z3 FP " ^ label, thm);
+        assert_concl_alpha ("checked Z3 FP " ^ label, thm, goal);
+        Library.check_oracle_tags ("checked Z3 FP " ^ label) thm
+      end
+  in
+    List.app check goals
   end)
 
 fun holsmt_solver_result_negative_diagnostics () =
@@ -10504,6 +10670,14 @@ let
       z3_rewrite_string_rungs_replay_success),
     ("z3_rewrite_string_rung_shaped_failure",
       z3_rewrite_string_rung_shaped_failure),
+    ("smtfp_prove_core_rungs_success",
+      smtfp_prove_core_rungs_success),
+    ("z3_rewrite_fp_ground_rungs_replay_success",
+      z3_rewrite_fp_ground_rungs_replay_success),
+    ("smtfp_prove_unsupported_diagnostic",
+      smtfp_prove_unsupported_diagnostic),
+    ("z3_fp_th_lemma_defensive_route_success",
+      z3_fp_th_lemma_defensive_route_success),
     ("z3_th_lemma_advanced_unsupported_diagnostic",
       z3_th_lemma_advanced_unsupported_diagnostic),
     ("z3_proof_replay_failure_diagnostic",
@@ -10532,6 +10706,8 @@ let
       z3_direct_ground_arithmetic_sat_success),
     ("z3_direct_ground_arithmetic_unsat_success",
       z3_direct_ground_arithmetic_unsat_success),
+    ("z3_direct_fp_ground_replay_success",
+      z3_direct_fp_ground_replay_success),
     ("holsmt_solver_result_negative_diagnostics",
       holsmt_solver_result_negative_diagnostics),
     ("solver_spec_rejects_bad_proof_theorem",

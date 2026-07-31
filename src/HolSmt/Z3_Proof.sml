@@ -191,7 +191,7 @@ struct
       "th_lemma[basic]"),
     mk_rule ("th-lemma-bv", ["th-lemma[bv]"], ListPremises,
       "th_lemma[bv]"),
-    mk_rule ("th-lemma-fp", ["th-lemma[fp]", "th-lemma-fpa",
+    mk_z3_4_rule ("th-lemma-fp", ["th-lemma[fp]", "th-lemma-fpa",
       "th-lemma[fpa]", "th-lemma-floating-point",
       "th-lemma[floating-point]"], ListPremises, "th_lemma[advanced]"),
     mk_z3_4_rule ("th-lemma-seq", ["th-lemma[seq]", "th-lemma-sequence",

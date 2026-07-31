@@ -20,6 +20,10 @@ local
   val ERR = Feedback.mk_HOL_ERR "Z3_ProofReplay"
   val WARNING = Feedback.HOL_WARNING "Z3_ProofReplay"
 
+  (* An FP rewrite failure must cross the generic rewrite handlers without
+     being mistaken for an invitation to try arithmetic or unification. *)
+  exception FP_REWRITE_ERROR of exn
+
   val ALL_DISTINCT_NIL = HolSmtTheory.ALL_DISTINCT_NIL
   val ALL_DISTINCT_CONS = HolSmtTheory.ALL_DISTINCT_CONS
   val NOT_MEM_NIL = HolSmtTheory.NOT_MEM_NIL
@@ -1499,17 +1503,8 @@ local
     if l ~~ r then
       (state, Thm.REFL l)
     else
-      (* proforma theorems *)
-      (state, profile "rewrite(01)(proforma)"
-        (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
-    handle Feedback.HOL_ERR _ =>
-
-    (* cached theorems *)
-    (state, profile "rewrite(02)(cache)" (state_inst_cached_thm state) t)
-    handle Feedback.HOL_ERR _ =>
-
-    (* re-ordering conjunctions and disjunctions *)
-    profile "rewrite(04)(conj/disj)" (fn () =>
+      (* re-ordering conjunctions and disjunctions *)
+      profile "rewrite(04)(conj/disj)" (fn () =>
       if boolSyntax.is_conj l then
         (state, profile "rewrite(04.1)(conj)" rewrite_conj (l, r))
       else if boolSyntax.is_disj l then
@@ -1525,10 +1520,32 @@ local
     (* at this point, we should have dealt with all propositional
        tautologies (i.e., 'tautLib.TAUT_PROVE t' should fail here) *)
 
+    (* Once an FP-shaped rewrite enters its dedicated ladder, failure at its
+       unsupported rung is terminal.  In particular, generic unification
+       must not turn an unsupported FP rewrite into a proof-local definition.
+       FP_REWRITE_ERROR crosses the handlers below and is converted back to a
+       structured HOL_ERR at the function boundary. *)
+    if SmtFpProve.has_fp_theory_term t then
+      let
+        val thm = profile "rewrite(03)(fp)" SmtFpProve.fp_prove t
+          handle Feedback.HOL_ERR holerr =>
+            raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+      in
+        (state_cache_thm state thm, thm)
+      end
+    else
+      (* FP has had first refusal ahead of every generic semantic rung. *)
+      (state, profile "rewrite(01)(proforma)"
+        (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
+
+    handle Feedback.HOL_ERR _ =>
+
+    (state, profile "rewrite(02)(cache)" (state_inst_cached_thm state) t)
+
+    handle Feedback.HOL_ERR _ =>
+
     (* Z3's String theory emits rewrite steps for literal normalization,
-       ground `str.*` evaluation, and regex normalization.  Give the
-       dedicated, solver-neutral ladder a chance before generic unification
-       or arithmetic reconstruction. *)
+       ground `str.*` evaluation, and regex normalization. *)
     let
       val thm = profile "rewrite(03)(string)"
         SmtStringProve.string_rewrite_prove t
@@ -1715,6 +1732,7 @@ local
       (state_define (state_cache_thm state thm) [def], thm)
     end
   end
+  handle FP_REWRITE_ERROR error => raise error
 
   (* |- ~(!x. P x y) <=> ~(P (sk y) y)
      |- (?x. P x y) <=> P (sk y) y *)
@@ -1914,6 +1932,26 @@ local
     th_lemma_wrapper ("advanced:" ^ #theory metadata) (fn (state, t) =>
       raise ERR "z3_th_lemma_advanced_unsupported"
         (unsupported_advanced_th_lemma_message state metadata t))
+
+  (* Defensive only: no th-lemma-fp occurrence was observed in any of the
+     TASK_02 proofs from supported Z3 4.11.2--4.15.3.  Keep the route checked
+     nonetheless, with the FP shape gate ahead of every prover rung. *)
+  fun z3_th_lemma_fp _ (state, thms, t) =
+  let
+    val t' = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    val () =
+      if SmtFpProve.has_fp_theory_term t' then ()
+      else SmtFpProve.unsupported t'
+    val thm = profile "th_lemma[fp]" SmtFpProve.fp_prove t'
+  in
+    (state_cache_thm state thm, Drule.LIST_MP thms thm)
+  end
+
+  fun z3_th_lemma_advanced metadata =
+    if advanced_th_lemma_obligation_theory metadata = "fp" then
+      z3_th_lemma_fp metadata
+    else
+      z3_th_lemma_advanced_unsupported metadata
 
   fun unsupported_string_th_lemma_message dispatch_theory
       (state : state) (metadata : th_lemma_metadata) t =
@@ -2201,14 +2239,17 @@ local
     handle Feedback.HOL_ERR _ => Feedback.message_of holerr
 
   fun raise_replay_error function state name pts concl thms holerr =
-    raise ERR function
-      ("Z3 proof replay failure\n" ^
-       "proof rule: " ^ name ^ "\n" ^
-       "local proof subterm: " ^ rule_application name pts concl ^ "\n" ^
-       "parsed HOL conclusion: " ^ term_diag concl ^ "\n" ^
-       "replay state: " ^ state_summary state ^ "\n" ^
-       "premise HOL theorems: " ^ list_summary thm_diag thms ^ "\n" ^
-       "underlying HOL_ERR: " ^ hol_err_diag holerr)
+    if SmtResource.is_resource_gate holerr then
+      raise Feedback.HOL_ERR holerr
+    else
+      raise ERR function
+        ("Z3 proof replay failure\n" ^
+         "proof rule: " ^ name ^ "\n" ^
+         "local proof subterm: " ^ rule_application name pts concl ^ "\n" ^
+         "parsed HOL conclusion: " ^ term_diag concl ^ "\n" ^
+         "replay state: " ^ state_summary state ^ "\n" ^
+         "premise HOL theorems: " ^ list_summary thm_diag thms ^ "\n" ^
+         "underlying HOL_ERR: " ^ hol_err_diag holerr)
 
   fun raise_final_error stage state thm holerr =
     raise ERR "check_proof"
@@ -2474,8 +2515,7 @@ local
     | thm_of_proofterm (state_proof, TH_LEMMA_ADVANCED (metadata, pts, concl))
         continuation =
         list_prems state_proof (th_lemma_rule_name metadata)
-          (z3_th_lemma_advanced_unsupported metadata) (pts, concl)
-          continuation []
+          (z3_th_lemma_advanced metadata) (pts, concl) continuation []
     | thm_of_proofterm (state_proof, TRANS x) continuation =
         two_prems state_proof "trans" z3_trans x continuation
     | thm_of_proofterm (state_proof, TRANS_STAR x) continuation =
