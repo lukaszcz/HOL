@@ -1186,6 +1186,16 @@ Definition smtfp_pack_ieee_bv_def:
     float_pack_ieee_bv (smtfp_rep x)
 End
 
+(* The result index is independent of the field index expression.  Z3's
+   proof-local (_ BitVec n) type has the same dimension as 1 + eb + (sb - 1),
+   but need not be syntactically the same HOL index type. *)
+Definition smtfp_pack_bv_def:
+  smtfp_pack_bv (x : ('t,'w) smtfp) : 'p word =
+    (smtfp_rep x).Sign @@
+      (((smtfp_rep x).Exponent @@ (smtfp_rep x).Significand) :
+       ('w + 't) word)
+End
+
 (* -------------------------------------------------------------------------
    Proved outbound transfer kit for native binary_ieee terms
    ------------------------------------------------------------------------- *)
@@ -1532,6 +1542,41 @@ Proof
         smtfp_from_sbv_def, smtfp_from_ieee_bv_def, smtfp_rep_def]
 QED
 
+Theorem smtfp_bits_rep[simp]:
+  smtfp_bits (smtfp_rep x).Sign (smtfp_rep x).Exponent
+    (smtfp_rep x).Significand = x
+Proof
+  `<| Sign := (smtfp_rep x).Sign;
+       Exponent := (smtfp_rep x).Exponent;
+       Significand := (smtfp_rep x).Significand |> = smtfp_rep x` by
+    simp [binary_ieeeTheory.float_component_equality] >>
+  simp [smtfp_bits_def]
+QED
+
+(* Expose the exact field layout used by Z3's fpa2bv decomposition.  Keeping
+   this as a boundary theorem means replay does not need to unfold either the
+   carrier or the IEEE interchange unpacker. *)
+Theorem smtfp_from_ieee_bv_fields:
+  FINITE (UNIV : 'w -> bool) /\ FINITE (UNIV : 't -> bool) ==>
+  !v : (1 + ('w + 't)) word.
+    smtfp_from_ieee_bv v =
+      smtfp_bits
+        ((dimindex(:'w) + dimindex(:'t) ><
+          dimindex(:'w) + dimindex(:'t)) v)
+        ((dimindex(:'w) + dimindex(:'t) - 1 >< dimindex(:'t)) v)
+        ((dimindex(:'t) - 1 >< 0) v)
+Proof
+  strip_tac >> gen_tac >> fs [] >>
+  `0 < dimindex(:'w)` by simp [wordsTheory.DIMINDEX_GT_0] >>
+  `0 < dimindex(:'t)` by simp [wordsTheory.DIMINDEX_GT_0] >>
+  rw [smtfp_from_ieee_bv_def, float_from_ieee_bv_def,
+      smtfp_bits_def] >>
+  asm_simp_tac (srw_ss() ++ ARITH_ss ++ wordsLib.WORD_EXTRACT_ss)
+    [arithmeticTheory.MIN_DEF, wordsTheory.word_index,
+     wordsTheory.DIMINDEX_GT_0, fcpTheory.finite_sum,
+     fcpTheory.index_sum]
+QED
+
 (* For finite index types the packing utility is a two-sided inverse at the
    raw-float level.  The smtfp unpack-pack direction remains valid after NaN
    canonicalization; pack-unpack intentionally need not preserve a
@@ -1575,6 +1620,44 @@ Proof
   strip_tac >> gen_tac >>
   simp [smtfp_from_ieee_bv_def, smtfp_pack_ieee_bv_def,
         float_ieee_bv_unpack_pack]
+QED
+
+Theorem smtfp_bits_pack_ieee_bv:
+  FINITE (UNIV : 'w -> bool) /\ FINITE (UNIV : 't -> bool) ==>
+  !x : ('t,'w) smtfp.
+    x = smtfp_bits
+      ((dimindex(:'w) + dimindex(:'t) ><
+        dimindex(:'w) + dimindex(:'t)) (smtfp_pack_ieee_bv x))
+      ((dimindex(:'w) + dimindex(:'t) - 1 >< dimindex(:'t))
+        (smtfp_pack_ieee_bv x))
+      ((dimindex(:'t) - 1 >< 0) (smtfp_pack_ieee_bv x))
+Proof
+  strip_tac >> gen_tac >>
+  simp [GSYM smtfp_from_ieee_bv_fields,
+        smtfp_ieee_bv_unpack_pack]
+QED
+
+Theorem smtfp_bits_pack_bv:
+  FINITE (UNIV : 'p -> bool) /\ FINITE (UNIV : 'w -> bool) /\
+  FINITE (UNIV : 't -> bool) /\
+  dimindex(:'p) = 1 + dimindex(:'w) + dimindex(:'t) ==>
+  !x : ('t,'w) smtfp.
+    x = smtfp_bits
+      ((dimindex(:'w) + dimindex(:'t) ><
+        dimindex(:'w) + dimindex(:'t))
+        (smtfp_pack_bv x : 'p word))
+      ((dimindex(:'w) + dimindex(:'t) - 1 >< dimindex(:'t))
+        (smtfp_pack_bv x : 'p word))
+      ((dimindex(:'t) - 1 >< 0) (smtfp_pack_bv x : 'p word))
+Proof
+  strip_tac >> gen_tac >> fs [] >>
+  `0 < dimindex(:'w)` by simp [wordsTheory.DIMINDEX_GT_0] >>
+  `0 < dimindex(:'t)` by simp [wordsTheory.DIMINDEX_GT_0] >>
+  rw [smtfp_pack_bv_def] >>
+  asm_simp_tac (srw_ss() ++ ARITH_ss ++ wordsLib.WORD_EXTRACT_ss)
+    [arithmeticTheory.MIN_DEF, wordsTheory.word_index,
+     wordsTheory.DIMINDEX_GT_0, fcpTheory.finite_sum,
+     fcpTheory.index_sum]
 QED
 
 Theorem float_ieee_bv_roundtrip_float32[simp]:
@@ -3475,6 +3558,14 @@ Proof
   simp [smtfp_lt_def, smtfp_word_lt_def, smtfp_rep_bits,
         canon_def, float_less_than_bits_raw, smtfp_nan_pattern_def,
         float_canon_qnan_def]
+QED
+
+Theorem smtfp_lt_irrefl[simp]:
+  ~smtfp_lt x x
+Proof
+  Cases_on `float_value (smtfp_rep x)` >>
+  simp [smtfp_lt_def, binary_ieeeTheory.float_less_than_def,
+        binary_ieeeTheory.float_compare_def]
 QED
 
 Theorem float_comparison_duals:

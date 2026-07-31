@@ -9548,6 +9548,170 @@ in
      ("convert_to_ubv", conversion)]
 end
 
+fun smtfp_bit_decomposition_rung_success () =
+let
+  fun fragment sort width sign_hi exponent_hi exponent_lo significand_hi =
+    "((set-logic QF_FP)\n" ^
+    "(declare-fun x () " ^ sort ^ ")\n" ^
+    "(declare-fun k!00 () (_ BitVec " ^ width ^ "))\n" ^
+    "(proof (rewrite (= x (fp ((_ extract " ^ sign_hi ^ " " ^
+      sign_hi ^ ") k!00) ((_ extract " ^ exponent_hi ^ " " ^
+      exponent_lo ^ ") k!00) ((_ extract " ^ significand_hi ^
+      " 0) k!00))))))"
+  fun check version (label, sort, width, sign_hi, exponent_hi,
+      exponent_lo, significand_hi) =
+    let
+      val proof = parse_z3_proof_string version
+        (fragment sort width sign_hi exponent_hi exponent_lo significand_hi)
+      val equation =
+        case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+          SOME (Z3_Proof.REWRITE equation) => equation
+        | _ => die ("FAIL: " ^ label ^ " decomposition parsed incorrectly")
+      val decompositions = List.map
+        (fn ({fp_var, bv_var, equation} : Z3_Proof.bit_decomposition) =>
+          {fp_var = fp_var, bv_var = bv_var, equation = equation}
+            : SmtFpProve.bit_decomposition)
+        (Z3_Proof.proof_bit_decompositions proof)
+      val _ = SmtFpProve.bit_decomposition_prove decompositions equation
+      val thm = Z3_ProofReplay.replay_root_for_test proof
+      val definitions = Thm.hyp thm
+      val definition_set = HOLset.addList (Term.empty_tmset, definitions)
+      val cleaned = Z3_ProofReplay.remove_definitions
+        (definition_set, Z3_Proof.proof_vars proof, thm)
+    in
+      assert_concl_alpha (label ^ " decomposition", thm, equation);
+      assert (List.length definitions = 1,
+        label ^ " decomposition did not define exactly one packed skolem");
+      assert_no_hyps (label ^ " cleaned decomposition", cleaned);
+      Library.check_oracle_tags (label ^ " decomposition") thm;
+      Library.check_oracle_tags (label ^ " cleaned decomposition") cleaned
+    end
+  val float32 =
+    ("Float32", "Float32", "32", "31", "30", "23", "22")
+  val formats = [
+    ("tiny", "(_ FloatingPoint 3 5)", "8", "7", "6", "4", "3"),
+    float32,
+    ("Float64", "Float64", "64", "63", "62", "52", "51"),
+    ("Float128", "Float128", "128", "127", "126", "112", "111")]
+in
+  List.app (fn version => check version float32)
+    ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"];
+  List.app (check "4.15.3") formats
+end
+
+fun smtfp_bit_decomposition_classification_replay_success () =
+let
+  val bits =
+    "(fp ((_ extract 7 7) k!00) ((_ extract 6 4) k!00) " ^
+    "((_ extract 3 0) k!00))"
+  val abs_bits =
+    "(fp #b0 ((_ extract 6 4) k!00) ((_ extract 3 0) k!00))"
+  val atom = "(fp.lt " ^ abs_bits ^ " " ^ abs_bits ^ ")"
+  val word_formula =
+    "(and (not (and (= ((_ extract 6 4) k!00) #b111) " ^
+    "(not (= ((_ extract 3 0) k!00) #x0)))) " ^
+    "(not (and (= ((_ extract 3 0) k!00) #x0) " ^
+    "(= ((_ extract 6 4) k!00) #b000))) " ^
+    "(or (not (bvule ((_ extract 6 4) k!00) " ^
+    "((_ extract 6 4) k!00))) " ^
+    "(not (bvule ((_ extract 3 0) k!00) " ^
+    "((_ extract 3 0) k!00)))))"
+  val declarations =
+    "(set-logic QF_FP)\n" ^
+    "(declare-fun x () (_ FloatingPoint 3 5))\n"
+  val assertion = "(fp.lt (fp.abs x) (fp.abs x))"
+  val proof_text =
+    "(" ^ declarations ^
+    "(declare-fun k!00 () (_ BitVec 8))\n" ^
+    "(proof\n" ^
+    "(let ((?a (fp.abs x)))\n" ^
+    "(let (($p (fp.lt ?a ?a)))\n" ^
+    "(let ((@decomp (rewrite (= x " ^ bits ^ "))))\n" ^
+    "(let ((@abs-context (monotonicity @decomp " ^
+      "(= ?a (fp.abs " ^ bits ^ ")))))\n" ^
+    "(let ((@abs (trans @abs-context " ^
+      "(rewrite (= (fp.abs " ^ bits ^ ") " ^ abs_bits ^ ")) " ^
+      "(= ?a " ^ abs_bits ^ "))))\n" ^
+    "(let ((@atom (monotonicity @abs @abs " ^
+      "(= $p " ^ atom ^ "))))\n" ^
+    "(let ((@converted (trans @atom " ^
+      "(rewrite (= " ^ atom ^ " " ^ word_formula ^ ")) " ^
+      "(= $p " ^ word_formula ^ "))))\n" ^
+    "(let ((@false (trans @converted " ^
+      "(rewrite (= " ^ word_formula ^ " false)) (= $p false))))\n" ^
+    "(mp (asserted $p) @false false)))))))))))"
+  val assertions = parse_smtlib_assertions
+    (declarations ^ "(assert " ^ assertion ^ ")\n")
+  val proof = parse_z3_proof_string "4.15.3" proof_text
+  val thm = Z3_ProofReplay.check_proof (assertions, boolSyntax.F, proof)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F,
+    "classification/decomposition replay did not derive false");
+  assert (HOLset.isSubset (Thm.hypset thm,
+      HOLset.addList (Term.empty_tmset, assertions)),
+    "classification replay leaked its packed skolem definition");
+  Library.check_oracle_tags "FP classification decomposition replay" thm
+end
+
+fun smtfp_bit_decomposition_sat_replay_success () =
+let
+  val bits =
+    "(fp ((_ extract 7 7) k!00) ((_ extract 6 4) k!00) " ^
+    "((_ extract 3 0) k!00))"
+  val declarations =
+    "(set-logic QF_UFFP)\n" ^
+    "(declare-fun x () (_ FloatingPoint 3 5))\n" ^
+    "(declare-fun p ((_ FloatingPoint 3 5)) Bool)\n"
+  val proof_text =
+    "(" ^ declarations ^
+    "(declare-fun k!00 () (_ BitVec 8))\n" ^
+    "(proof (let ((@x1 (rewrite (= x " ^ bits ^ "))))\n" ^
+    " (unit-resolution\n" ^
+    " (mp (mp (asserted (p x))\n" ^
+    "   (monotonicity @x1\n" ^
+    "     (= (p x) (p " ^ bits ^ ")))\n" ^
+    "   (p " ^ bits ^ "))\n" ^
+    "  (monotonicity\n" ^
+    "   (symm @x1 (= " ^ bits ^ " x))\n" ^
+    "   (= (p " ^ bits ^ ") (p x)))\n" ^
+    "  (p x))\n" ^
+    " (asserted (not (p x))) false))))"
+  val assertions = parse_smtlib_assertions
+    (declarations ^ "(assert (p x))\n(assert (not (p x)))\n")
+  val proof = parse_z3_proof_string "4.15.3" proof_text
+  val thm = Z3_ProofReplay.check_proof (assertions, boolSyntax.F, proof)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F,
+    "decomposition/SAT replay did not derive false");
+  assert (HOLset.isSubset (Thm.hypset thm,
+      HOLset.addList (Term.empty_tmset, assertions)),
+    "packed skolem definition escaped decomposition/SAT replay");
+  Library.check_oracle_tags "FP decomposition and SAT replay" thm
+end
+
+fun smtfp_bit_decomposition_nonfresh_failure () =
+let
+  val fragment =
+    "((set-logic QF_FP)\n" ^
+    "(declare-fun x () Float32)\n" ^
+    "(declare-fun k!00 () (_ BitVec 32))\n" ^
+    "(proof (monotonicity\n" ^
+    " (rewrite (= k!00 #x00000000))\n" ^
+    " (rewrite (= x (fp ((_ extract 31 31) k!00)\n" ^
+    "   ((_ extract 30 23) k!00) ((_ extract 22 0) k!00))))\n" ^
+    " (= x x))))"
+  val proof = parse_z3_proof_string "4.15.3" fragment
+in
+  expect_hol_error_contains "non-fresh FP decomposition"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (Z3_ProofReplay.replay_root_for_test proof));
+  expect_hol_error_contains "unrecorded FP decomposition"
+    "unsupported rewrite shape: theory=fp;"
+    (fn () => ignore (SmtFpProve.fp_prove
+      ``(x : (4,3) smtfp) = smtfp_bits
+          ((7 >< 7) (k : word8)) ((6 >< 4) k) ((3 >< 0) k)``))
+end
+
 fun z3_rewrite_fp_ground_rungs_replay_success () =
 let
   val rewrites = [
@@ -10672,6 +10836,14 @@ let
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",
       smtfp_prove_core_rungs_success),
+    ("smtfp_bit_decomposition_rung_success",
+      smtfp_bit_decomposition_rung_success),
+    ("smtfp_bit_decomposition_classification_replay_success",
+      smtfp_bit_decomposition_classification_replay_success),
+    ("smtfp_bit_decomposition_sat_replay_success",
+      smtfp_bit_decomposition_sat_replay_success),
+    ("smtfp_bit_decomposition_nonfresh_failure",
+      smtfp_bit_decomposition_nonfresh_failure),
     ("z3_rewrite_fp_ground_rungs_replay_success",
       z3_rewrite_fp_ground_rungs_replay_success),
     ("smtfp_prove_unsupported_diagnostic",

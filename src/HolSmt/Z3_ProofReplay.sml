@@ -1496,6 +1496,24 @@ local
     else
       raise ERR "rewrite_word_compare" ""
 
+  fun state_has_definition_for (state : state) var =
+    List.exists
+      (fn definition =>
+        case Lib.total boolSyntax.dest_eq definition of
+          SOME (lhs, _) => lhs ~~ var
+        | NONE => false)
+      (HOLset.listItems (#definition_hyps state))
+
+  fun fresh_fp_bit_decompositions (state : state) =
+    List.map
+      (fn ({fp_var, bv_var, equation} : bit_decomposition) =>
+        {fp_var = fp_var, bv_var = bv_var, equation = equation}
+          : SmtFpProve.bit_decomposition)
+      (List.filter
+        (fn ({bv_var, ...} : bit_decomposition) =>
+          not (state_has_definition_for state bv_var))
+        (#bit_decompositions state))
+
   fun z3_rewrite (state, t) =
   let
     val (l, r) = boolSyntax.dest_eq t
@@ -1526,13 +1544,20 @@ local
        FP_REWRITE_ERROR crosses the handlers below and is converted back to a
        structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
-      let
-        val thm = profile "rewrite(03)(fp)" SmtFpProve.fp_prove t
-          handle Feedback.HOL_ERR holerr =>
-            raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
-      in
-        (state_cache_thm state thm, thm)
-      end
+      ((state, profile "rewrite(02)(cache-fp)"
+          (state_inst_cached_thm state) t)
+        handle Feedback.HOL_ERR _ =>
+          let
+            val decompositions = fresh_fp_bit_decompositions state
+            val thm = profile "rewrite(03)(fp)"
+              (SmtFpProve.fp_prove_with_decompositions decompositions) t
+              handle Feedback.HOL_ERR holerr =>
+                raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+            val definitions = Thm.hyp thm
+            val state = state_define (state_cache_thm state thm) definitions
+          in
+            (state, thm)
+          end)
     else
       (* FP has had first refusal ahead of every generic semantic rung. *)
       (state, profile "rewrite(01)(proforma)"
