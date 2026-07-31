@@ -19,6 +19,7 @@ fun derive_clasimp_ss ss _ =
   |> simpLib.set_cond_depth 40
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
   |> simpLib.set_safe_solvers [safe_solver]
+  |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 
 (* This accessor is the only visible part of the private derived-value
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)

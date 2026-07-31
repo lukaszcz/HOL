@@ -2990,6 +2990,63 @@ val _ =
 fun closes_goal tactic goal =
   null (residual tactic goal) handle HOL_ERR _ => false
 
+val aesop_linarith_rewrite =
+  hd (Drule.CONJUNCTS arithmeticTheory.MIN_EQ_LE)
+
+val aesop_linarith_tactic =
+  aesopLib.AESOP_TAC
+    [clasetLib.Simp aesop_linarith_rewrite]
+
+val aesop_linarith_goal : Abbrev.goal =
+  ([``(x:num) <= y``, ``y <= z``], ``MIN x z = x``)
+
+val _ =
+  test
+    ("AESOP_TAC discharges a linear-arithmetic rewrite condition",
+     fn () =>
+       closes_goal aesop_linarith_tactic aesop_linarith_goal)
+
+fun with_aesop_arith_fact operation =
+  case ThmSetData.data_exportfns {settype = "arith"} of
+      NONE => false
+    | SOME export =>
+        let
+          val name =
+            {Thy = "arithmetic", Name = "X_LE_X_SQUARED"}
+          fun remove () =
+            #remove export
+              {thy = "arithmetic",
+               remove = "arithmetic$X_LE_X_SQUARED"}
+          val _ =
+            #add export
+              {thy = "arithmetic",
+               named_thm =
+                 (name, arithmeticTheory.X_LE_X_SQUARED)}
+          val result =
+            operation () handle e => (remove (); raise e)
+          val _ = remove ()
+        in
+          result
+        end
+
+val aesop_arith_fact_goal : Abbrev.goal =
+  ([``(x:num) ** 2 <= y``], ``MIN x y = x``)
+
+val _ =
+  test
+    ("AESOP_TAC reads [arith] facts dynamically and leaves the set clean",
+     fn () =>
+       not
+         (closes_goal aesop_linarith_tactic
+            aesop_arith_fact_goal) andalso
+       with_aesop_arith_fact
+         (fn () =>
+           closes_goal aesop_linarith_tactic
+             aesop_arith_fact_goal) andalso
+       not
+         (closes_goal aesop_linarith_tactic
+            aesop_arith_fact_goal))
+
 (* A tactic value is routinely bound before the declarations its goals
    need -- [val TAC = AESOP_TAC []] at the head of a script, then the
    theorems and simp rules the script proves.  Both entry points are
