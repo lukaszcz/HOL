@@ -1,0 +1,24 @@
+INCLUDES = .. ../../../integer ../../../real ../../../rational
+
+all: $(DEFAULT_TARGETS) selftest.exe
+.PHONY: all
+
+linarithInstTheory.uo: ../linarithData.uo
+selftest.uo: linarithInstTheory.uo
+
+selftest.exe: selftest.uo
+	$(HOLMOSMLC) -o $@ $<
+
+ifdef HOLSELFTESTLEVEL
+all: linarith-instances-selftest.log
+
+linarith-instances-selftest.log: selftest.exe
+	$(tee ./selftest.exe 2>&1,$@)
+endif
+
+EXTRA_CLEANS = selftest.exe linarith-instances-selftest.log
+
+ifeq ($(KERNELID),otknl)
+all: $(patsubst %Script.sml,%.ot.art,$(wildcard *Script.sml))
+
+endif
