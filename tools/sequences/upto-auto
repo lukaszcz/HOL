@@ -4,6 +4,7 @@ src/auto/rules
 src/auto/classical
 src/auto/blast
 src/auto/linarith
+src/auto/linarith/instances
 src/auto/clasimp
 src/auto/aesop
 !src/auto/rules/theory_tests

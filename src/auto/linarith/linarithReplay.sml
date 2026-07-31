@@ -184,6 +184,21 @@ fun lifts theorem =
       (linarithData.injections ())
   end
 
+fun same_conclusion theorem1 theorem2 =
+  Term.aconv (Thm.concl theorem1) (Thm.concl theorem2)
+
+fun conversion_closure theorem =
+  let
+    fun explore [] found = found
+      | explore (current :: pending) found =
+          if List.exists (same_conclusion current) found then
+            explore pending found
+          else
+            explore (pending @ lifts current) (found @ [current])
+  in
+    explore [theorem] []
+  end
+
 fun relation_operator destructor theorem =
   let
     fun search tm =
@@ -272,24 +287,29 @@ fun add_direct theorem1 theorem2 =
   end
   handle HOL_ERR _ => NONE
 
-fun try_add lifted other =
+fun try_add theorem others =
   first_result
-    (fn theorem =>
+    (fn other =>
       case add_direct theorem other of
           SOME result => result
         | NONE => raise ERR "try_add" "addition does not match")
-    lifted
+    others
+
+fun try_add_pairs [] _ = NONE
+  | try_add_pairs (theorem :: rest) others =
+      case try_add theorem others of
+          SOME result => SOME result
+        | NONE => try_add_pairs rest others
 
 fun add_thms theorem1 theorem2 =
   case add_direct theorem1 theorem2 of
       SOME theorem => theorem
     | NONE =>
-        (case try_add (lifts theorem1) theorem2 of
+        (case try_add_pairs
+                (conversion_closure theorem1)
+                (conversion_closure theorem2) of
              SOME theorem => theorem
-           | NONE =>
-               (case try_add (lifts theorem2) theorem1 of
-                    SOME theorem => theorem
-                  | NONE => add_failure theorem1 theorem2))
+           | NONE => add_failure theorem1 theorem2)
 and add_failure theorem1 theorem2 =
   let
     val _ = linarithData.trace_thm 1 "failed add, left:" theorem1

@@ -388,6 +388,13 @@ val _ =
 
 val _ =
   check
+    ("mixed sibling carriers replay through their common source",
+     fn () =>
+       valid_closes (linarithLib.SIMPLE_LINARITH_TAC [])
+         ([rleq n_real r0, qless q0 n_rat], boolSyntax.F))
+
+val _ =
+  check
     ("num-to-int add homomorphism normalizes compound source terms",
      fn () =>
        valid_closes (linarithLib.SIMPLE_LINARITH_TAC [])
