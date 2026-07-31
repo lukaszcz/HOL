@@ -1498,3 +1498,184 @@ val _ =
          with_arith_export
            (fn () => reducer_succeeds [] nonlinear_closed_goal)
        end)
+
+(* The 34 num/bool goals among the 54 lemma goals in Isabelle's
+   Arith_Examples.thy at f7e02b7e1f31.  The instances suite contains all
+   54 translations and checks that vendored total; this core partition
+   ensures the strength corpus also runs where the num instance is built.
+   Goal numbers retain their source order.  The two upstream "oops" goals
+   are retained: [47] is a bounded preprocessing-performance gap and [48]
+   is linear arithmetic's documented integer-divisibility incompleteness.
+
+   On 2026-07-31 the full core selftest took 16.6s at level 2 versus
+   11.8s at level 1 on an AMD Ryzen 9 9950X.  The 90s suite budget,
+   30s goal budget, and 5s known-gap budget leave ample headroom. *)
+
+datatype core_strength_expectation =
+    CoreStrengthSuccess
+  | CoreStrengthExpectedFailure of string
+  | CoreStrengthKnownGap of string
+
+val core_arith_examples_corpus :
+    (int * core_strength_expectation * Term.term) list =
+  [(1, CoreStrengthSuccess, “(i:num) <= MAX i j”),
+   (3, CoreStrengthSuccess, “MIN i j <= (i:num)”),
+   (5, CoreStrengthSuccess, “MIN (i:num) j <= MAX i j”),
+   (7, CoreStrengthSuccess,
+    “MIN (i:num) j + MAX i j = i + j”),
+   (9, CoreStrengthSuccess,
+    “(i:num) < j ==> MIN i j < MAX i j”),
+   (14, CoreStrengthSuccess, “(x:num) <= y ==> x - y = 0”),
+   (15, CoreStrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
+   (16, CoreStrengthSuccess,
+    “((x:num) <= y) = (x - y = 0)”),
+   (17, CoreStrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y = d”),
+   (18, CoreStrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y - x = d - x”),
+   (22, CoreStrengthSuccess, “(i:num) MOD 0 = i”),
+   (23, CoreStrengthSuccess, “(i:num) MOD 1 = 0”),
+   (24, CoreStrengthSuccess, “(i:num) MOD 42 <= 41”),
+   (30, CoreStrengthSuccess, “(x:num) < SUC y <=> x <= y”),
+   (31, CoreStrengthSuccess,
+    “((x:num) = z ==> x <> y) ==> x <> y \/ z <> y”),
+   (32, CoreStrengthSuccess,
+    “((x:num) < SUC y) = (x <= y)”),
+   (33, CoreStrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (34, CoreStrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (35, CoreStrengthSuccess, “(P:bool) = Q ==> Q = P”),
+   (36, CoreStrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==> MIN x y = 0”),
+   (37, CoreStrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==>
+     MAX x y = x + y”),
+   (38, CoreStrengthSuccess,
+    “(x:num) <> y /\ a + 2 = b /\ a < y /\ y < b /\
+     a < x /\ x < b ==> F”),
+   (39, CoreStrengthSuccess,
+    “y < (x:num) /\ z < y /\ x < z ==> F”),
+   (40, CoreStrengthSuccess, “y < (x:num) - 5 ==> y < x”),
+   (41, CoreStrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
+   (42, CoreStrengthSuccess,
+    “(x:num) <> y /\ x <= y ==> x < y”),
+   (43, CoreStrengthSuccess,
+    “(x:num) < y /\ P (x - y) ==> P 0”),
+   (44, CoreStrengthSuccess,
+    “(x - y) - (x:num) = (x - x) - y”),
+   (45, CoreStrengthSuccess,
+    “(a:num) < b /\ c < d ==> a - b = c - d”),
+   (46, CoreStrengthSuccess,
+    “(a:num) - (b - (c - (d - e))) =
+     a - (b - (c - (d - e)))”),
+   (47,
+    CoreStrengthKnownGap
+      "upstream oops: NNF expansion of the ordering disjunction",
+    “((n:num) < m /\ m < n') \/
+     (n < m /\ m = n') \/
+     (n < n' /\ n' < m) \/
+     (n = n' /\ n' < m) \/
+     (n = m /\ m < n') \/
+     (n' < m /\ m < n) \/
+     (n' < m /\ m = n) \/
+     (n' < n /\ n < m) \/
+     (n' = n /\ n < m) \/
+     (n' = m /\ m < n) \/
+     (m < n /\ n < n') \/
+     (m < n /\ n' = n) \/
+     (m < n' /\ n' < n) \/
+     (m = n /\ n < n') \/
+     (m = n' /\ n' < n) \/
+     (n' = m /\ m = n)”),
+   (48,
+    CoreStrengthExpectedFailure
+      "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)",
+    “2 * (x:num) <> 1”),
+   (49, CoreStrengthSuccess, “(0:num) < 1”),
+   (51, CoreStrengthSuccess, “(47:num) + 11 < 8 * 15”)]
+
+fun core_selftest_level () =
+  case Option.mapPartial Int.fromString
+         (OS.Process.getEnv "HOLSELFTESTLEVEL") of
+      SOME level => level
+    | NONE => 1
+
+val core_strength_goal_budget = Time.fromSeconds 30
+val core_strength_gap_budget = Time.fromSeconds 5
+val core_strength_suite_budget = Time.fromSeconds 90
+val core_strength_succeeded = ref 0
+val core_strength_failed_as_expected = ref 0
+
+fun core_strength_attempt expectation proposition =
+  let
+    val budget =
+      case expectation of
+          CoreStrengthKnownGap _ => core_strength_gap_budget
+        | _ => core_strength_goal_budget
+  in
+    SOME
+      (Timeout.apply budget
+        (fn () =>
+          valid_closes (linarithLib.LINARITH_TAC [])
+            ([], proposition)) ())
+  end
+  handle Timeout.TIMEOUT _ => NONE
+       | Feedback.HOL_ERR _ => SOME false
+
+fun run_core_strength_goal (number, expectation, proposition) =
+  let
+    val prefix =
+      "Arith_Examples core goal " ^ Int.toString number
+    val label =
+      case expectation of
+          CoreStrengthSuccess => prefix
+        | CoreStrengthExpectedFailure remedy =>
+            prefix ^ " (expected failure: " ^ remedy ^ ")"
+        | CoreStrengthKnownGap reason =>
+            prefix ^ " (known gap: " ^ reason ^ ")"
+    val _ = tprint label
+    val result = core_strength_attempt expectation proposition
+  in
+    case (expectation, result) of
+        (CoreStrengthSuccess, SOME true) =>
+          (core_strength_succeeded := !core_strength_succeeded + 1;
+           OK ())
+      | (CoreStrengthSuccess, NONE) =>
+          die (prefix ^ " exceeded its 30 second budget")
+      | (CoreStrengthSuccess, SOME false) =>
+          die (prefix ^ " was not proved by LINARITH_TAC")
+      | (CoreStrengthExpectedFailure remedy, SOME false) =>
+          (core_strength_failed_as_expected :=
+             !core_strength_failed_as_expected + 1;
+           OK ())
+      | (CoreStrengthExpectedFailure remedy, NONE) =>
+          die (prefix ^ " timed out; expected quick failure; " ^ remedy)
+      | (CoreStrengthExpectedFailure remedy, SOME true) =>
+          die (prefix ^ " unexpectedly succeeded; " ^ remedy)
+      | (CoreStrengthKnownGap reason, SOME true) =>
+          die (prefix ^ " unexpectedly closed the known gap; " ^ reason)
+      | (CoreStrengthKnownGap _, _) =>
+          (core_strength_failed_as_expected :=
+             !core_strength_failed_as_expected + 1;
+           OK ())
+  end
+
+val _ =
+  if core_selftest_level () >= 2 then
+    let
+      val started = Time.now ()
+      val _ =
+        List.app run_core_strength_goal core_arith_examples_corpus
+      val elapsed = Time.- (Time.now (), started)
+    in
+      check
+        ("Arith_Examples core suite count and time budget",
+         fn () =>
+           List.length core_arith_examples_corpus = 34 andalso
+           34 + 20 = 54 andalso
+           !core_strength_succeeded = 32 andalso
+           !core_strength_failed_as_expected = 2 andalso
+           Time.< (elapsed, core_strength_suite_budget))
+    end
+  else ()
