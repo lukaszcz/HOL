@@ -3190,6 +3190,27 @@ Proof
         float_canon_qnan_def]
 QED
 
+Theorem smtfp_neg_neg[simp]:
+  smtfp_neg (smtfp_neg x) = x
+Proof
+  qspec_then `x` strip_assume_tac smtfp_bits_surjective >>
+  fs [smtfp_neg_bits]
+QED
+
+Theorem smtfp_abs_abs[simp]:
+  smtfp_abs (smtfp_abs x) = smtfp_abs x
+Proof
+  qspec_then `x` strip_assume_tac smtfp_bits_surjective >>
+  fs [smtfp_abs_bits]
+QED
+
+Theorem smtfp_abs_neg[simp]:
+  smtfp_abs (smtfp_neg x) = smtfp_abs x
+Proof
+  qspec_then `x` strip_assume_tac smtfp_bits_surjective >>
+  fs [smtfp_abs_bits, smtfp_neg_bits]
+QED
+
 Theorem smtfp_bits_eq_nan:
   smtfp_nan_pattern e m /\ smtfp_nan_pattern e' m' ==>
   (smtfp_bits s e m : ('t,'w) smtfp) = smtfp_bits s' e' m'

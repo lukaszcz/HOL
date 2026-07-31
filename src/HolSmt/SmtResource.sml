@@ -70,8 +70,33 @@ struct
     else
       raise_gate "check_term_size" (term_size_diagnostic case_id observed)
 
+  (* Proof-parser terms are DAGs with extensive let-sharing.  [term_size]
+     unfolds that sharing and turned a 100 KB comparison into 335 million
+     visits before the cap could fire.  Preserve its tree-node semantics but
+     stop as soon as the fixed limit is exceeded. *)
+  fun term_nodes_up_to limit root =
+    let
+      fun loop ([], count) = count
+        | loop (tm :: pending, count) =
+            let val count = count + 1
+            in
+              if count > limit then count
+              else if Term.is_comb tm then
+                let val (rator, rand) = Term.dest_comb tm
+                in loop (rator :: rand :: pending, count) end
+              else if Term.is_abs tm then
+                let val (binder, body) = Term.dest_abs tm
+                in loop (binder :: body :: pending, count) end
+              else
+                loop (pending, count)
+            end
+    in
+      loop ([root], 0)
+    end
+
   fun check_bitblast_goal case_id goal =
-    check_term_size case_id (Term.term_size goal)
+    check_term_size case_id
+      (term_nodes_up_to max_bitblast_term_nodes goal)
 
   fun with_bitblast_step_time case_id f x =
     Timeout.apply max_bitblast_step_time f x

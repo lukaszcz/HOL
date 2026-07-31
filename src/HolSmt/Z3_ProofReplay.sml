@@ -117,6 +117,18 @@ local
       (fn thm => exact_inst thm t)
       (Net.match t (#thm_cache s))
 
+  (* FP decomposition theorems carry proof-local packed-word definitions.
+     Instantiating one cached decomposition at a different FP/BV pair creates
+     a second definition for the same skolem and breaks checked definition
+     elimination.  FP replay therefore reuses only the exact recorded
+     conclusion; its cheap proforma rung can simply re-prove other instances. *)
+  fun state_exact_cached_thm (s : state) (t : Term.term) : Thm.thm =
+    Lib.tryfind
+      (fn thm =>
+        if Thm.concl thm ~~ t then thm
+        else raise ERR "state_exact_cached_thm" "different conclusion")
+      (Net.match t (#thm_cache s))
+
   (***************************************************************************)
   (* auxiliary functions                                                     *)
   (***************************************************************************)
@@ -1496,23 +1508,102 @@ local
     else
       raise ERR "rewrite_word_compare" ""
 
-  fun state_has_definition_for (state : state) var =
-    List.exists
-      (fn definition =>
-        case Lib.total boolSyntax.dest_eq definition of
-          SOME (lhs, _) => lhs ~~ var
-        | NONE => false)
-      (HOLset.listItems (#definition_hyps state))
-
-  fun fresh_fp_bit_decompositions (state : state) =
+  fun fp_bit_decompositions (state : state) =
     List.map
       (fn ({fp_var, bv_var, equation} : bit_decomposition) =>
         {fp_var = fp_var, bv_var = bv_var, equation = equation}
           : SmtFpProve.bit_decomposition)
+      (#bit_decompositions state)
+
+  fun is_pack_of fp_var tm =
+    let
+      val (head, argument) = Term.dest_comb tm
+      val {Thy, Name, ...} = Term.dest_thy_const head
+    in
+      Thy = "smtfloat" andalso Name = "smtfp_pack_bv" andalso
+      argument ~~ fp_var
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  (* Recursive replay can encounter one decomposition while proving a later
+     dependency, then return to the same parser-recorded rewrite.  Reusing
+     the already established packed definition is sound; a conflicting
+     proof-local definition remains ineligible. *)
+  fun eligible_fp_bit_decompositions (state : state) =
+    let
+      val definitions = HOLset.listItems (#definition_hyps state)
+      fun eligible ({fp_var, bv_var, ...} : SmtFpProve.bit_decomposition) =
+        case List.filter
+            (fn definition =>
+              case Lib.total boolSyntax.dest_eq definition of
+                SOME (lhs, _) => lhs ~~ bv_var
+              | NONE => false)
+            definitions of
+          [] => true
+        | matching =>
+            List.all
+              (fn definition =>
+                is_pack_of fp_var (Lib.snd
+                  (boolSyntax.dest_eq definition)))
+              matching
+    in
+      List.filter eligible (fp_bit_decompositions state)
+    end
+
+  (* fpa2bv names packed words k!00, k!10, ... and then allocates one
+     Boolean k!N0 per bit, in the LSB-to-MSB argument order of Z3's internal
+     [mkbv].  The parser reverses [mkbv] for HOL's [v2w].  The parser
+     has already checked all declarations and decomposition widths; turn that
+     stable naming convention into ordinary removable definitions. *)
+  fun fp_per_bit_definitions (state : state) =
+  let
+    fun k_index var =
+      let
+        val name = Lib.fst (Term.dest_var var)
+        val _ = String.isPrefix "k!" name orelse raise Fail "not k!"
+        val digits = String.extract (name, 2, NONE)
+        val n = String.size digits
+        val _ = n > 0 andalso String.sub (digits, n - 1) = #"0" orelse
+          raise Fail "not a trailing-zero k! name"
+      in
+        Option.valOf (Int.fromString (String.substring (digits, 0, n - 1)))
+      end
+    fun compare_index (left, right) =
+      Int.compare (k_index left, k_index right)
+    val bv_vars = Listsort.sort compare_index
+      (List.map #bv_var (#bit_decompositions state))
+    val bool_vars = Listsort.sort compare_index
       (List.filter
-        (fn ({bv_var, ...} : bit_decomposition) =>
-          not (state_has_definition_for state bv_var))
-        (#bit_decompositions state))
+        (fn var => Term.type_of var = Type.bool andalso Lib.can k_index var)
+        (HOLset.listItems (#var_set state)))
+    fun allocate ([], remaining, definitions) =
+          if List.null remaining then List.rev definitions
+          else raise ERR "fp_per_bit_definitions"
+            "unallocated fpa2bv Boolean skolems"
+      | allocate (bv :: bvs, remaining, definitions) =
+          let
+            val width = Arbnum.toInt (wordsSyntax.size_of bv)
+            val _ = List.length remaining >= width orelse
+              raise ERR "fp_per_bit_definitions"
+                "too few fpa2bv Boolean skolems"
+            val bits = List.take (remaining, width)
+            val remaining = List.drop (remaining, width)
+            fun definition (offset, bit) =
+              boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
+                (numSyntax.term_of_int offset, bv))
+          in
+            allocate (bvs, remaining,
+              List.revAppend
+                (List.map definition
+                   (ListPair.zip (List.tabulate (width, Lib.I), bits)),
+                 definitions))
+          end
+  in
+    allocate (bv_vars, bool_vars, [])
+  end
+  handle Fail _ => []
+       | Option.Option => []
+       | Overflow => []
 
   fun z3_rewrite (state, t) =
   let
@@ -1545,12 +1636,15 @@ local
        structured HOL_ERR at the function boundary. *)
     if SmtFpProve.has_fp_theory_term t then
       ((state, profile "rewrite(02)(cache-fp)"
-          (state_inst_cached_thm state) t)
+          (state_exact_cached_thm state) t)
         handle Feedback.HOL_ERR _ =>
           let
-            val decompositions = fresh_fp_bit_decompositions state
+            val eligible_decompositions =
+              eligible_fp_bit_decompositions state
+            val all_decompositions = fp_bit_decompositions state
             val thm = profile "rewrite(03)(fp)"
-              (SmtFpProve.fp_prove_with_decompositions decompositions) t
+              (SmtFpProve.fp_prove_with_context arith_prove
+                eligible_decompositions all_decompositions) t
               handle Feedback.HOL_ERR holerr =>
                 raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
             val definitions = Thm.hyp thm
@@ -1605,6 +1699,32 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* Relate Z3's per-bit Boolean skolems to the packed BV skolem recorded
+       by rung 3.  The resulting theorem retains only checked definitional
+       hypotheses, which final replay eliminates as usual. *)
+    (let
+       val free_vars = HOLset.addList
+         (Term.empty_tmset, Term.free_vars t)
+       val packed_vars = List.map #bv_var (#bit_decompositions state)
+       val _ = List.exists
+           (fn var => HOLset.member (free_vars, var)) packed_vars orelse
+         raise ERR "z3_rewrite" "no parser-recorded FP packed word"
+       val definitions = fp_per_bit_definitions state @
+         HOLset.listItems (#definition_hyps state)
+       val thm = profile "rewrite(06.6)(fp-packed-bits)"
+         (SmtFpProve.definition_bitblast_prove definitions) t
+       val state = state_define (state_cache_thm state thm) (Thm.hyp thm)
+     in
+       (state, thm)
+     end
+     handle Feedback.HOL_ERR holerr =>
+       if SmtResource.is_resource_gate holerr then
+         raise FP_REWRITE_ERROR (Feedback.HOL_ERR holerr)
+       else
+         raise Feedback.HOL_ERR holerr)
+
+    handle Feedback.HOL_ERR _ =>
+
     let
       val thm = profile "rewrite(07)(SIMP_PROVE_UPDATE)" SIMP_PROVE_UPDATE t
         handle Feedback.HOL_ERR _ =>
@@ -1643,7 +1763,10 @@ local
 
         profile "rewrite(11)(arith)" arith_prove t
 
-        | HolSatLib.SAT_cex _ => profile "rewrite(11)(arith)" arith_prove t)
+        | HolSatLib.SAT_cex _ =>
+            (profile "rewrite(11)(arith)" arith_prove t
+             handle HolSatLib.SAT_cex _ =>
+               raise ERR "z3_rewrite" "rewrite has a counterexample"))
         handle Feedback.HOL_ERR _ =>
 
         (* Rewrites emitted by Z3 may contain the solver's totalized real
@@ -1967,7 +2090,9 @@ local
     val () =
       if SmtFpProve.has_fp_theory_term t' then ()
       else SmtFpProve.unsupported t'
-    val thm = profile "th_lemma[fp]" SmtFpProve.fp_prove t'
+    val thm = profile "th_lemma[fp]"
+      (SmtFpProve.fp_prove_with_decompositions_and_arith
+        arith_prove []) t'
   in
     (state_cache_thm state thm, Drule.LIST_MP thms thm)
   end
@@ -2313,6 +2438,13 @@ local
     val (state, thm) = profile name z3_rule_fn (state, concl)
       handle Feedback.HOL_ERR holerr =>
         raise_replay_error name state name [] concl [] holerr
+           | HolSatLib.SAT_cex cex =>
+        raise ERR name
+          ("Z3 proof replay decision procedure found a counterexample\n" ^
+           "proof rule: " ^ name ^ "\n" ^
+           "parsed HOL conclusion: " ^ term_diag concl ^ "\n" ^
+           "replay state: " ^ state_summary state ^ "\n" ^
+           "counterexample theorem: " ^ thm_diag cex)
     val _ = profile "check_thm" check_thm (name, thm, concl)
       handle Feedback.HOL_ERR holerr =>
         raise_replay_error "check_thm" state name [] concl [thm] holerr

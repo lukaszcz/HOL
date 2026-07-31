@@ -9548,6 +9548,52 @@ in
      ("convert_to_ubv", conversion)]
 end
 
+fun smtfp_tier2_atom_classes_success () =
+let
+  fun tiny theorem =
+    INST_TYPE [alpha |-> ``:4``, beta |-> ``:3``] theorem
+  val cases =
+    [("classification", tiny smtfloatTheory.smtfp_is_normal_bits),
+     ("comparison", tiny smtfloatTheory.smtfp_lt_bits),
+     ("HOL equality", tiny smtfloatTheory.smtfp_equality_bits),
+     ("fp.eq", tiny smtfloatTheory.smtfp_eq_bits),
+     ("abs", tiny smtfloatTheory.smtfp_abs_bits),
+     ("neg", tiny smtfloatTheory.smtfp_neg_bits)]
+  fun check (label, expected) =
+    let
+      val goal = Thm.concl expected
+      val thm = SmtFpProve.tier2_bitblast_prove goal
+    in
+      assert_no_hyps ("FP Tier-2 " ^ label, thm);
+      assert_concl_alpha ("FP Tier-2 " ^ label, thm, goal);
+      Library.check_oracle_tags ("FP Tier-2 " ^ label) thm
+    end
+in
+  List.app check cases
+end
+
+fun smtfp_tier2_resource_diagnostic () =
+let
+  val atom = ``smtfp_is_nan (x : (4,3) smtfp)``
+  val large = List.foldl
+    (fn (_, residue) => boolSyntax.mk_conj (atom, residue)) atom
+    (List.tabulate (50000, Lib.I))
+  val goal = boolSyntax.mk_eq (atom, large)
+  val expected =
+    SmtResource.term_size_diagnostic "tier2-atom" 200001
+in
+  (ignore (SmtFpProve.tier2_bitblast_prove goal);
+   die "FAIL: oversized FP Tier-2 atom did not resource-gate")
+  handle Feedback.HOL_ERR holerr =>
+    (assert (SmtResource.is_resource_gate holerr,
+       "oversized FP Tier-2 atom raised a non-resource diagnostic");
+     assert (Feedback.message_of holerr = expected,
+       "oversized FP Tier-2 atom changed its D1 diagnostic");
+     assert (not (String.isSubstring "unsupported rewrite shape"
+       (Feedback.message_of holerr)),
+       "oversized FP Tier-2 atom fell through to rung 6"))
+end
+
 fun smtfp_bit_decomposition_rung_success () =
 let
   fun fragment sort width sign_hi exponent_hi exponent_lo significand_hi =
@@ -10836,6 +10882,10 @@ let
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",
       smtfp_prove_core_rungs_success),
+    ("smtfp_tier2_atom_classes_success",
+      smtfp_tier2_atom_classes_success),
+    ("smtfp_tier2_resource_diagnostic",
+      smtfp_tier2_resource_diagnostic),
     ("smtfp_bit_decomposition_rung_success",
       smtfp_bit_decomposition_rung_success),
     ("smtfp_bit_decomposition_classification_replay_success",

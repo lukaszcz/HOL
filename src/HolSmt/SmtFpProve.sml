@@ -36,8 +36,8 @@ struct
   fun unsupported t =
     raise ERR "unsupported"
       ("unsupported rewrite shape: theory=fp; checked replay is only " ^
-       "implemented for proforma, ground-evaluation, and fresh " ^
-       "bit-decomposition rewrites; " ^
+       "implemented for proforma, ground-evaluation, bit-decomposition, " ^
+       "Tier-2 atom, and fp.to_real arithmetic rewrites; " ^
        "conclusion=" ^ Library.term_to_string t)
 
   (* The arbitrary-format classification probes compare [abs x] with itself.
@@ -69,6 +69,8 @@ struct
 
   fun proforma_prove t =
     (Z3_ProformaThms.prove Z3_ProformaThms.fp_thms t
+      handle Feedback.HOL_ERR _ =>
+        Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms t
       handle Feedback.HOL_ERR _ => reflexive_lt_prove t)
     handle Feedback.HOL_ERR holerr =>
       raise ERR "proforma_prove"
@@ -166,11 +168,188 @@ struct
     thm
   end
 
-  (* TASK_23 and TASK_25 replace these deliberate fall-through stubs with
-     Tier-2 bit-blast and arithmetic circuits. *)
-  fun tier2_bitblast_prove _ =
-    raise ERR "tier2_bitblast_prove" "rung 4 is not installed"
+  (* Rung 4 is intentionally guarded before either resource check.  An
+     unrelated, even very large, FP rewrite belongs to rung 6 rather than to
+     the D1 resource family. *)
+  val tier2_atom_names =
+    Redblackset.addList
+      (Redblackset.empty (Lib.pair_compare
+        (String.compare, String.compare)),
+       List.map (fn name => ("smtfloat", name))
+         ["smtfp_is_normal", "smtfp_is_subnormal", "smtfp_is_zero",
+          "smtfp_is_infinite", "smtfp_is_nan", "smtfp_is_negative",
+          "smtfp_is_positive", "smtfp_abs", "smtfp_neg", "smtfp_eq",
+          "smtfp_lt", "smtfp_le", "smtfp_gt", "smtfp_ge"])
 
+  fun is_tier2_atom_const tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Redblackset.member (tier2_atom_names, (Thy, Name)) end
+
+  fun is_smtfp_bits tm =
+    let
+      val (head, _) = boolSyntax.strip_comb tm
+      val {Thy, Name, ...} = Term.dest_thy_const head
+    in
+      Thy = "smtfloat" andalso Name = "smtfp_bits"
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun is_bits_equality tm =
+    let
+      val (left, right) = boolSyntax.dest_eq tm
+    in
+      type_mentions_fp (Term.type_of left) andalso
+      type_mentions_fp (Term.type_of right) andalso
+      is_smtfp_bits left andalso is_smtfp_bits right
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun is_tier2_atom_conversion t =
+    Lib.can (HolKernel.find_term is_tier2_atom_const) t orelse
+    Lib.can (HolKernel.find_term is_bits_equality) t
+
+  val tier2_rewrites =
+    let open smtfloatTheory
+    in
+      [smtfp_is_normal_bits, smtfp_is_subnormal_bits,
+       smtfp_is_zero_bits, smtfp_is_infinite_bits, smtfp_is_nan_bits,
+       smtfp_is_negative_bits, smtfp_is_positive_bits, smtfp_abs_bits,
+       smtfp_neg_bits, smtfp_equality_bits, smtfp_eq_bits,
+       smtfp_lt_bits, smtfp_le_bits, smtfp_gt_bits, smtfp_ge_bits,
+       smtfp_comparison_duals, smtfp_nan_pattern_def,
+       smtfp_mag_lt_def, smtfp_word_equal_def, smtfp_word_fp_eq_def,
+       smtfp_word_lt_def, smtfp_word_le_def, smtfp_word_gt_def,
+       smtfp_word_ge_def]
+    end
+
+  (* This is the th-lemma-bv recipe specialized to the large fpa2bv
+     residues: WORD_BIT_EQ simplification, conditional rewriting, then
+     BBLAST.  Running TAUT between the first and last stages is counter-
+     productive here because it treats every word comparison as an unrelated
+     atom and can exhaust the whole step-time cap before BBLAST starts. *)
+  val tier2_bv_prove =
+    let
+      val word_ss = simpLib.++
+        (simpLib.++ (bossLib.std_ss, wordsLib.WORD_ss),
+         wordsLib.WORD_BIT_EQ_ss)
+      val COND_REWRITE_TAC = simpLib.SIMP_TAC simpLib.empty_ss
+        [boolTheory.COND_RAND, boolTheory.COND_RATOR]
+    in
+      fn t =>
+        (blastLib.BBLAST_PROVE t
+         handle Feedback.HOL_ERR _ =>
+           let
+             val normalized = simpLib.SIMP_CONV word_ss [] t
+               handle Conv.UNCHANGED => Thm.REFL t
+             val residue = boolSyntax.rhs (Thm.concl normalized)
+             val residue_thm =
+               if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
+               else tautLib.TAUT_PROVE residue
+                 handle Feedback.HOL_ERR _ =>
+                   Tactical.prove (residue, Tactical.THEN
+                     (COND_REWRITE_TAC, blastLib.BBLAST_TAC))
+           in
+             Thm.EQ_MP (Thm.SYM normalized) residue_thm
+           end)
+        handle HolSatLib.SAT_cex _ =>
+          raise ERR "tier2_bv_prove" "word residue is not valid"
+    end
+
+  val tier2_case_id = "tier2-atom"
+  val packed_bits_case_id = "tier2-packed-bits"
+
+  fun pure_word_definition tm =
+    let
+      val (lhs, rhs) = boolSyntax.dest_eq tm
+    in
+      Term.is_var lhs andalso
+      (Term.type_of lhs = Type.bool orelse
+       wordsSyntax.is_word_type (Term.type_of lhs)) andalso
+      not (has_fp_theory_term rhs)
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  (* Z3 rewrites Tier-2 word formulas over its packed BV skolems into
+     formulas over per-bit Boolean skolems.  Rung 3 already defines each
+     packed word as the FP representative; checked per-bit definitions below
+     connect Z3's later Boolean formula to that word formula. *)
+  fun definition_bitblast_uncapped definitions t =
+  let
+    val _ = Lib.can (HolKernel.find_term
+      (wordsSyntax.is_word_type o Term.type_of)) t orelse
+      raise ERR "definition_bitblast_prove" "no packed word in conclusion"
+    val free_vars = HOLset.addList (Term.empty_tmset, Term.free_vars t)
+    fun relevant definition =
+      pure_word_definition definition andalso
+      HOLset.member (free_vars, Lib.fst (boolSyntax.dest_eq definition))
+    val definitions = List.filter relevant definitions
+    val _ = if List.null definitions then
+        raise ERR "definition_bitblast_prove" "no packed-bit definition"
+      else ()
+    val definition_thms = List.map Thm.ASSUME definitions
+    val normalized =
+      simpLib.SIMP_CONV simpLib.empty_ss definition_thms t
+      handle Conv.UNCHANGED => Thm.REFL t
+    val residue = boolSyntax.rhs (Thm.concl normalized)
+    val () = SmtResource.check_bitblast_goal packed_bits_case_id residue
+    val residue_thm =
+      if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
+      else tier2_bv_prove residue
+  in
+    Thm.EQ_MP (Thm.SYM normalized) residue_thm
+  end
+
+  fun definition_bitblast_prove definitions t =
+    SmtResource.with_bitblast_step_time packed_bits_case_id
+      (fn t =>
+        (SmtResource.check_bitblast_goal packed_bits_case_id t;
+         definition_bitblast_uncapped definitions t)) t
+
+  fun tier2_bitblast_uncapped decompositions t =
+  let
+    val decomposition_thms = List.map
+      (fn ({equation, ...} : bit_decomposition) =>
+        bit_decomposition_prove decompositions equation)
+      decompositions
+    val normalized =
+      simpLib.SIMP_CONV (bossLib.srw_ss())
+        (decomposition_thms @ tier2_rewrites) t
+      handle Conv.UNCHANGED => Thm.REFL t
+    val residue = boolSyntax.rhs (Thm.concl normalized)
+    val () = SmtResource.check_bitblast_goal tier2_case_id residue
+    val residue_thm =
+      if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
+      else tier2_bv_prove residue
+  in
+    Thm.EQ_MP (Thm.SYM normalized) residue_thm
+  end
+
+  fun tier2_bitblast_prove_with_decompositions decompositions t =
+    if not (is_tier2_atom_conversion t) then
+      raise ERR "tier2_bitblast_prove" "not a Tier-2 atom conversion"
+    else
+      SmtResource.with_bitblast_step_time tier2_case_id
+        (fn t =>
+          (SmtResource.check_bitblast_goal tier2_case_id t;
+           tier2_bitblast_uncapped decompositions t)) t
+
+  fun tier2_bitblast_prove t =
+    tier2_bitblast_prove_with_decompositions [] t
+
+  fun mentions_to_real t =
+    Lib.can (HolKernel.find_term
+      (fn tm =>
+        Term.is_const tm andalso
+        let val {Thy, Name, ...} = Term.dest_thy_const tm
+        in Thy = "smtfloat" andalso Name = "smtfp_to_real" end)) t
+
+  fun to_real_arith_prove arith_prove t =
+    if mentions_to_real t then arith_prove t
+    else raise ERR "to_real_arith_prove" "no fp.to_real residue"
+
+  (* TASK_25 replaces this remaining deliberate fall-through stub with
+     arithmetic circuits. *)
   fun symbolic_arithmetic_prove _ =
     raise ERR "symbolic_arithmetic_prove" "rung 5 is not installed"
 
@@ -182,7 +361,8 @@ struct
       else
         continuation ()
 
-  fun fp_prove_with_decompositions decompositions t =
+  fun fp_prove_with_context arith_prove eligible_decompositions
+      all_decompositions t =
     if not (has_fp_theory_term t) then
       unsupported t
     else
@@ -192,14 +372,27 @@ struct
         (profile "fp(rung:2/ground-eval)" ground_eval_prove) t (fn () =>
       next_rung
         (profile "fp(rung:3/bit-decomposition)"
-          (bit_decomposition_prove decompositions)) t (fn () =>
+          (bit_decomposition_prove eligible_decompositions)) t (fn () =>
       next_rung
-        (profile "fp(rung:4/tier2-bitblast)" tier2_bitblast_prove) t
+        (profile "fp(rung:4/to-real-arith)"
+          (to_real_arith_prove arith_prove)) t (fn () =>
+      next_rung
+        (profile "fp(rung:4/tier2-bitblast)"
+          (tier2_bitblast_prove_with_decompositions all_decompositions)) t
         (fn () =>
       next_rung
         (profile "fp(rung:5/symbolic-arithmetic)"
           symbolic_arithmetic_prove) t (fn () =>
-      profile "fp(rung:6/unsupported)" unsupported t)))))
+      profile "fp(rung:6/unsupported)" unsupported t))))))
+
+  fun fp_prove_with_decompositions_and_arith arith_prove decompositions =
+    fp_prove_with_context arith_prove decompositions decompositions
+
+  fun no_arith_prove _ =
+    raise ERR "no_arith_prove" "no arithmetic prover was supplied"
+
+  fun fp_prove_with_decompositions decompositions =
+    fp_prove_with_decompositions_and_arith no_arith_prove decompositions
 
   fun fp_prove t = fp_prove_with_decompositions [] t
 

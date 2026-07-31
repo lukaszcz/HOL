@@ -126,7 +126,8 @@ struct
       literal_normalization_thms @
       (* symbolic_classification_nan_positive and the arbitrary-format
          classification probes' abs normalization *)
-      [smtfp_is_nan_bits, smtfp_abs_bits] @
+      [smtfp_is_nan_bits, smtfp_abs_bits, smtfp_neg_neg,
+       smtfp_abs_abs, smtfp_abs_neg] @
       (* Ground rewrites use reflexivity; symbolic comparisons contain
          equality/symmetry transport and an fp.eq atom. *)
       [smtfp_equality_refl, smtfp_equality_symm,

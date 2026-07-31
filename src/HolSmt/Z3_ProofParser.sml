@@ -559,9 +559,10 @@ local
         end
       else
         raise ERR "<z3_builtin_dict._>" "not a bit-vector constant")),
-    (* mkbv: bool list -> _ word *)
+    (* Z3's internal mkbv arguments run from LSB to MSB, whereas HOL's
+       v2w list runs from MSB to LSB. *)
     ("mkbv", SmtLib_Theories.K_zero_list (fn l =>
-      bitstringSyntax.mk_v2w (listSyntax.mk_list (l, Type.bool),
+      bitstringSyntax.mk_v2w (listSyntax.mk_list (List.rev l, Type.bool),
         fcpSyntax.mk_int_numeric_type (List.length l)))),
     (* extract[m:n] t *)
     ("_", SmtLib_Theories.zero_one (fn token =>
