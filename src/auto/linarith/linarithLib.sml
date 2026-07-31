@@ -123,7 +123,7 @@ fun core function config (assumptions, conclusion) =
   let
     val (split_neq, result) =
       linarithSolve.prove config linarithDecomp.decomp
-        assumptions conclusion
+        linarithDecomp.is_nonnegative assumptions conclusion
   in
     case result of
         SOME justifications =>

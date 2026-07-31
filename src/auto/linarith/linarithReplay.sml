@@ -125,10 +125,64 @@ fun relation_homs injection =
     [#le hom, #lt hom, #eq hom]
   end
 
+fun injection_at_top injection tm =
+  case Lib.total Term.dest_comb tm of
+      SOME (operator, _) => Term.aconv operator (#inj injection)
+    | NONE => false
+
+fun orient_injection_hom injection theorem =
+  let
+    val opened = SPEC_ALL theorem
+    val (left, right) = boolSyntax.dest_eq (Thm.concl opened)
+  in
+    if injection_at_top injection left then opened
+    else if injection_at_top injection right then Thm.SYM opened
+    else opened
+  end
+
+fun injection_rewrites injection =
+  let
+    val hom = #hom injection
+  in
+    List.mapPartial
+      (Lib.total (orient_injection_hom injection))
+      [#add hom, #mul hom]
+  end
+
+fun rewrite_injections rewrites theorem =
+  if null rewrites then theorem
+  else
+    CONV_RULE
+      (TOP_DEPTH_CONV (FIRST_CONV (map REWR_CONV rewrites))) theorem
+    handle UNCHANGED => theorem
+
+fun normalize_lift injection theorem =
+  rewrite_injections (injection_rewrites injection) theorem
+
+fun normalize_injections theorem =
+  rewrite_injections
+    (List.concat
+      (map injection_rewrites (linarithData.injections ()))) theorem
+
+fun normalize_relation_sides theorem =
+  let
+    val instance = instance_of_thm theorem
+  in
+    CONV_RULE (BINOP_CONV (#norm_conv instance)) theorem
+  end
+  handle HOL_ERR _ => theorem
+       | UNCHANGED => theorem
+
 fun lifts theorem =
-  List.mapPartial
-    (fn injection => first_match (relation_homs injection) theorem)
-    (linarithData.injections ())
+  let
+    val normalized = normalize_relation_sides theorem
+  in
+    List.mapPartial
+      (fn injection =>
+        Option.map (normalize_lift injection)
+          (first_match (relation_homs injection) normalized))
+      (linarithData.injections ())
+  end
 
 fun add_direct theorem1 theorem2 =
   let
@@ -334,9 +388,10 @@ exception FalseReached of thm
 
 fun normalize_added theorem =
   let
-    val instance = instance_of_thm theorem
+    val expanded = normalize_injections theorem
+    val instance = instance_of_thm expanded
     val norm = #norm_conv instance
-    val theorem' = CONV_RULE (BINOP_CONV norm THENC norm) theorem
+    val theorem' = CONV_RULE (BINOP_CONV norm THENC norm) expanded
   in
     if Term.aconv (Thm.concl theorem') boolSyntax.F then
       raise FalseReached theorem'
@@ -347,9 +402,10 @@ fun normalize_final theorem =
   if Term.aconv (Thm.concl theorem) boolSyntax.F then theorem
   else
     let
-      val instance = instance_of_thm theorem
+      val expanded = normalize_injections theorem
+      val instance = instance_of_thm expanded
     in
-      CONV_RULE (#norm_conv instance) theorem
+      CONV_RULE (#norm_conv instance) expanded
     end
 
 fun mkthm (Env atoms) assumptions justification =
@@ -526,7 +582,7 @@ fun fwd_prove config theorems conclusion =
     val hypotheses = List.map Thm.concl theorems
     val (split_neq, result) =
       linarithSolve.prove config linarithDecomp.decomp
-        hypotheses conclusion
+        linarithDecomp.is_nonnegative hypotheses conclusion
     val justifications =
       case result of
           SOME justs => justs

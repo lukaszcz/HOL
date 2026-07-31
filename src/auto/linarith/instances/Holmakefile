@@ -1,10 +1,13 @@
-INCLUDES = .. ../../../integer ../../../real ../../../rational
+INCLUDES = .. ../../../integer ../../../num/reduce/src \
+           ../../../real ../../../rational
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
 linarithInstTheory.uo: ../linarithData.uo
-selftest.uo: linarithInstTheory.uo
+intLinarith.uo realLinarith.uo ratLinarith.uo: linarithInstTheory.uo
+selftest.uo: intLinarith.uo realLinarith.uo ratLinarith.uo \
+             ../linarithLib.uo
 
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<

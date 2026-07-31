@@ -60,6 +60,7 @@ sig
     Term.term list -> (decomp * int) list list
 
   val prove :
-    linarith_config -> (Term.term -> decomp option) -> Term.term list ->
-    Term.term -> bool * injust list option
+    linarith_config -> (Term.term -> decomp option) ->
+    (Term.term -> bool) -> Term.term list -> Term.term ->
+    bool * injust list option
 end

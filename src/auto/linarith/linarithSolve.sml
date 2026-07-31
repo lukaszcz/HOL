@@ -407,7 +407,7 @@ fun atoms_of_decomp
   List.foldl (fn ((tm, _), acc) => add_atom tm acc)
     (List.foldl (fn ((tm, _), acc) => add_atom tm acc) atoms lhs) rhs
 
-fun refutes systems =
+fun refutes is_nonnegative systems =
   let
     fun refute [] justs = SOME justs
       | refute (items :: rest) justs =
@@ -416,9 +416,9 @@ fun refutes systems =
             val count = List.length atoms
             val indices = List.tabulate (count, fn i => i)
             val atom_indices = ListPair.zip (atoms, indices)
-            fun nat_atom tm = Term.type_of tm = numSyntax.num
             val nonnegative =
-              List.mapPartial (mknonneg nat_atom indices) atom_indices
+              List.mapPartial
+                (mknonneg is_nonnegative indices) atom_indices
             val ineqs =
               List.map (mklineq atoms) items @ nonnegative
           in
@@ -435,7 +435,7 @@ fun negate tm =
   else boolSyntax.mk_neg tm
 
 fun prove ({neq_limit, split_limit = _} : linarith_config)
-          decompose hypotheses conclusion =
+          decompose is_nonnegative hypotheses conclusion =
   case (SOME (negate conclusion)
         handle Feedback.HOL_ERR _ => NONE) of
       NONE => (false, NONE)
@@ -460,7 +460,7 @@ fun prove ({neq_limit, split_limit = _} : linarith_config)
                         Int.toString neq_limit ^
                         "); ignoring disequalities")
         in
-          (split_neq, refutes systems)
+          (split_neq, refutes is_nonnegative systems)
         end
 
 end

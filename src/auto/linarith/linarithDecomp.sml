@@ -32,10 +32,51 @@ fun injection_arg tm =
         (case linarithData.injection_by_const operator of
              NONE => NONE
            | SOME injection =>
-               if same_type (Term.type_of arg) (#from_ty injection) andalso
-                  same_type (Term.type_of tm) (#to_ty injection)
-               then SOME arg
-               else NONE)
+               let
+                 fun supported source tm =
+                   let
+                     val dest = #dest source
+                   in
+                     case Lib.total (#dest_plus dest) tm of
+                         SOME (left, right) =>
+                           supported source left andalso
+                           supported source right
+                       | NONE =>
+                           (case Lib.total (#dest_mult dest) tm of
+                                SOME (left, right) =>
+                                  supported source left andalso
+                                  supported source right
+                              | NONE =>
+                                  Option.isSome
+                                    (Lib.total (#dest_lit dest) tm) orelse
+                                  not
+                                    (Option.isSome
+                                       (case #dest_minus dest of
+                                            NONE => NONE
+                                          | SOME f => Lib.total f tm) orelse
+                                     Option.isSome
+                                       (case #dest_neg dest of
+                                            NONE => NONE
+                                          | SOME f => Lib.total f tm) orelse
+                                     Option.isSome
+                                       (case #dest_div dest of
+                                            NONE => NONE
+                                          | SOME f => Lib.total f tm) orelse
+                                     Option.isSome
+                                       (case #dest_suc dest of
+                                            NONE => NONE
+                                          | SOME f => Lib.total f tm)))
+                   end
+               in
+                 if same_type (Term.type_of arg) (#from_ty injection) andalso
+                    same_type (Term.type_of tm) (#to_ty injection)
+                 then
+                   case linarithData.instance_for (#from_ty injection) of
+                       SOME source =>
+                         if supported source arg then SOME arg else NONE
+                     | NONE => SOME arg
+                 else NONE
+               end)
 
 fun dest_mult tm =
   case instance_of tm of
@@ -220,7 +261,10 @@ and poly_other (tm, multiplier, polynomial) =
                       in
                         case atom of
                             SOME atom' =>
-                              add_atom atom' coefficient polynomial
+                              if Term.aconv atom' tm then
+                                add_atom atom' coefficient polynomial
+                              else
+                                poly_acc (atom', coefficient, polynomial)
                           | NONE =>
                               add_constant rat_one coefficient polynomial
                       end
@@ -233,7 +277,11 @@ and poly_other (tm, multiplier, polynomial) =
                              in
                                case atom of
                                    SOME atom' =>
-                                     add_atom atom' coefficient polynomial
+                                     if Term.aconv atom' tm then
+                                       add_atom atom' coefficient polynomial
+                                     else
+                                       poly_acc
+                                         (atom', coefficient, polynomial)
                                  | NONE =>
                                      add_constant rat_one coefficient
                                        polynomial
@@ -301,6 +349,12 @@ fun decomp tm =
                          negated = negated'})
                  end)
   end
+
+fun is_nonnegative tm =
+  case linarithData.instance_for (Term.type_of tm) of
+      NONE => false
+    | SOME instance =>
+        Option.isSome (#nonneg (#kit instance) tm)
 
 fun is_relevant tm = Option.isSome (decomp tm)
 

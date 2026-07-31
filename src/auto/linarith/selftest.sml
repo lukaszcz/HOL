@@ -661,6 +661,7 @@ val _ =
     ("prove splits at the neq_limit boundary",
      fn () =>
        case prove {neq_limit = 1, split_limit = 9} unit_decomp
+                  (fn _ => false)
                   [dense_neq_tm, contradiction_tm] conclusion_tm of
            (true, SOME justs) => List.length justs = 2
          | _ => false)
@@ -670,6 +671,7 @@ val _ =
     ("prove ignores all disequalities when neq_limit is exceeded",
      fn () =>
        case prove {neq_limit = 0, split_limit = 9} unit_decomp
+                  (fn _ => false)
                   [dense_neq_tm, contradiction_tm] conclusion_tm of
            (false, SOME [_]) => true
          | _ => false)
@@ -688,7 +690,8 @@ val _ =
     ("prove appends the negated conclusion with its assumption index",
      fn () =>
        case prove {neq_limit = 9, split_limit = 9}
-                  from_negated_conclusion [] conclusion_tm of
+                  from_negated_conclusion (fn _ => false) []
+                  conclusion_tm of
            (true, SOME [Asm 0]) => true
          | _ => false)
 
@@ -697,7 +700,8 @@ val _ =
     ("prove avoids double negation of an already-negated conclusion",
      fn () =>
        case prove {neq_limit = 9, split_limit = 9}
-                  from_unwrapped_conclusion [] negated_conclusion_tm of
+                  from_unwrapped_conclusion (fn _ => false) []
+                  negated_conclusion_tm of
            (true, SOME [Asm 0]) => true
          | _ => false)
 
@@ -942,7 +946,7 @@ fun forward_with disequalities =
 
 fun tactic_replay_succeeds config assumptions conclusion =
   case linarithSolve.prove config linarithDecomp.decomp
-         assumptions conclusion of
+         linarithDecomp.is_nonnegative assumptions conclusion of
       (_, NONE) => false
     | (split_neq, SOME justifications) =>
         let
