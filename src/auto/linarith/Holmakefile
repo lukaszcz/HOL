@@ -6,7 +6,8 @@ all: $(DEFAULT_TARGETS) selftest.exe
 
 linarithSeedTheory.uo: linarithData.uo
 linarithNum.uo: linarithSeedTheory.uo
-selftest.uo: linarithNum.uo
+linarithReplay.uo: linarithNum.uo
+selftest.uo: linarithReplay.uo
 
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<

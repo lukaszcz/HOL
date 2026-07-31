@@ -90,6 +90,8 @@ fun expression_conv tm =
 fun norm_conv tm =
   (Conv.DEPTH_CONV
      (Conv.REWR_CONV arithmeticTheory.ADD1 ORELSEC
+      Conv.REWR_CONV arithmeticTheory.LEFT_ADD_DISTRIB ORELSEC
+      Conv.REWR_CONV arithmeticTheory.RIGHT_ADD_DISTRIB ORELSEC
       Conv.CHANGED_CONV reduceLib.REDUCE_CONV) THENC
    (relation_conv ORELSEC expression_conv ORELSEC Conv.ALL_CONV)) tm
 

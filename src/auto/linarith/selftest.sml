@@ -693,3 +693,219 @@ val _ =
                   from_unwrapped_conclusion [] negated_conclusion_tm of
            (true, SOME [Asm 0]) => true
          | _ => false)
+
+(* Golden kernel-replay tests.  These construct certificates directly so
+   every replay constructor and every currently shipped num kit slot is
+   exercised independently of Fourier--Motzkin search. *)
+
+fun num_less left right = numSyntax.mk_less (left, right)
+fun num_eq left right = boolSyntax.mk_eq (left, right)
+fun num_not tm = boolSyntax.mk_neg tm
+
+val num_zero = numSyntax.zero_tm
+val num_one = numSyntax.mk_numeral Arbnum.one
+
+fun replay terms justification =
+  linarithReplay.mkthm
+    (linarithReplay.mk_instance_env terms)
+    (List.map Thm.ASSUME terms) justification
+
+fun replay_is_false terms justification =
+  Term.aconv (Thm.concl (replay terms justification)) boolSyntax.F
+
+val _ =
+  check
+    ("replay golden: Asm",
+     fn () => replay_is_false [num_leq num_one num_zero] (Asm 0))
+
+val _ =
+  check
+    ("replay rejects a certificate that does not derive false",
+     fn () =>
+       ((ignore (replay [num_leq num_x num_x] (Asm 0)); false)
+        handle Feedback.HOL_ERR error =>
+          Feedback.message_of error =
+            "Linear arithmetic should have refuted the assumptions " ^
+            "but failed to."))
+
+val _ =
+  check
+    ("replay golden: Nonneg",
+     fn () =>
+       replay_is_false
+         [num_leq (num_plus num_x num_three) num_two]
+         (Added (Nonneg 0, Asm 0)))
+
+val _ =
+  check
+    ("replay atom indices agree with search lhs-before-rhs order",
+     fn () =>
+       replay_is_false
+         [num_leq num_x num_y,
+          num_leq (num_plus num_x num_three) num_two]
+         (Added (Nonneg 0, Asm 1)))
+
+val _ =
+  check
+    ("replay golden: LessD",
+     fn () => replay_is_false [num_less num_zero num_zero]
+                              (LessD (Asm 0)))
+
+val _ =
+  check
+    ("replay golden: NotLessD",
+     fn () => replay_is_false [num_not (num_less num_zero num_one)]
+                              (NotLessD (Asm 0)))
+
+val _ =
+  check
+    ("replay golden: NotLeD",
+     fn () => replay_is_false [num_not (num_leq num_zero num_zero)]
+                              (NotLeD (Asm 0)))
+
+val _ =
+  check
+    ("replay golden: NotLeDD",
+     fn () => replay_is_false [num_not (num_leq num_zero num_zero)]
+                              (NotLeDD (Asm 0)))
+
+fun add_replay relation1 relation2 =
+  replay_is_false
+    [relation1 (num_plus num_x num_three)
+       (num_plus num_y num_two),
+     relation2 num_y num_x]
+    (Added (Asm 0, Asm 1))
+
+val _ =
+  check
+    ("replay golden: Added with le/le add_mono",
+     fn () => add_replay num_leq num_leq)
+
+val _ =
+  check
+    ("replay golden: Added with lt/lt add_mono",
+     fn () => add_replay num_less num_less)
+
+val _ =
+  check
+    ("replay golden: Added with le/lt add_mono",
+     fn () => add_replay num_leq num_less)
+
+val _ =
+  check
+    ("replay golden: Added with lt/le add_mono",
+     fn () => add_replay num_less num_leq)
+
+val _ =
+  check
+    ("replay golden: Multiplied with le mult_mono",
+     fn () =>
+       replay_is_false [num_leq num_one num_zero]
+         (Multiplied (two, Asm 0)))
+
+val _ =
+  check
+    ("replay golden: Multiplied with positive-premise lt mult_mono",
+     fn () =>
+       replay_is_false
+         [num_less (num_plus num_x num_three)
+            (num_plus num_x num_two)]
+         (Multiplied (two, Asm 0)))
+
+fun num_instance_with_mult_mono mult_mono =
+  let
+    val dest = #dest num_instance
+    val kit = #kit num_instance
+  in
+    {ty = #ty num_instance,
+     discrete = #discrete num_instance,
+     dest = dest,
+     kit =
+       {add_mono = #add_mono kit,
+        mult_mono = mult_mono,
+        lessD = #lessD kit,
+        not_less = #not_less kit,
+        not_le = #not_le kit,
+        neqE = #neqE kit,
+        nonneg = #nonneg kit},
+     norm_conv = #norm_conv num_instance,
+     pre_split = #pre_split num_instance,
+     divmod_facts = #divmod_facts num_instance} :
+      linarithData.linarith_instance
+  end
+
+val _ =
+  check
+    ("replay golden: Multiplied falls back to iterated addition",
+     fn () =>
+       let
+         val _ =
+           linarithData.register_instance
+             (num_instance_with_mult_mono [])
+         val result =
+           replay_is_false [num_less num_zero num_zero]
+             (Multiplied (two, Asm 0))
+         val _ = linarithData.register_instance num_instance
+       in
+         result
+       end)
+
+val _ =
+  check
+    ("replay scales equality with AP_TERM and no mult_mono lemma",
+     fn () =>
+       let
+         val _ =
+           linarithData.register_instance
+             (num_instance_with_mult_mono [])
+         val result =
+           replay_is_false [num_eq num_one num_zero]
+             (Multiplied (two, Asm 0))
+         val _ = linarithData.register_instance num_instance
+       in
+         result
+       end)
+
+val _ =
+  check
+    ("replay scales equality by a negative multiplier",
+     fn () =>
+       replay_is_false [num_eq num_one num_zero]
+         (Multiplied (Arbint.~ two, Asm 0)))
+
+val _ =
+  check
+    ("replay generalizes and restores one shared complex atom",
+     fn () =>
+       let
+         val atom = numSyntax.mk_div (num_x, num_three)
+         val terms =
+           [num_leq (num_plus atom num_three) num_two,
+            num_leq num_zero atom]
+         val shared = ref false
+         fun prove generalized =
+           let
+             val (left_expression, _) =
+               numSyntax.dest_leq (List.nth (generalized, 0))
+             val (left_atom, _) =
+               numSyntax.dest_plus left_expression
+             val (_, right_atom) =
+               numSyntax.dest_leq (List.nth (generalized, 1))
+             val _ =
+               shared :=
+                 (Term.is_var left_atom andalso
+                  Term.aconv left_atom right_atom)
+           in
+             replay generalized (Added (Asm 0, Asm 1))
+           end
+         val theorem = linarithReplay.generalize terms prove
+       in
+         !shared andalso
+         Term.aconv (Thm.concl theorem) boolSyntax.F andalso
+         List.all
+           (fn tm => List.exists (Term.aconv tm) (Thm.hyp theorem)) terms
+       end)
+
+(* TODO: Add the injection add-fallback golden with the first real cross-type
+   instance kit.  The only injection available here is decomposition-only;
+   its placeholder hom theorems are not valid replay rules. *)
