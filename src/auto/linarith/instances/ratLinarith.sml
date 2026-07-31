@@ -236,6 +236,7 @@ val instance : linarithData.linarith_instance =
       nonneg = nonneg},
    norm_conv = norm_conv,
    pre_split = [],
+   atom_facts = (fn _ => []),
    divmod_facts = NONE}
 
 val _ = linarithData.register_instance instance

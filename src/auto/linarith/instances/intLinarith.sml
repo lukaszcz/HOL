@@ -151,15 +151,20 @@ fun divmod_facts tm =
   case dest_divmod tm of
       NONE => []
     | SOME (dividend, divisor) =>
-        (case nonzero_literal divisor of
-             NONE => []
-           | SOME nonzero =>
-               division_facts dividend divisor nonzero)
+        case nonzero_literal divisor of
+            NONE => []
+          | SOME nonzero =>
+              division_facts dividend divisor nonzero
 
 fun nonneg tm =
   case Lib.total intSyntax.dest_injected tm of
       SOME n => SOME (Thm.SPEC n integerTheory.INT_POS)
     | NONE => NONE
+
+fun atom_facts tm =
+  case Lib.total intSyntax.dest_Num tm of
+      SOME i => [Thm.SPEC i integerTheory.INT_OF_NUM]
+    | NONE => []
 
 val instance : linarithData.linarith_instance =
   {ty = intSyntax.int_ty,
@@ -194,6 +199,7 @@ val instance : linarithData.linarith_instance =
      [linarithInstTheory.INT_MIN_SPLIT,
       linarithInstTheory.INT_MAX_SPLIT,
       linarithInstTheory.INT_ABS_SPLIT],
+   atom_facts = atom_facts,
    divmod_facts = SOME divmod_facts}
 
 val _ = linarithData.register_instance instance

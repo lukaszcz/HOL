@@ -104,6 +104,14 @@ fun dest_lit tm =
       NONE => NONE
     | SOME instance => Lib.total (#dest_lit (#dest instance)) tm
 
+fun dest_suc tm =
+  case instance_of tm of
+      NONE => NONE
+    | SOME instance =>
+        (case #dest_suc (#dest instance) of
+             NONE => NONE
+           | SOME dest => Lib.total dest tm)
+
 fun try_product operator left right =
   Lib.total (fn () => mk_binary operator left right) ()
 
@@ -248,6 +256,13 @@ fun poly_acc (tm, multiplier, polynomial) =
                    | NONE => poly_other (tm, multiplier, polynomial))
         end
 and poly_other (tm, multiplier, polynomial) =
+  case dest_suc tm of
+      SOME arg =>
+        poly_acc
+          (arg, multiplier,
+           add_constant multiplier rat_one polynomial)
+    | NONE => poly_non_suc (tm, multiplier, polynomial)
+and poly_non_suc (tm, multiplier, polynomial) =
   case dest_neg tm of
       SOME arg => poly_acc (arg, Arbrat.negate multiplier, polynomial)
     | NONE =>

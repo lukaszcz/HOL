@@ -184,11 +184,91 @@ fun lifts theorem =
       (linarithData.injections ())
   end
 
+fun relation_operator destructor theorem =
+  let
+    fun search tm =
+      case Lib.total destructor tm of
+          SOME _ => SOME (#1 (dest_binary tm))
+        | NONE =>
+            if Term.is_abs tm then search (#2 (Term.dest_abs tm))
+            else
+              (case Lib.total Term.dest_comb tm of
+                   NONE => NONE
+                 | SOME (rator, rand) =>
+                     (case search rator of
+                          SOME operator => SOME operator
+                        | NONE => search rand))
+  in
+    search (Thm.concl theorem)
+  end
+
+fun equality_as_le instance theorem =
+  if not (boolSyntax.is_eq (relation_body (Thm.concl theorem))) then
+    theorem
+  else
+    let
+      val dest = #dest instance
+      val operator =
+        case first_result
+               (fn rule =>
+                 case relation_operator (#dest_leq dest) rule of
+                     SOME found => found
+                   | NONE => raise ERR "equality_as_le" "no leq operator")
+               (#add_mono (#kit instance)) of
+            SOME found => found
+          | NONE =>
+              raise ERR "equality_as_le"
+                "no leq operator occurs in the instance kit"
+      val (left, _) = boolSyntax.dest_eq (Thm.concl theorem)
+      val variable = genvar (#ty instance)
+      fun leq l r = Term.list_mk_comb (operator, [l, r])
+      val relation = leq left left
+      val reflexive = EQT_ELIM (#norm_conv instance relation)
+      val function = Term.mk_abs (variable, leq left variable)
+      val congruence =
+        CONV_RULE (BINOP_CONV BETA_CONV) (AP_TERM function theorem)
+    in
+      EQ_MP congruence reflexive
+    end
+
+fun add_equalities instance theorem1 theorem2 =
+  let
+    val dest = #dest instance
+    val operator =
+      case first_result
+             (fn rule =>
+               case relation_operator (#dest_plus dest) rule of
+                   SOME found => found
+                 | NONE => raise ERR "add_equalities" "no plus operator")
+             (#add_mono (#kit instance)) of
+          SOME found => found
+        | NONE =>
+            raise ERR "add_equalities"
+              "no plus operator occurs in the instance kit"
+  in
+    MK_COMB (MK_COMB (REFL operator, theorem1), theorem2)
+  end
+
+fun add_direct_raw instance theorem1 theorem2 =
+  first_match (#add_mono (#kit instance)) (CONJ theorem1 theorem2)
+
 fun add_direct theorem1 theorem2 =
   let
     val instance = instance_of_thm theorem1
+    val equality1 =
+      boolSyntax.is_eq (relation_body (Thm.concl theorem1))
+    val equality2 =
+      boolSyntax.is_eq (relation_body (Thm.concl theorem2))
   in
-    first_match (#add_mono (#kit instance)) (CONJ theorem1 theorem2)
+    case add_direct_raw instance theorem1 theorem2 of
+        SOME theorem => SOME theorem
+      | NONE =>
+          if equality1 andalso equality2 then
+            SOME (add_equalities instance theorem1 theorem2)
+          else
+            add_direct_raw instance
+              (equality_as_le instance theorem1)
+              (equality_as_le instance theorem2)
   end
   handle HOL_ERR _ => NONE
 
@@ -395,6 +475,7 @@ fun normalize_added theorem =
   in
     if Term.aconv (Thm.concl theorem') boolSyntax.F then
       raise FalseReached theorem'
+    else if Term.aconv (Thm.concl theorem') boolSyntax.T then expanded
     else theorem'
   end
 

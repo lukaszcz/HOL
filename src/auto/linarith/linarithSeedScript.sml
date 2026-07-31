@@ -51,7 +51,7 @@ QED
 Theorem NUM_SUB_SPLIT[arith_split]:
   !P m n.
     P (m - n) <=>
-    (m < n ==> P 0) /\ !d. m = n + d ==> P d
+    (m < n /\ P 0) \/ ?d. m = n + d /\ P d
 Proof
-  metis_tac [SUB_ELIM_THM']
+  metis_tac [SUB_ELIM_THM_EXISTS']
 QED

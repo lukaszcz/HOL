@@ -552,3 +552,213 @@ val _ =
          ([rleq rx ry, rleq ry rz], conditional_goal (rleq rx rz)) andalso
        valid_closes (simpLib.FULL_SIMP_TAC side_ss [])
          ([qleq qx qy, qleq qy qz], conditional_goal (qleq qx qz)))
+
+(* Translation of all 54 lemma goals in Isabelle's Arith_Examples.thy at
+   f7e02b7e1f31.  Isabelle's nat coercion truncates negative integers, so
+   [20], [21], [53], and [54] use Num (int_max i 0), rather than HOL4's
+   absolute-value Num coercion.  The two upstream "oops" goals are retained:
+   [47] retains upstream's NNF-explosion performance oops as a bounded
+   known gap, while [48] records linear arithmetic's documented integer-
+   divisibility incompleteness.
+
+   On 2026-07-31 this suite took 35.1s on an AMD Ryzen 9 9950X.  The 120s
+   suite budget, 30s goal budget, and 5s known-gap budget deliberately leave
+   ample headroom. *)
+
+datatype strength_expectation =
+    StrengthSuccess
+  | StrengthExpectedFailure of string
+  | StrengthKnownGap of string
+
+val arith_examples_corpus :
+    (int * strength_expectation * term) list =
+  [(1, StrengthSuccess, “(i:num) <= MAX i j”),
+   (2, StrengthSuccess, “(i:int) <= int_max i j”),
+   (3, StrengthSuccess, “MIN i j <= (i:num)”),
+   (4, StrengthSuccess, “int_min i j <= (i:int)”),
+   (5, StrengthSuccess, “MIN (i:num) j <= MAX i j”),
+   (6, StrengthSuccess,
+    “int_min (i:int) j <= int_max i j”),
+   (7, StrengthSuccess,
+    “MIN (i:num) j + MAX i j = i + j”),
+   (8, StrengthSuccess,
+    “int_min (i:int) j + int_max i j = i + j”),
+   (9, StrengthSuccess,
+    “(i:num) < j ==> MIN i j < MAX i j”),
+   (10, StrengthSuccess,
+    “(i:int) < j ==> int_min i j < int_max i j”),
+   (11, StrengthSuccess, “(0:int) <= ABS i”),
+   (12, StrengthSuccess, “(i:int) <= ABS i”),
+   (13, StrengthSuccess, “ABS (ABS (i:int)) = ABS i”),
+   (14, StrengthSuccess, “(x:num) <= y ==> x - y = 0”),
+   (15, StrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
+   (16, StrengthSuccess, “((x:num) <= y) = (x - y = 0)”),
+   (17, StrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y = d”),
+   (18, StrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y - x = d - x”),
+   (19, StrengthSuccess, “(x:int) < y ==> x - y < 0”),
+   (20, StrengthSuccess,
+    “Num (int_max ((i:int) + j) 0) <=
+     Num (int_max i 0) + Num (int_max j 0)”),
+   (21, StrengthSuccess,
+    “(i:int) < j ==> Num (int_max (i - j) 0) = 0”),
+   (22, StrengthSuccess, “(i:num) MOD 0 = i”),
+   (23, StrengthSuccess, “(i:num) MOD 1 = 0”),
+   (24, StrengthSuccess, “(i:num) MOD 42 <= 41”),
+   (* HOL4 int_mod is unspecified at zero.  Isabelle's total zmod
+      source goal therefore translates to its specified result. *)
+   (25, StrengthSuccess, “(i:int) = i”),
+   (26, StrengthSuccess, “(i:int) % 1 = 0”),
+   (27, StrengthSuccess, “(i:int) % 42 <= 41”),
+   (28, StrengthSuccess, “-(i:int) * 1 = 0 ==> i = 0”),
+   (29, StrengthSuccess,
+    “(0:int) < ABS i /\ ABS i * 1 < ABS i * j ==>
+     1 < ABS i * j”),
+   (30, StrengthSuccess, “(x:num) < SUC y <=> x <= y”),
+   (31, StrengthSuccess,
+    “((x:num) = z ==> x <> y) ==> x <> y \/ z <> y”),
+   (32, StrengthSuccess, “((x:num) < SUC y) = (x <= y)”),
+   (33, StrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (34, StrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (35, StrengthSuccess, “(P:bool) = Q ==> Q = P”),
+   (36, StrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==> MIN x y = 0”),
+   (37, StrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==>
+     MAX x y = x + y”),
+   (38, StrengthSuccess,
+    “(x:num) <> y /\ a + 2 = b /\ a < y /\ y < b /\
+     a < x /\ x < b ==> F”),
+   (39, StrengthSuccess,
+    “y < (x:num) /\ z < y /\ x < z ==> F”),
+   (40, StrengthSuccess, “y < (x:num) - 5 ==> y < x”),
+   (41, StrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
+   (42, StrengthSuccess,
+    “(x:num) <> y /\ x <= y ==> x < y”),
+   (43, StrengthSuccess,
+    “(x:num) < y /\ P (x - y) ==> P 0”),
+   (44, StrengthSuccess,
+    “(x - y) - (x:num) = (x - x) - y”),
+   (45, StrengthSuccess,
+    “(a:num) < b /\ c < d ==> a - b = c - d”),
+   (46, StrengthSuccess,
+    “(a:num) - (b - (c - (d - e))) =
+     a - (b - (c - (d - e)))”),
+   (47,
+    StrengthKnownGap
+      "upstream oops: NNF expansion of the ordering disjunction",
+    “((n:num) < m /\ m < n') \/
+     (n < m /\ m = n') \/
+     (n < n' /\ n' < m) \/
+     (n = n' /\ n' < m) \/
+     (n = m /\ m < n') \/
+     (n' < m /\ m < n) \/
+     (n' < m /\ m = n) \/
+     (n' < n /\ n < m) \/
+     (n' = n /\ n < m) \/
+     (n' = m /\ m < n) \/
+     (m < n /\ n < n') \/
+     (m < n /\ n' = n) \/
+     (m < n' /\ n' < n) \/
+     (m = n /\ n < n') \/
+     (m = n' /\ n' < n) \/
+     (n' = m /\ m = n)”),
+   (48,
+    StrengthExpectedFailure
+      "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)",
+    “2 * (x:num) <> 1”),
+   (49, StrengthSuccess, “(0:num) < 1”),
+   (50, StrengthSuccess, “(0:int) < 1”),
+   (51, StrengthSuccess, “(47:num) + 11 < 8 * 15”),
+   (52, StrengthSuccess, “(47:int) + 11 < 8 * 15”),
+   (53, StrengthSuccess,
+    “(a:num) <> b /\ (i:int) <> j /\ a < 2 /\ b < 2 ==>
+     a + b <= Num (int_max (ABS i) (ABS j))”),
+   (54, StrengthSuccess,
+    “(i:int) <> j /\ (a:num) <> b /\ a < 2 /\ b < 2 ==>
+     a + b <= Num (int_max (ABS i) (ABS j))”)]
+
+fun selftest_level () =
+  case Option.mapPartial Int.fromString
+         (OS.Process.getEnv "HOLSELFTESTLEVEL") of
+      SOME level => level
+    | NONE => 1
+
+val strength_goal_budget = Time.fromSeconds 30
+val strength_gap_budget = Time.fromSeconds 5
+val strength_suite_budget = Time.fromSeconds 120
+val strength_succeeded = ref 0
+val strength_failed_as_expected = ref 0
+
+fun strength_attempt expectation proposition =
+  let
+    val budget =
+      case expectation of
+          StrengthKnownGap _ => strength_gap_budget
+        | _ => strength_goal_budget
+  in
+    SOME
+      (Timeout.apply budget
+        (fn () =>
+          valid_closes (linarithLib.LINARITH_TAC [])
+            ([], proposition)) ())
+  end
+  handle Timeout.TIMEOUT _ => NONE
+       | Feedback.HOL_ERR _ => SOME false
+
+fun run_strength_goal (number, expectation, proposition) =
+  let
+    val prefix =
+      "Arith_Examples goal " ^ Int.toString number
+    val label =
+      case expectation of
+          StrengthSuccess => prefix
+        | StrengthExpectedFailure remedy =>
+            prefix ^ " (expected failure: " ^ remedy ^ ")"
+        | StrengthKnownGap reason =>
+            prefix ^ " (known gap: " ^ reason ^ ")"
+    val _ = tprint label
+    val result = strength_attempt expectation proposition
+  in
+    case (expectation, result) of
+        (StrengthSuccess, SOME true) =>
+          (strength_succeeded := !strength_succeeded + 1; OK ())
+      | (StrengthSuccess, NONE) =>
+          die (prefix ^ " exceeded its 30 second budget")
+      | (StrengthSuccess, SOME false) =>
+          die (prefix ^ " was not proved by LINARITH_TAC")
+      | (StrengthExpectedFailure remedy, SOME false) =>
+          (strength_failed_as_expected :=
+             !strength_failed_as_expected + 1;
+           OK ())
+      | (StrengthExpectedFailure remedy, NONE) =>
+          die (prefix ^ " timed out; expected quick failure; " ^ remedy)
+      | (StrengthExpectedFailure remedy, SOME true) =>
+          die (prefix ^ " unexpectedly succeeded; " ^ remedy)
+      | (StrengthKnownGap reason, SOME true) =>
+          die (prefix ^ " unexpectedly closed the known gap; " ^ reason)
+      | (StrengthKnownGap _, _) =>
+          (strength_failed_as_expected :=
+             !strength_failed_as_expected + 1;
+           OK ())
+  end
+
+val _ =
+  if selftest_level () >= 2 then
+    let
+      val started = Time.now ()
+      val _ = List.app run_strength_goal arith_examples_corpus
+      val elapsed = Time.- (Time.now (), started)
+    in
+      check
+        ("Arith_Examples suite count and time budget",
+         fn () =>
+           List.length arith_examples_corpus = 54 andalso
+           !strength_succeeded = 52 andalso
+           !strength_failed_as_expected = 2 andalso
+           Time.< (elapsed, strength_suite_budget))
+    end
+  else ()

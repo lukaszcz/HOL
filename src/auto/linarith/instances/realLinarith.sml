@@ -158,6 +158,7 @@ val instance : linarithData.linarith_instance =
      [linarithInstTheory.REAL_MIN_SPLIT,
       linarithInstTheory.REAL_MAX_SPLIT,
       linarithInstTheory.REAL_ABS_SPLIT],
+   atom_facts = (fn _ => []),
    divmod_facts = NONE}
 
 val _ = linarithData.register_instance instance

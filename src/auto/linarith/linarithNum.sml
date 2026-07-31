@@ -146,12 +146,20 @@ fun divmod_facts tm =
   case dest_divmod tm of
       NONE => []
     | SOME (dividend, divisor) =>
-        case positive_literal divisor of
-            NONE => []
-          | SOME positive =>
-              CONJUNCTS
-                (SPEC dividend
-                  (MP (SPEC divisor arithmeticTheory.DIVISION) positive))
+        if Term.aconv divisor numSyntax.zero_tm then
+          if numSyntax.is_mod tm then
+            [SPEC dividend
+               (GEN_ALL (CONJUNCT1 arithmeticTheory.MOD_0))]
+          else
+            [SPEC dividend
+               (GEN_ALL (CONJUNCT1 arithmeticTheory.DIV_0))]
+        else
+          case positive_literal divisor of
+              NONE => []
+            | SOME positive =>
+                CONJUNCTS
+                  (SPEC dividend
+                    (MP (SPEC divisor arithmeticTheory.DIVISION) positive))
 
 fun nonneg tm =
   if Term.type_of tm = numSyntax.num then
@@ -194,6 +202,7 @@ val instance : linarithData.linarith_instance =
      [linarithSeedTheory.NUM_MIN_SPLIT,
       linarithSeedTheory.NUM_MAX_SPLIT,
       linarithSeedTheory.NUM_SUB_SPLIT],
+   atom_facts = (fn _ => []),
    divmod_facts = SOME divmod_facts}
 
 end

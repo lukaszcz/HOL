@@ -97,8 +97,8 @@ val _ =
              in
                List.length (facts div_tm) = 2 andalso
                List.length (facts mod_tm) = 2 andalso
-               null (facts (numSyntax.mk_div
-                 (num_x, numSyntax.zero_tm)))
+               List.length (facts (numSyntax.mk_div
+                 (num_x, numSyntax.zero_tm))) = 1
              end)
 
 val num_decomp_relation =
@@ -148,6 +148,7 @@ fun synthetic_instance discrete : linarithData.linarith_instance =
       nonneg = (fn _ => NONE)},
    norm_conv = Conv.ALL_CONV,
    pre_split = [],
+   atom_facts = (fn _ => []),
    divmod_facts = NONE}
 
 val _ = linarithData.register_instance (synthetic_instance false)
@@ -242,6 +243,7 @@ fun make_decomp_instance dest_minus :
       nonneg = (fn _ => NONE)},
    norm_conv = Conv.ALL_CONV,
    pre_split = [],
+   atom_facts = (fn _ => []),
    divmod_facts = NONE}
 
 val decomp_instance =
@@ -841,6 +843,7 @@ fun num_instance_with_mult_mono mult_mono =
         nonneg = #nonneg kit},
      norm_conv = #norm_conv num_instance,
      pre_split = #pre_split num_instance,
+     atom_facts = #atom_facts num_instance,
      divmod_facts = #divmod_facts num_instance} :
       linarithData.linarith_instance
   end

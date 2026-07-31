@@ -28,6 +28,7 @@ sig
     },
     norm_conv : conv,
     pre_split : thm list,
+    atom_facts : term -> thm list,
     divmod_facts : (term -> thm list) option
   }
 

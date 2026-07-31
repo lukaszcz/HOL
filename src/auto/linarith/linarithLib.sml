@@ -151,6 +151,15 @@ fun SIMPLE_LINARITH_TAC arguments =
           core function linarithData.default_config goal))
   end
 
+fun has_registered_subterm tm =
+  Option.isSome (linarithData.instance_for (Term.type_of tm)) orelse
+  if Term.is_abs tm then has_registered_subterm (#2 (Term.dest_abs tm))
+  else
+    case Lib.total Term.dest_comb tm of
+        NONE => false
+      | SOME (rator, rand) =>
+          has_registered_subterm rator orelse has_registered_subterm rand
+
 fun shell_relevant tm =
   linarithDecomp.is_relevant tm orelse
   (case Lib.total boolSyntax.dest_neg tm of
@@ -158,8 +167,8 @@ fun shell_relevant tm =
      | NONE =>
          (case Lib.total boolSyntax.dest_eq tm of
               SOME (left, right) =>
-                same_type (Term.type_of left) Type.bool andalso
-                (shell_relevant left orelse shell_relevant right)
+                same_type (Term.type_of left) Type.bool orelse
+                shell_relevant left orelse shell_relevant right
             | NONE =>
                 (case Lib.total boolSyntax.dest_conj tm of
                      SOME (left, right) =>
@@ -181,7 +190,8 @@ fun shell_relevant tm =
                                              boolSyntax.dest_exists tm of
                                           SOME (_, body) =>
                                             shell_relevant body
-                                        | NONE => false)))))))
+                                        | NONE =>
+                                            has_registered_subterm tm)))))))
 
 fun filter_relevant (assumptions, conclusion) =
   let
@@ -199,6 +209,7 @@ val nnf_rewrites =
    boolTheory.DE_MORGAN_THM,
    boolTheory.NOT_FORALL_THM,
    boolTheory.NOT_EXISTS_THM,
+   arithmeticTheory.SUB_EQ_0,
    CONJUNCT1 boolTheory.NOT_CLAUSES]
 
 fun nnf_rule theorem = Rewrite.REWRITE_RULE nnf_rewrites theorem
@@ -299,12 +310,19 @@ fun decomp_atoms tm =
         map #1 (lhs @ rhs)
 
 fun facts_for tm =
-  case linarithData.instance_for (Term.type_of tm) of
-      NONE => []
-    | SOME instance =>
-        (case #divmod_facts instance of
-             NONE => []
-           | SOME facts => facts tm)
+  let
+    val instances = linarithData.all_instances ()
+    val generic = List.concat (map (fn i => #atom_facts i tm) instances)
+    val divmod =
+      case linarithData.instance_for (Term.type_of tm) of
+          NONE => []
+        | SOME instance =>
+            (case #divmod_facts instance of
+                 NONE => []
+               | SOME facts => facts tm)
+  in
+    generic @ divmod
+  end
 
 fun augmentation_round processed assumptions =
   let
@@ -361,7 +379,9 @@ fun CFG_LINARITH_TAC config arguments =
               (nnf_flatten,
                Tactical.THEN
                  (split_fixpoint function split_limit split_tac,
-                  augment_divmod function split_limit))))
+                  Tactical.THEN
+                    (augment_divmod function split_limit,
+                     nnf_flatten)))))
   in
     Tactical.THEN
       (clasetLib.INSERT_FACTS_TAC facts,
