@@ -274,9 +274,6 @@ fun split_fixpoint function limit split_tac =
     loop 0
   end
 
-fun insert_aconv tm terms =
-  if List.exists (Term.aconv tm) terms then terms else tm :: terms
-
 fun distinct_thms theorems =
   let
     fun add (theorem, result) =

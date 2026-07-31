@@ -1,0 +1,51 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `linarith_solver`
+
+``` hol4
+linarithLib.linarith_solver : Traverse.ssolver
+```
+
+------------------------------------------------------------------------
+
+Provides the named unsafe simplifier solver `"lin_arith"`.
+
+The solver proves arithmetic side conditions from the simplifier's
+`context_thms` and persistent `[arith]` facts. It uses direct forward
+arithmetic, without the operator splitting and Boolean preprocessing of
+`LINARITH_TAC`. The solver is already installed in the clasimp and Aesop
+simpsets. It can be added to another simpset with
+`simpLib.add_unsafe_solver`, suppressed for one invocation with
+`Excl "lin_arith"`, or removed from a simpset with
+`simpLib.remove_solver "lin_arith"`.
+
+Here *unsafe* determines when the simplifier tries the solver. Every
+successful result remains a kernel-checked theorem.
+
+### Failure
+
+The solver raises a `HOL_ERR` when its requested proposition does not
+follow by supported direct linear arithmetic. The simplifier treats this
+as the solver being inapplicable and may try another solver.
+
+### Example
+
+``` hol4
+val arithmetic_ss =
+  simpLib.add_unsafe_solver linarithLib.linarith_solver
+    (bossLib.srw_ss ());
+
+Theorem linarith_solver_example:
+  !x y z : num. x <= y /\ y <= z ==> x <= z
+Proof
+  rpt strip_tac >>
+  simpLib.FULL_SIMP_TAC arithmetic_ss []
+QED
+```
+
+### See also
+
+[`linarithLib`](#linarithLib),
+[`linarithLib.LINARITH_ss`](#linarithLib.LINARITH_ss),
+[`simpLib.add_unsafe_solver`](#simpLib.add_unsafe_solver),
+[`simpLib.remove_solver`](#simpLib.remove_solver),
+[`linarithData.arith`](#linarithData.arith)

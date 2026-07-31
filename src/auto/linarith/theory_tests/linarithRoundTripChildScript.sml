@@ -21,8 +21,12 @@ val split_count =
 val removed_count =
   count linarithRoundTripBaseTheory.arith_round_trip_removed
     (linarithData.arith_facts ())
+val split_removed_count =
+  count linarithRoundTripBaseTheory.arith_split_round_trip_removed
+    (linarithData.arith_split_thms ())
 
 val _ =
-  if fact_count = 1 andalso split_count = 1 andalso removed_count = 0
+  if fact_count = 1 andalso split_count = 1 andalso
+     removed_count = 0 andalso split_removed_count = 0
   then ()
   else fail "reload lost, duplicated, or resurrected an inherited theorem"

@@ -8,8 +8,6 @@ val ERR = mk_HOL_ERR "ratLinarith"
 val rat_of_int_tm =
   prim_mk_const {Name = "rat_of_int", Thy = "rat"}
 
-fun mk_rat_of_int tm = Term.mk_comb (rat_of_int_tm, tm)
-
 fun dest_rat_of_int tm =
   let
     val (operator, argument) = Term.dest_comb tm

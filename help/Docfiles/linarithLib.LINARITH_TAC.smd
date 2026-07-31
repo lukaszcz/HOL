@@ -1,0 +1,51 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `LINARITH_TAC`
+
+``` hol4
+linarithLib.LINARITH_TAC : thm list -> tactic
+```
+
+------------------------------------------------------------------------
+
+Proves a goal using full linear-arithmetic preprocessing and certificate
+replay.
+
+`LINARITH_TAC thms` is
+`CFG_LINARITH_TAC linarithLib.default_config thms`. It inserts persistent
+`[arith]` facts and each unmarked theorem in `thms`, negates the
+conclusion, filters irrelevant assumptions, converts Boolean structure to
+negation normal form, repeatedly applies operator-splitting rules, adds
+applicable division and modulus facts, and refutes every resulting linear
+constraint system.
+
+The split corpus consists of persistent `[arith_split]` declarations,
+per-instance rules, and arguments marked `markerLib.Split th`. Classical,
+simplifier, and Iff markers are rejected. The default `neq_limit` and
+`split_limit` are both 9. The tactic has close-or-fail semantics.
+
+### Failure
+
+Fails if preprocessing or linear arithmetic does not close every goal, if
+a needed carrier has no registered instance, if a limit is exceeded, or
+if an argument has an unsupported marker. A malformed split theorem is
+also rejected.
+
+### Example
+
+``` hol4
+Theorem linarith_tac_example:
+  !m n : num. MIN m n <= m
+Proof
+  rpt strip_tac >>
+  linarithLib.LINARITH_TAC []
+QED
+```
+
+### See also
+
+[`linarithLib`](#linarithLib),
+[`linarithLib.SIMPLE_LINARITH_TAC`](#linarithLib.SIMPLE_LINARITH_TAC),
+[`linarithLib.CFG_LINARITH_TAC`](#linarithLib.CFG_LINARITH_TAC),
+[`linarithData.arith`](#linarithData.arith),
+[`linarithData.arith_split`](#linarithData.arith_split),
+[`splitLib.SPLIT_TAC`](#splitLib.SPLIT_TAC)

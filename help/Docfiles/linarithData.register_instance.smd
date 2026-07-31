@@ -1,0 +1,53 @@
+>>__ Parse.temp_set_grammars $ valOf $ grammarDB {thyname="hol"};
+## `register_instance`
+
+``` hol4
+linarithData.register_instance :
+  linarithData.linarith_instance -> unit
+```
+
+------------------------------------------------------------------------
+
+Installs a carrier implementation in the session-local linarith registry.
+
+An instance record identifies its `ty` and whether its order is
+`discrete`. Its `dest` component recognises addition, optional subtraction
+and negation, multiplication, optional division and successor, literals,
+strict and non-strict order, and constructs literals. Its `kit` component
+provides monotonicity, strict-order, negated-order, disequality, and
+non-negativity theorems used during replay.
+
+The remaining fields are a normalising conversion, `pre_split` rules,
+`atom_facts`, and optional `divmod_facts`. These callbacks extend the
+generic preprocessing and replay engine without adding carrier tests to
+it. Injections between carriers are installed separately with
+`register_injection`.
+
+The registry is keyed by `#ty`. Registering another instance for the same
+type atomically replaces the old entry and issues a warning. Registration
+does not eagerly validate the theorem kit; malformed components fail when
+an arithmetic operation consumes them. Instance modules normally register
+their records as a module-loading side effect.
+
+### Failure
+
+Registration itself performs no theorem-kit validation. Invalid callbacks
+or replay theorems generally fail only when the instance is used.
+
+### Example
+
+The natural-number instance can be reinstalled explicitly. Calling the
+resulting function after `linarithLib` has loaded intentionally warns that
+it replaces the existing entry.
+
+``` hol4
+fun reinstall_num_instance () =
+  linarithData.register_instance linarithNum.instance;
+```
+
+### See also
+
+[`linarithLib`](#linarithLib),
+[`linarithData.arith`](#linarithData.arith),
+[`linarithData.arith_split`](#linarithData.arith_split),
+[`linarithLib.LINARITH_TAC`](#linarithLib.LINARITH_TAC)

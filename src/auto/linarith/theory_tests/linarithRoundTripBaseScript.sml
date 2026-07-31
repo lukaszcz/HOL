@@ -31,6 +31,16 @@ Proof
   simp[arith_split_round_trip_def]
 QED
 
+Definition arith_split_removed_def:
+  arith_split_removed (p : bool) = p
+End
+
+Theorem arith_split_round_trip_removed[arith_split]:
+  !P p. P (arith_split_removed p) <=> P p
+Proof
+  simp[arith_split_removed_def]
+QED
+
 val _ =
   if contains arith_round_trip_fact (linarithData.arith_facts ()) andalso
      contains arith_split_round_trip_rule
@@ -58,3 +68,19 @@ val _ =
      not (contains arith_round_trip_removed (linarithData.arith_facts ()))
   then ()
   else fail "remove_arith did not write and apply its REMOVE delta"
+
+val split_removed_name =
+  "linarithRoundTripBase.arith_split_round_trip_removed"
+val _ = linarithData.remove_arith_split split_removed_name
+
+val has_split_remove_delta =
+  List.exists
+    (fn ThmSetData.REMOVE name => name = split_removed_name | _ => false)
+    (ThmSetData.current_data {settype = "arith_split"})
+
+val _ =
+  if has_split_remove_delta andalso
+     not (contains arith_split_round_trip_removed
+       (linarithData.arith_split_thms ()))
+  then ()
+  else fail "remove_arith_split did not write and apply its REMOVE delta"

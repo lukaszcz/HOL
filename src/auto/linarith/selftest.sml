@@ -1024,6 +1024,10 @@ fun valid_closes tactic goal =
       [] => true
     | _ => false
 
+fun tactic_fails tactic goal =
+  ((ignore (Tactical.VALID tactic goal); false)
+   handle Feedback.HOL_ERR _ => true)
+
 val public_x = Term.mk_var ("linarith_public_x", numSyntax.num)
 val public_y = Term.mk_var ("linarith_public_y", numSyntax.num)
 val public_z = Term.mk_var ("linarith_public_z", numSyntax.num)
@@ -1105,6 +1109,22 @@ val _ =
        valid_closes (linarithLib.SIMPLE_LINARITH_TAC [])
          ([public_x_neq_one, num_leq public_x num_one],
           num_less public_x num_one))
+
+val public_fact_positive =
+  num_less num_zero (numSyntax.mk_fact public_x)
+val public_fact_positive_theorem =
+  Thm.SPEC public_x arithmeticTheory.FACT_LESS
+
+val _ =
+  check
+    ("plain tactic arguments are inserted as arithmetic facts",
+     fn () =>
+       tactic_fails (linarithLib.SIMPLE_LINARITH_TAC [])
+         ([], public_fact_positive) andalso
+       valid_closes
+         (linarithLib.SIMPLE_LINARITH_TAC
+           [public_fact_positive_theorem])
+         ([], public_fact_positive))
 
 fun marker_error_name marker =
   ((ignore (linarithLib.SIMPLE_LINARITH_TAC [marker]); false)
@@ -1215,9 +1235,15 @@ val two_pipeline_rounds : linarithLib.linarith_config =
 val nine_pipeline_rounds : linarithLib.linarith_config =
   {neq_limit = 9, split_limit = 9}
 
-fun tactic_fails tactic goal =
-  ((ignore (Tactical.VALID tactic goal); false)
-   handle Feedback.HOL_ERR _ => true)
+val _ =
+  check
+    ("default_config freezes both public limits at nine",
+     fn () =>
+       let
+         val {neq_limit, split_limit} = linarithLib.default_config
+       in
+         neq_limit = 9 andalso split_limit = 9
+       end)
 
 val _ =
   check
@@ -1265,14 +1291,26 @@ val _ =
          (linarithLib.CFG_LINARITH_TAC nine_pipeline_rounds [])
          ([], nested_min_goal))
 
+val public_condition =
+  Term.mk_var ("linarith_public_condition", Type.bool)
+val public_conditional =
+  boolSyntax.mk_cond (public_condition, public_x, public_y)
+val public_conditional_bound = num_leq public_conditional public_z
+val public_bool_split = TypeBase.case_pred_disj_of ``:bool``
+
 val _ =
   check
-    ("LINARITH_TAC accepts a validated per-call Split marker",
+    ("LINARITH_TAC consumes a per-call Split rule absent from its seeds",
      fn () =>
-       valid_closes
-         (linarithLib.LINARITH_TAC
-           [markerLib.Split linarithSeedTheory.NUM_MIN_SPLIT])
-         ([], min_le_left))
+       let
+         val goal =
+           ([public_x_le_z, public_y_le_z], public_conditional_bound)
+       in
+         tactic_fails (linarithLib.LINARITH_TAC []) goal andalso
+         valid_closes
+           (linarithLib.LINARITH_TAC
+             [markerLib.Split public_bool_split]) goal
+       end)
 
 fun full_marker_error marker =
   ((ignore (linarithLib.LINARITH_TAC [marker]); false)
@@ -1366,8 +1404,15 @@ val _ =
        List.all has_unregistered_message
          [fn () =>
             ignore
+              (linarithLib.LINARITH_TAC [] ([], unregistered_goal)),
+          fn () =>
+            ignore
               (linarithLib.SIMPLE_LINARITH_TAC []
                 ([], unregistered_goal)),
+          fn () =>
+            ignore
+              (linarithLib.CFG_LINARITH_TAC
+                linarithLib.default_config [] ([], unregistered_goal)),
           fn () => ignore (linarithLib.LINARITH_PROVE unregistered_goal),
           fn () => ignore (linarithLib.LINARITH_CONV unregistered_goal)])
 
