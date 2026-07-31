@@ -6,6 +6,8 @@ open linarithSolve
 
 val ERR = mk_HOL_ERR "linarithReplay"
 
+type config = linarithData.linarith_config
+
 fun nth what items index =
   List.nth (items, index)
   handle Subscript =>
@@ -423,6 +425,195 @@ fun mkthm (Env atoms) assumptions justification =
       in
         raise ERR "mkthm" message
       end
+  end
+
+(* Both replay paths use this operation to select neqE from the instance
+   belonging to the disequality's carrier. *)
+fun is_disequality tm =
+  case linarithDecomp.decomp tm of
+      SOME (Decomp {rel = REL_NEQ, negated = false, ...}) => true
+    | SOME (Decomp {rel = REL_EQ, negated = true, ...}) => true
+    | _ => false
+
+datatype split = Split of thm * term * term
+
+fun extract_split theorem =
+  let
+    val (left_imp, rest) = boolSyntax.dest_imp (Thm.concl theorem)
+    val (left, left_result) = boolSyntax.dest_imp left_imp
+    val (right_imp, result) = boolSyntax.dest_imp rest
+    val (right, right_result) = boolSyntax.dest_imp right_imp
+  in
+    if Term.aconv left_result boolSyntax.F andalso
+       Term.aconv right_result boolSyntax.F andalso
+       Term.aconv result boolSyntax.F
+    then Split (theorem, left, right)
+    else raise ERR "extract_split" "neqE has an unexpected conclusion"
+  end
+
+fun split_assumption discrete_only theorem =
+  let
+    val tm = Thm.concl theorem
+    val instance = instance_of_thm theorem
+  in
+    if is_disequality tm andalso
+       (not discrete_only orelse #discrete instance)
+    then
+      Option.map extract_split
+        (first_match [#neqE (#kit instance)] theorem)
+    else NONE
+  end
+  handle HOL_ERR _ => NONE
+
+datatype splittree =
+    Tip of thm list
+  | Spl of thm * term * splittree * term * splittree
+
+fun prepend_tips theorem (Tip theorems) = Tip (theorem :: theorems)
+  | prepend_tips theorem (Spl (split, left, left_tree,
+                               right, right_tree)) =
+      Spl (split, left, prepend_tips theorem left_tree,
+           right, prepend_tips theorem right_tree)
+
+fun split_pass _ [] = Tip []
+  | split_pass discrete_only (theorem :: rest) =
+      case split_assumption discrete_only theorem of
+          NONE => prepend_tips theorem (split_pass discrete_only rest)
+        | SOME (Split (split, left, right)) =>
+            Spl (split, left,
+                 split_pass discrete_only
+                   (rest @ [Thm.ASSUME left]),
+                 right,
+                 split_pass discrete_only
+                   (rest @ [Thm.ASSUME right]))
+
+fun bind_tips (Tip theorems) f = f theorems
+  | bind_tips (Spl (split, left, left_tree, right, right_tree)) f =
+      Spl (split, left, bind_tips left_tree f,
+           right, bind_tips right_tree f)
+
+fun splitasms assumptions =
+  bind_tips (split_pass true assumptions) (split_pass false)
+
+fun fwdproof (Tip assumptions) (justification :: rest) =
+      (mkthm (mk_instance_env (List.map Thm.concl assumptions))
+         assumptions justification,
+       rest)
+  | fwdproof (Tip _) [] =
+      raise ERR "fwdproof" "too few linear-arithmetic justifications"
+  | fwdproof (Spl (split, left, left_tree, right, right_tree)) justs =
+      let
+        val (left_false, left_rest) = fwdproof left_tree justs
+        val (right_false, right_rest) =
+          fwdproof right_tree left_rest
+        val left_case = Thm.DISCH left left_false
+        val right_case = Thm.DISCH right right_false
+      in
+        (Thm.MP (Thm.MP split left_case) right_case, right_rest)
+      end
+
+fun negate tm =
+  if boolSyntax.is_neg tm then boolSyntax.dest_neg tm
+  else boolSyntax.mk_neg tm
+
+fun finish_forward conclusion negated false_theorem =
+  if boolSyntax.is_neg conclusion then
+    Thm.NOT_INTRO (Thm.DISCH negated false_theorem)
+  else Thm.CCONTR conclusion false_theorem
+
+fun fwd_prove config theorems conclusion =
+  let
+    val hypotheses = List.map Thm.concl theorems
+    val (split_neq, result) =
+      linarithSolve.prove config linarithDecomp.decomp
+        hypotheses conclusion
+    val justifications =
+      case result of
+          SOME justs => justs
+        | NONE =>
+            raise ERR "fwd_prove" "linear arithmetic found no proof"
+    val negated = negate conclusion
+    val assumptions = theorems @ [Thm.ASSUME negated]
+    val tree = if split_neq then splitasms assumptions
+               else Tip assumptions
+    val (false_theorem, unused) = fwdproof tree justifications
+    val _ =
+      if null unused then ()
+      else
+        raise ERR "fwd_prove"
+          "too many linear-arithmetic justifications"
+    val theorem = finish_forward conclusion negated false_theorem
+    val _ = linarithData.trace_thm 2 "forward proof:" theorem
+  in
+    theorem
+  end
+
+fun find_split discrete_only assumptions =
+  let
+    fun find _ [] = NONE
+      | find prefix (theorem :: rest) =
+          case split_assumption discrete_only theorem of
+              SOME split => SOME (List.rev prefix, rest, split)
+            | NONE => find (theorem :: prefix) rest
+  in
+    find [] (List.map Thm.ASSUME assumptions)
+  end
+
+fun neq_elim_tac discrete_only (assumptions, goal) =
+  if not (Term.aconv goal boolSyntax.F) then
+    raise ERR "neq_elim_tac" "goal is not false"
+  else
+    case find_split discrete_only assumptions of
+        NONE => raise ERR "neq_elim_tac" "no matching disequality"
+      | SOME (prefix, suffix, Split (split, left, right)) =>
+          let
+            val common = List.map Thm.concl (prefix @ suffix)
+            val goals =
+              [(common @ [left], boolSyntax.F),
+               (common @ [right], boolSyntax.F)]
+            fun justify [left_false, right_false] =
+                  Thm.MP
+                    (Thm.MP split (Thm.DISCH left left_false))
+                    (Thm.DISCH right right_false)
+              | justify _ =
+                  raise ERR "neq_elim_tac" "invalid justification"
+          in
+            (goals, justify)
+          end
+
+fun append_negated_tac (assumptions, conclusion) =
+  let
+    val negated = negate conclusion
+    val goal = (assumptions @ [negated], boolSyntax.F)
+    fun justify [false_theorem] =
+          finish_forward conclusion negated false_theorem
+      | justify _ =
+          raise ERR "append_negated_tac" "invalid justification"
+  in
+    ([goal], justify)
+  end
+
+fun justification_tac justification (assumptions, goal) =
+  if not (Term.aconv goal boolSyntax.F) then
+    raise ERR "justification_tac" "goal is not false"
+  else
+    Tactic.ACCEPT_TAC
+      (mkthm (mk_instance_env assumptions)
+        (List.map Thm.ASSUME assumptions) justification)
+      (assumptions, goal)
+
+fun refute_tac split_neq justifications =
+  let
+    val split_tac =
+      if split_neq then
+        Tactical.THEN
+          (Tactical.REPEAT (neq_elim_tac true),
+           Tactical.REPEAT (neq_elim_tac false))
+      else Tactical.ALL_TAC
+    val leaves = List.map justification_tac justifications
+  in
+    Tactical.THEN
+      (append_negated_tac, Tactical.THENL (split_tac, leaves))
   end
 
 end

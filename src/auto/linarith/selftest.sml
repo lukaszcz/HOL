@@ -909,3 +909,96 @@ val _ =
 (* TODO: Add the injection add-fallback golden with the first real cross-type
    instance kit.  The only injection available here is decomposition-only;
    its placeholder hom theorems are not valid replay rules. *)
+
+val split_x = Term.mk_var ("linarith_split_x", numSyntax.num)
+val split_y = Term.mk_var ("linarith_split_y", numSyntax.num)
+val split_x_neq_one = num_not (num_eq split_x num_one)
+val split_y_neq_one = num_not (num_eq split_y num_one)
+val split_x_upper = num_leq split_x num_one
+val split_x_lower = num_leq num_one split_x
+val split_y_upper = num_leq split_y num_one
+val split_y_lower = num_leq num_one split_y
+val split_conclusion = num_leq split_x num_one
+
+val one_split_config : linarithData.linarith_config =
+  {neq_limit = 1, split_limit = 9}
+val two_split_config : linarithData.linarith_config =
+  {neq_limit = 2, split_limit = 9}
+
+fun forward_with disequalities =
+  linarithReplay.fwd_prove two_split_config
+    (List.map Thm.ASSUME
+      (disequalities @
+        [split_x_upper, split_x_lower,
+         split_y_upper, split_y_lower]))
+    split_conclusion
+
+fun tactic_replay_succeeds config assumptions conclusion =
+  case linarithSolve.prove config linarithDecomp.decomp
+         assumptions conclusion of
+      (_, NONE) => false
+    | (split_neq, SOME justifications) =>
+        let
+          val (goals, _) =
+            Tactical.VALID
+              (linarithReplay.refute_tac split_neq justifications)
+              (assumptions, conclusion)
+        in
+          null goals
+        end
+
+val _ =
+  check
+    ("forward replay proves a num consequence with one neq split",
+     fn () =>
+       let
+         val theorem =
+           linarithReplay.fwd_prove one_split_config
+             (List.map Thm.ASSUME
+               [split_x_neq_one, split_x_upper, split_x_lower])
+             split_conclusion
+       in
+         Term.aconv (Thm.concl theorem) split_conclusion andalso
+         List.exists (Term.aconv split_x_neq_one) (Thm.hyp theorem)
+       end)
+
+val _ =
+  check
+    ("forward replay handles nested neq splits at the configured limit",
+     fn () =>
+       let
+         val theorem =
+           forward_with [split_x_neq_one, split_y_neq_one]
+       in
+         Term.aconv (Thm.concl theorem) split_conclusion
+       end)
+
+val _ =
+  check
+    ("permuting num neq premises preserves both replay styles",
+     fn () =>
+       let
+         val orders =
+           [[split_x_neq_one, split_y_neq_one],
+            [split_y_neq_one, split_x_neq_one]]
+         fun forward_succeeds assumptions =
+           Term.aconv (Thm.concl (forward_with assumptions))
+             split_conclusion
+         fun tactic_succeeds assumptions =
+           tactic_replay_succeeds two_split_config
+             (assumptions @
+               [split_x_upper, split_x_lower,
+                split_y_upper, split_y_lower])
+             split_conclusion
+       in
+         List.all forward_succeeds orders andalso
+         List.all tactic_succeeds orders
+       end)
+
+val _ =
+  check
+    ("tactic replay closes an explicit neq goal through Tactical.VALID",
+     fn () =>
+       tactic_replay_succeeds one_split_config
+         [split_x_neq_one, split_x_upper, split_x_lower]
+         split_conclusion)
