@@ -4,6 +4,10 @@ INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/simp/src
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
+linarithSeedTheory.uo: linarithData.uo
+linarithNum.uo: linarithSeedTheory.uo
+selftest.uo: linarithNum.uo
+
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<
 
@@ -15,3 +19,8 @@ linarith-selftest.log: selftest.exe
 endif
 
 EXTRA_CLEANS = selftest.exe linarith-selftest.log
+
+ifeq ($(KERNELID),otknl)
+all: $(patsubst %Script.sml,%.ot.art,$(wildcard *Script.sml))
+
+endif

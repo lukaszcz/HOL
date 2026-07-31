@@ -15,10 +15,103 @@ fun last xs = hd (rev xs)
 
 val _ =
   check
-    ("linarith theorem sets initially ship empty",
+    ("linarith ships no arith facts and three num split seeds",
      fn () =>
        null (linarithData.arith_facts ()) andalso
-       null (linarithData.arith_split_thms ()))
+       List.length (linarithData.arith_split_thms ()) = 3)
+
+val num_instance = linarithNum.instance
+val _ = linarithData.register_instance num_instance
+
+val num_x = Term.mk_var ("linarith_num_x", numSyntax.num)
+val num_y = Term.mk_var ("linarith_num_y", numSyntax.num)
+val num_z = Term.mk_var ("linarith_num_z", numSyntax.num)
+val num_two = numSyntax.mk_numeral (Arbnum.fromInt 2)
+val num_three = numSyntax.mk_numeral (Arbnum.fromInt 3)
+val num_seven = numSyntax.mk_numeral (Arbnum.fromInt 7)
+val num_eight = numSyntax.mk_numeral (Arbnum.fromInt 8)
+
+fun num_plus left right = numSyntax.mk_plus (left, right)
+fun num_leq left right = numSyntax.mk_leq (left, right)
+
+fun normalized_rhs tm =
+  #2 (boolSyntax.dest_eq (Thm.concl (#norm_conv num_instance tm)))
+
+val _ =
+  check
+    ("num norm_conv turns a contradictory leq into false",
+     fn () =>
+       Term.aconv
+         (normalized_rhs
+            (num_leq (num_plus num_x num_three)
+              (num_plus num_x num_two)))
+         boolSyntax.F)
+
+val _ =
+  check
+    ("num norm_conv cancels a common summand",
+     fn () =>
+       Term.aconv
+         (normalized_rhs
+            (num_leq (num_plus num_x num_y)
+              (num_plus num_y num_z)))
+         (num_leq num_x num_z))
+
+val _ =
+  check
+    ("num norm_conv decides a ground relation",
+     fn () =>
+       Term.aconv
+         (normalized_rhs (numSyntax.mk_less (num_seven, num_eight)))
+         boolSyntax.T)
+
+val _ =
+  check
+    ("num literals include SUC towers",
+     fn () =>
+       let
+         val tower = numSyntax.mk_suc (numSyntax.mk_suc numSyntax.zero_tm)
+         val dest_lit = #dest_lit (#dest num_instance)
+       in
+         dest_lit tower = Arbrat.two andalso
+         Term.aconv (#mk_lit (#dest num_instance) Arbrat.two) num_two
+       end)
+
+val _ =
+  check
+    ("num divmod facts specialize DIVISION for a positive literal",
+     fn () =>
+       case #divmod_facts num_instance of
+           NONE => false
+         | SOME facts =>
+             let
+               val div_tm = numSyntax.mk_div (num_x, num_three)
+               val mod_tm = numSyntax.mk_mod (num_x, num_three)
+             in
+               List.length (facts div_tm) = 2 andalso
+               List.length (facts mod_tm) = 2 andalso
+               null (facts (numSyntax.mk_div
+                 (num_x, numSyntax.zero_tm)))
+             end)
+
+val num_decomp_relation =
+  num_leq
+    (num_plus (numSyntax.mk_mult (num_two, num_x)) num_three)
+    (num_plus num_x num_y)
+
+val _ =
+  check
+    ("decomp uses the locally registered num instance",
+     fn () =>
+       case linarithDecomp.decomp num_decomp_relation of
+           SOME
+             (Decomp
+                {lhs, lhs_const, rel = REL_LE, rhs, rhs_const,
+                 discrete = true, negated = false}) =>
+               List.length lhs = 1 andalso List.length rhs = 2 andalso
+               lhs_const = Arbrat.fromInt 3 andalso
+               rhs_const = Arbrat.zero
+         | _ => false)
 
 val registry_ty = Type.mk_type ("fun", [Type.bool, Type.bool])
 
