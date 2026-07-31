@@ -21,7 +21,14 @@ val _ =
        List.length (linarithData.arith_split_thms ()) = 3)
 
 val num_instance = linarithNum.instance
-val _ = linarithData.register_instance num_instance
+
+val _ =
+  check
+    ("linarithLib registers the num instance at module load",
+     fn () =>
+       case linarithData.instance_for numSyntax.num of
+           SOME instance => #discrete instance
+         | NONE => false)
 
 val num_x = Term.mk_var ("linarith_num_x", numSyntax.num)
 val num_y = Term.mk_var ("linarith_num_y", numSyntax.num)
@@ -1002,3 +1009,165 @@ val _ =
        tactic_replay_succeeds one_split_config
          [split_x_neq_one, split_x_upper, split_x_lower]
          split_conclusion)
+
+(* Public no-preprocessing surface. *)
+
+fun valid_closes tactic goal =
+  case #1 (Tactical.VALID tactic goal) of
+      [] => true
+    | _ => false
+
+val public_x = Term.mk_var ("linarith_public_x", numSyntax.num)
+val public_y = Term.mk_var ("linarith_public_y", numSyntax.num)
+val public_z = Term.mk_var ("linarith_public_z", numSyntax.num)
+val public_x_le_y = num_leq public_x public_y
+val public_y_le_z = num_leq public_y public_z
+val public_x_le_z = num_leq public_x public_z
+
+val forward_tm =
+  boolSyntax.list_mk_forall
+    ([public_x, public_y, public_z],
+     boolSyntax.mk_imp
+       (boolSyntax.mk_conj (public_x_le_y, public_y_le_z),
+        public_x_le_z))
+
+val _ =
+  check
+    ("num norm_conv refutes a successor self-bound",
+     fn () =>
+       Term.aconv
+         (normalized_rhs
+           (num_leq (num_plus public_z num_one) public_z))
+         boolSyntax.F)
+
+val _ =
+  check
+    ("LINARITH_PROVE strips universals and atomizes conjunctive premises",
+     fn () =>
+       let val theorem = linarithLib.LINARITH_PROVE forward_tm
+       in
+         null (Thm.hyp theorem) andalso
+         Term.aconv (Thm.concl theorem) forward_tm
+       end)
+
+val true_conv_tm =
+  boolSyntax.mk_imp
+    (public_x_le_y,
+     num_leq public_x (num_plus public_y num_one))
+
+val _ =
+  check
+    ("LINARITH_CONV proves a linear implication",
+     fn () =>
+       let
+         val theorem = linarithLib.LINARITH_CONV true_conv_tm
+         val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+       in
+         Term.aconv left true_conv_tm andalso
+         Term.aconv right boolSyntax.T
+       end)
+
+val false_conv_tm = num_less num_three num_two
+
+val _ =
+  check
+    ("LINARITH_CONV disproves a false arithmetic relation",
+     fn () =>
+       let
+         val theorem = linarithLib.LINARITH_CONV false_conv_tm
+         val (left, right) = boolSyntax.dest_eq (Thm.concl theorem)
+       in
+         Term.aconv left false_conv_tm andalso
+         Term.aconv right boolSyntax.F
+       end)
+
+val _ =
+  check
+    ("SIMPLE_LINARITH_TAC uses discreteness through Tactical.VALID",
+     fn () =>
+       valid_closes (linarithLib.SIMPLE_LINARITH_TAC [])
+         ([num_less public_x public_y],
+          num_leq (num_plus public_x num_one) public_y))
+
+val public_x_neq_one = num_not (num_eq public_x num_one)
+
+val _ =
+  check
+    ("SIMPLE_LINARITH_TAC splits disequalities through Tactical.VALID",
+     fn () =>
+       valid_closes (linarithLib.SIMPLE_LINARITH_TAC [])
+         ([public_x_neq_one, num_leq public_x num_one],
+          num_less public_x num_one))
+
+fun marker_error_name marker =
+  ((ignore (linarithLib.SIMPLE_LINARITH_TAC [marker]); false)
+   handle Feedback.HOL_ERR error =>
+     String.isSubstring "SIMPLE_LINARITH_TAC"
+       (Feedback.message_of error))
+
+val _ =
+  check
+    ("SIMPLE_LINARITH_TAC loudly rejects foreign argument markers",
+     fn () =>
+       List.all marker_error_name
+         [markerLib.Split (hd (#pre_split num_instance)),
+          clasetLib.Intro boolTheory.TRUTH,
+          clasetLib.Simp boolTheory.TRUTH,
+          clasetLib.Iff boolTheory.TRUTH,
+          clasetLib.Norm boolTheory.TRUTH])
+
+val nonlinear_goal =
+  num_leq (numSyntax.mk_mult (public_x, public_x)) public_x
+
+val _ =
+  check
+    ("nonlinear goals fail cleanly without leaking global state",
+     fn () =>
+       let
+         val facts_before = List.length (linarithData.arith_facts ())
+         val splits_before =
+           List.length (linarithData.arith_split_thms ())
+         val injections_before =
+           List.length (linarithData.injections ())
+         val failed =
+           ((ignore
+               (linarithLib.SIMPLE_LINARITH_TAC [] ([], nonlinear_goal));
+             false)
+            handle Feedback.HOL_ERR _ => true)
+       in
+         failed andalso
+         facts_before = List.length (linarithData.arith_facts ()) andalso
+         splits_before =
+           List.length (linarithData.arith_split_thms ()) andalso
+         injections_before = List.length (linarithData.injections ()) andalso
+         Option.isSome (linarithData.instance_for numSyntax.num)
+       end)
+
+val unregistered_ty =
+  Type.mk_type ("fun", [numSyntax.num, numSyntax.num])
+val unregistered_left =
+  Term.mk_var ("linarith_unregistered_left", unregistered_ty)
+val unregistered_right =
+  Term.mk_var ("linarith_unregistered_right", unregistered_ty)
+val unregistered_goal =
+  boolSyntax.mk_eq (unregistered_left, unregistered_right)
+val unregistered_message =
+  "no linarith instance for " ^ Parse.type_to_string unregistered_ty ^
+  " (load intLinarith / realLinarith / ratLinarith?)"
+
+fun has_unregistered_message operation =
+  ((operation (); false)
+   handle Feedback.HOL_ERR error =>
+     Feedback.message_of error = unregistered_message)
+
+val _ =
+  check
+    ("all public entries report the stable unregistered-carrier message",
+     fn () =>
+       List.all has_unregistered_message
+         [fn () =>
+            ignore
+              (linarithLib.SIMPLE_LINARITH_TAC []
+                ([], unregistered_goal)),
+          fn () => ignore (linarithLib.LINARITH_PROVE unregistered_goal),
+          fn () => ignore (linarithLib.LINARITH_CONV unregistered_goal)])

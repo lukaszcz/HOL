@@ -32,10 +32,18 @@ fun mk_sum [] = numSyntax.zero_tm
 fun ac_equality left right =
   if Term.aconv left right then Thm.REFL left
   else
-    EQT_ELIM
-      (AC_CONV
-        (arithmeticTheory.ADD_ASSOC, arithmeticTheory.ADD_COMM)
-        (boolSyntax.mk_eq (left, right)))
+    let
+      val equality = boolSyntax.mk_eq (left, right)
+    in
+      EQT_ELIM
+        (AC_CONV
+          (arithmeticTheory.ADD_ASSOC, arithmeticTheory.ADD_COMM)
+          equality)
+      handle HOL_ERR _ =>
+        EQT_ELIM
+          ((BINOP_CONV numSimps.ADDR_CANON_CONV THENC
+            REWR_CONV boolTheory.EQ_REFL) equality)
+    end
 
 fun cancel_common cancel tm =
   let
@@ -44,17 +52,40 @@ fun cancel_common cancel tm =
       if numSyntax.is_leq tm then numSyntax.dest_leq tm
       else if numSyntax.is_less tm then numSyntax.dest_less tm
       else boolSyntax.dest_eq tm
-    val lefts = numSyntax.strip_plus left
-    val rights = numSyntax.strip_plus right
+    fun summands expression =
+      case numSyntax.strip_plus expression of
+          [] => [expression]
+        | terms => terms
+    val lefts = summands left
+    val rights = summands right
   in
     case common_summand lefts rights of
         NONE => raise UNCHANGED
+      | SOME (_, [], []) => raise UNCHANGED
       | SOME (common, left', right') =>
           let
-            val left_target = numSyntax.mk_plus (common, mk_sum left')
-            val right_target = numSyntax.mk_plus (common, mk_sum right')
-            val left_thm = ac_equality left left_target
-            val right_thm = ac_equality right right_target
+            fun cancellation_side original [] =
+                  let
+                    val target = numSyntax.mk_plus
+                      (common, numSyntax.zero_tm)
+                    val expanded =
+                      Thm.SYM
+                        (Thm.SPEC common arithmeticTheory.ADD_0)
+                  in
+                    (target,
+                     Thm.TRANS (ac_equality original common) expanded)
+                  end
+              | cancellation_side original rest =
+                  let
+                    val target =
+                      numSyntax.mk_plus (common, mk_sum rest)
+                  in
+                    (target, ac_equality original target)
+                  end
+            val (left_target, left_thm) =
+              cancellation_side left left'
+            val (right_target, right_thm) =
+              cancellation_side right right'
             val relation_thm =
               Thm.MK_COMB (Thm.AP_TERM operator left_thm, right_thm)
             val cancel_thm =
@@ -78,7 +109,10 @@ fun relation_conv tm =
     (BINOP_CONV numSimps.ADDR_CANON_CONV THENC
      REPEATC (cancel_common cancel) THENC
      TRY_CONV reduceLib.REDUCE_CONV THENC
-     TRY_CONV (simpLib.SIMP_CONV boolSimps.bool_ss [])) tm
+     TRY_CONV
+       (simpLib.SIMP_CONV boolSimps.bool_ss
+          [prim_recTheory.LESS_REFL,
+           arithmeticTheory.LESS_EQ_REFL])) tm
   end
 
 fun expression_conv tm =
