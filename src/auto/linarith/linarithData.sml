@@ -79,6 +79,8 @@ fun instance_for ty =
     (find (fn (registered_ty, _) => same_type ty registered_ty)
       (Sref.value instance_registry))
 
+fun all_instances () = map #2 (Sref.value instance_registry)
+
 val injection_registry = Sref.new ([] : linarith_injection list)
 
 fun same_injection left right =

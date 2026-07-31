@@ -40,6 +40,7 @@ sig
 
   val register_instance : linarith_instance -> unit
   val instance_for : hol_type -> linarith_instance option
+  val all_instances : unit -> linarith_instance list
 
   val register_injection : linarith_injection -> unit
   val injections : unit -> linarith_injection list

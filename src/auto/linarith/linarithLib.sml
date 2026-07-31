@@ -21,13 +21,15 @@ fun relation_carrier tm =
   in
     case Lib.total boolSyntax.dest_eq body of
         SOME (left, right) =>
-          if same_type (Term.type_of left) (Term.type_of right)
+          if same_type (Term.type_of left) (Term.type_of right) andalso
+             not (same_type (Term.type_of left) Type.bool)
           then SOME (Term.type_of left)
           else NONE
       | NONE =>
           (case Lib.total strip_comb body of
                SOME (_, [left, right]) =>
                  if same_type (Term.type_of left) (Term.type_of right) andalso
+                    not (same_type (Term.type_of left) Type.bool) andalso
                     same_type (Term.type_of body) Type.bool
                  then SOME (Term.type_of left)
                  else NONE
@@ -70,7 +72,29 @@ fun validate_split function theorem =
    handle HOL_ERR _ =>
      raise ERR function "Malformed Split theorem (expected P-form)")
 
-fun process_argument function theorem =
+fun plain_argument function theorem =
+  let
+    val {simp_rules, iff_rules, simp_controls, rest} =
+      clasetLib.classify_simp_args [theorem]
+  in
+    if not (null simp_rules) then reject function "Simp"
+    else if not (null iff_rules) then reject function "Iff"
+    else if not (null simp_controls) then
+      reject function "simplifier-control"
+    else
+      case rest of
+          [plain] =>
+            (case first_marker plain classical_markers of
+                 SOME name => reject function name
+               | NONE =>
+                   (case clasetLib.destDel plain of
+                        SOME _ => reject function "Del"
+                      | NONE => plain))
+        | _ =>
+            raise ERR function "internal argument-classification error"
+  end
+
+fun simple_argument function theorem =
   if markerLib.is_Split theorem then
     let
       val split = markerLib.destSplit theorem
@@ -78,54 +102,275 @@ fun process_argument function theorem =
     in
       reject function "Split"
     end
-  else
-    let
-      val {simp_rules, iff_rules, simp_controls, rest} =
-        clasetLib.classify_simp_args [theorem]
-    in
-      if not (null simp_rules) then reject function "Simp"
-      else if not (null iff_rules) then reject function "Iff"
-      else if not (null simp_controls) then
-        reject function "simplifier-control"
-      else
-        case rest of
-            [plain] =>
-              (case first_marker plain classical_markers of
-                   SOME name => reject function name
-                 | NONE =>
-                     (case clasetLib.destDel plain of
-                          SOME _ => reject function "Del"
-                        | NONE => plain))
-          | _ =>
-              raise ERR function "internal argument-classification error"
-    end
+  else plain_argument function theorem
 
-fun process_arguments function = map (process_argument function)
-
-fun simple_core (assumptions, conclusion) =
+fun full_arguments function arguments =
   let
-    val _ = check_registered "SIMPLE_LINARITH_TAC" conclusion
+    fun add (theorem, (facts, splits)) =
+      if markerLib.is_Split theorem then
+        let
+          val split = markerLib.destSplit theorem
+          val _ = validate_split function split
+        in
+          (facts, split :: splits)
+        end
+      else (plain_argument function theorem :: facts, splits)
+  in
+    foldl add ([], []) arguments
+  end
+
+fun core function config (assumptions, conclusion) =
+  let
     val (split_neq, result) =
-      linarithSolve.prove linarithData.default_config
-        linarithDecomp.decomp assumptions conclusion
+      linarithSolve.prove config linarithDecomp.decomp
+        assumptions conclusion
   in
     case result of
         SOME justifications =>
           linarithReplay.refute_tac split_neq justifications
             (assumptions, conclusion)
       | NONE =>
-          raise ERR "SIMPLE_LINARITH_TAC"
-            "linear arithmetic found no proof"
+          (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
+           linarithData.trace 2
+             ("preprocessed conclusion\n" ^
+              Parse.term_to_string conclusion);
+           raise ERR function "linear arithmetic found no proof")
   end
 
 fun SIMPLE_LINARITH_TAC arguments =
   let
+    val function = "SIMPLE_LINARITH_TAC"
     val facts =
       linarithData.arith_facts () @
-      process_arguments "SIMPLE_LINARITH_TAC" arguments
+      map (simple_argument function) arguments
   in
-    Tactical.THEN (clasetLib.INSERT_FACTS_TAC facts, simple_core)
+    Tactical.THEN
+      (clasetLib.INSERT_FACTS_TAC facts,
+       fn goal as (_, conclusion) =>
+         (check_registered function conclusion;
+          core function linarithData.default_config goal))
   end
+
+fun shell_relevant tm =
+  linarithDecomp.is_relevant tm orelse
+  (case Lib.total boolSyntax.dest_neg tm of
+       SOME body => shell_relevant body
+     | NONE =>
+         (case Lib.total boolSyntax.dest_eq tm of
+              SOME (left, right) =>
+                same_type (Term.type_of left) Type.bool andalso
+                (shell_relevant left orelse shell_relevant right)
+            | NONE =>
+                (case Lib.total boolSyntax.dest_conj tm of
+                     SOME (left, right) =>
+                       shell_relevant left orelse shell_relevant right
+                   | NONE =>
+                       (case Lib.total boolSyntax.dest_disj tm of
+                     SOME (left, right) =>
+                       shell_relevant left orelse shell_relevant right
+                   | NONE =>
+                       (case Lib.total boolSyntax.dest_imp tm of
+                            SOME (left, right) =>
+                              shell_relevant left orelse
+                              shell_relevant right
+                          | NONE =>
+                              (case Lib.total boolSyntax.dest_forall tm of
+                                   SOME (_, body) => shell_relevant body
+                                 | NONE =>
+                                     (case Lib.total
+                                             boolSyntax.dest_exists tm of
+                                          SOME (_, body) =>
+                                            shell_relevant body
+                                        | NONE => false)))))))
+
+fun filter_relevant (assumptions, conclusion) =
+  let
+    val filtered = List.filter shell_relevant assumptions
+    fun validate [theorem] = theorem
+      | validate _ =
+          raise ERR "filter_relevant" "invalid validation theorem list"
+  in
+    ([(filtered, conclusion)], validate)
+  end
+
+val nnf_rewrites =
+  [boolTheory.IMP_DISJ_THM,
+   boolTheory.EQ_IMP_THM,
+   boolTheory.DE_MORGAN_THM,
+   boolTheory.NOT_FORALL_THM,
+   boolTheory.NOT_EXISTS_THM,
+   CONJUNCT1 boolTheory.NOT_CLAUSES]
+
+fun nnf_rule theorem = Rewrite.REWRITE_RULE nnf_rewrites theorem
+
+fun opposite_tac (assumptions, conclusion) =
+  let
+    fun contradiction [] = NONE
+      | contradiction (assumption :: rest) =
+          (case Lib.total boolSyntax.dest_neg assumption of
+               SOME positive =>
+                 if List.exists (Term.aconv positive) assumptions then
+                   SOME
+                     (MP (ASSUME assumption) (ASSUME positive))
+                 else contradiction rest
+             | NONE => contradiction rest)
+  in
+    if List.exists (Term.aconv boolSyntax.F) assumptions then
+      Tactic.ACCEPT_TAC (ASSUME boolSyntax.F) (assumptions, conclusion)
+    else
+      case contradiction assumptions of
+          SOME theorem =>
+            Tactic.CONTR_TAC theorem (assumptions, conclusion)
+        | NONE => raise ERR "opposite_tac" "no immediate contradiction"
+  end
+
+fun nnf_flatten goal =
+  Tactical.THEN
+    (Tactical.POP_ASSUM_LIST
+       (fn theorems =>
+         Tactical.MAP_EVERY (Tactic.STRIP_ASSUME_TAC o nnf_rule)
+           theorems),
+     Tactical.TRY opposite_tac) goal
+
+fun limit_exceeded function limit =
+  let
+    val message =
+      "linarith_split_limit exceeded (current value is " ^
+      Int.toString limit ^ ")"
+    val _ = linarithData.trace 1 message
+  in
+    raise ERR function message
+  end
+
+fun split_fixpoint function limit split_tac =
+  let
+    fun attempt goal = SOME (split_tac goal) handle HOL_ERR _ => NONE
+    fun loop rounds goal =
+      case attempt goal of
+          NONE => Tactical.ALL_TAC goal
+        | SOME (split_goals, split_validation) =>
+            if rounds >= limit then limit_exceeded function limit
+            else
+              let
+                val next =
+                  Tactical.THEN (nnf_flatten, loop (rounds + 1))
+                val (goals, validation) =
+                  Tactical.ALLGOALS next split_goals
+              in
+                (goals, split_validation o validation)
+              end
+  in
+    loop 0
+  end
+
+fun insert_aconv tm terms =
+  if List.exists (Term.aconv tm) terms then terms else tm :: terms
+
+fun distinct_thms theorems =
+  let
+    fun add (theorem, result) =
+      if List.exists
+           (fn old => Term.aconv (Thm.concl theorem) (Thm.concl old))
+           result
+      then result
+      else theorem :: result
+  in
+    List.rev (foldl add [] theorems)
+  end
+
+fun split_rules extra =
+  let
+    val seeds =
+      List.concat (map #pre_split (linarithData.all_instances ()))
+    val source =
+      distinct_thms
+        (linarithData.arith_split_thms () @ extra @ seeds)
+    fun forms theorem =
+      if splitLib.is_asm_split theorem then [theorem]
+      else [theorem, splitLib.mk_asm_split theorem]
+  in
+    List.concat (map forms source)
+  end
+
+fun decomp_atoms tm =
+  case linarithDecomp.decomp tm of
+      NONE => []
+    | SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
+        map #1 (lhs @ rhs)
+
+fun facts_for tm =
+  case linarithData.instance_for (Term.type_of tm) of
+      NONE => []
+    | SOME instance =>
+        (case #divmod_facts instance of
+             NONE => []
+           | SOME facts => facts tm)
+
+fun augmentation_round processed assumptions =
+  let
+    val candidates = List.concat (map decomp_atoms assumptions)
+    fun inspect (candidate, (seen, facts)) =
+      if List.exists (Term.aconv candidate) seen then (seen, facts)
+      else (candidate :: seen, facts_for candidate @ facts)
+    val (seen, facts) = foldl inspect (processed, []) candidates
+    val unique = distinct_thms facts
+    fun known theorem =
+      List.exists (Term.aconv (Thm.concl theorem)) assumptions
+    val novel = List.filter (not o known) unique
+  in
+    (seen, novel)
+  end
+
+fun augment_divmod function limit =
+  let
+    fun loop processed rounds (goal as (assumptions, _)) =
+      let
+        val (processed', facts) =
+          augmentation_round processed assumptions
+      in
+        if null facts then Tactical.TRY opposite_tac goal
+        else if rounds >= limit then limit_exceeded function limit
+        else
+          Tactical.THEN
+            (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts,
+             loop processed' (rounds + 1)) goal
+      end
+  in
+    loop [] 0
+  end
+
+type linarith_config = linarithData.linarith_config
+val default_config = linarithData.default_config
+
+fun CFG_LINARITH_TAC config arguments =
+  let
+    val function = "CFG_LINARITH_TAC"
+    val (argument_facts, argument_splits) =
+      full_arguments function arguments
+    val facts =
+      linarithData.arith_facts () @ List.rev argument_facts
+    val rules = split_rules (List.rev argument_splits)
+    val split_tac = splitLib.SPLIT_TAC rules
+    val split_limit = #split_limit config
+    val preprocess =
+      Tactical.THEN
+        (Tactic.CCONTR_TAC,
+         Tactical.THEN
+           (filter_relevant,
+            Tactical.THEN
+              (nnf_flatten,
+               Tactical.THEN
+                 (split_fixpoint function split_limit split_tac,
+                  augment_divmod function split_limit))))
+  in
+    Tactical.THEN
+      (clasetLib.INSERT_FACTS_TAC facts,
+       fn goal as (_, conclusion) =>
+         (check_registered function conclusion;
+          Tactical.THEN (preprocess, core function config) goal))
+  end
+
+val LINARITH_TAC = CFG_LINARITH_TAC default_config
 
 fun atomized_assumptions premises =
   List.concat (map (CONJUNCTS o Thm.ASSUME) premises)

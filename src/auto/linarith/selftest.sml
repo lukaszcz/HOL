@@ -1116,6 +1116,198 @@ val _ =
           clasetLib.Iff boolTheory.TRUTH,
           clasetLib.Norm boolTheory.TRUTH])
 
+(* Full num preprocessing battery.  All positive tactic tests go through
+   VALID so the generated proof is checked against the original goal. *)
+
+val irrelevant_premise =
+  Term.mk_var ("linarith_irrelevant_premise", Type.bool)
+val connective_premise =
+  boolSyntax.mk_conj (public_x_le_y, public_y_le_z)
+val existential_premise =
+  boolSyntax.mk_exists
+    (public_z,
+     boolSyntax.mk_conj (public_x_le_y, public_y_le_z))
+val total_order_goal =
+  boolSyntax.mk_disj (public_x_le_y, num_leq public_y public_x)
+val iff_premise = boolSyntax.mk_eq (boolSyntax.T, public_x_le_y)
+
+val _ =
+  check
+    ("full preprocessing filters relevance and flattens connectives",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([irrelevant_premise, connective_premise], public_x_le_z) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], total_order_goal) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([existential_premise], public_x_le_y) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([iff_premise], public_x_le_y))
+
+val public_min = numSyntax.mk_min (public_x, public_y)
+val public_max = numSyntax.mk_max (public_x, public_y)
+val min_le_left = num_leq public_min public_x
+val left_le_max = num_leq public_x public_max
+
+val _ =
+  check
+    ("LINARITH_TAC eliminates num MIN and MAX",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left) andalso
+       valid_closes (linarithLib.LINARITH_TAC []) ([], left_le_max))
+
+val _ =
+  check
+    ("full preprocessing is strictly stronger than SIMPLE on MIN",
+     fn () =>
+       let
+         val simple_fails =
+           ((ignore
+               (Tactical.VALID
+                 (linarithLib.SIMPLE_LINARITH_TAC [])
+                 ([], min_le_left));
+             false)
+            handle Feedback.HOL_ERR _ => true)
+       in
+         simple_fails andalso
+         valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left)
+       end)
+
+val subtraction_zero =
+  num_eq (numSyntax.mk_minus (public_x, public_y)) num_zero
+
+val _ =
+  check
+    ("LINARITH_TAC splits natural subtraction",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([num_less public_x public_y], subtraction_zero))
+
+val public_div_three = numSyntax.mk_div (public_x, num_three)
+val public_mod_three = numSyntax.mk_mod (public_x, num_three)
+val div_equation =
+  Thm.concl
+    (hd ((valOf (#divmod_facts num_instance)) public_div_three))
+val mod_bound = num_less public_mod_three num_three
+
+val _ =
+  check
+    ("LINARITH_TAC augments literal DIV/MOD atoms with DIVISION facts",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([num_less num_zero public_x], mod_bound) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], div_equation))
+
+val one_pipeline_round : linarithLib.linarith_config =
+  {neq_limit = 9, split_limit = 1}
+val zero_pipeline_rounds : linarithLib.linarith_config =
+  {neq_limit = 9, split_limit = 0}
+val two_pipeline_rounds : linarithLib.linarith_config =
+  {neq_limit = 9, split_limit = 2}
+val nine_pipeline_rounds : linarithLib.linarith_config =
+  {neq_limit = 9, split_limit = 9}
+
+fun tactic_fails tactic goal =
+  ((ignore (Tactical.VALID tactic goal); false)
+   handle Feedback.HOL_ERR _ => true)
+
+val _ =
+  check
+    ("div/mod augmentation is bounded by split_limit",
+     fn () =>
+       tactic_fails
+         (linarithLib.CFG_LINARITH_TAC zero_pipeline_rounds [])
+         ([], mod_bound) andalso
+       valid_closes
+         (linarithLib.CFG_LINARITH_TAC one_pipeline_round [])
+         ([], mod_bound))
+
+val nested_div =
+  numSyntax.mk_div
+    (numSyntax.mk_div (public_x, num_three), num_two)
+val nested_div_trigger = num_leq nested_div nested_div
+
+val _ =
+  check
+    ("nested div/mod augmentation reaches a bounded fixpoint",
+     fn () =>
+       let
+         val goal =
+           ([nested_div_trigger, num_leq num_one num_zero],
+            num_leq public_x public_x)
+       in
+         tactic_fails
+           (linarithLib.CFG_LINARITH_TAC one_pipeline_round []) goal andalso
+         valid_closes
+           (linarithLib.CFG_LINARITH_TAC two_pipeline_rounds []) goal
+       end)
+
+val nested_min =
+  numSyntax.mk_min (numSyntax.mk_min (public_x, public_y), public_z)
+val nested_min_goal = num_leq nested_min public_x
+
+val _ =
+  check
+    ("split fixpoint is bounded and accepts a CFG limit override",
+     fn () =>
+       tactic_fails
+         (linarithLib.CFG_LINARITH_TAC one_pipeline_round [])
+         ([], nested_min_goal) andalso
+       valid_closes
+         (linarithLib.CFG_LINARITH_TAC nine_pipeline_rounds [])
+         ([], nested_min_goal))
+
+val _ =
+  check
+    ("LINARITH_TAC accepts a validated per-call Split marker",
+     fn () =>
+       valid_closes
+         (linarithLib.LINARITH_TAC
+           [markerLib.Split linarithSeedTheory.NUM_MIN_SPLIT])
+         ([], min_le_left))
+
+fun full_marker_error marker =
+  ((ignore (linarithLib.LINARITH_TAC [marker]); false)
+   handle Feedback.HOL_ERR error =>
+     String.isSubstring "LINARITH_TAC" (Feedback.message_of error) orelse
+     String.isSubstring "CFG_LINARITH_TAC" (Feedback.message_of error))
+
+val _ =
+  check
+    ("LINARITH_TAC rejects foreign argument markers",
+     fn () =>
+       List.all full_marker_error
+         [clasetLib.Intro boolTheory.TRUTH,
+          clasetLib.Simp boolTheory.TRUTH,
+          clasetLib.Norm boolTheory.TRUTH])
+
+val full_neq_one : linarithLib.linarith_config =
+  {neq_limit = 1, split_limit = 9}
+val full_neq_zero : linarithLib.linarith_config =
+  {neq_limit = 0, split_limit = 9}
+val neq_goal = num_less public_x num_one
+val neq_assumptions = [public_x_neq_one, num_leq public_x num_one]
+
+val _ =
+  check
+    ("CFG_LINARITH_TAC splits neq at the limit and ignores it above",
+     fn () =>
+       valid_closes
+         (linarithLib.CFG_LINARITH_TAC full_neq_one [])
+         (neq_assumptions, neq_goal) andalso
+       tactic_fails
+         (linarithLib.CFG_LINARITH_TAC full_neq_zero [])
+         (neq_assumptions, neq_goal))
+
+val _ =
+  check
+    ("LINARITH_PROVE performs no MIN preprocessing",
+     fn () =>
+       ((ignore (linarithLib.LINARITH_PROVE min_le_left); false)
+        handle Feedback.HOL_ERR _ => true) andalso
+       valid_closes (linarithLib.LINARITH_TAC []) ([], min_le_left))
+
 val nonlinear_goal =
   num_leq (numSyntax.mk_mult (public_x, public_x)) public_x
 
