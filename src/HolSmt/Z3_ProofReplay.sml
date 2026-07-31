@@ -2785,6 +2785,12 @@ local
      expanded). *)
 
   fun remove_definitions (defs, var_set, thm): Thm.thm =
+  let
+    (* Replay state remembers definitions established by earlier steps even
+       when the final theorem no longer depends on them.  Definition
+       elimination concerns theorem hypotheses, not the historical state. *)
+    val defs = HOLset.intersection (defs, Thm.hypset thm)
+  in
     if HOLset.isEmpty defs then
       thm
     else
@@ -2809,13 +2815,26 @@ local
           Term.is_var (Lib.fst (boolSyntax.dest_eq def))
         val (ground_defs, defs) =
           List.partition (not o is_var_def) (HOLset.listItems defs)
-        val defs = HOLset.addList (Term.empty_tmset, defs)
         fun discharge_ground_def (def, thm) =
           case prove_ground_def def of
             SOME def_thm => Drule.PROVE_HYP def_thm thm
           | NONE => thm
         val thm = HOLset.foldl discharge_ground_def
           thm (HOLset.addList (Term.empty_tmset, ground_defs))
+        (* Substituting fpa2bv's per-bit definitions can turn its packed-word
+           definition into the cyclic-looking but valid identity
+           [w = v2w (GENLIST (flip word_bit w) ...)].  Discharge such checked
+           word identities before searching the remaining definition DAG. *)
+        fun prove_word_identity def =
+          SOME (blastLib.BBLAST_PROVE def)
+          handle Feedback.HOL_ERR _ => NONE
+               | HolSatLib.SAT_cex _ => NONE
+        fun discharge_word_identity (def, (remaining, thm)) =
+          case prove_word_identity def of
+            SOME def_thm => (remaining, Drule.PROVE_HYP def_thm thm)
+          | NONE => (def :: remaining, thm)
+        val (defs, thm) = List.foldl discharge_word_identity ([], thm) defs
+        val defs = HOLset.addList (Term.empty_tmset, defs)
       in
         if HOLset.isEmpty defs then thm
         else
@@ -2835,14 +2854,29 @@ local
            but not being referenced *)
         val unref_set = HOLset.difference (def_set, ref_set)
 
+        (* A packed fpa2bv word may participate in the benign cycle
+           [k = pack x], [k = v2w bs], [b_i = bit i k].  If no ordinary DAG
+           leaf exists, select the multiply-defined packed word; the checked
+           word-list fallback below breaks the cycle into Boolean definitions. *)
+        fun multiply_defined var =
+          List.length (List.filter
+            (fn (lhs, _) => Term.aconv lhs var) dest_defs) > 1
+        val duplicate_set = HOLset.filter multiply_defined def_set
+        val elimination_set =
+          if HOLset.isEmpty unref_set then duplicate_set else unref_set
         val () =
-          if HOLset.isEmpty unref_set then
-            raise ERR "remove_definitions" "no unreferenced variables"
+          if HOLset.isEmpty elimination_set then
+            raise ERR "remove_definitions"
+              ("no unreferenced variables; definitions=" ^
+               String.concatWith "; "
+                 (List.map Library.term_to_string
+                   (HOLset.listItems defs)))
           else
             ()
 
-        (* Pick an arbitrary variable from `unref_set` *)
-        val var = Option.valOf (HOLset.find (fn _ => true) unref_set)
+        (* Pick an arbitrary eliminable variable. *)
+        val var = Option.valOf
+          (HOLset.find (fn _ => true) elimination_set)
 
         (* Get all the variable's definitions *)
         fun filter_def (v, d) = if Term.term_eq v var then SOME d else NONE
@@ -2854,10 +2888,54 @@ local
         (* Instantiate the variable with the definition *)
         val thm = Thm.INST [var |-> inst] thm
 
-        (* For each definition corresponding to this variable, create a theorem
-           that can eliminate the definition from the set of hypotheses of `thm` *)
-        val hyp_thms = List.map (fn def => Library.gen_instantiation (inst, def,
-          var_set)) defs_to_remove
+        (* fpa2bv can define one packed word both semantically and as [mkbv]
+           over fresh Boolean skolems.  Ordinary syntactic unification cannot
+           solve that word equation; BBLAST can, under the canonical per-bit
+           definitions that checked definition elimination will remove next. *)
+        fun word_list_instantiation (left, right) =
+          let
+            fun dest_bits tm =
+              let
+                val (list_tm, index_ty) = bitstringSyntax.dest_v2w tm
+                val (bits, _) = listSyntax.dest_list list_tm
+                val _ = List.all
+                  (fn bit => Term.is_var bit andalso
+                    HOLset.member (var_set, bit)) bits orelse raise Match
+              in
+                (bits, index_ty)
+              end
+            val (word, bits, index_ty) =
+              case Lib.total dest_bits right of
+                SOME (bits, index_ty) => (left, bits, index_ty)
+              | NONE =>
+                  let val (bits, index_ty) = dest_bits left
+                  in (right, bits, index_ty) end
+            val width = List.length bits
+            val word_var = Term.mk_var
+              ("packed_definition_word", Term.type_of word)
+            fun bit_definition (index, bit) =
+              boolSyntax.mk_eq (bit, wordsSyntax.mk_word_bit
+                (numSyntax.term_of_int (width - index - 1), word_var))
+            val definitions = List.map bit_definition
+              (ListPair.zip (List.tabulate (width, Lib.I), bits))
+            val vector = bitstringSyntax.mk_v2w
+              (listSyntax.mk_list (bits, Type.bool), index_ty)
+            val conclusion = boolSyntax.mk_eq (word_var, vector)
+            val theorem = Tactical.TAC_PROOF ((definitions, conclusion),
+              Tactical.THEN
+                (bossLib.ASM_SIMP_TAC (bossLib.srw_ss()) [],
+                 blastLib.BBLAST_TAC))
+            val theorem = Thm.INST [word_var |-> word] theorem
+          in
+            if Term.aconv (Thm.concl theorem)
+                (boolSyntax.mk_eq (left, right)) then theorem
+            else Thm.SYM theorem
+          end
+        val hyp_thms = List.map
+          (fn def =>
+            Library.gen_instantiation (inst, def, var_set)
+            handle _ => word_list_instantiation (inst, def))
+          defs_to_remove
 
         (* Remove all the definitions corresponding to this variable *)
         fun remove_hyp (hyp_thm, thm) = Drule.PROVE_HYP hyp_thm thm
@@ -2876,6 +2954,7 @@ local
         remove_definitions (new_defs, var_set, thm)
       end
       end
+  end
 
   (* this function identifies hypotheses in the final theorem that are not in
      the original list of assumptions and then tries to remove them; it's a

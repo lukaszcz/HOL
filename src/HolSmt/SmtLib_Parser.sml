@@ -37,6 +37,7 @@ struct
     | TermApply of term_ast located * term_ast located list
     | TermApplyOperator of string located * term_ast located *
         term_ast located list
+    | TermAscribed of term_ast located * sort_ast located
     | TermLet of (string located * term_ast located) list * term_ast located
     | TermMatch of term_ast located * match_case_ast located list
     | TermForall of sorted_var_ast located list * term_ast located
@@ -617,6 +618,17 @@ local
             located loc
               (TermApplyOperator
                 (located (token_loc head_tok) head_text, rator, args))
+          end
+        else if reserved_head andalso head_text = "as" then
+          let
+            val term = parse_term_from_first
+              (need_token "parse_term" "ascribed identifier")
+            val sort = parse_sort ()
+            val close_tok = need_token "parse_term" "')'"
+            val _ = expect_token "parse_term" ")" close_tok
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+          in
+            located loc (TermAscribed (term, sort))
           end
         else if reserved_head andalso head_text = "let" then
           let
@@ -4124,6 +4136,21 @@ local
       | TermApplyOperator (operator, head, args) =>
           apply_operator (loc_of term_ast) (located_string_node operator)
             (check head) (List.map check args)
+      | TermAscribed (term, sort) =>
+          let
+            val checked = check term
+            val expected = typecheck_sort context tydict sort
+            val expected_surface = surface_sort_of_ast context tydict sort
+            val _ =
+              if checked_sort checked = expected then ()
+              else
+                type_error "typecheck_term" context (loc_of term_ast)
+                  (SOME expected) (SOME (checked_sort checked))
+                  "qualified identifier sort ascription mismatch"
+          in
+            checked_term_with_surface_sort expected_surface
+              (checked_term checked)
+          end
       | TermLet (bindings, body) =>
           let
             val checked_bindings =
@@ -4746,6 +4773,7 @@ local
             term_mentions_name head orelse List.exists term_mentions_name args
         | TermApplyOperator (_, head, args) =>
             term_mentions_name head orelse List.exists term_mentions_name args
+        | TermAscribed (term, _) => term_mentions_name term
         | TermLet (bindings, body) =>
             List.exists (term_mentions_name o Lib.snd) bindings orelse
             term_mentions_name body

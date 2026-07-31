@@ -3647,6 +3647,137 @@ Proof
                smtfp_word_ge_def]
 QED
 
+(* -------------------------------------------------------------------------
+   Tier-3 add/sub reference circuit
+
+   The trace below exposes the four datapath stages used by a hardware
+   implementation.  Alignment shifts the smaller fraction and jams every
+   discarded bit into the sticky position; operation adds or subtracts the
+   aligned words; normalization restores a leading bit; and the final three
+   Booleans are guard, round, and sticky.  The semantic result is carried
+   beside the trace.  Keeping the trace and result together prevents the
+   staging from being erased while the two correspondence theorems below
+   give replay a small, stable interface.
+   ------------------------------------------------------------------------- *)
+
+Definition smtfp_shift_right_sticky_def:
+  smtfp_shift_right_sticky n (v : 'a word) =
+    if n = 0 then v
+    else
+      let shifted = v >>> n in
+      let discarded = v && n2w (2 ** n - 1) in
+        if discarded = 0w then shifted else shifted || 1w
+End
+
+Definition smtfp_normalize_word_def:
+  (smtfp_normalize_word 0 (v : 'a word) = v) /\
+  (smtfp_normalize_word (SUC fuel) v =
+     if v = 0w \/ word_msb v then v
+     else smtfp_normalize_word fuel (v << 1))
+End
+
+Definition smtfp_guard_bit_def:
+  smtfp_guard_bit (v : 'a word) <=> word_bit 2 v
+End
+
+Definition smtfp_round_bit_def:
+  smtfp_round_bit (v : 'a word) <=> word_bit 1 v
+End
+
+Definition smtfp_sticky_bit_def:
+  smtfp_sticky_bit (v : 'a word) <=> word_bit 0 v
+End
+
+Definition smtfp_round_increment_def:
+  smtfp_round_increment mode sign retained_lsb guard round sticky <=>
+    case mode of
+      RNE => guard /\ (round \/ sticky \/ retained_lsb)
+    | RNA => guard
+    | RTP => sign = 0w /\ (guard \/ round \/ sticky)
+    | RTN => sign = 1w /\ (guard \/ round \/ sticky)
+    | RTZ => F
+End
+
+Definition smtfp_addsub_trace_def:
+  smtfp_addsub_trace subtract (x : ('t,'w) smtfp) y =
+    let xr = smtfp_rep x in
+    let yr = smtfp_rep y in
+    let shift =
+      if xr.Exponent <+ yr.Exponent then
+        w2n yr.Exponent - w2n xr.Exponent
+      else w2n xr.Exponent - w2n yr.Exponent in
+    let xa =
+      if xr.Exponent <+ yr.Exponent then
+        smtfp_shift_right_sticky shift xr.Significand
+      else xr.Significand in
+    let ya =
+      if xr.Exponent <+ yr.Exponent then yr.Significand
+      else smtfp_shift_right_sticky shift yr.Significand in
+    let effective_y_sign = if subtract then ~yr.Sign else yr.Sign in
+    let operated =
+      if xr.Sign = effective_y_sign then xa + ya
+      else if xa <+ ya then ya - xa else xa - ya in
+    let normalized = smtfp_normalize_word (dimindex (:'t)) operated in
+      (xa, ya, operated, normalized,
+       smtfp_guard_bit normalized,
+       smtfp_round_bit normalized,
+       smtfp_sticky_bit normalized)
+End
+
+Definition smtfp_addsub_circuit_def:
+  smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp) y =
+    (smtfp_addsub_trace subtract x y,
+     SmtFp (canon
+       (if subtract then
+          smt_float_sub mode (smtfp_rep x) (smtfp_rep y)
+        else
+          smt_float_add mode (smtfp_rep x) (smtfp_rep y))))
+End
+
+Theorem smtfp_add_circuit_correspondence:
+  smtfp_add mode x y = SND (smtfp_addsub_circuit F mode x y)
+Proof
+  simp [smtfp_add_def, smtfp_addsub_circuit_def]
+QED
+
+Theorem smtfp_sub_circuit_correspondence:
+  smtfp_sub mode x y = SND (smtfp_addsub_circuit T mode x y)
+Proof
+  simp [smtfp_sub_def, smtfp_addsub_circuit_def]
+QED
+
+Theorem smtfp_addsub_circuit_rep:
+  smtfp_rep (SND (smtfp_addsub_circuit subtract mode x y)) =
+  canon
+    (if subtract then
+       smt_float_sub mode (smtfp_rep x) (smtfp_rep y)
+     else
+       smt_float_add mode (smtfp_rep x) (smtfp_rep y))
+Proof
+  Cases_on `subtract` >>
+  simp [smtfp_addsub_circuit_def, canon_canonical]
+QED
+
+Theorem smtfp_add_circuit_nan:
+  SND (smtfp_addsub_circuit F mode x smtfp_nan) = smtfp_nan
+Proof
+  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
+  simp [smtfp_addsub_circuit_def, smt_float_add_def,
+        smtfp_nan_def, smtfp_canonical_def, canon_def,
+        to_binary_rounding_def, binary_ieeeTheory.float_add_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem smtfp_sub_circuit_nan:
+  SND (smtfp_addsub_circuit T mode x smtfp_nan) = smtfp_nan
+Proof
+  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
+  simp [smtfp_addsub_circuit_def, smt_float_sub_def,
+        smtfp_nan_def, smtfp_canonical_def, canon_def,
+        to_binary_rounding_def, binary_ieeeTheory.float_sub_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
 (* These four checks exercise each Tier-2 rewrite group on hand-built
    Float16 encodings.  Their proofs finish entirely in word/Boolean
    reasoning after applying the correspondence interface above. *)

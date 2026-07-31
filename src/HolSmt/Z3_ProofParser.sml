@@ -863,8 +863,8 @@ local
   fun bit_decomposition_of_rewrite vars equation =
   let
     val (fp_var, fields) = boolSyntax.dest_eq equation
-    val _ = Term.is_var fp_var orelse
-      raise ERR "bit_decomposition_of_rewrite" "FP variable expected"
+    val _ = SmtFpProve.type_mentions_fp (Term.type_of fp_var) orelse
+      raise ERR "bit_decomposition_of_rewrite" "FP term expected"
     val (sign, exponent, significand) = dest_smtfp_bits fields
     fun extract_source field =
       let val (_, _, source, _) = wordsSyntax.dest_word_extract field

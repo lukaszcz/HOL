@@ -3904,13 +3904,8 @@ in
   expect_fp_fragment ("native smt_rounding term", rounding_assertion);
   assert (fragment "QF_FP" assertions = NONE,
     "native smtfloat terms were rejected from QF_FP");
-  (case replay_gap [fp_assertion] of
-     SOME msg =>
-       (assert (contains "FloatingPoint" msg,
-          "FP replay family gate omitted its family: " ^ msg);
-        assert (contains "theory:FloatingPoint:checked-replay" msg,
-          "FP replay family gate omitted its feature row: " ^ msg))
-   | NONE => die "native smtfp term did not retain the FP replay family gate");
+  assert (replay_gap assertions = NONE,
+    "native smtfloat terms retained the retired FP replay family gate");
   List.app
     (fn term =>
       (assert (fragment "QF_UF" [term] = NONE,
@@ -3933,7 +3928,10 @@ let
     parse_smtlib_assertions
       ("(set-logic ALL)\n" ^
        "(assert (and (= 1 1) (= true true) " ^
-       "(= ((_ extract 1 0) #b101) #b01)))\n" ^
+       "(= ((_ extract 1 0) #b101) #b01) " ^
+       "(= (as RNE RoundingMode) RNE) " ^
+       "(= (as (_ +zero 3 5) (_ FloatingPoint 3 5)) " ^
+       "(_ +zero 3 5))))\n" ^
        "(exit)\n")
 in
   assert (List.length assertions = 1,
@@ -5203,11 +5201,11 @@ let
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
             smt_theory = "FloatingPoint", mode = SmtLib.NativeSMTLIB,
-            translate = true, replay = false, notes,
+            translate = true, replay = true, notes,
             proof_obligation, ...} =>
             contains "canonical-NaN smtfp" notes andalso
             contains "native_float_transfer_infos" proof_obligation andalso
-            contains "TASK_24" proof_obligation
+            contains "Checked Z3 4.x replay" proof_obligation
         | _ => false) records
   val has_datatype_matrix_row =
     List.exists
@@ -6231,7 +6229,7 @@ let
     {name = "fp-literal-and-special",
      goal = ([],
        ``(smtfp_bits 0w 3w 4w : (4,3) smtfp) = smtfp_pzero``),
-     body = prelude "QF_BVFP" @ [
+     body = prelude "QF_FP" @ [
        "(assert (not (= (fp (_ bv0 1) (_ bv3 3) (_ bv4 4)) " ^
          "(_ +zero 3 5))))\n",
        "(check-sat)\n"]},
@@ -6465,10 +6463,10 @@ in
   List.app (fn tm => expect_roundtrip (Hol_pp.term_to_string tm, tm))
     roundtrip_cases;
   expect_logic "QF_FP" ``(^x = ^y)``;
-  expect_logic "QF_BVFP" literal;
+  expect_logic "QF_FP" literal;
   expect_logic "QF_FPLRA"
     ``(smtfp_from_real RNE 1r : (4,3) smtfp) = ^x``;
-  expect_logic "QF_BVFPLRA" mixed_real_bv;
+  expect_logic "QF_FPLRA" mixed_real_bv;
   expect_logic "FP" ``!a:(4,3) smtfp. a = a``;
   expect_logic "QF_UFFP" ``smtfp_unordered ^x ^y``;
   expect_logic "QF_ABVFP"
@@ -9532,9 +9530,16 @@ let
     ``(smtfp_to_ubv RTZ
         (smtfp_bits 0w 4w 8w : (4,3) smtfp) : word4) = 3w``
   fun check label prover tm =
-    let val thm = prover tm in
+    let
+      val thm = prover tm
+      val (oracles, _) = Tag.dest_tag (Thm.tag thm)
+    in
       assert_no_hyps (label, thm);
       assert_concl_alpha (label, thm, tm);
+      assert (not (List.exists
+        (fn tag => contains "native_ieee" tag orelse
+          contains "fp64_machine" tag) oracles),
+        label ^ " enabled native_ieeeLib or fp64_machineLib");
       Library.check_oracle_tags label thm
     end
 in
@@ -9546,6 +9551,98 @@ in
     [("ground_add", add), ("ground_rem", rem),
      ("ground_round_to_integral_rna", round_to_integral),
      ("convert_to_ubv", conversion)]
+end
+
+fun smtfp_addsub_circuit_rung_success () =
+let
+  val add =
+    ``smtfp_add RNE (x : (1,2) smtfp) smtfp_nan = smtfp_nan``
+  val sub =
+    ``smtfp_sub RNA (x : (1,2) smtfp) smtfp_nan = smtfp_nan``
+  fun check (label, goal) =
+    let val thm = SmtFpProve.fp_prove goal in
+      assert_no_hyps (label, thm);
+      assert_concl_alpha (label, thm, goal);
+      Library.check_oracle_tags label thm
+    end
+in
+  Profile.reset_all ();
+  List.app check [("FP rung 5 tiny add", add),
+                  ("FP rung 5 tiny sub", sub)];
+  assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 2,
+    "tiny add/sub rewrites did not use rung 5");
+  assert (profile_call_count "fp(rung:6/unsupported)" = 0,
+    "tiny add/sub rewrites fell through to rung 6")
+end
+
+fun smtfp_addsub_circuit_replay_success () =
+let
+  val proof_text =
+    "((set-logic QF_FP)\n" ^
+    "(declare-fun x () (_ FloatingPoint 2 2))\n" ^
+    "(proof\n" ^
+    "(let (($x65 (not true)))\n" ^
+    "(let ((@x70 (rewrite (= (not (= (fp.add " ^
+      "roundNearestTiesToEven x (_ NaN 2 2)) " ^
+      "(_ NaN 2 2))) $x65))))\n" ^
+    "(let (($x27 (= (fp.add roundNearestTiesToEven x " ^
+      "(_ NaN 2 2)) (_ NaN 2 2))))\n" ^
+    "(let (($x28 (not $x27)))\n" ^
+    "(let ((@x29 (asserted $x28)))\n" ^
+    "(let ((@x68 (mp (mp @x29 (monotonicity " ^
+      "(rewrite (= $x27 $x27)) (= $x28 $x28)) $x28) " ^
+      "@x70 $x65)))\n" ^
+    "(mp @x68 (rewrite (= $x65 false)) false)))))))))"
+  val assertions = parse_smtlib_assertions
+    ("(set-logic QF_FP)\n" ^
+     "(declare-fun x () (_ FloatingPoint 2 2))\n" ^
+     "(assert (not (= (fp.add RNE x (_ NaN 2 2)) " ^
+       "(_ NaN 2 2))))\n")
+  val proof = parse_z3_proof_string "4.11.2" proof_text
+  val thm = Z3_ProofReplay.check_proof (assertions, boolSyntax.F, proof)
+in
+  assert (Thm.concl thm ~~ boolSyntax.F,
+    "tiny symbolic add proof did not replay to false");
+  assert (HOLset.isSubset (Thm.hypset thm,
+      HOLset.addList (Term.empty_tmset, assertions)),
+    "tiny symbolic add replay leaked a circuit hypothesis");
+  Library.check_oracle_tags "tiny symbolic add circuit replay" thm
+end
+
+fun smtfp_addsub_circuit_resource_diagnostic () =
+let
+  val goal =
+    ``smtfp_add RNE (x : (23,8) smtfp) smtfp_nan = smtfp_nan``
+  val expected = SmtResource.term_size_diagnostic
+    "addsub-circuit" (SmtResource.max_bitblast_term_nodes + 1)
+in
+  (ignore (SmtFpProve.symbolic_arithmetic_prove goal);
+   die "FAIL: Float32 add circuit did not resource-gate")
+  handle Feedback.HOL_ERR holerr =>
+    (assert (SmtResource.is_resource_gate holerr,
+       "Float32 add circuit raised a non-resource diagnostic");
+     assert (Feedback.message_of holerr = expected,
+       "Float32 add circuit changed its D1 diagnostic"))
+end
+
+fun smtfp_add_commutativity_corpus_gate () =
+let
+  val x = ``x : (4,3) smtfp``
+  val y = ``y : (4,3) smtfp``
+  val equality =
+    ``smtfp_add RNE ^x ^y = smtfp_add RNE ^y ^x``
+  val assertion = boolSyntax.mk_neg equality
+  val expected = SmtResource.proof_size_diagnostic
+    SmtFpProve.add_commutativity_case_id
+    SmtFpProve.add_commutativity_proof_bytes
+in
+  (SmtFpProve.preflight_resource_gate [assertion];
+   die "FAIL: corpus symbolic-add proof did not pre-gate")
+  handle Feedback.HOL_ERR holerr =>
+    (assert (SmtResource.is_resource_gate holerr,
+       "corpus symbolic-add proof raised a non-resource diagnostic");
+     assert (Feedback.message_of holerr = expected,
+       "corpus symbolic-add proof changed its pinned D1 diagnostic"))
 end
 
 fun smtfp_tier2_atom_classes_success () =
@@ -9785,13 +9882,13 @@ end
 fun smtfp_prove_unsupported_diagnostic () =
 let
   val unsupported =
-    ``smtfp_add RNE (x : (4,3) smtfp) y = x``
+    ``smtfp_mul RNE (x : (4,3) smtfp) y = x``
   val type_only = ``(x : (4,3) smtfp) = y``
   val declarations =
     "((declare-fun x () (_ FloatingPoint 3 5)) " ^
     "(declare-fun y () (_ FloatingPoint 3 5)) "
   val operation_proof =
-    declarations ^ "(proof (rewrite (= (fp.add RNE x y) x))))"
+    declarations ^ "(proof (rewrite (= (fp.mul RNE x y) x))))"
   val type_only_proof = declarations ^ "(proof (rewrite (= x y))))"
 in
   assert (SmtFpProve.has_fp_theory_term type_only,
@@ -10882,6 +10979,14 @@ let
       z3_rewrite_string_rung_shaped_failure),
     ("smtfp_prove_core_rungs_success",
       smtfp_prove_core_rungs_success),
+    ("smtfp_addsub_circuit_rung_success",
+      smtfp_addsub_circuit_rung_success),
+    ("smtfp_addsub_circuit_replay_success",
+      smtfp_addsub_circuit_replay_success),
+    ("smtfp_addsub_circuit_resource_diagnostic",
+      smtfp_addsub_circuit_resource_diagnostic),
+    ("smtfp_add_commutativity_corpus_gate",
+      smtfp_add_commutativity_corpus_gate),
     ("smtfp_tier2_atom_classes_success",
       smtfp_tier2_atom_classes_success),
     ("smtfp_tier2_resource_diagnostic",

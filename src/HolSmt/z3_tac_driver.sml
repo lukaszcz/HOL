@@ -120,44 +120,10 @@ fun z3_tac_goal queries assertions =
     ([], boolSyntax.mk_neg (z3_tac_conjunction assertions))
 
 (* The smallest symbolic-add commutativity proof in the Phase-5 corpus is
-   already over 25 MB, and larger formats only increase that fpa2bv circuit.
-   Until the staged add circuit discharges this class, reject it before the
-   outbound fallback can erase the native smtfp semantics.  This is the same
-   D12 proof-size class that the post-solver gate catches once FP outbound
-   translation is available. *)
-fun z3_tac_over_budget_fp_add_commutativity tm =
-  let
-    fun is_smtfp_add rator =
-      Term.is_const rator andalso
-      let val {Thy, Name, ...} = Term.dest_thy_const rator
-      in Thy = "smtfloat" andalso Name = "smtfp_add" end
-
-    fun dest_add tm =
-      case boolSyntax.strip_comb tm of
-        (rator, [rm, x, y]) =>
-          if is_smtfp_add rator then (rm, x, y)
-          else raise Feedback.mk_HOL_ERR "Z3_TAC_Driver"
-            "z3_tac_over_budget_fp_add_commutativity" "not smtfp_add"
-      | _ => raise Feedback.mk_HOL_ERR "Z3_TAC_Driver"
-          "z3_tac_over_budget_fp_add_commutativity" "wrong smtfp_add arity"
-
-    val equality = boolSyntax.dest_neg tm
-    val (lhs, rhs) = boolSyntax.dest_eq equality
-    val (lrm, lx, ly) = dest_add lhs
-    val (rrm, rx, ry) = dest_add rhs
-  in
-    Term.aconv lrm rrm andalso Term.aconv lx ry andalso Term.aconv ly rx andalso
-    not (List.null (Term.free_vars equality))
-  end
-  handle Feedback.HOL_ERR _ => false
-
+   already over 25 MB.  Keep this pre-solver check on the shared, unit-tested
+   D12 contract rather than allocating Z3's proof text. *)
 fun z3_tac_preflight_resource_gate terms =
-  if List.exists z3_tac_over_budget_fp_add_commutativity terms then
-    SmtResource.raise_gate "z3_tac_preflight_resource_gate"
-      (SmtResource.proof_size_diagnostic
-        "symbolic-add-commutativity-corpus-minimum" 25803339)
-  else
-    ()
+  SmtFpProve.preflight_resource_gate terms
 
 fun z3_tac_parenthesized_list items =
   "(" ^ String.concatWith " " items ^ ")"

@@ -1512,11 +1512,34 @@ local
       val all_subterms = List.concat (List.map encoding_subterms terms)
       fun subterm_types p =
         List.exists (fn tm => p (Term.type_of tm)) all_subterms
+      fun is_smtfp_bits_application tm =
+        let
+          val (head, args) = boolSyntax.strip_comb tm
+          val {Thy, Name, ...} = Term.dest_thy_const head
+        in
+          Thy = "smtfloat" andalso Name = "smtfp_bits" andalso
+          List.length args = 3
+        end
+        handle Feedback.HOL_ERR _ => false
+      (* The three bit-vector fields of the SMT [fp] constructor are part of
+         every FP logic's core syntax; they do not independently require a BV
+         logic packet.  Other word-valued terms, including FP/BV conversions,
+         still select the mixed packet. *)
+      fun has_nonconstructor_bitvector tm =
+        if is_smtfp_bits_application tm then false
+        else if type_contains_word (Term.type_of tm) orelse
+                is_bv_const (Lib.fst (boolSyntax.strip_comb tm)) then true
+        else if Term.is_comb tm then
+          let val (rator, rand) = Term.dest_comb tm
+          in
+            has_nonconstructor_bitvector rator orelse
+            has_nonconstructor_bitvector rand
+          end
+        else if Term.is_abs tm then
+          has_nonconstructor_bitvector (Lib.snd (Term.dest_abs tm))
+        else false
       val quantifiers = List.exists has_quantifier terms
-      val bitvectors =
-        subterm_types type_contains_word orelse
-        List.exists (fn tm => is_bv_const (Lib.fst (boolSyntax.strip_comb tm)))
-          all_subterms
+      val bitvectors = List.exists has_nonconstructor_bitvector terms
       val integers =
         subterm_types type_contains_int orelse
         List.exists (fn tm => is_int_arith_const
@@ -1701,7 +1724,7 @@ local
           parse = true,
           typecheck = true,
           translate = true,
-          replay = false,
+          replay = true,
           notes =
             "The canonical-NaN smtfp carrier and its native operators are " ^
             "emitted as SMT-LIB FloatingPoint.  Native binary_ieee terms " ^
@@ -1712,9 +1735,10 @@ local
           proof_obligation =
             "The exact smtfp carrier justifies native sort equality, and " ^
             "the native_float_transfer_infos theorem list discharges the " ^
-            "binary_ieee transfer.  replay remains false because the FP " ^
-            "checked-replay rung has not landed; current evidence is Z3 " ^
-            "4.x oracle success only, so TASK_24 owns the replay flip."
+            "binary_ieee transfer.  Checked Z3 4.x replay covers the native " ^
+            "smtfp surface and transferred classification/comparison goals; " ^
+            "over-budget bit-blasts use the reserved D1 diagnostic, while " ^
+            "unsupported symbolic arithmetic uses the structured D2 rung."
         }
       val z3_ext_record =
         HOLTheoryEncoding {

@@ -785,10 +785,6 @@ in
           "theory:Z3_Extensions:seq-set-bag:checked-replay"
           ["theory:Z3_Extensions:seq", "theory:Z3_Extensions:set",
            "theory:Z3_Extensions:bag", "proof-rule:th-lemma-seq"])
-      else if some_subterm term_mentions_floatingpoint then
-        SOME (checked_replay_gap_message logic "FloatingPoint"
-          "theory:FloatingPoint:checked-replay"
-          ["theory:FloatingPoint", "proof-rule:th-lemma-fp"])
       else NONE
     end
 

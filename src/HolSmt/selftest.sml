@@ -1692,10 +1692,64 @@ in
     (``x IN P INTER (Q INTER R) <=> x IN (P INTER Q) INTER R``,
       [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
 
-    (* Native smtfp reaches the official FP surface; the oracle path checks
-       the emitted benchmark with a supported Z3 4.x. *)
-    (``smtfp_eq (smtfp_pzero : (4,3) smtfp) smtfp_nzero``,
-      [thm_Z3_v4]),
+    (* Native smtfp reaches the official FP surface.  These checked Z3 4.x
+       rows cover every ground arithmetic class plus comparison, canonical
+       NaN equality, conversion, and a Float16 symbolic atom.  The functional
+       harness rejects every oracle tag, which also pins native_ieeeLib off. *)
+    (``smtfp_add RNE
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 4w 0w``, [thm_Z3p_v4]),
+    (``smtfp_sub RNE
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 3w 0w``, [thm_Z3p_v4]),
+    (``smtfp_mul RNE
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 5w 0w``, [thm_Z3p_v4]),
+    (``smtfp_div RNE
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 3w 0w``, [thm_Z3p_v4]),
+    (``smtfp_sqrt RNE (smtfp_bits 0w 5w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 4w 0w``, [thm_Z3p_v4]),
+    (``smtfp_fma RNE
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 4w 0w``, [thm_Z3p_v4]),
+    (``smtfp_rem
+         (smtfp_bits 0w 5w 4w : (4,3) smtfp)
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp) =
+       smtfp_bits 0w 3w 0w``, [thm_Z3p_v4]),
+    (``smtfp_round_to_integral RNA
+         (smtfp_bits 1w 4w 4w : (4,3) smtfp) =
+       smtfp_bits 1w 4w 8w``, [thm_Z3p_v4]),
+    (``smtfp_lt
+         (smtfp_bits 0w 3w 0w : (4,3) smtfp)
+         (smtfp_bits 0w 4w 0w : (4,3) smtfp)``, [thm_Z3p_v4]),
+    (``(smtfp_bits 1w 7w 1w : (4,3) smtfp) = smtfp_nan``,
+      [thm_Z3p_v4]),
+    (``(smtfp_to_ubv RTZ
+         (smtfp_bits 0w 4w 8w : (4,3) smtfp) : word4) = 3w``,
+      [thm_Z3p_v4]),
+    (``smtfp_lt (x : (10,5) smtfp) y ==> ~smtfp_lt y x``,
+      [thm_Z3p_v4]),
+
+    (* Tiny symbolic add/sub uses the checked Tier-3 circuit rung.  NaN is
+       deliberately symbolic in the other operand, so ground evaluation
+       cannot discharge either row. *)
+    (``smtfp_add RNE (x : (1,2) smtfp) smtfp_nan = smtfp_nan``,
+      [thm_Z3p_v4]),
+    (``smtfp_sub RNA (x : (1,2) smtfp) smtfp_nan = smtfp_nan``,
+      [thm_Z3p_v4]),
+
+    (* A native binary_ieee comparison is rewritten through the proved
+       transfer kit and then replays over the SMT FloatingPoint sort.  This
+       is the evidence for the support record's checked-replay claim. *)
+    (``float_less_than (x : (4,3) binary_ieee$float) y ==>
+       ~float_less_than y x``, [thm_Z3p_v4]),
 
     (* Native comparison plus arithmetic is first rewritten by the proved
        transfer kit, then answered by Z3 over the SMT FloatingPoint sort. *)

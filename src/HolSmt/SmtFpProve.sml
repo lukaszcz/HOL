@@ -37,7 +37,7 @@ struct
     raise ERR "unsupported"
       ("unsupported rewrite shape: theory=fp; checked replay is only " ^
        "implemented for proforma, ground-evaluation, bit-decomposition, " ^
-       "Tier-2 atom, and fp.to_real arithmetic rewrites; " ^
+       "Tier-2 atom, fp.to_real arithmetic, and add/sub circuit rewrites; " ^
        "conclusion=" ^ Library.term_to_string t)
 
   (* The arbitrary-format classification probes compare [abs x] with itself.
@@ -348,10 +348,106 @@ struct
     if mentions_to_real t then arith_prove t
     else raise ERR "to_real_arith_prove" "no fp.to_real residue"
 
-  (* TASK_25 replaces this remaining deliberate fall-through stub with
-     arithmetic circuits. *)
-  fun symbolic_arithmetic_prove _ =
-    raise ERR "symbolic_arithmetic_prove" "rung 5 is not installed"
+  val addsub_names =
+    Redblackset.addList
+      (Redblackset.empty (Lib.pair_compare
+        (String.compare, String.compare)),
+       [("smtfloat", "smtfp_add"), ("smtfloat", "smtfp_sub")])
+
+  fun is_addsub_const tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Redblackset.member (addsub_names, (Thy, Name)) end
+
+  fun is_addsub_app tm =
+    let val (head, args) = boolSyntax.strip_comb tm
+    in is_addsub_const head andalso List.length args = 3 end
+
+  fun addsub_result_type t =
+    Term.type_of (HolKernel.find_term is_addsub_app t)
+
+  fun addsub_format_width t =
+    let
+      val {Thy, Tyop, Args, ...} =
+        Type.dest_thy_type (addsub_result_type t)
+      val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
+        raise ERR "addsub_format_width" "smtfp result expected"
+      val (fraction, exponent) =
+        case Args of
+          [fraction, exponent] => (fraction, exponent)
+        | _ => raise ERR "addsub_format_width" "wrong smtfp arity"
+    in
+      1 + fcpSyntax.dest_int_numeric_type fraction +
+        fcpSyntax.dest_int_numeric_type exponent
+    end
+
+  val addsub_case_id = "addsub-circuit"
+
+  val addsub_rewrites =
+    let open smtfloatTheory
+    in
+      [smtfp_add_circuit_correspondence,
+       smtfp_sub_circuit_correspondence,
+       smtfp_add_circuit_nan, smtfp_sub_circuit_nan]
+    end
+
+  fun symbolic_arithmetic_uncapped t =
+  let
+    val _ = Lib.can (HolKernel.find_term is_addsub_const) t orelse
+      raise ERR "symbolic_arithmetic_prove" "not an add/sub rewrite"
+    val width = addsub_format_width t
+    (* The two-operand circuit scales exponentially in the packed width.
+       Refuse standard Float32 and larger formats before expanding it. *)
+    val () = if width < 32 then () else
+      SmtResource.check_term_size addsub_case_id
+        (SmtResource.max_bitblast_term_nodes + 1)
+    val normalized =
+      simpLib.SIMP_CONV (bossLib.srw_ss()) addsub_rewrites t
+      handle Conv.UNCHANGED => Thm.REFL t
+    val residue = boolSyntax.rhs (Thm.concl normalized)
+    val () = SmtResource.check_bitblast_goal addsub_case_id residue
+    val residue_thm =
+      if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
+      else tier2_bv_prove residue
+  in
+    Thm.EQ_MP (Thm.SYM normalized) residue_thm
+  end
+
+  fun symbolic_arithmetic_prove t =
+    SmtResource.with_bitblast_step_time addsub_case_id
+      symbolic_arithmetic_uncapped t
+
+  val add_commutativity_case_id =
+    "symbolic-add-commutativity-corpus-minimum"
+  val add_commutativity_proof_bytes = 25803339
+
+  fun is_add_commutativity tm =
+    let
+      fun dest_add tm =
+        case boolSyntax.strip_comb tm of
+          (head, [rm, x, y]) =>
+            if is_addsub_const head andalso
+                #Name (Term.dest_thy_const head) = "smtfp_add" then
+              (rm, x, y)
+            else raise ERR "is_add_commutativity" "smtfp_add expected"
+        | _ => raise ERR "is_add_commutativity" "wrong add arity"
+      val equality = boolSyntax.dest_neg tm
+      val (lhs, rhs) = boolSyntax.dest_eq equality
+      val (lrm, lx, ly) = dest_add lhs
+      val (rrm, rx, ry) = dest_add rhs
+    in
+      Term.aconv lrm rrm andalso Term.aconv lx ry andalso
+      Term.aconv ly rx andalso not (List.null (Term.free_vars equality))
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun preflight_resource_gate terms =
+    if List.exists is_add_commutativity terms then
+      SmtResource.raise_gate "preflight_resource_gate"
+        (SmtResource.proof_size_diagnostic add_commutativity_case_id
+          add_commutativity_proof_bytes)
+    else
+      ()
 
   fun next_rung prover t continuation =
     prover t
