@@ -1363,3 +1363,131 @@ val _ =
                 ([], unregistered_goal)),
           fn () => ignore (linarithLib.LINARITH_PROVE unregistered_goal),
           fn () => ignore (linarithLib.LINARITH_CONV unregistered_goal)])
+
+(* Reducer, solver, and cache integration. *)
+
+fun reducer_conversion theorems tm =
+  let
+    val {initial, addcontext, apply, ...} =
+      Traverse.dest_reducer linarithLib.LINARITH_REDUCER
+    val context = addcontext (initial, theorems)
+  in
+    apply
+      {solver = fn _ => Conv.NO_CONV,
+       conv = fn _ => Conv.NO_CONV,
+       context = context,
+       stack = [],
+       relation = (boolSyntax.equality, Thm.REFL)} tm
+  end
+
+fun reducer_succeeds theorems tm =
+  ((ignore (reducer_conversion theorems tm); true)
+   handle Feedback.HOL_ERR _ => false)
+
+val _ =
+  check
+    ("LINARITH_REDUCER admits local arithmetic context",
+     fn () =>
+       (linarithLib.clear_linarith_caches ();
+        reducer_succeeds [Thm.ASSUME public_x_le_y] public_x_le_y andalso
+        reducer_succeeds [Thm.ASSUME public_x_le_y] public_x_le_y))
+
+val conjunctive_context =
+  HolKernel.CONJ
+    (Thm.ASSUME public_x_le_y) (Thm.ASSUME public_y_le_z)
+
+val _ =
+  check
+    ("CACHED_LINARITH tracks atoms in conjunctive context",
+     fn () =>
+       (linarithLib.clear_linarith_caches ();
+        Term.aconv
+          (Thm.concl
+            (linarithLib.CACHED_LINARITH
+              [conjunctive_context] public_x_le_z))
+          (boolSyntax.mk_eq (public_x_le_z, boolSyntax.T))))
+
+val nonlinear_closed_fact = arithmeticTheory.X_LE_X_SQUARED
+val nonlinear_closed_goal = Thm.concl nonlinear_closed_fact
+val quantified_nonlinear_fact =
+  Thm.GEN public_x nonlinear_closed_fact
+
+val _ =
+  check
+    ("LINARITH_REDUCER applies context admission screens",
+     fn () =>
+       (linarithLib.clear_linarith_caches ();
+        not (reducer_succeeds [nonlinear_closed_fact]
+               nonlinear_closed_goal) andalso
+        (linarithLib.clear_linarith_caches ();
+         not (reducer_succeeds [quantified_nonlinear_fact]
+                nonlinear_closed_goal)) andalso
+        (linarithLib.clear_linarith_caches ();
+         not (reducer_succeeds [boolTheory.TRUTH] public_x_le_y))))
+
+val min_le_rule = hd (Drule.CONJUNCTS arithmeticTheory.MIN_EQ_LE)
+val linarith_side_ss =
+  simpLib.++
+    (simpLib.++ (simpLib.empty_ss, simpLib.rewrites [min_le_rule]),
+     linarithLib.LINARITH_ss)
+val min_side_goal =
+  (boolSyntax.mk_eq (numSyntax.mk_min (public_x, public_z), public_x))
+
+val _ =
+  check
+    ("LINARITH_ss discharges a conditional rewrite side condition",
+     fn () =>
+       valid_closes
+         (simpLib.FULL_SIMP_TAC linarith_side_ss [])
+         ([public_x_le_y, public_y_le_z], min_side_goal))
+
+val _ =
+  check
+    ("lin_arith solver uses its supplied arithmetic context",
+     fn () =>
+       let
+         val {name, solve} = linarithLib.linarith_solver
+         val theorem =
+           solve
+             {stack = [],
+              context_thms =
+                [Thm.ASSUME public_x_le_y,
+                 Thm.ASSUME public_y_le_z],
+              recurse = Conv.NO_CONV} public_x_le_z
+       in
+         name = "lin_arith" andalso
+         Term.aconv (Thm.concl theorem) public_x_le_z
+       end)
+
+fun with_arith_export operation =
+  case ThmSetData.data_exportfns {settype = "arith"} of
+      NONE => false
+    | SOME export =>
+        let
+          val name = {Thy = "arithmetic", Name = "X_LE_X_SQUARED"}
+          val remove_name = "arithmetic$X_LE_X_SQUARED"
+          fun remove () =
+            #remove export {thy = "arithmetic", remove = remove_name}
+          val _ = #add export
+            {thy = "arithmetic",
+             named_thm = (name, nonlinear_closed_fact)}
+          val result = operation () handle e =>
+            (remove (); raise e)
+          val _ = remove ()
+        in
+          result
+        end
+
+val _ =
+  check
+    ("cached failure is retried after dynamic [arith] growth",
+     fn () =>
+       let
+         val _ = linarithLib.clear_linarith_caches ()
+         val failed_before =
+           not (reducer_succeeds [] nonlinear_closed_goal)
+       in
+         failed_before andalso
+         with_arith_export
+           (fn () => reducer_succeeds [] nonlinear_closed_goal)
+       end)

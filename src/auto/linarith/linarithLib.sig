@@ -11,4 +11,11 @@ sig
 
   val LINARITH_PROVE : term -> thm
   val LINARITH_CONV : conv
+
+  val CTXT_LINARITH : thm list -> conv
+  val CACHED_LINARITH : thm list -> conv
+  val LINARITH_REDUCER : Traverse.reducer
+  val LINARITH_ss : simpLib.ssfrag
+  val linarith_solver : Traverse.ssolver
+  val clear_linarith_caches : unit -> unit
 end

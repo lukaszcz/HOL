@@ -434,6 +434,189 @@ fun LINARITH_CONV tm =
           end
   end
 
+fun context_forward theorems conclusion =
+  let
+    val atoms = List.concat (map CONJUNCTS theorems)
+    val theorem = forward_prove (map Thm.concl atoms) conclusion
+  in
+    List.foldl
+      (fn (premise, result) => PROVE_HYP premise result)
+      theorem atoms
+  end
+
+fun CTXT_LINARITH theorems tm =
+  if Type.compare (Term.type_of tm, Type.bool) <> EQUAL orelse
+     (not (linarithDecomp.is_relevant tm) andalso
+      not (Term.aconv tm boolSyntax.F))
+  then raise ERR "CTXT_LINARITH" "not applicable"
+  else
+    let
+      fun prove goal = context_forward theorems goal
+    in
+      case attempt prove tm of
+          SOME theorem => EQT_INTRO theorem
+        | NONE =>
+            if Term.aconv tm boolSyntax.F then
+              raise ERR "CTXT_LINARITH" "linear arithmetic found no proof"
+            else
+              (case attempt prove (boolSyntax.mk_neg tm) of
+                   SOME theorem => EQF_INTRO theorem
+                 | NONE =>
+                     raise ERR "CTXT_LINARITH"
+                       "linear arithmetic could neither prove nor disprove \
+                       \term")
+    end
+
+fun add_atom bound atom atoms =
+  if List.exists (Term.aconv atom) bound orelse
+     List.exists (Term.aconv atom) atoms
+  then atoms
+  else atom :: atoms
+
+fun linarith_vars tm =
+  let
+    fun add_side bound (items, atoms) =
+      List.foldl
+        (fn ((atom, _), result) => add_atom bound atom result)
+        atoms items
+    fun recurse bound atoms tm =
+      case linarithDecomp.decomp tm of
+          SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
+            add_side bound (rhs, add_side bound (lhs, atoms))
+        | NONE =>
+            (case Lib.total boolSyntax.dest_neg tm of
+                 SOME body => recurse bound atoms body
+               | NONE =>
+                   (case Lib.total boolSyntax.dest_conj tm of
+                        SOME (left, right) =>
+                          recurse bound (recurse bound atoms left) right
+                      | NONE =>
+                          (case Lib.total boolSyntax.dest_disj tm of
+                               SOME (left, right) =>
+                                 recurse bound
+                                   (recurse bound atoms left) right
+                             | NONE =>
+                                 (case Lib.total boolSyntax.dest_imp tm of
+                                      SOME (left, right) =>
+                                        recurse bound
+                                          (recurse bound atoms left) right
+                                    | NONE =>
+                                        (case Lib.total
+                                                boolSyntax.dest_forall tm of
+                                             SOME (variable, body) =>
+                                               recurse (variable :: bound)
+                                                 atoms body
+                                           | NONE =>
+                                               (case Lib.total
+                                                       boolSyntax.dest_exists
+                                                       tm of
+                                                    SOME (variable, body) =>
+                                                      recurse
+                                                        (variable :: bound)
+                                                        atoms body
+                                                  | NONE => atoms))))))
+  in
+    List.rev (recurse [] [] tm)
+  end
+
+fun cache_check tm =
+  Type.compare (Term.type_of tm, Type.bool) = EQUAL andalso
+  (linarithDecomp.is_relevant tm orelse Term.aconv tm boolSyntax.F)
+
+val (CACHED_LINARITH, linarith_cache) =
+  Cache.RCACHE {capacity = 2000, per_key_cap = 50}
+    (linarith_vars, cache_check, CTXT_LINARITH)
+
+fun contains_forall sense tm =
+  case Lib.total boolSyntax.dest_conj tm of
+      SOME (left, right) =>
+        contains_forall sense left orelse contains_forall sense right
+    | NONE =>
+        (case Lib.total boolSyntax.dest_disj tm of
+             SOME (left, right) =>
+               contains_forall sense left orelse
+               contains_forall sense right
+           | NONE =>
+               (case Lib.total boolSyntax.dest_neg tm of
+                    SOME body => contains_forall (not sense) body
+                  | NONE =>
+                      (case Lib.total boolSyntax.dest_imp tm of
+                           SOME (left, right) =>
+                             contains_forall (not sense) left orelse
+                             contains_forall sense right
+                         | NONE =>
+                             (case Lib.total boolSyntax.dest_forall tm of
+                                  SOME (_, body) =>
+                                    sense orelse contains_forall sense body
+                                | NONE =>
+                                    (case Lib.total
+                                            boolSyntax.dest_exists tm of
+                                         SOME (_, body) =>
+                                           not sense orelse
+                                           contains_forall sense body
+                                       | NONE => false)))))
+
+fun admissible theorem =
+  let
+    val conclusion = Thm.concl theorem
+  in
+    (not (null (Thm.hyp theorem)) orelse
+     null (Term.free_vars conclusion)) andalso
+    not (contains_forall true conclusion) andalso
+    linarithDecomp.is_relevant conclusion
+  end
+
+(* Give dynamic [arith] facts assumption-shaped cache identities.  Their
+   original proofs remove those identities from the conversion result. *)
+fun cached_with_arith context tm =
+  let
+    val facts =
+      List.concat (map CONJUNCTS (linarithData.arith_facts ()))
+    val assumed = map (Thm.ASSUME o Thm.concl) facts
+    val theorem = CACHED_LINARITH (context @ assumed) tm
+  in
+    List.foldl
+      (fn (fact, result) => PROVE_HYP fact result)
+      theorem facts
+  end
+
+val LINARITH_REDUCER =
+  let
+    exception CTXT of thm list
+    fun get_context e = (raise e) handle CTXT value => value
+    fun addcontext (context, newtheorems) =
+      let
+        val admitted =
+          List.filter admissible
+            (List.concat (map CONJUNCTS newtheorems))
+      in
+        CTXT (admitted @ get_context context)
+      end
+  in
+    Traverse.REDUCER
+      {name = SOME "LINARITH_DP",
+       addcontext = addcontext,
+       apply = fn args =>
+         cached_with_arith (get_context (#context args)),
+       initial = CTXT []}
+  end
+
+val LINARITH_ss =
+  simpLib.named_merge_ss "LINARITH"
+    [simpLib.SSFRAG
+       {name = SOME "LINARITH_DP",
+        convs = [], rewrs = [], congs = [], filter = NONE,
+        ac = [], dprocs = [LINARITH_REDUCER]}]
+
+(* Mirrors Isabelle's solver setup at lin_arith.ML:949. *)
+val linarith_solver : Traverse.ssolver =
+  {name = "lin_arith",
+   solve = fn {context_thms, ...} => fn tm =>
+     context_forward
+       (context_thms @ linarithData.arith_facts ()) tm}
+
+fun clear_linarith_caches () = Cache.clear_cache linarith_cache
+
 val _ = linarithData.register_instance linarithNum.instance
 
 end
