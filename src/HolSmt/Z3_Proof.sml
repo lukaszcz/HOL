@@ -269,35 +269,85 @@ struct
 
   type proof_steps = (int, proofterm) Redblackmap.dict
 
+  (* A bit-decomposition is only a syntactic hint at this stage.  In
+     particular, [equation] is not an assumption and [bv_var] has not yet
+     been given a HOL definition.  Floating-point replay uses the association
+     to recognize the rewrite at which it is safe to construct and prove such
+     a definition. *)
+  type bit_decomposition = {
+    fp_var : Term.term,
+    bv_var : Term.term,
+    equation : Term.term
+  }
+
   type proof = {
     steps : proof_steps,
     vars : Term.term HOLset.set,
+    bit_decompositions : bit_decomposition list,
     z3_version : string
   }
 
-  fun mk_proof (steps, vars, z3_version) : proof = {
+  fun mk_proof (steps, vars, bit_decompositions, z3_version) : proof = {
     steps = steps,
     vars = vars,
+    bit_decompositions = bit_decompositions,
     z3_version = z3_version
   }
 
   fun empty_proof z3_version = mk_proof
-    (Redblackmap.mkDict Int.compare, Term.empty_tmset, z3_version)
+    (Redblackmap.mkDict Int.compare, Term.empty_tmset, [], z3_version)
 
   fun proof_steps (proof : proof) = #steps proof
   fun proof_vars (proof : proof) = #vars proof
+  fun proof_bit_decompositions (proof : proof) = #bit_decompositions proof
   fun proof_version (proof : proof) = #z3_version proof
 
   fun update_proof_steps (proof : proof) steps = {
     steps = steps,
     vars = #vars proof,
+    bit_decompositions = #bit_decompositions proof,
     z3_version = #z3_version proof
   }
 
   fun update_proof_vars (proof : proof) vars = {
     steps = #steps proof,
     vars = vars,
+    bit_decompositions = #bit_decompositions proof,
     z3_version = #z3_version proof
   }
+
+  fun update_proof_bit_decompositions (proof : proof) bit_decompositions = {
+    steps = #steps proof,
+    vars = #vars proof,
+    bit_decompositions = bit_decompositions,
+    z3_version = #z3_version proof
+  }
+
+  fun proofterm_premises (AND_ELIM (pt, _)) = [pt]
+    | proofterm_premises (APPLY_DEF (pt, _)) = [pt]
+    | proofterm_premises (IFF_FALSE (pt, _)) = [pt]
+    | proofterm_premises (IFF_TRUE (pt, _)) = [pt]
+    | proofterm_premises (LEMMA (pt, _)) = [pt]
+    | proofterm_premises (MONOTONICITY (pts, _)) = pts
+    | proofterm_premises (MP (pt1, pt2, _)) = [pt1, pt2]
+    | proofterm_premises (MP_EQ (pt1, pt2, _)) = [pt1, pt2]
+    | proofterm_premises (NNF_NEG (pts, _)) = pts
+    | proofterm_premises (NNF_POS (pts, _)) = pts
+    | proofterm_premises (NOT_OR_ELIM (pt, _)) = [pt]
+    | proofterm_premises (PROOF_BIND (_, pt)) = [pt]
+    | proofterm_premises (QUANT_INTRO (pt, _)) = [pt]
+    | proofterm_premises (SYMM (pt, _)) = [pt]
+    | proofterm_premises (TH_LEMMA_ARITH (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_ARRAY (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_BASIC (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_BV (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_DATATYPE (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_SEQ (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_CHAR (_, pts, _)) = pts
+    | proofterm_premises (TH_LEMMA_ADVANCED (_, pts, _)) = pts
+    | proofterm_premises (TRANS (pt1, pt2, _)) = [pt1, pt2]
+    | proofterm_premises (TRANS_STAR (pts, _)) = pts
+    | proofterm_premises (UNIT_RESOLUTION (pts, _)) = pts
+    | proofterm_premises _ = []
 
 end

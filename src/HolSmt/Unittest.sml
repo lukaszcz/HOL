@@ -6853,36 +6853,45 @@ end
 
 fun z3_proof_parser_floatingpoint_decomposition_success () =
 let
-  (* Assembled from TASK_02's arbitrary_format_float32 decomposition and
-     its ground-arithmetic/scale mode spellings.  Keep the exact extract
-     boundaries and Z3's long mode names emitted by fpa2bv. *)
+  (* The first rewrite is TASK_02's exact Float32 decomposition preamble.
+     The second is a compact corpus-shaped stand-in for one monolithic atom
+     conversion over the per-bit Boolean skolems. *)
   val fragment =
     "((set-logic QF_FP)\n\
     \(declare-fun x () Float32)\n\
     \(declare-fun k!00 () (_ BitVec 32))\n\
+    \(declare-fun k!10 () Bool)\n\
     \(proof\n\
-    \(asserted\n\
-    \(and\n\
-    \ (= x (fp ((_ extract 31 31) k!00)\n\
-    \          ((_ extract 30 23) k!00)\n\
-    \          ((_ extract 22 0) k!00)))\n\
-    \ (= (fp.add roundNearestTiesToEven x x) (fp.add RNE x x))\n\
-    \ (= (fp.add roundNearestTiesToAway x x) (fp.add RNA x x))\n\
-    \ (= (fp.add roundTowardPositive x x) (fp.add RTP x x))\n\
-    \ (= (fp.add roundTowardNegative x x) (fp.add RTN x x))\n\
-    \ (= (fp.add roundTowardZero x x) (fp.add RTZ x x)))))))"
+    \(monotonicity\n\
+    \ (rewrite\n\
+    \  (= x (fp ((_ extract 31 31) k!00)\n\
+    \           ((_ extract 30 23) k!00)\n\
+    \           ((_ extract 22 0) k!00))))\n\
+    \ (rewrite\n\
+    \  (= (fp.lt x (_ +zero 8 24))\n\
+    \     (and (or k!10 (= ((_ extract 7 0) k!00) #x00))\n\
+    \       (= (fp.add roundNearestTiesToEven x x) (fp.add RNE x x))\n\
+    \       (= (fp.add roundNearestTiesToAway x x) (fp.add RNA x x))\n\
+    \       (= (fp.add roundTowardPositive x x) (fp.add RTP x x))\n\
+    \       (= (fp.add roundTowardNegative x x) (fp.add RTN x x))\n\
+    \       (= (fp.add roundTowardZero x x) (fp.add RTZ x x)))))\n\
+    \ (= x x)))))"
   val proof = parse_z3_proof_string "4.15.3" fragment
-  val conclusion =
+  val (decomposition, atom_conversion, conclusion) =
     case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
-      SOME (Z3_Proof.ASSERTED concl) => concl
-    | SOME _ => die "FAIL: FP proof fragment parsed to the wrong proof rule"
+      SOME (Z3_Proof.MONOTONICITY
+        ([Z3_Proof.REWRITE decomposition,
+          Z3_Proof.REWRITE atom_conversion], concl)) =>
+        (decomposition, atom_conversion, concl)
+    | SOME _ => die "FAIL: FP proof fragment parsed to the wrong proof shape"
     | NONE => die "FAIL: FP proof fragment has no root proof step"
   fun is_smtfloat_const name tm =
     Term.is_const tm andalso
     let val {Thy, Name, ...} = Term.dest_thy_const tm
     in Thy = "smtfloat" andalso Name = name end
   fun has_smtfloat_const name =
-    term_has_subterm (is_smtfloat_const name) conclusion
+    List.exists (term_has_subterm (is_smtfloat_const name))
+      [decomposition, atom_conversion, conclusion]
   fun find_proof_var name =
     List.find (fn tm =>
       Term.is_var tm andalso Lib.fst (Term.dest_var tm) = name)
@@ -6890,7 +6899,8 @@ let
   val k = find_proof_var "k!00"
   val x = find_proof_var "x"
   val expected_names =
-    ["smtfp_bits", "smtfp_add", "RNE", "RNA", "RTP", "RTN", "RTZ"]
+    ["smtfp_bits", "smtfp_lt", "smtfp_pzero", "smtfp_add",
+     "RNE", "RNA", "RTP", "RTN", "RTZ"]
   fun type_is_smtfp ty =
     let val {Thy, Tyop, ...} = Type.dest_thy_type ty
     in Thy = "smtfloat" andalso Tyop = "smtfp" end
@@ -6899,16 +6909,27 @@ in
   List.app (fn name => assert (has_smtfloat_const name,
       "FP proof dictionary did not resolve smtfloatTheory." ^ name))
     expected_names;
-  (case k of
-     SOME tm =>
-       assert (wordsSyntax.is_word_type (Term.type_of tm) andalso
-           fcpLib.index_to_num (wordsSyntax.dim_of tm) = Arbnum.fromInt 32,
-         "proof-local k!00 did not retain its declared 32-bit sort")
-   | NONE => die "FAIL: proof declaration did not register k!00");
-  (case x of
-     SOME tm => assert (type_is_smtfp (Term.type_of tm),
-       "proof Float32 declaration did not resolve to smtfp")
-   | NONE => die "FAIL: proof declaration did not register x");
+  (case (k, x, Z3_Proof.proof_bit_decompositions proof) of
+     (SOME k_tm, SOME x_tm,
+      [{fp_var, bv_var, equation} : Z3_Proof.bit_decomposition]) =>
+       (assert (wordsSyntax.is_word_type (Term.type_of k_tm) andalso
+            fcpLib.index_to_num (wordsSyntax.dim_of k_tm) = Arbnum.fromInt 32,
+          "proof-local k!00 did not retain its declared 32-bit sort");
+        assert (type_is_smtfp (Term.type_of x_tm),
+          "proof Float32 declaration did not resolve to smtfp");
+        assert (bv_var ~~ k_tm andalso fp_var ~~ x_tm,
+          "k!00 decomposition association has the wrong variables");
+        assert (equation ~~ decomposition,
+          "k!00 decomposition association lost its rewrite equation"))
+   | (NONE, _, _) => die "FAIL: proof declaration did not register k!00"
+   | (_, NONE, _) => die "FAIL: proof declaration did not register x"
+   | (_, _, decompositions) =>
+       die ("FAIL: expected one k! decomposition association, found " ^
+         Int.toString (List.length decompositions)));
+  assert (not (List.exists (fn {equation, ...} =>
+      equation ~~ atom_conversion)
+      (Z3_Proof.proof_bit_decompositions proof)),
+    "monolithic atom conversion was misregistered as a decomposition");
   expect_hol_error_contains "benchmark proof-skolem leakage" "k!00"
     (fn () => ignore (parse_smtlib_assertions
       ("(set-logic QF_FP)\n" ^

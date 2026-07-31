@@ -71,6 +71,10 @@ local
     thm_cache : Thm.thm Net.net,
     (* contains all of the variables that Z3 has defined *)
     var_set : Term.term HOLset.set,
+    (* Parser-discovered FP decomposition associations.  These are hints, not
+       hypotheses: rung 3 must prove a definition before adding it through
+       [state_define]. *)
+    bit_decompositions : bit_decomposition list,
     z3_version : string
   }
 
@@ -80,6 +84,7 @@ local
       definition_hyps = #definition_hyps s,
       thm_cache = #thm_cache s,
       var_set = #var_set s,
+      bit_decompositions = #bit_decompositions s,
       z3_version = #z3_version s
     }
 
@@ -89,6 +94,7 @@ local
       definition_hyps = HOLset.addList (#definition_hyps s, terms),
       thm_cache = #thm_cache s,
       var_set = #var_set s,
+      bit_decompositions = #bit_decompositions s,
       z3_version = #z3_version s
     }
 
@@ -98,6 +104,7 @@ local
       definition_hyps = #definition_hyps s,
       thm_cache = Net.insert (Thm.concl thm, thm) (#thm_cache s),
       var_set = #var_set s,
+      bit_decompositions = #bit_decompositions s,
       z3_version = #z3_version s
     }
 
@@ -2071,6 +2078,8 @@ local
       term_set_summary "asserted_hyps" (#asserted_hyps state),
       term_set_summary "definition_hyps" (#definition_hyps state),
       term_set_summary "z3_vars" (#var_set state),
+      "bit_decompositions=" ^ Int.toString
+        (List.length (#bit_decompositions state)),
       "z3_version=" ^ #z3_version state
     ]
 
@@ -2881,6 +2890,7 @@ in
       definition_hyps = Term.empty_tmset,
       thm_cache = Net.empty,
       var_set = proof_vars proof,
+      bit_decompositions = proof_bit_decompositions proof,
       z3_version = proof_version proof
     }
     val ((_, _), thm) = thm_of_proofterm ((state, proof), ID 0) Lib.I
@@ -2902,6 +2912,7 @@ in
       definition_hyps = Term.empty_tmset,
       thm_cache = Net.empty,
       var_set = proof_vars proof,
+      bit_decompositions = proof_bit_decompositions proof,
       z3_version = proof_version proof
     }
 

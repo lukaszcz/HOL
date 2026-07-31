@@ -153,6 +153,14 @@ local
   fun builtin_name name =
     SmtLib_Theories.K_zero_zero (Term.mk_var (name, Type.alpha))
 
+  fun z3_leftassoc name make args =
+    case args of
+      first :: second :: rest =>
+        List.foldl (fn (next, result) => make (result, next))
+          (make (first, second)) rest
+    | _ => raise ERR ("<z3_builtin_dict." ^ name ^ ">")
+        "at least two arguments expected"
+
   (***************************************************************************)
   (* Z3-internal Unicode-string symbols                                      *)
   (***************************************************************************)
@@ -481,6 +489,23 @@ local
        them are kept. *)
     ("iff", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
     ("implies", SmtLib_Theories.K_zero_two boolSyntax.mk_imp),
+    (* fpa2bv uses Z3's n-ary extension of otherwise binary BV operators. *)
+    ("concat", SmtLib_Theories.K_zero_list
+      (z3_leftassoc "concat" wordsSyntax.mk_word_concat)),
+    ("bvadd", SmtLib_Theories.K_zero_list
+      (z3_leftassoc "bvadd" wordsSyntax.mk_word_add)),
+    ("bvor", SmtLib_Theories.K_zero_list
+      (z3_leftassoc "bvor" wordsSyntax.mk_word_or)),
+    ("bvredand", SmtLib_Theories.K_zero_one wordsSyntax.mk_reduce_and),
+    ("bvredor", SmtLib_Theories.K_zero_one wordsSyntax.mk_reduce_or),
+    (* Z3's symbolic fp.to_real bridge contains its internal real-power
+       operator.  HOL's ordinary [pow] has a natural exponent, so preserve
+       this proof-local operator without assigning it the wrong semantics. *)
+    ("^", SmtLib_Theories.K_zero_two (fn (base, exponent) =>
+      Term.list_mk_comb
+        (Term.mk_var ("z3_real_pow", boolSyntax.list_mk_fun
+          ([realSyntax.real_ty, realSyntax.real_ty], realSyntax.real_ty)),
+         [base, exponent]))),
     (* equivalence modulo naming *)
     ("~", SmtLib_Theories.K_zero_two boolSyntax.mk_eq),
     (* the following two are the unary arithmetic negation operator *)
@@ -806,6 +831,87 @@ local
            handler ^ "'")
 
   (***************************************************************************)
+  (* discovering FloatingPoint bit-decomposition rewrites                    *)
+  (***************************************************************************)
+
+  fun is_k_skolem tm =
+    Term.is_var tm andalso
+    let
+      val name = Lib.fst (Term.dest_var tm)
+      val n = String.size name
+      fun digits i =
+        i >= n orelse
+        (Char.isDigit (String.sub (name, i)) andalso digits (i + 1))
+    in
+      n > 2 andalso String.isPrefix "k!" name andalso digits 2
+    end
+
+  fun dest_smtfp_bits tm =
+  let
+    val (head, args) = boolSyntax.strip_comb tm
+    val {Thy, Name, ...} = Term.dest_thy_const head
+  in
+    if Thy = "smtfloat" andalso Name = "smtfp_bits" then
+      case args of
+        [sign, exponent, significand] => (sign, exponent, significand)
+      | _ => raise ERR "dest_smtfp_bits" "three fields expected"
+    else
+      raise ERR "dest_smtfp_bits" "smtfp_bits expected"
+  end
+
+  fun bit_decomposition_of_rewrite vars equation =
+  let
+    val (fp_var, fields) = boolSyntax.dest_eq equation
+    val _ = Term.is_var fp_var orelse
+      raise ERR "bit_decomposition_of_rewrite" "FP variable expected"
+    val (sign, exponent, significand) = dest_smtfp_bits fields
+    fun extract_source field =
+      let val (_, _, source, _) = wordsSyntax.dest_word_extract field
+      in source end
+    val sources = List.map extract_source [sign, exponent, significand]
+    val bv_var = List.hd sources
+    val _ = List.all (Term.aconv bv_var) (List.tl sources) orelse
+      raise ERR "bit_decomposition_of_rewrite"
+        "extracts do not share a source"
+    val _ = is_k_skolem bv_var orelse
+      raise ERR "bit_decomposition_of_rewrite" "k! skolem expected"
+    val _ = HOLset.member (vars, bv_var) orelse
+      raise ERR "bit_decomposition_of_rewrite" "undeclared k! skolem"
+  in
+    SOME {fp_var = fp_var, bv_var = bv_var, equation = equation}
+  end
+  handle Feedback.HOL_ERR _ => NONE
+
+  fun discover_bit_decompositions proof =
+  let
+    val vars = proof_vars proof
+    fun add_decomposition decomposition decompositions =
+      if List.exists (fn {bv_var, equation, ...} =>
+          Term.aconv bv_var (#bv_var decomposition) andalso
+          Term.aconv equation (#equation decomposition)) decompositions then
+        decompositions
+      else
+        decomposition :: decompositions
+    fun collect (pt, decompositions) =
+      let
+        val decompositions =
+          case pt of
+            REWRITE equation =>
+              (case bit_decomposition_of_rewrite vars equation of
+                 SOME decomposition =>
+                   add_decomposition decomposition decompositions
+               | NONE => decompositions)
+          | _ => decompositions
+      in
+        List.foldl collect decompositions (proofterm_premises pt)
+      end
+    val decompositions = Redblackmap.foldl
+      (fn (_, pt, found) => collect (pt, found)) [] (proof_steps proof)
+  in
+    update_proof_bit_decompositions proof (List.rev decompositions)
+  end
+
+  (***************************************************************************)
   (* parsing of let definitions                                              *)
   (***************************************************************************)
 
@@ -1039,8 +1145,8 @@ in
       (List.foldl
         (fn ((_, witness), vars) => HOLset.add (vars, witness))
         Term.empty_tmset string_witnesses)
-    val proof = parse_proof get_token
-      (tydict, tmdict, initial_proof)
+    val proof = discover_bit_decompositions (parse_proof get_token
+      (tydict, tmdict, initial_proof))
     val _ = if !Library.trace > 0 then
         WARNING "parse_stream" ("ignoring token '" ^ get_token () ^
           "' (and perhaps others) after proof")
