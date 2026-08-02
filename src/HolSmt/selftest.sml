@@ -1737,10 +1737,10 @@ in
     (``smtfp_lt (x : (10,5) smtfp) y ==> ~smtfp_lt y x``,
       [thm_Z3p_v4]),
 
-    (* Tiny symbolic add/sub uses the checked Tier-3 circuit rung.  NaN is
-       deliberately symbolic in the other operand, so ground evaluation
-       cannot discharge either row. *)
-    (``smtfp_add RNE (x : (1,2) smtfp) smtfp_nan = smtfp_nan``,
+    (* Tiny symbolic add/sub uses the checked Tier-3 circuit rung.  The add
+       row exercises symbolic finite/exceptional dispatch against +0; the
+       sub row covers symbolic exceptional dispatch. *)
+    (``smtfp_add RTN (x : (1,2) smtfp) smtfp_pzero = x``,
       [thm_Z3p_v4]),
     (``smtfp_sub RNA (x : (1,2) smtfp) smtfp_nan = smtfp_nan``,
       [thm_Z3p_v4]),

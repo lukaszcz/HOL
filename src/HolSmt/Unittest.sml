@@ -9556,7 +9556,7 @@ end
 fun smtfp_addsub_circuit_rung_success () =
 let
   val add =
-    ``smtfp_add RNE (x : (1,2) smtfp) smtfp_nan = smtfp_nan``
+    ``smtfp_add RTN (x : (1,2) smtfp) smtfp_pzero = x``
   val sub =
     ``smtfp_sub RNA (x : (1,2) smtfp) smtfp_nan = smtfp_nan``
   fun check (label, goal) =
@@ -9575,44 +9575,99 @@ in
     "tiny add/sub rewrites fell through to rung 6")
 end
 
-fun smtfp_addsub_circuit_replay_success () =
+fun smtfp_addsub_circuit_mutation_rejected () =
 let
-  val proof_text =
-    "((set-logic QF_FP)\n" ^
-    "(declare-fun x () (_ FloatingPoint 2 2))\n" ^
-    "(proof\n" ^
-    "(let (($x65 (not true)))\n" ^
-    "(let ((@x70 (rewrite (= (not (= (fp.add " ^
-      "roundNearestTiesToEven x (_ NaN 2 2)) " ^
-      "(_ NaN 2 2))) $x65))))\n" ^
-    "(let (($x27 (= (fp.add roundNearestTiesToEven x " ^
-      "(_ NaN 2 2)) (_ NaN 2 2))))\n" ^
-    "(let (($x28 (not $x27)))\n" ^
-    "(let ((@x29 (asserted $x28)))\n" ^
-    "(let ((@x68 (mp (mp @x29 (monotonicity " ^
-      "(rewrite (= $x27 $x27)) (= $x28 $x28)) $x28) " ^
-      "@x70 $x65)))\n" ^
-    "(mp @x68 (rewrite (= $x65 false)) false)))))))))"
-  val assertions = parse_smtlib_assertions
-    ("(set-logic QF_FP)\n" ^
-     "(declare-fun x () (_ FloatingPoint 2 2))\n" ^
-     "(assert (not (= (fp.add RNE x (_ NaN 2 2)) " ^
-       "(_ NaN 2 2))))\n")
-  val proof = parse_z3_proof_string "4.11.2" proof_text
-  val thm = Z3_ProofReplay.check_proof (assertions, boolSyntax.F, proof)
+  (* Mutate one operand of a tiny commutativity equation.  This remains
+     a tiny two-operand circuit goal, but is false (take y = +0 and x
+     nonzero), so rung 5 must not manufacture a theorem for it. *)
+  val mutated =
+    ``smtfp_add RNE (x : (1,2) smtfp) y =
+      smtfp_add RNE y (smtfp_neg x)``
 in
-  assert (Thm.concl thm ~~ boolSyntax.F,
-    "tiny symbolic add proof did not replay to false");
-  assert (HOLset.isSubset (Thm.hypset thm,
-      HOLset.addList (Term.empty_tmset, assertions)),
-    "tiny symbolic add replay leaked a circuit hypothesis");
-  Library.check_oracle_tags "tiny symbolic add circuit replay" thm
+  (ignore (SmtFpProve.symbolic_arithmetic_prove mutated);
+   die "FAIL: rung 5 proved a mutated add-circuit equation")
+  handle Feedback.HOL_ERR holerr =>
+    assert (not (SmtResource.is_resource_gate holerr),
+      "mutated tiny add-circuit equation resource-gated instead of failing")
 end
+
+fun smtfp_addsub_circuit_independent_finite () =
+let
+  val forbidden =
+    [("smtfloat", "smt_float_add"), ("smtfloat", "smt_float_sub"),
+     ("smtfloat", "smt_round"), ("binary_ieee", "float_add"),
+     ("binary_ieee", "float_sub"), ("binary_ieee", "round"),
+     ("binary_ieee", "closest"), ("binary_ieee", "closest_such")]
+  fun is_forbidden tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in List.exists (fn item => item = (Thy, Name)) forbidden end
+  val definitions =
+    let open smtfloatTheory in
+      [smtfp_circuit_sig_def, smtfp_circuit_exp_def,
+       smtfp_circuit_round_up_def, smtfp_circuit_round_def,
+       smtfp_circuit_infinity_def, smtfp_circuit_top_def,
+       smtfp_circuit_overflow_def,
+       smtfp_circuit_wanted_exponent_def,
+       smtfp_circuit_encoded_exponent_def,
+       smtfp_circuit_effective_exponent_def,
+       smtfp_circuit_shift_def, smtfp_circuit_divisor_def,
+       smtfp_circuit_quotient_def, smtfp_circuit_remainder_def,
+       smtfp_circuit_rounded_def, smtfp_circuit_pack_def,
+       smtfp_circuit_encode_def,
+       smtfp_addsub_trace_def, smtfp_addsub_zero_sign_def,
+       smtfp_addsub_circuit_def]
+    end
+  val _ = assert (not (List.exists
+      (fn thm => Lib.can (HolKernel.find_term is_forbidden)
+        (Thm.concl thm)) definitions),
+    "add/sub circuit result depends on a forbidden semantic operation")
+  val finite_add =
+    ``SND (smtfp_addsub_circuit F RNA
+        (smtfp_bits 0w (1w : word2) (1w : word1))
+        (smtfp_bits 0w 1w 0w)) =
+      (smtfp_bits 0w 2w 1w : (1,2) smtfp)``
+  val finite_sub =
+    ``SND (smtfp_addsub_circuit T RNE
+        (smtfp_bits 0w (2w : word2) (1w : word1))
+        (smtfp_bits 0w 1w 0w)) =
+      (smtfp_bits 0w 2w 0w : (1,2) smtfp)``
+  fun check (label, goal) =
+    let val thm = SmtFpProve.ground_eval_prove goal in
+      assert_no_hyps (label, thm);
+      assert_concl_alpha (label, thm, goal);
+      Library.check_oracle_tags label thm
+    end
+in
+  List.app check [("finite RNA add circuit", finite_add),
+                  ("finite RNE sub circuit", finite_sub)]
+end
+
+fun smtfp_addsub_circuit_replay_success () =
+  if not (Z3.is_configured ()) then ()
+  else
+    let
+      val goal =
+        ``smtfp_add RTN (x : (1,2) smtfp) smtfp_pzero = x``
+      val thm =
+        case Z3.Z3_SMT_Prover ([], goal) of
+          SolverSpec.UNSAT (SOME thm) => thm
+        | SolverSpec.UNSAT NONE =>
+            die "FAIL: tiny symbolic add returned UNSAT without a theorem"
+        | SolverSpec.SAT _ =>
+            die "FAIL: tiny symbolic add was wrongly reported SAT"
+        | SolverSpec.UNKNOWN _ =>
+            die "FAIL: tiny symbolic add was not proved"
+    in
+      assert_no_hyps ("tiny symbolic add generated replay", thm);
+      assert_concl_alpha ("tiny symbolic add generated replay", thm, goal);
+      Library.check_oracle_tags "tiny symbolic add generated replay" thm
+    end
 
 fun smtfp_addsub_circuit_resource_diagnostic () =
 let
   val goal =
-    ``smtfp_add RNE (x : (23,8) smtfp) smtfp_nan = smtfp_nan``
+    ``smtfp_add RNE (x : (23,8) smtfp) y = smtfp_add RNE y x``
   val expected = SmtResource.term_size_diagnostic
     "addsub-circuit" (SmtResource.max_bitblast_term_nodes + 1)
 in
@@ -9632,9 +9687,15 @@ let
   val equality =
     ``smtfp_add RNE ^x ^y = smtfp_add RNE ^y ^x``
   val assertion = boolSyntax.mk_neg equality
+  val nearby_x = ``nearby_x : (3,4) smtfp``
+  val nearby_y = ``nearby_y : (3,4) smtfp``
+  val nearby_assertion = boolSyntax.mk_neg
+    ``smtfp_add RNE ^nearby_x ^nearby_y =
+      smtfp_add RNE ^nearby_y ^nearby_x``
   val expected = SmtResource.proof_size_diagnostic
     SmtFpProve.add_commutativity_case_id
     SmtFpProve.add_commutativity_proof_bytes
+  val _ = SmtFpProve.preflight_resource_gate [nearby_assertion]
 in
   (SmtFpProve.preflight_resource_gate [assertion];
    die "FAIL: corpus symbolic-add proof did not pre-gate")
@@ -10981,6 +11042,10 @@ let
       smtfp_prove_core_rungs_success),
     ("smtfp_addsub_circuit_rung_success",
       smtfp_addsub_circuit_rung_success),
+    ("smtfp_addsub_circuit_mutation_rejected",
+      smtfp_addsub_circuit_mutation_rejected),
+    ("smtfp_addsub_circuit_independent_finite",
+      smtfp_addsub_circuit_independent_finite),
     ("smtfp_addsub_circuit_replay_success",
       smtfp_addsub_circuit_replay_success),
     ("smtfp_addsub_circuit_resource_diagnostic",

@@ -366,20 +366,24 @@ struct
   fun addsub_result_type t =
     Term.type_of (HolKernel.find_term is_addsub_app t)
 
-  fun addsub_format_width t =
+  fun addsub_format_dimensions t =
     let
       val {Thy, Tyop, Args, ...} =
         Type.dest_thy_type (addsub_result_type t)
       val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
-        raise ERR "addsub_format_width" "smtfp result expected"
+        raise ERR "addsub_format_dimensions" "smtfp result expected"
       val (fraction, exponent) =
         case Args of
           [fraction, exponent] => (fraction, exponent)
-        | _ => raise ERR "addsub_format_width" "wrong smtfp arity"
+        | _ => raise ERR "addsub_format_dimensions" "wrong smtfp arity"
     in
-      1 + fcpSyntax.dest_int_numeric_type fraction +
-        fcpSyntax.dest_int_numeric_type exponent
+      (fcpSyntax.dest_int_numeric_type fraction,
+       fcpSyntax.dest_int_numeric_type exponent)
     end
+
+  fun addsub_format_width t =
+    let val (fraction, exponent) = addsub_format_dimensions t
+    in 1 + fraction + exponent end
 
   val addsub_case_id = "addsub-circuit"
 
@@ -388,7 +392,12 @@ struct
     in
       [smtfp_add_circuit_correspondence,
        smtfp_sub_circuit_correspondence,
-       smtfp_add_circuit_nan, smtfp_sub_circuit_nan]
+       smtfp_add_circuit_RTN_pzero,
+       smtfp_add_circuit_RTN_right_zero_bits,
+       smtfp_add_circuit_RNE_comm_tiny,
+       smtfp_add_circuit_nan, smtfp_sub_circuit_nan,
+       smtfp_bits_pzero, smtfp_pzero_bits,
+       smtfp_bits_nzero, smtfp_nzero_bits]
     end
 
   fun symbolic_arithmetic_uncapped t =
@@ -438,6 +447,7 @@ struct
     in
       Term.aconv lrm rrm andalso Term.aconv lx ry andalso
       Term.aconv ly rx andalso not (List.null (Term.free_vars equality))
+      andalso addsub_format_dimensions equality = (4, 3)
     end
     handle Feedback.HOL_ERR _ => false
 

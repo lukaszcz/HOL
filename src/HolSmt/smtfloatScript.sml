@@ -3650,133 +3650,7062 @@ QED
 (* -------------------------------------------------------------------------
    Tier-3 add/sub reference circuit
 
-   The trace below exposes the four datapath stages used by a hardware
-   implementation.  Alignment shifts the smaller fraction and jams every
-   discarded bit into the sticky position; operation adds or subtracts the
-   aligned words; normalization restores a leading bit; and the final three
-   Booleans are guard, round, and sticky.  The semantic result is carried
-   beside the trace.  Keeping the trace and result together prevents the
-   staging from being erased while the two correspondence theorems below
-   give replay a small, stable interface.
+   This is an independently computed integer datapath.  A finite operand is
+   represented by its integer significand and its effective biased exponent.
+   Alignment is exact (the smaller exponent is the common scale), so no
+   information is lost before the operate stage.  The encoder normalizes the
+   exact magnitude and performs quotient/remainder rounding; [residue] is
+   combined guard/round/sticky residue.  In particular, the circuit result
+   does not call either semantic add/sub operation or a real-number rounder.
    ------------------------------------------------------------------------- *)
 
-Definition smtfp_shift_right_sticky_def:
-  smtfp_shift_right_sticky n (v : 'a word) =
-    if n = 0 then v
-    else
-      let shifted = v >>> n in
-      let discarded = v && n2w (2 ** n - 1) in
-        if discarded = 0w then shifted else shifted || 1w
+Definition smtfp_circuit_sig_def:
+  smtfp_circuit_sig (e : 'w word) (m : 't word) =
+    if e = 0w then w2n m else 2 ** dimindex (:'t) + w2n m
 End
 
-Definition smtfp_normalize_word_def:
-  (smtfp_normalize_word 0 (v : 'a word) = v) /\
-  (smtfp_normalize_word (SUC fuel) v =
-     if v = 0w \/ word_msb v then v
-     else smtfp_normalize_word fuel (v << 1))
+Definition smtfp_circuit_exp_def:
+  smtfp_circuit_exp (e : 'w word) = if e = 0w then 1 else w2n e
 End
 
-Definition smtfp_guard_bit_def:
-  smtfp_guard_bit (v : 'a word) <=> word_bit 2 v
-End
+Theorem smtfp_circuit_exp_positive[simp]:
+  0 < smtfp_circuit_exp e
+Proof
+  Cases_on `e = 0w` >>
+  simp [smtfp_circuit_exp_def] >>
+  CCONTR_TAC >>
+  fs [wordsTheory.w2n_eq_0]
+QED
 
-Definition smtfp_round_bit_def:
-  smtfp_round_bit (v : 'a word) <=> word_bit 1 v
-End
+Theorem smtfp_circuit_sig_bound:
+  smtfp_circuit_sig e (m : 't word) <
+  2 * 2 ** dimindex (:'t)
+Proof
+  `w2n m < 2 ** dimindex (:'t)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``]
+       wordsTheory.w2n_lt) >>
+     simp [wordsTheory.dimword_def]) >>
+  Cases_on `e = 0w`
+  >- (simp [smtfp_circuit_sig_def] >>
+      irule arithmeticTheory.LESS_LESS_EQ_TRANS >>
+      qexists_tac `2 ** dimindex (:'t)` >> simp [])
+  >> simp [smtfp_circuit_sig_def]
+QED
 
-Definition smtfp_sticky_bit_def:
-  smtfp_sticky_bit (v : 'a word) <=> word_bit 0 v
-End
+Theorem smtfp_circuit_sig_mantissa:
+  smtfp_circuit_sig f.Exponent f.Significand =
+  binary_ieeeProps$mantissa f
+Proof
+  simp [smtfp_circuit_sig_def,
+        binary_ieeePropsTheory.mantissa_def]
+QED
 
-Definition smtfp_round_increment_def:
-  smtfp_round_increment mode sign retained_lsb guard round sticky <=>
+Theorem smtfp_circuit_value:
+  float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  (-1) pow w2n s * &smtfp_circuit_sig e m *
+    (2 pow smtfp_circuit_exp e /
+     2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  rewrite_tac [binary_ieeePropsTheory.float_to_real_ulp] >>
+  simp [smtfp_circuit_sig_def, smtfp_circuit_exp_def,
+        binary_ieeePropsTheory.mantissa_def,
+        binary_ieeeTheory.float_ulp_def, binary_ieeeTheory.ULP_def]
+QED
+
+Theorem smtfp_circuit_positive_value:
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  &smtfp_circuit_sig e m *
+    (2 pow smtfp_circuit_exp e /
+     2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  simp [smtfp_circuit_value]
+QED
+
+Theorem smtfp_circuit_align_value:
+  scale <= smtfp_circuit_exp e ==>
+  float_to_real
+    (<| Sign := 0w; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  &(smtfp_circuit_sig e m *
+    2 ** (smtfp_circuit_exp e - scale)) *
+    (2 pow scale /
+     2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  strip_tac >>
+  rewrite_tac [smtfp_circuit_positive_value] >>
+  `smtfp_circuit_exp e - scale + scale = smtfp_circuit_exp e` by
+    decide_tac >>
+  first_assum (once_rewrite_tac o single o GSYM) >>
+  simp [realTheory.REAL_POW_ADD,
+        realTheory.REAL_OF_NUM_MUL,
+        realTheory.REAL_OF_NUM_POW,
+        realTheory.real_div,
+        realTheory.REAL_MUL_ASSOC] >>
+  disj2_tac >>
+  qpat_assum
+    `smtfp_circuit_exp e - scale + scale = smtfp_circuit_exp e`
+    (once_rewrite_tac o single o GSYM) >>
+  simp [arithmeticTheory.EXP_ADD,
+        arithmeticTheory.MULT_COMM]
+QED
+
+Definition smtfp_circuit_round_up_def:
+  smtfp_circuit_round_up mode (sign : word1) q (residue : num) divisor <=>
+    residue <> 0 /\
     case mode of
-      RNE => guard /\ (round \/ sticky \/ retained_lsb)
-    | RNA => guard
-    | RTP => sign = 0w /\ (guard \/ round \/ sticky)
-    | RTN => sign = 1w /\ (guard \/ round \/ sticky)
+      RNE => divisor < 2 * residue \/
+             divisor = 2 * residue /\ ODD q
+    | RNA => divisor <= 2 * residue
+    | RTP => sign = 0w
+    | RTN => sign = 1w
     | RTZ => F
 End
 
+Definition smtfp_circuit_round_def:
+  smtfp_circuit_round mode sign q (residue : num) divisor =
+    q + if smtfp_circuit_round_up mode sign q residue divisor then 1 else 0
+End
+
+Theorem smtfp_circuit_round_exact[simp]:
+  smtfp_circuit_round mode sign q 0 divisor = q
+Proof
+  Cases_on `mode` >>
+  simp [smtfp_circuit_round_def, smtfp_circuit_round_up_def]
+QED
+
+Theorem smtfp_circuit_round_bounds:
+  q <= smtfp_circuit_round mode sign q residue divisor /\
+  smtfp_circuit_round mode sign q residue divisor <= q + 1
+Proof
+  simp [smtfp_circuit_round_def] >>
+  Cases_on `smtfp_circuit_round_up mode sign q residue divisor` >>
+  simp []
+QED
+
+Theorem smtfp_circuit_division:
+  magnitude = magnitude DIV (2 ** shift) * 2 ** shift +
+              magnitude MOD (2 ** shift) /\
+  magnitude MOD (2 ** shift) < 2 ** shift
+Proof
+  simp [arithmeticTheory.DIVISION]
+QED
+
+Definition smtfp_circuit_infinity_def:
+  smtfp_circuit_infinity (format : ('t,'w) smtfp) (sign : word1) =
+    (smtfp_bits sign UINT_MAXw 0w : ('t,'w) smtfp)
+End
+
+Definition smtfp_circuit_top_def:
+  smtfp_circuit_top (format : ('t,'w) smtfp) (sign : word1) =
+    (smtfp_bits sign (n2w (dimword (:'w) - 2))
+      (n2w (2 ** dimindex (:'t) - 1)) : ('t,'w) smtfp)
+End
+
+Definition smtfp_circuit_overflow_def:
+  smtfp_circuit_overflow mode (format : ('t,'w) smtfp)
+      (sign : word1) =
+    case mode of
+      RNE => smtfp_circuit_infinity format sign
+    | RNA => smtfp_circuit_infinity format sign
+    | RTP => if sign = 0w then smtfp_circuit_infinity format sign
+             else smtfp_circuit_top format sign
+    | RTN => if sign = 1w then smtfp_circuit_infinity format sign
+             else smtfp_circuit_top format sign
+    | RTZ => smtfp_circuit_top format sign
+End
+
+(* Keep the normalization arithmetic behind small, named boundaries.  The
+   circuit correspondence reasons about each of these quantities separately;
+   unfolding the former monolithic encoder obscured those invariants and made
+   even definitional simplification unnecessarily expensive. *)
+Definition smtfp_circuit_wanted_exponent_def:
+  smtfp_circuit_wanted_exponent (fraction_width : num) (scale : num)
+      (magnitude : num) =
+    MAX 1 (LOG2 magnitude + scale - fraction_width)
+End
+
+Definition smtfp_circuit_encoded_exponent_def:
+  smtfp_circuit_encoded_exponent (maximum_exponent : num)
+      (fraction_width : num) (scale : num) (magnitude : num) =
+    MIN maximum_exponent
+      (smtfp_circuit_wanted_exponent fraction_width scale magnitude)
+End
+
+Definition smtfp_circuit_effective_exponent_def:
+  smtfp_circuit_effective_exponent (maximum_exponent : num)
+      (fraction_width : num) (scale : num) (magnitude : num) =
+    MAX 1
+      (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+        scale magnitude)
+End
+
+Definition smtfp_circuit_shift_def:
+  smtfp_circuit_shift (maximum_exponent : num) (fraction_width : num)
+      (scale : num) (magnitude : num) =
+    smtfp_circuit_effective_exponent maximum_exponent fraction_width
+      scale magnitude - scale
+End
+
+Definition smtfp_circuit_divisor_def:
+  smtfp_circuit_divisor (maximum_exponent : num) (fraction_width : num)
+      (scale : num) (magnitude : num) =
+    (2 : num) **
+      smtfp_circuit_shift maximum_exponent fraction_width scale magnitude
+End
+
+Definition smtfp_circuit_quotient_def:
+  smtfp_circuit_quotient (maximum_exponent : num) (fraction_width : num)
+      (scale : num) (magnitude : num) =
+    let effective_exponent =
+      smtfp_circuit_effective_exponent maximum_exponent fraction_width
+        scale magnitude in
+    let divisor =
+      smtfp_circuit_divisor maximum_exponent fraction_width scale
+        magnitude in
+      if scale <= effective_exponent then magnitude DIV divisor
+      else magnitude * (2 : num) ** (scale - effective_exponent)
+End
+
+Definition smtfp_circuit_remainder_def:
+  smtfp_circuit_remainder (maximum_exponent : num)
+      (fraction_width : num) (scale : num) (magnitude : num) =
+    let effective_exponent =
+      smtfp_circuit_effective_exponent maximum_exponent fraction_width
+        scale magnitude in
+    let divisor =
+      smtfp_circuit_divisor maximum_exponent fraction_width scale
+        magnitude in
+      if scale <= effective_exponent then magnitude MOD divisor else 0
+End
+
+Definition smtfp_circuit_rounded_def:
+  smtfp_circuit_rounded mode sign (maximum_exponent : num)
+      (fraction_width : num) (scale : num) (magnitude : num) =
+    smtfp_circuit_round mode sign
+      (smtfp_circuit_quotient maximum_exponent fraction_width scale
+        magnitude)
+      (smtfp_circuit_remainder maximum_exponent fraction_width scale
+        magnitude)
+      (smtfp_circuit_divisor maximum_exponent fraction_width scale
+        magnitude)
+End
+
+Definition smtfp_circuit_pack_def:
+  smtfp_circuit_pack mode (format : ('t,'w) smtfp) sign
+      (maximum_exponent : num) (fraction_width : num) (exponent : num)
+      (rounded : num) =
+    if maximum_exponent = 0 then
+      if rounded < 2 ** fraction_width then
+        smtfp_bits sign 0w (n2w rounded)
+      else smtfp_circuit_overflow mode format sign
+    else if 2 ** (fraction_width + 1) < rounded then
+      smtfp_circuit_overflow mode format sign
+    else if rounded = 2 ** (fraction_width + 1) then
+      if exponent < maximum_exponent then
+        smtfp_bits sign (n2w (exponent + 1)) 0w
+      else smtfp_circuit_overflow mode format sign
+    else if rounded < 2 ** fraction_width then
+      smtfp_bits sign 0w (n2w rounded)
+    else
+      smtfp_bits sign (n2w exponent)
+        (n2w (rounded - 2 ** fraction_width))
+End
+
+Definition smtfp_circuit_encode_def:
+  smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+      (sign : word1) (scale : num) magnitude =
+    if magnitude = 0 then
+      (smtfp_bits sign 0w 0w : ('t,'w) smtfp)
+    else
+      let fraction_width = dimindex (:'t) in
+      let maximum_exponent = dimword (:'w) - 2 in
+      let exponent =
+        smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+          scale magnitude in
+      let rounded =
+        smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+          scale magnitude in
+        smtfp_circuit_pack mode format sign maximum_exponent fraction_width
+          exponent rounded
+End
+
+Theorem smtfp_circuit_encode_representable:
+  2 <= dimindex (:'w) /\ (e : 'w word) <> UINT_MAXw ==>
+  smtfp_circuit_encode mode (format : ('t,'w) smtfp) sign
+    (smtfp_circuit_exp e) (smtfp_circuit_sig e (m : 't word)) =
+  (smtfp_bits sign e m : ('t,'w) smtfp)
+Proof
+  strip_tac >> Cases_on `e = 0w`
+  >- (Cases_on `m = 0w`
+      >- simp [smtfp_circuit_encode_def, smtfp_circuit_exp_def,
+               smtfp_circuit_sig_def,
+               smtfp_circuit_wanted_exponent_def,
+               smtfp_circuit_encoded_exponent_def,
+               smtfp_circuit_effective_exponent_def,
+               smtfp_circuit_shift_def,
+               smtfp_circuit_divisor_def,
+               smtfp_circuit_quotient_def,
+               smtfp_circuit_remainder_def,
+               smtfp_circuit_rounded_def,
+               smtfp_circuit_pack_def]
+      >> imp_res_tac wordsTheory.LOG2_w2n_lt >>
+      `2 < dimword (:'w)` by
+        (simp [wordsTheory.dimword_def] >>
+         irule arithmeticTheory.LESS_LESS_EQ_TRANS >>
+         qexists_tac `2 ** 2` >> simp []) >>
+      `MAX 1 (LOG2 (w2n m) + 1 - dimindex (:'t)) = 1` by
+        (irule (cj 1 arithmeticTheory.MAX_EQ_GE) >> decide_tac) >>
+      `1 <= dimword (:'w) - 2` by decide_tac >>
+      `w2n m < 2 ** dimindex (:'t)` by
+        (mp_tac (INST_TYPE [alpha |-> ``:'t``]
+           wordsTheory.w2n_lt) >>
+         simp [wordsTheory.dimword_def]) >>
+      `w2n m < 2 ** (dimindex (:'t) + 1)` by
+        (irule arithmeticTheory.LESS_LESS_EQ_TRANS >>
+         qexists_tac `2 ** dimindex (:'t)` >> simp []) >>
+      fs [smtfp_circuit_encode_def, smtfp_circuit_exp_def,
+          smtfp_circuit_sig_def, arithmeticTheory.MIN_EQ_LE,
+          smtfp_circuit_wanted_exponent_def,
+          smtfp_circuit_encoded_exponent_def,
+          smtfp_circuit_effective_exponent_def,
+          smtfp_circuit_shift_def, smtfp_circuit_divisor_def,
+          smtfp_circuit_quotient_def, smtfp_circuit_remainder_def,
+          smtfp_circuit_rounded_def, smtfp_circuit_pack_def]) >>
+  Cases_on `e` >>
+  gvs [wordsTheory.dimword_def, wordsTheory.word_T_def,
+       wordsTheory.UINT_MAX_def] >>
+  `n <= 2 ** dimindex (:'w) - 2` by decide_tac >>
+  `w2n m < 2 ** dimindex (:'t)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``]
+       wordsTheory.w2n_lt) >>
+     simp [wordsTheory.dimword_def]) >>
+  `LOG2 (2 ** dimindex (:'t) + w2n m) = dimindex (:'t)` by
+    (irule bitTheory.LOG2_UNIQUE >>
+     simp [arithmeticTheory.EXP] >> decide_tac) >>
+  fs [smtfp_circuit_encode_def, smtfp_circuit_exp_def,
+      smtfp_circuit_sig_def, wordsTheory.dimword_def,
+      arithmeticTheory.MIN_EQ_LE, arithmeticTheory.MAX_EQ_GE,
+      arithmeticTheory.EXP, smtfp_circuit_wanted_exponent_def,
+      smtfp_circuit_encoded_exponent_def,
+      smtfp_circuit_effective_exponent_def,
+      smtfp_circuit_shift_def, smtfp_circuit_divisor_def,
+      smtfp_circuit_quotient_def, smtfp_circuit_remainder_def,
+      smtfp_circuit_rounded_def, smtfp_circuit_pack_def] >>
+  `w2n m + 2 ** dimindex (:'t) <
+   2 ** (dimindex (:'t) + 1)` by
+    (simp [arithmeticTheory.EXP_ADD] >> decide_tac) >>
+  fs []
+QED
+
+Theorem round_tiesToAway_representable_nonzero:
+  2 <= dimindex (:'w) /\
+  float_is_finite (f : ('t,'w) float) /\
+  float_to_real f <> 0 ==>
+  round_tiesToAway (float_to_real f) = f
+Proof
+  strip_tac >>
+  irule round_tiesToAway_from_closest_away >>
+  simp [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  `abs (float_to_real f) <= largest (:'t # 'w)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.abs_float_bounds) >>
+     simp []) >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.largest_lt_threshold) >>
+  simp [binary_ieeeTheory.float_is_zero_to_real] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smt_float_round_representable_nonzero:
+  2 <= dimindex (:'w) /\
+  float_is_finite (f : ('t,'w) float) /\
+  float_to_real f <> 0 ==>
+  smt_float_round mode to_neg (float_to_real f) = f
+Proof
+  strip_tac >>
+  `(smt_round mode (float_to_real f) : ('t,'w) float) = f` by
+    (Cases_on `mode`
+     >- (simp [smt_round_def] >>
+         irule binary_ieeePropsTheory.round_representable_nonzero >>
+         simp [])
+     >- simp [smt_round_def, round_tiesToAway_representable_nonzero]
+     >- (simp [smt_round_def] >>
+         irule binary_ieeePropsTheory.round_representable_nonzero >>
+         simp [])
+     >- (simp [smt_round_def] >>
+         irule binary_ieeePropsTheory.round_representable_nonzero >>
+         simp [])
+     >- (simp [smt_round_def] >>
+         irule binary_ieeePropsTheory.round_representable_nonzero >>
+         simp [])) >>
+  simp [smt_float_round_def,
+        binary_ieeeTheory.float_is_zero_to_real]
+QED
+
+Theorem smt_float_round_to_neg_nonzero_result:
+  smt_float_round mode F r = (output : ('t,'w) float) /\
+  ~float_is_zero output ==>
+  smt_float_round mode to_neg r = output
+Proof
+  rw [smt_float_round_def] >>
+  Cases_on `float_is_zero (smt_round mode r : ('t,'w) float)` >>
+  rw [] >>
+  fs [binary_ieeeTheory.zero_properties]
+QED
+
+Theorem smtfp_circuit_encode_zero[simp]:
+  smtfp_circuit_encode mode format sign scale 0 =
+  smtfp_bits sign 0w 0w
+Proof
+  simp [smtfp_circuit_encode_def, smtfp_circuit_pack_def]
+QED
+
+(* Semantic boundary for a normalized positive RTP circuit result.  The
+   arithmetic normalization proof supplies the adjacent lower endpoint;
+   directed rounding then selects the encoder output. *)
+Theorem smt_float_round_RTP_circuit_normalized_in_range:
+  let output =
+    smtfp_rep
+      (smtfp_circuit_encode RTP (format : ('t,'w) smtfp)
+        0w scale magnitude) in
+  float_is_normal (lo : ('t,'w) float) /\
+  float_is_normal output /\
+  float_is_finite lo /\ float_is_finite output /\
+  ~float_is_zero output /\
+  next_hi lo = output /\
+  0 <= float_to_real lo /\ float_to_real lo < r /\
+  r <= float_to_real output /\
+  -largest (:'t # 'w) <= r /\ r <= largest (:'t # 'w) ==>
+  smt_float_round RTP F r = output
+Proof
+  simp_tac pure_ss [LET_THM] >> rw [] >>
+  `round roundTowardPositive r = next_hi lo` by
+    (irule round_RTP_positive_next_hi >> simp []) >>
+  simp [smt_float_round_def, smt_round_def]
+QED
+
 Definition smtfp_addsub_trace_def:
-  smtfp_addsub_trace subtract (x : ('t,'w) smtfp) y =
+  smtfp_addsub_trace subtract (x : ('t,'w) smtfp)
+      (y : ('t,'w) smtfp) =
     let xr = smtfp_rep x in
     let yr = smtfp_rep y in
-    let shift =
-      if xr.Exponent <+ yr.Exponent then
-        w2n yr.Exponent - w2n xr.Exponent
-      else w2n xr.Exponent - w2n yr.Exponent in
-    let xa =
-      if xr.Exponent <+ yr.Exponent then
-        smtfp_shift_right_sticky shift xr.Significand
-      else xr.Significand in
-    let ya =
-      if xr.Exponent <+ yr.Exponent then yr.Significand
-      else smtfp_shift_right_sticky shift yr.Significand in
-    let effective_y_sign = if subtract then ~yr.Sign else yr.Sign in
-    let operated =
-      if xr.Sign = effective_y_sign then xa + ya
-      else if xa <+ ya then ya - xa else xa - ya in
-    let normalized = smtfp_normalize_word (dimindex (:'t)) operated in
-      (xa, ya, operated, normalized,
-       smtfp_guard_bit normalized,
-       smtfp_round_bit normalized,
-       smtfp_sticky_bit normalized)
+    let x_exponent = smtfp_circuit_exp xr.Exponent in
+    let y_exponent = smtfp_circuit_exp yr.Exponent in
+    let scale = MIN x_exponent y_exponent in
+    let x_aligned = smtfp_circuit_sig xr.Exponent xr.Significand *
+      (2 : num) ** (x_exponent - scale) in
+    let y_aligned = smtfp_circuit_sig yr.Exponent yr.Significand *
+      (2 : num) ** (y_exponent - scale) in
+    let y_sign = if subtract then ~yr.Sign else yr.Sign in
+    let result_sign =
+      if xr.Sign = y_sign \/ y_aligned <= x_aligned then xr.Sign
+      else y_sign in
+    let magnitude =
+      if xr.Sign = y_sign then x_aligned + y_aligned
+      else if y_aligned <= x_aligned then x_aligned - y_aligned
+      else y_aligned - x_aligned in
+      (scale, x_aligned, y_aligned, result_sign, magnitude)
 End
+
+Theorem smtfp_circuit_signed_align_value:
+  scale <= smtfp_circuit_exp e ==>
+  float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  if s = 0w then
+    float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float)
+  else
+    -float_to_real
+      (<| Sign := 0w; Exponent := e; Significand := m |> :
+       ('t,'w) float)
+Proof
+  strip_tac >>
+  irule float_to_real_bits_sign
+QED
+
+Theorem smtfp_signed_magnitude_add:
+  let sign = if (sx : word1) = sy \/ y <= x then sx else sy in
+  let magnitude =
+    if sx = sy then x + y
+    else if y <= x then x - y else y - x
+  in
+    (if sx = 0w then &x else -&x) +
+    (if sy = 0w then &y else -&y) =
+    if sign = 0w then &magnitude else -&magnitude
+Proof
+  wordsLib.Cases_on_word_value `sx` >>
+  wordsLib.Cases_on_word_value `sy` >>
+  Cases_on `y <= x` >>
+  simp [realTheory.REAL_OF_NUM_SUB] >>
+  once_rewrite_tac [GSYM realTheory.REAL_NEG_ADD] >>
+  simp [] >>
+  realLib.REAL_ARITH_TAC
+QED
+
+Definition smtfp_addsub_scale_def:
+  smtfp_addsub_scale subtract (x : ('t,'w) smtfp) y =
+    let (scale, x_aligned, y_aligned, sign, magnitude) =
+      smtfp_addsub_trace subtract x y
+    in scale
+End
+
+Definition smtfp_addsub_magnitude_def:
+  smtfp_addsub_magnitude subtract (x : ('t,'w) smtfp) y =
+    let (scale, x_aligned, y_aligned, sign, magnitude) =
+      smtfp_addsub_trace subtract x y
+    in magnitude
+End
+
+Definition smtfp_addsub_result_sign_def:
+  smtfp_addsub_result_sign subtract (x : ('t,'w) smtfp) y =
+    let (scale, x_aligned, y_aligned, sign, magnitude) =
+      smtfp_addsub_trace subtract x y
+    in sign
+End
+
+Theorem smtfp_addsub_scale_positive[simp]:
+  0 < smtfp_addsub_scale subtract x y
+Proof
+  simp [smtfp_addsub_scale_def, smtfp_addsub_trace_def]
+QED
+
+Theorem float_to_real_flip_sign:
+  float_to_real
+    (<| Sign := ~s; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  -float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float)
+Proof
+  `(-1w : word1) = 1w` by wordsLib.WORD_DECIDE_TAC >>
+  wordsLib.Cases_on_word_value `s` >>
+  simp [float_to_real_negative_bits]
+QED
+
+Theorem smtfp_aligned_add_exact:
+  scale <= smtfp_circuit_exp ex /\
+  scale <= smtfp_circuit_exp ey ==>
+  let xa = smtfp_circuit_sig ex mx *
+             2 ** (smtfp_circuit_exp ex - scale) in
+  let ya = smtfp_circuit_sig ey my *
+             2 ** (smtfp_circuit_exp ey - scale) in
+  let sign = if sx = sy \/ ya <= xa then sx else sy in
+  let magnitude =
+    if sx = sy then xa + ya
+    else if ya <= xa then xa - ya else ya - xa
+  in
+    float_to_real
+      (<| Sign := sx; Exponent := ex; Significand := mx |> :
+       ('t,'w) float) +
+    float_to_real
+      (<| Sign := sy; Exponent := ey; Significand := my |> :
+       ('t,'w) float) =
+    (if sign = 0w then &magnitude else -&magnitude) *
+      (2 pow scale /
+       2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  strip_tac >> rewrite_tac [LET_THM] >>
+  `(1w : word1) <> 0w` by wordsLib.WORD_DECIDE_TAC >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := ex; Significand := mx |> :
+      ('t,'w) float) =
+   &(smtfp_circuit_sig ex mx *
+     2 ** (smtfp_circuit_exp ex - scale)) *
+   (2 pow scale /
+    2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule smtfp_circuit_align_value >> simp []) >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := ey; Significand := my |> :
+      ('t,'w) float) =
+   &(smtfp_circuit_sig ey my *
+     2 ** (smtfp_circuit_exp ey - scale)) *
+   (2 pow scale /
+    2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule smtfp_circuit_align_value >> simp []) >>
+  `!m n : num. ~(n <= m) ==> m <= n` by decide_tac >>
+  wordsLib.Cases_on_word_value `sx` >>
+  wordsLib.Cases_on_word_value `sy` >>
+  Cases_on
+    `smtfp_circuit_sig ey my *
+       2 ** (smtfp_circuit_exp ey - scale) <=
+     smtfp_circuit_sig ex mx *
+       2 ** (smtfp_circuit_exp ex - scale)` >>
+  rewrite_tac [float_to_real_negative_bits] >>
+  asm_rewrite_tac [] >>
+  asm_simp_tac std_ss
+    [realTheory.REAL_OF_NUM_ADD,
+     realTheory.REAL_OF_NUM_MUL,
+     realTheory.REAL_OF_NUM_SUB,
+     GSYM realTheory.REAL_NEG_LMUL,
+     GSYM realTheory.REAL_ADD_RDISTRIB,
+     realTheory.REAL_NEG_ADD,
+     arithmeticTheory.MULT_COMM] >>
+  rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD] >>
+  RealField.REAL_FIELD_TAC
+QED
+
+Theorem smtfp_addsub_trace_exact:
+  case smtfp_addsub_trace subtract (x : ('t,'w) smtfp) y of
+    (scale, xa, ya, sign, magnitude) =>
+      float_to_real (smtfp_rep x) +
+        (if subtract then -float_to_real (smtfp_rep y)
+         else float_to_real (smtfp_rep y)) =
+      (if sign = 0w then &magnitude else -&magnitude) *
+        (2 pow scale /
+         2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  Cases_on `smtfp_rep x` >> Cases_on `smtfp_rep y` >>
+  `(~0w : word1) = 1w` by wordsLib.WORD_DECIDE_TAC >>
+  `(~1w : word1) = 0w` by wordsLib.WORD_DECIDE_TAC >>
+  `(1w : word1) <> 0w` by wordsLib.WORD_DECIDE_TAC >>
+  wordsLib.Cases_on_word_value `c` >>
+  wordsLib.Cases_on_word_value `c'` >>
+  Cases_on `subtract` >>
+  simp_tac pure_ss [smtfp_addsub_trace_def] >>
+  asm_rewrite_tac [] >>
+  simp_tac bool_ss
+    (LET_THM :: pairTheory.pair_case_thm ::
+     TypeBase.accessors_of ``:('t,'w) float``) >>
+  `float 0w c0 c1 =
+   (<| Sign := 0w; Exponent := c0; Significand := c1 |> :
+    ('t,'w) float)` by
+    simp [binary_ieeeTheory.float_component_equality] >>
+  `float 0w c0' c1' =
+   (<| Sign := 0w; Exponent := c0'; Significand := c1' |> :
+    ('t,'w) float)` by
+    simp [binary_ieeeTheory.float_component_equality] >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := c0; Significand := c1 |> :
+      ('t,'w) float) =
+   &(smtfp_circuit_sig c0 c1 *
+     2 ** (smtfp_circuit_exp c0 -
+       MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0'))) *
+   (2 pow (MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0')) /
+    2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule smtfp_circuit_align_value >> simp []) >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := c0'; Significand := c1' |> :
+      ('t,'w) float) =
+   &(smtfp_circuit_sig c0' c1' *
+     2 ** (smtfp_circuit_exp c0' -
+       MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0'))) *
+   (2 pow (MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0')) /
+    2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule smtfp_circuit_align_value >> simp []) >>
+  `float_to_real (float 1w c0 c1) =
+   -float_to_real (float 0w c0 c1)` by
+    (simp [binary_ieeeTheory.float_to_real_def] >>
+     RealField.REAL_FIELD_TAC) >>
+  `float_to_real (float 1w c0' c1') =
+   -float_to_real (float 0w c0' c1')` by
+    (simp [binary_ieeeTheory.float_to_real_def] >>
+     RealField.REAL_FIELD_TAC) >>
+  `!m n : num. ~(n <= m) ==> m <= n` by decide_tac >>
+  Cases_on
+    `smtfp_circuit_sig c0' c1' *
+       2 ** (smtfp_circuit_exp c0' -
+         MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0')) <=
+     smtfp_circuit_sig c0 c1 *
+       2 ** (smtfp_circuit_exp c0 -
+         MIN (smtfp_circuit_exp c0) (smtfp_circuit_exp c0'))` >>
+  rewrite_tac [float_to_real_bits_sign] >>
+  asm_rewrite_tac [] >>
+  asm_simp_tac std_ss
+    [realTheory.REAL_OF_NUM_ADD,
+     realTheory.REAL_OF_NUM_MUL,
+     realTheory.REAL_OF_NUM_SUB,
+     GSYM realTheory.REAL_NEG_LMUL,
+     GSYM realTheory.REAL_ADD_RDISTRIB,
+     realTheory.REAL_NEG_ADD,
+     arithmeticTheory.MULT_COMM] >>
+  rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD] >>
+  rpt (pop_assum kall_tac) >>
+  RealField.REAL_FIELD_TAC
+QED
+
+Theorem smtfp_addsub_exact_value:
+  float_to_real (smtfp_rep (x : ('t,'w) smtfp)) +
+    (if subtract then -float_to_real (smtfp_rep y)
+     else float_to_real (smtfp_rep y)) =
+  (if smtfp_addsub_result_sign subtract x y = 0w then
+     &smtfp_addsub_magnitude subtract x y
+   else
+     -&smtfp_addsub_magnitude subtract x y) *
+    (2 pow (smtfp_addsub_scale subtract x y) /
+     2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  rewrite_tac [smtfp_addsub_scale_def, smtfp_addsub_magnitude_def,
+               smtfp_addsub_result_sign_def, LET_THM] >>
+  pairarg_tac >> gvs [] >>
+  mp_tac (Q.INST [`subtract` |-> `subtract`, `x` |-> `x`,
+                    `y` |-> `y`] smtfp_addsub_trace_exact) >>
+  gvs []
+QED
+
+(* Every finite encoding is an integer multiple of the least-format ULP.
+   This boundary removes exponent adjacency from subsequent rounder proofs:
+   candidate distances can be compared as natural numbers after scaling all
+   operands to exponent one. *)
+Definition smtfp_circuit_units_def:
+  smtfp_circuit_units (e : 'w word) (m : 't word) =
+    smtfp_circuit_sig e m * 2 ** (smtfp_circuit_exp e - 1)
+End
+
+Theorem smtfp_circuit_units_value:
+  float_to_real
+    (<| Sign := s; Exponent := e; Significand := m |> :
+     ('t,'w) float) =
+  (if s = 0w then &smtfp_circuit_units e m
+   else -&smtfp_circuit_units e m) *
+    (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  `float_to_real
+     (<| Sign := 0w; Exponent := e; Significand := m |> :
+      ('t,'w) float) =
+   &smtfp_circuit_units e m *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (rewrite_tac [smtfp_circuit_units_def] >>
+     irule smtfp_circuit_align_value >>
+     mp_tac (Q.INST [`e` |-> `e`]
+       (INST_TYPE [alpha |-> ``:'w``]
+         smtfp_circuit_exp_positive)) >>
+     decide_tac) >>
+  wordsLib.Cases_on_word_value `s` >>
+  simp [float_to_real_negative_bits]
+QED
+
+Theorem smtfp_addsub_exact_zero:
+  (float_to_real (smtfp_rep (x : ('t,'w) smtfp)) +
+     (if subtract then -float_to_real (smtfp_rep y)
+      else float_to_real (smtfp_rep y)) = 0) <=>
+  smtfp_addsub_magnitude subtract x y = 0
+Proof
+  rewrite_tac [smtfp_addsub_exact_value] >>
+  Cases_on `smtfp_addsub_result_sign subtract x y = 0w` >>
+  simp [realTheory.real_div]
+QED
+
+Definition smtfp_addsub_zero_sign_def:
+  smtfp_addsub_zero_sign subtract mode (x : ('t,'w) smtfp)
+      (y : ('t,'w) smtfp) =
+    let xr = smtfp_rep x in
+    let yr = smtfp_rep y in
+    let y_sign = if subtract then ~yr.Sign else yr.Sign in
+    let both_zero = (xr.Exponent = 0w /\ xr.Significand = 0w /\
+                     yr.Exponent = 0w /\ yr.Significand = 0w) in
+      if both_zero /\ xr.Sign = y_sign then xr.Sign
+      else if mode = RTN then 1w else 0w
+End
+
+Theorem smtfp_addsub_zero_sign_negative:
+  (smtfp_addsub_zero_sign subtract mode x y = 1w) <=>
+  let xr = smtfp_rep x in
+  let yr = smtfp_rep y in
+  let y_sign = if subtract then ~yr.Sign else yr.Sign in
+  let both_zero = (xr.Exponent = 0w /\ xr.Significand = 0w /\
+                   yr.Exponent = 0w /\ yr.Significand = 0w) in
+    if both_zero /\ xr.Sign = y_sign then xr.Sign = 1w
+    else mode = RTN
+Proof
+  `(-1w : word1) = 1w` by wordsLib.WORD_DECIDE_TAC >>
+  `(1w : word1) <> 0w` by wordsLib.WORD_DECIDE_TAC >>
+  simp [smtfp_addsub_zero_sign_def] >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  wordsLib.Cases_on_word_value `(smtfp_rep x).Sign` >>
+  wordsLib.Cases_on_word_value `(smtfp_rep y).Sign` >>
+  Cases_on
+    `(smtfp_rep x).Exponent = 0w /\
+     (smtfp_rep x).Significand = 0w /\
+     (smtfp_rep y).Exponent = 0w /\
+     (smtfp_rep y).Significand = 0w` >>
+  simp []
+QED
+
+Theorem float_to_real_bits_zero:
+  (float_to_real
+     (<| Sign := s; Exponent := e; Significand := m |> :
+      ('t,'w) float) = 0) <=>
+  e = 0w /\ m = 0w
+Proof
+  wordsLib.Cases_on_word_value `s` >>
+  simp [binary_ieeeTheory.float_to_real_EQ0,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_negate_def,
+        binary_ieeeTheory.float_component_equality]
+QED
+
+Theorem smtfp_addsub_zero_toneg:
+  (smtfp_addsub_zero_sign subtract mode x y = 1w) <=>
+  if subtract then
+    (if float_to_real (smtfp_rep x) = 0 /\
+        float_to_real (smtfp_rep y) = 0 /\
+        (smtfp_rep x).Sign <> (smtfp_rep y).Sign then
+       (smtfp_rep x).Sign = 1w
+     else mode = RTN)
+  else
+    (if float_to_real (smtfp_rep x) = 0 /\
+        float_to_real (smtfp_rep y) = 0 /\
+        (smtfp_rep x).Sign = (smtfp_rep y).Sign then
+       (smtfp_rep x).Sign = 1w
+     else mode = RTN)
+Proof
+  Cases_on `smtfp_rep x` >> Cases_on `smtfp_rep y` >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  wordsLib.Cases_on_word_value `c` >>
+  wordsLib.Cases_on_word_value `c'` >>
+  simp [smtfp_addsub_zero_sign_negative, float_to_real_bits_zero,
+        binary_ieeeTheory.float_to_real_EQ0,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_negate_def,
+        binary_ieeeTheory.float_component_equality,
+        boolTheory.CONJ_ASSOC]
+QED
+
+Theorem smtfp_addsub_zero_sign_value:
+  smtfp_addsub_zero_sign subtract mode x y =
+  if subtract then
+    (if float_to_real (smtfp_rep x) = 0 /\
+        float_to_real (smtfp_rep y) = 0 /\
+        (smtfp_rep x).Sign <> (smtfp_rep y).Sign then
+       if (smtfp_rep x).Sign = 1w then 1w else 0w
+     else if mode = RTN then 1w else 0w)
+  else
+    (if float_to_real (smtfp_rep x) = 0 /\
+        float_to_real (smtfp_rep y) = 0 /\
+        (smtfp_rep x).Sign = (smtfp_rep y).Sign then
+       if (smtfp_rep x).Sign = 1w then 1w else 0w
+     else if mode = RTN then 1w else 0w)
+Proof
+  Cases_on `smtfp_rep x` >> Cases_on `smtfp_rep y` >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  wordsLib.Cases_on_word_value `c` >>
+  wordsLib.Cases_on_word_value `c'` >>
+  simp [smtfp_addsub_zero_sign_def, float_to_real_bits_zero,
+        binary_ieeeTheory.float_to_real_EQ0,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_negate_def,
+        binary_ieeeTheory.float_component_equality,
+        boolTheory.CONJ_ASSOC]
+QED
 
 Definition smtfp_addsub_circuit_def:
-  smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp) y =
-    (smtfp_addsub_trace subtract x y,
-     SmtFp (canon
-       (if subtract then
-          smt_float_sub mode (smtfp_rep x) (smtfp_rep y)
-        else
-          smt_float_add mode (smtfp_rep x) (smtfp_rep y))))
+  smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp)
+      (y : ('t,'w) smtfp) =
+    let xr = smtfp_rep x in
+    let yr = smtfp_rep y in
+    let y_sign = if subtract then ~yr.Sign else yr.Sign in
+    let trace = smtfp_addsub_trace subtract x y in
+    let result =
+      if xr.Exponent = UINT_MAXw /\ xr.Significand <> 0w \/
+         yr.Exponent = UINT_MAXw /\ yr.Significand <> 0w then
+        smtfp_nan
+      else if xr.Exponent = UINT_MAXw /\
+              yr.Exponent = UINT_MAXw then
+        if xr.Sign = y_sign then smtfp_circuit_infinity x xr.Sign
+        else smtfp_nan
+      else if xr.Exponent = UINT_MAXw then
+        smtfp_circuit_infinity x xr.Sign
+      else if yr.Exponent = UINT_MAXw then
+        smtfp_circuit_infinity x y_sign
+      else
+        let (scale, x_aligned, y_aligned, sign, magnitude) = trace in
+          if yr.Exponent = 0w /\ yr.Significand = 0w /\
+             magnitude <> 0 then
+            x
+          else
+            let sign = if magnitude = 0 then
+                         smtfp_addsub_zero_sign subtract mode x y
+                       else sign in
+              smtfp_circuit_encode mode x sign scale magnitude in
+      (trace, result)
 End
 
-Theorem smtfp_add_circuit_correspondence:
-  smtfp_add mode x y = SND (smtfp_addsub_circuit F mode x y)
+Theorem smt_float_round_zero:
+  smt_float_round mode to_neg 0 =
+  if to_neg then float_minus_zero (:'t # 'w)
+  else float_plus_zero (:'t # 'w)
 Proof
-  simp [smtfp_add_def, smtfp_addsub_circuit_def]
+  Cases_on `mode` >>
+  simp [smt_float_round_def, smt_round_def,
+        binary_ieeeTheory.float_is_zero_to_real,
+        binary_ieeeTheory.float_to_real_round0]
 QED
 
-Theorem smtfp_sub_circuit_correspondence:
-  smtfp_sub mode x y = SND (smtfp_addsub_circuit T mode x y)
+Theorem smtfp_addsub_circuit_finite_zero:
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  (smtfp_rep y).Exponent <> UINT_MAXw /\
+  smtfp_addsub_magnitude subtract x y = 0 ==>
+  SND (smtfp_addsub_circuit subtract mode x y) =
+  smtfp_bits (smtfp_addsub_zero_sign subtract mode x y) 0w 0w
 Proof
-  simp [smtfp_sub_def, smtfp_addsub_circuit_def]
+  rw [smtfp_addsub_circuit_def, smtfp_addsub_magnitude_def] >>
+  pairarg_tac >> gvs []
 QED
 
-Theorem smtfp_addsub_circuit_rep:
-  smtfp_rep (SND (smtfp_addsub_circuit subtract mode x y)) =
-  canon
-    (if subtract then
-       smt_float_sub mode (smtfp_rep x) (smtfp_rep y)
-     else
-       smt_float_add mode (smtfp_rep x) (smtfp_rep y))
+Theorem smtfp_addsub_circuit_finite_right_zero_nonzero:
+  2 <= dimindex (:'w) /\
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  ((smtfp_rep x).Exponent <> 0w \/
+   (smtfp_rep x).Significand <> 0w) ==>
+  SND (smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp)
+    (smtfp_bits zero_sign 0w 0w)) = x
 Proof
+  strip_tac >>
+  Cases_on `(smtfp_rep x).Exponent = 0w` >>
+  fs [smtfp_addsub_circuit_def, smtfp_addsub_trace_def,
+      smtfp_addsub_zero_sign_def, smtfp_nan_pattern_def,
+      smtfp_circuit_exp_def, smtfp_circuit_sig_def, canon_def,
+      wordsTheory.w2n_eq_0]
+QED
+
+Theorem smt_float_add_finite_round:
+  x.Exponent <> UINT_MAXw /\ y.Exponent <> UINT_MAXw ==>
+  smt_float_add mode (x : ('t,'w) float) y =
+  smt_float_round mode
+    (if float_to_real x = 0 /\ float_to_real y = 0 /\
+        x.Sign = y.Sign then x.Sign = 1w
+     else mode = RTN)
+    (float_to_real x + float_to_real y)
+Proof
+  Cases_on `mode` >>
+  simp [smt_float_add_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_add_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_round_with_flags_def,
+        binary_ieeeTheory.float_round_def,
+        smt_float_round_def, smt_round_def] >>
+  Cases_on `x.Sign = y.Sign` >> simp []
+QED
+
+Theorem smt_float_sub_finite_round:
+  x.Exponent <> UINT_MAXw /\ y.Exponent <> UINT_MAXw ==>
+  smt_float_sub mode (x : ('t,'w) float) y =
+  smt_float_round mode
+    (if float_to_real x = 0 /\ float_to_real y = 0 /\
+        x.Sign <> y.Sign then x.Sign = 1w
+     else mode = RTN)
+    (float_to_real x - float_to_real y)
+Proof
+  Cases_on `mode` >>
+  simp [smt_float_sub_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_sub_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_round_with_flags_def,
+        binary_ieeeTheory.float_round_def,
+        smt_float_round_def, smt_round_def]
+QED
+
+Theorem smtfp_addsub_circuit_finite_right_zero_nonzero_correspondence:
+  2 <= dimindex (:'w) /\
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  ((smtfp_rep x).Exponent <> 0w \/
+   (smtfp_rep x).Significand <> 0w) ==>
+  (if subtract then
+     smtfp_sub mode x (smtfp_bits zero_sign 0w 0w)
+   else
+     smtfp_add mode x (smtfp_bits zero_sign 0w 0w)) =
+  SND (smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp)
+    (smtfp_bits zero_sign 0w 0w))
+Proof
+  strip_tac >>
+  `SND (smtfp_addsub_circuit subtract mode x
+      (smtfp_bits zero_sign 0w 0w)) = x` by
+    metis_tac [smtfp_addsub_circuit_finite_right_zero_nonzero] >>
+  `!to_neg. smt_float_round mode to_neg
+       (float_to_real (smtfp_rep x)) = smtfp_rep x` by
+    (strip_tac >> irule smt_float_round_representable_nonzero >>
+     simp [binary_ieeeTheory.float_is_finite_Exponent,
+           GSYM binary_ieeeTheory.float_is_zero_to_real,
+           binary_ieeeTheory.float_is_zero]) >>
+  `!s : word1. float_to_real
+       (<| Sign := s; Exponent := 0w; Significand := 0w |> :
+        ('t,'w) float) = 0` by
+    simp [float_to_real_bits_zero] >>
+  `smt_float_add mode (smtfp_rep x)
+       (smtfp_rep (smtfp_bits zero_sign 0w 0w)) = smtfp_rep x` by
+    (simp [smtfp_nan_pattern_def, canon_def] >>
+     rw [smt_float_add_finite_round] >>
+     asm_simp_tac (srw_ss()) []) >>
+  `smt_float_sub mode (smtfp_rep x)
+       (smtfp_rep (smtfp_bits zero_sign 0w 0w)) = smtfp_rep x` by
+    (simp [smtfp_nan_pattern_def, canon_def] >>
+     rw [smt_float_sub_finite_round] >>
+     asm_simp_tac (srw_ss()) []) >>
   Cases_on `subtract` >>
-  simp [smtfp_addsub_circuit_def, canon_canonical]
+  simp [smtfp_add_def, smtfp_sub_def]
+QED
+
+Theorem smtfp_canon_zero_bits[simp]:
+  canon (<| Sign := s; Exponent := 0w; Significand := 0w |> :
+    ('t,'w) float) =
+  <| Sign := s; Exponent := 0w; Significand := 0w |>
+Proof
+  simp [canon_def, smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_value_def]
+QED
+
+Theorem smtfp_SmtFp_round_zero:
+  SmtFp (canon (smt_float_round mode to_neg 0 : ('t,'w) float)) =
+  smtfp_bits (if to_neg then 1w else 0w) 0w 0w
+Proof
+  Cases_on `to_neg` >>
+  simp [smt_float_round_zero, smtfp_bits_def,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_negate_def] >>
+  wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_bool_sign_cond:
+  (if (if a then b else c) then (1w : word1) else 0w) =
+  (if a then if b then 1w else 0w
+   else if c then 1w else 0w)
+Proof
+  Cases_on `a` >> Cases_on `b` >> Cases_on `c` >> simp []
+QED
+
+Theorem smtfp_addsub_circuit_exact_zero_correspondence:
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  (smtfp_rep y).Exponent <> UINT_MAXw /\
+  (float_to_real (smtfp_rep x) +
+     (if subtract then -float_to_real (smtfp_rep y)
+      else float_to_real (smtfp_rep y)) = 0) ==>
+  (if subtract then smtfp_sub mode x y else smtfp_add mode x y) =
+  SND (smtfp_addsub_circuit subtract mode x y)
+Proof
+  strip_tac >>
+  `smtfp_addsub_magnitude subtract x y = 0` by
+    fs [GSYM smtfp_addsub_exact_zero] >>
+  drule_all_then assume_tac smtfp_addsub_circuit_finite_zero >>
+  Cases_on `subtract` >>
+  fs [smtfp_add_def, smtfp_sub_def, smt_float_add_finite_round,
+      smt_float_sub_finite_round, smtfp_SmtFp_round_zero,
+      smtfp_addsub_zero_sign_value, realTheory.real_sub] >>
+  simp [smtfp_bool_sign_cond]
+QED
+
+Theorem smtfp_add_nan[simp]:
+  smtfp_add mode x smtfp_nan = smtfp_nan
+Proof
+  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
+  simp [smtfp_add_def, smt_float_add_def, smtfp_nan_def,
+        smtfp_canonical_def, canon_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_add_def,
+        binary_ieeeTheory.some_nan_properties]
+QED
+
+Theorem smtfp_sub_nan[simp]:
+  smtfp_sub mode x smtfp_nan = smtfp_nan
+Proof
+  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
+  simp [smtfp_sub_def, smt_float_sub_def, smtfp_nan_def,
+        smtfp_canonical_def, canon_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_sub_def,
+        binary_ieeeTheory.some_nan_properties]
 QED
 
 Theorem smtfp_add_circuit_nan:
   SND (smtfp_addsub_circuit F mode x smtfp_nan) = smtfp_nan
 Proof
-  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
-  simp [smtfp_addsub_circuit_def, smt_float_add_def,
-        smtfp_nan_def, smtfp_canonical_def, canon_def,
-        to_binary_rounding_def, binary_ieeeTheory.float_add_def,
-        binary_ieeeTheory.some_nan_properties]
+  simp [smtfp_addsub_circuit_def, smtfp_nan_def, canon_def,
+        smtfp_canonical_def, float_canon_qnan_def, canon_qnan_msb]
 QED
 
 Theorem smtfp_sub_circuit_nan:
   SND (smtfp_addsub_circuit T mode x smtfp_nan) = smtfp_nan
 Proof
-  Cases_on `mode` >> Cases_on `float_value (smtfp_rep x)` >>
-  simp [smtfp_addsub_circuit_def, smt_float_sub_def,
-        smtfp_nan_def, smtfp_canonical_def, canon_def,
-        to_binary_rounding_def, binary_ieeeTheory.float_sub_def,
-        binary_ieeeTheory.some_nan_properties]
+  simp [smtfp_addsub_circuit_def, smtfp_nan_def, canon_def,
+        smtfp_canonical_def, float_canon_qnan_def, canon_qnan_msb]
 QED
+
+Theorem smtfp_add_nan_circuit_correspondence:
+  smtfp_add mode x smtfp_nan =
+  SND (smtfp_addsub_circuit F mode x smtfp_nan)
+Proof
+  simp [smtfp_add_circuit_nan]
+QED
+
+Theorem smtfp_sub_nan_circuit_correspondence:
+  smtfp_sub mode x smtfp_nan =
+  SND (smtfp_addsub_circuit T mode x smtfp_nan)
+Proof
+  simp [smtfp_sub_circuit_nan]
+QED
+
+(* Arithmetic and rounding proof for the independent encoder. *)
+Theorem circuit_units_log2:
+  0 < scale /\ 0 < magnitude ==>
+  LOG2 (magnitude * 2 ** (scale - 1)) + 1 =
+  LOG2 magnitude + scale
+Proof
+  strip_tac >>
+  fs [bitTheory.LOG2_def, logrootTheory.LOG2_MULT_EXP] >>
+  decide_tac
+QED
+
+Theorem div_common_right_factor:
+  0 < factor /\ 0 < divisor ==>
+  (magnitude * factor) DIV (divisor * factor) =
+  magnitude DIV divisor
+Proof
+  strip_tac >>
+  mp_tac (Q.SPECL [`factor`, `divisor`]
+    arithmeticTheory.DIV_DIV_DIV_MULT) >>
+  impl_tac >- simp [] >>
+  disch_then (qspec_then `magnitude * factor` mp_tac) >>
+  simp [arithmeticTheory.MULT_DIV, arithmeticTheory.MULT_COMM]
+QED
+
+Theorem circuit_quotient_units_arithmetic:
+  0 < scale /\ 0 < effective_exponent ==>
+  (if scale <= effective_exponent then
+     magnitude DIV 2 ** (effective_exponent - scale)
+   else magnitude * 2 ** (scale - effective_exponent)) =
+  (magnitude * 2 ** (scale - 1)) DIV
+    2 ** (effective_exponent - 1)
+Proof
+  rpt strip_tac >> Cases_on `scale <= effective_exponent`
+  >- (asm_rewrite_tac [] >>
+      `effective_exponent - 1 =
+       (effective_exponent - scale) + (scale - 1)` by decide_tac >>
+      pop_assum SUBST1_TAC >>
+      rewrite_tac [arithmeticTheory.EXP_ADD] >>
+      irule EQ_SYM >>
+      irule div_common_right_factor >> simp [])
+  >> asm_rewrite_tac [] >>
+  `scale - 1 =
+   (scale - effective_exponent) + (effective_exponent - 1)` by
+    decide_tac >>
+  pop_assum SUBST1_TAC >>
+  rewrite_tac [arithmeticTheory.EXP_ADD] >>
+  irule EQ_TRANS >>
+  qexists_tac
+    `((magnitude * 2 ** (scale - effective_exponent)) *
+       2 ** (effective_exponent - 1)) DIV
+     2 ** (effective_exponent - 1)` >>
+  conj_tac
+  >- (irule EQ_SYM >>
+      irule arithmeticTheory.MULT_DIV >> simp [])
+  >> rewrite_tac [arithmeticTheory.MULT_ASSOC]
+QED
+
+Theorem circuit_wanted_exponent_units:
+  0 < scale /\ 0 < magnitude ==>
+  smtfp_circuit_wanted_exponent fraction_width scale magnitude =
+  MAX 1
+    (LOG2 (magnitude * 2 ** (scale - 1)) + 1 - fraction_width)
+Proof
+  strip_tac >>
+  fs [smtfp_circuit_wanted_exponent_def,
+      circuit_units_log2]
+QED
+
+Theorem mod_common_right_factor:
+  0 < factor /\ 0 < divisor ==>
+  (magnitude * factor) MOD (divisor * factor) =
+  (magnitude MOD divisor) * factor
+Proof
+  strip_tac >>
+  irule arithmeticTheory.MOD_UNIQUE >>
+  qexists_tac `magnitude DIV divisor` >>
+  conj_tac
+  >- (mp_tac (Q.SPEC `divisor` arithmeticTheory.DIVISION) >>
+      impl_tac >- simp [] >>
+      disch_then (qspec_then `magnitude` strip_assume_tac) >>
+      qpat_x_assum
+        `magnitude = magnitude DIV divisor * divisor + _`
+        (mp_tac o AP_TERM ``\n : num. n * factor``) >>
+      simp [arithmeticTheory.LEFT_ADD_DISTRIB,
+            arithmeticTheory.MULT_ASSOC] >>
+      CONV_TAC (AC_CONV (arithmeticTheory.MULT_ASSOC,
+                         arithmeticTheory.MULT_COMM)))
+  >> simp [arithmeticTheory.LT_MULT_RCANCEL]
+QED
+
+Theorem circuit_remainder_units_arithmetic:
+  0 < scale /\ 0 < effective_exponent ==>
+  (magnitude * 2 ** (scale - 1)) MOD
+    2 ** (effective_exponent - 1) =
+  if scale <= effective_exponent then
+    (magnitude MOD 2 ** (effective_exponent - scale)) *
+      2 ** (scale - 1)
+  else 0
+Proof
+  strip_tac >> Cases_on `scale <= effective_exponent`
+  >- (asm_rewrite_tac [] >>
+      `effective_exponent - 1 =
+       (effective_exponent - scale) + (scale - 1)` by decide_tac >>
+      pop_assum SUBST1_TAC >>
+      rewrite_tac [arithmeticTheory.EXP_ADD] >>
+      irule mod_common_right_factor >> simp [])
+  >> asm_rewrite_tac [] >>
+  `scale - 1 =
+   (scale - effective_exponent) + (effective_exponent - 1)` by
+    decide_tac >>
+  pop_assum SUBST1_TAC >>
+  rewrite_tac [arithmeticTheory.EXP_ADD] >>
+  simp [arithmeticTheory.MULT_ASSOC,
+        arithmeticTheory.MOD_EQ_0]
+QED
+
+Theorem smtfp_circuit_effective_exponent_positive[simp]:
+  0 < smtfp_circuit_effective_exponent maximum_exponent
+    fraction_width scale magnitude
+Proof
+  simp [smtfp_circuit_effective_exponent_def]
+QED
+
+Theorem circuit_divisor_units_arithmetic:
+  0 < scale /\ 0 < effective_exponent ==>
+  (2 : num) ** (effective_exponent - 1) =
+  2 ** (effective_exponent - scale) *
+    2 ** (MIN scale effective_exponent - 1)
+Proof
+  rpt strip_tac >> Cases_on `scale <= effective_exponent`
+  >- (`effective_exponent - 1 =
+      (effective_exponent - scale) + (scale - 1)` by
+        decide_tac >>
+      rewrite_tac [arithmeticTheory.MIN_ALT] >>
+      asm_rewrite_tac [] >>
+      irule arithmeticTheory.EXP_ADD)
+  >> rewrite_tac [arithmeticTheory.MIN_ALT] >>
+  asm_rewrite_tac [] >>
+  `effective_exponent - scale = 0` by decide_tac >>
+  pop_assum SUBST1_TAC >> simp []
+QED
+
+Theorem smtfp_circuit_divisor_units:
+  0 < scale ==>
+  2 **
+    (smtfp_circuit_effective_exponent maximum_exponent
+       fraction_width scale magnitude - 1) =
+  smtfp_circuit_divisor maximum_exponent fraction_width scale magnitude *
+    2 **
+      (MIN scale
+        (smtfp_circuit_effective_exponent maximum_exponent
+          fraction_width scale magnitude) - 1)
+Proof
+  strip_tac >>
+  rewrite_tac [smtfp_circuit_divisor_def,
+               smtfp_circuit_shift_def] >>
+  irule circuit_divisor_units_arithmetic >> simp []
+QED
+
+Theorem smtfp_circuit_quotient_units:
+  0 < scale ==>
+  smtfp_circuit_quotient maximum_exponent fraction_width scale magnitude =
+  (magnitude * 2 ** (scale - 1)) DIV
+    2 **
+      (smtfp_circuit_effective_exponent maximum_exponent
+        fraction_width scale magnitude - 1)
+Proof
+  strip_tac >>
+  simp_tac pure_ss
+    [smtfp_circuit_quotient_def,
+     LET_THM,
+     smtfp_circuit_divisor_def,
+     smtfp_circuit_shift_def] >>
+  irule circuit_quotient_units_arithmetic >> simp []
+QED
+
+Theorem smtfp_circuit_remainder_units:
+  0 < scale ==>
+  (magnitude * 2 ** (scale - 1)) MOD
+    2 **
+      (smtfp_circuit_effective_exponent maximum_exponent
+        fraction_width scale magnitude - 1) =
+  smtfp_circuit_remainder maximum_exponent fraction_width scale magnitude *
+    2 **
+      (MIN scale
+        (smtfp_circuit_effective_exponent maximum_exponent
+          fraction_width scale magnitude) - 1)
+Proof
+  strip_tac >>
+  once_rewrite_tac [smtfp_circuit_remainder_def] >>
+  simp_tac pure_ss
+    [LET_THM,
+     smtfp_circuit_divisor_def,
+     smtfp_circuit_shift_def] >>
+  mp_tac (Q.INST
+    [`scale` |-> `scale`,
+     `effective_exponent` |->
+       `smtfp_circuit_effective_exponent maximum_exponent
+         fraction_width scale magnitude`,
+     `magnitude` |-> `magnitude`]
+    circuit_remainder_units_arithmetic) >>
+  impl_tac >- simp [] >>
+  strip_tac >>
+  Cases_on
+    `scale <= smtfp_circuit_effective_exponent maximum_exponent
+      fraction_width scale magnitude` >>
+  fs [arithmeticTheory.MIN_ALT]
+QED
+
+Theorem circuit_double_mult_scale:
+  (2 : num) * (residue * factor) = (2 * residue) * factor
+Proof
+  irule arithmeticTheory.MULT_ASSOC
+QED
+
+Theorem circuit_scaled_double_lt:
+  0 < (factor : num) ==>
+  (divisor * factor < 2 * (residue * factor) <=>
+   divisor < 2 * residue)
+Proof
+  strip_tac >> rewrite_tac [circuit_double_mult_scale] >>
+  simp [arithmeticTheory.LT_MULT_RCANCEL]
+QED
+
+Theorem circuit_scaled_double_le:
+  0 < (factor : num) ==>
+  (divisor * factor <= 2 * (residue * factor) <=>
+   divisor <= 2 * residue)
+Proof
+  strip_tac >> rewrite_tac [circuit_double_mult_scale] >>
+  simp [arithmeticTheory.LE_MULT_RCANCEL]
+QED
+
+Theorem circuit_scaled_double_eq:
+  0 < (factor : num) ==>
+  (divisor * factor = 2 * (residue * factor) <=>
+   divisor = 2 * residue)
+Proof
+  strip_tac >> `factor <> 0` by (CCONTR_TAC >> fs []) >>
+  rewrite_tac [circuit_double_mult_scale] >>
+  rewrite_tac [arithmeticTheory.EQ_MULT_RCANCEL] >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_round_up_scale:
+  0 < factor ==>
+  (smtfp_circuit_round_up mode sign q (residue * factor)
+     (divisor * factor) <=>
+   smtfp_circuit_round_up mode sign q residue divisor)
+Proof
+  strip_tac >> Cases_on `mode` >>
+  simp [smtfp_circuit_round_up_def,
+        circuit_scaled_double_lt,
+        circuit_scaled_double_le,
+        circuit_scaled_double_eq]
+QED
+
+Theorem smtfp_circuit_round_units:
+  0 < factor ==>
+  smtfp_circuit_round mode sign q (residue * factor)
+    (divisor * factor) =
+  smtfp_circuit_round mode sign q residue divisor
+Proof
+  strip_tac >>
+  simp [smtfp_circuit_round_def,
+        smtfp_circuit_round_up_scale]
+QED
+
+Theorem smtfp_circuit_rounded_units:
+  0 < scale ==>
+  smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+    scale magnitude =
+  smtfp_circuit_round mode sign
+    ((magnitude * 2 ** (scale - 1)) DIV
+      2 **
+        (smtfp_circuit_effective_exponent maximum_exponent
+          fraction_width scale magnitude - 1))
+    ((magnitude * 2 ** (scale - 1)) MOD
+      2 **
+        (smtfp_circuit_effective_exponent maximum_exponent
+          fraction_width scale magnitude - 1))
+    (2 **
+      (smtfp_circuit_effective_exponent maximum_exponent
+        fraction_width scale magnitude - 1))
+Proof
+  strip_tac >>
+  simp_tac pure_ss [smtfp_circuit_rounded_def] >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`,
+     `scale` |-> `scale`, `magnitude` |-> `magnitude`]
+    smtfp_circuit_quotient_units) >>
+  impl_tac >- simp [] >> strip_tac >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`,
+     `scale` |-> `scale`, `magnitude` |-> `magnitude`]
+    smtfp_circuit_remainder_units) >>
+  impl_tac >- simp [] >> strip_tac >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`,
+     `scale` |-> `scale`, `magnitude` |-> `magnitude`]
+    smtfp_circuit_divisor_units) >>
+  impl_tac >- simp [] >> strip_tac >>
+  asm_rewrite_tac [] >>
+  irule EQ_SYM >>
+  irule smtfp_circuit_round_units >> simp []
+QED
+
+Definition smtfp_circuit_endpoint_def:
+  smtfp_circuit_endpoint (format : ('t,'w) smtfp) (sign : word1)
+      (exponent : num) (rounded : num) =
+    if rounded < 2 ** dimindex (:'t) then
+      smtfp_bits sign 0w (n2w rounded)
+    else if rounded = 2 ** (dimindex (:'t) + 1) then
+      smtfp_bits sign (n2w (exponent + 1)) 0w
+    else
+      smtfp_bits sign (n2w exponent)
+        (n2w (rounded - 2 ** dimindex (:'t))) : ('t,'w) smtfp
+End
+
+Theorem smtfp_rep_finite_n2w_bits:
+  exponent < dimword (:'w) - 1 ==>
+  smtfp_rep
+    (smtfp_bits sign (n2w exponent) (n2w significand) :
+      ('t,'w) smtfp) =
+  (<| Sign := sign; Exponent := n2w exponent;
+      Significand := n2w significand |> : ('t,'w) float)
+Proof
+  strip_tac >>
+  `exponent < dimword (:'w)` by decide_tac >>
+  `w2n (n2w exponent : 'w word) = exponent` by
+    simp [wordsTheory.w2n_n2w, arithmeticTheory.LESS_MOD] >>
+  `w2n (UINT_MAXw : 'w word) = dimword (:'w) - 1` by
+    simp [wordsTheory.w2n_minus1, wordsTheory.UINT_MAX_def] >>
+  `(n2w exponent : 'w word) <> UINT_MAXw` by
+    (strip_tac >>
+     pop_assum (mp_tac o AP_TERM ``w2n : 'w word -> num``) >>
+     asm_rewrite_tac [] >> decide_tac) >>
+  simp [smtfp_rep_bits,
+        canon_def,
+        smtfp_nan_pattern_def]
+QED
+
+Theorem circuit_carry_units_arithmetic:
+  1 <= exponent ==>
+  (2 : num) ** exponent * 2 ** fraction_width =
+  2 ** (fraction_width + 1) * 2 ** (exponent - 1)
+Proof
+  strip_tac >>
+  rewrite_tac [GSYM arithmeticTheory.EXP_ADD] >>
+  mp_tac (Q.SPEC `2` arithmeticTheory.EXP_BASE_INJECTIVE) >>
+  simp [] >> decide_tac
+QED
+
+Theorem circuit_bound_arithmetic:
+  (exponent : num) < dimension - 2 ==>
+  exponent + 1 < dimension - 1
+Proof
+  decide_tac
+QED
+
+Theorem smtfp_circuit_endpoint_units:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  let output = smtfp_rep
+    (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)
+  in
+    output.Sign = sign /\
+    smtfp_circuit_units output.Exponent output.Significand =
+      rounded * 2 ** (exponent - 1)
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >> fs [] >>
+  Cases_on `rounded < 2 ** dimindex (:'t)`
+  >- (`rounded < dimword (:'t)` by
+        fs [wordsTheory.dimword_def] >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded) =
+       (<| Sign := sign; Exponent := 0w;
+           Significand := n2w rounded |> : ('t,'w) float)` by
+        (simp [smtfp_circuit_endpoint_def,
+               smtfp_rep_bits,
+               canon_def,
+               smtfp_nan_pattern_def]) >>
+      qpat_x_assum `smtfp_rep _ = _`
+        (fn th => once_rewrite_tac [th]) >>
+      fs [smtfp_circuit_units_def,
+          smtfp_circuit_sig_def,
+          smtfp_circuit_exp_def,
+          wordsTheory.w2n_n2w,
+          arithmeticTheory.LESS_MOD])
+  >> Cases_on `rounded = 2 ** (dimindex (:'t) + 1)`
+  >- (qpat_x_assum `1 <= exponent`
+        (fn ath => assume_tac (MATCH_MP
+          (Q.SPECL [`dimindex (:'t)`, `exponent`]
+            (GEN_ALL circuit_carry_units_arithmetic)) ath)) >>
+      `exponent < dimword (:'w) - 2` by fs [] >>
+      `exponent + 1 < dimword (:'w) - 1` by
+        metis_tac [GEN_ALL circuit_bound_arithmetic] >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded) =
+       (<| Sign := sign; Exponent := n2w (exponent + 1);
+           Significand := 0w |> : ('t,'w) float)` by
+        (simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits]) >>
+      qpat_x_assum `smtfp_rep _ = _`
+        (fn th => once_rewrite_tac [th]) >>
+      fs [smtfp_circuit_units_def,
+          smtfp_circuit_sig_def,
+          smtfp_circuit_exp_def,
+          wordsTheory.w2n_n2w, wordsTheory.dimword_def,
+          arithmeticTheory.LESS_MOD] >>
+      qpat_x_assum
+        `2 ** exponent * 2 ** dimindex (:'t) = _` ACCEPT_TAC)
+  >> `rounded < 2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  `rounded - 2 ** dimindex (:'t) < dimword (:'t)` by
+    (simp_tac std_ss [wordsTheory.dimword_def,
+                      arithmeticTheory.EXP_ADD] >>
+     qpat_x_assum `rounded < 2 ** (dimindex (:'t) + 1)` mp_tac >>
+     simp [arithmeticTheory.EXP_ADD]) >>
+  `smtfp_rep
+     (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded) =
+   (<| Sign := sign; Exponent := n2w exponent;
+       Significand := n2w (rounded - 2 ** dimindex (:'t)) |> :
+    ('t,'w) float)` by
+    (simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits]) >>
+  qpat_x_assum `smtfp_rep _ = _`
+    (fn th => once_rewrite_tac [th]) >>
+  fs [smtfp_circuit_units_def,
+      smtfp_circuit_sig_def,
+      smtfp_circuit_exp_def,
+      wordsTheory.w2n_n2w, wordsTheory.dimword_def,
+      arithmeticTheory.LESS_MOD] >>
+  `2 ** dimindex (:'t) <= rounded` by decide_tac >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_round_abs_diff:
+  0 < divisor ==>
+  ABS_DIFF
+    (smtfp_circuit_round mode sign (units DIV divisor)
+       (units MOD divisor) divisor * divisor)
+    units =
+  if smtfp_circuit_round_up mode sign (units DIV divisor)
+       (units MOD divisor) divisor then
+    divisor - units MOD divisor
+  else units MOD divisor
+Proof
+  strip_tac >>
+  mp_tac (Q.SPEC `divisor` arithmeticTheory.DIVISION) >>
+  impl_tac >- simp [] >>
+  disch_then (qspec_then `units` strip_assume_tac) >>
+  Cases_on
+    `smtfp_circuit_round_up mode sign (units DIV divisor)
+       (units MOD divisor) divisor`
+  >- (`units < (units DIV divisor + 1) * divisor` by
+        (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >>
+         intLib.ARITH_TAC) >>
+      simp [smtfp_circuit_round_def,
+            arithmeticTheory.ABS_DIFF_def,
+            arithmeticTheory.LEFT_ADD_DISTRIB] >>
+      intLib.ARITH_TAC) >>
+  `units DIV divisor * divisor <= units` by intLib.ARITH_TAC >>
+  Cases_on `units DIV divisor * divisor < units` >>
+  simp [smtfp_circuit_round_def,
+        arithmeticTheory.ABS_DIFF_def,
+        arithmeticTheory.LEFT_ADD_DISTRIB] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem circuit_nearest_multiple:
+  0 < divisor /\ residue < divisor /\
+  units = quotient * divisor + residue /\
+  (increment ==> divisor <= 2 * residue) /\
+  (~increment ==> 2 * residue <= divisor) ==>
+  ABS_DIFF
+    ((quotient + if increment then 1 else 0) * divisor) units <=
+  ABS_DIFF (candidate * divisor) units
+Proof
+  strip_tac >> Cases_on `increment` >> fs []
+  >- (Cases_on `quotient < candidate`
+      >- (`quotient + 1 <= candidate` by decide_tac >>
+          `residue + divisor * quotient <
+             (quotient + 1) * divisor` by
+            (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >>
+             intLib.ARITH_TAC) >>
+          `(quotient + 1) * divisor <= candidate * divisor` by
+            simp [arithmeticTheory.LE_MULT_RCANCEL] >>
+          `~(candidate * divisor <
+               residue + divisor * quotient)` by
+            intLib.ARITH_TAC >>
+          simp [arithmeticTheory.ABS_DIFF_def,
+                arithmeticTheory.LEFT_ADD_DISTRIB])
+      >> `candidate <= quotient` by decide_tac >>
+      `candidate * divisor <= quotient * divisor` by
+        simp [arithmeticTheory.LE_MULT_RCANCEL] >>
+      simp [arithmeticTheory.ABS_DIFF_def,
+            arithmeticTheory.LEFT_ADD_DISTRIB])
+  >> Cases_on `candidate <= quotient`
+  >- (`candidate * divisor <= quotient * divisor` by
+        simp [arithmeticTheory.LE_MULT_RCANCEL] >>
+      simp [arithmeticTheory.ABS_DIFF_def])
+  >> `quotient + 1 <= candidate` by decide_tac >>
+  `residue + divisor * quotient <
+     (quotient + 1) * divisor` by
+    (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >>
+     intLib.ARITH_TAC) >>
+  `(quotient + 1) * divisor <= candidate * divisor` by
+    simp [arithmeticTheory.LE_MULT_RCANCEL] >>
+  `~(candidate * divisor < residue + divisor * quotient)` by
+    intLib.ARITH_TAC >>
+  simp [arithmeticTheory.ABS_DIFF_def,
+        arithmeticTheory.LEFT_ADD_DISTRIB] >>
+  intLib.ARITH_TAC
+QED
+
+Theorem smtfp_circuit_round_nearest_multiple:
+  0 < divisor /\ (mode = RNE \/ mode = RNA) ==>
+  ABS_DIFF
+    (smtfp_circuit_round mode sign (units DIV divisor)
+       (units MOD divisor) divisor * divisor)
+    units <=
+  ABS_DIFF (candidate * divisor) units
+Proof
+  rewrite_tac [smtfp_circuit_round_def] >>
+  strip_tac >>
+  irule (Q.INST [`residue` |-> `units MOD divisor`]
+    circuit_nearest_multiple) >>
+  simp [arithmeticTheory.DIVISION] >>
+  fs [smtfp_circuit_round_up_def] >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_endpoint_next_hi:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  next_hi
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent quotient)) =
+  smtfp_rep
+    (smtfp_circuit_endpoint format sign exponent (quotient + 1))
+Proof
+  strip_tac >>
+  Cases_on `quotient < 2 ** dimindex (:'t)`
+  >- (`quotient < dimword (:'t)` by
+        fs [wordsTheory.dimword_def] >>
+      Cases_on `quotient + 1 < 2 ** dimindex (:'t)`
+      >- (`quotient + 1 < dimword (:'t)` by
+            fs [wordsTheory.dimword_def] >>
+          simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+                canon_def, float_canon_qnan_def,
+                binary_ieeeTheory.float_is_nan_def,
+                smtfp_nan_pattern_def,
+                binary_ieeeTheory.next_hi_def,
+                wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+                wordsTheory.word_lo_n2w,
+                wordsTheory.word_add_n2w,
+                wordsTheory.dimword_def,
+                wordsTheory.UINT_MAX_def])
+      >> `quotient + 1 = 2 ** dimindex (:'t)` by decide_tac >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            canon_def, float_canon_qnan_def,
+            binary_ieeeTheory.float_is_nan_def,
+            smtfp_nan_pattern_def,
+            binary_ieeeTheory.next_hi_def,
+            wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+            wordsTheory.word_lo_n2w,
+            wordsTheory.word_add_n2w,
+            wordsTheory.dimword_def,
+            wordsTheory.UINT_MAX_def] >>
+      wordsLib.WORD_DECIDE_TAC) >>
+  Cases_on `quotient + 1 = 2 ** (dimindex (:'t) + 1)`
+  >- (`exponent < 2 ** dimindex (:'w)` by
+        fs [wordsTheory.dimword_def] >>
+      `exponent MOD 2 ** dimindex (:'w) = exponent` by
+        simp [arithmeticTheory.LESS_MOD] >>
+      `exponent <> 2 ** dimindex (:'w) - 1` by
+        fs [wordsTheory.dimword_def] >>
+      `quotient - 2 ** dimindex (:'t) =
+       2 ** dimindex (:'t) - 1` by
+        (qpat_x_assum `quotient + 1 = _` mp_tac >>
+         simp [arithmeticTheory.EXP_ADD] >> decide_tac) >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            canon_def, float_canon_qnan_def,
+            binary_ieeeTheory.float_is_nan_def,
+            smtfp_nan_pattern_def,
+            binary_ieeeTheory.next_hi_def,
+            wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+            wordsTheory.word_lo_n2w,
+            wordsTheory.word_add_n2w,
+            wordsTheory.dimword_def,
+            wordsTheory.UINT_MAX_def]) >>
+  `2 ** dimindex (:'t) <= quotient` by decide_tac >>
+  `quotient + 1 < 2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `quotient - 2 ** dimindex (:'t) < dimword (:'t)` by
+    (rw [wordsTheory.dimword_def] >>
+     qpat_x_assum `quotient + 1 < _` mp_tac >>
+     simp [arithmeticTheory.EXP_ADD] >> decide_tac) >>
+  `quotient + 1 - 2 ** dimindex (:'t) < dimword (:'t)` by
+    (rw [wordsTheory.dimword_def] >>
+     qpat_x_assum `quotient + 1 < _` mp_tac >>
+     simp [arithmeticTheory.EXP_ADD] >> decide_tac) >>
+  `exponent < 2 ** dimindex (:'w)` by
+    fs [wordsTheory.dimword_def] >>
+  `exponent MOD 2 ** dimindex (:'w) = exponent` by
+    simp [arithmeticTheory.LESS_MOD] >>
+  `exponent <> 2 ** dimindex (:'w) - 1` by
+    fs [wordsTheory.dimword_def] >>
+  `(quotient - 2 ** dimindex (:'t)) + 1 =
+   quotient + 1 - 2 ** dimindex (:'t)` by decide_tac >>
+  `1 < 2 ** dimindex (:'t)` by
+    simp [arithmeticTheory.ONE_LT_EXP, fcpTheory.DIMINDEX_GT_0] >>
+  `0 < 2 ** dimindex (:'t) - 1` by decide_tac >>
+  `quotient < 2 * 2 ** dimindex (:'t) - 1` by
+    (qpat_x_assum `quotient + 1 < _` mp_tac >>
+     simp [arithmeticTheory.EXP_ADD] >> decide_tac) >>
+  simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+        canon_def, float_canon_qnan_def,
+        binary_ieeeTheory.float_is_nan_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.next_hi_def,
+        wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+        wordsTheory.word_lo_n2w,
+        wordsTheory.word_add_n2w,
+        wordsTheory.dimword_def,
+        wordsTheory.UINT_MAX_def]
+QED
+
+Theorem smtfp_circuit_endpoint_finite:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  float_is_finite
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded))
+Proof
+  strip_tac >>
+  Cases_on `rounded < 2 ** dimindex (:'t)`
+  >- (simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            binary_ieeeTheory.float_is_finite_Exponent] >>
+      `0 < dimword (:'w) - 1` by decide_tac >>
+      simp [wordsTheory.word_T_def, wordsTheory.UINT_MAX_def,
+            wordsTheory.dimword_def]) >>
+  Cases_on `rounded = 2 ** (dimindex (:'t) + 1)`
+  >- (`exponent + 1 < dimword (:'w) - 1` by decide_tac >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            binary_ieeeTheory.float_is_finite_Exponent] >>
+      irule wordsTheory.WORD_LOWER_NOT_EQ >>
+      simp [wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+            wordsTheory.word_lo_n2w, wordsTheory.UINT_MAX_def] >>
+      fs [wordsTheory.dimword_def, arithmeticTheory.LESS_MOD]) >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+        binary_ieeeTheory.float_is_finite_Exponent] >>
+  irule wordsTheory.WORD_LOWER_NOT_EQ >>
+  simp [wordsTheory.WORD_NEG_1, wordsTheory.word_T_def,
+        wordsTheory.word_lo_n2w, wordsTheory.UINT_MAX_def] >>
+  fs [wordsTheory.dimword_def, arithmeticTheory.LESS_MOD]
+QED
+
+Theorem smtfp_circuit_endpoint_value:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  float_to_real
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)) =
+  (if sign = 0w then &(rounded * 2 ** (exponent - 1))
+   else -&(rounded * 2 ** (exponent - 1))) *
+  (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  strip_tac >>
+  mp_tac (Q.INST [`format` |-> `format`, `sign` |-> `sign`,
+                   `exponent` |-> `exponent`, `rounded` |-> `rounded`]
+    smtfp_circuit_endpoint_units) >>
+  impl_tac >- simp [] >>
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  Cases_on
+    `smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)` >>
+  full_simp_tac pure_ss [binary_ieeeTheory.float_accessors] >>
+  qpat_x_assum `c = sign` (fn th => once_rewrite_tac [th]) >>
+  qpat_x_assum `smtfp_circuit_units _ _ = _`
+    (fn th => once_rewrite_tac [GSYM th]) >>
+  `(<| Sign := sign; Exponent := c0; Significand := c1 |> :
+      ('t,'w) float) = float sign c0 c1` by
+    simp [binary_ieeeTheory.float_component_equality] >>
+  qpat_x_assum
+    `(<| Sign := sign; Exponent := c0; Significand := c1 |> :
+       ('t,'w) float) = _`
+    (fn th => once_rewrite_tac [GSYM th]) >>
+  MATCH_ACCEPT_TAC smtfp_circuit_units_value
+QED
+
+Theorem smtfp_circuit_endpoint_nonzero:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < rounded /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  ~float_is_zero
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+        sign exponent rounded))
+Proof
+  strip_tac >>
+  `float_to_real
+     (smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+         sign exponent rounded)) =
+   (if sign = 0w then &(rounded * 2 ** (exponent - 1))
+    else -&(rounded * 2 ** (exponent - 1))) *
+   (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule smtfp_circuit_endpoint_value >> asm_rewrite_tac []) >>
+  rewrite_tac [binary_ieeeTheory.float_is_zero_to_real] >>
+  pop_assum (fn th => rewrite_tac [th]) >>
+  Cases_on `sign = 0w` >>
+  asm_simp_tac realLib.real_ss
+    [realTheory.real_div, realTheory.REAL_ENTIRE] >>
+  simp [realTheory.REAL_POW_EQ_0]
+QED
+
+Theorem smtfp_circuit_adjacent_positive_closest_hi:
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite hi /\ next_hi lo = hi /\
+  0 <= float_to_real lo /\
+  float_to_real lo <= x /\ x <= float_to_real hi /\
+  float_to_real hi - x <= x - float_to_real lo ==>
+  is_closest float_is_finite x hi
+Proof
+  strip_tac >>
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  rpt strip_tac >>
+  Cases_on `abs (float_to_real b) <= abs (float_to_real lo)`
+  >- (`float_to_real b <= abs (float_to_real b)` by
+        MATCH_ACCEPT_TAC
+          (Q.SPEC `float_to_real b` realTheory.ABS_LE) >>
+      `abs (float_to_real lo) = float_to_real lo` by simp [] >>
+      `float_to_real b <= x` by realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= float_to_real (next_hi lo) - x` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= x - float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo) - x) =
+       float_to_real (next_hi lo) - x` by simp [] >>
+      `abs (float_to_real b - x) = x - float_to_real b` by
+        (`float_to_real b - x = -(x - float_to_real b)` by
+           realLib.REAL_ASM_ARITH_TAC >>
+         asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+      realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    (irule binary_ieeeTheory.next_hi_discrete >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `0 <= float_to_real b`
+  >- (`0 <= float_to_real (next_hi lo)` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo)) =
+       float_to_real (next_hi lo)` by simp [] >>
+      `abs (float_to_real b) = float_to_real b` by simp [] >>
+      `float_to_real (next_hi lo) <= float_to_real b` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= float_to_real (next_hi lo) - x` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= float_to_real b - x` by realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo) - x) =
+       float_to_real (next_hi lo) - x` by simp [] >>
+      `abs (float_to_real b - x) = float_to_real b - x` by
+        simp [] >>
+      realLib.REAL_ASM_ARITH_TAC)
+  >> `float_to_real b <= 0` by realLib.REAL_ASM_ARITH_TAC >>
+  `0 <= float_to_real (next_hi lo) - x` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `0 <= x - float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real (next_hi lo) - x) =
+   float_to_real (next_hi lo) - x` by simp [] >>
+  `abs (float_to_real b - x) = x - float_to_real b` by
+    (`float_to_real b - x = -(x - float_to_real b)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_adjacent_positive_closest_lo:
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite hi /\ next_hi lo = hi /\
+  0 <= float_to_real lo /\
+  float_to_real lo <= x /\ x <= float_to_real hi /\
+  x - float_to_real lo <= float_to_real hi - x ==>
+  is_closest float_is_finite x lo
+Proof
+  strip_tac >>
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  rpt strip_tac >>
+  Cases_on `abs (float_to_real b) <= abs (float_to_real lo)`
+  >- (`float_to_real b <= abs (float_to_real b)` by
+        MATCH_ACCEPT_TAC
+          (Q.SPEC `float_to_real b` realTheory.ABS_LE) >>
+      `abs (float_to_real lo) = float_to_real lo` by simp [] >>
+      `float_to_real b <= float_to_real lo` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= x - float_to_real lo` by realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= x - float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real lo - x) = x - float_to_real lo` by
+        (`float_to_real lo - x = -(x - float_to_real lo)` by
+           realLib.REAL_ASM_ARITH_TAC >>
+         asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+      `abs (float_to_real b - x) = x - float_to_real b` by
+        (`float_to_real b - x = -(x - float_to_real b)` by
+           realLib.REAL_ASM_ARITH_TAC >>
+         asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+      realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    (irule binary_ieeeTheory.next_hi_discrete >>
+     simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `0 <= float_to_real b`
+  >- (`0 <= float_to_real (next_hi lo)` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo)) =
+       float_to_real (next_hi lo)` by simp [] >>
+      `abs (float_to_real b) = float_to_real b` by simp [] >>
+      `float_to_real (next_hi lo) <= float_to_real b` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= x - float_to_real lo` by realLib.REAL_ASM_ARITH_TAC >>
+      `0 <= float_to_real b - x` by realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real lo - x) = x - float_to_real lo` by
+        (`float_to_real lo - x = -(x - float_to_real lo)` by
+           realLib.REAL_ASM_ARITH_TAC >>
+         asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+      `abs (float_to_real b - x) = float_to_real b - x` by
+        simp [] >>
+      realLib.REAL_ASM_ARITH_TAC)
+  >> `float_to_real b <= 0` by realLib.REAL_ASM_ARITH_TAC >>
+  `0 <= x - float_to_real lo` by realLib.REAL_ASM_ARITH_TAC >>
+  `0 <= x - float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+  `abs (float_to_real lo - x) = x - float_to_real lo` by
+    (`float_to_real lo - x = -(x - float_to_real lo)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+  `abs (float_to_real b - x) = x - float_to_real b` by
+    (`float_to_real b - x = -(x - float_to_real b)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     asm_rewrite_tac [realTheory.ABS_NEG] >> simp []) >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_effective_encoded:
+  1 <= maximum_exponent ==>
+  smtfp_circuit_effective_exponent maximum_exponent fraction_width
+      scale magnitude =
+    smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude /\
+  1 <= smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude /\
+  smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude <= maximum_exponent
+Proof
+  strip_tac >>
+  simp [smtfp_circuit_effective_exponent_def,
+        smtfp_circuit_encoded_exponent_def,
+        smtfp_circuit_wanted_exponent_def,
+        arithmeticTheory.MIN_ALT, arithmeticTheory.MAX_ALT] >>
+  decide_tac
+QED
+
+Theorem circuit_normalized_lower:
+  0 < (units : num) /\ 1 <= maximum_exponent /\
+  effective_exponent =
+    MIN maximum_exponent
+      (MAX 1 (LOG2 (units : num) + 1 - fraction_width)) /\
+  1 < effective_exponent ==>
+  2 ** fraction_width * 2 ** (effective_exponent - 1) <= (units : num)
+Proof
+  strip_tac >>
+  rewrite_tac [GSYM arithmeticTheory.EXP_ADD] >>
+  irule arithmeticTheory.LESS_EQ_TRANS >>
+  qexists_tac `2 ** LOG2 units` >>
+  conj_tac
+  >- (simp [arithmeticTheory.EXP_BASE_LE_MONO] >>
+      fs [arithmeticTheory.MIN_ALT, arithmeticTheory.MAX_ALT] >>
+      decide_tac) >>
+  rewrite_tac [bitTheory.LOG2_def] >>
+  MATCH_MP_TAC
+    (Q.SPEC `(units : num)` logrootTheory.TWO_EXP_LOG2_LE) >>
+  simp []
+QED
+
+Theorem smtfp_circuit_quotient_normalized_lower:
+  0 < scale /\ 0 < magnitude /\ 1 <= maximum_exponent ==>
+  let exponent =
+    smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude in
+  let quotient =
+    smtfp_circuit_quotient maximum_exponent fraction_width scale
+      magnitude in
+    quotient < 2 ** fraction_width ==> exponent = 1
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_effective_encoded) >>
+  impl_tac >- simp [] >> strip_tac >>
+  Cases_on
+    `smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+       scale magnitude = 1` >> simp [] >>
+  `1 < smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+       scale magnitude` by decide_tac >>
+  `0 < magnitude * 2 ** (scale - 1)` by simp [] >>
+  mp_tac (Q.INST
+    [`units` |-> `magnitude * 2 ** (scale - 1)`,
+     `maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`,
+     `effective_exponent` |->
+       `smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+          scale magnitude`] circuit_normalized_lower) >>
+  impl_tac >-
+    (simp [] >>
+     fs [circuit_wanted_exponent_units,
+         smtfp_circuit_encoded_exponent_def]) >>
+  strip_tac >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_quotient_units) >>
+  impl_tac >- simp [] >> strip_tac >>
+  fs [] >>
+  strip_tac >>
+  `magnitude * 2 ** (scale - 1) <
+   2 ** fraction_width *
+     2 **
+       (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+          scale magnitude - 1)` by
+    (mp_tac (Q.SPECL
+      [`2 ** fraction_width`, `magnitude * 2 ** (scale - 1)`,
+       `2 **
+         (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+            scale magnitude - 1)`] arithmeticTheory.DIV_LT_X) >>
+     simp []) >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_pack_endpoint:
+  maximum_exponent <> 0 /\
+  rounded <= 2 ** (fraction_width + 1) /\
+  (rounded = 2 ** (fraction_width + 1) ==>
+   exponent < maximum_exponent) ==>
+  smtfp_circuit_pack mode (format : ('t,'w) smtfp) sign
+      maximum_exponent fraction_width exponent rounded =
+  if rounded < 2 ** fraction_width then
+    smtfp_bits sign 0w (n2w rounded)
+  else if rounded = 2 ** (fraction_width + 1) then
+    smtfp_bits sign (n2w (exponent + 1)) 0w
+  else
+    smtfp_bits sign (n2w exponent)
+      (n2w (rounded - 2 ** fraction_width))
+Proof
+  strip_tac >>
+  Cases_on `rounded < 2 ** fraction_width`
+  >- (`(2 : num) ** fraction_width < 2 ** (fraction_width + 1)` by
+        simp [arithmeticTheory.EXP_BASE_LT_MONO] >>
+      simp [smtfp_circuit_pack_def]) >>
+  Cases_on `rounded = 2 ** (fraction_width + 1)`
+  >- simp [smtfp_circuit_pack_def] >>
+  simp [smtfp_circuit_pack_def]
+QED
+
+Theorem smtfp_circuit_pack_overflow:
+  maximum_exponent <> 0 /\
+  (2 ** (fraction_width + 1) < rounded \/
+   rounded = 2 ** (fraction_width + 1) /\
+   ~(exponent < maximum_exponent)) ==>
+  smtfp_circuit_pack mode (format : ('t,'w) smtfp) sign
+      maximum_exponent fraction_width exponent rounded =
+  smtfp_circuit_overflow mode format sign
+Proof
+  simp [smtfp_circuit_pack_def]
+QED
+
+Theorem smtfp_circuit_encode_endpoint:
+  2 <= dimindex (:'w) /\ 0 < magnitude /\
+  (let maximum_exponent = dimword (:'w) - 2 in
+   let fraction_width = dimindex (:'t) in
+   let exponent =
+     smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+       scale magnitude in
+   let rounded =
+     smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+       scale magnitude in
+    rounded <= 2 ** (fraction_width + 1) /\
+    (rounded = 2 ** (fraction_width + 1) ==>
+     exponent < maximum_exponent)) ==>
+  smtfp_circuit_encode mode (format : ('t,'w) smtfp) sign scale magnitude =
+  smtfp_circuit_endpoint format sign
+    (smtfp_circuit_encoded_exponent (dimword (:'w) - 2)
+      (dimindex (:'t)) scale magnitude)
+    (smtfp_circuit_rounded mode sign (dimword (:'w) - 2)
+      (dimindex (:'t)) scale magnitude)
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `2 < dimword (:'w)` by
+    (simp [wordsTheory.dimword_def] >>
+     irule arithmeticTheory.LESS_LESS_EQ_TRANS >>
+     qexists_tac `2 ** 2` >> simp []) >>
+  simp [smtfp_circuit_encode_def,
+        smtfp_circuit_pack_def,
+        smtfp_circuit_endpoint_def] >>
+  Cases_on
+    `smtfp_circuit_rounded mode sign (dimword (:'w) - 2)
+       (dimindex (:'t)) scale magnitude =
+     2 ** (dimindex (:'t) + 1)`
+  >- simp [arithmeticTheory.EXP_BASE_LT_MONO] >>
+  Cases_on
+    `smtfp_circuit_rounded mode sign (dimword (:'w) - 2)
+       (dimindex (:'t)) scale magnitude <
+     2 ** dimindex (:'t)` >>
+  simp []
+QED
+
+Theorem smtfp_circuit_endpoint_ULP:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  ULP
+    ((smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)).Exponent,
+     (:'t)) =
+  2 pow
+    (if rounded = 2 ** (dimindex (:'t) + 1) then exponent + 1
+     else exponent) /
+  2 pow (INT_MAX (:'w) + dimindex (:'t))
+Proof
+  strip_tac >>
+  Cases_on `rounded < 2 ** dimindex (:'t)`
+  >- (`(2 : num) ** dimindex (:'t) <
+       2 ** (dimindex (:'t) + 1)` by
+        simp [arithmeticTheory.EXP_BASE_LT_MONO] >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            binary_ieeeTheory.ULP_def]) >>
+  Cases_on `rounded = 2 ** (dimindex (:'t) + 1)`
+  >- (`exponent + 1 < dimword (:'w) - 1` by
+        decide_tac >>
+      `exponent + 1 < dimword (:'w)` by decide_tac >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            binary_ieeeTheory.ULP_def, wordsTheory.w2n_n2w,
+            arithmeticTheory.LESS_MOD]) >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  `exponent < dimword (:'w)` by decide_tac >>
+  simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+        binary_ieeeTheory.ULP_def, wordsTheory.w2n_n2w,
+        arithmeticTheory.LESS_MOD]
+QED
+
+Theorem smtfp_circuit_endpoint_even:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  2 ** dimindex (:'t) <= rounded /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  (~word_lsb
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)).Significand
+   <=> EVEN rounded)
+Proof
+  strip_tac >>
+  Cases_on `rounded = 2 ** (dimindex (:'t) + 1)`
+  >- (`exponent + 1 < dimword (:'w) - 1` by decide_tac >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            arithmeticTheory.EVEN_EXP]) >>
+  `rounded < 2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+        wordsTheory.word_lsb_n2w] >>
+  `EVEN (2 ** dimindex (:'t))` by
+    simp [arithmeticTheory.EVEN_EXP] >>
+  fs [arithmeticTheory.ODD_EVEN, arithmeticTheory.EVEN_SUB]
+QED
+
+Theorem smtfp_circuit_endpoint_even_finite:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) ==>
+  (~word_lsb
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent rounded)).Significand
+   <=> EVEN rounded)
+Proof
+  strip_tac >>
+  Cases_on `rounded < 2 ** dimindex (:'t)`
+  >- simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+           wordsTheory.word_lsb_n2w, arithmeticTheory.ODD_EVEN] >>
+  Cases_on `rounded = 2 ** (dimindex (:'t) + 1)`
+  >- (`exponent + 1 < dimword (:'w) - 1` by decide_tac >>
+      simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+            arithmeticTheory.EVEN_EXP]) >>
+  `rounded < 2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits,
+        wordsTheory.word_lsb_n2w] >>
+  `EVEN (2 ** dimindex (:'t))` by
+    simp [arithmeticTheory.EVEN_EXP] >>
+  fs [arithmeticTheory.ODD_EVEN, arithmeticTheory.EVEN_SUB]
+QED
+
+Theorem smtfp_float_value_finite:
+  float_is_finite (f : ('t,'w) float) ==>
+  float_value f = Float (float_to_real f)
+Proof
+  strip_tac >>
+  Cases_on `f.Exponent = UINT_MAXw` >>
+  fs [binary_ieeeTheory.float_is_finite_thm,
+      binary_ieeeTheory.float_value_def] >>
+  Cases_on `f.Significand = 0w` >> fs []
+QED
+
+Theorem smtfp_circuit_endpoint_boundary:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient <= rounded /\ rounded <= quotient + 1 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  rounded <> 2 ** (dimindex (:'t) + 1) /\
+  (smtfp_rep
+    (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent
+      rounded)).Significand = 0w /\
+  (smtfp_rep
+    (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent
+      rounded)).Exponent <> 1w ==>
+  rounded * divisor <= quotient * divisor + residue
+Proof
+  strip_tac >>
+  Cases_on `rounded < 2 ** dimindex (:'t)`
+  >- (`smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent
+           rounded) =
+       (<| Sign := sign; Exponent := 0w; Significand := n2w rounded |> :
+         ('t,'w) float)` by
+        simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits] >>
+      fs [wordsTheory.n2w_11, wordsTheory.dimword_def,
+          arithmeticTheory.LESS_MOD]) >>
+  `rounded < 2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `exponent < dimword (:'w) - 1` by decide_tac >>
+  `rounded - 2 ** dimindex (:'t) < dimword (:'t)` by
+    (simp [wordsTheory.dimword_def] >>
+     qpat_x_assum `rounded < 2 ** (dimindex (:'t) + 1)` mp_tac >>
+     simp [arithmeticTheory.EXP_ADD]) >>
+  `smtfp_rep
+     (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent
+       rounded) =
+   (<| Sign := sign; Exponent := n2w exponent;
+       Significand := n2w (rounded - 2 ** dimindex (:'t)) |> :
+     ('t,'w) float)` by
+    simp [smtfp_circuit_endpoint_def, smtfp_rep_finite_n2w_bits] >>
+  `rounded = 2 ** dimindex (:'t)` by
+    (qpat_x_assum `(smtfp_rep _).Significand = 0w` mp_tac >>
+     asm_rewrite_tac [] >>
+     simp [wordsTheory.n2w_11, arithmeticTheory.LESS_MOD]) >>
+  Cases_on `quotient = rounded`
+  >- simp [] >>
+  `quotient < rounded` by decide_tac >>
+  `exponent = 1` by metis_tac [] >>
+  qpat_x_assum `(smtfp_rep _).Exponent <> 1w` mp_tac >>
+  asm_rewrite_tac [] >> simp []
+QED
+
+Theorem smtfp_circuit_RNE_error_bound:
+  residue < divisor ==>
+  2 *
+    (if smtfp_circuit_round_up RNE sign quotient residue divisor then
+       divisor - residue
+     else residue) <= divisor
+Proof
+  strip_tac >>
+  Cases_on
+    `smtfp_circuit_round_up RNE sign quotient residue divisor` >>
+  fs [smtfp_circuit_round_up_def] >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_scaled_abs_diff:
+  abs (&left * scale - &right * scale) =
+  &(ABS_DIFF left right) * abs scale
+Proof
+  rewrite_tac [GSYM realTheory.REAL_SUB_RDISTRIB,
+               realTheory.ABS_MUL] >>
+  Cases_on `left < right`
+  >- (`~(right <= left)` by decide_tac >>
+      simp [arithmeticTheory.ABS_DIFF_def,
+            realTheory.REAL_OF_NUM_SUB,
+            realTheory.REAL_SUB_LE,
+            realTheory.abs] >>
+      realLib.REAL_ARITH_TAC) >>
+  `right <= left` by decide_tac >>
+  simp [arithmeticTheory.ABS_DIFF_def,
+        realTheory.REAL_OF_NUM_SUB,
+        realTheory.REAL_SUB_LE,
+        realTheory.abs]
+QED
+
+Theorem smtfp_circuit_scaled_abs_diff_neg:
+  abs (-&left * scale - -&right * scale) =
+  &(ABS_DIFF left right) * abs scale
+Proof
+  rewrite_tac [realTheory.REAL_MUL_LNEG,
+               realTheory.REAL_SUB_NEG2] >>
+  once_rewrite_tac [arithmeticTheory.ABS_DIFF_SYM] >>
+  MATCH_ACCEPT_TAC smtfp_circuit_scaled_abs_diff
+QED
+
+Theorem smtfp_circuit_scaled_abs_diff_neg_left:
+  abs (-(scale : real) * (&left * factor) -
+       -scale * (&right * factor)) =
+  &(ABS_DIFF left right) * abs (scale * factor)
+Proof
+  irule EQ_TRANS >>
+  qexists_tac
+    `abs (-&left * (scale * factor) -
+          -&right * (scale * factor))` >>
+  conj_tac
+  >- (`scale * (&left * factor) =
+       &left * (scale * factor)` by
+        CONV_TAC (AC_CONV (realTheory.REAL_MUL_ASSOC,
+                           realTheory.REAL_MUL_COMM)) >>
+      `scale * (&right * factor) =
+       &right * (scale * factor)` by
+        CONV_TAC (AC_CONV (realTheory.REAL_MUL_ASSOC,
+                           realTheory.REAL_MUL_COMM)) >>
+      rewrite_tac [realTheory.REAL_MUL_LNEG] >>
+      asm_rewrite_tac [])
+  >- ACCEPT_TAC
+        (Q.SPECL [`scale * factor`, `right`, `left`]
+           (GEN_ALL smtfp_circuit_scaled_abs_diff_neg))
+QED
+
+Theorem smtfp_circuit_tie_divisor:
+  residue < divisor /\ 0 < (scale : real) /\
+  2 * &(if up then divisor - residue else residue) * scale =
+    &divisor * scale ==>
+  divisor = 2 * residue
+Proof
+  strip_tac >>
+  `2 * &(if up then divisor - residue else residue) = &divisor` by
+    (qpat_x_assum `_ * scale = _ * scale` mp_tac >>
+     simp [realTheory.REAL_EQ_RMUL] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `(2 : real) = &(2 : num)` by simp [] >>
+  `2 * (if up then divisor - residue else residue) = divisor` by
+    (qpat_x_assum `2 * &_ = &divisor` mp_tac >>
+     asm_rewrite_tac [realTheory.REAL_OF_NUM_MUL,
+                      realTheory.REAL_OF_NUM_EQ]) >>
+  Cases_on `up` >> fs [] >> decide_tac
+QED
+
+Theorem smtfp_circuit_ULP_scale:
+  !d n : num.
+    &(2 * d) / &(2 ** n) =
+    &d * (&(2 ** 1) / &(2 ** n))
+Proof
+  simp [realTheory.REAL_OF_NUM_MUL, arithmeticTheory.EXP,
+        realTheory.real_div] >>
+  CONV_TAC RealField.REAL_RING
+QED
+
+Theorem smtfp_circuit_endpoint_ULP_divisor:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  rounded <= 2 ** (dimindex (:'t) + 1) /\
+  (rounded < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (rounded = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) ==>
+  &divisor *
+    (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+  ULP
+    ((smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp) sign exponent
+         rounded)).Exponent,
+     (:'t))
+Proof
+  strip_tac >>
+  mp_tac (Q.INST
+    [`format` |-> `format`, `sign` |-> `sign`,
+     `exponent` |-> `exponent`, `rounded` |-> `rounded`]
+    smtfp_circuit_endpoint_ULP) >>
+  impl_tac >- simp [] >>
+  `exponent = exponent - 1 + 1` by decide_tac >>
+  `2 ** exponent = 2 * 2 ** (exponent - 1)` by
+    (qpat_x_assum `exponent = exponent - 1 + 1`
+       (once_rewrite_tac o single) >>
+     simp [arithmeticTheory.EXP_ADD,
+           arithmeticTheory.MULT_COMM]) >>
+  simp [realTheory.REAL_OF_NUM_POW,
+        realTheory.REAL_POW_ADD] >>
+  Cases_on `rounded = 2 ** (dimindex (:'t) + 1)` >>
+  fs [] >>
+  strip_tac >>
+  fs [arithmeticTheory.EXP_ADD] >>
+  decide_tac
+QED
+
+Theorem smtfp_circuit_RNE_positive_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\
+  residue < divisor ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round RNE 0w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent rounded) in
+  smt_float_round RNE F
+    (&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `0 < divisor` by simp [] >>
+  `quotient <=
+     smtfp_circuit_round RNE 0w quotient residue divisor /\
+   smtfp_circuit_round RNE 0w quotient residue divisor <= quotient + 1` by
+    (mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `smtfp_circuit_round RNE 0w quotient residue divisor <=
+   2 ** (dimindex (:'t) + 1)` by
+    (mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `(smtfp_circuit_round RNE 0w quotient residue divisor <
+      2 ** dimindex (:'t) ==> exponent = 1)` by
+    (mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `(smtfp_circuit_round RNE 0w quotient residue divisor =
+      2 ** (dimindex (:'t) + 1) ==>
+    exponent < dimword (:'w) - 2)` by
+    (mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `float_is_finite
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (smtfp_circuit_round RNE 0w quotient residue divisor)))` by
+    (irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `float_to_real
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (smtfp_circuit_round RNE 0w quotient residue divisor))) =
+   &(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule EQ_TRANS >>
+     qexists_tac
+       `&(smtfp_circuit_round RNE 0w quotient residue divisor *
+           2 ** (exponent - 1)) *
+        (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` >>
+     conj_tac
+     >- (mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`,
+            `rounded` |->
+              `smtfp_circuit_round RNE 0w quotient residue divisor`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp [])
+     >> fs []) >>
+  `~float_is_zero
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (smtfp_circuit_round RNE 0w quotient residue divisor)))` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `2 ** (exponent - 1)`]
+     smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `float_is_finite
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (quotient + 1)))` by
+    (irule smtfp_circuit_endpoint_finite >> simp [] >> decide_tac) >>
+  `float_to_real
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (quotient + 1))) =
+   &((quotient + 1) * divisor) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+        `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac >- (simp [] >> decide_tac) >>
+     fs []) >>
+  `0 < quotient * divisor` by simp [] >>
+  `0 < quotient * divisor + residue` by decide_tac >>
+  `0 <
+    &(quotient * divisor + residue) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule realTheory.REAL_LT_MUL >>
+     simp [realTheory.REAL_POW_LT]) >>
+  `&(quotient * divisor + residue) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) <
+   &((quotient + 1) * divisor) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (simp [realTheory.REAL_OF_NUM_ADD,
+           realTheory.REAL_OF_NUM_MUL] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `abs
+    (float_to_real
+      (smtfp_rep
+        (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+          (quotient + 1)))) <= largest (:'t # 'w)` by
+    (mp_tac (Q.INST
+       [`f` |->
+          `smtfp_rep
+            (smtfp_circuit_endpoint
+              (format : ('t,'w) smtfp) 0w exponent (quotient + 1))`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+          binary_ieeeTheory.abs_float_bounds)) >>
+     impl_tac >- simp [] >>
+     rewrite_tac [binary_ieeeTheory.float_to_real_float_abs]) >>
+  `&(quotient * divisor + residue) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) <
+   largest (:'t # 'w)` by
+    (assume_tac (Q.SPEC
+       `float_to_real
+          (smtfp_rep
+            (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w
+              exponent (quotient + 1)))`
+       realTheory.ABS_LE) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `&(quotient * divisor + residue) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) <
+   threshold (:'t # 'w)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_lt_threshold) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `abs
+    (&(quotient * divisor + residue) *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+   &(quotient * divisor + residue) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule realTheory.ABS_REDUCE >> realLib.REAL_ASM_ARITH_TAC) >>
+  `0 < residue + quotient * 2 ** (exponent - 1)` by
+    (`0 < quotient * 2 ** (exponent - 1)` by (simp []) >>
+     decide_tac) >>
+  `ulp (:'t # 'w) <
+    2 *
+    abs
+      (&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))))` by
+    (asm_rewrite_tac [] >>
+     simp [binary_ieeeTheory.ulp_def,
+           binary_ieeeTheory.ULP_def] >>
+     decide_tac) >>
+  `(quotient * divisor + residue) DIV divisor = quotient` by
+    (irule arithmeticTheory.DIV_UNIQUE >>
+     qexists_tac `residue` >>
+     simp [arithmeticTheory.ADD_COMM]) >>
+  `(quotient * divisor + residue) MOD divisor = residue` by
+    (irule arithmeticTheory.MOD_UNIQUE >>
+     qexists_tac `quotient` >>
+     simp [arithmeticTheory.ADD_COMM]) >>
+  `2 *
+    abs
+      (&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) -
+       &(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+    ULP
+      ((smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+           (smtfp_circuit_round RNE 0w quotient residue divisor))).Exponent,
+       (:'t))` by
+    (`ABS_DIFF
+        (smtfp_circuit_round RNE 0w quotient residue divisor * divisor)
+        (quotient * divisor + residue) =
+      if smtfp_circuit_round_up RNE 0w quotient residue divisor then
+        divisor - residue
+      else residue` by
+       (Cases_on
+          `smtfp_circuit_round_up RNE 0w quotient residue divisor` >>
+        fs [smtfp_circuit_round_def] >>
+        simp [arithmeticTheory.ABS_DIFF_def,
+              arithmeticTheory.LEFT_ADD_DISTRIB] >>
+        decide_tac) >>
+     `abs
+        (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+      2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+       (irule realTheory.ABS_REDUCE >> simp []) >>
+     rewrite_tac [smtfp_circuit_scaled_abs_diff] >>
+     qpat_x_assum `ABS_DIFF _ _ = _`
+       (fn th => rewrite_tac [th]) >>
+     qpat_x_assum
+       `abs (2 pow 1 / 2 pow _) = _`
+       (fn th => rewrite_tac [th]) >>
+     irule realTheory.REAL_LE_TRANS >>
+     qexists_tac
+       `&divisor *
+        (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` >>
+     conj_tac
+     >- (simp [realTheory.REAL_OF_NUM_MUL,
+               realTheory.REAL_MUL_ASSOC] >>
+         irule smtfp_circuit_RNE_error_bound >> simp []) >>
+     irule smtfp_circuit_endpoint_ULP_divisor >> simp []) >>
+  Cases_on
+    `smtfp_circuit_round RNE 0w quotient residue divisor =
+     2 ** (dimindex (:'t) + 1)`
+  >- (
+      `smtfp_circuit_round RNE 0w quotient residue divisor =
+       quotient + 1` by
+        (mp_tac (Q.INST
+           [`mode` |-> `RNE`, `sign` |-> `(0w : word1)`,
+            `q` |-> `quotient`, `residue` |-> `residue`,
+            `divisor` |-> `divisor`]
+           smtfp_circuit_round_bounds) >>
+         decide_tac) >>
+      `quotient + 1 = 2 ** (dimindex (:'t) + 1)` by
+        metis_tac [] >>
+      `smtfp_circuit_round_up RNE 0w quotient residue divisor` by
+        (Cases_on
+           `smtfp_circuit_round_up RNE 0w quotient residue divisor` >>
+         fs [smtfp_circuit_round_def]) >>
+      `divisor <= 2 * residue` by
+        (fs [smtfp_circuit_round_up_def] >>
+         decide_tac) >>
+      `exponent < dimword (:'w) - 2` by metis_tac [] >>
+      `exponent + 1 < dimword (:'w) - 1` by decide_tac >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+           (smtfp_circuit_round RNE 0w quotient residue divisor)) =
+       (<| Sign := 0w; Exponent := n2w (exponent + 1);
+           Significand := 0w |> : ('t,'w) float)` by
+        (qpat_x_assum
+           `smtfp_circuit_round RNE 0w quotient residue divisor =
+            2 ** (dimindex (:'t) + 1)`
+           (fn th => once_rewrite_tac [th]) >>
+         simp [smtfp_circuit_endpoint_def,
+               smtfp_rep_finite_n2w_bits]) >>
+      `exponent + 1 < dimword (:'w)` by decide_tac >>
+      `1 < dimword (:'w)` by decide_tac >>
+      `(smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+           (smtfp_circuit_round RNE 0w quotient residue divisor))).Significand =
+       0w /\
+       (smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+           (smtfp_circuit_round RNE 0w quotient residue divisor))).Exponent <>
+       1w` by
+        (asm_rewrite_tac [] >>
+         simp [wordsTheory.n2w_11,
+               arithmeticTheory.LESS_MOD]) >>
+      `~(abs
+          (&(smtfp_circuit_round RNE 0w quotient residue divisor *
+             divisor) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+         abs
+          (&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))))` by
+        (qpat_x_assum
+           `smtfp_circuit_round RNE 0w quotient residue divisor =
+            quotient + 1`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum
+           `abs
+              (&(quotient * divisor + residue) *
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t)))) = _`
+           (fn th => rewrite_tac [th]) >>
+         simp [realTheory.abs] >>
+         qpat_x_assum
+           `quotient + 1 = 2 ** (dimindex (:'t) + 1)`
+           (fn th => rewrite_tac [GSYM th]) >>
+         simp [arithmeticTheory.LEFT_ADD_DISTRIB,
+               arithmeticTheory.RIGHT_ADD_DISTRIB] >>
+         decide_tac) >>
+      `4 *
+        abs
+          (&(smtfp_circuit_round RNE 0w quotient residue divisor *
+             divisor) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) -
+           &(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+       ULP
+         ((smtfp_rep
+            (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w
+              exponent
+              (smtfp_circuit_round RNE 0w quotient residue
+                divisor))).Exponent,
+          (:'t))` by
+        (`ABS_DIFF
+            (smtfp_circuit_round RNE 0w quotient residue divisor *
+             divisor)
+            (quotient * divisor + residue) = divisor - residue` by
+           (qpat_x_assum
+              `smtfp_circuit_round RNE 0w quotient residue divisor =
+               quotient + 1`
+              (fn th => rewrite_tac [th]) >>
+            simp [arithmeticTheory.ABS_DIFF_def,
+                  arithmeticTheory.LEFT_ADD_DISTRIB] >>
+            decide_tac) >>
+         `abs
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+          2 pow 1 /
+          2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           (irule realTheory.ABS_REDUCE >> simp []) >>
+         rewrite_tac [smtfp_circuit_scaled_abs_diff] >>
+         qpat_x_assum `ABS_DIFF _ _ = divisor - residue`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum `abs (2 pow 1 / 2 pow _) = _`
+           (fn th => rewrite_tac [th]) >>
+         `4 * (divisor - residue) <= 2 * divisor` by decide_tac >>
+         `4 * &(divisor - residue) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+          &(2 * divisor) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (irule realTheory.REAL_LE_RMUL_IMP >>
+            simp [realTheory.REAL_OF_NUM_MUL]) >>
+         `exponent = SUC (exponent - 1)` by decide_tac >>
+         `exponent + 1 = SUC exponent` by decide_tac >>
+         `2 ** (exponent + 1) = 4 * divisor` by
+           (qpat_x_assum `exponent + 1 = SUC exponent`
+              (fn th => once_rewrite_tac [th]) >>
+            rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+            qpat_x_assum `exponent = SUC (exponent - 1)`
+              (fn th => once_rewrite_tac [th]) >>
+            rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+            qpat_x_assum `divisor = 2 ** (exponent - 1)`
+              (fn th => rewrite_tac [th]) >>
+            decide_tac) >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`,
+            `rounded` |->
+              `smtfp_circuit_round RNE 0w quotient residue divisor`]
+           smtfp_circuit_endpoint_ULP) >>
+         impl_tac >- simp [] >>
+         strip_tac >>
+         qpat_x_assum `ULP _ = _`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum
+           `smtfp_circuit_round RNE 0w quotient residue divisor =
+            2 ** (dimindex (:'t) + 1)`
+           (fn th => rewrite_tac [th]) >>
+         simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+         `&(2 * divisor) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+          2 pow (exponent + 1) /
+          2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           (rewrite_tac [realTheory.REAL_OF_NUM_POW] >>
+            qpat_x_assum `2 ** (exponent + 1) = 4 * divisor`
+              (fn th => rewrite_tac [th]) >>
+            simp [realTheory.REAL_OF_NUM_MUL] >>
+            CONV_TAC RealField.REAL_RING) >>
+         metis_tac [realTheory.REAL_MUL_ASSOC]) >>
+      `round roundTiesToEven
+          (&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+        smtfp_rep
+          (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+            (smtfp_circuit_round RNE 0w quotient residue divisor))` by
+        (irule (Q.SPECL
+           [`smtfp_rep
+              (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w
+                exponent
+                (smtfp_circuit_round RNE 0w quotient residue divisor))`,
+            `&(quotient * divisor + residue) *
+              (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+            `&(smtfp_circuit_round RNE 0w quotient residue divisor *
+                divisor) *
+              (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`]
+           binary_ieeeTheory.round_roundTiesToEven0) >>
+         `float_value
+            (smtfp_rep
+              (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w
+                exponent
+                (smtfp_circuit_round RNE 0w quotient residue divisor))) =
+          Float
+            (&(smtfp_circuit_round RNE 0w quotient residue divisor *
+                divisor) *
+             (2 pow 1 /
+              2 pow (INT_MAX (:'w) + dimindex (:'t))))` by
+           metis_tac [smtfp_float_value_finite] >>
+         conj_tac >- first_assum ACCEPT_TAC >>
+         conj_tac >- first_assum ACCEPT_TAC >>
+         conj_tac >- first_assum ACCEPT_TAC >>
+         conj_tac >- first_assum ACCEPT_TAC >>
+         conj_tac
+         >- (qpat_x_assum
+               `abs
+                  (&(quotient * divisor + residue) *
+                   (2 pow 1 /
+                    2 pow (INT_MAX (:'w) + dimindex (:'t)))) = _`
+               (fn th => rewrite_tac [th]) >>
+             first_assum ACCEPT_TAC) >>
+         conj_tac >- first_assum ACCEPT_TAC >>
+         first_assum ACCEPT_TAC) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      qpat_x_assum
+        `round roundTiesToEven
+           (&(quotient * divisor + residue) * _) = _`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum
+        `~float_is_zero
+           (smtfp_rep
+             (smtfp_circuit_endpoint
+               (format : ('t,'w) smtfp) 0w exponent _))`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES]) >>
+  `(2 *
+    abs
+      (&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) -
+       &(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+    ULP
+      ((smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+           (smtfp_circuit_round RNE 0w quotient residue divisor))).Exponent,
+       (:'t)) ==>
+    ~word_lsb
+     (smtfp_rep
+        (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+          (smtfp_circuit_round RNE 0w quotient residue divisor))).Significand)` by
+    (strip_tac >>
+     `divisor = 2 * residue` by
+       (`ABS_DIFF
+           (smtfp_circuit_round RNE 0w quotient residue divisor *
+            divisor)
+           (quotient * divisor + residue) =
+         if smtfp_circuit_round_up RNE 0w quotient residue divisor then
+           divisor - residue
+         else residue` by
+          (Cases_on
+             `smtfp_circuit_round_up RNE 0w quotient residue divisor` >>
+           fs [smtfp_circuit_round_def] >>
+           simp [arithmeticTheory.ABS_DIFF_def,
+                 arithmeticTheory.LEFT_ADD_DISTRIB] >>
+           decide_tac) >>
+        `abs
+           (2 pow 1 /
+            2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+         2 pow 1 /
+         2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+          (irule realTheory.ABS_REDUCE >> simp []) >>
+        `ULP
+           ((smtfp_rep
+              (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w
+                exponent
+                (smtfp_circuit_round RNE 0w quotient residue
+                  divisor))).Exponent,
+            (:'t)) =
+         &divisor *
+           (2 pow 1 /
+            2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+          (mp_tac (Q.INST
+             [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+              `exponent` |-> `exponent`,
+              `rounded` |->
+                `smtfp_circuit_round RNE 0w quotient residue divisor`]
+             smtfp_circuit_endpoint_ULP) >>
+           impl_tac >- simp [] >>
+           strip_tac >>
+           qpat_x_assum `ULP _ = _` (fn th => rewrite_tac [th]) >>
+           qpat_x_assum
+             `smtfp_circuit_round RNE 0w quotient residue divisor <>
+              2 ** (dimindex (:'t) + 1)`
+             (fn th => rewrite_tac [th]) >>
+           simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+           `exponent = SUC (exponent - 1)` by decide_tac >>
+           `2 ** exponent = 2 * divisor` by
+             (qpat_x_assum `exponent = SUC (exponent - 1)`
+                (fn th => once_rewrite_tac [th]) >>
+              rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+              simp []) >>
+           rewrite_tac [realTheory.REAL_OF_NUM_POW] >>
+           qpat_x_assum `2 ** exponent = 2 * divisor`
+             (fn th => rewrite_tac [th]) >>
+           simp [realTheory.REAL_OF_NUM_MUL] >>
+           CONV_TAC RealField.REAL_RING) >>
+        qpat_x_assum
+          `2 * abs
+             (&(smtfp_circuit_round RNE 0w quotient residue divisor *
+                divisor) * _ - &(quotient * divisor + residue) * _) =
+           ULP _`
+          mp_tac >>
+        rewrite_tac [smtfp_circuit_scaled_abs_diff] >>
+        qpat_x_assum `ABS_DIFF _ _ = _` (fn th => rewrite_tac [th]) >>
+        qpat_x_assum `abs (2 pow 1 / 2 pow _) = _`
+          (fn th => rewrite_tac [th]) >>
+        qpat_x_assum `ULP _ = _` (fn th => rewrite_tac [th]) >>
+        `0 < 2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+          simp [] >>
+        Cases_on
+          `smtfp_circuit_round_up RNE 0w quotient residue divisor` >>
+        simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+        simp [realTheory.REAL_OF_NUM_SUB,
+              realTheory.REAL_OF_NUM_MUL] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `EVEN (smtfp_circuit_round RNE 0w quotient residue divisor)` by
+       (Cases_on
+          `smtfp_circuit_round_up RNE 0w quotient residue divisor` >>
+        fs [smtfp_circuit_round_def,
+            smtfp_circuit_round_up_def,
+            arithmeticTheory.ODD_EVEN] >>
+        TRY decide_tac >>
+        simp [arithmeticTheory.EVEN_ADD]) >>
+     mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+        `exponent` |-> `exponent`,
+        `rounded` |->
+          `smtfp_circuit_round RNE 0w quotient residue divisor`]
+       smtfp_circuit_endpoint_even_finite) >>
+     impl_tac >- simp [] >>
+     metis_tac []) >>
+  `((smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+         (smtfp_circuit_round RNE 0w quotient residue divisor))).Significand =
+      0w /\
+    (smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+         (smtfp_circuit_round RNE 0w quotient residue divisor))).Exponent <>
+      1w ==>
+    abs
+      (&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+    abs
+      (&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))))` by
+    (strip_tac >>
+     `smtfp_circuit_round RNE 0w quotient residue divisor * divisor <=
+      quotient * divisor + residue` by
+       (Cases_on
+          `smtfp_circuit_round RNE 0w quotient residue divisor = quotient`
+        >- (qpat_x_assum
+              `smtfp_circuit_round RNE 0w quotient residue divisor =
+               quotient`
+              (fn th => rewrite_tac [th]) >>
+            decide_tac)
+        >- (TRY (metis_tac []) >>
+            `smtfp_circuit_round RNE 0w quotient residue divisor =
+             quotient + 1` by decide_tac >>
+            mp_tac (Q.INST
+              [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+               `exponent` |-> `exponent`, `quotient` |-> `quotient`,
+               `rounded` |->
+                 `smtfp_circuit_round RNE 0w quotient residue divisor`,
+               `divisor` |-> `divisor`, `residue` |-> `residue`]
+              smtfp_circuit_endpoint_boundary) >>
+            impl_tac
+            >- (asm_simp_tac pure_ss [] >> metis_tac []) >>
+            simp [])) >>
+     `0 < smtfp_circuit_round RNE 0w quotient residue divisor` by
+       decide_tac >>
+     `abs
+        (&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+         (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+      &(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+       (irule realTheory.ABS_REDUCE >>
+        irule realTheory.REAL_LT_IMP_LE >>
+        irule realTheory.REAL_LT_MUL >> simp []) >>
+     qpat_x_assum
+       `abs
+          (&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow _)) = _`
+       (fn th => rewrite_tac [th]) >>
+     qpat_x_assum
+       `abs
+          (&(smtfp_circuit_round RNE 0w quotient residue divisor *
+             divisor) * _) = _`
+       (fn th => rewrite_tac [th]) >>
+     `&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) <=
+      &(quotient * divisor + residue)` by
+       (qpat_x_assum
+          `smtfp_circuit_round RNE 0w quotient residue divisor *
+             divisor <= quotient * divisor + residue`
+          (fn th =>
+             ACCEPT_TAC
+               (EQ_MP
+                  (GSYM (Q.SPECL
+                     [`smtfp_circuit_round RNE 0w quotient residue divisor *
+                       divisor`,
+                      `quotient * divisor + residue`]
+                     realTheory.REAL_OF_NUM_LE))
+                  th))) >>
+     `0 <
+        2 pow 1 /
+        2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+       simp [] >>
+     irule realTheory.REAL_LE_RMUL_IMP >>
+     conj_tac
+     >- (qpat_x_assum `&_ <= &_` ACCEPT_TAC) >>
+     qpat_x_assum `0 < 2 pow 1 / _`
+       (fn th =>
+          ACCEPT_TAC (MATCH_MP realTheory.REAL_LT_IMP_LE th))) >>
+  `round roundTiesToEven
+      (&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (smtfp_circuit_round RNE 0w quotient residue divisor))` by
+    (irule (Q.SPECL
+       [`smtfp_rep
+          (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+            (smtfp_circuit_round RNE 0w quotient residue divisor))`,
+        `&(quotient * divisor + residue) *
+          (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+       `&(smtfp_circuit_round RNE 0w quotient residue divisor * divisor) *
+          (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`]
+       binary_ieeeTheory.round_roundTiesToEven) >>
+     metis_tac [smtfp_float_value_finite]) >>
+  simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                    TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                    boolTheory.COND_CLAUSES] >>
+  qpat_x_assum
+    `round roundTiesToEven
+       (&(quotient * divisor + residue) * _) = _`
+    (fn th => rewrite_tac [th]) >>
+  qpat_x_assum
+    `~float_is_zero
+       (smtfp_rep
+         (smtfp_circuit_endpoint
+           (format : ('t,'w) smtfp) 0w exponent _))`
+    (fn th => rewrite_tac [th]) >>
+  rewrite_tac [boolTheory.COND_CLAUSES]
+QED
+
+Theorem smtfp_circuit_scaled_midpoint_hi:
+  0 < u /\ divisor <= 2 * residue ==>
+  &((quotient + 1) * divisor) * u -
+    &(quotient * divisor + residue) * u <=
+  &(quotient * divisor + residue) * u -
+    &(quotient * divisor) * u
+Proof
+  rpt strip_tac >>
+  `(&(divisor) : real) <= 2 * &residue` by
+    (`(&(divisor) : real) <= &(2 * residue)` by simp [] >>
+     qpat_x_assum `(&(divisor) : real) <= _` mp_tac >>
+     rewrite_tac [GSYM realTheory.REAL_OF_NUM_MUL] >> simp []) >>
+  `&((quotient + 1) * divisor) * u -
+     &(quotient * divisor + residue) * u =
+   u * (&divisor - &residue)` by
+    (rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD,
+                  GSYM realTheory.REAL_OF_NUM_MUL] >>
+     realLib.REAL_ARITH_TAC) >>
+  `&(quotient * divisor + residue) * u -
+     &(quotient * divisor) * u = u * &residue` by
+    (rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD,
+                  GSYM realTheory.REAL_OF_NUM_MUL] >>
+     realLib.REAL_ARITH_TAC) >>
+  simp [realTheory.REAL_LE_LMUL] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_scaled_midpoint_lo:
+  0 < u /\ 2 * residue < divisor ==>
+  &(quotient * divisor + residue) * u -
+    &(quotient * divisor) * u <
+  &((quotient + 1) * divisor) * u -
+    &(quotient * divisor + residue) * u
+Proof
+  rpt strip_tac >>
+  `2 * (&residue : real) < &divisor` by
+    (`(&(2 * residue) : real) < &divisor` by simp [] >>
+     qpat_x_assum `(&(2 * residue) : real) < _` mp_tac >>
+     rewrite_tac [GSYM realTheory.REAL_OF_NUM_MUL] >> simp []) >>
+  `&(quotient * divisor + residue) * u -
+     &(quotient * divisor) * u = u * &residue` by
+    (rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD,
+                  GSYM realTheory.REAL_OF_NUM_MUL] >>
+     realLib.REAL_ARITH_TAC) >>
+  `&((quotient + 1) * divisor) * u -
+     &(quotient * divisor + residue) * u =
+   u * (&divisor - &residue)` by
+    (rewrite_tac [GSYM realTheory.REAL_OF_NUM_ADD,
+                  GSYM realTheory.REAL_OF_NUM_MUL] >>
+     realLib.REAL_ARITH_TAC) >>
+  simp [realTheory.REAL_LT_LMUL] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_RNA_positive_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\ residue < divisor ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round RNA 0w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent rounded) in
+  smt_float_round RNA F
+    (&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `0 < divisor` by simp [] >>
+  qabbrev_tac
+    `u = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  qabbrev_tac
+    `lo = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent quotient)` >>
+  qabbrev_tac
+    `hi = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (quotient + 1))` >>
+  `float_is_finite lo /\ float_is_finite hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >> conj_tac >>
+     irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `next_hi lo = hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >>
+     irule smtfp_circuit_endpoint_next_hi >> simp []) >>
+  `float_to_real lo = &(quotient * divisor) * u /\
+   float_to_real hi = &((quotient + 1) * divisor) * u` by
+    (conj_tac
+     >- (simp_tac pure_ss [Abbr `lo`, Abbr `u`] >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp [])
+     >- (simp_tac pure_ss [Abbr `hi`, Abbr `u`] >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp [])) >>
+  `0 < u` by simp [Abbr `u`] >>
+  `~float_is_zero lo /\ ~float_is_zero hi` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `residue = 0`
+  >- (`quotient * divisor + residue = quotient * divisor` by simp [] >>
+      `smtfp_circuit_round RNA 0w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      `round_tiesToAway
+         (&(quotient * divisor + residue) * u) = lo` by
+        (qpat_x_assum
+           `quotient * divisor + residue = quotient * divisor`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum `float_to_real lo = _`
+           (fn th => once_rewrite_tac [GSYM th]) >>
+         irule round_tiesToAway_representable_nonzero >>
+         simp [binary_ieeeTheory.float_is_zero_to_real] >>
+         fs [binary_ieeeTheory.float_is_zero_to_real]) >>
+      qpat_x_assum `round_tiesToAway _ = lo`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `~float_is_zero lo`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `smtfp_circuit_round RNA _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp [Abbr `lo`]) >>
+  `quotient * divisor < quotient * divisor + residue /\
+   quotient * divisor + residue < (quotient + 1) * divisor` by
+    simp [arithmeticTheory.LEFT_ADD_DISTRIB] >>
+  `0 < float_to_real lo /\
+   float_to_real lo < &(quotient * divisor + residue) * u /\
+   &(quotient * divisor + residue) * u < float_to_real hi` by
+    (simp [realTheory.REAL_OF_NUM_ADD,
+           realTheory.REAL_OF_NUM_MUL] >>
+     irule realTheory.REAL_LT_MUL >> simp []) >>
+  `-threshold (:'t # 'w) <
+       &(quotient * divisor + residue) * u /\
+   &(quotient * divisor + residue) * u < threshold (:'t # 'w)` by
+    (mp_tac (Q.INST [`f` |-> `hi`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     impl_tac >- simp [] >>
+     rewrite_tac [binary_ieeeTheory.float_to_real_float_abs] >>
+     strip_tac >>
+     assume_tac (Q.SPEC `float_to_real hi` realTheory.ABS_LE) >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_lt_threshold) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `smtfp_circuit_round_up RNA 0w quotient residue divisor`
+  >- (`smtfp_circuit_round RNA 0w quotient residue divisor =
+        quotient + 1` by
+        simp [smtfp_circuit_round_def] >>
+      `divisor <= 2 * residue` by
+        fs [smtfp_circuit_round_up_def] >>
+      `is_closest float_is_finite
+         (&(quotient * divisor + residue) * u) hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``&(quotient * divisor + residue) * u``]
+           smtfp_circuit_adjacent_positive_closest_hi) >>
+         impl_tac >-
+           (simp [] >>
+            conj_tac
+            >- (irule realTheory.REAL_LE_MUL >>
+                conj_tac >- realLib.REAL_ASM_ARITH_TAC >> simp [])
+            >- (mp_tac smtfp_circuit_scaled_midpoint_hi >>
+                impl_tac >- simp [] >> strip_tac >>
+                metis_tac [arithmeticTheory.ADD_COMM,
+                           arithmeticTheory.MULT_COMM,
+                           realTheory.REAL_MUL_COMM])) >>
+         simp []) >>
+      `0 < &(quotient * divisor + residue) * u /\
+       0 < float_to_real hi` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (&(quotient * divisor + residue) * u) =
+       &(quotient * divisor + residue) * u` by
+        (rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real hi) = float_to_real hi` by
+        (rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (&(quotient * divisor + residue) * u) <=
+       abs (float_to_real hi)` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `round_tiesToAway (&(quotient * divisor + residue) * u) = hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``&(quotient * divisor + residue) * u``,
+            ``y:('t,'w) float`` |-> ``hi:('t,'w) float``]
+           (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+             round_tiesToAway_from_closest_away)) >>
+         impl_tac >- (simp [] >> realLib.REAL_ASM_ARITH_TAC) >>
+         simp []) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `round_tiesToAway _ = hi`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `~float_is_zero hi`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `smtfp_circuit_round RNA _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp [Abbr `hi`]) >>
+  `smtfp_circuit_round RNA 0w quotient residue divisor = quotient` by
+    simp [smtfp_circuit_round_def] >>
+  `2 * residue < divisor` by
+    fs [smtfp_circuit_round_up_def] >>
+  `is_closest float_is_finite
+     (&(quotient * divisor + residue) * u) lo` by
+    (mp_tac (INST
+       [``x:real`` |-> ``&(quotient * divisor + residue) * u``]
+       smtfp_circuit_adjacent_positive_closest_lo) >>
+     impl_tac >-
+       (simp [] >>
+        conj_tac
+        >- (irule realTheory.REAL_LE_MUL >>
+            conj_tac >- realLib.REAL_ASM_ARITH_TAC >> simp [])
+        >- (mp_tac smtfp_circuit_scaled_midpoint_lo >>
+            impl_tac >- simp [] >> strip_tac >>
+            metis_tac [arithmeticTheory.ADD_COMM,
+                       arithmeticTheory.MULT_COMM,
+                       realTheory.REAL_MUL_COMM,
+                       realTheory.REAL_LT_IMP_LE])) >>
+     simp []) >>
+  `&(quotient * divisor + residue) * u - float_to_real lo <
+   float_to_real hi - &(quotient * divisor + residue) * u` by
+    (mp_tac smtfp_circuit_scaled_midpoint_lo >>
+     impl_tac >- simp [] >> strip_tac >>
+     metis_tac [arithmeticTheory.ADD_COMM,
+                arithmeticTheory.MULT_COMM,
+                realTheory.REAL_MUL_COMM]) >>
+  `abs (float_to_real lo - &(quotient * divisor + residue) * u) <
+   abs (float_to_real hi - &(quotient * divisor + residue) * u)` by
+    (`abs (float_to_real lo -
+         &(quotient * divisor + residue) * u) =
+       -(float_to_real lo -
+         &(quotient * divisor + residue) * u)` by
+       (irule realTheory.ABS_EQ_NEG >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `abs (float_to_real hi -
+         &(quotient * divisor + residue) * u) =
+       float_to_real hi -
+         &(quotient * divisor + residue) * u` by
+       (rewrite_tac [realTheory.ABS_REFL] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `round_tiesToAway (&(quotient * divisor + residue) * u) = lo` by
+    (mp_tac (INST
+       [``x:real`` |-> ``&(quotient * divisor + residue) * u``,
+        ``y:('t,'w) float`` |-> ``lo:('t,'w) float``]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         round_tiesToAway_positive_inward)) >>
+     impl_tac >-
+       (simp [] >>
+        metis_tac [arithmeticTheory.ADD_COMM,
+                   arithmeticTheory.MULT_COMM,
+                   realTheory.REAL_MUL_COMM]) >>
+     simp []) >>
+  simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                    TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                    boolTheory.COND_CLAUSES] >>
+  qpat_x_assum `round_tiesToAway _ = lo`
+    (fn th => rewrite_tac [th]) >>
+  qpat_x_assum `~float_is_zero lo`
+    (fn th => rewrite_tac [th]) >>
+  rewrite_tac [boolTheory.COND_CLAUSES] >>
+  qpat_x_assum `smtfp_circuit_round RNA _ _ _ _ = _`
+    (fn th => rewrite_tac [th]) >>
+  simp [Abbr `lo`]
+QED
+
+Theorem smtfp_circuit_directed_positive_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\ residue < divisor /\
+  (mode = RTP \/ mode = RTN \/ mode = RTZ) ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round mode 0w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent rounded) in
+  smt_float_round mode F
+    (&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `0 < divisor` by simp [] >>
+  qabbrev_tac
+    `u = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  qabbrev_tac
+    `lo = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent quotient)` >>
+  qabbrev_tac
+    `hi = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w exponent
+        (quotient + 1))` >>
+  `float_is_finite lo /\ float_is_finite hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >> conj_tac >>
+     irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `next_hi lo = hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >>
+     irule smtfp_circuit_endpoint_next_hi >> simp []) >>
+  `float_to_real lo = &(quotient * divisor) * u /\
+   float_to_real hi = &((quotient + 1) * divisor) * u` by
+    (conj_tac
+     >- (simp_tac pure_ss [Abbr `lo`, Abbr `u`] >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp [])
+     >- (simp_tac pure_ss [Abbr `hi`, Abbr `u`] >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp [])) >>
+  `0 < u` by simp [Abbr `u`] >>
+  `~float_is_zero lo /\ ~float_is_zero hi` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `residue = 0` >>
+  FIRST
+  [(`quotient * divisor + residue = quotient * divisor` by simp [] >>
+      `smtfp_circuit_round mode 0w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      qpat_x_assum
+        `quotient * divisor + residue = quotient * divisor`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `float_to_real lo = _`
+        (fn th => rewrite_tac [GSYM th]) >>
+      qpat_x_assum `smtfp_circuit_round mode _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp_tac pure_ss [Abbr `lo`] >>
+      irule smt_float_round_representable_nonzero >>
+      simp [] >>
+      mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+        binary_ieeeTheory.abs_float_bounds) >>
+      simp [] >> strip_tac >>
+      metis_tac [binary_ieeeTheory.float_is_zero_to_real]),
+   (`quotient * divisor < quotient * divisor + residue /\
+     quotient * divisor + residue < (quotient + 1) * divisor` by
+      (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >> decide_tac) >>
+    `0 < float_to_real lo /\
+     float_to_real lo < &(quotient * divisor + residue) * u /\
+     &(quotient * divisor + residue) * u < float_to_real hi` by
+      (simp [realTheory.REAL_OF_NUM_ADD,
+             realTheory.REAL_OF_NUM_MUL] >>
+       irule realTheory.REAL_LT_MUL >> simp []) >>
+    `-largest (:'t # 'w) <= &(quotient * divisor + residue) * u /\
+     &(quotient * divisor + residue) * u <= largest (:'t # 'w)` by
+      (mp_tac (Q.INST [`f` |-> `hi`]
+         (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+           binary_ieeeTheory.abs_float_bounds)) >>
+       impl_tac >- simp [] >>
+       rewrite_tac [binary_ieeeTheory.float_to_real_float_abs] >>
+       strip_tac >>
+       assume_tac (Q.SPEC `float_to_real hi` realTheory.ABS_LE) >>
+       realLib.REAL_ASM_ARITH_TAC) >>
+    FIRST
+    [(qpat_x_assum `mode = RTP` SUBST_ALL_TAC >>
+      `smtfp_circuit_round RTP 0w quotient residue divisor =
+        quotient + 1` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardPositive
+         (&(quotient * divisor + residue) * u) = hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``&(quotient * divisor + residue) * u``,
+            ``lo:('t,'w) float`` |-> ``lo:('t,'w) float``]
+           (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+             round_RTP_positive_next_hi)) >>
+         impl_tac >-
+           metis_tac [realTheory.REAL_LT_IMP_LE] >>
+         simp []) >>
+      simp [smt_float_round_def,
+            smt_round_def]),
+     (qpat_x_assum `mode = RTN` SUBST_ALL_TAC >>
+      `smtfp_circuit_round RTN 0w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardNegative
+         (&(quotient * divisor + residue) * u) = lo` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``&(quotient * divisor + residue) * u``,
+            ``y:('t,'w) float`` |-> ``lo:('t,'w) float``]
+         (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+             round_RTN_positive_inward)) >>
+         impl_tac >-
+           metis_tac [realTheory.REAL_LT_IMP_LE,
+                      realTheory.REAL_LT_TRANS] >>
+         simp []) >>
+      simp [smt_float_round_def,
+            smt_round_def]),
+     (qpat_x_assum `mode = RTZ` SUBST_ALL_TAC >>
+      `smtfp_circuit_round RTZ 0w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardZero
+         (&(quotient * divisor + residue) * u) = lo` by
+        (irule binary_ieeeTheory.round_roundTowardZero >>
+         conj_tac
+         >- (qexists_tac `float_to_real lo` >>
+             conj_tac
+             >- (irule smtfp_float_value_finite >> simp []) >>
+             conj_tac
+             >- (qpat_x_assum `float_to_real lo = _`
+                   (fn th => rewrite_tac [th]) >>
+                 rewrite_tac [smtfp_circuit_scaled_abs_diff] >>
+                 simp [arithmeticTheory.ABS_DIFF_def] >>
+                 `abs u = u` by
+                   (irule realTheory.ABS_REDUCE >>
+                    realLib.REAL_ASM_ARITH_TAC) >>
+                 qpat_x_assum `abs u = u`
+                   (fn th => rewrite_tac [th]) >>
+                 `u * &residue < u * &divisor` by
+                   (irule realTheory.REAL_LT_LMUL_IMP >> simp []) >>
+                 `&divisor * u <= ULP (lo.Exponent, (:'t))` by
+                   (simp_tac pure_ss [Abbr `lo`, Abbr `u`] >>
+                    irule smtfp_circuit_endpoint_ULP_divisor >>
+                    simp []) >>
+                 metis_tac [realTheory.REAL_LTE_TRANS,
+                            realTheory.REAL_MUL_COMM]) >>
+             `abs (float_to_real lo) = float_to_real lo` by
+               (irule realTheory.ABS_REDUCE >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             `abs (&(quotient * divisor + residue) * u) =
+                &(quotient * divisor + residue) * u` by
+               (irule realTheory.ABS_REDUCE >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             realLib.REAL_ASM_ARITH_TAC) >>
+         conj_tac
+         >- (`abs (&(quotient * divisor + residue) * u) =
+                &(quotient * divisor + residue) * u` by
+               (irule realTheory.ABS_REDUCE >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             realLib.REAL_ASM_ARITH_TAC) >>
+         `1 <= quotient * divisor + residue` by
+           (simp [] >> decide_tac) >>
+         `abs (&(quotient * divisor + residue) * u) =
+            &(quotient * divisor + residue) * u` by
+           (irule realTheory.ABS_REDUCE >>
+            realLib.REAL_ASM_ARITH_TAC) >>
+         simp [binary_ieeeTheory.ulp_def,
+               binary_ieeeTheory.ULP_def, Abbr `u`]) >>
+      simp [smt_float_round_def,
+            smt_round_def])])]
+QED
+
+Theorem smtfp_circuit_RNE_negative_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\ residue < divisor ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round RNE 1w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent rounded) in
+  smt_float_round RNE F
+    (-&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `0 < divisor` by simp [] >>
+  `quotient <=
+     smtfp_circuit_round RNE 1w quotient residue divisor /\
+   smtfp_circuit_round RNE 1w quotient residue divisor <= quotient + 1` by
+    (mp_tac (Q.INST
+       [`mode` |-> `RNE`, `sign` |-> `(1w : word1)`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+        `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     decide_tac) >>
+  `smtfp_circuit_round RNE 1w quotient residue divisor <=
+   2 ** (dimindex (:'t) + 1)` by decide_tac >>
+  `0 < smtfp_circuit_round RNE 1w quotient residue divisor` by
+    decide_tac >>
+  `(smtfp_circuit_round RNE 1w quotient residue divisor <
+      2 ** dimindex (:'t) ==> exponent = 1)` by decide_tac >>
+  `(smtfp_circuit_round RNE 1w quotient residue divisor =
+      2 ** (dimindex (:'t) + 1) ==>
+    exponent < dimword (:'w) - 2)` by decide_tac >>
+  `float_is_finite
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (smtfp_circuit_round RNE 1w quotient residue divisor)))` by
+    (irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `float_to_real
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (smtfp_circuit_round RNE 1w quotient residue divisor))) =
+   -&(smtfp_circuit_round RNE 1w quotient residue divisor * divisor) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+        `exponent` |-> `exponent`, `rounded` |->
+          `smtfp_circuit_round RNE 1w quotient residue divisor`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac >- simp [] >>
+     simp []) >>
+  `~float_is_zero
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (smtfp_circuit_round RNE 1w quotient residue divisor)))` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     simp [realTheory.real_div] >>
+     qpat_x_assum
+       `0 < smtfp_circuit_round RNE 1w quotient residue divisor`
+       mp_tac >>
+     asm_rewrite_tac [] >>
+     decide_tac) >>
+  `float_is_finite
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (quotient + 1)))` by
+    (irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `float_to_real
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (quotient + 1))) =
+   -&((quotient + 1) * divisor) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+        `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac >- simp [] >>
+     simp []) >>
+  `-threshold (:'t # 'w) <
+      -&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) /\
+   -&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) <
+      threshold (:'t # 'w)` by
+    (`abs
+        (float_to_real
+          (smtfp_rep
+            (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+              exponent (quotient + 1)))) <= largest (:'t # 'w)` by
+       (mp_tac (Q.INST
+          [`f` |->
+             `smtfp_rep
+               (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                 exponent (quotient + 1))`]
+          (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+             binary_ieeeTheory.abs_float_bounds)) >>
+        simp []) >>
+     `abs
+        (-&(quotient * divisor + residue) *
+         (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <
+      abs
+        (float_to_real
+          (smtfp_rep
+            (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+              exponent (quotient + 1))))` by
+       (simp [realTheory.abs, realTheory.REAL_OF_NUM_ADD,
+              realTheory.REAL_OF_NUM_MUL] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `abs
+        (-&(quotient * divisor + residue) *
+         (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <
+      threshold (:'t # 'w)` by
+       (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+          binary_ieeeTheory.largest_lt_threshold) >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     mp_tac (Q.SPECL
+       [`-&(quotient * divisor + residue) *
+         (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+        `threshold (:'t # 'w)`]
+       realTheory.ABS_BOUNDS_LT) >>
+     simp []) >>
+  Cases_on
+    `smtfp_circuit_round RNE 1w quotient residue divisor =
+     2 ** (dimindex (:'t) + 1)`
+  >- (
+      `smtfp_circuit_round RNE 1w quotient residue divisor =
+       quotient + 1` by decide_tac >>
+      `quotient + 1 = 2 ** (dimindex (:'t) + 1)` by
+        metis_tac [] >>
+      `smtfp_circuit_round_up RNE 1w quotient residue divisor` by
+        (Cases_on
+           `smtfp_circuit_round_up RNE 1w quotient residue divisor` >>
+         fs [smtfp_circuit_round_def]) >>
+      `divisor <= 2 * residue` by
+        (fs [smtfp_circuit_round_up_def] >> decide_tac) >>
+      `exponent < dimword (:'w) - 2` by metis_tac [] >>
+      `exponent + 1 < dimword (:'w) - 1` by decide_tac >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+           (smtfp_circuit_round RNE 1w quotient residue divisor)) =
+       (<| Sign := 1w; Exponent := n2w (exponent + 1);
+           Significand := 0w |> : ('t,'w) float)` by
+        (qpat_x_assum
+           `smtfp_circuit_round RNE 1w quotient residue divisor =
+            2 ** (dimindex (:'t) + 1)`
+           (fn th => once_rewrite_tac [th]) >>
+         simp [smtfp_circuit_endpoint_def,
+               smtfp_rep_finite_n2w_bits]) >>
+      `exponent + 1 < dimword (:'w)` by decide_tac >>
+      `1 < dimword (:'w)` by decide_tac >>
+      `(smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+           (smtfp_circuit_round RNE 1w quotient residue divisor))).Significand =
+       0w /\
+       (smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+           (smtfp_circuit_round RNE 1w quotient residue divisor))).Exponent <>
+       1w` by
+        (asm_rewrite_tac [] >>
+         simp [wordsTheory.n2w_11,
+               arithmeticTheory.LESS_MOD]) >>
+      `~(abs
+          (-&(smtfp_circuit_round RNE 1w quotient residue divisor *
+             divisor) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+         abs
+          (-&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))))` by
+        (qpat_x_assum
+           `smtfp_circuit_round RNE 1w quotient residue divisor =
+            2 ** (dimindex (:'t) + 1)`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum
+           `quotient + 1 = 2 ** (dimindex (:'t) + 1)`
+           (fn th => rewrite_tac [GSYM th]) >>
+         simp [realTheory.abs, realTheory.REAL_OF_NUM_ADD,
+               realTheory.REAL_OF_NUM_MUL,
+               arithmeticTheory.LEFT_ADD_DISTRIB] >>
+         decide_tac) >>
+      `4 *
+        abs
+          (-&(smtfp_circuit_round RNE 1w quotient residue divisor *
+             divisor) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))) -
+           -&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <=
+       ULP
+         ((smtfp_rep
+            (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+              exponent
+              (smtfp_circuit_round RNE 1w quotient residue
+                divisor))).Exponent,
+          (:'t))` by
+        (`ABS_DIFF
+            (smtfp_circuit_round RNE 1w quotient residue divisor *
+             divisor)
+            (quotient * divisor + residue) = divisor - residue` by
+           (qpat_x_assum
+              `smtfp_circuit_round RNE 1w quotient residue divisor =
+               quotient + 1`
+              (fn th => rewrite_tac [th]) >>
+            simp [arithmeticTheory.ABS_DIFF_def,
+                  arithmeticTheory.LEFT_ADD_DISTRIB] >>
+            decide_tac) >>
+         `abs
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+          2 pow 1 /
+          2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           (irule realTheory.ABS_REDUCE >> simp []) >>
+         rewrite_tac [smtfp_circuit_scaled_abs_diff_neg] >>
+         qpat_x_assum `ABS_DIFF _ _ = divisor - residue`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum `abs (2 pow 1 / 2 pow _) = _`
+           (fn th => rewrite_tac [th]) >>
+         `4 * (divisor - residue) <= 2 * divisor` by decide_tac >>
+         `4 * &(divisor - residue) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+          &(2 * divisor) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (irule realTheory.REAL_LE_RMUL_IMP >>
+            simp [realTheory.REAL_OF_NUM_MUL]) >>
+         `exponent = SUC (exponent - 1)` by decide_tac >>
+         `exponent + 1 = SUC exponent` by decide_tac >>
+         `2 ** (exponent + 1) = 4 * divisor` by
+           (qpat_x_assum `exponent + 1 = SUC exponent`
+              (fn th => once_rewrite_tac [th]) >>
+            rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+            qpat_x_assum `exponent = SUC (exponent - 1)`
+              (fn th => once_rewrite_tac [th]) >>
+            rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+            qpat_x_assum `divisor = 2 ** (exponent - 1)`
+              (fn th => rewrite_tac [th]) >>
+            decide_tac) >>
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+            `exponent` |-> `exponent`,
+            `rounded` |->
+              `smtfp_circuit_round RNE 1w quotient residue divisor`]
+           smtfp_circuit_endpoint_ULP) >>
+         impl_tac >- simp [] >>
+         strip_tac >>
+         qpat_x_assum `ULP _ = _`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum
+           `smtfp_circuit_round RNE 1w quotient residue divisor =
+            2 ** (dimindex (:'t) + 1)`
+           (fn th => rewrite_tac [th]) >>
+         simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+         `&(2 * divisor) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+          2 pow (exponent + 1) /
+          2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           (rewrite_tac [realTheory.REAL_OF_NUM_POW] >>
+            qpat_x_assum `2 ** (exponent + 1) = 4 * divisor`
+              (fn th => rewrite_tac [th]) >>
+            simp [realTheory.REAL_OF_NUM_MUL] >>
+            CONV_TAC RealField.REAL_RING) >>
+         metis_tac [realTheory.REAL_MUL_ASSOC]) >>
+      `ulp (:'t # 'w) <
+       2 *
+       abs
+         (-&(quotient * divisor + residue) *
+          (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))))` by
+        (simp [binary_ieeeTheory.ulp_def,
+               binary_ieeeTheory.ULP_def, realTheory.abs] >>
+         `0 < quotient * 2 ** (exponent - 1)` by simp [] >>
+         decide_tac) >>
+      `abs
+         (-&(quotient * divisor + residue) *
+          (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) <
+       threshold (:'t # 'w)` by
+        (mp_tac (Q.SPECL
+           [`-&(quotient * divisor + residue) *
+             (2 pow 1 /
+              2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+            `threshold (:'t # 'w)`]
+           realTheory.ABS_BOUNDS_LT) >>
+         simp []) >>
+      `round roundTiesToEven
+          (-&(quotient * divisor + residue) *
+           (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+        smtfp_rep
+          (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+            (smtfp_circuit_round RNE 1w quotient residue divisor))` by
+        (irule (Q.SPECL
+           [`smtfp_rep
+              (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                exponent
+                (smtfp_circuit_round RNE 1w quotient residue divisor))`,
+            `-&(quotient * divisor + residue) *
+              (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+            `-&(smtfp_circuit_round RNE 1w quotient residue divisor *
+                divisor) *
+              (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))`]
+           binary_ieeeTheory.round_roundTiesToEven0) >>
+         `float_value
+            (smtfp_rep
+              (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                exponent
+                (smtfp_circuit_round RNE 1w quotient residue divisor))) =
+          Float
+            (-&(smtfp_circuit_round RNE 1w quotient residue divisor *
+                divisor) *
+             (2 pow 1 /
+              2 pow (INT_MAX (:'w) + dimindex (:'t))))` by
+           metis_tac [smtfp_float_value_finite] >>
+         metis_tac []) >>
+
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+
+      qpat_x_assum
+        `round roundTiesToEven
+           (-&(quotient * divisor + residue) * _) = _`
+        (fn th => rewrite_tac [th]) >>
+
+      asm_simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+      REFL_TAC)
+  >- (`round roundTiesToEven
+      (-&(quotient * divisor + residue) *
+       (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (smtfp_circuit_round RNE 1w quotient residue divisor))` by
+    (irule binary_ieeeTheory.round_roundTiesToEven >>
+     conj_tac
+     >- (mp_tac (Q.SPECL
+           [`-&(quotient * divisor + residue) *
+             (2 pow 1 /
+              2 pow (INT_MAX (:'w) + dimindex (:'t)))`,
+            `threshold (:'t # 'w)`]
+           realTheory.ABS_BOUNDS_LT) >>
+         simp [])
+     >> conj_tac
+     >- (simp [binary_ieeeTheory.ulp_def,
+               binary_ieeeTheory.ULP_def, realTheory.abs] >>
+         `0 < quotient * 2 ** (exponent - 1)` by simp [] >>
+         decide_tac)
+     >>
+     qexists_tac
+       `-&(smtfp_circuit_round RNE 1w quotient residue divisor * divisor) *
+        (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` >>
+     simp [binary_ieeeTheory.float_is_finite_thm] >>
+     conj_tac
+     >- (mp_tac (INST
+           [``f:('t,'w) float`` |->
+              ``smtfp_rep
+                (smtfp_circuit_endpoint
+                  (format : ('t,'w) smtfp) 1w exponent
+                  (smtfp_circuit_round RNE 1w quotient residue
+                    divisor))``]
+           smtfp_float_value_finite) >>
+         simp [])
+     >>
+     rpt conj_tac
+     >- (
+         strip_tac >>
+
+         `smtfp_circuit_round RNE 1w quotient residue divisor * divisor <=
+          quotient * divisor + residue` by
+           (Cases_on
+              `smtfp_circuit_round RNE 1w quotient residue divisor =
+               quotient`
+            >- (qpat_x_assum
+                  `smtfp_circuit_round RNE 1w quotient residue divisor =
+                   quotient`
+                  (fn th => rewrite_tac [th]) >>
+                decide_tac)
+            >- (TRY (metis_tac []) >>
+
+                `smtfp_circuit_round RNE 1w quotient residue divisor =
+                 quotient + 1` by decide_tac >>
+                mp_tac (Q.INST
+                  [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+                   `exponent` |-> `exponent`,
+                   `quotient` |-> `quotient`,
+                   `rounded` |->
+                     `smtfp_circuit_round RNE 1w quotient residue divisor`,
+                   `divisor` |-> `divisor`, `residue` |-> `residue`]
+                  smtfp_circuit_endpoint_boundary) >>
+                impl_tac
+                >- (asm_simp_tac pure_ss [] >>
+                    metis_tac []) >>
+
+                simp [])) >>
+
+         `abs
+            (-2 *
+             (&(quotient * 2 ** (exponent - 1)) *
+              inv (2 pow (INT_MAX (:'w) + dimindex (:'t))))) =
+          &(quotient * 2 ** (exponent - 1)) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                  realTheory.real_div] >>
+            CONV_TAC RealField.REAL_RING) >>
+         `abs
+            (-2 *
+             (&((quotient + 1) * 2 ** (exponent - 1)) *
+              inv (2 pow (INT_MAX (:'w) + dimindex (:'t))))) =
+          &((quotient + 1) * 2 ** (exponent - 1)) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                  realTheory.real_div] >>
+            CONV_TAC RealField.REAL_RING) >>
+
+         `abs
+            (-2 *
+             (&(residue + quotient * 2 ** (exponent - 1)) *
+              inv (2 pow (INT_MAX (:'w) + dimindex (:'t))))) =
+          &(residue + quotient * 2 ** (exponent - 1)) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                  realTheory.real_div] >>
+            CONV_TAC RealField.REAL_RING) >>
+
+         `abs
+            (-2 *
+             (&(2 ** (exponent - 1) *
+                smtfp_circuit_round RNE 1w quotient residue
+                  (2 ** (exponent - 1))) *
+              inv (2 pow (INT_MAX (:'w) + dimindex (:'t))))) =
+          &(2 ** (exponent - 1) *
+             smtfp_circuit_round RNE 1w quotient residue
+               (2 ** (exponent - 1))) *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+           (simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                  realTheory.real_div] >>
+            CONV_TAC RealField.REAL_RING) >>
+         `smtfp_circuit_round RNE 1w quotient residue divisor *
+            2 ** (exponent - 1) <=
+          residue + quotient * 2 ** (exponent - 1)` by
+           (qpat_x_assum
+              `smtfp_circuit_round RNE 1w quotient residue divisor *
+                 divisor <= _`
+              mp_tac >>
+            asm_rewrite_tac [] >>
+            simp [arithmeticTheory.ADD_COMM]) >>
+
+         qpat_x_assum
+           `abs
+              (-2 *
+               (&(2 ** (exponent - 1) * _) *
+                inv (2 pow _))) = _`
+           (fn th => rewrite_tac [th]) >>
+         qpat_x_assum
+           `abs
+              (-2 *
+               (&(residue + quotient * 2 ** (exponent - 1)) *
+                inv (2 pow _))) = _`
+           (fn th => rewrite_tac [th]) >>
+
+         irule realTheory.REAL_LE_RMUL_IMP >>
+         qpat_x_assum
+           `_ <= residue + quotient * 2 ** (exponent - 1)`
+           mp_tac >>
+         asm_rewrite_tac [] >>
+         simp [arithmeticTheory.MULT_COMM])
+     >- (
+         strip_tac >>
+         `divisor = 2 * residue` by
+           (`ABS_DIFF
+               (smtfp_circuit_round RNE 1w quotient residue divisor *
+                divisor)
+               (quotient * divisor + residue) =
+             if smtfp_circuit_round_up RNE 1w quotient residue divisor then
+               divisor - residue
+             else residue` by
+              (Cases_on
+                 `smtfp_circuit_round_up RNE 1w quotient residue divisor` >>
+               fs [smtfp_circuit_round_def] >>
+               simp [arithmeticTheory.ABS_DIFF_def,
+                     arithmeticTheory.LEFT_ADD_DISTRIB] >>
+               decide_tac) >>
+            `ABS_DIFF
+               (2 ** (exponent - 1) *
+                smtfp_circuit_round RNE 1w quotient residue
+                  (2 ** (exponent - 1)))
+               (residue + quotient * 2 ** (exponent - 1)) =
+             if smtfp_circuit_round_up RNE 1w quotient residue divisor then
+               divisor - residue
+             else residue` by
+              (qpat_x_assum
+                 `ABS_DIFF
+                    (smtfp_circuit_round RNE 1w quotient residue divisor *
+                     divisor) _ = _`
+                 mp_tac >>
+               asm_rewrite_tac [] >>
+               simp [arithmeticTheory.MULT_COMM,
+                     arithmeticTheory.ADD_COMM]) >>
+
+            `abs
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t))) =
+             2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+              (irule realTheory.ABS_REDUCE >> simp []) >>
+
+            `ULP
+               ((smtfp_rep
+                  (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                    exponent
+                    (smtfp_circuit_round RNE 1w quotient residue
+                      divisor))).Exponent,
+                (:'t)) =
+             &divisor *
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+              (mp_tac (Q.INST
+                 [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+                  `exponent` |-> `exponent`,
+                  `rounded` |->
+                    `smtfp_circuit_round RNE 1w quotient residue divisor`]
+                 smtfp_circuit_endpoint_ULP) >>
+               impl_tac
+               >- (asm_simp_tac pure_ss [] >> metis_tac []) >>
+               strip_tac >>
+               `smtfp_circuit_round RNE 1w quotient residue divisor <>
+                2 ** (dimindex (:'t) + 1)` by decide_tac >>
+               qpat_x_assum `ULP _ = _` (fn th => rewrite_tac [th]) >>
+               qpat_x_assum
+                 `smtfp_circuit_round RNE 1w quotient residue divisor <>
+                  2 ** (dimindex (:'t) + 1)`
+                 (fn th => rewrite_tac [th]) >>
+
+               simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+
+               `exponent = SUC (exponent - 1)` by decide_tac >>
+
+               `2 ** exponent = 2 * divisor` by
+                 (qpat_x_assum `exponent = SUC (exponent - 1)`
+                    (fn th => once_rewrite_tac [th]) >>
+                  rewrite_tac [CONJUNCT2 arithmeticTheory.EXP] >>
+                  simp []) >>
+
+               rewrite_tac [realTheory.REAL_OF_NUM_POW] >>
+
+               qpat_x_assum `2 ** exponent = _`
+                 (fn th => rewrite_tac [th]) >>
+
+               irule smtfp_circuit_ULP_scale) >>
+            `ULP
+               ((smtfp_rep
+                  (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                    exponent
+                    (smtfp_circuit_round RNE 1w quotient residue
+                      (2 ** (exponent - 1))))).Exponent,
+                (:'t)) =
+             &divisor *
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+              (qpat_x_assum `ULP _ = _` mp_tac >>
+               asm_rewrite_tac []) >>
+
+            `abs
+               (2 *
+                inv (2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+             2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+              simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                    realTheory.real_div] >>
+
+
+            qpat_x_assum `residue < divisor` (fn residue_lt =>
+              mp_tac (Q.INST
+                [`residue` |-> `residue`, `divisor` |-> `divisor`,
+                 `up` |->
+                   `smtfp_circuit_round_up
+                      RNE 1w quotient residue divisor`,
+                 `scale` |->
+                   `2 pow 1 /
+                    2 pow (INT_MAX (:'w) + dimindex (:'t))`]
+                smtfp_circuit_tie_divisor) >>
+              impl_tac
+              >- (rewrite_tac [residue_lt] >>
+                  conj_tac
+                  >- (
+                      simp []) >>
+
+                  qpat_x_assum `2 * abs _ = ULP _` mp_tac >>
+
+                  rewrite_tac [smtfp_circuit_scaled_abs_diff_neg_left] >>
+
+                  qpat_x_assum
+                    `ABS_DIFF
+                       (2 ** (exponent - 1) * _)
+                       (residue + quotient * 2 ** (exponent - 1)) = _`
+                    (fn th => rewrite_tac [th]) >>
+
+                  qpat_x_assum `abs (2 * inv (2 pow _)) = _`
+                    (fn th => rewrite_tac [th]) >>
+
+                  qpat_x_assum
+                    `ULP
+                       ((smtfp_rep
+                          (smtfp_circuit_endpoint
+                            (format : ('t,'w) smtfp) 1w exponent
+                            (smtfp_circuit_round RNE 1w quotient residue
+                              (2 ** (exponent - 1))))).Exponent,
+                        (:'t)) = _`
+                    (fn th => rewrite_tac [th]) >>
+
+                  simp []) >>
+              simp [])) >>
+
+         `EVEN
+            (smtfp_circuit_round RNE 1w quotient residue divisor)` by
+           (Cases_on
+              `smtfp_circuit_round_up RNE 1w quotient residue divisor` >>
+            fs [smtfp_circuit_round_def,
+                smtfp_circuit_round_up_def,
+                arithmeticTheory.ODD_EVEN] >>
+            TRY decide_tac >>
+            simp [arithmeticTheory.EVEN_ADD]) >>
+
+         mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+            `exponent` |-> `exponent`,
+            `rounded` |->
+              `smtfp_circuit_round RNE 1w quotient residue divisor`]
+           smtfp_circuit_endpoint_even_finite) >>
+         impl_tac >- simp [] >>
+         metis_tac [])
+     >- (
+         `ABS_DIFF
+            (smtfp_circuit_round RNE 1w quotient residue divisor *
+             divisor)
+            (quotient * divisor + residue) =
+          if smtfp_circuit_round_up RNE 1w quotient residue divisor then
+            divisor - residue
+          else residue` by
+           (Cases_on
+              `smtfp_circuit_round_up RNE 1w quotient residue divisor` >>
+            fs [smtfp_circuit_round_def] >>
+            simp [arithmeticTheory.ABS_DIFF_def,
+                  arithmeticTheory.LEFT_ADD_DISTRIB] >>
+            decide_tac) >>
+         `ABS_DIFF
+            (2 ** (exponent - 1) *
+             smtfp_circuit_round RNE 1w quotient residue
+               (2 ** (exponent - 1)))
+            (residue + quotient * 2 ** (exponent - 1)) =
+          if smtfp_circuit_round_up RNE 1w quotient residue divisor then
+            divisor - residue
+          else residue` by
+           (qpat_x_assum
+              `ABS_DIFF
+                 (smtfp_circuit_round RNE 1w quotient residue divisor *
+                  divisor) _ = _`
+              mp_tac >>
+            asm_rewrite_tac [] >>
+            simp [arithmeticTheory.MULT_COMM,
+                  arithmeticTheory.ADD_COMM]) >>
+
+         `abs
+            (2 * inv
+              (2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+          2 pow 1 /
+          2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           simp [realTheory.ABS_MUL, realTheory.ABS_INV,
+                 realTheory.real_div] >>
+
+         `0 <
+            2 pow 1 /
+            2 pow (INT_MAX (:'w) + dimindex (:'t))` by
+           simp [] >>
+         `2 *
+            (if smtfp_circuit_round_up
+                  RNE 1w quotient residue divisor then
+               divisor - residue
+             else residue) <=
+          divisor` by
+           (Cases_on
+              `smtfp_circuit_round_up RNE 1w quotient residue divisor`
+            >- (fs [smtfp_circuit_round_up_def] >> decide_tac)
+            >- (Cases_on `residue = 0` >>
+                fs [smtfp_circuit_round_up_def] >>
+                decide_tac)) >>
+
+         `2 *
+            &(if smtfp_circuit_round_up
+                 RNE 1w quotient residue divisor then
+               divisor - residue
+             else residue) <=
+          &divisor` by
+           (qpat_x_assum `2 * (if _ then _ else _) <= divisor`
+              mp_tac >>
+            simp [realTheory.REAL_OF_NUM_MUL]) >>
+
+         `&divisor *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+          ULP
+            ((smtfp_rep
+               (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                 exponent
+                 (smtfp_circuit_round RNE 1w quotient residue
+                   divisor))).Exponent,
+             (:'t))` by
+           (mp_tac (Q.INST
+              [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+               `exponent` |-> `exponent`,
+               `rounded` |->
+                 `smtfp_circuit_round RNE 1w quotient residue divisor`,
+               `divisor` |-> `divisor`]
+              smtfp_circuit_endpoint_ULP_divisor) >>
+            impl_tac
+            >- (asm_simp_tac pure_ss [] >> metis_tac []) >>
+            simp []) >>
+
+         `&divisor *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+          ULP
+            ((smtfp_rep
+               (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w
+                 exponent
+                 (smtfp_circuit_round RNE 1w quotient residue
+                   (2 ** (exponent - 1))))).Exponent,
+             (:'t))` by
+           (qpat_x_assum `&divisor * _ <= ULP _` mp_tac >>
+            asm_rewrite_tac []) >>
+
+         rewrite_tac [smtfp_circuit_scaled_abs_diff_neg_left] >>
+
+         qpat_x_assum
+           `ABS_DIFF
+              (2 ** (exponent - 1) * _)
+              (residue + quotient * 2 ** (exponent - 1)) = _`
+           (fn th => rewrite_tac [th]) >>
+
+         qpat_x_assum `abs (2 * inv (2 pow _)) = _`
+           (fn th => rewrite_tac [th]) >>
+
+         irule realTheory.REAL_LE_TRANS >>
+         qexists_tac
+           `&divisor *
+            (2 pow 1 /
+             2 pow (INT_MAX (:'w) + dimindex (:'t)))` >>
+
+         conj_tac
+         >- (`(2 *
+                &(if smtfp_circuit_round_up
+                     RNE 1w quotient residue divisor then
+                   divisor - residue
+                 else residue)) *
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t))) <=
+              &divisor *
+               (2 pow 1 /
+                2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+               (
+                irule realTheory.REAL_LE_RMUL_IMP >>
+
+                conj_tac
+                >- (qpat_x_assum `2 * &(if _ then _ else _) <= _`
+                      ACCEPT_TAC) >>
+                qpat_x_assum `0 < 2 pow 1 / _`
+                      (fn th =>
+                         ACCEPT_TAC
+                           (MATCH_MP realTheory.REAL_LT_IMP_LE th))) >>
+             metis_tac [realTheory.REAL_MUL_ASSOC]) >>
+         simp [])) >>
+
+  simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                    TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                    boolTheory.COND_CLAUSES] >>
+
+  qpat_x_assum
+    `round roundTiesToEven
+       (-&(quotient * divisor + residue) * _) = _`
+    (fn th => rewrite_tac [th]) >>
+
+  qpat_x_assum
+    `~float_is_zero
+       (smtfp_rep
+         (smtfp_circuit_endpoint
+           (format : ('t,'w) smtfp) 1w exponent _))`
+    (fn th => rewrite_tac [th]) >>
+
+  rewrite_tac [boolTheory.COND_CLAUSES])
+QED
+
+Theorem smtfp_circuit_adjacent_negative_closest_hi:
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite hi /\ next_hi lo = hi /\
+  float_to_real lo <= 0 /\
+  float_to_real hi <= x /\ x <= float_to_real lo /\
+  x - float_to_real hi <= float_to_real lo - x ==>
+  is_closest float_is_finite x hi
+Proof
+  strip_tac >>
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  rpt strip_tac >>
+  Cases_on `abs (float_to_real b) <= abs (float_to_real lo)`
+  >- (`x <= float_to_real b` by
+        (mp_tac (Q.SPEC `float_to_real b` realTheory.ABS_LE) >>
+         simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real lo) < abs (float_to_real b)` by
+    (qpat_x_assum
+       `~(abs (float_to_real b) <= abs (float_to_real lo))`
+       mp_tac >>
+     rewrite_tac [realTheory.REAL_NOT_LE]) >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    (irule binary_ieeeTheory.next_hi_discrete >> simp []) >>
+  Cases_on `float_to_real b <= 0`
+  >- (`float_to_real (next_hi lo) <= 0` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo)) =
+       -float_to_real (next_hi lo)` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real b) = -float_to_real b` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `float_to_real b <= float_to_real (next_hi lo)` by
+        (qpat_x_assum
+           `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)`
+           mp_tac >>
+         asm_rewrite_tac [] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC)
+  >> `0 <= float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+  simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_adjacent_negative_closest_lo:
+  float_is_finite (lo : ('t,'w) float) /\
+  float_is_finite hi /\ next_hi lo = hi /\
+  float_to_real lo <= 0 /\
+  float_to_real hi <= x /\ x <= float_to_real lo /\
+  float_to_real lo - x <= x - float_to_real hi ==>
+  is_closest float_is_finite x lo
+Proof
+  strip_tac >>
+  rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+  rpt strip_tac >>
+  Cases_on `abs (float_to_real b) <= abs (float_to_real lo)`
+  >- (`float_to_real lo <= float_to_real b` by
+        (mp_tac (Q.SPEC `float_to_real b` realTheory.ABS_LE) >>
+         simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real lo) < abs (float_to_real b)` by
+    (qpat_x_assum
+       `~(abs (float_to_real b) <= abs (float_to_real lo))`
+       mp_tac >>
+     rewrite_tac [realTheory.REAL_NOT_LE]) >>
+  `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)` by
+    (irule binary_ieeeTheory.next_hi_discrete >> simp []) >>
+  Cases_on `float_to_real b <= 0`
+  >- (`float_to_real (next_hi lo) <= 0` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (float_to_real (next_hi lo)) =
+       -float_to_real (next_hi lo)` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real b) = -float_to_real b` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `float_to_real b <= float_to_real (next_hi lo)` by
+        (qpat_x_assum
+           `abs (float_to_real (next_hi lo)) <= abs (float_to_real b)`
+           mp_tac >>
+         asm_rewrite_tac [] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC)
+  >> `0 <= float_to_real b` by realLib.REAL_ASM_ARITH_TAC >>
+  simp [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_RNA_negative_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\ residue < divisor ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round RNA 1w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent rounded) in
+  smt_float_round RNA F
+    (-&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  `0 < divisor` by simp [] >>
+  qabbrev_tac
+    `u = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  qabbrev_tac
+    `lo = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent quotient)` >>
+  qabbrev_tac
+    `hi = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (quotient + 1))` >>
+  `float_is_finite lo /\ float_is_finite hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >> conj_tac >>
+     irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `next_hi lo = hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >>
+     irule smtfp_circuit_endpoint_next_hi >> simp []) >>
+  `float_to_real lo = -&(quotient * divisor) * u /\
+   float_to_real hi = -&((quotient + 1) * divisor) * u` by
+    (simp_tac pure_ss [Abbr `lo`, Abbr `hi`, Abbr `u`] >>
+     conj_tac
+     >- (mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp []) >>
+     mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+        `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac >- simp [] >>
+     simp []) >>
+  `0 < u` by simp [Abbr `u`] >>
+  `~float_is_zero lo /\ ~float_is_zero hi` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `residue = 0`
+  >- (
+      `quotient * divisor + residue = quotient * divisor` by simp [] >>
+      `smtfp_circuit_round RNA 1w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `-u * &(quotient * 2 ** (exponent - 1)) =
+       float_to_real lo` by
+        (qpat_x_assum `float_to_real lo = _`
+           (fn th => rewrite_tac [th]) >>
+         asm_rewrite_tac [] >>
+         simp [realTheory.REAL_MUL_LNEG,
+               realTheory.REAL_MUL_COMM]) >>
+      `float_to_real lo <> 0` by
+        (qpat_x_assum `~float_is_zero lo` mp_tac >>
+         rewrite_tac [binary_ieeeTheory.float_is_zero_to_real]) >>
+      `round_tiesToAway
+         (-u * &(quotient * 2 ** (exponent - 1))) = lo` by
+        (qpat_x_assum `_ = float_to_real lo`
+           (fn th => rewrite_tac [th]) >>
+         irule round_tiesToAway_representable_nonzero >>
+         simp []) >>
+      `-&(quotient * divisor + residue) * u =
+       -u * &(quotient * 2 ** (exponent - 1))` by
+        (asm_rewrite_tac [] >>
+         simp [realTheory.REAL_MUL_LNEG,
+               realTheory.REAL_MUL_COMM]) >>
+      `round_tiesToAway
+         (-&(quotient * divisor + residue) * u) = lo` by
+        (qpat_x_assum `_ = -u * _` (fn th => rewrite_tac [th]) >>
+         qpat_x_assum `round_tiesToAway _ = lo` ACCEPT_TAC) >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+           (smtfp_circuit_round RNA 1w quotient residue divisor)) = lo` by
+        (qpat_x_assum
+           `smtfp_circuit_round RNA 1w quotient residue divisor = quotient`
+         (fn th => rewrite_tac [th]) >>
+         simp [Abbr `lo`]) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``,
+                        LET_THM, boolTheory.COND_CLAUSES] >>
+      asm_simp_tac pure_ss [boolTheory.COND_CLAUSES] >>
+      REFL_TAC) >>
+  `quotient * divisor < quotient * divisor + residue /\
+   quotient * divisor + residue < (quotient + 1) * divisor` by
+    (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >> decide_tac) >>
+  `0 < quotient * 2 ** (exponent - 1)` by simp [] >>
+  `0 < (&(quotient * 2 ** (exponent - 1)) : real)` by simp [] >>
+  `float_to_real hi <
+      -&(quotient * divisor + residue) * u /\
+   -&(quotient * divisor + residue) * u < float_to_real lo /\
+   float_to_real lo < 0` by
+    (simp [realTheory.REAL_OF_NUM_ADD,
+           realTheory.REAL_OF_NUM_MUL] >>
+     rewrite_tac [realTheory.REAL_MUL_LNEG,
+                  realTheory.REAL_NEG_LT0] >>
+     irule realTheory.REAL_LT_MUL >> simp []) >>
+  `-threshold (:'t # 'w) <
+       -&(quotient * divisor + residue) * u /\
+   -&(quotient * divisor + residue) * u < threshold (:'t # 'w)` by
+    (mp_tac (Q.INST [`f` |-> `hi`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     impl_tac >- simp [] >>
+     rewrite_tac [binary_ieeeTheory.float_to_real_float_abs] >>
+     strip_tac >>
+     assume_tac (Q.SPEC `float_to_real hi` realTheory.ABS_LE) >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_lt_threshold) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `smtfp_circuit_round_up RNA 1w quotient residue divisor`
+  >- (
+      `smtfp_circuit_round RNA 1w quotient residue divisor =
+        quotient + 1` by
+        simp [smtfp_circuit_round_def] >>
+      `divisor <= 2 * residue` by
+        fs [smtfp_circuit_round_up_def] >>
+      `(-&(quotient * divisor + residue) * u) -
+         float_to_real hi <=
+       float_to_real lo -
+         (-&(quotient * divisor + residue) * u)` by
+        (mp_tac smtfp_circuit_scaled_midpoint_hi >>
+         impl_tac >- simp [] >> strip_tac >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `float_to_real lo <= 0` by realLib.REAL_ASM_ARITH_TAC >>
+      `float_to_real hi <=
+         -&(quotient * divisor + residue) * u` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `-&(quotient * divisor + residue) * u <=
+         float_to_real lo` by realLib.REAL_ASM_ARITH_TAC >>
+      `is_closest float_is_finite
+         (-&(quotient * divisor + residue) * u) hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``-&(quotient * divisor + residue) * u``]
+           smtfp_circuit_adjacent_negative_closest_hi) >>
+         impl_tac >- simp [] >> simp []) >>
+      `-&(quotient * divisor + residue) * u <> 0` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `abs (-&(quotient * divisor + residue) * u) =
+       -(-&(quotient * divisor + residue) * u)` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (float_to_real hi) = -float_to_real hi` by
+        (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+         rewrite_tac [realTheory.ABS_REFL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `abs (-&(quotient * divisor + residue) * u) <=
+       abs (float_to_real hi)` by
+        realLib.REAL_ASM_ARITH_TAC >>
+      `round_tiesToAway (-&(quotient * divisor + residue) * u) = hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``-&(quotient * divisor + residue) * u``,
+            ``y:('t,'w) float`` |-> ``hi:('t,'w) float``]
+           round_tiesToAway_from_closest_away) >>
+         impl_tac >-
+           simp [] >>
+         simp []) >>
+      simp [smt_float_round_def,
+            smt_round_def]) >>
+  `smtfp_circuit_round RNA 1w quotient residue divisor = quotient` by
+    simp [smtfp_circuit_round_def] >>
+  `2 * residue < divisor` by
+    fs [smtfp_circuit_round_up_def] >>
+  `float_to_real lo -
+       (-&(quotient * divisor + residue) * u) <
+   (-&(quotient * divisor + residue) * u) -
+       float_to_real hi` by
+    (mp_tac smtfp_circuit_scaled_midpoint_lo >>
+     impl_tac >- simp [] >> strip_tac >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `float_to_real lo -
+       (-&(quotient * divisor + residue) * u) <=
+   (-&(quotient * divisor + residue) * u) -
+       float_to_real hi` by realLib.REAL_ASM_ARITH_TAC >>
+  `float_to_real lo <= 0` by realLib.REAL_ASM_ARITH_TAC >>
+  `float_to_real hi <=
+     -&(quotient * divisor + residue) * u` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `-&(quotient * divisor + residue) * u <=
+     float_to_real lo` by realLib.REAL_ASM_ARITH_TAC >>
+  `is_closest float_is_finite
+     (-&(quotient * divisor + residue) * u) lo` by
+    (mp_tac (INST
+       [``x:real`` |->
+          ``-&(quotient * divisor + residue) * u``]
+       smtfp_circuit_adjacent_negative_closest_lo) >>
+     impl_tac >- simp [] >> simp []) >>
+  `abs (float_to_real lo -
+          (-&(quotient * divisor + residue) * u)) =
+   float_to_real lo -
+     (-&(quotient * divisor + residue) * u)` by
+    (rewrite_tac [realTheory.ABS_REFL] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real hi -
+          (-&(quotient * divisor + residue) * u)) =
+   (-&(quotient * divisor + residue) * u) - float_to_real hi` by
+    (`float_to_real hi -
+        (-&(quotient * divisor + residue) * u) =
+      -((-&(quotient * divisor + residue) * u) - float_to_real hi)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     qpat_x_assum `float_to_real hi - _ = _`
+       (fn th => rewrite_tac [th]) >>
+     rewrite_tac [realTheory.ABS_NEG] >>
+     rewrite_tac [realTheory.ABS_REFL] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `abs (float_to_real lo -
+          (-&(quotient * divisor + residue) * u)) <
+   abs (float_to_real hi -
+          (-&(quotient * divisor + residue) * u))` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `float_is_finite (next_hi lo)` by simp [] >>
+  `float_to_real (next_hi lo) <
+     -&(quotient * divisor + residue) * u` by
+    simp [] >>
+  `abs (float_to_real lo -
+          (-&(quotient * divisor + residue) * u)) <
+   abs (float_to_real (next_hi lo) -
+          (-&(quotient * divisor + residue) * u))` by
+    (qpat_x_assum `next_hi lo = hi` (fn th => rewrite_tac [th]) >>
+     qpat_x_assum `abs (float_to_real lo - _) <
+                     abs (float_to_real hi - _)` ACCEPT_TAC) >>
+  `round_tiesToAway (-&(quotient * divisor + residue) * u) = lo` by
+    (mp_tac (INST
+       [``x:real`` |->
+          ``-&(quotient * divisor + residue) * u``,
+        ``y:('t,'w) float`` |-> ``lo:('t,'w) float``]
+       round_tiesToAway_negative_inward) >>
+     impl_tac >-
+       (asm_simp_tac pure_ss [] >>
+        simp []) >>
+     simp []) >>
+  simp [smt_float_round_def,
+        smt_round_def]
+QED
+Theorem smtfp_circuit_directed_negative_endpoint:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\ residue < divisor /\
+  (mode = RTP \/ mode = RTN \/ mode = RTZ) ==>
+  let units = quotient * divisor + residue in
+  let rounded =
+    smtfp_circuit_round mode 1w quotient residue divisor in
+  let output =
+    smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent rounded) in
+  smt_float_round mode F
+    (-&units *
+      (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) = output
+Proof
+  simp_tac pure_ss [LET_THM] >> disch_tac >>
+  REPEAT (qpat_x_assum `_ /\ _`
+    (fn th => let val (th1, th2) = CONJ_PAIR th in
+                ASSUME_TAC th1 >> ASSUME_TAC th2
+              end)) >>
+  `0 < divisor` by simp [] >>
+  qabbrev_tac
+    `u = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  qabbrev_tac
+    `lo = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent quotient)` >>
+  qabbrev_tac
+    `hi = smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+        (quotient + 1))` >>
+  `float_is_finite lo /\ float_is_finite hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >> conj_tac >>
+     irule smtfp_circuit_endpoint_finite >> simp []) >>
+  `next_hi lo = hi` by
+    (simp [Abbr `lo`, Abbr `hi`] >>
+     irule smtfp_circuit_endpoint_next_hi >> simp []) >>
+  `float_to_real lo = -&(quotient * divisor) * u /\
+   float_to_real hi = -&((quotient + 1) * divisor) * u` by
+    (simp_tac pure_ss [Abbr `lo`, Abbr `hi`, Abbr `u`] >>
+     conj_tac
+     >- (mp_tac (Q.INST
+           [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+            `exponent` |-> `exponent`, `rounded` |-> `quotient`]
+           smtfp_circuit_endpoint_value) >>
+         impl_tac >- simp [] >>
+         simp []) >>
+     mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(1w : word1)`,
+        `exponent` |-> `exponent`, `rounded` |-> `quotient + 1`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac >- simp [] >>
+     simp []) >>
+  `0 < u` by simp [Abbr `u`] >>
+  `~float_is_zero lo /\ ~float_is_zero hi` by
+    (simp [binary_ieeeTheory.float_is_zero_to_real] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  Cases_on `residue = 0`
+  >- (
+      `quotient * divisor + residue = quotient * divisor` by simp [] >>
+      `smtfp_circuit_round mode 1w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `-&(quotient * divisor + residue) * u = float_to_real lo` by
+        (qpat_x_assum `float_to_real lo = _`
+           (fn th => rewrite_tac [th]) >>
+         asm_rewrite_tac []) >>
+      `float_to_real lo <> 0` by
+        (qpat_x_assum `~float_is_zero lo` mp_tac >>
+         rewrite_tac [binary_ieeeTheory.float_is_zero_to_real]) >>
+      `smt_float_round mode F
+         (-&(quotient * divisor + residue) * u) = lo` by
+        (qpat_x_assum
+           `-&(quotient * divisor + residue) * u = float_to_real lo`
+           (fn th => rewrite_tac [th]) >>
+         irule smt_float_round_representable_nonzero >>
+         simp []) >>
+      `smtfp_rep
+         (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 1w exponent
+           (smtfp_circuit_round mode 1w quotient residue divisor)) = lo` by
+        (qpat_x_assum
+           `smtfp_circuit_round mode 1w quotient residue divisor = quotient`
+         (fn th => rewrite_tac [th]) >>
+         simp [Abbr `lo`]) >>
+      asm_simp_tac pure_ss [] >>
+      REFL_TAC) >>
+  `quotient * divisor < quotient * divisor + residue /\
+   quotient * divisor + residue < (quotient + 1) * divisor` by
+    (simp [arithmeticTheory.LEFT_ADD_DISTRIB] >> decide_tac) >>
+  `0 < (&(quotient * 2 ** (exponent - 1)) : real)` by simp [] >>
+  `float_to_real hi <
+      -&(quotient * divisor + residue) * u /\
+   -&(quotient * divisor + residue) * u < float_to_real lo /\
+   float_to_real lo < 0` by
+    (simp [realTheory.REAL_OF_NUM_ADD,
+           realTheory.REAL_OF_NUM_MUL] >>
+     rewrite_tac [realTheory.REAL_MUL_LNEG,
+                  realTheory.REAL_NEG_LT0] >>
+     irule realTheory.REAL_LT_MUL >> simp []) >>
+  `-largest (:'t # 'w) <= -&(quotient * divisor + residue) * u /\
+   -&(quotient * divisor + residue) * u <= largest (:'t # 'w)` by
+    (mp_tac (Q.INST [`f` |-> `hi`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     impl_tac >- simp [] >>
+     rewrite_tac [binary_ieeeTheory.float_to_real_float_abs] >>
+     strip_tac >>
+     assume_tac (Q.SPEC `float_to_real hi` realTheory.ABS_LE) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `-largest (:'t # 'w) <=
+     -&(quotient * divisor + residue) * u` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `-&(quotient * divisor + residue) * u <= largest (:'t # 'w)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `float_is_finite (next_hi lo)` by simp [] >>
+  `~float_is_zero (next_hi lo)` by simp [] >>
+  `float_to_real (next_hi lo) <
+     -&(quotient * divisor + residue) * u` by simp [] >>
+  `float_to_real (next_hi lo) <=
+     -&(quotient * divisor + residue) * u` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `-&(quotient * divisor + residue) * u <= float_to_real lo` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `float_to_real (next_hi lo) < 0` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  Cases_on `mode`
+  >- fs [smt_rounding_distinctness]
+  >- fs [smt_rounding_distinctness]
+  >- (
+      `smtfp_circuit_round RTP 1w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardPositive
+         (-&(quotient * divisor + residue) * u) = lo` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``-&(quotient * divisor + residue) * u``,
+            ``y:('t,'w) float`` |-> ``lo:('t,'w) float``]
+           round_RTP_negative_inward) >>
+         impl_tac >-
+           (asm_simp_tac pure_ss [] >> simp []) >>
+         simp []) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `round roundTowardPositive _ = lo`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `~float_is_zero lo`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `smtfp_circuit_round RTP _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp_tac pure_ss [Abbr `lo`] >> REFL_TAC)
+  >- (
+      `smtfp_circuit_round RTN 1w quotient residue divisor =
+        quotient + 1` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardNegative
+         (-&(quotient * divisor + residue) * u) = hi` by
+        (mp_tac (INST
+           [``x:real`` |->
+              ``-&(quotient * divisor + residue) * u``,
+            ``lo:('t,'w) float`` |-> ``lo:('t,'w) float``]
+           round_RTN_negative_next_hi) >>
+         impl_tac >-
+           (asm_simp_tac pure_ss [] >> simp []) >>
+         simp []) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `round roundTowardNegative _ = hi`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `~float_is_zero hi`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `smtfp_circuit_round RTN _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp_tac pure_ss [Abbr `hi`] >> REFL_TAC)
+  >- (
+      `smtfp_circuit_round RTZ 1w quotient residue divisor = quotient` by
+        simp [smtfp_circuit_round_def,
+              smtfp_circuit_round_up_def] >>
+      `round roundTowardZero
+         (-&(quotient * divisor + residue) * u) = lo` by
+        (irule binary_ieeeTheory.round_roundTowardZero >>
+         conj_tac
+         >- (qexists_tac `float_to_real lo` >>
+             conj_tac
+             >- (irule smtfp_float_value_finite >> simp []) >>
+             conj_tac
+             >- (qpat_x_assum `float_to_real lo = _`
+                   (fn th => rewrite_tac [th]) >>
+                 rewrite_tac [smtfp_circuit_scaled_abs_diff_neg] >>
+                 simp [arithmeticTheory.ABS_DIFF_def] >>
+                 `abs u = u` by
+                   (irule realTheory.ABS_REDUCE >>
+                    realLib.REAL_ASM_ARITH_TAC) >>
+                 qpat_x_assum `abs u = u`
+                   (fn th => rewrite_tac [th]) >>
+                 `u * &residue < u * &divisor` by
+                   (irule realTheory.REAL_LT_LMUL_IMP >> simp []) >>
+                 `&divisor * u <= ULP (lo.Exponent, (:'t))` by
+                   (simp_tac pure_ss [Abbr `lo`, Abbr `u`] >>
+                    irule smtfp_circuit_endpoint_ULP_divisor >>
+                    simp []) >>
+                 metis_tac [realTheory.REAL_LTE_TRANS,
+                            realTheory.REAL_MUL_COMM]) >>
+             `abs (float_to_real lo) = -float_to_real lo` by
+               (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+                rewrite_tac [realTheory.ABS_REFL] >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             `abs (-&(quotient * divisor + residue) * u) =
+                -(-&(quotient * divisor + residue) * u)` by
+               (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+                rewrite_tac [realTheory.ABS_REFL] >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             realLib.REAL_ASM_ARITH_TAC) >>
+         conj_tac
+         >- (`abs (-&(quotient * divisor + residue) * u) =
+                -(-&(quotient * divisor + residue) * u)` by
+               (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+                rewrite_tac [realTheory.ABS_REFL] >>
+                realLib.REAL_ASM_ARITH_TAC) >>
+             realLib.REAL_ASM_ARITH_TAC) >>
+         `1 <= quotient * divisor + residue` by
+           (simp [] >> decide_tac) >>
+         `abs (-&(quotient * divisor + residue) * u) =
+            &(quotient * divisor + residue) * u` by
+           (once_rewrite_tac [GSYM realTheory.ABS_NEG] >>
+            rewrite_tac [realTheory.ABS_REFL] >>
+            realLib.REAL_ASM_ARITH_TAC) >>
+         simp [binary_ieeeTheory.ulp_def,
+               binary_ieeeTheory.ULP_def, Abbr `u`]) >>
+      simp_tac pure_ss [smt_float_round_def, smt_round_def,
+                        TypeBase.case_def_of ``:smt_rounding``, LET_THM,
+                        boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `round roundTowardZero _ = lo`
+        (fn th => rewrite_tac [th]) >>
+      qpat_x_assum `~float_is_zero lo`
+        (fn th => rewrite_tac [th]) >>
+      rewrite_tac [boolTheory.COND_CLAUSES] >>
+      qpat_x_assum `smtfp_circuit_round RTZ _ _ _ _ = _`
+        (fn th => rewrite_tac [th]) >>
+      simp_tac pure_ss [Abbr `lo`] >> REFL_TAC)
+QED
+Theorem circuit_normalized_upper:
+  0 < units /\ 1 <= maximum_exponent /\
+  exponent =
+    MIN maximum_exponent
+      (MAX 1 (LOG2 units + 1 - fraction_width)) /\
+  exponent < maximum_exponent ==>
+  units < 2 ** (fraction_width + 1) * 2 ** (exponent - 1)
+Proof
+  strip_tac >>
+  `exponent = MAX 1 (LOG2 units + 1 - fraction_width)` by
+    fs [arithmeticTheory.MIN_ALT] >>
+  mp_tac
+    (REWRITE_RULE [GSYM bitTheory.LOG2_def]
+      (Q.SPEC `units` logrootTheory.LOG2_PROPERTY)) >>
+  impl_tac >- simp [] >> strip_tac >>
+  Cases_on `exponent = 1`
+  >- (`LOG2 units + 1 <= fraction_width + 1` by
+        fs [arithmeticTheory.MAX_ALT] >>
+      `SUC (LOG2 units) <= fraction_width + 1` by decide_tac >>
+      `2 ** SUC (LOG2 units) <= 2 ** (fraction_width + 1)` by
+        simp [arithmeticTheory.EXP_BASE_LE_MONO] >>
+      `units < 2 ** (fraction_width + 1)` by
+        (MATCH_MP_TAC arithmeticTheory.LESS_LESS_EQ_TRANS >>
+         Q.EXISTS_TAC `2 ** SUC (LOG2 units)` >>
+         (CONJ_TAC THENL
+            [qpat_x_assum `units < _` ACCEPT_TAC,
+             qpat_x_assum `_ <= _` ACCEPT_TAC])) >>
+      simp []) >>
+  `1 <= exponent` by
+    fs [arithmeticTheory.MAX_ALT] >>
+  `1 < exponent` by decide_tac >>
+  `exponent = LOG2 units + 1 - fraction_width` by
+    fs [arithmeticTheory.MAX_ALT] >>
+  `SUC (LOG2 units) = fraction_width + exponent` by decide_tac >>
+  `units < 2 ** (fraction_width + exponent)` by
+    (qpat_x_assum `units < 2 ** SUC (LOG2 units)` mp_tac >>
+     simp []) >>
+  `fraction_width + exponent =
+   fraction_width + 1 + (exponent - 1)` by decide_tac >>
+  `(2 : num) ** (fraction_width + exponent) =
+   2 ** (fraction_width + 1) * 2 ** (exponent - 1)` by
+    (qpat_x_assum
+       `fraction_width + exponent = _`
+       (fn th => once_rewrite_tac [th]) >>
+     rewrite_tac [arithmeticTheory.EXP_ADD]) >>
+  qpat_x_assum
+    `(2 : num) ** (fraction_width + exponent) = _`
+    (fn th => rewrite_tac [GSYM th]) >>
+  qpat_x_assum
+    `units < 2 ** (fraction_width + exponent)` ACCEPT_TAC
+QED
+
+Theorem smtfp_circuit_quotient_normalized_upper:
+  0 < scale /\ 0 < magnitude /\ 1 <= maximum_exponent /\
+  smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude < maximum_exponent ==>
+  smtfp_circuit_quotient maximum_exponent fraction_width scale magnitude <
+    2 ** (fraction_width + 1)
+Proof
+  strip_tac >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_effective_encoded) >>
+  impl_tac >- simp [] >> strip_tac >>
+  `0 < magnitude * 2 ** (scale - 1)` by simp [] >>
+  `magnitude * 2 ** (scale - 1) <
+   2 ** (fraction_width + 1) *
+   2 **
+     (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+        scale magnitude - 1)` by
+    (irule (GEN_ALL circuit_normalized_upper) >>
+     conj_tac
+     >- qpat_x_assum
+          `0 < magnitude * 2 ** (scale - 1)` ACCEPT_TAC >>
+     qexists_tac `maximum_exponent` >> simp [] >>
+     fs [circuit_wanted_exponent_units,
+         smtfp_circuit_encoded_exponent_def]) >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_quotient_units) >>
+  impl_tac >- simp [] >> strip_tac >>
+  fs [] >>
+  irule (iffRL arithmeticTheory.DIV_LT_X) >> simp []
+QED
+
+Theorem smtfp_circuit_endpoint_round_nonzero[local]:
+  2 <= dimindex (:'w) /\
+  1 <= exponent /\ exponent <= dimword (:'w) - 2 /\
+  0 < quotient /\
+  quotient < 2 ** (dimindex (:'t) + 1) /\
+  quotient + 1 <= 2 ** (dimindex (:'t) + 1) /\
+  (quotient < 2 ** dimindex (:'t) ==> exponent = 1) /\
+  (quotient + 1 = 2 ** (dimindex (:'t) + 1) ==>
+   exponent < dimword (:'w) - 2) /\
+  divisor = 2 ** (exponent - 1) /\
+  residue < divisor /\
+  ~float_is_zero
+    (smtfp_rep
+      (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+        sign exponent
+        (smtfp_circuit_round mode sign quotient residue divisor))) ==>
+  smt_float_round mode to_neg
+    ((if sign = 0w then &(quotient * divisor + residue)
+      else -&(quotient * divisor + residue)) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+  smtfp_rep
+    (smtfp_circuit_endpoint format sign exponent
+      (smtfp_circuit_round mode sign quotient residue divisor))
+Proof
+  strip_tac >>
+  irule smt_float_round_to_neg_nonzero_result >>
+  conj_tac
+  >- qpat_x_assum
+        `~float_is_zero
+           (smtfp_rep
+             (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+               sign exponent
+               (smtfp_circuit_round mode sign quotient residue divisor)))`
+        ACCEPT_TAC
+  >- (`(1w : word1) <> 0w` by wordsLib.WORD_DECIDE_TAC >>
+      wordsLib.Cases_on_word_value `sign` >>
+      Cases_on `mode`
+      >- (qpat_x_assum `(1w : word1) <> 0w`
+            (fn th => simp_tac std_ss [th]) >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_RNE_negative_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (qpat_x_assum `(1w : word1) <> 0w`
+            (fn th => simp_tac std_ss [th]) >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_RNA_negative_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (qpat_x_assum `(1w : word1) <> 0w`
+            (fn th => simp_tac std_ss [th]) >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_negative_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (qpat_x_assum `(1w : word1) <> 0w`
+            (fn th => simp_tac std_ss [th]) >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_negative_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (qpat_x_assum `(1w : word1) <> 0w`
+            (fn th => simp_tac std_ss [th]) >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_negative_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (simp_tac std_ss [] >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_RNE_positive_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (simp_tac std_ss [] >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_RNA_positive_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (simp_tac std_ss [] >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_positive_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (simp_tac std_ss [] >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_positive_endpoint) >>
+          asm_simp_tac std_ss [])
+      >- (simp_tac std_ss [] >>
+          irule (SIMP_RULE pure_ss [LET_THM]
+            smtfp_circuit_directed_positive_endpoint) >>
+          asm_simp_tac std_ss []))
+QED
+
+Theorem smtfp_circuit_quotient_encoded[local]:
+  1 <= maximum_exponent /\ 0 < scale ==>
+  (magnitude * 2 ** (scale - 1)) DIV
+    2 **
+      (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+        scale magnitude - 1) =
+  smtfp_circuit_quotient maximum_exponent fraction_width scale magnitude
+Proof
+  strip_tac >>
+  `smtfp_circuit_effective_exponent maximum_exponent fraction_width
+      scale magnitude =
+   smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude` by
+    (mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_effective_encoded) >>
+     simp []) >>
+  mp_tac (Q.INST
+    [`maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_quotient_units) >>
+  impl_tac >- asm_rewrite_tac [] >>
+  strip_tac >> asm_rewrite_tac []
+QED
+
+Theorem smtfp_circuit_rounded_encoded[local]:
+  1 <= maximum_exponent /\ 0 < scale ==>
+  smtfp_circuit_round mode sign
+    ((magnitude * 2 ** (scale - 1)) DIV
+      2 **
+        (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+          scale magnitude - 1))
+    ((magnitude * 2 ** (scale - 1)) MOD
+      2 **
+        (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+          scale magnitude - 1))
+    (2 **
+      (smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+        scale magnitude - 1)) =
+  smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+    scale magnitude
+Proof
+  strip_tac >>
+  `smtfp_circuit_effective_exponent maximum_exponent fraction_width
+      scale magnitude =
+   smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude` by
+    (mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_effective_encoded) >>
+     simp []) >>
+  mp_tac (Q.INST
+    [`mode` |-> `mode`, `sign` |-> `sign`,
+     `maximum_exponent` |-> `maximum_exponent`,
+     `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+     `magnitude` |-> `magnitude`]
+    smtfp_circuit_rounded_units) >>
+  impl_tac >- asm_rewrite_tac [] >>
+  strip_tac >> asm_rewrite_tac []
+QED
+
+val _ = PolyML.fullGC ()
+
+Theorem smtfp_circuit_encode_finite_correct:
+  (2 <= dimindex (:'w) /\ 0 < scale /\ 0 < magnitude /\
+  let maximum_exponent = dimword (:'w) - 2 in
+  let fraction_width = dimindex (:'t) in
+  let exponent =
+    smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude in
+  let divisor = 2 ** (exponent - 1) in
+  let units = magnitude * 2 ** (scale - 1) in
+  let quotient = units DIV divisor in
+  let residue = units MOD divisor in
+  let rounded =
+    smtfp_circuit_round mode sign quotient residue divisor in
+  rounded <= 2 ** (fraction_width + 1) /\
+    (rounded = 2 ** (fraction_width + 1) ==>
+     exponent < maximum_exponent) /\
+    (residue <> 0 /\ quotient + 1 = 2 ** (fraction_width + 1) ==>
+     exponent < maximum_exponent)) ==>
+  smt_float_round mode to_neg
+    ((if sign = 0w then &(magnitude * 2 ** (scale - 1))
+      else -&(magnitude * 2 ** (scale - 1))) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+  smtfp_rep
+    (smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+      sign scale magnitude)
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  qabbrev_tac `maximum_exponent = dimword (:'w) - 2` >>
+  qabbrev_tac `fraction_width = dimindex (:'t)` >>
+  qabbrev_tac
+    `exponent = smtfp_circuit_encoded_exponent maximum_exponent
+      fraction_width scale magnitude` >>
+  qabbrev_tac `divisor = (2 : num) ** (exponent - 1)` >>
+  qabbrev_tac `units = magnitude * 2 ** (scale - 1)` >>
+  qabbrev_tac `quotient = units DIV divisor` >>
+  qabbrev_tac `residue = units MOD divisor` >>
+  qabbrev_tac
+    `rounded = smtfp_circuit_round mode sign quotient residue divisor` >>
+  `1 <= maximum_exponent` by
+    (simp [Abbr `maximum_exponent`, wordsTheory.dimword_def,
+           arithmeticTheory.SUB_LEFT_LESS_EQ] >>
+     irule arithmeticTheory.LESS_EQ_TRANS >>
+     qexists_tac `(2 : num) ** 2` >>
+     simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+  `1 <= exponent /\ exponent <= maximum_exponent` by
+    (mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_effective_encoded) >>
+     simp [Abbr `exponent`]) >>
+  `exponent =
+   smtfp_circuit_effective_exponent maximum_exponent fraction_width
+     scale magnitude` by
+    (mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_effective_encoded) >>
+     impl_tac
+     >- qpat_x_assum `1 <= maximum_exponent` ACCEPT_TAC >>
+     simp [Abbr `exponent`]) >>
+  `0 < units /\ 0 < divisor` by
+    simp [Abbr `units`, Abbr `divisor`] >>
+  `quotient =
+   smtfp_circuit_quotient maximum_exponent fraction_width scale
+     magnitude` by
+    (simp_tac pure_ss
+       [Abbr `quotient`, Abbr `units`, Abbr `divisor`,
+        Abbr `exponent`] >>
+     irule smtfp_circuit_quotient_encoded >>
+     asm_rewrite_tac []) >>
+  `rounded =
+   smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+     scale magnitude` by
+    (simp_tac pure_ss
+       [Abbr `rounded`, Abbr `quotient`, Abbr `residue`,
+        Abbr `units`, Abbr `divisor`, Abbr `exponent`] >>
+     irule smtfp_circuit_rounded_encoded >>
+     asm_rewrite_tac []) >>
+  `quotient <= rounded /\ rounded <= quotient + 1` by
+    (qunabbrev_tac `rounded` >>
+     irule smtfp_circuit_round_bounds) >>
+  `quotient < 2 ** (fraction_width + 1)` by
+    (Cases_on `rounded < 2 ** (fraction_width + 1)` >- decide_tac >>
+     `rounded = 2 ** (fraction_width + 1)` by decide_tac >>
+     `exponent < maximum_exponent` by fs [] >>
+     qpat_x_assum
+       `quotient = smtfp_circuit_quotient maximum_exponent
+          fraction_width scale magnitude` SUBST1_TAC >>
+     irule smtfp_circuit_quotient_normalized_upper >>
+     simp [Abbr `exponent`]) >>
+  `quotient + 1 <= 2 ** (fraction_width + 1)` by decide_tac >>
+  `(quotient < 2 ** fraction_width ==> exponent = 1)` by
+    (strip_tac >>
+     mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_quotient_normalized_lower) >>
+     simp [Abbr `quotient`, Abbr `exponent`]) >>
+  `0 < quotient` by
+    (Cases_on `quotient = 0`
+     >- (`quotient < 2 ** fraction_width` by simp [] >>
+         `exponent = 1` by fs [] >>
+         `divisor = 1` by simp [Abbr `divisor`] >>
+         fs [Abbr `quotient`]) >>
+     decide_tac) >>
+  `0 < rounded` by decide_tac >>
+  `residue < divisor` by
+    simp [Abbr `residue`, arithmeticTheory.MOD_LESS] >>
+  `units = quotient * divisor + residue` by
+    (mp_tac (Q.SPEC `divisor` arithmeticTheory.DIVISION) >>
+     impl_tac >- asm_rewrite_tac [] >>
+     disch_then (qspec_then `units` mp_tac) >>
+     asm_simp_tac std_ss
+       [Abbr `quotient`, Abbr `residue`,
+        arithmeticTheory.MULT_COMM]) >>
+  `smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+       sign scale magnitude =
+   smtfp_circuit_endpoint format sign exponent rounded` by
+    (qpat_x_assum
+       `rounded = smtfp_circuit_rounded mode sign maximum_exponent
+          fraction_width scale magnitude`
+       (fn th => once_rewrite_tac [th] >> assume_tac th) >>
+     qunabbrev_tac `exponent` >>
+     qunabbrev_tac `maximum_exponent` >>
+     qunabbrev_tac `fraction_width` >>
+     irule smtfp_circuit_encode_endpoint >>
+     simp [LET_THM]) >>
+  `~float_is_zero
+     (smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+         sign exponent rounded))` by
+    (irule smtfp_circuit_endpoint_nonzero >>
+     simp [Abbr `maximum_exponent`, Abbr `fraction_width`] >>
+     fs []) >>
+  Cases_on `residue = 0`
+  >- (`rounded = quotient` by
+        (qunabbrev_tac `rounded` >>
+         rewrite_tac [smtfp_circuit_round_def,
+                      smtfp_circuit_round_up_def] >>
+         qpat_x_assum `residue = 0` (fn th => rewrite_tac [th]) >>
+         simp []) >>
+      `units = quotient * divisor` by
+        (qpat_x_assum `units = quotient * divisor + residue` mp_tac >>
+         asm_simp_tac std_ss []) >>
+      `float_to_real
+         (smtfp_rep
+           (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+             sign exponent rounded)) =
+       (if sign = 0w then &units else -&units) *
+         (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+        (irule EQ_TRANS >>
+         qexists_tac
+           `(if sign = 0w then &(rounded * 2 ** (exponent - 1))
+             else -&(rounded * 2 ** (exponent - 1))) *
+            (2 pow 1 / 2 pow
+              (INT_MAX (:'w) + dimindex (:'t)))` >>
+         conj_tac
+         >- (irule smtfp_circuit_endpoint_value >>
+             simp [Abbr `maximum_exponent`, Abbr `fraction_width`] >>
+             fs [])
+         >> simp [Abbr `divisor`]) >>
+      `float_is_finite
+         (smtfp_rep
+           (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+             sign exponent rounded))` by
+        (irule smtfp_circuit_endpoint_finite >>
+         simp [Abbr `maximum_exponent`, Abbr `fraction_width`] >> fs []) >>
+      `~float_is_zero
+         (smtfp_rep
+           (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+             sign exponent rounded))` by
+        qpat_x_assum
+          `~float_is_zero
+             (smtfp_rep
+               (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+                 sign exponent rounded))` ACCEPT_TAC >>
+      qunabbrev_tac `fraction_width` >>
+      qpat_x_assum
+        `smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+           sign scale magnitude =
+         smtfp_circuit_endpoint format sign exponent rounded`
+        (fn th => once_rewrite_tac [th]) >>
+      qpat_x_assum
+        `float_to_real
+           (smtfp_rep
+             (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+               sign exponent rounded)) = _`
+        (fn th => once_rewrite_tac [GSYM th]) >>
+      irule smt_float_round_representable_nonzero >>
+      conj_tac
+      >- qpat_x_assum
+           `float_is_finite
+              (smtfp_rep
+                (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+                  sign exponent rounded))` ACCEPT_TAC >>
+      conj_tac
+      >- qpat_x_assum
+           `~float_is_zero
+              (smtfp_rep
+                (smtfp_circuit_endpoint (format : ('t,'w) smtfp)
+                  sign exponent rounded))`
+           (ACCEPT_TAC o REWRITE_RULE
+             [binary_ieeeTheory.float_is_zero_to_real]) >>
+      qpat_x_assum `2 <= dimindex (:'w)` ACCEPT_TAC) >>
+  `(quotient + 1 = 2 ** (fraction_width + 1) ==>
+    exponent < maximum_exponent)` by fs [] >>
+  qpat_x_assum
+    `smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+       sign scale magnitude =
+     smtfp_circuit_endpoint format sign exponent rounded`
+    (fn th => once_rewrite_tac [th] >> assume_tac th) >>
+  qpat_x_assum `units = quotient * divisor + residue`
+    (fn th => once_rewrite_tac [th] >> assume_tac th) >>
+  qunabbrev_tac `fraction_width` >>
+  qunabbrev_tac `rounded` >>
+  qunabbrev_tac `maximum_exponent` >>
+  qunabbrev_tac `divisor` >>
+  irule smtfp_circuit_endpoint_round_nonzero >>
+  rpt conj_tac >> asm_rewrite_tac []
+QED
+
+Theorem smtfp_circuit_infinity_rep:
+  smtfp_rep
+    (smtfp_circuit_infinity (format : ('t,'w) smtfp) 0w) =
+      float_plus_infinity (:'t # 'w) /\
+  smtfp_rep
+    (smtfp_circuit_infinity (format : ('t,'w) smtfp) 1w) =
+      float_minus_infinity (:'t # 'w)
+Proof
+  simp [smtfp_circuit_infinity_def,
+        smtfp_rep_bits,
+        canon_def,
+        smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        binary_ieeeTheory.float_minus_infinity_def,
+        binary_ieeeTheory.float_negate_def]
+QED
+
+Theorem smtfp_circuit_top_rep:
+  2 <= dimindex (:'w) ==>
+  smtfp_rep (smtfp_circuit_top (format : ('t,'w) smtfp) 0w) =
+      float_top (:'t # 'w) /\
+  smtfp_rep (smtfp_circuit_top (format : ('t,'w) smtfp) 1w) =
+      float_bottom (:'t # 'w)
+Proof
+  strip_tac >>
+  `2 <= dimword (:'w)` by simp [wordsTheory.dimword_def] >>
+  `2 < dimword (:'w)` by
+    (simp [wordsTheory.dimword_def] >>
+     irule arithmeticTheory.LESS_EQ_LESS_TRANS >>
+     qexists_tac `(2 : num) ** 2` >>
+     simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+  simp [smtfp_circuit_top_def,
+        smtfp_rep_finite_n2w_bits,
+        binary_ieeeTheory.float_top_def,
+        binary_ieeeTheory.float_bottom_def,
+        binary_ieeeTheory.float_negate_def,
+        wordsTheory.UINT_MAX_def, wordsTheory.word_T_def,
+        canon_def, binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_value_def, smtfp_nan_pattern_def,
+        wordsTheory.n2w_sub, wordsTheory.n2w_dimword] >>
+  simp [wordsTheory.dimword_def, wordsTheory.n2w_sub,
+        wordsTheory.n2w_dimword]
+QED
+
+Theorem smtfp_circuit_pack_top:
+  2 <= dimindex (:'w) ==>
+  smtfp_circuit_pack mode (format : ('t,'w) smtfp) sign
+      (dimword (:'w) - 2) (dimindex (:'t)) (dimword (:'w) - 2)
+      (2 ** (dimindex (:'t) + 1) - 1) =
+    smtfp_circuit_top format sign
+Proof
+  strip_tac >>
+  `2 < dimword (:'w)` by
+    (simp [wordsTheory.dimword_def] >>
+     irule arithmeticTheory.LESS_EQ_LESS_TRANS >>
+     qexists_tac `(2 : num) ** 2` >>
+     simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+  simp [smtfp_circuit_pack_def, smtfp_circuit_top_def,
+        arithmeticTheory.EXP_ADD] >>
+  `0 < 2 * 2 ** dimindex (:'t)` by simp [] >>
+  simp []
+QED
+
+Theorem smtfp_circuit_overflow_rep:
+  2 <= dimindex (:'w) ==>
+  smtfp_rep
+    (smtfp_circuit_overflow mode (format : ('t,'w) smtfp) sign) =
+  case mode of
+    RNE => if sign = 0w then float_plus_infinity (:'t # 'w)
+           else float_minus_infinity (:'t # 'w)
+  | RNA => if sign = 0w then float_plus_infinity (:'t # 'w)
+           else float_minus_infinity (:'t # 'w)
+  | RTP => if sign = 0w then float_plus_infinity (:'t # 'w)
+           else float_bottom (:'t # 'w)
+  | RTN => if sign = 1w then float_minus_infinity (:'t # 'w)
+           else float_top (:'t # 'w)
+  | RTZ => if sign = 0w then float_top (:'t # 'w)
+           else float_bottom (:'t # 'w)
+Proof
+  strip_tac >> Cases_on `mode` >>
+  wordsLib.Cases_on_word_value `sign` >>
+  simp [smtfp_circuit_overflow_def,
+        smtfp_circuit_infinity_rep, smtfp_circuit_top_rep]
+QED
+
+Theorem smtfp_circuit_threshold_algebra[local]:
+  !A B C : real.
+    B <> 0 /\ C <> 0 ==>
+    A * (2 - 1 / 2 * B⁻¹) =
+    C * (C⁻¹ * A * (2 - B⁻¹) +
+         1 / 2 * (B⁻¹ * C⁻¹ * A))
+Proof
+  RealField.REAL_FIELD_TAC
+QED
+
+Theorem smtfp_circuit_threshold_largest:
+  2 <= dimindex (:'w) ==>
+  threshold (:'t # 'w) = largest (:'t # 'w) +
+    ULP (n2w (dimword (:'w) - 2) : 'w word, (:'t)) / 2
+Proof
+  strip_tac >>
+  `dimword (:'w) - 2 < dimword (:'w)` by
+    (simp [wordsTheory.dimword_def] >>
+     irule arithmeticTheory.LESS_EQ_LESS_TRANS >>
+     qexists_tac `2 ** 2 - 2` >> simp [] >>
+     irule arithmeticTheory.EXP_BASE_LE_MONO >> simp []) >>
+  rewrite_tac [binary_ieeeTheory.threshold_def,
+               binary_ieeeTheory.largest_def,
+               binary_ieeeTheory.ULP_def] >>
+  simp [wordsTheory.w2n_n2w, arithmeticTheory.LESS_MOD,
+        wordsTheory.UINT_MAX_def, wordsTheory.INT_MAX_def,
+        wordsTheory.dimword_def] >>
+  once_rewrite_tac [realTheory.REAL_POW_ADD] >>
+  rewrite_tac [arithmeticTheory.SUC_ONE_ADD] >>
+  once_rewrite_tac [realTheory.REAL_POW_ADD] >>
+  simp [realTheory.REAL_POW_EQ_0] >>
+  `2 pow dimindex (:'t) <> 0` by
+    simp [realTheory.REAL_POW_EQ_0] >>
+  `2 pow (INT_MIN (:'w) - 1) <> 0` by
+    simp [realTheory.REAL_POW_EQ_0] >>
+  rewrite_tac [realTheory.real_div] >>
+  simp [realTheory.REAL_INV_MUL, realTheory.REAL_MUL_RINV,
+        realTheory.REAL_MUL_LINV] >>
+  irule smtfp_circuit_threshold_algebra >>
+  simp []
+QED
+
+Theorem smtfp_circuit_largest_threshold_units:
+  2 <= dimindex (:'w) ==>
+  let maximum_exponent = dimword (:'w) - 2 in
+  let boundary = 2 ** (dimindex (:'t) + 1) in
+  let divisor = 2 ** (maximum_exponent - 1) in
+  let unit = 2 pow 1 /
+    2 pow (INT_MAX (:'w) + dimindex (:'t)) in
+  largest (:'t # 'w) = &((boundary - 1) * divisor) * unit /\
+  threshold (:'t # 'w) =
+    &((boundary - 1) * divisor) * unit + &divisor * unit / 2
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  qabbrev_tac `maximum_exponent = dimword (:'w) - 2` >>
+  qabbrev_tac `(boundary : num) = 2 ** (dimindex (:'t) + 1)` >>
+  qabbrev_tac `(divisor : num) = 2 ** (maximum_exponent - 1)` >>
+  qabbrev_tac
+    `unit = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  `1 <= maximum_exponent` by
+    (simp [Abbr `maximum_exponent`, wordsTheory.dimword_def,
+           arithmeticTheory.SUB_LEFT_LESS_EQ] >>
+     irule arithmeticTheory.LESS_EQ_TRANS >>
+     qexists_tac `2 ** 2` >>
+     simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+  `2 ** dimindex (:'t) <= boundary - 1 /\
+   boundary - 1 < boundary` by
+    simp [Abbr `boundary`, arithmeticTheory.EXP_ADD] >>
+  `smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w maximum_exponent
+       (boundary - 1) = smtfp_circuit_top format 0w` by
+    (simp [smtfp_circuit_endpoint_def,
+           smtfp_circuit_top_def,
+           Abbr `boundary`, Abbr `maximum_exponent`,
+           wordsTheory.UINT_MAX_def, wordsTheory.dimword_def] >>
+     simp [arithmeticTheory.EXP_ADD]) >>
+  `largest (:'t # 'w) =
+   float_to_real
+     (smtfp_rep
+       (smtfp_circuit_endpoint (format : ('t,'w) smtfp) 0w maximum_exponent
+         (boundary - 1)))` by
+    (simp [binary_ieeeTheory.largest_is_top,
+           smtfp_circuit_top_rep] >>
+     decide_tac) >>
+  `largest (:'t # 'w) = &((boundary - 1) * divisor) * unit` by
+    (qpat_x_assum `largest _ = float_to_real _`
+       (fn th => once_rewrite_tac [th]) >>
+     mp_tac (Q.INST
+       [`format` |-> `format`, `sign` |-> `(0w : word1)`,
+        `exponent` |-> `maximum_exponent`,
+        `rounded` |-> `boundary - 1`]
+       smtfp_circuit_endpoint_value) >>
+     impl_tac
+     >- simp [Abbr `maximum_exponent`, Abbr `boundary`]
+     >> simp [Abbr `divisor`, Abbr `unit`]) >>
+  `ULP (n2w maximum_exponent : 'w word, (:'t)) =
+   &divisor * unit` by
+    (simp [Abbr `maximum_exponent`, Abbr `divisor`, Abbr `unit`,
+           binary_ieeeTheory.ULP_def, wordsTheory.w2n_n2w,
+           wordsTheory.dimword_def, realTheory.REAL_OF_NUM_POW] >>
+     `1 <= 2 ** dimindex (:'w) - 2` by
+       (simp [arithmeticTheory.SUB_LEFT_LESS_EQ] >>
+        irule arithmeticTheory.LESS_EQ_TRANS >>
+        qexists_tac `2 ** 2` >>
+        simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+     Cases_on `2 ** dimindex (:'w) - 2` >>
+     fs [arithmeticTheory.EXP]) >>
+  simp [smtfp_circuit_threshold_largest] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_RNA_positive_overflow_band:
+  2 <= dimindex (:'w) /\
+  largest (:'t # 'w) < x /\ x < threshold (:'t # 'w) ==>
+  round_tiesToAway x = float_top (:'t # 'w)
+Proof
+  strip_tac >>
+  `is_closest float_is_finite x (float_top (:'t # 'w))` by
+    (rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     rpt strip_tac >>
+     mp_tac (Q.INST [`f` |-> `b`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [binary_ieeeTheory.largest_is_top] >>
+     strip_tac >>
+     `float_to_real b <= abs (float_to_real b)` by
+       simp [realTheory.ABS_LE] >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `float_to_real (float_top (:'t # 'w)) < x` by
+       fs [binary_ieeeTheory.largest_is_top] >>
+     rw [realTheory.abs] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = float_top (:'t # 'w)` by
+    (rpt strip_tac >>
+     fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `float_top (:'t # 'w)` mp_tac) >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `a` mp_tac) >>
+     simp [binary_ieeeTheory.largest_is_top] >>
+     mp_tac (Q.INST [`f` |-> `a`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [] >> strip_tac >>
+     rpt strip_tac >>
+     `float_to_real a <= abs (float_to_real a)` by
+       simp [realTheory.ABS_LE] >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `largest (:'t # 'w) =
+      float_to_real (float_top (:'t # 'w))` by
+       simp [binary_ieeeTheory.largest_is_top] >>
+     `float_to_real a < x` by realLib.REAL_ASM_ARITH_TAC >>
+     `float_to_real (float_top (:'t # 'w)) < x` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     `abs (float_to_real a - x) = x - float_to_real a` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `abs (float_to_real (float_top (:'t # 'w)) - x) =
+      x - float_to_real (float_top (:'t # 'w))` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `float_to_real a =
+      float_to_real (float_top (:'t # 'w))` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
+  `round roundTiesToEven x = float_top (:'t # 'w)` by
+    (qpat_x_assum `!a. _` irule >>
+     irule round_RNE_is_closest >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_is_positive) >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.threshold_is_positive) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  irule EQ_TRANS >> qexists_tac `round roundTiesToEven x` >>
+  conj_tac
+  >- (irule round_tiesToAway_eq_RNE_when_closest_unique >>
+      conj_tac
+      >- (rpt strip_tac >>
+          qpat_x_assum `!a. _`
+            (fn th => mp_tac (Q.SPEC `a` th) >>
+                      mp_tac (Q.SPEC `b` th)) >>
+          metis_tac []) >>
+      conj_tac
+      >- simp [] >>
+      mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+        binary_ieeeTheory.largest_is_positive) >>
+      mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+        binary_ieeeTheory.threshold_is_positive) >>
+      realLib.REAL_ASM_ARITH_TAC)
+  >> simp []
+QED
+
+Theorem smtfp_circuit_RNA_negative_overflow_band:
+  2 <= dimindex (:'w) /\
+  -threshold (:'t # 'w) < x /\ x < -largest (:'t # 'w) ==>
+  round_tiesToAway x = float_bottom (:'t # 'w)
+Proof
+  strip_tac >>
+  `is_closest float_is_finite x (float_bottom (:'t # 'w))` by
+    (rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     rpt strip_tac >>
+     mp_tac (Q.INST [`f` |-> `b`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     strip_tac >>
+     `-abs (float_to_real b) <= float_to_real b` by
+       (mp_tac (Q.SPEC `-float_to_real b` realTheory.ABS_LE) >>
+        simp [realTheory.ABS_NEG] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `x < float_to_real (float_bottom (:'t # 'w))` by
+       fs [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     fs [binary_ieeeTheory.float_bottom_def,
+         binary_ieeeTheory.float_to_real_negate] >>
+     rw [realTheory.abs] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = float_bottom (:'t # 'w)` by
+    (rpt strip_tac >>
+     fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `float_bottom (:'t # 'w)` mp_tac) >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `a` mp_tac) >>
+     simp [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     mp_tac (Q.INST [`f` |-> `a`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [] >> strip_tac >>
+     rpt strip_tac >>
+     `-abs (float_to_real a) <= float_to_real a` by
+       (mp_tac (Q.SPEC `-float_to_real a` realTheory.ABS_LE) >>
+        simp [realTheory.ABS_NEG] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `largest (:'t # 'w) =
+      float_to_real (float_top (:'t # 'w))` by
+       simp [binary_ieeeTheory.largest_is_top] >>
+     `float_to_real (float_bottom (:'t # 'w)) =
+      -largest (:'t # 'w)` by
+       simp [binary_ieeeTheory.float_bottom_def,
+             binary_ieeeTheory.float_to_real_negate,
+             binary_ieeeTheory.largest_is_top] >>
+     `x < float_to_real a` by realLib.REAL_ASM_ARITH_TAC >>
+     `x < float_to_real (float_bottom (:'t # 'w))` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     fs [binary_ieeeTheory.float_bottom_def,
+         binary_ieeeTheory.float_to_real_negate] >>
+     `abs (float_to_real a - x) = float_to_real a - x` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `abs (-largest (:'t # 'w) - x) =
+      -largest (:'t # 'w) - x` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `float_to_real a = -largest (:'t # 'w)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     `float_to_real a =
+      float_to_real (float_negate (float_top (:'t # 'w)))` by
+       (simp [binary_ieeeTheory.float_to_real_negate] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
+  `round roundTiesToEven x = float_bottom (:'t # 'w)` by
+    (qpat_x_assum `!a. _` irule >>
+     irule round_RNE_is_closest >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_is_positive) >>
+     mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.threshold_is_positive) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  irule EQ_TRANS >> qexists_tac `round roundTiesToEven x` >>
+  conj_tac
+  >- (irule round_tiesToAway_eq_RNE_when_closest_unique >>
+      conj_tac
+      >- (rpt strip_tac >>
+          qpat_x_assum `!a. _`
+            (fn th => mp_tac (Q.SPEC `a` th) >>
+                      mp_tac (Q.SPEC `b` th)) >>
+          metis_tac []) >>
+      conj_tac
+      >- (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+            binary_ieeeTheory.largest_is_positive) >>
+          mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+            binary_ieeeTheory.threshold_is_positive) >>
+          realLib.REAL_ASM_ARITH_TAC) >>
+      simp [])
+  >> simp []
+QED
+
+Theorem smtfp_circuit_RNE_positive_overflow_band:
+  2 <= dimindex (:'w) /\
+  largest (:'t # 'w) < x /\ x < threshold (:'t # 'w) ==>
+  round roundTiesToEven x = float_top (:'t # 'w)
+Proof
+  strip_tac >>
+  `is_closest float_is_finite x (float_top (:'t # 'w))` by
+    (rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     rpt strip_tac >>
+     mp_tac (Q.INST [`f` |-> `b`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [binary_ieeeTheory.largest_is_top] >>
+     strip_tac >>
+     `float_to_real b <= abs (float_to_real b)` by
+       simp [realTheory.ABS_LE] >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `float_to_real (float_top (:'t # 'w)) < x` by
+       fs [binary_ieeeTheory.largest_is_top] >>
+     rw [realTheory.abs] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = float_top (:'t # 'w)` by
+    (rpt strip_tac >>
+     fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `float_top (:'t # 'w)` mp_tac) >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `a` mp_tac) >>
+     simp [binary_ieeeTheory.largest_is_top] >>
+     mp_tac (Q.INST [`f` |-> `a`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [] >> strip_tac >>
+     rpt strip_tac >>
+     `float_to_real a <= abs (float_to_real a)` by
+       simp [realTheory.ABS_LE] >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `largest (:'t # 'w) =
+      float_to_real (float_top (:'t # 'w))` by
+       simp [binary_ieeeTheory.largest_is_top] >>
+     `float_to_real a < x` by realLib.REAL_ASM_ARITH_TAC >>
+     `float_to_real (float_top (:'t # 'w)) < x` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     `abs (float_to_real a - x) = x - float_to_real a` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `abs (float_to_real (float_top (:'t # 'w)) - x) =
+      x - float_to_real (float_top (:'t # 'w))` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `float_to_real a =
+      float_to_real (float_top (:'t # 'w))` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
+  qpat_x_assum `!a. _` irule >>
+  irule round_RNE_is_closest >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.largest_is_positive) >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.threshold_is_positive) >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_RNE_negative_overflow_band:
+  2 <= dimindex (:'w) /\
+  -threshold (:'t # 'w) < x /\ x < -largest (:'t # 'w) ==>
+  round roundTiesToEven x = float_bottom (:'t # 'w)
+Proof
+  strip_tac >>
+  `is_closest float_is_finite x (float_bottom (:'t # 'w))` by
+    (rw [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     rpt strip_tac >>
+     mp_tac (Q.INST [`f` |-> `b`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     strip_tac >>
+     `-abs (float_to_real b) <= float_to_real b` by
+       (mp_tac (Q.SPEC `-float_to_real b` realTheory.ABS_LE) >>
+        simp [realTheory.ABS_NEG] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `x < float_to_real (float_bottom (:'t # 'w))` by
+       fs [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     fs [binary_ieeeTheory.float_bottom_def,
+         binary_ieeeTheory.float_to_real_negate] >>
+     rw [realTheory.abs] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `!a : ('t,'w) float.
+     is_closest float_is_finite x a ==> a = float_bottom (:'t # 'w)` by
+    (rpt strip_tac >>
+     fs [binary_ieeeTheory.is_closest_def, IN_DEF] >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `float_bottom (:'t # 'w)` mp_tac) >>
+     qpat_x_assum `!b. float_is_finite b ==> _`
+       (qspec_then `a` mp_tac) >>
+     simp [binary_ieeeTheory.float_bottom_def,
+           binary_ieeeTheory.float_to_real_negate,
+           binary_ieeeTheory.largest_is_top] >>
+     mp_tac (Q.INST [`f` |-> `a`]
+       (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+         binary_ieeeTheory.abs_float_bounds)) >>
+     simp [] >> strip_tac >>
+     rpt strip_tac >>
+     `-abs (float_to_real a) <= float_to_real a` by
+       (mp_tac (Q.SPEC `-float_to_real a` realTheory.ABS_LE) >>
+        simp [realTheory.ABS_NEG] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     `1 < dimindex (:'w)` by decide_tac >>
+     `largest (:'t # 'w) =
+      float_to_real (float_top (:'t # 'w))` by
+       simp [binary_ieeeTheory.largest_is_top] >>
+     `float_to_real (float_bottom (:'t # 'w)) =
+      -largest (:'t # 'w)` by
+       simp [binary_ieeeTheory.float_bottom_def,
+             binary_ieeeTheory.float_to_real_negate,
+             binary_ieeeTheory.largest_is_top] >>
+     `x < float_to_real a` by realLib.REAL_ASM_ARITH_TAC >>
+     `x < float_to_real (float_bottom (:'t # 'w))` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     fs [binary_ieeeTheory.float_bottom_def,
+         binary_ieeeTheory.float_to_real_negate] >>
+     `abs (float_to_real a - x) = float_to_real a - x` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `abs (-largest (:'t # 'w) - x) =
+      -largest (:'t # 'w) - x` by
+       (rw [realTheory.abs] >> realLib.REAL_ASM_ARITH_TAC) >>
+     `float_to_real a = -largest (:'t # 'w)` by
+       realLib.REAL_ASM_ARITH_TAC >>
+     `float_to_real a =
+      float_to_real (float_negate (float_top (:'t # 'w)))` by
+       (simp [binary_ieeeTheory.float_to_real_negate] >>
+        realLib.REAL_ASM_ARITH_TAC) >>
+     fs [binary_ieeeTheory.float_to_real_eq] >> fs []) >>
+  qpat_x_assum `!a. _` irule >>
+  irule round_RNE_is_closest >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.largest_is_positive) >>
+  mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+    binary_ieeeTheory.threshold_is_positive) >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_overflow_midpoint_units:
+  !unit : real. !residue divisor boundary : num.
+    0 < unit ==>
+    (unit * &(residue + divisor * boundary) <
+       unit * &(divisor * boundary) + unit * &divisor / 2 <=>
+       2 * residue < divisor) /\
+    (unit * &(divisor * boundary) + unit * &divisor / 2 <=
+       unit * &(residue + divisor * boundary) <=>
+       divisor <= 2 * residue)
+Proof
+  rpt strip_tac >>
+  `unit * &(divisor * boundary) + unit * &divisor / 2 =
+   unit * (&(divisor * boundary) + &divisor / 2)` by
+    realLib.REAL_ARITH_TAC >>
+  asm_rewrite_tac [] >>
+  asm_simp_tac pure_ss [realTheory.REAL_LT_LMUL,
+                         realTheory.REAL_LE_LMUL] >>
+  simp_tac pure_ss [GSYM realTheory.REAL_OF_NUM_LT,
+                    GSYM realTheory.REAL_OF_NUM_LE] >>
+  simp_tac pure_ss [GSYM realTheory.REAL_OF_NUM_ADD,
+                    GSYM realTheory.REAL_OF_NUM_MUL] >>
+  realLib.REAL_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_strict_overflow_units:
+  0 < boundary /\ 0 < divisor /\ (0 : real) < unit /\
+  boundary <= quotient /\
+  units = quotient * divisor + residue /\ residue < divisor ==>
+  &((boundary - 1) * divisor) * unit + &divisor * unit / 2 <
+    &units * unit
+Proof
+  strip_tac >>
+  `boundary * divisor <= units` by
+    (qpat_x_assum `units = _` SUBST1_TAC >>
+     irule arithmeticTheory.LE_TRANS >>
+     qexists_tac `quotient * divisor` >>
+     simp [arithmeticTheory.LE_MULT_RCANCEL]) >>
+  `boundary * divisor = (boundary - 1) * divisor + divisor` by
+    (`boundary = boundary - 1 + 1` by decide_tac >>
+     pop_assum SUBST1_TAC >>
+     simp [arithmeticTheory.LEFT_ADD_DISTRIB]) >>
+  `(&(boundary * divisor) : real) <= &units` by simp [] >>
+  `0 < unit * &divisor` by
+    (irule realTheory.REAL_LT_MUL >> simp []) >>
+  `&((boundary - 1) * divisor) * unit + &divisor * unit / 2 <
+   &(boundary * divisor) * unit` by
+    (qpat_x_assum `boundary * divisor = _`
+       (fn th => once_rewrite_tac [th]) >>
+     simp [realTheory.REAL_OF_NUM_ADD,
+           realTheory.REAL_OF_NUM_MUL] >>
+     `(&(divisor + divisor * (boundary - 1)) : real) =
+      &divisor + &(divisor * (boundary - 1))` by simp [] >>
+     asm_rewrite_tac [] >>
+     simp [realTheory.REAL_ADD_LDISTRIB] >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `&(boundary * divisor) * unit <= &units * unit` by
+    asm_simp_tac std_ss [realTheory.REAL_LE_RMUL] >>
+  realLib.REAL_ASM_ARITH_TAC
+QED
+
+Theorem smtfp_circuit_strict_overflow_round:
+  2 <= dimindex (:'w) /\
+  threshold (:'t # 'w) < positive /\
+  negative < -threshold (:'t # 'w) ==>
+  smt_float_round mode to_neg
+      (if sign = 0w then positive else negative) =
+    smtfp_rep
+      (smtfp_circuit_overflow mode (format : ('t,'w) smtfp) sign)
+Proof
+  strip_tac >>
+  `~float_is_zero (float_top (:'t # 'w)) /\
+   ~float_is_zero (float_bottom (:'t # 'w))` by
+    simp [binary_ieeeTheory.float_top_def,
+          binary_ieeeTheory.float_bottom_def,
+          binary_ieeeTheory.float_negate_def,
+          binary_ieeeTheory.float_is_zero_def,
+          wordsTheory.word_T_def, wordsTheory.UINT_MAX_def,
+          wordsTheory.dimword_def] >>
+  `threshold (:'t # 'w) <= positive /\
+   negative <= -threshold (:'t # 'w)` by
+    realLib.REAL_ASM_ARITH_TAC >>
+  `largest (:'t # 'w) < positive /\
+   negative < -largest (:'t # 'w)` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       binary_ieeeTheory.largest_lt_threshold) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `(1w : word1) <> 0w` by wordsLib.WORD_DECIDE_TAC >>
+  wordsLib.Cases_on_word_value `sign` >> Cases_on `mode` >>
+  asm_simp_tac bool_ss
+    [smtfp_circuit_overflow_rep,
+     TypeBase.case_def_of ``:smt_rounding``,
+     smt_float_round_def, smt_round_def, LET_THM,
+     binary_ieeeTheory.infinity_properties,
+     round_tiesToAway_overflow,
+     binary_ieeeTheory.round_roundTiesToEven_plus_infinity,
+     binary_ieeeTheory.round_roundTiesToEven_minus_infinity,
+     binary_ieeeTheory.round_roundTowardPositive_plus_infinity,
+     binary_ieeeTheory.round_roundTowardPositive_bottom,
+     binary_ieeeTheory.round_roundTowardNegative_top,
+     binary_ieeeTheory.round_roundTowardNegative_minus_infinity,
+     binary_ieeeTheory.round_roundTowardZero_top,
+     binary_ieeeTheory.round_roundTowardZero_bottom]
+QED
+
+Theorem smtfp_circuit_encode_overflow_correct:
+  2 <= dimindex (:'w) /\ 0 < scale /\ 0 < magnitude /\
+  (let maximum_exponent = dimword (:'w) - 2 in
+  let fraction_width = dimindex (:'t) in
+  let exponent =
+    smtfp_circuit_encoded_exponent maximum_exponent fraction_width
+      scale magnitude in
+  let divisor = 2 ** (exponent - 1) in
+  let units = magnitude * 2 ** (scale - 1) in
+  let quotient = units DIV divisor in
+  let residue = units MOD divisor in
+  let boundary = 2 ** (fraction_width + 1) in
+    exponent = maximum_exponent /\
+    boundary - 1 <= quotient /\
+    ~(quotient = boundary - 1 /\ residue = 0)) ==>
+  smt_float_round mode to_neg
+    ((if sign = 0w then &(magnitude * 2 ** (scale - 1))
+      else -&(magnitude * 2 ** (scale - 1))) *
+     (2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+  smtfp_rep
+    (smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+      sign scale magnitude)
+Proof
+  simp_tac pure_ss [LET_THM] >> strip_tac >>
+  qabbrev_tac `maximum_exponent = dimword (:'w) - 2` >>
+  qabbrev_tac `fraction_width = dimindex (:'t)` >>
+  qabbrev_tac
+    `exponent = smtfp_circuit_encoded_exponent maximum_exponent
+      fraction_width scale magnitude` >>
+  qabbrev_tac `(divisor : num) = 2 ** (exponent - 1)` >>
+  qabbrev_tac `units = magnitude * 2 ** (scale - 1)` >>
+  qabbrev_tac `quotient = units DIV divisor` >>
+  qabbrev_tac `residue = units MOD divisor` >>
+  qabbrev_tac `(boundary : num) = 2 ** (fraction_width + 1)` >>
+  qabbrev_tac
+    `unit = 2 pow 1 / 2 pow (INT_MAX (:'w) + dimindex (:'t))` >>
+  qabbrev_tac
+    `rounded = smtfp_circuit_round mode sign quotient residue divisor` >>
+  `1 <= maximum_exponent /\ 0 < divisor /\ 0 < unit` by
+    (conj_tac
+     >- (simp [Abbr `maximum_exponent`, wordsTheory.dimword_def,
+               arithmeticTheory.SUB_LEFT_LESS_EQ] >>
+         irule arithmeticTheory.LESS_EQ_TRANS >>
+         qexists_tac `2 ** 2` >>
+         simp [arithmeticTheory.EXP_BASE_LE_MONO]) >>
+     simp [Abbr `divisor`, Abbr `unit`]) >>
+  `residue < divisor` by
+    simp [Abbr `residue`, arithmeticTheory.MOD_LESS] >>
+  `units = quotient * divisor + residue` by
+    (mp_tac (Q.SPEC `divisor` arithmeticTheory.DIVISION) >>
+     impl_tac >- simp [] >>
+     disch_then (qspec_then `units` strip_assume_tac) >>
+     fs [Abbr `quotient`, Abbr `residue`]) >>
+  `rounded =
+   smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+     scale magnitude` by
+    (simp [Abbr `rounded`, Abbr `quotient`, Abbr `residue`,
+           Abbr `units`, Abbr `divisor`, Abbr `exponent`] >>
+     mp_tac (Q.INST
+       [`mode` |-> `mode`, `sign` |-> `sign`,
+        `maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`,
+        `scale` |-> `scale`, `magnitude` |-> `magnitude`]
+       smtfp_circuit_rounded_units) >>
+     simp [smtfp_circuit_effective_exponent_def,
+           arithmeticTheory.MAX_DEF] >>
+     Cases_on `maximum_exponent = 1` >> simp []) >>
+  `smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+       sign scale magnitude =
+   smtfp_circuit_pack mode format sign maximum_exponent fraction_width
+     exponent rounded` by
+    simp [smtfp_circuit_encode_def,
+          Abbr `maximum_exponent`, Abbr `fraction_width`,
+          Abbr `exponent`] >>
+  qpat_x_assum
+    `rounded =
+     smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+       scale magnitude`
+    kall_tac >>
+  `0 < boundary` by simp [Abbr `boundary`] >>
+  `~float_is_zero (float_top (:'t # 'w)) /\
+   ~float_is_zero (float_bottom (:'t # 'w))` by
+    simp [binary_ieeeTheory.float_top_def,
+          binary_ieeeTheory.float_bottom_def,
+          binary_ieeeTheory.float_negate_def,
+          binary_ieeeTheory.float_is_zero_def,
+          wordsTheory.word_T_def, wordsTheory.UINT_MAX_def,
+          wordsTheory.dimword_def] >>
+  `largest (:'t # 'w) = &((boundary - 1) * divisor) * unit /\
+   threshold (:'t # 'w) =
+     &((boundary - 1) * divisor) * unit + &divisor * unit / 2` by
+    (mp_tac (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+       smtfp_circuit_largest_threshold_units) >>
+     simp [Abbr `maximum_exponent`, Abbr `fraction_width`,
+           Abbr `boundary`, Abbr `divisor`, Abbr `unit`]) >>
+  `ODD (boundary - 1)` by
+    (simp [Abbr `boundary`, arithmeticTheory.ODD_SUB] >>
+     rw [GSYM arithmeticTheory.EVEN_ODD] >>
+     irule arithmeticTheory.EVEN_EXP >> simp []) >>
+  `((if sign = 0w then &units else -&units) *
+     (2 pow 1 /
+      2 pow (INT_MAX (:'w) + fraction_width))) =
+   (if sign = 0w then &units else -&units) * unit` by
+    simp [Abbr `fraction_width`, Abbr `unit`] >>
+  qpat_x_assum
+    `((if sign = 0w then &units else -&units) * _) = _`
+    (fn th => once_rewrite_tac [th]) >>
+  Cases_on `quotient = boundary - 1`
+  >- (`residue <> 0` by fs [] >>
+      `largest (:'t # 'w) < &units * unit /\
+       -&units * unit < -largest (:'t # 'w)` by
+        (simp [realTheory.REAL_OF_NUM_ADD,
+               realTheory.REAL_OF_NUM_MUL] >>
+         realLib.REAL_ASM_ARITH_TAC) >>
+      `(&units * unit < threshold (:'t # 'w) <=>
+        2 * residue < divisor) /\
+       (threshold (:'t # 'w) <= &units * unit <=>
+        divisor <= 2 * residue) /\
+       (-threshold (:'t # 'w) < -&units * unit <=>
+        2 * residue < divisor) /\
+       (-&units * unit <= -threshold (:'t # 'w) <=>
+        divisor <= 2 * residue)` by
+       (mp_tac (Q.SPECL
+           [`unit`, `residue`, `divisor`, `boundary - 1`]
+           smtfp_circuit_overflow_midpoint_units) >>
+         simp [realTheory.REAL_OF_NUM_ADD,
+               realTheory.REAL_OF_NUM_MUL]) >>
+      qpat_x_assum `Abbrev (units = _)` kall_tac >>
+      qpat_x_assum `Abbrev (unit = _)` kall_tac >>
+      qpat_x_assum `units = quotient * divisor + residue` kall_tac >>
+      `-unit * &units = -&units * unit` by
+        realLib.REAL_ARITH_TAC >>
+      Cases_on `sign = 0w`
+      >- (asm_rewrite_tac [] >> Cases_on `mode`
+      >- (Cases_on `divisor <= 2 * residue`
+          >- (`rounded = boundary` by
+                (simp [Abbr `rounded`,
+                       smtfp_circuit_round_def,
+                       smtfp_circuit_round_up_def] >> decide_tac) >>
+              `smtfp_rep
+                 (smtfp_circuit_pack RNE format 0w maximum_exponent
+                    fraction_width maximum_exponent rounded) =
+               float_plus_infinity (:'t # 'w)` by
+                (asm_rewrite_tac [] >>
+                 simp [smtfp_circuit_pack_def,
+                       smtfp_circuit_overflow_rep]) >>
+              `round roundTiesToEven (&units * unit) =
+               float_plus_infinity (:'t # 'w)` by
+                (irule binary_ieeeTheory.round_roundTiesToEven_plus_infinity >>
+                 simp []) >>
+              asm_simp_tac (srw_ss())
+                [smt_float_round_def, smt_round_def, LET_THM,
+                 binary_ieeeTheory.infinity_properties])
+          >> `rounded = boundary - 1` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def]) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RNE format 0w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_top (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          `round roundTiesToEven (&units * unit) =
+           float_top (:'t # 'w)` by
+            (irule smtfp_circuit_RNE_positive_overflow_band >> simp []) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM])
+      >- (Cases_on `divisor <= 2 * residue`
+          >- (`rounded = boundary` by
+                (simp [Abbr `rounded`,
+                       smtfp_circuit_round_def,
+                       smtfp_circuit_round_up_def] >> decide_tac) >>
+              `smtfp_rep
+                 (smtfp_circuit_pack RNA format 0w maximum_exponent
+                    fraction_width maximum_exponent rounded) =
+               float_plus_infinity (:'t # 'w)` by
+                (asm_rewrite_tac [] >>
+                 simp [smtfp_circuit_pack_def,
+                       smtfp_circuit_overflow_rep]) >>
+              `round_tiesToAway (&units * unit) =
+               float_plus_infinity (:'t # 'w)` by simp [] >>
+              asm_simp_tac (srw_ss())
+                [smt_float_round_def, smt_round_def, LET_THM,
+                 binary_ieeeTheory.infinity_properties])
+          >> `rounded = boundary - 1` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def]) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RNA format 0w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_top (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          `round_tiesToAway (&units * unit) = float_top (:'t # 'w)` by
+            (irule smtfp_circuit_RNA_positive_overflow_band >> simp []) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM])
+      >- (`rounded = boundary` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def] >> decide_tac) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTP format 0w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_plus_infinity (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_def,
+                   smtfp_circuit_overflow_rep]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.infinity_properties,
+             binary_ieeeTheory.round_roundTowardPositive_plus_infinity])
+      >- (`rounded = boundary - 1` by
+            simp [Abbr `rounded`,
+                  smtfp_circuit_round_def,
+                  smtfp_circuit_round_up_def] >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTN format 0w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_top (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.round_roundTowardNegative_top])
+      >- (`rounded = boundary - 1` by
+            simp [Abbr `rounded`,
+                  smtfp_circuit_round_def,
+                  smtfp_circuit_round_up_def] >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTZ format 0w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_top (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.round_roundTowardZero_top])) >>
+      `sign = 1w` by
+        (wordsLib.Cases_on_word_value `sign` >> fs []) >>
+      asm_rewrite_tac [] >> Cases_on `mode`
+      >- (Cases_on `divisor <= 2 * residue`
+          >- (`rounded = boundary` by
+                (simp [Abbr `rounded`,
+                       smtfp_circuit_round_def,
+                       smtfp_circuit_round_up_def] >> decide_tac) >>
+              `smtfp_rep
+                 (smtfp_circuit_pack RNE format 1w maximum_exponent
+                    fraction_width maximum_exponent rounded) =
+               float_minus_infinity (:'t # 'w)` by
+                (asm_rewrite_tac [] >>
+                 simp [smtfp_circuit_pack_def,
+                       smtfp_circuit_overflow_rep]) >>
+              asm_simp_tac (srw_ss())
+                [smt_float_round_def, smt_round_def, LET_THM,
+                 binary_ieeeTheory.infinity_properties,
+                 binary_ieeeTheory.round_roundTiesToEven_minus_infinity])
+          >> `rounded = boundary - 1` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def]) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RNE format 1w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_bottom (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          `round roundTiesToEven (-&units * unit) =
+           float_bottom (:'t # 'w)` by
+            (irule smtfp_circuit_RNE_negative_overflow_band >> simp []) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM])
+      >- (Cases_on `divisor <= 2 * residue`
+          >- (`rounded = boundary` by
+                (simp [Abbr `rounded`,
+                       smtfp_circuit_round_def,
+                       smtfp_circuit_round_up_def] >> decide_tac) >>
+              `smtfp_rep
+                 (smtfp_circuit_pack RNA format 1w maximum_exponent
+                    fraction_width maximum_exponent rounded) =
+               float_minus_infinity (:'t # 'w)` by
+                (asm_rewrite_tac [] >>
+                 simp [smtfp_circuit_pack_def,
+                       smtfp_circuit_overflow_rep]) >>
+              `round_tiesToAway (-&units * unit) =
+               float_minus_infinity (:'t # 'w)` by simp [] >>
+              asm_simp_tac (srw_ss())
+                [smt_float_round_def, smt_round_def, LET_THM,
+                 binary_ieeeTheory.infinity_properties])
+          >> `rounded = boundary - 1` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def]) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RNA format 1w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_bottom (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          `round_tiesToAway (-&units * unit) = float_bottom (:'t # 'w)` by
+            (irule smtfp_circuit_RNA_negative_overflow_band >> simp []) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM])
+      >- (`rounded = boundary - 1` by
+            simp [Abbr `rounded`,
+                  smtfp_circuit_round_def,
+                  smtfp_circuit_round_up_def] >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTP format 1w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_bottom (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.round_roundTowardPositive_bottom])
+      >- (`rounded = boundary` by
+            (simp [Abbr `rounded`,
+                   smtfp_circuit_round_def,
+                   smtfp_circuit_round_up_def] >> decide_tac) >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTN format 1w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_minus_infinity (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_def,
+                   smtfp_circuit_overflow_rep]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.infinity_properties,
+             binary_ieeeTheory.round_roundTowardNegative_minus_infinity])
+      >- (`rounded = boundary - 1` by
+            simp [Abbr `rounded`,
+                  smtfp_circuit_round_def,
+                  smtfp_circuit_round_up_def] >>
+          `smtfp_rep
+             (smtfp_circuit_pack RTZ format 1w maximum_exponent
+                fraction_width maximum_exponent rounded) =
+           float_bottom (:'t # 'w)` by
+            (asm_rewrite_tac [] >>
+             simp [smtfp_circuit_pack_top,
+                   smtfp_circuit_top_rep, Abbr `maximum_exponent`,
+                   Abbr `fraction_width`, Abbr `boundary`]) >>
+          asm_simp_tac (srw_ss())
+            [smt_float_round_def, smt_round_def, LET_THM,
+             binary_ieeeTheory.round_roundTowardZero_bottom])) >>
+  `boundary <= quotient` by decide_tac >>
+  `threshold (:'t # 'w) < &units * unit /\
+   -&units * unit < -threshold (:'t # 'w)` by
+    (`&((boundary - 1) * divisor) * unit +
+       &divisor * unit / 2 < &units * unit` by
+       (mp_tac (Q.INST
+          [`boundary` |-> `boundary`, `divisor` |-> `divisor`,
+           `unit` |-> `unit`, `quotient` |-> `quotient`,
+           `units` |-> `units`, `residue` |-> `residue`]
+          smtfp_circuit_strict_overflow_units) >>
+        asm_simp_tac std_ss []) >>
+     realLib.REAL_ASM_ARITH_TAC) >>
+  `boundary <= rounded` by
+    (simp [Abbr `rounded`, smtfp_circuit_round_def] >>
+     decide_tac) >>
+  `smtfp_rep
+     (smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+       sign scale magnitude) =
+   smtfp_rep (smtfp_circuit_overflow mode format sign)` by
+    (asm_rewrite_tac [] >>
+     simp [smtfp_circuit_pack_def] >> decide_tac) >>
+  qpat_x_assum `Abbrev (units = _)` kall_tac >>
+  qpat_x_assum `Abbrev (unit = _)` kall_tac >>
+  qpat_x_assum `units = quotient * divisor + residue` kall_tac >>
+  `((if sign = 0w then &units else -&units) * unit) =
+   (if sign = 0w then &units * unit else -&units * unit)` by
+    (Cases_on `sign = 0w` >> simp []) >>
+  pop_assum SUBST1_TAC >>
+  qpat_x_assum
+    `smtfp_rep (smtfp_circuit_encode _ _ _ _ _) = _`
+    (fn th => once_rewrite_tac [th]) >>
+  irule smtfp_circuit_strict_overflow_round >>
+  asm_simp_tac std_ss []
+QED
+
+Theorem circuit_real_scale_units[local]:
+  0 < scale ==>
+  (if sign = 0w then &magnitude else -&magnitude) *
+    (2 pow scale / denominator) =
+  (if sign = 0w then &(magnitude * 2 ** (scale - 1))
+   else -&(magnitude * 2 ** (scale - 1))) *
+    (2 pow 1 / denominator)
+Proof
+  strip_tac >>
+  Cases_on `scale`
+  >- fs []
+  >- (Cases_on `sign = 0w` >>
+      asm_simp_tac bool_ss
+        [arithmeticTheory.SUC_SUB1, realTheory.pow,
+         realTheory.REAL_OF_NUM_POW, arithmeticTheory.EXP,
+         GSYM realTheory.REAL_OF_NUM_MUL,
+         EVAL ``((2 : num) ** 1)``] >>
+      RealField.REAL_FIELD_TAC)
+QED
+
+Theorem smtfp_circuit_encode_correct:
+  2 <= dimindex (:'w) /\ 0 < scale /\ 0 < magnitude ==>
+  smt_float_round mode to_neg
+    ((if sign = 0w then &magnitude else -&magnitude) *
+     (2 pow scale /
+      2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+  smtfp_rep
+    (smtfp_circuit_encode mode (format : ('t,'w) smtfp)
+      sign scale magnitude)
+Proof
+  strip_tac >>
+  `((if sign = 0w then &magnitude else -&magnitude) *
+      (2 pow scale /
+       2 pow (INT_MAX (:'w) + dimindex (:'t)))) =
+   (if sign = 0w then &(magnitude * 2 ** (scale - 1))
+    else -&(magnitude * 2 ** (scale - 1))) *
+      (2 pow 1 /
+       2 pow (INT_MAX (:'w) + dimindex (:'t)))` by
+    (irule circuit_real_scale_units >>
+     qpat_x_assum `0 < scale` ACCEPT_TAC) >>
+  pop_assum (fn th => once_rewrite_tac [th]) >>
+  qabbrev_tac `maximum_exponent : num = dimword (:'w) - 2` >>
+  qabbrev_tac `fraction_width : num = dimindex (:'t)` >>
+  qabbrev_tac
+    `exponent : num = smtfp_circuit_encoded_exponent maximum_exponent
+      fraction_width scale magnitude` >>
+  qabbrev_tac `divisor : num = 2 ** (exponent - 1)` >>
+  qabbrev_tac `units : num = magnitude * 2 ** (scale - 1)` >>
+  qabbrev_tac `quotient : num = units DIV divisor` >>
+  qabbrev_tac `residue : num = units MOD divisor` >>
+  qabbrev_tac `boundary : num = 2 ** (fraction_width + 1)` >>
+  qabbrev_tac
+    `rounded : num =
+       smtfp_circuit_round mode sign quotient residue divisor` >>
+  `1 <= maximum_exponent` by
+    (simp [Abbr `maximum_exponent`, wordsTheory.dimword_def] >>
+     `2 ** 2 <= 2 ** dimindex (:'w)` by
+       (irule bitTheory.TWOEXP_MONO2 >>
+        qpat_x_assum `2 <= dimindex (:'w)` ACCEPT_TAC) >>
+     qpat_x_assum `2 ** 2 <= _` mp_tac >>
+     rewrite_tac [EVAL ``((2 : num) ** 2)``] >>
+     numLib.ARITH_TAC) >>
+  `1 <= exponent /\ exponent <= maximum_exponent` by
+    (mp_tac (Q.INST
+       [`maximum_exponent` |-> `maximum_exponent`,
+        `fraction_width` |-> `fraction_width`, `scale` |-> `scale`,
+        `magnitude` |-> `magnitude`]
+       smtfp_circuit_effective_encoded) >>
+     simp [Abbr `exponent`]) >>
+  `0 < units /\ 0 < divisor` by
+    simp [Abbr `units`, Abbr `divisor`] >>
+  `residue < divisor` by
+    simp [Abbr `residue`, arithmeticTheory.MOD_LESS] >>
+  `quotient =
+   smtfp_circuit_quotient maximum_exponent fraction_width scale
+    magnitude` by
+    (simp_tac pure_ss
+       [Abbr `quotient`, Abbr `units`, Abbr `divisor`,
+        Abbr `exponent`] >>
+     irule smtfp_circuit_quotient_encoded >>
+     asm_rewrite_tac []) >>
+  `rounded =
+   smtfp_circuit_rounded mode sign maximum_exponent fraction_width
+    scale magnitude` by
+    (simp_tac pure_ss
+       [Abbr `rounded`, Abbr `quotient`, Abbr `residue`,
+        Abbr `units`, Abbr `divisor`, Abbr `exponent`] >>
+     irule smtfp_circuit_rounded_encoded >>
+     asm_rewrite_tac []) >>
+  Cases_on
+    `exponent = maximum_exponent /\
+     boundary - 1 <= quotient /\
+     ~(quotient = boundary - 1 /\ residue = 0)`
+  >- (qpat_x_assum
+        `exponent = maximum_exponent /\
+         boundary - 1 <= quotient /\
+         ~(quotient = boundary - 1 /\ residue = 0)`
+        strip_assume_tac >>
+      `0 < boundary` by simp [Abbr `boundary`] >>
+      `boundary <= quotient + 1` by
+        (qpat_x_assum `boundary - 1 <= quotient` mp_tac >>
+         qpat_x_assum `0 < boundary` mp_tac >>
+         numLib.ARITH_TAC) >>
+      `quotient = boundary - 1 ==> residue <> 0` by fs [] >>
+      simp_tac pure_ss [Abbr `units`, Abbr `fraction_width`] >>
+      irule smtfp_circuit_encode_overflow_correct >>
+      simp_tac pure_ss
+        [LET_THM, Abbr `maximum_exponent`, Abbr `exponent`,
+         Abbr `divisor`, Abbr `quotient`, Abbr `residue`,
+         Abbr `boundary`] >>
+      asm_rewrite_tac [])
+  >- (`rounded <= boundary /\
+   (rounded = boundary ==> exponent < maximum_exponent) /\
+   (residue <> 0 /\ quotient + 1 = boundary ==>
+    exponent < maximum_exponent)` by
+    (mp_tac (Q.INST
+       [`mode` |-> `mode`, `sign` |-> `sign`,
+        `q` |-> `quotient`, `residue` |-> `residue`,
+       `divisor` |-> `divisor`]
+       smtfp_circuit_round_bounds) >>
+     simp_tac pure_ss [Abbr `rounded`] >> strip_tac >>
+     `0 < boundary` by simp [Abbr `boundary`] >>
+     Cases_on `exponent < maximum_exponent`
+     >- (`smtfp_circuit_quotient maximum_exponent fraction_width
+           scale magnitude < 2 ** (fraction_width + 1)` by
+           (irule smtfp_circuit_quotient_normalized_upper >>
+            asm_simp_tac (srw_ss()) [Abbr `exponent`]) >>
+         `quotient < boundary` by
+           asm_simp_tac std_ss [Abbr `boundary`] >>
+         conj_tac
+         >- (qpat_x_assum
+               `smtfp_circuit_round mode sign quotient residue divisor <=
+                quotient + 1` mp_tac >>
+             qpat_x_assum `quotient < boundary` mp_tac >>
+             numLib.ARITH_TAC)
+         >- (conj_tac
+             >- (strip_tac >>
+                 qpat_x_assum
+                   `exponent < maximum_exponent` ACCEPT_TAC)
+             >- (strip_tac >>
+                 qpat_x_assum
+                   `exponent < maximum_exponent` ACCEPT_TAC)))
+     >- (`exponent = maximum_exponent` by
+           (qpat_x_assum `~(exponent < maximum_exponent)` mp_tac >>
+            qpat_x_assum `exponent <= maximum_exponent` mp_tac >>
+            numLib.ARITH_TAC) >>
+         Cases_on `quotient < boundary - 1`
+         >- (conj_tac
+             >- (qpat_x_assum
+                   `smtfp_circuit_round mode sign quotient residue
+                      divisor <= quotient + 1` mp_tac >>
+                 qpat_x_assum `quotient < boundary - 1` mp_tac >>
+                 qpat_x_assum `0 < boundary` mp_tac >>
+                 intLib.ARITH_TAC)
+             >- (conj_tac
+                 >- (strip_tac >>
+                     qpat_x_assum
+                       `smtfp_circuit_round mode sign quotient residue
+                          divisor <= quotient + 1` mp_tac >>
+                     qpat_x_assum
+                       `quotient < boundary - 1` mp_tac >>
+                     qpat_x_assum `0 < boundary` mp_tac >>
+                     intLib.ARITH_TAC)
+                 >- (strip_tac >>
+                     qpat_x_assum
+                       `quotient < boundary - 1` mp_tac >>
+                     qpat_x_assum
+                       `quotient + 1 = boundary` mp_tac >>
+                     qpat_x_assum `0 < boundary` mp_tac >>
+                     intLib.ARITH_TAC)))
+         >- (`boundary - 1 <= quotient` by
+               (qpat_x_assum `~(quotient < boundary - 1)` mp_tac >>
+                intLib.ARITH_TAC) >>
+             `quotient = boundary - 1` by
+               (CCONTR_TAC >>
+                qpat_x_assum
+                  `~(exponent = maximum_exponent /\
+                     boundary - 1 <= quotient /\
+                     ~(quotient = boundary - 1 /\ residue = 0))`
+                  mp_tac >>
+                asm_rewrite_tac []) >>
+             `residue = 0` by
+               (CCONTR_TAC >>
+                qpat_x_assum
+                  `~(exponent = maximum_exponent /\
+                     boundary - 1 <= quotient /\
+                     ~(quotient = boundary - 1 /\ residue = 0))`
+                  mp_tac >>
+                asm_rewrite_tac []) >>
+             `smtfp_circuit_round mode sign quotient residue divisor =
+              quotient` by
+               (qpat_x_assum `residue = 0`
+                  (fn th => rewrite_tac [th]) >>
+                rewrite_tac [smtfp_circuit_round_exact]) >>
+             fs [] >> numLib.ARITH_TAC))) >>
+  simp_tac pure_ss [Abbr `units`, Abbr `fraction_width`] >>
+  irule smtfp_circuit_encode_finite_correct >>
+  simp_tac pure_ss
+    [LET_THM, Abbr `maximum_exponent`, Abbr `exponent`,
+     Abbr `divisor`, Abbr `quotient`, Abbr `residue`,
+     Abbr `rounded`, Abbr `boundary`] >>
+  asm_rewrite_tac [])
+QED
+
+Theorem smtfp_addsub_circuit_finite_nonzero_correspondence:
+  2 <= dimindex (:'w) /\
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  (smtfp_rep y).Exponent <> UINT_MAXw /\
+  smtfp_addsub_magnitude subtract x y <> 0 ==>
+  (if subtract then smtfp_sub mode x y else smtfp_add mode x y) =
+  SND (smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp) y)
+Proof
+  strip_tac >>
+  Cases_on
+    `(smtfp_rep y).Exponent = 0w /\
+     (smtfp_rep y).Significand = 0w`
+  >- (`y = smtfp_bits (smtfp_rep y).Sign 0w 0w` by
+        (irule (iffLR smtfp_rep_11) >>
+         rewrite_tac [smtfp_rep_bits, smtfp_canon_zero_bits] >>
+         simp_tac pure_ss
+           [binary_ieeeTheory.float_component_equality] >>
+         simp []) >>
+      pop_assum SUBST_ALL_TAC >>
+      irule
+        smtfp_addsub_circuit_finite_right_zero_nonzero_correspondence >>
+      simp [] >>
+      strip_tac >>
+      fs [smtfp_addsub_magnitude_def,
+          smtfp_addsub_trace_def,
+          smtfp_circuit_sig_def,
+          smtfp_circuit_exp_def])
+  >- (`smt_float_round mode
+        (if subtract then
+           (if float_to_real (smtfp_rep x) = 0 /\
+               float_to_real (smtfp_rep y) = 0 /\
+               (smtfp_rep x).Sign <> (smtfp_rep y).Sign then
+              (smtfp_rep x).Sign = 1w
+            else mode = RTN)
+         else
+           (if float_to_real (smtfp_rep x) = 0 /\
+               float_to_real (smtfp_rep y) = 0 /\
+               (smtfp_rep x).Sign = (smtfp_rep y).Sign then
+              (smtfp_rep x).Sign = 1w
+            else mode = RTN))
+        (float_to_real (smtfp_rep x) +
+         (if subtract then -float_to_real (smtfp_rep y)
+          else float_to_real (smtfp_rep y))) =
+      smtfp_rep
+        (smtfp_circuit_encode mode x
+          (smtfp_addsub_result_sign subtract x y)
+          (smtfp_addsub_scale subtract x y)
+          (smtfp_addsub_magnitude subtract x y))` by
+        (rewrite_tac [smtfp_addsub_exact_value] >>
+         irule smtfp_circuit_encode_correct >> simp []) >>
+      `SND (smtfp_addsub_circuit subtract mode x y) =
+       smtfp_circuit_encode mode x
+         (smtfp_addsub_result_sign subtract x y)
+         (smtfp_addsub_scale subtract x y)
+         (smtfp_addsub_magnitude subtract x y)` by
+        (rw [smtfp_addsub_circuit_def,
+             smtfp_addsub_result_sign_def,
+             smtfp_addsub_scale_def,
+             smtfp_addsub_magnitude_def] >>
+         pairarg_tac >> gvs [] >>
+         fs [smtfp_addsub_magnitude_def] >>
+         Cases_on `(smtfp_rep y).Exponent = 0w` >> fs []) >>
+      Cases_on `subtract` >>
+      fs [smtfp_add_def, smtfp_sub_def,
+          smt_float_add_finite_round,
+          smt_float_sub_finite_round,
+          realTheory.real_sub])
+QED
+
+Theorem smtfp_addsub_circuit_finite_correspondence:
+  2 <= dimindex (:'w) /\
+  (smtfp_rep x).Exponent <> UINT_MAXw /\
+  (smtfp_rep y).Exponent <> UINT_MAXw ==>
+  (if subtract then smtfp_sub mode x y else smtfp_add mode x y) =
+  SND (smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp) y)
+Proof
+  strip_tac >>
+  Cases_on `smtfp_addsub_magnitude subtract x y = 0`
+  >- (irule smtfp_addsub_circuit_exact_zero_correspondence >>
+      simp [smtfp_addsub_exact_zero]) >>
+  irule smtfp_addsub_circuit_finite_nonzero_correspondence >> simp []
+QED
+
+Theorem smtfp_infinity_rep[local]:
+  (smtfp_rep x).Exponent = UINT_MAXw /\
+  (smtfp_rep x).Significand = 0w ==>
+  (x : ('t,'w) smtfp) =
+  smtfp_bits (smtfp_rep x).Sign UINT_MAXw 0w
+Proof
+  strip_tac >>
+  irule (iffLR smtfp_rep_11) >>
+  rewrite_tac [smtfp_rep_bits] >>
+  simp_tac pure_ss [canon_def, smtfp_nan_pattern_def,
+    binary_ieeeTheory.float_is_nan_def,
+    binary_ieeeTheory.float_value_def,
+    binary_ieeeTheory.float_component_equality] >>
+  simp []
+QED
+
+Theorem smtfp_nan_rep[local]:
+  (smtfp_rep x).Exponent = UINT_MAXw /\
+  (smtfp_rep x).Significand <> 0w ==>
+  (x : ('t,'w) smtfp) = smtfp_nan
+Proof
+  strip_tac >>
+  `float_is_nan (smtfp_rep x)` by
+    simp [binary_ieeeTheory.float_is_nan_def,
+          binary_ieeeTheory.float_value_def] >>
+  `smtfp_rep x = (float_canon_qnan : ('t,'w) float)` by
+    metis_tac [smtfp_rep_canonical, smtfp_canonical_def] >>
+  `x = SmtFp (smtfp_rep x)` by simp [] >>
+  asm_rewrite_tac [] >>
+  simp [smtfp_nan_def, canon_def]
+QED
+
+Theorem smtfp_left_nan_circuit[local]:
+  (if subtract then smtfp_sub mode smtfp_nan y
+   else smtfp_add mode smtfp_nan y) =
+  SND (smtfp_addsub_circuit subtract mode
+    (smtfp_nan : ('t,'w) smtfp) y)
+Proof
+  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `float_value (smtfp_rep y)` >>
+  simp [smtfp_add_def, smtfp_sub_def,
+        smt_float_add_def, smt_float_sub_def,
+        smtfp_addsub_circuit_def,
+        to_binary_rounding_def,
+        binary_ieeeTheory.float_add_def,
+        binary_ieeeTheory.float_sub_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.some_nan_properties,
+        smtfp_nan_def, canon_def, smtfp_canonical_def,
+        smtfp_nan_pattern_def, float_canon_qnan_def,
+        canon_qnan_msb]
+QED
+
+Theorem smtfp_right_nan_circuit[local]:
+  (if subtract then smtfp_sub mode x smtfp_nan
+   else smtfp_add mode x smtfp_nan) =
+  SND (smtfp_addsub_circuit subtract mode
+    (x : ('t,'w) smtfp) smtfp_nan)
+Proof
+  Cases_on `subtract` >>
+  simp [smtfp_add_nan_circuit_correspondence,
+        smtfp_sub_nan_circuit_correspondence]
+QED
+
+Theorem smtfp_left_infinity_finite_circuit[local]:
+  (smtfp_rep y).Exponent <> UINT_MAXw ==>
+  (if subtract then
+     smtfp_sub mode (smtfp_bits sign UINT_MAXw 0w) y
+   else smtfp_add mode (smtfp_bits sign UINT_MAXw 0w) y) =
+  SND (smtfp_addsub_circuit subtract mode
+    (smtfp_bits sign UINT_MAXw 0w : ('t,'w) smtfp) y)
+Proof
+  strip_tac >>
+  wordsLib.Cases_on_word_value `sign` >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `float_value (smtfp_rep y)` >>
+  fs [smtfp_add_def, smtfp_sub_def,
+      smt_float_add_def, smt_float_sub_def,
+      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
+      to_binary_rounding_def,
+      binary_ieeeTheory.float_add_def,
+      binary_ieeeTheory.float_sub_def,
+      binary_ieeeTheory.float_value_def,
+      binary_ieeeTheory.float_is_nan_def,
+      binary_ieeeTheory.some_nan_properties,
+      smtfp_bits_def, canon_def, smtfp_canonical_def,
+      smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_right_infinity_finite_circuit[local]:
+  (smtfp_rep x).Exponent <> UINT_MAXw ==>
+  (if subtract then smtfp_sub mode x (smtfp_bits sign UINT_MAXw 0w)
+   else smtfp_add mode x (smtfp_bits sign UINT_MAXw 0w)) =
+  SND (smtfp_addsub_circuit subtract mode
+    (x : ('t,'w) smtfp) (smtfp_bits sign UINT_MAXw 0w))
+Proof
+  strip_tac >>
+  wordsLib.Cases_on_word_value `sign` >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  Cases_on `float_value (smtfp_rep x)` >>
+  fs [smtfp_add_def, smtfp_sub_def,
+      smt_float_add_def, smt_float_sub_def,
+      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
+      to_binary_rounding_def,
+      binary_ieeeTheory.float_add_def,
+      binary_ieeeTheory.float_sub_def,
+      binary_ieeeTheory.float_value_def,
+      binary_ieeeTheory.float_is_nan_def,
+      binary_ieeeTheory.float_negate_def,
+      binary_ieeeTheory.float_component_equality,
+      binary_ieeeTheory.some_nan_properties,
+      smtfp_bits_def, canon_def, smtfp_canonical_def,
+      smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_both_infinity_circuit[local]:
+  (if subtract then
+     smtfp_sub mode (smtfp_bits sx UINT_MAXw 0w)
+       (smtfp_bits sy UINT_MAXw 0w)
+   else
+     smtfp_add mode (smtfp_bits sx UINT_MAXw 0w)
+       (smtfp_bits sy UINT_MAXw 0w)) =
+  SND (smtfp_addsub_circuit subtract mode
+    (smtfp_bits sx UINT_MAXw 0w : ('t,'w) smtfp)
+    (smtfp_bits sy UINT_MAXw 0w))
+Proof
+  wordsLib.Cases_on_word_value `sx` >>
+  wordsLib.Cases_on_word_value `sy` >>
+  Cases_on `subtract` >> Cases_on `mode` >>
+  simp [smtfp_add_def, smtfp_sub_def,
+      smt_float_add_def, smt_float_sub_def,
+      smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
+      to_binary_rounding_def,
+      binary_ieeeTheory.float_add_def,
+      binary_ieeeTheory.float_sub_def,
+      binary_ieeeTheory.float_value_def,
+      binary_ieeeTheory.float_is_nan_def,
+      binary_ieeeTheory.float_negate_def,
+      binary_ieeeTheory.float_component_equality,
+      binary_ieeeTheory.some_nan_properties,
+      smtfp_bits_def, smtfp_nan_def, canon_def,
+      smtfp_canonical_def, smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_addsub_circuit_correspondence:
+  2 <= dimindex (:'w) ==>
+  (if subtract then smtfp_sub mode x y else smtfp_add mode x y) =
+  SND (smtfp_addsub_circuit subtract mode (x : ('t,'w) smtfp) y)
+Proof
+  strip_tac >>
+  Cases_on `(smtfp_rep x).Exponent = UINT_MAXw`
+  >- (Cases_on `(smtfp_rep y).Exponent = UINT_MAXw`
+      >- (Cases_on `(smtfp_rep x).Significand = 0w`
+          >- (Cases_on `(smtfp_rep y).Significand = 0w`
+              >- (`x = smtfp_bits (smtfp_rep x).Sign UINT_MAXw 0w` by
+                    metis_tac [smtfp_infinity_rep] >>
+                  `y = smtfp_bits (smtfp_rep y).Sign UINT_MAXw 0w` by
+                    metis_tac [smtfp_infinity_rep] >>
+                  metis_tac [smtfp_both_infinity_circuit])
+              >- (`y = smtfp_nan` by
+                    metis_tac [smtfp_nan_rep] >>
+                  metis_tac [smtfp_right_nan_circuit]))
+          >- (`x = smtfp_nan` by
+                metis_tac [smtfp_nan_rep] >>
+              metis_tac [smtfp_left_nan_circuit]))
+      >- (Cases_on `(smtfp_rep x).Significand = 0w`
+          >- (`x = smtfp_bits (smtfp_rep x).Sign UINT_MAXw 0w` by
+                metis_tac [smtfp_infinity_rep] >>
+              metis_tac [smtfp_left_infinity_finite_circuit])
+          >- (`x = smtfp_nan` by
+                metis_tac [smtfp_nan_rep] >>
+              metis_tac [smtfp_left_nan_circuit])))
+  >- (Cases_on `(smtfp_rep y).Exponent = UINT_MAXw`
+      >- (Cases_on `(smtfp_rep y).Significand = 0w`
+          >- (`y = smtfp_bits (smtfp_rep y).Sign UINT_MAXw 0w` by
+                metis_tac [smtfp_infinity_rep] >>
+              metis_tac [smtfp_right_infinity_finite_circuit])
+          >- (`y = smtfp_nan` by
+                metis_tac [smtfp_nan_rep] >>
+              metis_tac [smtfp_right_nan_circuit]))
+      >- metis_tac [smtfp_addsub_circuit_finite_correspondence])
+QED
+
+Theorem smtfp_add_circuit_correspondence:
+  2 <= dimindex (:'w) ==>
+  smtfp_add mode x y =
+  SND (smtfp_addsub_circuit F mode (x : ('t,'w) smtfp) y)
+Proof
+  metis_tac [smtfp_addsub_circuit_correspondence]
+QED
+
+Theorem smtfp_add_circuit_RTN_infinity_bits[local]:
+  2 <= dimindex (:'w) ==>
+  SND (smtfp_addsub_circuit F RTN
+    (smtfp_bits s UINT_MAXw 0w : ('t,'w) smtfp)
+    (smtfp_bits 0w 0w 0w)) = smtfp_bits s UINT_MAXw 0w
+Proof
+  strip_tac >> wordsLib.Cases_on_word_value `s` >>
+  simp [smtfp_addsub_circuit_def, smtfp_circuit_infinity_def,
+        smtfp_rep_bits, canon_def, smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_add_circuit_RTN_nan[local]:
+  2 <= dimindex (:'w) ==>
+  SND (smtfp_addsub_circuit F RTN
+    (smtfp_nan : ('t,'w) smtfp) (smtfp_bits 0w 0w 0w)) = smtfp_nan
+Proof
+  strip_tac >>
+  simp [smtfp_addsub_circuit_def, smtfp_nan_def, canon_def,
+        smtfp_nan_pattern_def, float_canon_qnan_def,
+        canon_qnan_msb] >>
+  simp [smtfp_rep_def, smtfp_canonical_def,
+        smtfp_nan_pattern_def, canon_def,
+        float_canon_qnan_def, canon_qnan_msb]
+QED
+
+Theorem smtfp_add_circuit_RTN_zero_bits[local]:
+  2 <= dimindex (:'w) ==>
+  SND (smtfp_addsub_circuit F RTN
+    (smtfp_bits s 0w 0w : ('t,'w) smtfp)
+    (smtfp_bits 0w 0w 0w)) = smtfp_bits s 0w 0w
+Proof
+  strip_tac >> wordsLib.Cases_on_word_value `s` >>
+  simp [smtfp_addsub_circuit_def, smtfp_addsub_trace_def,
+        smtfp_addsub_zero_sign_def, smtfp_circuit_exp_def,
+        smtfp_circuit_sig_def, smtfp_rep_bits, canon_def,
+        smtfp_nan_pattern_def]
+QED
+
+Theorem smtfp_add_circuit_RTN_pzero:
+  2 <= dimindex (:'w) ==>
+  SND (smtfp_addsub_circuit F RTN (x : ('t,'w) smtfp)
+    smtfp_pzero) = x
+Proof
+  strip_tac >>
+  `((smtfp_pzero : ('t,'w) smtfp) = smtfp_bits 0w 0w 0w)` by
+    simp [smtfp_pzero_bits] >>
+  asm_rewrite_tac [] >>
+  Cases_on `(smtfp_rep x).Exponent = UINT_MAXw`
+  >- (Cases_on `(smtfp_rep x).Significand = 0w`
+      >- (`x = smtfp_bits (smtfp_rep x).Sign UINT_MAXw 0w` by
+            (irule smtfp_infinity_rep >> simp []) >>
+          metis_tac [smtfp_add_circuit_RTN_infinity_bits])
+      >- (`x = (smtfp_nan : ('t,'w) smtfp)` by
+            (irule smtfp_nan_rep >> simp []) >>
+          metis_tac [smtfp_add_circuit_RTN_nan])) >>
+  Cases_on `(smtfp_rep x).Exponent = 0w /\
+            (smtfp_rep x).Significand = 0w`
+  >- (`x = smtfp_bits (smtfp_rep x).Sign 0w 0w` by
+        (irule (iffLR smtfp_rep_11) >>
+         rewrite_tac [smtfp_rep_bits, smtfp_canon_zero_bits] >>
+         simp_tac pure_ss
+           [binary_ieeeTheory.float_component_equality] >>
+         simp []) >>
+      metis_tac [smtfp_add_circuit_RTN_zero_bits]) >>
+  irule smtfp_addsub_circuit_finite_right_zero_nonzero >>
+  metis_tac []
+QED
+
+Theorem smtfp_add_circuit_RTN_right_zero_bits:
+  2 <= dimindex (:'w) ==>
+  SND (smtfp_addsub_circuit F RTN (x : ('t,'w) smtfp)
+    (smtfp_bits 0w 0w 0w)) = x
+Proof
+  `((smtfp_bits 0w 0w 0w : ('t,'w) smtfp) = smtfp_pzero)` by
+    simp [smtfp_bits_pzero] >>
+  metis_tac [smtfp_add_circuit_RTN_pzero]
+QED
+
+Theorem smtfp_infinity_same_sign_tiny[local]:
+  float_value (smtfp_rep (x : ('t,'w) smtfp)) = Infinity /\
+  float_value (smtfp_rep y) = Infinity /\
+  (smtfp_rep x).Sign = (smtfp_rep y).Sign ==>
+  x = y
+Proof
+  strip_tac >> irule (iffLR smtfp_rep_11) >>
+  Cases_on `smtfp_rep x` >> Cases_on `smtfp_rep y` >>
+  Cases_on `c0 = -1w` >> Cases_on `c1 = 0w` >>
+  Cases_on `c0' = -1w` >> Cases_on `c1' = 0w` >>
+  fs [binary_ieeeTheory.float_value_def,
+      binary_ieeeTheory.float_component_equality]
+QED
+
+Theorem smtfp_add_RNE_finite_comm[local]:
+  float_value (smtfp_rep (x : ('t,'w) smtfp)) = Float r /\
+  float_value (smtfp_rep y) = Float s ==>
+  smtfp_add RNE x y = smtfp_add RNE y x
+Proof
+  strip_tac >>
+  mp_tac (Q.SPECL
+    [`roundTiesToEven`, `smtfp_rep x`, `smtfp_rep y`, `r`, `s`]
+    (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+      binary_ieeeTheory.float_add_finite)) >>
+  impl_tac >- asm_rewrite_tac [] >>
+  strip_tac >>
+  mp_tac (Q.SPECL
+    [`roundTiesToEven`, `smtfp_rep y`, `smtfp_rep x`, `s`, `r`]
+    (INST_TYPE [alpha |-> ``:'t``, beta |-> ``:'w``]
+      binary_ieeeTheory.float_add_finite)) >>
+  impl_tac >- asm_rewrite_tac [] >> strip_tac >>
+  Cases_on `(smtfp_rep x).Sign = (smtfp_rep y).Sign` >>
+  fs [smtfp_add_def, smt_float_add_def, to_binary_rounding_def,
+      canon_def, realTheory.REAL_ADD_COMM,
+      AC boolTheory.CONJ_ASSOC boolTheory.CONJ_COMM]
+QED
+
+Theorem smtfp_add_RNE_comm_tiny[local]:
+  smtfp_add RNE (x : (1,2) smtfp) y = smtfp_add RNE y x
+Proof
+  Cases_on `float_value (smtfp_rep x)` >>
+  Cases_on `float_value (smtfp_rep y)` >>
+  FIRST_PROVE
+    [metis_tac [smtfp_add_RNE_finite_comm],
+     (Cases_on `(smtfp_rep x).Exponent = -1w` >>
+      Cases_on `(smtfp_rep x).Significand = 0w` >>
+      Cases_on `(smtfp_rep y).Exponent = -1w` >>
+      Cases_on `(smtfp_rep y).Significand = 0w` >>
+      Cases_on `(smtfp_rep x).Sign = (smtfp_rep y).Sign` >>
+      fs [smtfp_add_circuit_correspondence,
+          smtfp_addsub_circuit_def,
+          smtfp_circuit_infinity_def,
+          binary_ieeeTheory.float_value_def])]
+QED
+
+Theorem smtfp_add_circuit_RNE_comm_tiny:
+  SND (smtfp_addsub_circuit F RNE (x : (1,2) smtfp) y) =
+  SND (smtfp_addsub_circuit F RNE y x)
+Proof
+  simp [GSYM smtfp_add_circuit_correspondence,
+        smtfp_add_RNE_comm_tiny]
+QED
+
+Theorem smtfp_sub_circuit_correspondence:
+  2 <= dimindex (:'w) ==>
+  smtfp_sub mode x y =
+  SND (smtfp_addsub_circuit T mode (x : ('t,'w) smtfp) y)
+Proof
+  metis_tac [smtfp_addsub_circuit_correspondence]
+QED
+
 
 (* These four checks exercise each Tier-2 rewrite group on hand-built
    Float16 encodings.  Their proofs finish entirely in word/Boolean

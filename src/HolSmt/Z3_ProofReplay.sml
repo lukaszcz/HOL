@@ -1550,31 +1550,45 @@ local
       List.filter eligible (fp_bit_decompositions state)
     end
 
+  fun fp_k_index var =
+    let
+      val name = Lib.fst (Term.dest_var var)
+      val _ = String.isPrefix "k!" name orelse raise Fail "not k!"
+      val digits = String.extract (name, 2, NONE)
+      val n = String.size digits
+      val _ = n > 0 andalso String.sub (digits, n - 1) = #"0" orelse
+        raise Fail "not a trailing-zero k! name"
+    in
+      Option.valOf (Int.fromString (String.substring (digits, 0, n - 1)))
+    end
+
+  fun fp_inferred_packed_vars (state : state) =
+    List.filter
+      (fn var => wordsSyntax.is_word_type (Term.type_of var) andalso
+        Lib.can fp_k_index var)
+      (HOLset.listItems (#var_set state))
+
+  fun fp_packed_vars (state : state) =
+    case List.map #bv_var (#bit_decompositions state) of
+      [] => fp_inferred_packed_vars state
+    | recorded => recorded
+
   (* fpa2bv names packed words k!00, k!10, ... and then allocates one
      Boolean k!N0 per bit, in the LSB-to-MSB argument order of Z3's internal
-     [mkbv].  The parser reverses [mkbv] for HOL's [v2w].  The parser
-     has already checked all declarations and decomposition widths; turn that
-     stable naming convention into ordinary removable definitions. *)
+     [mkbv].  A direct atom rewrite need not include a standalone packed-word
+     decomposition, so infer its word skolem only when no parser record is
+     available.  Exact type, name, width, and allocation checks below keep
+     this fallback confined to that proof shape. *)
   fun fp_per_bit_definitions (state : state) =
   let
-    fun k_index var =
-      let
-        val name = Lib.fst (Term.dest_var var)
-        val _ = String.isPrefix "k!" name orelse raise Fail "not k!"
-        val digits = String.extract (name, 2, NONE)
-        val n = String.size digits
-        val _ = n > 0 andalso String.sub (digits, n - 1) = #"0" orelse
-          raise Fail "not a trailing-zero k! name"
-      in
-        Option.valOf (Int.fromString (String.substring (digits, 0, n - 1)))
-      end
     fun compare_index (left, right) =
-      Int.compare (k_index left, k_index right)
+      Int.compare (fp_k_index left, fp_k_index right)
     val bv_vars = Listsort.sort compare_index
-      (List.map #bv_var (#bit_decompositions state))
+      (fp_packed_vars state)
     val bool_vars = Listsort.sort compare_index
       (List.filter
-        (fn var => Term.type_of var = Type.bool andalso Lib.can k_index var)
+        (fn var => Term.type_of var = Type.bool andalso
+          Lib.can fp_k_index var)
         (HOLset.listItems (#var_set state)))
     fun allocate ([], remaining, definitions) =
           if List.null remaining then List.rev definitions
@@ -1700,15 +1714,16 @@ local
     handle Feedback.HOL_ERR _ =>
 
     (* Relate Z3's per-bit Boolean skolems to the packed BV skolem recorded
-       by rung 3.  The resulting theorem retains only checked definitional
-       hypotheses, which final replay eliminates as usual. *)
+       by rung 3 or inferred by the exact-allocation fallback above.  The
+       resulting theorem retains only checked definitional hypotheses, which
+       final replay eliminates as usual. *)
     (let
        val free_vars = HOLset.addList
          (Term.empty_tmset, Term.free_vars t)
-       val packed_vars = List.map #bv_var (#bit_decompositions state)
+       val packed_vars = fp_packed_vars state
        val _ = List.exists
            (fn var => HOLset.member (free_vars, var)) packed_vars orelse
-         raise ERR "z3_rewrite" "no parser-recorded FP packed word"
+         raise ERR "z3_rewrite" "no FP packed word in rewrite"
        val definitions = fp_per_bit_definitions state @
          HOLset.listItems (#definition_hyps state)
        val thm = profile "rewrite(06.6)(fp-packed-bits)"
