@@ -949,6 +949,12 @@ fun num_instance_with_mult_mono mult_mono =
       linarithData.linarith_instance
   end
 
+(* Iterated addition builds the multiple by doubling, so a multiplier
+   with a set bit above the least significant one -- 12 is 1100, 11 is
+   1011 -- exercises more than one arm of the recursion.  The scaled row
+   here cancels only against the exact multiple, so a dropped bit is a
+   failed replay rather than a differently shaped route to the same
+   falsity. *)
 val _ =
   check
     ("replay golden: Multiplied falls back to iterated addition",
@@ -957,9 +963,21 @@ val _ =
          val _ =
            linarithData.register_instance
              (num_instance_with_mult_mono [])
+         fun exact n =
+           let
+             val literal = numSyntax.mk_numeral (Arbnum.fromInt n)
+             fun scale tm = numSyntax.mk_mult (literal, tm)
+           in
+             replay_is_false
+               [num_leq (num_plus (scale num_x) num_one) (scale num_y),
+                num_leq num_y num_x]
+               (Added (Asm 0, Multiplied (Arbint.fromInt n, Asm 1)))
+           end
+           handle Feedback.HOL_ERR _ => false
          val result =
            replay_is_false [num_less num_zero num_zero]
-             (Multiplied (two, Asm 0))
+             (Multiplied (two, Asm 0)) andalso
+           List.all exact [2, 11, 12]
          val _ = linarithData.register_instance num_instance
        in
          result

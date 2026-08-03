@@ -256,17 +256,30 @@ and add_failure theorem1 theorem2 =
     raise ERR "mkthm" "Linear arithmetic: failed to add thms"
   end
 
+(* The multiplier is a Fourier--Motzkin coefficient -- a product of lcms
+   -- so it is unbounded, and n - 1 additions is too many.  Double
+   instead, adding one copy back on a set bit: O(log n) additions.  The
+   intermediate sums come out balanced rather than right-nested, but
+   normalize_sides is what the caller reads, and that is unchanged. *)
 fun mult_by_add n theorem =
   if Arbint.< (n, Arbint.one) then
     raise ERR "mult_by_add" "non-positive inequality multiplier"
   else
     let
-      fun loop i result =
-        if i = Arbint.one then result
-        else loop (Arbint.- (i, Arbint.one))
-               (add_thms theorem result)
+      (* i copies of theorem summed, for i >= 1. *)
+      fun multiple i =
+        if i = Arbint.one then theorem
+        else
+          let
+            val (half, bit) = Arbint.divmod (i, Arbint.two)
+            val halved = multiple half
+            val doubled = add_thms halved halved
+          in
+            if bit = Arbint.zero then doubled
+            else add_thms theorem doubled
+          end
     in
-      loop n theorem
+      multiple n
     end
 
 fun additive_scale instance n variable =
