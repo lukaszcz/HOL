@@ -306,20 +306,53 @@ fun integ (Decomp {lhs, lhs_const, rel, rhs, rhs_const,
          negated = negated})
   end
 
-fun coeff poly atom =
-  case List.find (fn (tm, _) => Term.aconv tm atom) poly of
-      NONE => zero
-    | SOME (_, c) => c
+(* Termtab is keyed on Term.compare, whose EQUAL is exactly Term.aconv
+   (both ignore a bound variable's name and compare its type), so the
+   index classifies atoms the same way the linear search it replaces
+   did. *)
+type atom_index = {width : int, column : int Termtab.table}
 
-fun mklineq atoms (item, index) =
+fun atom_index atoms =
+  let
+    fun add (atom, (i, columns)) =
+      (i + 1, Termtab.update (atom, i) columns)
+    val (width, columns) =
+      List.foldl add (0, Termtab.empty) atoms
+  in
+    {width = width, column = columns}
+  end
+
+(* Scattering the polynomial into its columns costs
+   O(A + |poly| * log A), against the O(A * |poly|) of one linear
+   search of the polynomial per column.  Atoms outside the index have
+   no column and are dropped, as they were by mapping over the atom
+   list.  The entries are placed back to front so that the first
+   occurrence of a repeated atom wins, as List.find did. *)
+fun scatter ({width, column} : atom_index) poly =
+  let
+    val row = Array.array (width, zero)
+    fun place (tm, c) =
+      case Termtab.lookup column tm of
+          NONE => ()
+        | SOME i => Array.update (row, i, c)
+  in
+    List.app place (List.rev poly); row
+  end
+
+fun mklineq index (item, asm_index) =
   let
     val (m, {lhs, lhs_const, rel, rhs, rhs_const,
              discrete, negated}) = integ item
-    val lhs_coeffs = List.map (coeff lhs) atoms
-    val rhs_coeffs = List.map (coeff rhs) atoms
-    val diff = ListPair.mapEq Arbint.- (rhs_coeffs, lhs_coeffs)
+    val lhs_coeffs = scatter index lhs
+    val rhs_coeffs = scatter index rhs
+    val diff =
+      List.tabulate
+        (#width index,
+         fn i =>
+            Arbint.- (Array.sub (rhs_coeffs, i),
+                      Array.sub (lhs_coeffs, i)))
     val c = Arbint.- (lhs_const, rhs_const)
-    val just = Asm index
+    val just = Asm asm_index
     fun lineq (constant, ty, cs, why) =
       Lineq (constant, ty, cs, mk_multiplied m why)
     fun negate cs = List.map Arbint.~ cs
@@ -425,12 +458,15 @@ fun split_items split_neq items =
    split system must come from this one function. *)
 fun atoms_of_decomps decomps =
   let
-    fun add ((tm, _), seen) =
-      if Lib.op_mem Term.aconv tm seen then seen else tm :: seen
-    fun add_decomp (Decomp {lhs, rhs, ...}, seen) =
-      List.foldl add (List.foldl add seen lhs) rhs
+    fun add ((tm, _), acc as (seen, atoms)) =
+      if Termtab.defined seen tm then acc
+      else (Termtab.update (tm, ()) seen, tm :: atoms)
+    fun add_decomp (Decomp {lhs, rhs, ...}, acc) =
+      List.foldl add (List.foldl add acc lhs) rhs
+    val (_, atoms) =
+      List.foldl add_decomp (Termtab.empty, []) decomps
   in
-    List.rev (List.foldl add_decomp [] decomps)
+    List.rev atoms
   end
 
 fun refutes is_nonnegative systems =
@@ -439,12 +475,13 @@ fun refutes is_nonnegative systems =
       | refute (items :: rest) justs =
           let
             val atoms = atoms_of_decomps (List.map #1 items)
+            val index = atom_index atoms
             val nonnegative =
               List.mapPartial
-                (mknonneg is_nonnegative (List.length atoms))
+                (mknonneg is_nonnegative (#width index))
                 (Lib.enumerate 0 atoms)
             val ineqs =
-              List.map (mklineq atoms) items @ nonnegative
+              List.map (mklineq index) items @ nonnegative
           in
             case elim (ineqs, []) of
                 Success just => refute rest (just :: justs)

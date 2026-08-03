@@ -644,10 +644,35 @@ val _ =
   check
     ("integ and mklineq use arbitrary-precision denominator scaling",
      fn () =>
-       case mklineq [x] (scaled, 7) of
+       case mklineq (atom_index [x]) (scaled, 7) of
            Lineq (c, Le, [a], Multiplied (m, Asm 7)) =>
              c = zero andalso a = negone andalso m = huge
          | _ => false)
+
+(* Rows are built by scattering each side into the columns of the
+   shared index, so a coefficient's column, and not just its value,
+   is part of what certificates depend on. *)
+val y = Term.mk_var ("linarith_unit_y", numSyntax.num)
+val z = Term.mk_var ("linarith_unit_z", numSyntax.num)
+
+val scattered =
+  Decomp {
+    lhs = [(z, Arbrat.fromInt 5), (x, Arbrat.one)],
+    lhs_const = Arbrat.zero, rel = REL_LE,
+    rhs = [(z, Arbrat.fromInt 2)], rhs_const = Arbrat.zero,
+    discrete = true, negated = false
+  }
+
+val _ =
+  check
+    ("mklineq scatters each side into its atom's column",
+     fn () =>
+       Lib.list_eq Term.aconv (atoms_of_decomps [scattered]) [z, x] andalso
+       (case mklineq (atom_index [x, y, z]) (scattered, 3) of
+            Lineq (c, Le, [a, b, d], Asm 3) =>
+              c = zero andalso a = negone andalso b = zero andalso
+              d = Arbint.~ three
+          | _ => false))
 
 fun const_decomp lhs rel discrete =
   Decomp {

@@ -37,7 +37,14 @@ sig
   type linarith_config = linarithData.linarith_config
 
   val elim : lineq list * history -> result
-  val mklineq : Term.term list -> decomp * int -> lineq
+
+  (* The column each atom's coefficient occupies.  Built once per split
+     system from that system's atom ordering; rows scatter into it
+     rather than searching their polynomial once per column. *)
+  type atom_index
+  val atom_index : Term.term list -> atom_index
+
+  val mklineq : atom_index -> decomp * int -> lineq
 
   (* The atom ordering that coefficient rows follow. *)
   val atoms_of_decomps : decomp list -> Term.term list
