@@ -25,6 +25,29 @@ fun mk_binary operator left right =
 
 fun instance_of tm = linarithData.instance_for (Term.type_of tm)
 
+(* An injection may be stripped only from an argument built out of the
+   operators it distributes over -- sums, products and literals.  Every
+   other operator of the source carrier keeps the injection, and the
+   injected term stays an atom: num subtraction is the standard reason,
+   since &(m - n) is not &m - &n. *)
+fun supported source tm =
+  let
+    val dest = #dest source
+  in
+    case Lib.total (#dest_plus dest) tm of
+        SOME (left, right) =>
+          supported source left andalso supported source right
+      | NONE =>
+    case Lib.total (#dest_mult dest) tm of
+        SOME (left, right) =>
+          supported source left andalso supported source right
+      | NONE =>
+        Option.isSome (Lib.total (#dest_lit dest) tm) orelse
+        not
+          (List.exists (fn recognises => recognises tm)
+             (linarithData.compound_ops source))
+  end
+
 fun injection_arg tm =
   case Lib.total unary_parts tm of
       NONE => NONE
@@ -32,85 +55,36 @@ fun injection_arg tm =
         (case linarithData.injection_by_const operator of
              NONE => NONE
            | SOME injection =>
-               let
-                 fun supported source tm =
-                   let
-                     val dest = #dest source
-                   in
-                     case Lib.total (#dest_plus dest) tm of
-                         SOME (left, right) =>
-                           supported source left andalso
-                           supported source right
-                       | NONE =>
-                           (case Lib.total (#dest_mult dest) tm of
-                                SOME (left, right) =>
-                                  supported source left andalso
-                                  supported source right
-                              | NONE =>
-                                  Option.isSome
-                                    (Lib.total (#dest_lit dest) tm) orelse
-                                  not
-                                    (Option.isSome
-                                       (case #dest_minus dest of
-                                            NONE => NONE
-                                          | SOME f => Lib.total f tm) orelse
-                                     Option.isSome
-                                       (case #dest_neg dest of
-                                            NONE => NONE
-                                          | SOME f => Lib.total f tm) orelse
-                                     Option.isSome
-                                       (case #dest_div dest of
-                                            NONE => NONE
-                                          | SOME f => Lib.total f tm) orelse
-                                     Option.isSome
-                                       (case #dest_suc dest of
-                                            NONE => NONE
-                                          | SOME f => Lib.total f tm)))
-                   end
-               in
-                 if same_type (Term.type_of arg) (#from_ty injection) andalso
-                    same_type (Term.type_of tm) (#to_ty injection)
-                 then
-                   case linarithData.instance_for (#from_ty injection) of
-                       SOME source =>
-                         if supported source arg then SOME arg else NONE
-                     | NONE => SOME arg
-                 else NONE
-               end)
+               if same_type (Term.type_of arg) (#from_ty injection) andalso
+                  same_type (Term.type_of tm) (#to_ty injection)
+               then
+                 case linarithData.instance_for (#from_ty injection) of
+                     SOME source =>
+                       if supported source arg then SOME arg else NONE
+                   | NONE => SOME arg
+               else NONE)
 
-fun dest_mult tm =
+(* Every destructor lookup is "find the term's carrier, then try that
+   instance's operator"; the optional ones answer NONE for a carrier
+   that has no such operator at all. *)
+fun dest_mandatory select tm =
   case instance_of tm of
       NONE => NONE
-    | SOME instance => Lib.total (#dest_mult (#dest instance)) tm
+    | SOME instance => Lib.total (select (#dest instance)) tm
 
-fun dest_div tm =
+fun dest_optional select tm =
   case instance_of tm of
       NONE => NONE
     | SOME instance =>
-        (case #dest_div (#dest instance) of
+        (case select (#dest instance) of
              NONE => NONE
            | SOME dest => Lib.total dest tm)
 
-fun dest_neg tm =
-  case instance_of tm of
-      NONE => NONE
-    | SOME instance =>
-        (case #dest_neg (#dest instance) of
-             NONE => NONE
-           | SOME dest => Lib.total dest tm)
-
-fun dest_lit tm =
-  case instance_of tm of
-      NONE => NONE
-    | SOME instance => Lib.total (#dest_lit (#dest instance)) tm
-
-fun dest_suc tm =
-  case instance_of tm of
-      NONE => NONE
-    | SOME instance =>
-        (case #dest_suc (#dest instance) of
-             NONE => NONE
-           | SOME dest => Lib.total dest tm)
+fun dest_mult tm = dest_mandatory #dest_mult tm
+fun dest_lit tm = dest_mandatory #dest_lit tm
+fun dest_div tm = dest_optional #dest_div tm
+fun dest_neg tm = dest_optional #dest_neg tm
+fun dest_suc tm = dest_optional #dest_suc tm
 
 fun try_product operator left right =
   Lib.total (fn () => mk_binary operator left right) ()

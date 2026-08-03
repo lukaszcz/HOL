@@ -36,6 +36,23 @@ type linarith_instance = {
   atom_facts : term -> thm list
 }
 
+(* The dest record is matched whole, without a ... wildcard, so that a
+   new destructor is a compile error here instead of a silently wrong
+   complement at the sites that reason about it. *)
+fun compound_ops
+      ({dest = {dest_plus = _, dest_minus, dest_neg, dest_mult = _,
+                dest_div, dest_suc, dest_lit = _, mk_lit = _,
+                dest_less = _, dest_leq = _}, ...} : linarith_instance) =
+  let
+    fun recognises f tm = Option.isSome (Lib.total f tm)
+  in
+    List.mapPartial Lib.I
+      [Option.map recognises dest_minus,
+       Option.map recognises dest_neg,
+       Option.map recognises dest_div,
+       Option.map recognises dest_suc]
+  end
+
 type linarith_injection = {
   from_ty : hol_type,
   to_ty : hol_type,

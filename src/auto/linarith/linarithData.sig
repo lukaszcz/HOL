@@ -86,6 +86,13 @@ sig
     atom_facts : term -> thm list
   }
 
+  (* Every optional operator of the carrier, as recognisers.  Defined
+     here, beside the record, so that adding a destructor to
+     linarith_instance is a compile error at one site rather than a
+     silent change of meaning at the places that reason about the
+     complement. *)
+  val compound_ops : linarith_instance -> (term -> bool) list
+
   type linarith_injection = {
     from_ty : hol_type,
     to_ty : hol_type,
