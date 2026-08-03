@@ -5,9 +5,6 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
-val load_hint =
-  " (load intLinarith / realLinarith / ratLinarith?)"
-
 fun same_type left right = Type.compare (left, right) = EQUAL
 
 fun relation_carrier tm =
@@ -36,16 +33,32 @@ fun relation_carrier tm =
              | _ => NONE)
   end
 
-fun check_registered function tm =
-  case relation_carrier tm of
-      NONE => ()
+fun no_instance_for ty =
+  case linarithData.instance_for ty of
+      SOME _ => NONE
+    | NONE => SOME ty
+
+fun registered_carriers () =
+  String.concatWith ", "
+    (map (Parse.type_to_string o #ty) (linarithData.all_instances ()))
+
+(* The carrier is a guess about where the arithmetic is, never a
+   precondition on the goal -- a contradictory context refutes a
+   conclusion of any type -- so it explains a failure rather than
+   preventing an attempt.  The roster comes from the registry, so a
+   carrier registered later cannot leave it stale. *)
+fun unregistered_hint conclusion =
+  case Option.mapPartial no_instance_for (relation_carrier conclusion) of
+      NONE => ""
     | SOME ty =>
-        (case linarithData.instance_for ty of
-             SOME _ => ()
-           | NONE =>
-               raise ERR function
-                 ("no linarith instance for " ^
-                  Parse.type_to_string ty ^ load_hint))
+        " (no linarith instance for " ^ Parse.type_to_string ty ^
+        "; registered: " ^ registered_carriers () ^ ")"
+
+(* The hint travels with the search rather than being recomputed at the
+   failure site: CCONTR_TAC has replaced the conclusion by F long before
+   the search gives up. *)
+fun no_proof function hint =
+  raise ERR function ("linear arithmetic found no proof" ^ hint)
 
 val classical_markers =
   [(clasetLib.destSIntro, "SIntro"),
@@ -127,13 +140,13 @@ fun refutation config (assumptions, conclusion) =
 (* The diagnostics report the goal as preprocessing left it, so they stay
    on this side of the interface; the failure is reported under the
    caller's name because the public entries report their own. *)
-fun core function config (goal as (assumptions, conclusion)) =
+fun core function hint config (goal as (assumptions, conclusion)) =
   case refutation config goal of
       SOME tactic => tactic goal
     | NONE =>
         (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
          linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
-         raise ERR function "linear arithmetic found no proof")
+         no_proof function hint)
 
 fun SIMPLE_LINARITH_TAC arguments =
   let
@@ -145,8 +158,8 @@ fun SIMPLE_LINARITH_TAC arguments =
     Tactical.THEN
       (clasetLib.INSERT_FACTS_TAC facts,
        fn goal as (_, conclusion) =>
-         (check_registered function conclusion;
-          core function linarithData.default_config goal))
+         core function (unregistered_hint conclusion)
+           linarithData.default_config goal)
   end
 
 fun has_registered_subterm tm =
@@ -427,42 +440,46 @@ fun disj_elim_tac config (assumptions, conclusion) =
    augmentation bound, now counted along a branch of the search rather
    than along a preprocessing chain.  Disjunction elimination needs no
    bound: every step of it consumes a disjunction, and only an operator
-   split puts one back. *)
+   split puts one back.
+
+   The failure hint is an argument of the search rather than of this
+   function, so a caller can read it off the goal without rebuilding
+   the rewriting the search sets up once. *)
 fun split_on_demand function config split_tac =
   let
     val limit = #split_limit config
     val carrier_rule = Rewrite.REWRITE_RULE (carrier_nnf_rewrites ())
     val flatten = nnf_flatten carrier_rule
-    fun node splits goal =
-      Tactical.THEN (flatten, decide false splits) goal
-    and decide augmented splits goal =
+    fun node hint splits goal =
+      Tactical.THEN (flatten, decide hint false splits) goal
+    and decide hint augmented splits goal =
       case refutation config goal of
           SOME tactic => tactic goal
-        | NONE => branch augmented splits goal
-    and branch augmented splits goal =
+        | NONE => branch hint augmented splits goal
+    and branch hint augmented splits goal =
       case Lib.total (disj_elim_tac config) goal of
-          SOME split => expand splits split
+          SOME split => expand hint splits split
         | NONE =>
             (case Lib.total split_tac goal of
                  SOME split =>
                    if splits >= limit then limit_exceeded function limit
-                   else expand (splits + 1) split
-               | NONE => augment augmented splits goal)
-    and augment augmented splits goal =
-      if augmented then core function config goal
+                   else expand hint (splits + 1) split
+               | NONE => augment hint augmented splits goal)
+    and augment hint augmented splits goal =
+      if augmented then core function hint config goal
       else
         Tactical.THEN
           (augment_atom_facts function limit,
-           Tactical.THEN (flatten, decide true splits)) goal
-    and expand splits (goals, validation) =
+           Tactical.THEN (flatten, decide hint true splits)) goal
+    and expand hint splits (goals, validation) =
       let
         val (result, revalidation) =
-          Tactical.ALLGOALS (node splits) goals
+          Tactical.ALLGOALS (node hint splits) goals
       in
         (result, validation o revalidation)
       end
   in
-    node 0
+    fn hint => node hint 0
   end
 
 type linarith_config = linarithData.linarith_config
@@ -482,10 +499,11 @@ fun CFG_LINARITH_TAC config arguments =
     Tactical.THEN
       (clasetLib.INSERT_FACTS_TAC facts,
        fn goal as (_, conclusion) =>
-         (check_registered function conclusion;
-          Tactical.THEN
-            (Tactic.CCONTR_TAC,
-             Tactical.THEN (filter_relevant, search)) goal))
+         Tactical.THEN
+           (Tactic.CCONTR_TAC,
+            Tactical.THEN
+              (filter_relevant, search (unregistered_hint conclusion)))
+           goal)
   end
 
 val LINARITH_TAC = CFG_LINARITH_TAC default_config
@@ -517,8 +535,12 @@ fun LINARITH_PROVE tm =
   let
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
-    val _ = check_registered "LINARITH_PROVE" conclusion
-    val theorem = forward_prove premises conclusion
+    (* Reported here rather than left to fwd_prove, so that a public
+       entry names itself and carries the carrier hint. *)
+    val theorem =
+      forward_prove premises conclusion
+      handle HOL_ERR _ =>
+        no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
     val implication = Lib.itlist Thm.DISCH premises theorem
     val result = GENL variables implication
   in
@@ -531,22 +553,12 @@ fun LINARITH_PROVE tm =
 fun attempt prove tm = SOME (prove tm) handle HOL_ERR _ => NONE
 
 fun LINARITH_CONV tm =
-  let
-    val _ = check_registered "LINARITH_CONV" tm
-  in
-    case attempt LINARITH_PROVE tm of
-        SOME theorem => EQT_INTRO theorem
-      | NONE =>
-          let
-            val negated = boolSyntax.mk_neg tm
-          in
-            case attempt LINARITH_PROVE negated of
-                SOME theorem => EQF_INTRO theorem
-              | NONE =>
-                  raise ERR "LINARITH_CONV"
-                    "linear arithmetic could neither prove nor disprove term"
-          end
-  end
+  case attempt LINARITH_PROVE tm of
+      SOME theorem => EQT_INTRO theorem
+    | NONE =>
+        (case attempt LINARITH_PROVE (boolSyntax.mk_neg tm) of
+             SOME theorem => EQF_INTRO theorem
+           | NONE => no_proof "LINARITH_CONV" (unregistered_hint tm))
 
 (* forward_prove atomises its premise terms itself, so the context
    theorems only have to be discharged against the result. *)

@@ -1464,6 +1464,21 @@ val _ =
          Option.isSome (linarithData.instance_for numSyntax.num)
        end)
 
+(* The carrier read off a conclusion is a guess about where to look for
+   arithmetic, not a precondition on the goal: a contradictory context
+   refutes a conclusion of any type. *)
+val list_ty = listSyntax.mk_list_type Type.alpha
+val list_l1 = Term.mk_var ("linarith_l1", list_ty)
+val list_l2 = Term.mk_var ("linarith_l2", list_ty)
+
+val _ =
+  check
+    ("a contradictory context closes a goal at an unregistered carrier",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([num_less public_x num_zero],
+          boolSyntax.mk_eq (list_l1, list_l2)))
+
 val unregistered_ty =
   Type.mk_type ("fun", [numSyntax.num, numSyntax.num])
 val unregistered_left =
@@ -1472,9 +1487,14 @@ val unregistered_right =
   Term.mk_var ("linarith_unregistered_right", unregistered_ty)
 val unregistered_goal =
   boolSyntax.mk_eq (unregistered_left, unregistered_right)
+(* Built from the registry, like the hint itself: a roster spelled out
+   here would go stale the moment a carrier is added. *)
 val unregistered_message =
-  "no linarith instance for " ^ Parse.type_to_string unregistered_ty ^
-  " (load intLinarith / realLinarith / ratLinarith?)"
+  "linear arithmetic found no proof (no linarith instance for " ^
+  Parse.type_to_string unregistered_ty ^ "; registered: " ^
+  String.concatWith ", "
+    (map (Parse.type_to_string o #ty) (linarithData.all_instances ())) ^
+  ")"
 
 fun has_unregistered_message operation =
   ((operation (); false)
@@ -1483,7 +1503,7 @@ fun has_unregistered_message operation =
 
 val _ =
   check
-    ("all public entries report the stable unregistered-carrier message",
+    ("all public entries report the same unregistered-carrier failure",
      fn () =>
        List.all has_unregistered_message
          [fn () =>
