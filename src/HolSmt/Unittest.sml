@@ -9680,6 +9680,136 @@ in
        "Float32 add circuit changed its D1 diagnostic"))
 end
 
+fun smtfp_mul_circuit_rung_success () =
+let
+  val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
+  val goal = ``smtfp_mul RNE (x : (10,5) smtfp) ^one = x``
+  val _ = Profile.reset_all ()
+  val thm = SmtFpProve.fp_prove goal
+in
+  assert_no_hyps ("FP rung 5 Float16 mul", thm);
+  assert_concl_alpha ("FP rung 5 Float16 mul", thm, goal);
+  Library.check_oracle_tags "FP rung 5 Float16 mul" thm;
+  assert (profile_call_count "fp(rung:5/symbolic-arithmetic)" = 1,
+    "Float16 mul identity did not use rung 5");
+  assert (profile_call_count "fp(rung:6/unsupported)" = 0,
+    "Float16 mul identity fell through to rung 6")
+end
+
+fun smtfp_mul_circuit_mutation_rejected () =
+let
+  val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
+  val mutated =
+    ``smtfp_mul RNE (x : (10,5) smtfp) ^one = smtfp_neg x``
+in
+  (ignore (SmtFpProve.symbolic_arithmetic_prove mutated);
+   die "FAIL: rung 5 proved a mutated mul-circuit equation")
+  handle Feedback.HOL_ERR holerr =>
+    assert (not (SmtResource.is_resource_gate holerr),
+      "mutated Float16 mul equation resource-gated instead of failing")
+end
+
+fun smtfp_mul_circuit_independent_finite () =
+let
+  val forbidden =
+    [("smtfloat", "smt_float_mul"), ("smtfloat", "smt_round"),
+     ("binary_ieee", "float_mul"), ("binary_ieee", "round"),
+     ("binary_ieee", "closest"), ("binary_ieee", "closest_such")]
+  fun is_forbidden tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in List.exists (fn item => item = (Thy, Name)) forbidden end
+  val definitions =
+    let open smtfloatTheory in
+      [smtfp_mul_trace_def, smtfp_mul_sign_def,
+       smtfp_mul_product_def, smtfp_mul_exponent_sum_def,
+       smtfp_mul_wanted_exponent_def, smtfp_mul_encoded_exponent_def,
+       smtfp_mul_shift_right_def, smtfp_mul_divisor_def,
+       smtfp_mul_quotient_def, smtfp_mul_remainder_def,
+       smtfp_mul_encode_def,
+       smtfp_mul_circuit_def]
+    end
+  val _ = assert (not (List.exists
+      (fn thm => Lib.can (HolKernel.find_term is_forbidden)
+        (Thm.concl thm)) definitions),
+    "mul circuit depends on a forbidden semantic operation")
+  val finite =
+    ``SND (smtfp_mul_circuit RNE
+        (smtfp_bits 0w (3w : word3) (8w : word4))
+        (smtfp_bits 0w 4w 0w)) =
+      (smtfp_bits 0w 4w 8w : (4,3) smtfp)``
+  val thm = SmtFpProve.ground_eval_prove finite
+in
+  assert_no_hyps ("finite RNE mul circuit", thm);
+  assert_concl_alpha ("finite RNE mul circuit", thm, finite);
+  Library.check_oracle_tags "finite RNE mul circuit" thm
+end
+
+fun smtfp_mul_circuit_replay_resource_diagnostic () =
+  if not (Z3.is_configured ()) then ()
+  else
+    let
+      val one = ``smtfp_bits 0w (15w : word5) (0w : word10)``
+      val goal = ``smtfp_mul RNE (x : (10,5) smtfp) ^one = x``
+      val expected = SmtResource.step_time_diagnostic "mul-circuit"
+    in
+      (ignore (Z3.Z3_SMT_Prover ([], goal));
+       die "FAIL: Float16 symbolic mul did not resource-gate")
+      handle Feedback.HOL_ERR holerr =>
+        (assert (SmtResource.is_resource_gate holerr,
+           "Float16 generated replay raised a non-resource diagnostic");
+         assert (Feedback.message_of holerr = expected,
+           "Float16 generated replay changed its D12 diagnostic"))
+    end
+
+fun smtfp_mul_circuit_resource_diagnostic () =
+let
+  val goal =
+    ``smtfp_mul RNE (x : (23,8) smtfp) y = smtfp_mul RNE y x``
+  val expected = SmtResource.term_size_diagnostic
+    "mul-circuit" (SmtResource.max_bitblast_term_nodes + 1)
+in
+  (ignore (SmtFpProve.symbolic_arithmetic_prove goal);
+   die "FAIL: Float32 mul circuit did not resource-gate")
+  handle Feedback.HOL_ERR holerr =>
+    (assert (SmtResource.is_resource_gate holerr,
+       "Float32 mul circuit raised a non-resource diagnostic");
+     assert (Feedback.message_of holerr = expected,
+       "Float32 mul circuit changed its D12 diagnostic"))
+end
+
+fun smtfp_deferred_gate_residue_diagnostics () =
+let
+  val x = ``x : (4,3) smtfp``
+  val y = ``y : (4,3) smtfp``
+  val z = ``z : (4,3) smtfp``
+  val wide = ``wide : (7,5) smtfp``
+  val u = ``u : word8``
+  val r = ``r : real``
+  val cases =
+    [("fp.div", ``smtfp_div RNE ^x ^y = ^x``),
+     ("fp.sqrt", ``smtfp_sqrt RNE ^x = ^x``),
+     ("fp.fma", ``smtfp_fma RNE ^x ^y ^z = ^x``),
+     ("fp.rem", ``smtfp_rem ^x ^y = ^x``),
+     ("fp.roundToIntegral",
+      ``smtfp_round_to_integral RNE ^x = ^x``),
+     ("float-to-float to_fp",
+      ``(smtfp_to_fp RNE ^x : (7,5) smtfp) = ^wide``),
+     ("real-to-fp", ``(smtfp_from_real RNE ^r : (4,3) smtfp) = ^x``),
+     ("signed-BV-to-fp",
+      ``(smtfp_from_sbv RNE ^u : (4,3) smtfp) = ^x``),
+     ("unsigned-BV-to-fp",
+      ``(smtfp_from_ubv RNE ^u : (4,3) smtfp) = ^x``),
+     ("fp.to_sbv", ``(smtfp_to_sbv RNE ^x : word8) = ^u``),
+     ("fp.to_ubv", ``(smtfp_to_ubv RNE ^x : word8) = ^u``)]
+  fun check (label, goal) =
+    expect_hol_error_contains ("deferred FP gate " ^ label)
+      "unsupported rewrite shape: theory=fp;"
+      (fn () => ignore (SmtFpProve.fp_prove goal))
+in
+  List.app check cases
+end
+
 fun smtfp_add_commutativity_corpus_gate () =
 let
   val x = ``x : (4,3) smtfp``
@@ -9943,13 +10073,13 @@ end
 fun smtfp_prove_unsupported_diagnostic () =
 let
   val unsupported =
-    ``smtfp_mul RNE (x : (4,3) smtfp) y = x``
+    ``smtfp_div RNE (x : (4,3) smtfp) y = x``
   val type_only = ``(x : (4,3) smtfp) = y``
   val declarations =
     "((declare-fun x () (_ FloatingPoint 3 5)) " ^
     "(declare-fun y () (_ FloatingPoint 3 5)) "
   val operation_proof =
-    declarations ^ "(proof (rewrite (= (fp.mul RNE x y) x))))"
+    declarations ^ "(proof (rewrite (= (fp.div RNE x y) x))))"
   val type_only_proof = declarations ^ "(proof (rewrite (= x y))))"
 in
   assert (SmtFpProve.has_fp_theory_term type_only,
@@ -11050,6 +11180,18 @@ let
       smtfp_addsub_circuit_replay_success),
     ("smtfp_addsub_circuit_resource_diagnostic",
       smtfp_addsub_circuit_resource_diagnostic),
+    ("smtfp_mul_circuit_rung_success",
+      smtfp_mul_circuit_rung_success),
+    ("smtfp_mul_circuit_mutation_rejected",
+      smtfp_mul_circuit_mutation_rejected),
+    ("smtfp_mul_circuit_independent_finite",
+      smtfp_mul_circuit_independent_finite),
+    ("smtfp_mul_circuit_replay_resource_diagnostic",
+      smtfp_mul_circuit_replay_resource_diagnostic),
+    ("smtfp_mul_circuit_resource_diagnostic",
+      smtfp_mul_circuit_resource_diagnostic),
+    ("smtfp_deferred_gate_residue_diagnostics",
+      smtfp_deferred_gate_residue_diagnostics),
     ("smtfp_add_commutativity_corpus_gate",
       smtfp_add_commutativity_corpus_gate),
     ("smtfp_tier2_atom_classes_success",

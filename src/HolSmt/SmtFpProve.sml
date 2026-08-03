@@ -37,7 +37,8 @@ struct
     raise ERR "unsupported"
       ("unsupported rewrite shape: theory=fp; checked replay is only " ^
        "implemented for proforma, ground-evaluation, bit-decomposition, " ^
-       "Tier-2 atom, fp.to_real arithmetic, and add/sub circuit rewrites; " ^
+       "Tier-2 atom, fp.to_real arithmetic, and add/sub/mul circuit " ^
+       "rewrites; " ^
        "conclusion=" ^ Library.term_to_string t)
 
   (* The arbitrary-format classification probes compare [abs x] with itself.
@@ -385,7 +386,45 @@ struct
     let val (fraction, exponent) = addsub_format_dimensions t
     in 1 + fraction + exponent end
 
+  val mul_names =
+    Redblackset.addList
+      (Redblackset.empty (Lib.pair_compare
+        (String.compare, String.compare)),
+       [("smtfloat", "smtfp_mul")])
+
+  fun is_mul_const tm =
+    Term.is_const tm andalso
+    let val {Thy, Name, ...} = Term.dest_thy_const tm
+    in Redblackset.member (mul_names, (Thy, Name)) end
+
+  fun is_mul_app tm =
+    let val (head, args) = boolSyntax.strip_comb tm
+    in is_mul_const head andalso List.length args = 3 end
+
+  fun mul_result_type t =
+    Term.type_of (HolKernel.find_term is_mul_app t)
+
+  fun mul_format_dimensions t =
+    let
+      val {Thy, Tyop, Args, ...} =
+        Type.dest_thy_type (mul_result_type t)
+      val _ = Thy = "smtfloat" andalso Tyop = "smtfp" orelse
+        raise ERR "mul_format_dimensions" "smtfp result expected"
+      val (fraction, exponent) =
+        case Args of
+          [fraction, exponent] => (fraction, exponent)
+        | _ => raise ERR "mul_format_dimensions" "wrong smtfp arity"
+    in
+      (fcpSyntax.dest_int_numeric_type fraction,
+       fcpSyntax.dest_int_numeric_type exponent)
+    end
+
+  fun mul_format_width t =
+    let val (fraction, exponent) = mul_format_dimensions t
+    in 1 + fraction + exponent end
+
   val addsub_case_id = "addsub-circuit"
+  val mul_case_id = "mul-circuit"
 
   val addsub_rewrites =
     let open smtfloatTheory
@@ -400,21 +439,35 @@ struct
        smtfp_bits_nzero, smtfp_nzero_bits]
     end
 
+  val mul_rewrites =
+    let open smtfloatTheory
+    in
+      [smtfp_mul_circuit_correspondence,
+       smtfp_mul_circuit_one_float16,
+       smtfp_mul_one_float16]
+    end
+
   fun symbolic_arithmetic_uncapped t =
   let
-    val _ = Lib.can (HolKernel.find_term is_addsub_const) t orelse
-      raise ERR "symbolic_arithmetic_prove" "not an add/sub rewrite"
-    val width = addsub_format_width t
+    val has_addsub = Lib.can (HolKernel.find_term is_addsub_const) t
+    val has_mul = Lib.can (HolKernel.find_term is_mul_const) t
+    val _ = has_addsub orelse has_mul orelse
+      raise ERR "symbolic_arithmetic_prove"
+        "not an add/sub/mul rewrite"
+    val case_id = if has_mul then mul_case_id else addsub_case_id
+    val width =
+      if has_mul then mul_format_width t else addsub_format_width t
+    val rewrites = if has_mul then mul_rewrites else addsub_rewrites
     (* The two-operand circuit scales exponentially in the packed width.
        Refuse standard Float32 and larger formats before expanding it. *)
     val () = if width < 32 then () else
-      SmtResource.check_term_size addsub_case_id
+      SmtResource.check_term_size case_id
         (SmtResource.max_bitblast_term_nodes + 1)
     val normalized =
-      simpLib.SIMP_CONV (bossLib.srw_ss()) addsub_rewrites t
+      simpLib.SIMP_CONV (bossLib.srw_ss()) rewrites t
       handle Conv.UNCHANGED => Thm.REFL t
     val residue = boolSyntax.rhs (Thm.concl normalized)
-    val () = SmtResource.check_bitblast_goal addsub_case_id residue
+    val () = SmtResource.check_bitblast_goal case_id residue
     val residue_thm =
       if Term.aconv residue boolSyntax.T then boolTheory.TRUTH
       else tier2_bv_prove residue
@@ -423,8 +476,15 @@ struct
   end
 
   fun symbolic_arithmetic_prove t =
-    SmtResource.with_bitblast_step_time addsub_case_id
-      symbolic_arithmetic_uncapped t
+    let
+      val case_id =
+        if Lib.can (HolKernel.find_term is_mul_const) t then
+          mul_case_id
+        else addsub_case_id
+    in
+      SmtResource.with_bitblast_step_time case_id
+        symbolic_arithmetic_uncapped t
+    end
 
   val add_commutativity_case_id =
     "symbolic-add-commutativity-corpus-minimum"

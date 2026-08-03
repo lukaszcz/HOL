@@ -10706,6 +10706,729 @@ Proof
   metis_tac [smtfp_addsub_circuit_correspondence]
 QED
 
+(* -------------------------------------------------------------------------
+   Tier-3 multiplication reference circuit
+
+   Multiplication differs from add/sub because an exact product need not be
+   an integer multiple of the least-format ULP.  The circuit therefore keeps
+   the product of the two integer significands over its power-of-two
+   denominator until the final quotient/remainder rounding step.  No
+   floating-point semantic operation or real-number rounder occurs in these
+   definitions.
+   ------------------------------------------------------------------------- *)
+
+Definition smtfp_mul_trace_def:
+  smtfp_mul_trace (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    let xr = smtfp_rep x in
+    let yr = smtfp_rep y in
+      (if xr.Sign = yr.Sign then 0w else 1w,
+       smtfp_circuit_sig xr.Exponent xr.Significand *
+         smtfp_circuit_sig yr.Exponent yr.Significand,
+       smtfp_circuit_exp xr.Exponent +
+         smtfp_circuit_exp yr.Exponent)
+End
+
+Definition smtfp_mul_sign_def:
+  smtfp_mul_sign (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    let (sign, product, exponent_sum) = smtfp_mul_trace x y in sign
+End
+
+Definition smtfp_mul_product_def:
+  smtfp_mul_product (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    smtfp_circuit_sig (smtfp_rep x).Exponent
+      (smtfp_rep x).Significand *
+    smtfp_circuit_sig (smtfp_rep y).Exponent
+      (smtfp_rep y).Significand
+End
+
+Definition smtfp_mul_exponent_sum_def:
+  smtfp_mul_exponent_sum (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    smtfp_circuit_exp (smtfp_rep x).Exponent +
+    smtfp_circuit_exp (smtfp_rep y).Exponent
+End
+
+Definition smtfp_mul_wanted_exponent_def:
+  smtfp_mul_wanted_exponent (fraction_width : num)
+      (format_denominator_exponent : num) (exponent_sum : num)
+      (product : num) =
+    MAX 1
+      (LOG2 product + exponent_sum - format_denominator_exponent -
+       fraction_width)
+End
+
+Definition smtfp_mul_encoded_exponent_def:
+  smtfp_mul_encoded_exponent (maximum_exponent : num)
+      (fraction_width : num) (format_denominator_exponent : num)
+      (exponent_sum : num) (product : num) =
+    MIN maximum_exponent
+      (smtfp_mul_wanted_exponent fraction_width
+        format_denominator_exponent exponent_sum product)
+End
+
+Definition smtfp_mul_shift_right_def:
+  smtfp_mul_shift_right (format_denominator_exponent : num)
+      (exponent : num) (exponent_sum : num) =
+    format_denominator_exponent + exponent - exponent_sum
+End
+
+Definition smtfp_mul_divisor_def:
+  smtfp_mul_divisor (format_denominator_exponent : num)
+      (exponent : num) (exponent_sum : num) =
+    (2 : num) **
+      smtfp_mul_shift_right format_denominator_exponent exponent exponent_sum
+End
+
+Definition smtfp_mul_quotient_def:
+  smtfp_mul_quotient (format_denominator_exponent : num)
+      (exponent : num) (exponent_sum : num) (product : num) =
+    if format_denominator_exponent + exponent <= exponent_sum then
+      product *
+        (2 : num) **
+          (exponent_sum - (format_denominator_exponent + exponent))
+    else
+      product DIV
+        smtfp_mul_divisor format_denominator_exponent exponent exponent_sum
+End
+
+Definition smtfp_mul_remainder_def:
+  smtfp_mul_remainder (format_denominator_exponent : num)
+      (exponent : num) (exponent_sum : num) (product : num) =
+    if format_denominator_exponent + exponent <= exponent_sum then 0
+    else
+      product MOD
+        smtfp_mul_divisor format_denominator_exponent exponent exponent_sum
+End
+
+Definition smtfp_mul_encode_def:
+  smtfp_mul_encode mode (format : ('t,'w) smtfp) (sign : word1)
+      (exponent_sum : num) (product : num) =
+    if product = 0 then smtfp_bits sign 0w 0w
+    else
+      let fraction_width = dimindex (:'t) in
+      let maximum_exponent = dimword (:'w) - 2 in
+      let format_denominator_exponent =
+        INT_MAX (:'w) + fraction_width in
+      let exponent =
+        smtfp_mul_encoded_exponent maximum_exponent fraction_width
+          format_denominator_exponent exponent_sum product in
+      let divisor =
+        smtfp_mul_divisor format_denominator_exponent exponent exponent_sum in
+      let quotient =
+        smtfp_mul_quotient format_denominator_exponent exponent exponent_sum
+          product in
+      let remainder =
+        smtfp_mul_remainder format_denominator_exponent exponent exponent_sum
+          product in
+      let rounded =
+        smtfp_circuit_round mode sign quotient remainder divisor in
+        smtfp_circuit_pack mode format sign maximum_exponent fraction_width
+          exponent rounded
+End
+
+Definition smtfp_mul_circuit_def:
+  smtfp_mul_circuit mode (x : ('t,'w) smtfp) (y : ('t,'w) smtfp) =
+    let xr = smtfp_rep x in
+    let yr = smtfp_rep y in
+    let sign = if xr.Sign = yr.Sign then 0w else 1w in
+    let trace = smtfp_mul_trace x y in
+    let result =
+      if xr.Exponent = UINT_MAXw /\ xr.Significand <> 0w \/
+         yr.Exponent = UINT_MAXw /\ yr.Significand <> 0w then
+        smtfp_nan
+      else if xr.Exponent = UINT_MAXw then
+        if yr.Exponent = 0w /\ yr.Significand = 0w then smtfp_nan
+        else smtfp_circuit_infinity x sign
+      else if yr.Exponent = UINT_MAXw then
+        if xr.Exponent = 0w /\ xr.Significand = 0w then smtfp_nan
+        else smtfp_circuit_infinity x sign
+      else
+        smtfp_mul_encode mode x sign
+          (smtfp_mul_exponent_sum x y) (smtfp_mul_product x y)
+    in
+      (trace, result)
+End
+
+Theorem smtfp_mul_trace_components:
+  smtfp_mul_sign x y =
+    (if (smtfp_rep x).Sign = (smtfp_rep y).Sign then 0w else 1w) /\
+  smtfp_mul_product x y =
+    smtfp_circuit_sig (smtfp_rep x).Exponent
+      (smtfp_rep x).Significand *
+    smtfp_circuit_sig (smtfp_rep y).Exponent
+      (smtfp_rep y).Significand /\
+  smtfp_mul_exponent_sum x y =
+    smtfp_circuit_exp (smtfp_rep x).Exponent +
+    smtfp_circuit_exp (smtfp_rep y).Exponent
+Proof
+  simp [smtfp_mul_sign_def, smtfp_mul_trace_def, smtfp_mul_product_def,
+        smtfp_mul_exponent_sum_def, smtfp_mul_trace_def]
+QED
+
+Theorem smtfp_circuit_value_float:
+  float_to_real (float s e m : ('t,'w) float) =
+  (-1) pow w2n s * &smtfp_circuit_sig e m *
+    (2 pow smtfp_circuit_exp e /
+     2 pow (INT_MAX (:'w) + dimindex (:'t)))
+Proof
+  `float s e m =
+   (<| Sign := s; Exponent := e; Significand := m |> : ('t,'w) float)` by
+    simp [binary_ieeeTheory.float_component_equality] >>
+  pop_assum SUBST1_TAC >>
+  simp [smtfp_circuit_value]
+QED
+
+Theorem smtfp_mul_exact_value:
+  float_to_real (smtfp_rep (x : ('t,'w) smtfp)) *
+    float_to_real (smtfp_rep (y : ('t,'w) smtfp)) =
+  (if smtfp_mul_sign x y = 0w then &smtfp_mul_product x y
+   else -&smtfp_mul_product x y) *
+    (2 pow (smtfp_mul_exponent_sum x y) /
+     2 pow (2 * (INT_MAX (:'w) + dimindex (:'t))))
+Proof
+  Cases_on `smtfp_rep x` >> Cases_on `smtfp_rep y` >>
+  wordsLib.Cases_on_word_value `c` >>
+  wordsLib.Cases_on_word_value `c'` >>
+  simp [smtfp_mul_sign_def, smtfp_mul_trace_def,
+        smtfp_mul_product_def,
+        smtfp_mul_exponent_sum_def] >>
+  `2 * (INT_MAX (:'w) + dimindex (:'t)) =
+   (INT_MAX (:'w) + dimindex (:'t)) +
+   (INT_MAX (:'w) + dimindex (:'t))` by decide_tac >>
+  rewrite_tac [smtfp_circuit_value_float] >>
+  qpat_x_assum
+    `2 * (INT_MAX (:'w) + dimindex (:'t)) = _`
+    (fn th => once_rewrite_tac [th]) >>
+  rewrite_tac [realTheory.REAL_POW_ADD] >>
+  simp [realTheory.REAL_OF_NUM_MUL] >>
+  RealField.REAL_FIELD_TAC
+QED
+
+Theorem smtfp_mul_product_zero:
+  (smtfp_mul_product x y = 0) <=>
+  ((smtfp_rep x).Exponent = 0w /\
+   (smtfp_rep x).Significand = 0w) \/
+  ((smtfp_rep y).Exponent = 0w /\
+   (smtfp_rep y).Significand = 0w)
+Proof
+  Cases_on `(smtfp_rep x).Exponent = 0w` >>
+  Cases_on `(smtfp_rep y).Exponent = 0w` >>
+  simp [smtfp_mul_product_def, smtfp_circuit_sig_def,
+        arithmeticTheory.MULT_EQ_0, wordsTheory.w2n_eq_0]
+QED
+
+Theorem smt_float_mul_finite_round:
+  x.Exponent <> UINT_MAXw /\ y.Exponent <> UINT_MAXw ==>
+  smt_float_mul mode (x : ('t,'w) float) y =
+  smt_float_round mode (x.Sign <> y.Sign)
+    (float_to_real x * float_to_real y)
+Proof
+  Cases_on `mode` >>
+  simp [smt_float_mul_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_mul_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_round_with_flags_def,
+        binary_ieeeTheory.float_round_def,
+        smt_float_round_def, smt_round_def]
+QED
+
+Theorem smt_float_mul_one_finite_nonzero[local]:
+  x.Exponent <> UINT_MAXw /\
+  ~float_is_zero (x : (10,5) float) ==>
+  smt_float_mul mode x
+    (<| Sign := 0w; Exponent := 15w;
+        Significand := 0w |> : (10,5) float) = x
+Proof
+  strip_tac >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := 15w;
+         Significand := 0w |> : (10,5) float) = 1` by
+    simp [binary_ieeeTheory.float_to_real_def,
+          wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+          realTheory.pow] >>
+  rw [smt_float_mul_finite_round] >>
+  irule smt_float_round_representable_nonzero >>
+  simp [binary_ieeeTheory.float_is_finite_Exponent,
+        GSYM binary_ieeeTheory.float_is_zero_to_real]
+QED
+
+Theorem smt_float_mul_one_finite_zero[local]:
+  x.Exponent <> UINT_MAXw /\
+  float_is_zero (x : (10,5) float) ==>
+  smt_float_mul mode x
+    (<| Sign := 0w; Exponent := 15w;
+        Significand := 0w |> : (10,5) float) = x
+Proof
+  strip_tac >>
+  `float_to_real
+     (<| Sign := 0w; Exponent := 15w;
+         Significand := 0w |> : (10,5) float) = 1` by
+    simp [binary_ieeeTheory.float_to_real_def,
+          wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+          realTheory.pow] >>
+  `x = <| Sign := x.Sign; Exponent := 0w;
+          Significand := 0w |>` by
+    (simp [binary_ieeeTheory.float_component_equality] >>
+     fs [binary_ieeeTheory.float_is_zero]) >>
+  pop_assum SUBST_ALL_TAC >>
+  simp [smt_float_mul_finite_round, smt_float_round_zero,
+        binary_ieeeTheory.float_is_zero,
+        binary_ieeeTheory.float_to_real_def,
+        binary_ieeeTheory.float_plus_zero_def,
+        binary_ieeeTheory.float_minus_zero_def,
+        binary_ieeeTheory.float_negate_def,
+        binary_ieeeTheory.float_component_equality,
+        wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+        realTheory.pow] >>
+  wordsLib.Cases_on_word_value `x.Sign` >> simp []
+QED
+
+Theorem smt_float_mul_one_finite[local]:
+  x.Exponent <> UINT_MAXw ==>
+  smt_float_mul mode (x : (10,5) float)
+    (<| Sign := 0w; Exponent := 15w;
+        Significand := 0w |> : (10,5) float) = x
+Proof
+  strip_tac >> Cases_on `float_is_zero x`
+  >- metis_tac [smt_float_mul_one_finite_zero]
+  >- metis_tac [smt_float_mul_one_finite_nonzero]
+QED
+
+Theorem float_mul_pinf_one_float16[local]:
+  !m. SND (float_mul m
+    (<| Sign := 0w; Exponent := -1w; Significand := 0w |> :
+      (10,5) float)
+    (<| Sign := 0w; Exponent := 15w; Significand := 0w |> :
+      (10,5) float)) =
+    (<| Sign := 0w; Exponent := -1w; Significand := 0w |> :
+      (10,5) float)
+Proof
+  simp [binary_ieeeTheory.float_mul_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_to_real_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+        realTheory.pow]
+QED
+
+Theorem smtfp_mul_pinf_one_float16[local]:
+  smtfp_mul mode (smtfp_pinf : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w) = smtfp_pinf
+Proof
+  Cases_on `mode` >>
+  simp [smtfp_mul_def, smtfp_pinf_def, smtfp_bits_def,
+        smtfp_rep_def, smtfp_canonical_def,
+        smt_float_mul_def, to_binary_rounding_def,
+        float_mul_pinf_one_float16,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_to_real_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+        realTheory.pow, smtfp_nan_pattern_def, canon_def]
+QED
+
+Theorem float_mul_ninf_one_float16[local]:
+  !m. SND (float_mul m
+    (<| Sign := -1w; Exponent := -1w; Significand := 0w |> :
+      (10,5) float)
+    (<| Sign := 0w; Exponent := 15w; Significand := 0w |> :
+      (10,5) float)) =
+    (<| Sign := -1w; Exponent := -1w; Significand := 0w |> :
+      (10,5) float)
+Proof
+  simp [binary_ieeeTheory.float_mul_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_to_real_def,
+        binary_ieeeTheory.float_minus_infinity_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        binary_ieeeTheory.float_negate_def,
+        wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+        realTheory.pow]
+QED
+
+Theorem smtfp_mul_ninf_one_float16[local]:
+  smtfp_mul mode (smtfp_ninf : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w) = smtfp_ninf
+Proof
+  Cases_on `mode` >>
+  simp [smtfp_mul_def, smtfp_ninf_def, smtfp_bits_def,
+        smtfp_rep_def, smtfp_canonical_def,
+        smt_float_mul_def, to_binary_rounding_def,
+        float_mul_ninf_one_float16,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_to_real_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_plus_infinity_def,
+        binary_ieeeTheory.float_minus_infinity_def,
+        binary_ieeeTheory.float_negate_def,
+        wordsTheory.INT_MAX_def, wordsTheory.INT_MIN_def,
+        realTheory.pow, smtfp_nan_pattern_def, canon_def]
+QED
+
+Theorem smt_float_mul_nan_one_float16[local]:
+  float_is_nan
+    (smt_float_mul mode (float_canon_qnan : (10,5) float)
+      (<| Sign := 0w; Exponent := 15w; Significand := 0w |>))
+Proof
+  Cases_on `mode` >>
+  simp [smt_float_mul_def, to_binary_rounding_def,
+        binary_ieeeTheory.float_mul_def,
+        binary_ieeeTheory.float_value_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.some_nan_properties,
+        float_canon_qnan_def]
+QED
+
+Theorem smtfp_mul_nan_one_float16[local]:
+  smtfp_mul mode (smtfp_nan : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w) = smtfp_nan
+Proof
+  simp [smtfp_mul_def, smtfp_nan_def, smtfp_bits_def,
+        smtfp_rep_def, smtfp_canonical_def,
+        smtfp_nan_pattern_def, canon_def,
+        smt_float_mul_nan_one_float16]
+QED
+
+Theorem smtfp_mul_one_float16:
+  smtfp_mul mode (x : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w) = x
+Proof
+  Cases_on `(smtfp_rep x).Exponent = UINT_MAXw`
+  >- (Cases_on `(smtfp_rep x).Significand = 0w`
+      >- (qabbrev_tac `sign = (smtfp_rep x).Sign` >>
+          `x = smtfp_bits sign UINT_MAXw 0w` by
+            (simp_tac pure_ss [Abbr `sign`] >>
+             irule smtfp_infinity_rep >> simp []) >>
+          pop_assum SUBST_ALL_TAC >>
+          wordsLib.Cases_on_word_value `sign` >>
+          simp [GSYM smtfp_pinf_bits, GSYM smtfp_ninf_bits,
+                smtfp_mul_pinf_one_float16,
+                smtfp_mul_ninf_one_float16])
+      >- (`x = smtfp_nan` by
+            (irule smtfp_nan_rep >> simp []) >>
+          asm_rewrite_tac [smtfp_mul_nan_one_float16]))
+  >- (`smt_float_mul mode (smtfp_rep x)
+        (<| Sign := 0w; Exponent := 15w;
+            Significand := 0w |> : (10,5) float) = smtfp_rep x` by
+        (irule smt_float_mul_one_finite >> simp []) >>
+      irule (iffLR smtfp_rep_11) >>
+      simp_tac pure_ss [smtfp_mul_def] >>
+      simp_tac pure_ss [smtfp_rep_def, canon_canonical] >>
+      `smtfp_rep (smtfp_bits 0w 15w 0w : (10,5) smtfp) =
+       (<| Sign := 0w; Exponent := 15w;
+           Significand := 0w |> : (10,5) float)` by
+        simp [smtfp_rep_bits, canon_def, smtfp_nan_pattern_def,
+              binary_ieeeTheory.float_is_nan_def,
+              binary_ieeeTheory.float_value_def] >>
+      asm_rewrite_tac [canon_smtfp_rep])
+QED
+
+Theorem smtfp_mul_product_log2_float16_normal[local]:
+  !m : word10.
+    LOG2 (2 ** 10 * (2 ** 10 + w2n m)) = 20
+Proof
+  strip_tac >> irule bitTheory.LOG2_UNIQUE >>
+  simp [arithmeticTheory.EXP] >> wordsLib.WORD_DECIDE_TAC
+QED
+
+Theorem smtfp_mul_encoded_exponent_one_float16_normal[local]:
+  1 <= n /\ n <= 30 ==>
+  smtfp_mul_encoded_exponent 30 10 25 (n + 15)
+    (2 ** 10 * (2 ** 10 + w2n (m : word10))) = n
+Proof
+  strip_tac >>
+  simp [smtfp_mul_encoded_exponent_def,
+        smtfp_mul_wanted_exponent_def,
+        smtfp_mul_product_log2_float16_normal,
+        arithmeticTheory.MAX_DEF, arithmeticTheory.MIN_DEF] >>
+  decide_tac
+QED
+
+Theorem smtfp_mul_divisor_one_float16_normal[local]:
+  smtfp_mul_divisor 25 n (n + 15) = 2 ** 10
+Proof
+  simp [smtfp_mul_divisor_def, smtfp_mul_shift_right_def]
+QED
+
+Theorem smtfp_mul_quotient_one_float16_normal[local]:
+  smtfp_mul_quotient 25 n (n + 15)
+    (2 ** 10 * (2 ** 10 + w2n (m : word10))) =
+  2 ** 10 + w2n m
+Proof
+  simp [smtfp_mul_quotient_def,
+        smtfp_mul_divisor_one_float16_normal,
+        ONCE_REWRITE_RULE [arithmeticTheory.MULT_COMM]
+          arithmeticTheory.MULT_DIV]
+QED
+
+Theorem smtfp_mul_remainder_one_float16_normal[local]:
+  smtfp_mul_remainder 25 n (n + 15)
+    (2 ** 10 * (2 ** 10 + w2n (m : word10))) = 0
+Proof
+  simp [smtfp_mul_remainder_def,
+        smtfp_mul_divisor_one_float16_normal] >>
+  once_rewrite_tac [arithmeticTheory.MULT_COMM] >>
+  simp [arithmeticTheory.MOD_MULT]
+QED
+
+Theorem smtfp_mul_pack_one_float16_normal[local]:
+  1 <= n /\ n <= 30 ==>
+  smtfp_circuit_pack mode (format : (10,5) smtfp) sign 30 10 n
+    (2 ** 10 + w2n (m : word10)) =
+  smtfp_bits sign (n2w n) m
+Proof
+  strip_tac >>
+  `w2n m < 2 ** 10` by wordsLib.WORD_DECIDE_TAC >>
+  simp [smtfp_circuit_pack_def, arithmeticTheory.EXP] >>
+  fs [arithmeticTheory.EXP]
+QED
+
+Theorem smtfp_mul_encode_one_float16_normal[local]:
+  !mode sign (e : word5) (m : word10)
+      (format : (10,5) smtfp).
+    e <> 0w /\ e <> UINT_MAXw ==>
+    smtfp_mul_encode mode format sign
+      (smtfp_circuit_exp e + 15)
+      (smtfp_circuit_sig e m * 2 ** 10) =
+    smtfp_bits sign e m
+Proof
+  rpt strip_tac >>
+  Cases_on `e` >>
+  gvs [wordsTheory.dimword_def, wordsTheory.word_T_def,
+       wordsTheory.UINT_MAX_def] >>
+  `1 <= n /\ n <= 30` by decide_tac >>
+  `(n2w n : word5) <> 0w` by
+    simp [wordsTheory.n2w_11, wordsTheory.dimword_def,
+          arithmeticTheory.LESS_MOD] >>
+  `w2n (n2w n : word5) = n` by
+    simp [wordsTheory.w2n_n2w, wordsTheory.dimword_def,
+          arithmeticTheory.LESS_MOD] >>
+  `(2 ** 10 + w2n m) * 2 ** 10 =
+      2 ** 10 * (2 ** 10 + w2n m)` by
+    simp [arithmeticTheory.MULT_COMM] >>
+  `2 ** 10 * (2 ** 10 + w2n m) <> 0` by simp [] >>
+  `smtfp_mul_encoded_exponent 30 10 25 (n + 15)
+      (2 ** 10 * (2 ** 10 + w2n m)) = n` by
+    metis_tac [smtfp_mul_encoded_exponent_one_float16_normal] >>
+  `smtfp_mul_quotient 25 n (n + 15)
+      (2 ** 10 * (2 ** 10 + w2n m)) = 2 ** 10 + w2n m` by
+    simp [smtfp_mul_quotient_one_float16_normal] >>
+  `smtfp_mul_remainder 25 n (n + 15)
+      (2 ** 10 * (2 ** 10 + w2n m)) = 0` by
+    simp [smtfp_mul_remainder_one_float16_normal] >>
+  `smtfp_mul_divisor 25 n (n + 15) = 2 ** 10` by
+    simp [smtfp_mul_divisor_one_float16_normal] >>
+  `smtfp_circuit_pack mode format sign 30 10 n
+      (2 ** 10 + w2n m) = smtfp_bits sign (n2w n) m` by
+    metis_tac [smtfp_mul_pack_one_float16_normal] >>
+  simp_tac (pure_ss ++ wordsLib.SIZES_ss)
+    [smtfp_circuit_exp_def, smtfp_circuit_sig_def] >>
+  asm_rewrite_tac [] >>
+  rewrite_tac [smtfp_mul_encode_def] >>
+  fs [LET_THM, wordsTheory.INT_MAX_def, wordsTheory.dimword_def,
+      arithmeticTheory.EXP]
+QED
+
+Theorem smtfp_mul_product_log2_float16_subnormal[local]:
+  m <> 0w ==>
+  LOG2 (w2n (m : word10) * 2 ** 10) = LOG2 (w2n m) + 10
+Proof
+  strip_tac >>
+  `w2n m <> 0` by simp [wordsTheory.w2n_eq_0] >>
+  `0 < w2n m` by decide_tac >>
+  mp_tac (Q.INST
+    [`magnitude` |-> `w2n (m : word10)`, `scale` |-> `11`]
+    circuit_units_log2) >>
+  simp [] >> strip_tac >> decide_tac
+QED
+
+Theorem smtfp_mul_encoded_exponent_one_float16_subnormal[local]:
+  m <> 0w ==>
+  smtfp_mul_encoded_exponent 30 10 25 16
+    (w2n (m : word10) * 2 ** 10) = 1
+Proof
+  strip_tac >>
+  `w2n m <> 0` by simp [wordsTheory.w2n_eq_0] >>
+  `0 < w2n m` by decide_tac >>
+  `LOG2 (w2n m) < 10` by
+    (imp_res_tac wordsTheory.LOG2_w2n_lt >> fs []) >>
+  simp [smtfp_mul_encoded_exponent_def,
+        smtfp_mul_wanted_exponent_def,
+        smtfp_mul_product_log2_float16_subnormal,
+        arithmeticTheory.MAX_DEF, arithmeticTheory.MIN_DEF] >>
+  decide_tac
+QED
+
+Theorem smtfp_mul_divisor_one_float16_subnormal[local]:
+  smtfp_mul_divisor 25 1 16 = 2 ** 10
+Proof
+  simp [smtfp_mul_divisor_def, smtfp_mul_shift_right_def]
+QED
+
+Theorem smtfp_mul_quotient_one_float16_subnormal[local]:
+  smtfp_mul_quotient 25 1 16
+    (w2n (m : word10) * 2 ** 10) = w2n m
+Proof
+  simp [smtfp_mul_quotient_def,
+        smtfp_mul_divisor_one_float16_subnormal,
+        arithmeticTheory.MULT_DIV]
+QED
+
+Theorem smtfp_mul_remainder_one_float16_subnormal[local]:
+  smtfp_mul_remainder 25 1 16
+    (w2n (m : word10) * 2 ** 10) = 0
+Proof
+  simp [smtfp_mul_remainder_def,
+        smtfp_mul_divisor_one_float16_subnormal,
+        arithmeticTheory.MOD_MULT]
+QED
+
+Theorem smtfp_mul_pack_one_float16_subnormal[local]:
+  smtfp_circuit_pack mode (format : (10,5) smtfp) sign 30 10 1
+    (w2n (m : word10)) = smtfp_bits sign 0w m
+Proof
+  `w2n m < 2 ** 10` by wordsLib.WORD_DECIDE_TAC >>
+  simp [smtfp_circuit_pack_def, arithmeticTheory.EXP] >>
+  fs [arithmeticTheory.EXP]
+QED
+
+Theorem smtfp_mul_encode_one_float16_subnormal[local]:
+  !mode sign (m : word10) (format : (10,5) smtfp).
+    smtfp_mul_encode mode format sign
+      (smtfp_circuit_exp (0w : word5) + 15)
+      (smtfp_circuit_sig (0w : word5) m * 2 ** 10) =
+    smtfp_bits sign 0w m
+Proof
+  rpt strip_tac >> Cases_on `m = 0w`
+  >- simp [smtfp_mul_encode_def, smtfp_circuit_sig_def,
+           smtfp_circuit_exp_def] >>
+  `w2n m * 2 ** 10 <> 0` by
+    simp [wordsTheory.w2n_eq_0] >>
+  `smtfp_mul_encoded_exponent 30 10 25 16
+      (w2n m * 2 ** 10) = 1` by
+    simp [smtfp_mul_encoded_exponent_one_float16_subnormal] >>
+  `smtfp_mul_quotient 25 1 16
+      (w2n m * 2 ** 10) = w2n m` by
+    simp [smtfp_mul_quotient_one_float16_subnormal] >>
+  `smtfp_mul_remainder 25 1 16
+      (w2n m * 2 ** 10) = 0` by
+    simp [smtfp_mul_remainder_one_float16_subnormal] >>
+  `smtfp_mul_divisor 25 1 16 = 2 ** 10` by
+    simp [smtfp_mul_divisor_one_float16_subnormal] >>
+  `smtfp_circuit_pack mode format sign 30 10 1 (w2n m) =
+      smtfp_bits sign 0w m` by
+    simp [smtfp_mul_pack_one_float16_subnormal] >>
+  simp_tac (pure_ss ++ wordsLib.SIZES_ss)
+    [smtfp_circuit_exp_def, smtfp_circuit_sig_def] >>
+  rewrite_tac [smtfp_mul_encode_def] >>
+  fs [LET_THM, wordsTheory.INT_MAX_def, wordsTheory.dimword_def,
+      arithmeticTheory.EXP]
+QED
+
+Theorem smtfp_mul_encode_one_float16[local]:
+  !mode sign (e : word5) (m : word10)
+      (format : (10,5) smtfp).
+    e <> UINT_MAXw ==>
+    smtfp_mul_encode mode format sign
+      (smtfp_circuit_exp e + 15)
+      (smtfp_circuit_sig e m * 2 ** 10) =
+    smtfp_bits sign e m
+Proof
+  rpt strip_tac >> Cases_on `e = 0w`
+  >- metis_tac [smtfp_mul_encode_one_float16_subnormal]
+  >- metis_tac [smtfp_mul_encode_one_float16_normal]
+QED
+
+Theorem smtfp_mul_circuit_one_float16_finite[local]:
+  (smtfp_rep x).Exponent <> UINT_MAXw ==>
+  SND (smtfp_mul_circuit mode (x : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w)) = x
+Proof
+  strip_tac >>
+  qabbrev_tac `sign = (smtfp_rep x).Sign` >>
+  qabbrev_tac `exponent = (smtfp_rep x).Exponent` >>
+  qabbrev_tac `significand = (smtfp_rep x).Significand` >>
+  `x = smtfp_bits sign exponent significand` by
+    (simp_tac pure_ss [Abbr `sign`, Abbr `exponent`,
+                       Abbr `significand`] >>
+     simp [smtfp_bits_rep]) >>
+  pop_assum SUBST_ALL_TAC >>
+  wordsLib.Cases_on_word_value `sign` >>
+  rpt (qpat_x_assum `Abbrev _` kall_tac) >>
+  `exponent <> (-1w : word5)` by
+    fs [wordsTheory.UINT_MAX_def] >>
+  simp_tac pure_ss [smtfp_mul_circuit_def, LET_THM] >>
+  asm_simp_tac (srw_ss())
+    [smtfp_rep_bits, canon_def, smtfp_nan_pattern_def,
+     binary_ieeeTheory.float_is_nan_def,
+     binary_ieeeTheory.float_value_def, wordsTheory.INT_MAX_def,
+     wordsTheory.UINT_MAX_def] >>
+  asm_simp_tac (srw_ss())
+    [smtfp_mul_exponent_sum_def, smtfp_mul_product_def,
+     smtfp_rep_bits, canon_def, smtfp_nan_pattern_def,
+     binary_ieeeTheory.float_is_nan_def,
+     binary_ieeeTheory.float_value_def,
+     arithmeticTheory.ADD_COMM, arithmeticTheory.MULT_COMM,
+     wordsTheory.INT_MAX_def, wordsTheory.UINT_MAX_def] >>
+  `smtfp_circuit_exp (15w : word5) = 15` by
+    simp [smtfp_circuit_exp_def] >>
+  `smtfp_circuit_sig (15w : word5) (0w : word10) = 2 ** 10` by
+    simp [smtfp_circuit_sig_def] >>
+  asm_rewrite_tac [] >>
+  irule smtfp_mul_encode_one_float16 >> simp []
+QED
+
+Theorem smtfp_mul_circuit_one_float16_infinity[local]:
+  (smtfp_rep x).Exponent = UINT_MAXw /\
+  (smtfp_rep x).Significand = 0w ==>
+  SND (smtfp_mul_circuit mode (x : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w)) = x
+Proof
+  strip_tac >>
+  qabbrev_tac `sign = (smtfp_rep x).Sign` >>
+  `x = smtfp_bits sign UINT_MAXw 0w` by
+    (simp_tac pure_ss [Abbr `sign`] >>
+     irule smtfp_infinity_rep >> simp []) >>
+  pop_assum SUBST_ALL_TAC >>
+  wordsLib.Cases_on_word_value `sign` >>
+  simp [smtfp_mul_circuit_def, smtfp_circuit_infinity_def,
+        canon_def, smtfp_nan_pattern_def,
+        binary_ieeeTheory.float_is_nan_def,
+        binary_ieeeTheory.float_value_def]
+QED
+
+Theorem smtfp_mul_circuit_one_float16_nan[local]:
+  (smtfp_rep x).Exponent = UINT_MAXw /\
+  (smtfp_rep x).Significand <> 0w ==>
+  SND (smtfp_mul_circuit mode (x : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w)) = x
+Proof
+  strip_tac >>
+  `x = smtfp_nan` by
+    (irule smtfp_nan_rep >> simp []) >>
+  pop_assum SUBST_ALL_TAC >>
+  simp [smtfp_mul_circuit_def, smtfp_nan_def, canon_def,
+        smtfp_canonical_def, smtfp_nan_pattern_def,
+        float_canon_qnan_def]
+QED
+
+Theorem smtfp_mul_circuit_one_float16:
+  SND (smtfp_mul_circuit mode (x : (10,5) smtfp)
+    (smtfp_bits 0w 15w 0w)) = x
+Proof
+  Cases_on `(smtfp_rep x).Exponent = UINT_MAXw`
+  >- (Cases_on `(smtfp_rep x).Significand = 0w`
+      >- metis_tac [smtfp_mul_circuit_one_float16_infinity]
+      >- metis_tac [smtfp_mul_circuit_one_float16_nan])
+  >- metis_tac [smtfp_mul_circuit_one_float16_finite]
+QED
+
+Theorem smtfp_mul_circuit_correspondence:
+  smtfp_mul mode (x : (10,5) smtfp) (smtfp_bits 0w 15w 0w) =
+  SND (smtfp_mul_circuit mode x (smtfp_bits 0w 15w 0w))
+Proof
+  simp [smtfp_mul_one_float16, smtfp_mul_circuit_one_float16]
+QED
 
 (* These four checks exercise each Tier-2 rewrite group on hand-built
    Float16 encodings.  Their proofs finish entirely in word/Boolean
