@@ -8,13 +8,10 @@ val ac_ops : linarithCancel.ac_ops =
    dest_leq = realSyntax.dest_leq,
    strip_plus = realSyntax.strip_plus,
    mk_plus = realSyntax.mk_plus,
-   zero = realSyntax.zero_tm,
    assoc = realTheory.REAL_ADD_ASSOC,
    comm = realTheory.REAL_ADD_COMM,
    rid = realTheory.REAL_ADD_RID,
    ac_fallback = NONE}
-
-val cancel_common = linarithCancel.cancel_common ac_ops
 
 val safe_conv = QCONV o TRY_CONV
 
@@ -30,34 +27,16 @@ fun expression_conv tm =
      TRY_CONV RealField.REAL_RAT_REDUCE_CONV) tm
   else raise UNCHANGED
 
-(* The cancellation theorem for a relation of this carrier, and NONE for
-   anything else.  Deciding this once is what lets norm_conv dispatch:
-   ORELSEC catches HOL_ERR only, so an alternative that signals "not
-   mine" by raising UNCHANGED is never reached past. *)
-fun cancel_rule tm =
-  if realSyntax.is_leq tm then SOME realTheory.REAL_LE_LADD
-  else if realSyntax.is_less tm then SOME realTheory.REAL_LT_LADD
-  else if boolSyntax.is_eq tm andalso
-          Term.type_of (#1 (boolSyntax.dest_eq tm)) = realSyntax.real_ty
-  then SOME realTheory.REAL_EQ_LADD
-  else NONE
-
-fun relation_conv tm =
-  case cancel_rule tm of
-      NONE => raise UNCHANGED
-    | SOME cancel =>
-        (BINOP_CONV expression_conv THENC
-         REPEATC (cancel_common cancel) THENC
-         TRY_CONV RealField.REAL_RAT_REDUCE_CONV THENC
-         TRY_CONV
-           (simpLib.SIMP_CONV boolSimps.bool_ss
-              [realTheory.REAL_LT_REFL,
-               realTheory.REAL_LE_REFL])) tm
-
-fun norm_conv tm =
-  case cancel_rule tm of
-      SOME _ => relation_conv tm
-    | NONE => expression_conv tm
+val norm_conv =
+  linarithCancel.mk_norm_conv
+    {ac = ac_ops,
+     ty = realSyntax.real_ty,
+     leq_cancel = realTheory.REAL_LE_LADD,
+     less_cancel = realTheory.REAL_LT_LADD,
+     eq_cancel = realTheory.REAL_EQ_LADD,
+     expression_conv = expression_conv,
+     reduce_conv = RealField.REAL_RAT_REDUCE_CONV,
+     refl_thms = [realTheory.REAL_LT_REFL, realTheory.REAL_LE_REFL]}
 
 fun nonneg tm =
   case Lib.total realSyntax.dest_injected tm of

@@ -16,16 +16,15 @@ val safe_solver =
 
 val unsafe_solvers = [linarithLib.linarith_solver]
 
+fun add_unsafe_solvers ss =
+  Lib.rev_itlist simpLib.add_unsafe_solver unsafe_solvers ss
+
 fun derive_clasimp_ss ss _ =
   ss
   |> simpLib.set_cond_depth 40
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
   |> simpLib.set_safe_solvers [safe_solver]
-  |> (fn ss' =>
-       List.foldl
-         (fn (solver, current) =>
-           simpLib.add_unsafe_solver solver current)
-         ss' unsafe_solvers)
+  |> add_unsafe_solvers
 
 (* This accessor is the only visible part of the private derived-value
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)

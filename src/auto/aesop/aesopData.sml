@@ -50,7 +50,7 @@ type cached_simpset = {generation : int, simpset : simpLib.simpset}
 (* Keeping the final solver safe is essential for the normalisation phase:
    it may discharge only goals justified without witness instantiation or
    unsafe search.  clasimp's safe solver is exactly that stack, so it is
-   shared rather than restated here, as is its unsafe solver list.  Unsafe
+   shared rather than restated here, as is its unsafe solver stack.  Unsafe
    solvers remain available only to prove simplifier side conditions in
    safe mode.  The derivation itself is not shared: clasimp_ss also carries
    split_ss, which the aesop simpset deliberately leaves to the search. *)
@@ -60,11 +60,7 @@ fun derive_aesop_ss ss _ : cached_simpset =
      ss
      |> simpLib.set_cond_depth 40
      |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
-     |> (fn ss' =>
-          List.foldl
-            (fn (solver, current) =>
-              simpLib.add_unsafe_solver solver current)
-            ss' clasimpLib.unsafe_solvers)
+     |> clasimpLib.add_unsafe_solvers
      |> (fn ss' =>
           simpLib.++ (ss', simpLib.rewrites (aesop_simp_rewrites ())))}
 

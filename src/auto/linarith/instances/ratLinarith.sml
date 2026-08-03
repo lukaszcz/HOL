@@ -8,13 +8,9 @@ val ERR = mk_HOL_ERR "ratLinarith"
 val rat_of_int_tm =
   prim_mk_const {Name = "rat_of_int", Thy = "rat"}
 
-fun dest_rat_of_int tm =
-  let
-    val (operator, argument) = Term.dest_comb tm
-  in
-    if Term.aconv operator rat_of_int_tm then argument
-    else raise ERR "dest_rat_of_int" "not a rat_of_int application"
-  end
+val dest_rat_of_int =
+  sdest_monop ("rat_of_int", "rat")
+    (ERR "dest_rat_of_int" "not a rat_of_int application")
 
 fun dest_lit tm =
   case Lib.total dest_rat_of_int tm of
@@ -60,13 +56,10 @@ val ac_ops : linarithCancel.ac_ops =
    dest_leq = ratSyntax.dest_rat_leq,
    strip_plus = ratSyntax.strip_rat_add,
    mk_plus = ratSyntax.mk_rat_add,
-   zero = ratSyntax.rat_0_tm,
    assoc = ratTheory.RAT_ADD_ASSOC,
    comm = ratTheory.RAT_ADD_COMM,
    rid = ratTheory.RAT_ADD_RID,
    ac_fallback = NONE}
-
-val cancel_common = linarithCancel.cancel_common ac_ops
 
 val safe_conv = QCONV o TRY_CONV
 
@@ -104,29 +97,16 @@ fun expression_conv tm =
      safe_conv rat_poly_conv) tm
   else raise UNCHANGED
 
-fun relation_conv tm =
-  let
-    val cancel =
-      if ratSyntax.is_rat_leq tm then ratTheory.RAT_LEQ_LADD
-      else if ratSyntax.is_rat_les tm then ratTheory.RAT_LES_LADD
-      else if boolSyntax.is_eq tm andalso
-              Term.type_of (#1 (boolSyntax.dest_eq tm)) =
-                ratSyntax.rat_ty
-      then ratTheory.RAT_EQ_LADD
-      else raise UNCHANGED
-  in
-    (BINOP_CONV expression_conv THENC
-     REPEATC (cancel_common cancel) THENC
-     TRY_CONV ratLib.RAT_BASIC_ARITH_CONV THENC
-     TRY_CONV
-       (simpLib.SIMP_CONV boolSimps.bool_ss
-          [ratTheory.RAT_LES_REF,
-           ratTheory.RAT_LEQ_REF])) tm
-  end
-
-fun norm_conv tm =
-  if Term.type_of tm = ratSyntax.rat_ty then expression_conv tm
-  else safe_conv relation_conv tm
+val norm_conv =
+  linarithCancel.mk_norm_conv
+    {ac = ac_ops,
+     ty = ratSyntax.rat_ty,
+     leq_cancel = ratTheory.RAT_LEQ_LADD,
+     less_cancel = ratTheory.RAT_LES_LADD,
+     eq_cancel = ratTheory.RAT_EQ_LADD,
+     expression_conv = expression_conv,
+     reduce_conv = ratLib.RAT_BASIC_ARITH_CONV,
+     refl_thms = [ratTheory.RAT_LES_REF, ratTheory.RAT_LEQ_REF]}
 
 fun nonneg tm =
   case Lib.total ratSyntax.dest_rat_of_num tm of

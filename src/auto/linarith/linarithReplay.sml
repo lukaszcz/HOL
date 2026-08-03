@@ -37,13 +37,7 @@ fun generalize terms prove =
     Thm.INST restoring (prove generalized)
   end
 
-fun dest_binary tm =
-  let
-    val (rator, right) = Term.dest_comb tm
-    val (operator, left) = Term.dest_comb rator
-  in
-    (operator, left, right)
-  end
+val dest_binary = linarithDecomp.binary_parts
 
 fun relation_body tm =
   case Lib.total boolSyntax.dest_neg tm of
@@ -246,11 +240,8 @@ fun add_direct theorem1 theorem2 =
 
 fun try_add theorem others = Lib.get_first (add_direct theorem) others
 
-fun try_add_pairs [] _ = NONE
-  | try_add_pairs (theorem :: rest) others =
-      case try_add theorem others of
-          SOME result => SOME result
-        | NONE => try_add_pairs rest others
+fun try_add_pairs theorems others =
+  Lib.get_first (fn theorem => try_add theorem others) theorems
 
 fun add_thms theorem1 theorem2 =
   case add_direct theorem1 theorem2 of
@@ -395,7 +386,7 @@ fun normalize_sides instance theorem =
   end
 
 (* Scaling has to renormalize whatever it built, and for both kinds of
-   relation.  Scaling an inequality did not, so a row scaled twice on
+   relation.  Scaling an inequality did not, so a row scaled again on
    the way to a refutation kept the shape t * 2 * 3, which cancellation
    cannot match against the t * 6 on the other side, and replay ended at
    a true relation instead of at falsity. *)
@@ -429,8 +420,11 @@ fun normalize_added theorem =
   let
     val expanded = normalize_injections theorem
     val instance = instance_of_thm expanded
-    val norm = #norm_conv instance
-    val theorem' = CONV_RULE (BINOP_CONV norm THENC norm) expanded
+    (* norm_conv normalizes both sides of a relation itself, so a
+       BINOP_CONV pass before it would only run the carrier's polynomial
+       conversion -- the most expensive step of the replay loop -- a
+       second time for no change. *)
+    val theorem' = CONV_RULE (#norm_conv instance) expanded
   in
     if Term.aconv (Thm.concl theorem') boolSyntax.F then
       raise FalseReached theorem'
@@ -561,82 +555,10 @@ fun split_assumption discrete_only theorem =
   end
   handle HOL_ERR _ => NONE
 
-datatype splittree =
-    Tip of thm list
-  | Spl of thm * term * splittree * term * splittree
-
-fun prepend_tips theorem (Tip theorems) = Tip (theorem :: theorems)
-  | prepend_tips theorem (Spl (split, left, left_tree,
-                               right, right_tree)) =
-      Spl (split, left, prepend_tips theorem left_tree,
-           right, prepend_tips theorem right_tree)
-
-fun split_pass _ [] = Tip []
-  | split_pass discrete_only (theorem :: rest) =
-      case split_assumption discrete_only theorem of
-          NONE => prepend_tips theorem (split_pass discrete_only rest)
-        | SOME (Split (split, left, right)) =>
-            Spl (split, left,
-                 split_pass discrete_only
-                   (rest @ [Thm.ASSUME left]),
-                 right,
-                 split_pass discrete_only
-                   (rest @ [Thm.ASSUME right]))
-
-fun bind_tips (Tip theorems) f = f theorems
-  | bind_tips (Spl (split, left, left_tree, right, right_tree)) f =
-      Spl (split, left, bind_tips left_tree f,
-           right, bind_tips right_tree f)
-
-fun splitasms assumptions =
-  bind_tips (split_pass true assumptions) (split_pass false)
-
-fun fwdproof (Tip assumptions) (justification :: rest) =
-      (mkthm assumptions justification, rest)
-  | fwdproof (Tip _) [] =
-      raise ERR "fwdproof" "too few linear-arithmetic justifications"
-  | fwdproof (Spl (split, left, left_tree, right, right_tree)) justs =
-      let
-        val (left_false, left_rest) = fwdproof left_tree justs
-        val (right_false, right_rest) =
-          fwdproof right_tree left_rest
-        val left_case = Thm.DISCH left left_false
-        val right_case = Thm.DISCH right right_false
-      in
-        (Thm.MP (Thm.MP split left_case) right_case, right_rest)
-      end
-
 fun finish_forward conclusion negated false_theorem =
   if boolSyntax.is_neg conclusion then
     Thm.NOT_INTRO (Thm.DISCH negated false_theorem)
   else Thm.CCONTR conclusion false_theorem
-
-fun fwd_prove config theorems conclusion =
-  let
-    val hypotheses = List.map Thm.concl theorems
-    val (split_neq, result) =
-      linarithSolve.prove config linarithDecomp.decomp
-        linarithDecomp.is_nonnegative hypotheses conclusion
-    val justifications =
-      case result of
-          SOME justs => justs
-        | NONE =>
-            raise ERR "fwd_prove" "linear arithmetic found no proof"
-    val negated = negate conclusion
-    val assumptions = theorems @ [Thm.ASSUME negated]
-    val tree = if split_neq then splitasms assumptions
-               else Tip assumptions
-    val (false_theorem, unused) = fwdproof tree justifications
-    val _ =
-      if null unused then ()
-      else
-        raise ERR "fwd_prove"
-          "too many linear-arithmetic justifications"
-    val theorem = finish_forward conclusion negated false_theorem
-    val _ = linarithData.trace_thm 2 "forward proof:" theorem
-  in
-    theorem
-  end
 
 fun find_split discrete_only assumptions =
   let
@@ -711,9 +633,30 @@ fun refute config assumptions conclusion =
       linarithSolve.prove config linarithDecomp.decomp
         linarithDecomp.is_nonnegative assumptions conclusion
   in
-    case result of
-        SOME justifications => refute_tac split_neq justifications
-      | NONE => raise ERR "refute" "linear arithmetic found no proof"
+    Option.map (refute_tac split_neq) result
+  end
+
+(* The forward proof is the tactic replay run on a goal made of the
+   premises' own conclusions.  Reproducing the disequality case split a
+   second time as a tree of theorems would have to stay case-for-case in
+   step with refute_tac, since both consume the one justification list
+   in the order elim_neq generated it. *)
+fun fwd_prove config theorems conclusion =
+  let
+    val hypotheses = List.map Thm.concl theorems
+    val tactic =
+      case refute config hypotheses conclusion of
+          SOME tactic => tactic
+        | NONE =>
+            raise ERR "fwd_prove" "linear arithmetic found no proof"
+    val (goals, validation) = tactic (hypotheses, conclusion)
+    val _ =
+      if null goals then ()
+      else raise ERR "fwd_prove" "replay left a subgoal open"
+    val theorem = Lib.rev_itlist PROVE_HYP theorems (validation [])
+    val _ = linarithData.trace_thm 2 "forward proof:" theorem
+  in
+    theorem
   end
 
 end

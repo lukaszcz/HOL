@@ -58,11 +58,10 @@ val classical_markers =
    (clasetLib.destForward, "Forward"),
    (clasetLib.destSForward, "SForward")]
 
-fun first_marker _ [] = NONE
-  | first_marker theorem ((dest, name) :: rest) =
-      case dest theorem of
-          SOME _ => SOME name
-        | NONE => first_marker theorem rest
+fun first_marker theorem markers =
+  Lib.get_first
+    (fn (dest, name) => Option.map (fn _ => name) (dest theorem))
+    markers
 
 fun reject function name =
   raise ERR function (name ^ " marker is not accepted by " ^ function)
@@ -119,14 +118,11 @@ fun full_arguments function arguments =
   end
 
 (* A goal the arithmetic cannot refute is not yet a failure: the search
-   splits it and asks again.  So finding the certificate is separate from
-   reporting that there is none, and only a caller that has run out of
-   splits pays for the diagnostics. *)
+   splits it and asks again.  So refute answers NONE rather than
+   failing, and only a caller that has run out of splits pays for the
+   diagnostics below. *)
 fun refutation config (assumptions, conclusion) =
-  SOME (linarithReplay.refute config assumptions conclusion)
-  handle Feedback.HOL_ERR error =>
-    if Feedback.top_function_of error = "refute" then NONE
-    else raise Feedback.HOL_ERR error
+  linarithReplay.refute config assumptions conclusion
 
 (* The diagnostics report the goal as preprocessing left it, so they stay
    on this side of the interface; the failure is reported under the
@@ -262,10 +258,12 @@ val strip_literals =
 
 (* NNF_CONV does not see the carrier rules and it does not see their
    output, so the order is fixed: NNF first, then the carrier pass,
-   because SUB_EQ_0 and its kin produce relations already in NNF. *)
-fun nnf_flatten goal =
+   because SUB_EQ_0 and its kin produce relations already in NNF.  The
+   carrier rule is a parameter because building it reads the registry
+   and builds a rewrite net; the search runs this at every node of a
+   tree over one fixed registry. *)
+fun nnf_flatten carrier_rule goal =
   let
-    val carrier_rule = Rewrite.REWRITE_RULE (carrier_nnf_rewrites ())
     val nnf_rule = carrier_rule o Conv.CONV_RULE normalForms.NNF_CONV
   in
     Tactical.THEN
@@ -433,8 +431,10 @@ fun disj_elim_tac config (assumptions, conclusion) =
 fun split_on_demand function config split_tac =
   let
     val limit = #split_limit config
+    val carrier_rule = Rewrite.REWRITE_RULE (carrier_nnf_rewrites ())
+    val flatten = nnf_flatten carrier_rule
     fun node splits goal =
-      Tactical.THEN (nnf_flatten, decide false splits) goal
+      Tactical.THEN (flatten, decide false splits) goal
     and decide augmented splits goal =
       case refutation config goal of
           SOME tactic => tactic goal
@@ -453,7 +453,7 @@ fun split_on_demand function config split_tac =
       else
         Tactical.THEN
           (augment_atom_facts function limit,
-           Tactical.THEN (nnf_flatten, decide true splits)) goal
+           Tactical.THEN (flatten, decide true splits)) goal
     and expand splits (goals, validation) =
       let
         val (result, revalidation) =
@@ -510,9 +510,7 @@ fun forward_prove premises conclusion =
       end
     val theorem = linarithReplay.generalize terms prove
   in
-    List.foldl
-      (fn (premise, result) => PROVE_HYP premise result)
-      theorem premise_theorems
+    Lib.rev_itlist PROVE_HYP premise_theorems theorem
   end
 
 fun LINARITH_PROVE tm =
@@ -521,9 +519,7 @@ fun LINARITH_PROVE tm =
     val (premises, conclusion) = boolSyntax.strip_imp_only body
     val _ = check_registered "LINARITH_PROVE" conclusion
     val theorem = forward_prove premises conclusion
-    val implication =
-      List.foldr (fn (premise, result) => Thm.DISCH premise result)
-        theorem premises
+    val implication = Lib.itlist Thm.DISCH premises theorem
     val result = GENL variables implication
   in
     if Term.aconv (Thm.concl result) tm then result
@@ -558,9 +554,7 @@ fun context_forward theorems conclusion =
   let
     val theorem = forward_prove (map Thm.concl theorems) conclusion
   in
-    List.foldl
-      (fn (premise, result) => PROVE_HYP premise result)
-      theorem theorems
+    Lib.rev_itlist PROVE_HYP theorems theorem
   end
 
 fun CTXT_LINARITH theorems tm =
@@ -655,18 +649,24 @@ fun admissible theorem =
   end
 
 (* Give dynamic [arith] facts assumption-shaped cache identities.  Their
-   original proofs remove those identities from the conversion result. *)
+   original proofs remove those identities from the conversion result.
+
+   cache_check is the same test CTXT_LINARITH opens with, so a term it
+   rejects is declined before the context is even looked at.  Asking it
+   first is what keeps the reducer, which is offered every boolean
+   subterm of a simplification, from dumping and re-assuming the whole
+   [arith] table for each one. *)
 fun cached_with_arith context tm =
-  let
-    val facts =
-      List.concat (map CONJUNCTS (linarithData.arith_facts ()))
-    val assumed = map (Thm.ASSUME o Thm.concl) facts
-    val theorem = CACHED_LINARITH (context @ assumed) tm
-  in
-    List.foldl
-      (fn (fact, result) => PROVE_HYP fact result)
-      theorem facts
-  end
+  if not (cache_check tm) then CACHED_LINARITH context tm
+  else
+    let
+      val facts =
+        List.concat (map CONJUNCTS (linarithData.arith_facts ()))
+      val assumed = map (Thm.ASSUME o Thm.concl) facts
+      val theorem = CACHED_LINARITH (context @ assumed) tm
+    in
+      Lib.rev_itlist PROVE_HYP facts theorem
+    end
 
 val LINARITH_REDUCER =
   let

@@ -529,7 +529,7 @@ val _ =
 
 fun first_pivot rows =
   case elim (rows, []) of
-      Failure hist => SOME (#1 (last hist))
+      Failure pivots => SOME (last pivots)
     | Success _ => NONE
 
 val _ =
@@ -987,14 +987,10 @@ fun forward_with disequalities =
     split_conclusion
 
 fun tactic_replay_succeeds config assumptions conclusion =
-  let
-    val (goals, _) =
-      Tactical.VALID
-        (linarithReplay.refute config assumptions conclusion)
-        (assumptions, conclusion)
-  in
-    null goals
-  end
+  (case linarithReplay.refute config assumptions conclusion of
+       NONE => false
+     | SOME tactic =>
+         null (#1 (Tactical.VALID tactic (assumptions, conclusion))))
   handle Feedback.HOL_ERR _ => false
 
 val _ =

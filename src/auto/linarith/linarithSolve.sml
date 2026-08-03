@@ -19,7 +19,7 @@ datatype injust =
 datatype lineq =
   Lineq of Arbint.int * lineq_type * Arbint.int list * injust
 
-type history = (int * lineq list) list
+type history = int list
 datatype result = Success of injust | Failure of history
 
 type linarith_config = linarithData.linarith_config
@@ -64,6 +64,18 @@ fun find_add_type (Eq, ty) = ty
   | find_add_type (Lt, _) = Lt
   | find_add_type (Le, Le) = Le
 
+(* Scaling a row that is already scaled composes the two literals rather
+   than nesting the justifications.  mklineq scales by a denominator LCM
+   and elimination then scales that row again, so the nested form would
+   reach replay as t * 2 * 3 and leave every instance's norm_conv obliged
+   to recognize it as the t * 6 on the other side. *)
+fun mk_multiplied n just =
+  if ai_one n then just
+  else
+    case just of
+        Multiplied (m, inner) => mk_multiplied (Arbint.* (n, m)) inner
+      | _ => Multiplied (n, just)
+
 fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
   if ai_one n then ineq
   else if ai_zero n andalso ty = Lt then
@@ -73,7 +85,7 @@ fun multiply_ineq n (ineq as Lineq (k, ty, coeffs, just)) =
   else
     Lineq (Arbint.* (n, k), ty,
            List.map (fn c => Arbint.* (n, c)) coeffs,
-           Multiplied (n, just))
+           mk_multiplied n just)
 
 fun add_ineq (Lineq (k1, ty1, coeffs1, just1))
              (Lineq (k2, ty2, coeffs2, just2)) =
@@ -235,7 +247,7 @@ fun elim (ineqs, hist) =
               List.map (elim_var v eq) dependent @ independent
           in
             trace (fn () => "equation pivot " ^ Int.toString v);
-            elim (others, (v, nontriv) :: hist)
+            elim (others, v :: hist)
           end
         else
           let
@@ -243,7 +255,7 @@ fun elim (ineqs, hist) =
               List.map (fn Lineq (_, _, cs, _) => cs) noneqs
           in
             case choose_blowup coeff_lists of
-                NONE => Failure ((~1, nontriv) :: hist)
+                NONE => Failure (~1 :: hist)
               | SOME (_, v) =>
                   let
                     val (independent, dependent) =
@@ -260,7 +272,7 @@ fun elim (ineqs, hist) =
                   in
                     trace (fn () => "inequality pivot " ^ Int.toString v);
                     elim (distinct_rows (independent @ products pos),
-                          (v, nontriv) :: hist)
+                          v :: hist)
                   end
           end
       end
@@ -309,8 +321,7 @@ fun mklineq atoms (item, index) =
     val c = Arbint.- (lhs_const, rhs_const)
     val just = Asm index
     fun lineq (constant, ty, cs, why) =
-      Lineq (constant, ty, cs,
-             if ai_one m then why else Multiplied (m, why))
+      Lineq (constant, ty, cs, mk_multiplied m why)
     fun negate cs = List.map Arbint.~ cs
   in
     case (rel, negated) of
@@ -337,12 +348,12 @@ fun mklineq atoms (item, index) =
 
 (* Nonneg is the registry-extensible replacement for upstream mknat
    (fast_lin_arith.ML:549-553). *)
-fun mknonneg is_nonnegative indices (atom, index) =
+fun mknonneg is_nonnegative width (index, atom) =
   if is_nonnegative atom then
     SOME
       (Lineq
          (zero, Le,
-          List.map (fn i => if i = index then one else zero) indices,
+          List.tabulate (width, fn i => if i = index then one else zero),
           Nonneg atom))
   else NONE
 
@@ -428,11 +439,10 @@ fun refutes is_nonnegative systems =
       | refute (items :: rest) justs =
           let
             val atoms = atoms_of_decomps (List.map #1 items)
-            val indices = List.tabulate (List.length atoms, fn i => i)
-            val atom_indices = ListPair.zip (atoms, indices)
             val nonnegative =
               List.mapPartial
-                (mknonneg is_nonnegative indices) atom_indices
+                (mknonneg is_nonnegative (List.length atoms))
+                (Lib.enumerate 0 atoms)
             val ineqs =
               List.map (mklineq atoms) items @ nonnegative
           in

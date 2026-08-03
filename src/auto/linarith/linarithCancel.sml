@@ -10,17 +10,25 @@ type ac_ops = {
   dest_leq : term -> term * term,
   strip_plus : term -> term list,
   mk_plus : term * term -> term,
-  zero : term,
   assoc : thm,
   comm : thm,
   rid : thm,
   ac_fallback : conv option
 }
 
-fun remove_aconv _ [] = NONE
-  | remove_aconv tm (item :: rest) =
-      if Term.aconv tm item then SOME rest
-      else Option.map (fn rest' => item :: rest') (remove_aconv tm rest)
+type norm_spec = {
+  ac : ac_ops,
+  ty : hol_type,
+  leq_cancel : thm,
+  less_cancel : thm,
+  eq_cancel : thm,
+  expression_conv : conv,
+  reduce_conv : conv,
+  refl_thms : thm list
+}
+
+fun remove_aconv tm items =
+  Option.map #2 (Lib.total (Lib.pluck (Term.aconv tm)) items)
 
 fun common_summand [] _ = NONE
   | common_summand (item :: rest) right =
@@ -32,8 +40,10 @@ fun common_summand [] _ = NONE
                   (common, item :: left, right'))
               (common_summand rest right)
 
-fun mk_sum (ops : ac_ops) [] = #zero ops
-  | mk_sum ops terms = list_mk_lbinop (curry (#mk_plus ops)) terms
+(* Only ever asked for the non-empty remainder of a cancellation; the
+   emptied side is handled by the identity theorem instead. *)
+fun mk_sum (ops : ac_ops) terms =
+  list_mk_lbinop (curry (#mk_plus ops)) terms
 
 fun relation_sides (ops : ac_ops) tm =
   case Lib.total (#dest_leq ops) tm of
@@ -92,6 +102,29 @@ fun cancel_common (ops : ac_ops) cancel tm =
           in
             Thm.TRANS relation_thm cancel_thm
           end
+  end
+
+fun mk_norm_conv (spec : norm_spec) =
+  let
+    val ops = #ac spec
+    val expression_conv = #expression_conv spec
+    fun cancel_rule tm =
+      if Lib.can (#dest_leq ops) tm then SOME (#leq_cancel spec)
+      else if Lib.can (#dest_less ops) tm then SOME (#less_cancel spec)
+      else if boolSyntax.is_eq tm andalso
+              Term.type_of (#1 (boolSyntax.dest_eq tm)) = #ty spec
+      then SOME (#eq_cancel spec)
+      else NONE
+    val finish =
+      TRY_CONV (#reduce_conv spec) THENC
+      TRY_CONV (simpLib.SIMP_CONV boolSimps.bool_ss (#refl_thms spec))
+  in
+    fn tm =>
+      case cancel_rule tm of
+          NONE => expression_conv tm
+        | SOME cancel =>
+            (BINOP_CONV expression_conv THENC
+             REPEATC (cancel_common ops cancel) THENC finish) tm
   end
 
 end

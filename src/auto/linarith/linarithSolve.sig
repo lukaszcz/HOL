@@ -29,7 +29,9 @@ sig
   datatype lineq =
     Lineq of Arbint.int * lineq_type * Arbint.int list * injust
 
-  type history = (int * lineq list) list
+  (* The columns eliminated so far, most recent first.  Search discards
+     a failure, so the rows of each round are not carried with it. *)
+  type history = int list
   datatype result = Success of injust | Failure of history
 
   type linarith_config = linarithData.linarith_config

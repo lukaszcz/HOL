@@ -60,9 +60,10 @@ sig
     },
     (* Normalizes a relation or an expression of the carrier, and
        reduces to T the trivially true relations replay builds.  It
-       may report "no change" by raising UNCHANGED -- num, int and
-       real end theirs in ALL_CONV, which does -- since replay either
-       absorbs that exception or drops it with Lib.total.  The one
+       may report "no change" by raising UNCHANGED -- every instance
+       built with linarithCancel.mk_norm_conv does so for a term
+       outside its carrier -- since replay either absorbs that
+       exception or drops it with Lib.total.  The one
        thing it must decide is reflexivity: replay hands left <= left
        straight to EQT_ELIM, so an instance that leaves that term
        alone raises UNCHANGED out of the whole tactic rather than
