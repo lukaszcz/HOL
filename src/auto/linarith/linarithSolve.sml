@@ -495,15 +495,16 @@ fun negate tm =
   if boolSyntax.is_neg tm then boolSyntax.dest_neg tm
   else boolSyntax.mk_neg tm
 
-fun prove ({neq_limit, split_limit = _} : linarith_config)
-          decompose is_nonnegative hypotheses conclusion =
+fun prove_decomposed ({neq_limit, split_limit = _} : linarith_config)
+                     decompose is_nonnegative hypotheses conclusion =
   case (SOME (negate conclusion)
         handle Feedback.HOL_ERR _ => NONE) of
       NONE => (false, NONE)
     | SOME negated_conclusion =>
         let
-          val terms = hypotheses @ [negated_conclusion]
-          val items = List.map (fn tm => (tm, decompose tm)) terms
+          val items =
+            hypotheses @
+            [(negated_conclusion, decompose negated_conclusion)]
           fun neq (_, SOME decomp) = is_neq decomp
             | neq (_, NONE) = false
           val neq_count = List.length (List.filter neq items)
@@ -519,5 +520,9 @@ fun prove ({neq_limit, split_limit = _} : linarith_config)
         in
           (split_neq, refutes is_nonnegative systems)
         end
+
+fun prove config decompose is_nonnegative hypotheses conclusion =
+  prove_decomposed config decompose is_nonnegative
+    (List.map (fn tm => (tm, decompose tm)) hypotheses) conclusion
 
 end

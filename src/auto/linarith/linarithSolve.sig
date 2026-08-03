@@ -65,4 +65,13 @@ sig
     linarith_config -> (Term.term -> decomp option) ->
     (Term.term -> bool) -> Term.term list -> Term.term ->
     bool * injust list option
+
+  (* prove is this applied to its decomposed hypotheses.  A caller that
+     asks the same question repeatedly about one fixed hypothesis set
+     decomposes that set once and calls this directly; the negated
+     conclusion is still decomposed per call, since it varies. *)
+  val prove_decomposed :
+    linarith_config -> (Term.term -> decomp option) ->
+    (Term.term -> bool) -> (Term.term * decomp option) list ->
+    Term.term -> bool * injust list option
 end

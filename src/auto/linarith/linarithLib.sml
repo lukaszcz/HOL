@@ -396,10 +396,13 @@ fun augment_atom_facts function limit =
 (* Whether a disjunct can be added to the literals already assumed
    without the arithmetic refuting the result.  A disjunct that cannot
    is a case the split would close immediately, so counting them
-   measures how much of a disjunction is still live. *)
-fun consistent config literals disjunct =
-  case linarithSolve.prove config linarithDecomp.decomp
-         linarithDecomp.is_nonnegative (disjunct :: literals)
+   measures how much of a disjunction is still live.  The literals are
+   taken already decomposed, since every disjunct of every disjunction
+   is scored against the same ones. *)
+fun consistent config decomposed disjunct =
+  case linarithSolve.prove_decomposed config linarithDecomp.decomp
+         linarithDecomp.is_nonnegative
+         ((disjunct, linarithDecomp.decomp disjunct) :: decomposed)
          boolSyntax.F of
       (_, SOME _) => false
     | (_, NONE) => true
@@ -420,9 +423,11 @@ fun disj_elim_tac config (assumptions, conclusion) =
       if List.null disjunctions then
         raise ERR "disj_elim_tac" "no disjunctive assumption"
       else ()
+    val decomposed =
+      List.map (fn tm => (tm, linarithDecomp.decomp tm)) literals
     fun score disjunction =
       (List.length
-         (List.filter (consistent config literals)
+         (List.filter (consistent config decomposed)
             (boolSyntax.strip_disj disjunction)),
        disjunction)
     fun cheaper (candidate as (count, _), best as (fewest, _)) =

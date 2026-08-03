@@ -1250,6 +1250,44 @@ val _ =
        valid_closes (linarithLib.LINARITH_TAC [])
          ([iff_premise], public_x_le_y))
 
+(* Choosing which disjunction to eliminate scores every disjunct against
+   the same literals, so the literals are decomposed once per choice
+   rather than once per disjunct.  Decomposition is the term-traversal
+   half of the solver, so the cost that matters is decompositions per
+   tactic call: this goal takes 274, where scoring from undecomposed
+   literals took 364. *)
+val chain_vars =
+  List.tabulate
+    (9, fn i =>
+       Term.mk_var ("linarith_chain_" ^ Int.toString i, numSyntax.num))
+val chain_target = Term.mk_var ("linarith_chain_target", numSyntax.num)
+val chain_literals =
+  List.tabulate
+    (8, fn i =>
+       num_leq (List.nth (chain_vars, i)) (List.nth (chain_vars, i + 1)))
+val chain_disjunction =
+  boolSyntax.list_mk_disj
+    (List.tabulate
+       (5, fn i =>
+          num_leq
+            (num_plus (last chain_vars)
+               (numSyntax.mk_numeral (Arbnum.fromInt (i + 1))))
+            chain_target))
+
+val _ =
+  check
+    ("scoring a disjunction decomposes the literals once per choice",
+     fn () =>
+       let
+         val _ = linarithDecomp.decomp_count := 0
+         val closed =
+           valid_closes (linarithLib.LINARITH_TAC [])
+             (chain_literals @ [chain_disjunction],
+              num_leq (hd chain_vars) chain_target)
+       in
+         closed andalso !linarithDecomp.decomp_count = 274
+       end)
+
 (* Conditionals are the propositional form the old six-theorem rewrite
    list could not reach; normalForms.NNF_CONV splits them on both sides
    of the turnstile. *)

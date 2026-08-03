@@ -308,8 +308,11 @@ fun relation tm =
                                  | NONE => NONE)
                       end))
 
+val decomp_count = ref 0
+
 fun decomp tm =
   let
+    val _ = decomp_count := !decomp_count + 1
     val (negated, body) =
       case Lib.total boolSyntax.dest_neg tm of
           SOME inner => (true, inner)
