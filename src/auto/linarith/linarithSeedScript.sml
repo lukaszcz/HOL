@@ -1,8 +1,6 @@
 Theory linarithSeed
 Ancestors
   arithmetic
-Libs
-  linarithData
 
 open arithmeticTheory
 
@@ -32,7 +30,7 @@ Proof
   metis_tac [LESS_CASES, LESS_OR_EQ]
 QED
 
-Theorem NUM_MIN_SPLIT[arith_split]:
+Theorem NUM_MIN_SPLIT:
   !P m n.
     P (MIN m n) <=>
     (m < n ==> P m) /\ (n <= m ==> P n)
@@ -40,7 +38,7 @@ Proof
   rw [MIN_DEF, NOT_LESS]
 QED
 
-Theorem NUM_MAX_SPLIT[arith_split]:
+Theorem NUM_MAX_SPLIT:
   !P m n.
     P (MAX m n) <=>
     (m < n ==> P n) /\ (n <= m ==> P m)
@@ -48,7 +46,7 @@ Proof
   rw [MAX_DEF, NOT_LESS]
 QED
 
-Theorem NUM_SUB_SPLIT[arith_split]:
+Theorem NUM_SUB_SPLIT:
   !P m n.
     P (m - n) <=>
     (m < n /\ P 0) \/ ?d. m = n + d /\ P d

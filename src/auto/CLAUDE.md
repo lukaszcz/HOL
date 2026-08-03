@@ -60,7 +60,8 @@ Phased subtree layout:
     blast/       tableau prover (Paulson's blast)
     clasimp/     AUTO/FORCE/FASTFORCE/CLARSIMP, [iff]
     aesop/       best-first engine (aesop-style)
-    linarith/    generic linear arith, `LINARITH_TAC`
+    linarith/    generic linear arith, `LINARITH_TAC`; carrier
+                 instances, no dispatching `ARITH_TAC`
 
 `linarith/` contains the pre-boss core and num instance.  Its
 `instances/` subdirectory contains the int, real and rat instances and
@@ -109,8 +110,11 @@ belongs to the parallel build band.
   schemas with claset attributes and nothing else.
 - Preprocessing normalizes forms, not instances; a justification that
   needs a problem's name is recognition.
-- Unsolved problems are asserted expected failures citing the planned
-  remedy — checked to fail, so passing turns the suite red.
+- Checked-to-fail is only for method boundaries: a goal the procedure
+  is documented not to decide, asserted to fail fast, with its error,
+  citing the procedure that would close it.  A goal that is merely too
+  hard or too slow is never asserted to fail — assert that the tactic
+  terminates and reports no proof, and leave closing it a pass.
 - Test specified behavior (solved goals, residues, warnings), not
   internals — nets and `claset` internals may change.
 - Bug fixes get a failing-first regression test.

@@ -67,11 +67,6 @@ fun first_marker _ [] = NONE
 fun reject function name =
   raise ERR function (name ^ " marker is not accepted by " ^ function)
 
-fun validate_split function theorem =
-  (ignore (splitLib.is_asm_split theorem)
-   handle HOL_ERR _ =>
-     raise ERR function "Malformed Split theorem (expected P-form)")
-
 fun plain_argument function theorem =
   let
     val {simp_rules, iff_rules, simp_controls, rest} =
@@ -98,7 +93,9 @@ fun simple_argument function theorem =
   if markerLib.is_Split theorem then
     let
       val split = markerLib.destSplit theorem
-      val _ = validate_split function split
+      val _ =
+        linarithData.check_asm_split function
+          "Split theorem (expected P-form)" split
     in
       reject function "Split"
     end
@@ -110,7 +107,9 @@ fun full_arguments function arguments =
       if markerLib.is_Split theorem then
         let
           val split = markerLib.destSplit theorem
-          val _ = validate_split function split
+          val _ =
+            linarithData.check_asm_split function
+              "Split theorem (expected P-form)" split
         in
           (facts, split :: splits)
         end
@@ -119,23 +118,27 @@ fun full_arguments function arguments =
     foldl add ([], []) arguments
   end
 
-fun core function config (assumptions, conclusion) =
-  let
-    val (split_neq, result) =
-      linarithSolve.prove config linarithDecomp.decomp
-        linarithDecomp.is_nonnegative assumptions conclusion
-  in
-    case result of
-        SOME justifications =>
-          linarithReplay.refute_tac split_neq justifications
-            (assumptions, conclusion)
-      | NONE =>
-          (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
-           linarithData.trace 2
-             ("preprocessed conclusion\n" ^
-              Parse.term_to_string conclusion);
-           raise ERR function "linear arithmetic found no proof")
-  end
+(* A goal the arithmetic cannot refute is not yet a failure: the search
+   splits it and asks again.  So finding the certificate is separate from
+   reporting that there is none, and only a caller that has run out of
+   splits pays for the diagnostics. *)
+fun refutation config (assumptions, conclusion) =
+  SOME (linarithReplay.refute config assumptions conclusion)
+  handle Feedback.HOL_ERR error =>
+    if Feedback.top_function_of error = "refute" then NONE
+    else raise Feedback.HOL_ERR error
+
+(* The diagnostics report the goal as preprocessing left it, so they stay
+   on this side of the interface; the failure is reported under the
+   caller's name because the public entries report their own. *)
+fun core function config (goal as (assumptions, conclusion)) =
+  case refutation config goal of
+      SOME tactic => tactic goal
+    | NONE =>
+        (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
+         linarithData.trace 2
+           ("preprocessed conclusion\n" ^ Parse.term_to_string conclusion);
+         raise ERR function "linear arithmetic found no proof")
 
 fun SIMPLE_LINARITH_TAC arguments =
   let
@@ -220,18 +223,10 @@ fun filter_relevant (assumptions, conclusion) =
     ([(filtered, conclusion)], validate)
   end
 
-val propositional_nnf_rewrites =
-  [boolTheory.IMP_DISJ_THM,
-   boolTheory.EQ_IMP_THM,
-   boolTheory.DE_MORGAN_THM,
-   boolTheory.NOT_FORALL_THM,
-   boolTheory.NOT_EXISTS_THM,
-   CONJUNCT1 boolTheory.NOT_CLAUSES]
-
-(* Carrier-specific normalizations (truncated subtraction, say) arrive
-   from the registry rather than being named here. *)
-fun nnf_rewrites () =
-  propositional_nnf_rewrites @
+(* The propositional half of the normalization is normalForms.NNF_CONV.
+   What remains here is carrier-specific (truncated subtraction, say) and
+   arrives from the registry rather than being named. *)
+fun carrier_nnf_rewrites () =
   List.concat (map #nnf_rules (linarithData.all_instances ()))
 
 fun opposite_tac (assumptions, conclusion) =
@@ -255,15 +250,29 @@ fun opposite_tac (assumptions, conclusion) =
         | NONE => raise ERR "opposite_tac" "no immediate contradiction"
   end
 
+(* Tactic.STRIP_ASSUME_TAC without the disjunction case.  Conjunctions
+   and existentials decompose an assumption without branching, so they
+   are eliminated as soon as they appear.  Disjunctions branch, and are
+   left standing for split_on_demand to eliminate one at a time: a goal
+   the arithmetic closes never pays for the case splits it did not
+   need. *)
+val strip_literals =
+  Thm_cont.REPEAT_TCL
+    (Thm_cont.FIRST_TCL [Thm_cont.CONJUNCTS_THEN, Thm_cont.CHOOSE_THEN])
+    Tactic.CHECK_ASSUME_TAC
+
+(* NNF_CONV does not see the carrier rules and it does not see their
+   output, so the order is fixed: NNF first, then the carrier pass,
+   because SUB_EQ_0 and its kin produce relations already in NNF. *)
 fun nnf_flatten goal =
   let
-    val nnf_rule = Rewrite.REWRITE_RULE (nnf_rewrites ())
+    val carrier_rule = Rewrite.REWRITE_RULE (carrier_nnf_rewrites ())
+    val nnf_rule = carrier_rule o Conv.CONV_RULE normalForms.NNF_CONV
   in
     Tactical.THEN
       (Tactical.POP_ASSUM_LIST
          (fn theorems =>
-           Tactical.MAP_EVERY (Tactic.STRIP_ASSUME_TAC o nnf_rule)
-             theorems),
+           Tactical.MAP_EVERY (strip_literals o nnf_rule) theorems),
        Tactical.TRY opposite_tac) goal
   end
 
@@ -275,27 +284,6 @@ fun limit_exceeded function limit =
     val _ = linarithData.trace 1 message
   in
     raise ERR function message
-  end
-
-fun split_fixpoint function limit split_tac =
-  let
-    fun attempt goal = SOME (split_tac goal) handle HOL_ERR _ => NONE
-    fun loop rounds goal =
-      case attempt goal of
-          NONE => Tactical.ALL_TAC goal
-        | SOME (split_goals, split_validation) =>
-            if rounds >= limit then limit_exceeded function limit
-            else
-              let
-                val next =
-                  Tactical.THEN (nnf_flatten, loop (rounds + 1))
-                val (goals, validation) =
-                  Tactical.ALLGOALS next split_goals
-              in
-                (goals, split_validation o validation)
-              end
-  in
-    loop 0
   end
 
 fun distinct_thms theorems =
@@ -330,20 +318,12 @@ fun decomp_atoms tm =
     | SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
         map #1 (lhs @ rhs)
 
+(* Every instance sees every atom: an instance's atom_facts declines the
+   atoms outside its own carrier, and the ones it accepts need not live
+   in that carrier either (int accepts Num i : num). *)
 fun facts_for tm =
-  let
-    val instances = linarithData.all_instances ()
-    val generic = List.concat (map (fn i => #atom_facts i tm) instances)
-    val divmod =
-      case linarithData.instance_for (Term.type_of tm) of
-          NONE => []
-        | SOME instance =>
-            (case #divmod_facts instance of
-                 NONE => []
-               | SOME facts => facts tm)
-  in
-    generic @ divmod
-  end
+  List.concat
+    (map (fn i => #atom_facts i tm) (linarithData.all_instances ()))
 
 fun augmentation_round processed assumptions =
   let
@@ -360,7 +340,7 @@ fun augmentation_round processed assumptions =
     (seen, novel)
   end
 
-fun augment_divmod function limit =
+fun augment_atom_facts function limit =
   let
     fun loop processed rounds (goal as (assumptions, _)) =
       let
@@ -378,6 +358,114 @@ fun augment_divmod function limit =
     loop [] 0
   end
 
+(* Whether a disjunct can be added to the literals already assumed
+   without the arithmetic refuting the result.  A disjunct that cannot
+   is a case the split would close immediately, so counting them
+   measures how much of a disjunction is still live. *)
+fun consistent config literals disjunct =
+  case linarithSolve.prove config linarithDecomp.decomp
+         linarithDecomp.is_nonnegative (disjunct :: literals)
+         boolSyntax.F of
+      (_, SOME _) => false
+    | (_, NONE) => true
+
+(* Eliminate one disjunctive assumption, choosing the one with the
+   fewest disjuncts still consistent with the literals already assumed.
+   Choosing blindly makes the search exponential in the number of
+   disjunctions, because it expands a disjunction of conjunctions into
+   its disjunctive normal form before the arithmetic ever runs.
+   Choosing this way is unit propagation modulo the arithmetic: a
+   disjunction all but one of whose cases the current literals already
+   refute costs one branch, not two. *)
+fun disj_elim_tac config (assumptions, conclusion) =
+  let
+    val (disjunctions, literals) =
+      List.partition boolSyntax.is_disj assumptions
+    val _ =
+      if List.null disjunctions then
+        raise ERR "disj_elim_tac" "no disjunctive assumption"
+      else ()
+    fun score disjunction =
+      (List.length
+         (List.filter (consistent config literals)
+            (boolSyntax.strip_disj disjunction)),
+       disjunction)
+    fun cheaper (candidate as (count, _), best as (fewest, _)) =
+      if count < fewest then candidate else best
+    val scored = List.map score disjunctions
+    val (_, chosen) = List.foldl cheaper (hd scored) (tl scored)
+    val (left, right) = boolSyntax.dest_disj chosen
+    val common = List.filter (not o Term.aconv chosen) assumptions
+    val goals =
+      [(common @ [left], conclusion), (common @ [right], conclusion)]
+    fun justify [left_case, right_case] =
+          Thm.DISJ_CASES (Thm.ASSUME chosen) left_case right_case
+      | justify _ = raise ERR "disj_elim_tac" "invalid justification"
+  in
+    (goals, justify)
+  end
+
+(* Refute the goal in hand; only if that fails, take one step and try
+   again.  The steps are ordered by how much they cost and how much
+   they can be avoided:
+
+   Disjunction elimination comes first.  An operator split does not
+   branch by itself — it replaces a MIN, MAX or truncated subtraction
+   by a conditional statement of its cases, which normalization turns
+   into a disjunction — so disjunction elimination is what consumes
+   what operator splitting produces.  Leaving those disjunctions
+   standing lets the operators reappear in every one of them, and the
+   splitting never finishes.
+
+   Fact augmentation comes last, because it is the one step that adds
+   assumptions without discharging anything: doing it before the case
+   splits would offer the splitter its own output to split, and the
+   splitting would not finish.  It is tried once per goal, after the
+   case splits have run out and before the goal is declared
+   unrefutable.  Coming last is also what keeps it from missing atoms:
+   nothing reaches it with a disjunction still standing, so the atoms
+   it collects from an assumption are the atoms of a literal.
+
+   split_limit keeps its meaning of an operator-splitting and
+   augmentation bound, now counted along a branch of the search rather
+   than along a preprocessing chain.  Disjunction elimination needs no
+   bound: every step of it consumes a disjunction, and only an operator
+   split puts one back. *)
+fun split_on_demand function config split_tac =
+  let
+    val limit = #split_limit config
+    fun node splits goal =
+      Tactical.THEN (nnf_flatten, decide false splits) goal
+    and decide augmented splits goal =
+      case refutation config goal of
+          SOME tactic => tactic goal
+        | NONE => branch augmented splits goal
+    and branch augmented splits goal =
+      case Lib.total (disj_elim_tac config) goal of
+          SOME split => expand splits split
+        | NONE =>
+            (case Lib.total split_tac goal of
+                 SOME split =>
+                   if splits >= limit then limit_exceeded function limit
+                   else expand (splits + 1) split
+               | NONE => augment augmented splits goal)
+    and augment augmented splits goal =
+      if augmented then core function config goal
+      else
+        Tactical.THEN
+          (augment_atom_facts function limit,
+           Tactical.THEN (nnf_flatten, decide true splits)) goal
+    and expand splits (goals, validation) =
+      let
+        val (result, revalidation) =
+          Tactical.ALLGOALS (node splits) goals
+      in
+        (result, validation o revalidation)
+      end
+  in
+    node 0
+  end
+
 type linarith_config = linarithData.linarith_config
 val default_config = linarithData.default_config
 
@@ -390,25 +478,15 @@ fun CFG_LINARITH_TAC config arguments =
       linarithData.arith_facts () @ List.rev argument_facts
     val rules = split_rules (List.rev argument_splits)
     val split_tac = splitLib.SPLIT_TAC rules
-    val split_limit = #split_limit config
-    val preprocess =
-      Tactical.THEN
-        (Tactic.CCONTR_TAC,
-         Tactical.THEN
-           (filter_relevant,
-            Tactical.THEN
-              (nnf_flatten,
-               Tactical.THEN
-                 (split_fixpoint function split_limit split_tac,
-                  Tactical.THEN
-                    (augment_divmod function split_limit,
-                     nnf_flatten)))))
+    val search = split_on_demand function config split_tac
   in
     Tactical.THEN
       (clasetLib.INSERT_FACTS_TAC facts,
        fn goal as (_, conclusion) =>
          (check_registered function conclusion;
-          Tactical.THEN (preprocess, core function config) goal))
+          Tactical.THEN
+            (Tactic.CCONTR_TAC,
+             Tactical.THEN (filter_relevant, search)) goal))
   end
 
 val LINARITH_TAC = CFG_LINARITH_TAC default_config
@@ -475,14 +553,15 @@ fun LINARITH_CONV tm =
           end
   end
 
+(* forward_prove atomises its premise terms itself, so the context
+   theorems only have to be discharged against the result. *)
 fun context_forward theorems conclusion =
   let
-    val atoms = List.concat (map CONJUNCTS theorems)
-    val theorem = forward_prove (map Thm.concl atoms) conclusion
+    val theorem = forward_prove (map Thm.concl theorems) conclusion
   in
     List.foldl
       (fn (premise, result) => PROVE_HYP premise result)
-      theorem atoms
+      theorem theorems
   end
 
 fun CTXT_LINARITH theorems tm =
@@ -618,12 +697,20 @@ val LINARITH_ss =
         convs = [], rewrs = [], congs = [], filter = NONE,
         ac = [], dprocs = [LINARITH_REDUCER]}]
 
-(* Mirrors Isabelle's solver setup at lin_arith.ML:949. *)
+(* Mirrors Isabelle's solver setup at lin_arith.ML:949.  Arithmetic side
+   conditions share the reducer's cache; cached_with_arith is a
+   conversion, so EQT_ELIM turns its |- tm = T into the |- tm a solver
+   must return, and its HOL_ERR on a |- tm = F correctly reports the
+   refuted condition as undischarged.  Terms the guard rejects keep the
+   direct forward call: they are the "contradictory context proves
+   anything" case, which the cache cannot serve. *)
 val linarith_solver : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
-     context_forward
-       (context_thms @ linarithData.arith_facts ()) tm}
+     if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
+     else
+       context_forward
+         (context_thms @ linarithData.arith_facts ()) tm}
 
 fun clear_linarith_caches () = Cache.clear_cache linarith_cache
 

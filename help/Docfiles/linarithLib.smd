@@ -32,9 +32,16 @@ in the clasimp and Aesop simpsets.
 Persistent `[arith]` declarations supply extra facts. Persistent
 `[arith_split]` declarations supply P-form operator-splitting rules to the
 full tactics. A `markerLib.Split th` argument supplies such a rule for one
-full-tactic invocation. Instance `pre_split` rules and the shipped split
-set handle operators such as `MIN`, `MAX`, natural subtraction, and
-absolute value. The `[arith]` set initially has no members.
+full-tactic invocation. Instance `pre_split` rules handle operators such
+as `MIN`, `MAX`, natural subtraction, and absolute value. The `[arith]`
+and `[arith_split]` sets both initially have no members.
+
+Instances also supply facts about individual atoms — division, modulus,
+and `Num` facts for the shipped ones. The full tactics add them for the
+atoms occurring in the goal, repeating until no new fact appears. They do
+so only where the arithmetic has failed and no case split remains: the
+full tactics split on demand, refuting what they have before expanding
+any disjunction or operator.
 
 The trace named `"linarith"` reports preprocessing, search, and replay
 detail at levels 1 through 3.

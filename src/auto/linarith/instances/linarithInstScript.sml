@@ -1,8 +1,6 @@
 Theory linarithInst
 Ancestors
   integer real rat
-Libs
-  linarithData
 
 open integerTheory realTheory ratTheory
 
@@ -25,7 +23,7 @@ Proof
   metis_tac [INT_LT_TOTAL]
 QED
 
-Theorem INT_MIN_SPLIT[arith_split]:
+Theorem INT_MIN_SPLIT:
   !P (x : int) y.
     P (int_min x y) <=>
     (x < y ==> P x) /\ (y <= x ==> P y)
@@ -34,7 +32,7 @@ Proof
   metis_tac [INT_NOT_LT]
 QED
 
-Theorem INT_MAX_SPLIT[arith_split]:
+Theorem INT_MAX_SPLIT:
   !P (x : int) y.
     P (int_max x y) <=>
     (x < y ==> P y) /\ (y <= x ==> P x)
@@ -43,7 +41,7 @@ Proof
   metis_tac [INT_NOT_LT]
 QED
 
-Theorem INT_ABS_SPLIT[arith_split]:
+Theorem INT_ABS_SPLIT:
   !P (x : int).
     P (ABS x) <=>
     (x < 0 ==> P (~x)) /\ (0 <= x ==> P x)
@@ -59,7 +57,7 @@ Proof
   metis_tac [REAL_LT_TOTAL]
 QED
 
-Theorem REAL_MIN_SPLIT[arith_split]:
+Theorem REAL_MIN_SPLIT:
   !P (x : real) y.
     P (min x y) <=>
     (x <= y ==> P x) /\ (y < x ==> P y)
@@ -68,7 +66,7 @@ Proof
   metis_tac [REAL_NOT_LE]
 QED
 
-Theorem REAL_MAX_SPLIT[arith_split]:
+Theorem REAL_MAX_SPLIT:
   !P (x : real) y.
     P (max x y) <=>
     (x <= y ==> P y) /\ (y < x ==> P x)
@@ -77,7 +75,7 @@ Proof
   metis_tac [REAL_NOT_LE]
 QED
 
-Theorem REAL_ABS_SPLIT[arith_split]:
+Theorem REAL_ABS_SPLIT:
   !P (x : real).
     P (abs x) <=>
     (0 <= x ==> P x) /\ (x < 0 ==> P (-x))

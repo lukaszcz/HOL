@@ -1,7 +1,7 @@
 structure linarithNum :> linarithNum =
 struct
 
-open Abbrev HolKernel Conv Drule Rewrite
+open HolKernel Conv Drule Rewrite
 
 fun dest_lit tm =
   Arbrat.fromNat (numSyntax.dest_numeral tm)
@@ -69,7 +69,9 @@ fun dest_divmod tm =
       SOME args => SOME args
     | NONE => Lib.total numSyntax.dest_mod tm
 
-fun divmod_facts tm =
+(* atom_facts sees every atom of every carrier; dest_divmod declines the
+   ones outside the naturals. *)
+fun atom_facts tm =
   case dest_divmod tm of
       NONE => []
     | SOME (dividend, divisor) =>
@@ -98,7 +100,7 @@ val lessD =
 
 val instance : linarithData.linarith_instance =
   {ty = numSyntax.num,
-   discrete = true,
+   discrete = SOME {lessD = [lessD]},
    dest =
      {dest_plus = numSyntax.dest_plus,
       dest_minus = NONE,
@@ -119,7 +121,6 @@ val instance : linarithData.linarith_instance =
       mult_mono =
         [arithmeticTheory.LESS_MONO_MULT,
          arithmeticTheory.LT_MULT_LCANCEL],
-      lessD = [lessD],
       not_less = arithmeticTheory.NOT_LESS,
       not_le = arithmeticTheory.NOT_LESS_EQUAL,
       neqE = linarithSeedTheory.NUM_NEQ_E,
@@ -130,7 +131,6 @@ val instance : linarithData.linarith_instance =
      [linarithSeedTheory.NUM_MIN_SPLIT,
       linarithSeedTheory.NUM_MAX_SPLIT,
       linarithSeedTheory.NUM_SUB_SPLIT],
-   atom_facts = (fn _ => []),
-   divmod_facts = SOME divmod_facts}
+   atom_facts = atom_facts}
 
 end

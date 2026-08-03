@@ -9,7 +9,7 @@ fun same_type left right = Type.compare (left, right) = EQUAL
 
 type linarith_instance = {
   ty : hol_type,
-  discrete : bool,
+  discrete : {lessD : thm list} option,
   dest : {
     dest_plus : term -> term * term,
     dest_minus : (term -> term * term) option,
@@ -25,7 +25,6 @@ type linarith_instance = {
   kit : {
     add_mono : thm list,
     mult_mono : thm list,
-    lessD : thm list,
     not_less : thm,
     not_le : thm,
     neqE : thm,
@@ -34,8 +33,7 @@ type linarith_instance = {
   norm_conv : conv,
   nnf_rules : thm list,
   pre_split : thm list,
-  atom_facts : term -> thm list,
-  divmod_facts : (term -> thm list) option
+  atom_facts : term -> thm list
 }
 
 type linarith_injection = {
@@ -113,17 +111,19 @@ fun apply_arith_delta delta table =
         Symtab.update (persistent_name name, theorem) table
     | ThmSetData.REMOVE name => remove_name name table
 
-fun validate_split name theorem =
+(* The P-form test is the whole of split validation; the two channels
+   differ only in how they name what they rejected. *)
+fun check_asm_split function what theorem =
   (ignore (splitLib.is_asm_split theorem)
-   handle HOL_ERR _ =>
-     raise ERR "apply_arith_split_delta"
-       ("Malformed [arith_split] theorem " ^ persistent_name name))
+   handle HOL_ERR _ => raise ERR function ("Malformed " ^ what))
 
 fun apply_arith_split_delta delta table =
   case delta of
       ThmSetData.ADD (name, theorem) =>
         let
-          val _ = validate_split name theorem
+          val _ =
+            check_asm_split "apply_arith_split_delta"
+              ("[arith_split] theorem " ^ persistent_name name) theorem
         in
           Symtab.update (persistent_name name, theorem) table
         end

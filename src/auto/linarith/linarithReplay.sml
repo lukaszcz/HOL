@@ -14,13 +14,6 @@ fun nth what items index =
     raise ERR "mkthm" (what ^ " index " ^ Int.toString index ^
       " is out of range")
 
-fun atoms_of terms =
-  atoms_of_decomps (List.mapPartial linarithDecomp.decomp terms)
-
-datatype instance_env = Env of term list
-
-fun mk_instance_env terms = Env (atoms_of terms)
-
 fun is_literal tm =
   case linarithData.instance_for (Term.type_of tm) of
       NONE => false
@@ -29,7 +22,8 @@ fun is_literal tm =
 
 fun generalize terms prove =
   let
-    val atoms = atoms_of terms
+    val atoms =
+      atoms_of_decomps (List.mapPartial linarithDecomp.decomp terms)
     val abstracted =
       List.filter (fn tm => not (Term.is_var tm) andalso
                             not (is_literal tm)) atoms
@@ -439,50 +433,58 @@ fun normalize_final theorem =
       CONV_RULE (#norm_conv instance) expanded
     end
 
-fun mkthm (Env atoms) assumptions justification =
+(* Only a discrete carrier can strengthen a strict inequality to the
+   non-strict one about its successor; a dense carrier supplies no such
+   rule, and the LessD/NotLeDD justifications never arise for it. *)
+fun lessD_rules (instance : linarithData.linarith_instance) =
+  case #discrete instance of
+      SOME {lessD} => lessD
+    | NONE => []
+
+fun mkthm assumptions justification =
   let
     fun one (Asm index) = nth "assumption" assumptions index
-      | one (Nonneg index) =
-          let
-            val atom = nth "atom" atoms index
-          in
-            case linarithData.instance_for (Term.type_of atom) of
-                NONE =>
-                  raise ERR "mkthm"
-                    ("no linarith instance for nonnegative atom " ^
-                     Parse.term_to_string atom)
-              | SOME instance =>
-                  (case #nonneg (#kit instance) atom of
-                       SOME theorem => theorem
-                     | NONE =>
-                         raise ERR "mkthm"
-                           ("instance declined nonnegative atom " ^
-                            Parse.term_to_string atom))
-          end
-      | one (LessD why) = from_kit "LessD" #lessD why
+      | one (Nonneg atom) =
+          (case linarithData.instance_for (Term.type_of atom) of
+               NONE =>
+                 raise ERR "mkthm"
+                   ("no linarith instance for nonnegative atom " ^
+                    Parse.term_to_string atom)
+             | SOME instance =>
+                 (case #nonneg (#kit instance) atom of
+                      SOME theorem => theorem
+                    | NONE =>
+                        raise ERR "mkthm"
+                          ("instance declined nonnegative atom " ^
+                           Parse.term_to_string atom)))
+      | one (LessD why) = from_instance "LessD" lessD_rules why
       | one (NotLessD why) =
-          from_kit "NotLessD" (fn kit => [#not_less kit]) why
+          from_instance "NotLessD"
+            (fn instance => [#not_less (#kit instance)]) why
       | one (NotLeD why) =
-          from_kit "NotLeD" (fn kit => [#not_le kit]) why
+          from_instance "NotLeD"
+            (fn instance => [#not_le (#kit instance)]) why
       | one (NotLeDD why) =
           let
             val theorem = one why
-            val kit = #kit (instance_of_thm theorem)
+            val instance = instance_of_thm theorem
             val less =
-              required_match "apply NotLeDD to" [#not_le kit] theorem
+              required_match "apply NotLeDD to"
+                [#not_le (#kit instance)] theorem
           in
-            required_match "finish NotLeDD on" (#lessD kit) less
+            required_match "finish NotLeDD on" (lessD_rules instance) less
           end
       | one (Multiplied (n, why)) = mult_thm n (one why)
       | one (Added (left, right)) =
           normalize_added (add_thms (one left) (one right))
     (* Apply the rules the justification's own carrier supplies. *)
-    and from_kit name select why =
+    and from_instance name select why =
           let
             val theorem = one why
-            val kit = #kit (instance_of_thm theorem)
+            val instance = instance_of_thm theorem
           in
-            required_match ("apply " ^ name ^ " to") (select kit) theorem
+            required_match ("apply " ^ name ^ " to")
+              (select instance) theorem
           end
 
     val theorem =
@@ -536,7 +538,7 @@ fun split_assumption discrete_only theorem =
     val instance = instance_of_thm theorem
   in
     if is_disequality tm andalso
-       (not discrete_only orelse #discrete instance)
+       (not discrete_only orelse Option.isSome (#discrete instance))
     then
       Option.map extract_split
         (first_match [#neqE (#kit instance)] theorem)
@@ -575,9 +577,7 @@ fun splitasms assumptions =
   bind_tips (split_pass true assumptions) (split_pass false)
 
 fun fwdproof (Tip assumptions) (justification :: rest) =
-      (mkthm (mk_instance_env (List.map Thm.concl assumptions))
-         assumptions justification,
-       rest)
+      (mkthm assumptions justification, rest)
   | fwdproof (Tip _) [] =
       raise ERR "fwdproof" "too few linear-arithmetic justifications"
   | fwdproof (Spl (split, left, left_tree, right, right_tree)) justs =
@@ -673,8 +673,7 @@ fun justification_tac justification (assumptions, goal) =
     raise ERR "justification_tac" "goal is not false"
   else
     Tactic.ACCEPT_TAC
-      (mkthm (mk_instance_env assumptions)
-        (List.map Thm.ASSUME assumptions) justification)
+      (mkthm (List.map Thm.ASSUME assumptions) justification)
       (assumptions, goal)
 
 fun refute_tac split_neq justifications =
@@ -689,6 +688,17 @@ fun refute_tac split_neq justifications =
   in
     Tactical.THEN
       (append_negated_tac, Tactical.THENL (split_tac, leaves))
+  end
+
+fun refute config assumptions conclusion =
+  let
+    val (split_neq, result) =
+      linarithSolve.prove config linarithDecomp.decomp
+        linarithDecomp.is_nonnegative assumptions conclusion
+  in
+    case result of
+        SOME justifications => refute_tac split_neq justifications
+      | NONE => raise ERR "refute" "linear arithmetic found no proof"
   end
 
 end

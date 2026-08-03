@@ -8,7 +8,7 @@ datatype lineq_type = Eq | Le | Lt
 
 datatype injust =
     Asm of int
-  | Nonneg of int
+  | Nonneg of Term.term
   | LessD of injust
   | NotLessD of injust
   | NotLeD of injust
@@ -112,34 +112,26 @@ fun is_contradictory (Lineq (k, ty, _, _)) =
     | Le => ai_pos k
     | Lt => Arbint.>= (k, zero)
 
-fun extract_first pred items =
+(* The equation pivot is a coefficient of least magnitude among the
+   nonzero entries of the equations; ties (only ever c against ~c) go
+   to the one met first in row-then-column order. *)
+fun min_abs_coeff rows =
   let
-    fun extract _ [] = raise List.Empty
-      | extract prefix (item :: rest) =
-          if pred item then (item, prefix @ rest)
-          else extract (item :: prefix) rest
+    fun better (c, best) =
+      if ai_zero c then best
+      else
+        case best of
+            NONE => SOME c
+          | SOME b =>
+              if Arbint.< (Arbint.abs c, Arbint.abs b) then SOME c
+              else best
+    fun add_row (Lineq (_, _, coeffs, _), best) =
+      List.foldl better best coeffs
   in
-    extract [] items
+    case List.foldl add_row NONE rows of
+        SOME c => c
+      | NONE => raise ERR "min_abs_coeff" "no coefficients"
   end
-
-fun distinct_coeffs rows =
-  let
-    fun add c cs =
-      if List.exists (ai_eq c) cs then cs else c :: cs
-    fun add_row (Lineq (_, _, coeffs, _), cs) =
-      List.foldl (fn (c, acc) => add c acc) cs coeffs
-  in
-    List.foldl add_row [] rows
-  end
-
-fun min_abs (c :: cs) =
-  let
-    fun better (x, best) =
-      if Arbint.< (Arbint.abs x, Arbint.abs best) then x else best
-  in
-    List.foldl better c cs
-  end
-  | min_abs [] = raise ERR "min_abs" "no coefficients"
 
 (* One pass tallies the sign counts of every column; the pivot is the
    column with the smallest nonzero product, favouring earlier columns. *)
@@ -222,11 +214,9 @@ fun elim (ineqs, hist) =
       in
         if not (List.null eqs) then
           let
-            val coeff =
-              min_abs
-                (List.filter (not o ai_zero) (distinct_coeffs eqs))
+            val coeff = min_abs_coeff eqs
             val (eq as Lineq (_, _, eqcoeffs, _), other_eqs) =
-              extract_first
+              Lib.pluck
                 (fn Lineq (_, _, cs, _) => List.exists (ai_eq coeff) cs)
                 eqs
             fun index _ [] =
@@ -350,7 +340,7 @@ fun mknonneg is_nonnegative indices (atom, index) =
       (Lineq
          (zero, Le,
           List.map (fn i => if i = index then one else zero) indices,
-          Nonneg index))
+          Nonneg atom))
   else NONE
 
 fun is_neq (Decomp {rel, negated, ...}) =
@@ -417,8 +407,8 @@ fun split_items split_neq items =
     List.map number_hyps cases
   end
 
-(* Nonneg justifications index into this list, so replay must recover the
-   very same order; both sides call this one function. *)
+(* Coefficient rows follow this order, so every row built for one
+   split system must come from this one function. *)
 fun atoms_of_decomps decomps =
   let
     fun add ((tm, _), seen) =

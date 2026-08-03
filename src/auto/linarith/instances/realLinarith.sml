@@ -1,7 +1,7 @@
 structure realLinarith :> realLinarith =
 struct
 
-open Abbrev HolKernel Conv Drule Rewrite
+open HolKernel Conv
 
 val ac_ops : linarithCancel.ac_ops =
   {dest_less = realSyntax.dest_less,
@@ -60,7 +60,7 @@ fun nonneg tm =
 
 val instance : linarithData.linarith_instance =
   {ty = realSyntax.real_ty,
-   discrete = false,
+   discrete = NONE,
    dest =
      {dest_plus = realSyntax.dest_plus,
       dest_minus = SOME realSyntax.dest_minus,
@@ -81,7 +81,6 @@ val instance : linarithData.linarith_instance =
       mult_mono =
         [realTheory.REAL_LE_LMUL_IMP,
          realTheory.REAL_LT_LMUL_IMP],
-      lessD = [],
       not_less = realTheory.REAL_NOT_LT,
       not_le = realTheory.REAL_NOT_LE,
       neqE = linarithInstTheory.REAL_NEQ_E,
@@ -92,8 +91,7 @@ val instance : linarithData.linarith_instance =
      [linarithInstTheory.REAL_MIN_SPLIT,
       linarithInstTheory.REAL_MAX_SPLIT,
       linarithInstTheory.REAL_ABS_SPLIT],
-   atom_facts = (fn _ => []),
-   divmod_facts = NONE}
+   atom_facts = (fn _ => [])}
 
 val _ = linarithData.register_instance instance
 

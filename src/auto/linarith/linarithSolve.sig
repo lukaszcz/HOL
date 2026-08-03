@@ -14,9 +14,11 @@ sig
 
   datatype lineq_type = Eq | Le | Lt
 
+  (* Asm indexes the assumption list replay is given; Nonneg carries
+     the atom itself, whose own instance supplies its theorem. *)
   datatype injust =
       Asm of int
-    | Nonneg of int
+    | Nonneg of Term.term
     | LessD of injust
     | NotLessD of injust
     | NotLeD of injust
@@ -35,7 +37,7 @@ sig
   val elim : lineq list * history -> result
   val mklineq : Term.term list -> decomp * int -> lineq
 
-  (* The atom ordering that Nonneg justifications index into. *)
+  (* The atom ordering that coefficient rows follow. *)
   val atoms_of_decomps : decomp list -> Term.term list
 
   val negate : Term.term -> Term.term
@@ -47,6 +49,9 @@ sig
   val split_items :
     bool -> (Term.term * decomp option) list -> (decomp * int) list list
 
+  (* The flag reports whether disequalities were split: when it is
+     true there is one justification per case, in the order the cases
+     are generated, and the caller must reproduce that case split. *)
   val prove :
     linarith_config -> (Term.term -> decomp option) ->
     (Term.term -> bool) -> Term.term list -> Term.term ->

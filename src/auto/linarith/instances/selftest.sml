@@ -1,4 +1,4 @@
-open HolKernel testutils linarithInstTheory
+open HolKernel testutils linarithInstTheory linarithCorpus
 
 fun check (name, predicate) =
   (tprint name;
@@ -61,7 +61,7 @@ val _ =
     ("int divmod facts cover INT_DIV_P and INT_MOD_P behavior",
      fn () =>
        let
-         val facts = valOf (#divmod_facts int_instance)
+         val facts = #atom_facts int_instance
          val positive = facts (intSyntax.mk_mod (ix, i3))
          val negative = facts (intSyntax.mk_div (ix, im3))
        in
@@ -457,10 +457,9 @@ val _ =
          val bad = ileq n_int im1
          val theorem =
            linarithReplay.mkthm
-             (linarithReplay.mk_instance_env [bad])
              [Thm.ASSUME bad]
              (linarithSolve.Added
-               (linarithSolve.Nonneg 0, linarithSolve.Asm 0))
+               (linarithSolve.Nonneg n_int, linarithSolve.Asm 0))
        in
          Term.aconv (Thm.concl theorem) boolSyntax.F
        end)
@@ -563,22 +562,23 @@ val _ =
 (* Translation of all 54 lemma goals in Isabelle's Arith_Examples.thy at
    f7e02b7e1f31.  Isabelle's nat coercion truncates negative integers, so
    [20], [21], [53], and [54] use Num (int_max i 0), rather than HOL4's
-   absolute-value Num coercion.  The two upstream "oops" goals are retained:
-   [47] retains upstream's NNF-explosion performance oops as a bounded
-   known gap, while [48] records linear arithmetic's documented integer-
-   divisibility incompleteness.
+   absolute-value Num coercion.  Both upstream "oops" goals are retained:
+   [47] is proved here, because splitting on demand never builds the
+   disjunctive normal form whose size defeated upstream, while [48] is
+   the corpus's one method boundary -- linear arithmetic's documented
+   integer-divisibility incompleteness -- asserted to be reported,
+   promptly and by that name, rather than run into.
 
-   On 2026-07-31 this suite took 35.1s on an AMD Ryzen 9 9950X.  The 120s
-   suite budget, 30s goal budget, and 5s known-gap budget deliberately leave
-   ample headroom. *)
+   On 2026-08-02 the full instances selftest took 10.0s at level 2 versus
+   7.7s at level 1 on an AMD Ryzen 9 9950X, down from 50.2s at level 2
+   before the tactics began splitting on demand.  The 120s suite budget,
+   30s goal budget, and 5s boundary budget deliberately leave ample
+   headroom.
 
-datatype strength_expectation =
-    StrengthSuccess
-  | StrengthExpectedFailure of string
-  | StrengthKnownGap of string
+   linarithCorpus owns the driver, the budgets and the canonical goal
+   numbering; the numbering check below pins this list to all of it. *)
 
-val arith_examples_corpus :
-    (int * strength_expectation * term) list =
+val arith_examples_corpus : strength_goal list =
   [(1, StrengthSuccess, “(i:num) <= MAX i j”),
    (2, StrengthSuccess, “(i:int) <= int_max i j”),
    (3, StrengthSuccess, “MIN i j <= (i:num)”),
@@ -654,9 +654,7 @@ val arith_examples_corpus :
    (46, StrengthSuccess,
     “(a:num) - (b - (c - (d - e))) =
      a - (b - (c - (d - e)))”),
-   (47,
-    StrengthKnownGap
-      "upstream oops: NNF expansion of the ordering disjunction",
+   (47, StrengthSuccess,
     “((n:num) < m /\ m < n') \/
      (n < m /\ m = n') \/
      (n < n' /\ n' < m) \/
@@ -675,7 +673,9 @@ val arith_examples_corpus :
      (n' = m /\ m = n)”),
    (48,
     StrengthExpectedFailure
-      "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)",
+      {error = "CFG_LINARITH_TAC: linear arithmetic found no proof",
+       remedy =
+         "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)"},
     “2 * (x:num) <> 1”),
    (49, StrengthSuccess, “(0:num) < 1”),
    (50, StrengthSuccess, “(0:int) < 1”),
@@ -688,84 +688,18 @@ val arith_examples_corpus :
     “(i:int) <> j /\ (a:num) <> b /\ a < 2 /\ b < 2 ==>
      a + b <= Num (int_max (ABS i) (ABS j))”)]
 
-fun selftest_level () =
-  case Option.mapPartial Int.fromString
-         (OS.Process.getEnv "HOLSELFTESTLEVEL") of
-      SOME level => level
-    | NONE => 1
-
-val strength_goal_budget = Time.fromSeconds 30
-val strength_gap_budget = Time.fromSeconds 5
-val strength_suite_budget = Time.fromSeconds 120
-val strength_succeeded = ref 0
-val strength_failed_as_expected = ref 0
-
-fun strength_attempt expectation proposition =
-  let
-    val budget =
-      case expectation of
-          StrengthKnownGap _ => strength_gap_budget
-        | _ => strength_goal_budget
-  in
-    SOME
-      (Timeout.apply budget
-        (fn () =>
-          valid_closes (linarithLib.LINARITH_TAC [])
-            ([], proposition)) ())
-  end
-  handle Timeout.TIMEOUT _ => NONE
-       | Feedback.HOL_ERR _ => SOME false
-
-fun run_strength_goal (number, expectation, proposition) =
-  let
-    val prefix =
-      "Arith_Examples goal " ^ Int.toString number
-    val label =
-      case expectation of
-          StrengthSuccess => prefix
-        | StrengthExpectedFailure remedy =>
-            prefix ^ " (expected failure: " ^ remedy ^ ")"
-        | StrengthKnownGap reason =>
-            prefix ^ " (known gap: " ^ reason ^ ")"
-    val _ = tprint label
-    val result = strength_attempt expectation proposition
-  in
-    case (expectation, result) of
-        (StrengthSuccess, SOME true) =>
-          (strength_succeeded := !strength_succeeded + 1; OK ())
-      | (StrengthSuccess, NONE) =>
-          die (prefix ^ " exceeded its 30 second budget")
-      | (StrengthSuccess, SOME false) =>
-          die (prefix ^ " was not proved by LINARITH_TAC")
-      | (StrengthExpectedFailure remedy, SOME false) =>
-          (strength_failed_as_expected :=
-             !strength_failed_as_expected + 1;
-           OK ())
-      | (StrengthExpectedFailure remedy, NONE) =>
-          die (prefix ^ " timed out; expected quick failure; " ^ remedy)
-      | (StrengthExpectedFailure remedy, SOME true) =>
-          die (prefix ^ " unexpectedly succeeded; " ^ remedy)
-      | (StrengthKnownGap reason, SOME true) =>
-          die (prefix ^ " unexpectedly closed the known gap; " ^ reason)
-      | (StrengthKnownGap _, _) =>
-          (strength_failed_as_expected :=
-             !strength_failed_as_expected + 1;
-           OK ())
-  end
+val _ =
+  check_numbering
+    {suite = "Arith_Examples", numbering = full_numbering}
+    arith_examples_corpus
 
 val _ =
   if selftest_level () >= 2 then
-    let
-      val started = Time.now ()
-      val _ = List.app run_strength_goal arith_examples_corpus
-      val elapsed = Time.- (Time.now (), started)
-    in
-      check
-        ("Arith_Examples suite count and time budget",
-         fn () =>
-           List.length arith_examples_corpus = 54 andalso
-           !strength_succeeded = 52 andalso
-           !strength_failed_as_expected = 2 andalso
-           Time.< (elapsed, strength_suite_budget))
-    end
+    run_suite
+      {suite = "Arith_Examples",
+       tactic = fn () => linarithLib.LINARITH_TAC [],
+       suite_budget = Time.fromSeconds 120,
+       expected_successes = 53,
+       expected_boundaries = 1}
+      arith_examples_corpus
   else ()

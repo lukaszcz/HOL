@@ -1,7 +1,7 @@
 structure intLinarith :> intLinarith =
 struct
 
-open Abbrev HolKernel Conv Drule Rewrite
+open HolKernel Conv Drule
 
 fun dest_lit tm =
   Arbrat.fromAInt (intSyntax.int_of_term tm)
@@ -83,28 +83,29 @@ fun division_facts dividend divisor nonzero =
       (simpLib.SIMP_RULE boolSimps.bool_ss [sign] division)
   end
 
-fun divmod_facts tm =
-  case dest_divmod tm of
-      NONE => []
-    | SOME (dividend, divisor) =>
-        case nonzero_literal divisor of
-            NONE => []
-          | SOME nonzero =>
-              division_facts dividend divisor nonzero
-
 fun nonneg tm =
   case Lib.total intSyntax.dest_injected tm of
       SOME n => SOME (Thm.SPEC n integerTheory.INT_POS)
     | NONE => NONE
 
+(* atom_facts sees every atom of every carrier.  The Num arm deliberately
+   fires on natural-number atoms; the divmod arm declines everything
+   outside the integers. *)
 fun atom_facts tm =
   case Lib.total intSyntax.dest_Num tm of
       SOME i => [Thm.SPEC i integerTheory.INT_OF_NUM]
-    | NONE => []
+    | NONE =>
+        case dest_divmod tm of
+            NONE => []
+          | SOME (dividend, divisor) =>
+              case nonzero_literal divisor of
+                  NONE => []
+                | SOME nonzero =>
+                    division_facts dividend divisor nonzero
 
 val instance : linarithData.linarith_instance =
   {ty = intSyntax.int_ty,
-   discrete = true,
+   discrete = SOME {lessD = [integerTheory.INT_LT_LE1]},
    dest =
      {dest_plus = intSyntax.dest_plus,
       dest_minus = SOME intSyntax.dest_minus,
@@ -125,7 +126,6 @@ val instance : linarithData.linarith_instance =
       mult_mono =
         [linarithInstTheory.INT_LE_LMUL_POS,
          linarithInstTheory.INT_LT_LMUL_POS],
-      lessD = [integerTheory.INT_LT_LE1],
       not_less = integerTheory.INT_NOT_LT,
       not_le = integerTheory.INT_NOT_LE,
       neqE = linarithInstTheory.INT_NEQ_E,
@@ -136,8 +136,7 @@ val instance : linarithData.linarith_instance =
      [linarithInstTheory.INT_MIN_SPLIT,
       linarithInstTheory.INT_MAX_SPLIT,
       linarithInstTheory.INT_ABS_SPLIT],
-   atom_facts = atom_facts,
-   divmod_facts = SOME divmod_facts}
+   atom_facts = atom_facts}
 
 val _ = linarithData.register_instance instance
 

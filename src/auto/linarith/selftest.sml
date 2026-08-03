@@ -1,5 +1,6 @@
 open testutils
 open linarithSolve
+open linarithCorpus
 
 val zero = Arbint.zero
 val one = Arbint.one
@@ -15,10 +16,35 @@ fun last xs = hd (rev xs)
 
 val _ =
   check
-    ("linarith ships no arith facts and three num split seeds",
+    ("linarith ships the [arith] and [arith_split] tables empty",
      fn () =>
        null (linarithData.arith_facts ()) andalso
-       List.length (linarithData.arith_split_thms ()) = 3)
+       null (linarithData.arith_split_thms ()))
+
+(* The num split seeds no longer carry [arith_split]: they reach the
+   split channel through the instance's pre_split, which is the other
+   half of what split_rules unions.  Pinned here, where the attribute
+   table used to be. *)
+val num_split_seeds =
+  [linarithSeedTheory.NUM_MIN_SPLIT,
+   linarithSeedTheory.NUM_MAX_SPLIT,
+   linarithSeedTheory.NUM_SUB_SPLIT]
+
+val _ =
+  check
+    ("the three num split seeds arrive through the instance channel",
+     fn () =>
+       let
+         val pre_splits =
+           List.concat (map #pre_split (linarithData.all_instances ()))
+         fun offered seed =
+           List.exists
+             (fn rule => Term.aconv (Thm.concl rule) (Thm.concl seed))
+             pre_splits
+       in
+         List.all offered num_split_seeds andalso
+         List.all (not o splitLib.is_asm_split) num_split_seeds
+       end)
 
 val num_instance = linarithNum.instance
 
@@ -27,7 +53,7 @@ val _ =
     ("linarithLib registers the num instance at module load",
      fn () =>
        case linarithData.instance_for numSyntax.num of
-           SOME instance => #discrete instance
+           SOME instance => Option.isSome (#discrete instance)
          | NONE => false)
 
 val num_x = Term.mk_var ("linarith_num_x", numSyntax.num)
@@ -88,18 +114,16 @@ val _ =
   check
     ("num divmod facts specialize DIVISION for a positive literal",
      fn () =>
-       case #divmod_facts num_instance of
-           NONE => false
-         | SOME facts =>
-             let
-               val div_tm = numSyntax.mk_div (num_x, num_three)
-               val mod_tm = numSyntax.mk_mod (num_x, num_three)
-             in
-               List.length (facts div_tm) = 2 andalso
-               List.length (facts mod_tm) = 2 andalso
-               List.length (facts (numSyntax.mk_div
-                 (num_x, numSyntax.zero_tm))) = 1
-             end)
+       let
+         val facts = #atom_facts num_instance
+         val div_tm = numSyntax.mk_div (num_x, num_three)
+         val mod_tm = numSyntax.mk_mod (num_x, num_three)
+       in
+         List.length (facts div_tm) = 2 andalso
+         List.length (facts mod_tm) = 2 andalso
+         List.length (facts (numSyntax.mk_div
+           (num_x, numSyntax.zero_tm))) = 1
+       end)
 
 val num_decomp_relation =
   num_leq
@@ -141,7 +165,6 @@ fun synthetic_instance discrete : linarithData.linarith_instance =
    kit =
      {add_mono = [],
       mult_mono = [],
-      lessD = [],
       not_less = boolTheory.TRUTH,
       not_le = boolTheory.TRUTH,
       neqE = boolTheory.TRUTH,
@@ -149,18 +172,19 @@ fun synthetic_instance discrete : linarithData.linarith_instance =
    norm_conv = Conv.ALL_CONV,
    nnf_rules = [],
    pre_split = [],
-   atom_facts = (fn _ => []),
-   divmod_facts = NONE}
+   atom_facts = (fn _ => [])}
 
-val _ = linarithData.register_instance (synthetic_instance false)
-val _ = linarithData.register_instance (synthetic_instance true)
+val _ = linarithData.register_instance (synthetic_instance NONE)
+val _ =
+  linarithData.register_instance
+    (synthetic_instance (SOME {lessD = [boolTheory.TRUTH]}))
 
 val _ =
   check
     ("instance registration replaces an existing same-type entry",
      fn () =>
        case linarithData.instance_for registry_ty of
-           SOME instance => #discrete instance
+           SOME instance => Option.isSome (#discrete instance)
          | NONE => false)
 
 fun function_ty domain range = Type.mk_type ("fun", [domain, range])
@@ -222,7 +246,7 @@ fun synth_lit tm =
 fun make_decomp_instance dest_minus :
     linarithData.linarith_instance =
   {ty = registry_ty,
-   discrete = false,
+   discrete = NONE,
    dest =
      {dest_plus = dest_binary synth_plus,
       dest_minus = dest_minus,
@@ -237,7 +261,6 @@ fun make_decomp_instance dest_minus :
    kit =
      {add_mono = [],
       mult_mono = [],
-      lessD = [],
       not_less = boolTheory.TRUTH,
       not_le = boolTheory.TRUTH,
       neqE = boolTheory.TRUTH,
@@ -245,8 +268,7 @@ fun make_decomp_instance dest_minus :
    norm_conv = Conv.ALL_CONV,
    nnf_rules = [],
    pre_split = [],
-   atom_facts = (fn _ => []),
-   divmod_facts = NONE}
+   atom_facts = (fn _ => [])}
 
 val decomp_instance =
   make_decomp_instance (SOME (dest_binary synth_minus))
@@ -717,9 +739,7 @@ val num_zero = numSyntax.zero_tm
 val num_one = numSyntax.mk_numeral Arbnum.one
 
 fun replay terms justification =
-  linarithReplay.mkthm
-    (linarithReplay.mk_instance_env terms)
-    (List.map Thm.ASSUME terms) justification
+  linarithReplay.mkthm (List.map Thm.ASSUME terms) justification
 
 fun replay_is_false terms justification =
   Term.aconv (Thm.concl (replay terms justification)) boolSyntax.F
@@ -745,16 +765,18 @@ val _ =
      fn () =>
        replay_is_false
          [num_leq (num_plus num_x num_three) num_two]
-         (Added (Nonneg 0, Asm 0)))
+         (Added (Nonneg num_x, Asm 0)))
 
 val _ =
   check
-    ("replay atom indices agree with search lhs-before-rhs order",
+    ("replay rejects a Nonneg atom the instance declines",
      fn () =>
-       replay_is_false
-         [num_leq num_x num_y,
-          num_leq (num_plus num_x num_three) num_two]
-         (Added (Nonneg 0, Asm 1)))
+       ((ignore (replay [num_leq num_one num_zero] (Nonneg synth_x));
+         false)
+        handle Feedback.HOL_ERR error =>
+          Feedback.message_of error =
+            "instance declined nonnegative atom " ^
+            Parse.term_to_string synth_x))
 
 val _ =
   check
@@ -834,7 +856,6 @@ fun num_instance_with_mult_mono mult_mono =
      kit =
        {add_mono = #add_mono kit,
         mult_mono = mult_mono,
-        lessD = #lessD kit,
         not_less = #not_less kit,
         not_le = #not_le kit,
         neqE = #neqE kit,
@@ -842,8 +863,7 @@ fun num_instance_with_mult_mono mult_mono =
      norm_conv = #norm_conv num_instance,
      nnf_rules = #nnf_rules num_instance,
      pre_split = #pre_split num_instance,
-     atom_facts = #atom_facts num_instance,
-     divmod_facts = #divmod_facts num_instance} :
+     atom_facts = #atom_facts num_instance} :
       linarithData.linarith_instance
   end
 
@@ -947,18 +967,15 @@ fun forward_with disequalities =
     split_conclusion
 
 fun tactic_replay_succeeds config assumptions conclusion =
-  case linarithSolve.prove config linarithDecomp.decomp
-         linarithDecomp.is_nonnegative assumptions conclusion of
-      (_, NONE) => false
-    | (split_neq, SOME justifications) =>
-        let
-          val (goals, _) =
-            Tactical.VALID
-              (linarithReplay.refute_tac split_neq justifications)
-              (assumptions, conclusion)
-        in
-          null goals
-        end
+  let
+    val (goals, _) =
+      Tactical.VALID
+        (linarithReplay.refute config assumptions conclusion)
+        (assumptions, conclusion)
+  in
+    null goals
+  end
+  handle Feedback.HOL_ERR _ => false
 
 val _ =
   check
@@ -1170,6 +1187,28 @@ val _ =
        valid_closes (linarithLib.LINARITH_TAC [])
          ([iff_premise], public_x_le_y))
 
+(* Conditionals are the propositional form the old six-theorem rewrite
+   list could not reach; normalForms.NNF_CONV splits them on both sides
+   of the turnstile. *)
+val cond_condition =
+  Term.mk_var ("linarith_cond_condition", Type.bool)
+val cond_premise =
+  boolSyntax.mk_cond
+    (cond_condition, public_x_le_y, num_less public_x public_y)
+val cond_goal =
+  boolSyntax.mk_cond
+    (cond_condition, public_x_le_y,
+     num_leq public_x (numSyntax.mk_suc public_y))
+
+val _ =
+  check
+    ("full preprocessing splits conditionals in premise and goal",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([cond_premise], public_x_le_y) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([num_less public_x public_y], cond_goal))
+
 val public_min = numSyntax.mk_min (public_x, public_y)
 val public_max = numSyntax.mk_max (public_x, public_y)
 val min_le_left = num_leq public_min public_x
@@ -1213,7 +1252,7 @@ val public_div_three = numSyntax.mk_div (public_x, num_three)
 val public_mod_three = numSyntax.mk_mod (public_x, num_three)
 val div_equation =
   Thm.concl
-    (hd ((valOf (#divmod_facts num_instance)) public_div_three))
+    (hd (#atom_facts num_instance public_div_three))
 val mod_bound = num_less public_mod_three num_three
 
 val _ =
@@ -1229,8 +1268,6 @@ val one_pipeline_round : linarithLib.linarith_config =
   {neq_limit = 9, split_limit = 1}
 val zero_pipeline_rounds : linarithLib.linarith_config =
   {neq_limit = 9, split_limit = 0}
-val two_pipeline_rounds : linarithLib.linarith_config =
-  {neq_limit = 9, split_limit = 2}
 val nine_pipeline_rounds : linarithLib.linarith_config =
   {neq_limit = 9, split_limit = 9}
 
@@ -1260,20 +1297,37 @@ val nested_div =
     (numSyntax.mk_div (public_x, num_three), num_two)
 val nested_div_trigger = num_leq nested_div nested_div
 
+(* The inner quotient is not an atom of either side, so closing this
+   needs the facts the outer atom's own facts introduce: augmentation
+   has to reach a fixpoint rather than stop after the atoms it was
+   handed. *)
+val nested_div_goal =
+  ([num_less num_zero nested_div],
+   num_less num_zero (numSyntax.mk_div (public_x, num_three)))
+
 val _ =
   check
     ("nested div/mod augmentation reaches a bounded fixpoint",
      fn () =>
-       let
-         val goal =
-           ([nested_div_trigger, num_leq num_one num_zero],
-            num_leq public_x public_x)
-       in
-         tactic_fails
-           (linarithLib.CFG_LINARITH_TAC one_pipeline_round []) goal andalso
-         valid_closes
-           (linarithLib.CFG_LINARITH_TAC two_pipeline_rounds []) goal
-       end)
+       tactic_fails
+         (linarithLib.CFG_LINARITH_TAC zero_pipeline_rounds [])
+         nested_div_goal andalso
+       valid_closes
+         (linarithLib.CFG_LINARITH_TAC one_pipeline_round [])
+         nested_div_goal)
+
+(* Splitting on demand means the rounds are spent only when the
+   arithmetic cannot close the goal without them: a goal refutable as it
+   stands is closed even where no round is allowed at all, however much
+   nested div/mod its assumptions carry. *)
+val _ =
+  check
+    ("no augmentation round is spent on an already refutable goal",
+     fn () =>
+       valid_closes
+         (linarithLib.CFG_LINARITH_TAC zero_pipeline_rounds [])
+         ([nested_div_trigger, num_leq num_one num_zero],
+          num_leq public_x public_x))
 
 val nested_min =
   numSyntax.mk_min (numSyntax.mk_min (public_x, public_y), public_z)
@@ -1281,7 +1335,7 @@ val nested_min_goal = num_leq nested_min public_x
 
 val _ =
   check
-    ("split fixpoint is bounded and accepts a CFG limit override",
+    ("operator splitting is bounded and accepts a CFG limit override",
      fn () =>
        tactic_fails
          (linarithLib.CFG_LINARITH_TAC one_pipeline_round [])
@@ -1510,6 +1564,32 @@ val _ =
          Term.aconv (Thm.concl theorem) public_x_le_z
        end)
 
+(* The branch cache_check does not take: a plain boolean atom is neither
+   relevant nor F, so the solver keeps the direct forward call and can
+   still discharge it from a contradictory arithmetic context. *)
+val public_p = Term.mk_var ("linarith_public_p", Type.bool)
+val public_successor_bound =
+  num_leq (num_plus public_z num_one) public_z
+
+val _ =
+  check
+    ("lin_arith solver discharges a non-arithmetic side condition",
+     fn () =>
+       let
+         val {solve, ...} = linarithLib.linarith_solver
+         val outside_guard =
+           not (linarithDecomp.is_relevant public_p) andalso
+           not (Term.aconv public_p boolSyntax.F)
+         val theorem =
+           solve
+             {stack = [],
+              context_thms = [Thm.ASSUME public_successor_bound],
+              recurse = Conv.NO_CONV} public_p
+       in
+         outside_guard andalso
+         Term.aconv (Thm.concl theorem) public_p
+       end)
+
 fun with_arith_export operation =
   case ThmSetData.data_exportfns {settype = "arith"} of
       NONE => false
@@ -1547,75 +1627,74 @@ val _ =
    Arith_Examples.thy at f7e02b7e1f31.  The instances suite contains all
    54 translations and checks that vendored total; this core partition
    ensures the strength corpus also runs where the num instance is built.
-   Goal numbers retain their source order.  The two upstream "oops" goals
-   are retained: [47] is a bounded preprocessing-performance gap and [48]
-   is linear arithmetic's documented integer-divisibility incompleteness.
+   Goal numbers retain their source order.  Both upstream "oops" goals
+   are retained: [47] is proved here, because splitting on demand never
+   builds the disjunctive normal form whose size defeated upstream, and
+   [48] is the corpus's one method boundary -- linear arithmetic's
+   documented integer-divisibility incompleteness -- asserted to be
+   reported, promptly and by that name, rather than run into.
 
-   On 2026-07-31 the full core selftest took 16.6s at level 2 versus
-   11.8s at level 1 on an AMD Ryzen 9 9950X.  The 90s suite budget,
-   30s goal budget, and 5s known-gap budget leave ample headroom. *)
+   On 2026-08-02 the full core selftest took 13.2s at level 2 versus
+   12.2s at level 1 on an AMD Ryzen 9 9950X.  The 90s suite budget,
+   30s goal budget, and 5s boundary budget leave ample headroom.
 
-datatype core_strength_expectation =
-    CoreStrengthSuccess
-  | CoreStrengthExpectedFailure of string
-  | CoreStrengthKnownGap of string
+   linarithCorpus owns the driver, the budgets and the canonical goal
+   numbering; the numbering check below pins this list to the core
+   subset of it. *)
 
-val core_arith_examples_corpus :
-    (int * core_strength_expectation * Term.term) list =
-  [(1, CoreStrengthSuccess, “(i:num) <= MAX i j”),
-   (3, CoreStrengthSuccess, “MIN i j <= (i:num)”),
-   (5, CoreStrengthSuccess, “MIN (i:num) j <= MAX i j”),
-   (7, CoreStrengthSuccess,
+val core_arith_examples_corpus : strength_goal list =
+  [(1, StrengthSuccess, “(i:num) <= MAX i j”),
+   (3, StrengthSuccess, “MIN i j <= (i:num)”),
+   (5, StrengthSuccess, “MIN (i:num) j <= MAX i j”),
+   (7, StrengthSuccess,
     “MIN (i:num) j + MAX i j = i + j”),
-   (9, CoreStrengthSuccess,
+   (9, StrengthSuccess,
     “(i:num) < j ==> MIN i j < MAX i j”),
-   (14, CoreStrengthSuccess, “(x:num) <= y ==> x - y = 0”),
-   (15, CoreStrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
-   (16, CoreStrengthSuccess,
+   (14, StrengthSuccess, “(x:num) <= y ==> x - y = 0”),
+   (15, StrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
+   (16, StrengthSuccess,
     “((x:num) <= y) = (x - y = 0)”),
-   (17, CoreStrengthSuccess,
+   (17, StrengthSuccess,
     “(x:num) < y /\ d < 1 ==> x - y = d”),
-   (18, CoreStrengthSuccess,
+   (18, StrengthSuccess,
     “(x:num) < y /\ d < 1 ==> x - y - x = d - x”),
-   (22, CoreStrengthSuccess, “(i:num) MOD 0 = i”),
-   (23, CoreStrengthSuccess, “(i:num) MOD 1 = 0”),
-   (24, CoreStrengthSuccess, “(i:num) MOD 42 <= 41”),
-   (30, CoreStrengthSuccess, “(x:num) < SUC y <=> x <= y”),
-   (31, CoreStrengthSuccess,
+   (22, StrengthSuccess, “(i:num) MOD 0 = i”),
+   (23, StrengthSuccess, “(i:num) MOD 1 = 0”),
+   (24, StrengthSuccess, “(i:num) MOD 42 <= 41”),
+   (30, StrengthSuccess, “(x:num) < SUC y <=> x <= y”),
+   (31, StrengthSuccess,
     “((x:num) = z ==> x <> y) ==> x <> y \/ z <> y”),
-   (32, CoreStrengthSuccess,
+   (32, StrengthSuccess,
     “((x:num) < SUC y) = (x <= y)”),
-   (33, CoreStrengthSuccess,
+   (33, StrengthSuccess,
     “(x:num) < y /\ y < z ==> x < z”),
-   (34, CoreStrengthSuccess,
+   (34, StrengthSuccess,
     “(x:num) < y /\ y < z ==> x < z”),
-   (35, CoreStrengthSuccess, “(P:bool) = Q ==> Q = P”),
-   (36, CoreStrengthSuccess,
+   (35, StrengthSuccess, “(P:bool) = Q ==> Q = P”),
+   (36, StrengthSuccess,
     “P = ((x:num) = 0) /\ ~P = (y = 0) ==> MIN x y = 0”),
-   (37, CoreStrengthSuccess,
+   (37, StrengthSuccess,
     “P = ((x:num) = 0) /\ ~P = (y = 0) ==>
      MAX x y = x + y”),
-   (38, CoreStrengthSuccess,
+   (38, StrengthSuccess,
     “(x:num) <> y /\ a + 2 = b /\ a < y /\ y < b /\
      a < x /\ x < b ==> F”),
-   (39, CoreStrengthSuccess,
+   (39, StrengthSuccess,
     “y < (x:num) /\ z < y /\ x < z ==> F”),
-   (40, CoreStrengthSuccess, “y < (x:num) - 5 ==> y < x”),
-   (41, CoreStrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
-   (42, CoreStrengthSuccess,
+   (40, StrengthSuccess, “y < (x:num) - 5 ==> y < x”),
+   (41, StrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
+   (42, StrengthSuccess,
     “(x:num) <> y /\ x <= y ==> x < y”),
-   (43, CoreStrengthSuccess,
+   (43, StrengthSuccess,
     “(x:num) < y /\ P (x - y) ==> P 0”),
-   (44, CoreStrengthSuccess,
+   (44, StrengthSuccess,
     “(x - y) - (x:num) = (x - x) - y”),
-   (45, CoreStrengthSuccess,
+   (45, StrengthSuccess,
     “(a:num) < b /\ c < d ==> a - b = c - d”),
-   (46, CoreStrengthSuccess,
+   (46, StrengthSuccess,
     “(a:num) - (b - (c - (d - e))) =
      a - (b - (c - (d - e)))”),
-   (47,
-    CoreStrengthKnownGap
-      "upstream oops: NNF expansion of the ordering disjunction",
+   (47, StrengthSuccess,
     “((n:num) < m /\ m < n') \/
      (n < m /\ m = n') \/
      (n < n' /\ n' < m) \/
@@ -1633,94 +1712,26 @@ val core_arith_examples_corpus :
      (m = n' /\ n' < n) \/
      (n' = m /\ m = n)”),
    (48,
-    CoreStrengthExpectedFailure
-      "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)",
+    StrengthExpectedFailure
+      {error = "CFG_LINARITH_TAC: linear arithmetic found no proof",
+       remedy =
+         "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)"},
     “2 * (x:num) <> 1”),
-   (49, CoreStrengthSuccess, “(0:num) < 1”),
-   (51, CoreStrengthSuccess, “(47:num) + 11 < 8 * 15”)]
-
-fun core_selftest_level () =
-  case Option.mapPartial Int.fromString
-         (OS.Process.getEnv "HOLSELFTESTLEVEL") of
-      SOME level => level
-    | NONE => 1
-
-val core_strength_goal_budget = Time.fromSeconds 30
-val core_strength_gap_budget = Time.fromSeconds 5
-val core_strength_suite_budget = Time.fromSeconds 90
-val core_strength_succeeded = ref 0
-val core_strength_failed_as_expected = ref 0
-
-fun core_strength_attempt expectation proposition =
-  let
-    val budget =
-      case expectation of
-          CoreStrengthKnownGap _ => core_strength_gap_budget
-        | _ => core_strength_goal_budget
-  in
-    SOME
-      (Timeout.apply budget
-        (fn () =>
-          valid_closes (linarithLib.LINARITH_TAC [])
-            ([], proposition)) ())
-  end
-  handle Timeout.TIMEOUT _ => NONE
-       | Feedback.HOL_ERR _ => SOME false
-
-fun run_core_strength_goal (number, expectation, proposition) =
-  let
-    val prefix =
-      "Arith_Examples core goal " ^ Int.toString number
-    val label =
-      case expectation of
-          CoreStrengthSuccess => prefix
-        | CoreStrengthExpectedFailure remedy =>
-            prefix ^ " (expected failure: " ^ remedy ^ ")"
-        | CoreStrengthKnownGap reason =>
-            prefix ^ " (known gap: " ^ reason ^ ")"
-    val _ = tprint label
-    val result = core_strength_attempt expectation proposition
-  in
-    case (expectation, result) of
-        (CoreStrengthSuccess, SOME true) =>
-          (core_strength_succeeded := !core_strength_succeeded + 1;
-           OK ())
-      | (CoreStrengthSuccess, NONE) =>
-          die (prefix ^ " exceeded its 30 second budget")
-      | (CoreStrengthSuccess, SOME false) =>
-          die (prefix ^ " was not proved by LINARITH_TAC")
-      | (CoreStrengthExpectedFailure remedy, SOME false) =>
-          (core_strength_failed_as_expected :=
-             !core_strength_failed_as_expected + 1;
-           OK ())
-      | (CoreStrengthExpectedFailure remedy, NONE) =>
-          die (prefix ^ " timed out; expected quick failure; " ^ remedy)
-      | (CoreStrengthExpectedFailure remedy, SOME true) =>
-          die (prefix ^ " unexpectedly succeeded; " ^ remedy)
-      | (CoreStrengthKnownGap reason, SOME true) =>
-          die (prefix ^ " unexpectedly closed the known gap; " ^ reason)
-      | (CoreStrengthKnownGap _, _) =>
-          (core_strength_failed_as_expected :=
-             !core_strength_failed_as_expected + 1;
-           OK ())
-  end
+   (49, StrengthSuccess, “(0:num) < 1”),
+   (51, StrengthSuccess, “(47:num) + 11 < 8 * 15”)]
 
 val _ =
-  if core_selftest_level () >= 2 then
-    let
-      val started = Time.now ()
-      val _ =
-        List.app run_core_strength_goal core_arith_examples_corpus
-      val elapsed = Time.- (Time.now (), started)
-    in
-      check
-        ("Arith_Examples core suite count and time budget",
-         fn () =>
-           (* 34 num-only goals here; instances/selftest.sml runs the
-              remaining 20 of the 54-goal corpus. *)
-           List.length core_arith_examples_corpus = 34 andalso
-           !core_strength_succeeded = 32 andalso
-           !core_strength_failed_as_expected = 2 andalso
-           Time.< (elapsed, core_strength_suite_budget))
-    end
+  check_numbering
+    {suite = "Arith_Examples core", numbering = core_numbering}
+    core_arith_examples_corpus
+
+val _ =
+  if selftest_level () >= 2 then
+    run_suite
+      {suite = "Arith_Examples core",
+       tactic = fn () => linarithLib.LINARITH_TAC [],
+       suite_budget = Time.fromSeconds 90,
+       expected_successes = 33,
+       expected_boundaries = 1}
+      core_arith_examples_corpus
   else ()

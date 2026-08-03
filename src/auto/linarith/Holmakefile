@@ -1,14 +1,14 @@
 HOLHEAP = $(HOLDIR)/bin/hol.state0
-INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/simp/src
+INCLUDES = $(HOLDIR)/src/auto/rules $(HOLDIR)/src/simp/src \
+           $(HOLDIR)/src/metis
 
 all: $(DEFAULT_TARGETS) selftest.exe
 .PHONY: all
 
-linarithSeedTheory.uo: linarithData.uo
 linarithNum.uo: linarithSeedTheory.uo
 linarithReplay.uo: linarithNum.uo
 linarithLib.uo: linarithReplay.uo
-selftest.uo: linarithLib.uo
+selftest.uo: linarithLib.uo linarithCorpus.uo
 
 selftest.exe: selftest.uo
 	$(HOLMOSMLC) -o $@ $<

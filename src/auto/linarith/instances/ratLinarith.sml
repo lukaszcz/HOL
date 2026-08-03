@@ -1,7 +1,7 @@
 structure ratLinarith :> ratLinarith =
 struct
 
-open Abbrev HolKernel Conv Drule Rewrite
+open HolKernel Conv
 
 val ERR = mk_HOL_ERR "ratLinarith"
 
@@ -136,7 +136,7 @@ fun nonneg tm =
 
 val instance : linarithData.linarith_instance =
   {ty = ratSyntax.rat_ty,
-   discrete = false,
+   discrete = NONE,
    dest =
      {dest_plus = ratSyntax.dest_rat_add,
       dest_minus = SOME ratSyntax.dest_rat_sub,
@@ -157,7 +157,6 @@ val instance : linarithData.linarith_instance =
       mult_mono =
         [linarithInstTheory.RAT_LEQ_LMUL_POS,
          linarithInstTheory.RAT_LT_LMUL_POS],
-      lessD = [],
       not_less = ratTheory.RAT_LEQ_LES,
       not_le = ratTheory.RAT_LES_LEQ,
       neqE = linarithInstTheory.RAT_NEQ_E,
@@ -165,8 +164,7 @@ val instance : linarithData.linarith_instance =
    norm_conv = norm_conv,
    nnf_rules = [],
    pre_split = [],
-   atom_facts = (fn _ => []),
-   divmod_facts = NONE}
+   atom_facts = (fn _ => [])}
 
 val _ = linarithData.register_instance instance
 

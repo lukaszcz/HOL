@@ -13,7 +13,7 @@ The tactic inserts persistent `[arith]` facts and the unmarked theorems in
 its argument, then runs arithmetic search and kernel replay with the
 default disequality configuration. It uses carrier discreteness where
 applicable, but does not perform relevance filtering, Boolean
-preprocessing, operator splitting, or division and modulus augmentation.
+preprocessing, operator splitting, or atom-fact augmentation.
 A `Split` argument and all foreign theorem markers are therefore rejected.
 The tactic has close-or-fail semantics.
 

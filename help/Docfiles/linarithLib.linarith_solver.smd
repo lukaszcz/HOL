@@ -12,7 +12,11 @@ Provides the named unsafe simplifier solver `"lin_arith"`.
 The solver proves arithmetic side conditions from the simplifier's
 `context_thms` and persistent `[arith]` facts. It uses direct forward
 arithmetic, without the operator splitting and Boolean preprocessing of
-`LINARITH_TAC`. The solver is already installed in the clasimp and Aesop
+`LINARITH_TAC`. Arithmetic propositions share the cache of
+`LINARITH_ss`, so `clear_linarith_caches` applies to them; a
+proposition outside linear arithmetic is not cached and is proved only
+when the context is itself arithmetically contradictory. The solver is
+already installed in the clasimp and Aesop
 simpsets. It can be added to another simpset with
 `simpLib.add_unsafe_solver`, suppressed for one invocation with
 `Excl "lin_arith"`, or removed from a simpset with

@@ -1,7 +1,7 @@
 structure linarithDecomp :> linarithDecomp =
 struct
 
-open Abbrev HolKernel
+open HolKernel
 
 type polynomial = (term * Arbrat.rat) list * Arbrat.rat
 
@@ -360,7 +360,7 @@ fun decomp tm =
                         {lhs = lhs_atoms, lhs_const = lhs_const,
                          rel = rel', rhs = rhs_atoms,
                          rhs_const = rhs_const,
-                         discrete = #discrete instance,
+                         discrete = Option.isSome (#discrete instance),
                          negated = negated'})
                  end)
   end
