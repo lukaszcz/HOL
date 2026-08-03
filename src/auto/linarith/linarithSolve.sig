@@ -2,6 +2,15 @@ signature linarithSolve =
 sig
   datatype relation = REL_LE | REL_LT | REL_EQ | REL_NEQ
 
+  (* negated says the relation appeared under a negation, and only the
+     order relations ever carry it: linarithDecomp.decomp turns a
+     negated equality into REL_NEQ with negated = false, and REL_NEQ has
+     no negated form because ~(x <> y) is not a relation this layer
+     recognises.  So a producer of a decomp -- decomp, less_decomp,
+     swap_less, or a caller building one directly -- must present an
+     equation as REL_EQ and a disequation as REL_NEQ, both unnegated.
+     is_neq and mklineq read the invariant rather than restating both
+     encodings. *)
   datatype decomp = Decomp of {
     lhs : (Term.term * Arbrat.rat) list,
     lhs_const : Arbrat.rat,

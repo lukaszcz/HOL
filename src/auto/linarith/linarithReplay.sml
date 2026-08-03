@@ -8,19 +8,13 @@ val ERR = mk_HOL_ERR "linarithReplay"
 
 type config = linarithData.linarith_config
 
-fun nth what items index =
-  List.nth (items, index)
-  handle Subscript =>
-    raise ERR "mkthm" (what ^ " index " ^ Int.toString index ^
-      " is out of range")
-
 fun is_literal tm =
   case linarithData.instance_for (Term.type_of tm) of
       NONE => false
     | SOME instance =>
         Option.isSome (Lib.total (#dest_lit (#dest instance)) tm)
 
-fun generalize terms prove =
+fun generalize terms =
   let
     val atoms =
       atoms_of_decomps (List.mapPartial linarithDecomp.decomp terms)
@@ -34,7 +28,7 @@ fun generalize terms prove =
       (variables, abstracted)
     val generalized = List.map (Term.subst generalizing) terms
   in
-    Thm.INST restoring (prove generalized)
+    (generalized, Thm.INST restoring)
   end
 
 val dest_binary = linarithDecomp.binary_parts
@@ -152,16 +146,23 @@ fun lifts theorem =
 fun same_conclusion theorem1 theorem2 =
   Term.aconv (Thm.concl theorem1) (Thm.concl theorem2)
 
+(* Breadth-first, because try_add_pairs takes the first pair that adds
+   and so depends on this order: the theorem itself, then its lifts,
+   then theirs.  The queue is kept as a front list and a reversed back
+   list, and the result is accumulated reversed, so neither the
+   enqueueing nor the appending walks what it has already built. *)
 fun conversion_closure theorem =
   let
-    fun explore [] found = found
-      | explore (current :: pending) found =
+    fun explore ([], []) found = List.rev found
+      | explore ([], back) found = explore (List.rev back, []) found
+      | explore (current :: front, back) found =
           if List.exists (same_conclusion current) found then
-            explore pending found
+            explore (front, back) found
           else
-            explore (pending @ lifts current) (found @ [current])
+            explore (front, List.revAppend (lifts current, back))
+              (current :: found)
   in
-    explore [theorem] []
+    explore ([theorem], []) []
   end
 
 (* The relation's operator constant, read off the first subterm of the
@@ -239,6 +240,14 @@ fun try_add theorem others = Lib.get_first (add_direct theorem) others
 fun try_add_pairs theorems others =
   Lib.get_first (fn theorem => try_add theorem others) theorems
 
+fun add_failure theorem1 theorem2 =
+  let
+    val _ = linarithData.trace_thm 1 "failed add, left:" theorem1
+    val _ = linarithData.trace_thm 1 "failed add, right:" theorem2
+  in
+    raise ERR "mkthm" "Linear arithmetic: failed to add thms"
+  end
+
 fun add_thms theorem1 theorem2 =
   case add_direct theorem1 theorem2 of
       SOME theorem => theorem
@@ -248,13 +257,6 @@ fun add_thms theorem1 theorem2 =
                 (conversion_closure theorem2) of
              SOME theorem => theorem
            | NONE => add_failure theorem1 theorem2)
-and add_failure theorem1 theorem2 =
-  let
-    val _ = linarithData.trace_thm 1 "failed add, left:" theorem1
-    val _ = linarithData.trace_thm 1 "failed add, right:" theorem2
-  in
-    raise ERR "mkthm" "Linear arithmetic: failed to add thms"
-  end
 
 (* The multiplier is a Fourier--Motzkin coefficient -- a product of lcms
    -- so it is unbounded, and n - 1 additions is too many.  Double
@@ -457,7 +459,16 @@ fun lessD_rules (instance : linarithData.linarith_instance) =
 
 fun mkthm assumptions justification =
   let
-    fun one (Asm index) = nth "assumption" assumptions index
+    (* A certificate names the same assumption at many of its leaves,
+       so the list is indexed once here rather than walked per leaf. *)
+    val indexed = Vector.fromList assumptions
+    fun assumption index =
+      Vector.sub (indexed, index)
+      handle Subscript =>
+        raise ERR "mkthm"
+          ("assumption index " ^ Int.toString index ^
+           " is out of range")
+    fun one (Asm index) = assumption index
       | one (Nonneg atom) =
           (case linarithData.instance_for (Term.type_of atom) of
                NONE =>
@@ -523,11 +534,12 @@ fun mkthm assumptions justification =
   end
 
 (* Both replay paths use this operation to select neqE from the instance
-   belonging to the disequality's carrier. *)
+   belonging to the disequality's carrier.  REL_NEQ is the only encoding
+   to test for: decomp canonicalises a negated equality into it (see
+   linarithSolve.sig). *)
 fun is_disequality tm =
   case linarithDecomp.decomp tm of
-      SOME (Decomp {rel = REL_NEQ, negated = false, ...}) => true
-    | SOME (Decomp {rel = REL_EQ, negated = true, ...}) => true
+      SOME (Decomp {rel = REL_NEQ, ...}) => true
     | _ => false
 
 datatype split = Split of thm * term * term

@@ -395,12 +395,11 @@ fun mklineq index (item, asm_index) =
           else lineq (c, Lt, diff, just)
       | (REL_LT, true) =>
           lineq (Arbint.~ c, Le, negate diff, NotLessD just)
-      | (REL_EQ, false) => lineq (c, Eq, diff, just)
-      | (REL_EQ, true) =>
-          raise ERR "mklineq" "unsplit disequality"
-      | (REL_NEQ, false) =>
-          raise ERR "mklineq" "unsplit disequality"
-      | (REL_NEQ, true) => lineq (c, Eq, diff, just)
+      (* The two equational relations arrive unnegated -- see the
+         invariant on decomp in linarithSolve.sig -- so each is one
+         arm, not two. *)
+      | (REL_EQ, _) => lineq (c, Eq, diff, just)
+      | (REL_NEQ, _) => raise ERR "mklineq" "unsplit disequality"
   end
 
 (* Nonneg is the registry-extensible replacement for upstream mknat
@@ -414,9 +413,7 @@ fun mknonneg is_nonnegative width (index, atom) =
           Nonneg atom))
   else NONE
 
-fun is_neq (Decomp {rel, negated, ...}) =
-  (rel = REL_NEQ andalso not negated) orelse
-  (rel = REL_EQ andalso negated)
+fun is_neq (Decomp {rel, ...}) = rel = REL_NEQ
 
 fun is_discrete (Decomp {discrete, ...}) = discrete
 

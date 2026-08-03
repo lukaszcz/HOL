@@ -12,8 +12,16 @@ type strength_goal = int * strength_outcome * term
 (* Isabelle's Arith_Examples.thy at f7e02b7e1f31 has 54 lemma goals,
    numbered here in source order.  The 34 num/bool ones are a strict
    subset: the other 20 need int, real or rat syntax and so can only
-   run in instances/. *)
-val full_numbering = List.tabulate (54, fn index => index + 1)
+   run in instances/.  Both lists are spelled out, so that the count and
+   the duplicate-freeness numbering_relation_holds asserts of each are
+   things a mis-edited numbering can actually break. *)
+val full_numbering =
+  [1, 2, 3, 4, 5, 6, 7, 8, 9,
+   10, 11, 12, 13, 14, 15, 16, 17, 18, 19,
+   20, 21, 22, 23, 24, 25, 26, 27, 28, 29,
+   30, 31, 32, 33, 34, 35, 36, 37, 38, 39,
+   40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+   50, 51, 52, 53, 54]
 
 val core_numbering =
   [1, 3, 5, 7, 9,

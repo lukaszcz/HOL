@@ -1006,25 +1006,18 @@ val _ =
          val terms =
            [num_leq (num_plus atom num_three) num_two,
             num_leq num_zero atom]
-         val shared = ref false
-         fun prove generalized =
-           let
-             val (left_expression, _) =
-               numSyntax.dest_leq (List.nth (generalized, 0))
-             val (left_atom, _) =
-               numSyntax.dest_plus left_expression
-             val (_, right_atom) =
-               numSyntax.dest_leq (List.nth (generalized, 1))
-             val _ =
-               shared :=
-                 (Term.is_var left_atom andalso
-                  Term.aconv left_atom right_atom)
-           in
-             replay generalized (Added (Asm 0, Asm 1))
-           end
-         val theorem = linarithReplay.generalize terms prove
+         val (generalized, restore) = linarithReplay.generalize terms
+         val (left_expression, _) =
+           numSyntax.dest_leq (List.nth (generalized, 0))
+         val (left_atom, _) = numSyntax.dest_plus left_expression
+         val (_, right_atom) =
+           numSyntax.dest_leq (List.nth (generalized, 1))
+         val shared =
+           Term.is_var left_atom andalso Term.aconv left_atom right_atom
+         val theorem =
+           restore (replay generalized (Added (Asm 0, Asm 1)))
        in
-         !shared andalso
+         shared andalso
          Term.aconv (Thm.concl theorem) boolSyntax.F andalso
          List.all
            (fn tm => List.exists (Term.aconv tm) (Thm.hyp theorem)) terms

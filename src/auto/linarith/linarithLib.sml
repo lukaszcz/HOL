@@ -101,7 +101,11 @@ fun plain_argument function theorem =
             raise ERR function "internal argument-classification error"
   end
 
-fun simple_argument function theorem =
+(* A Split argument is held to the same P-form wherever it is offered:
+   the entries below differ only in what they do with an accepted one,
+   so an entry that rejects splits still rejects a malformed split as
+   malformed rather than as a split. *)
+fun classify_split_argument function theorem =
   if markerLib.is_Split theorem then
     let
       val split = markerLib.destSplit theorem
@@ -109,23 +113,21 @@ fun simple_argument function theorem =
         linarithData.check_asm_split function
           "Split theorem (expected P-form)" split
     in
-      reject function "Split"
+      SOME split
     end
-  else plain_argument function theorem
+  else NONE
+
+fun simple_argument function theorem =
+  case classify_split_argument function theorem of
+      SOME _ => reject function "Split"
+    | NONE => plain_argument function theorem
 
 fun full_arguments function arguments =
   let
     fun add (theorem, (facts, splits)) =
-      if markerLib.is_Split theorem then
-        let
-          val split = markerLib.destSplit theorem
-          val _ =
-            linarithData.check_asm_split function
-              "Split theorem (expected P-form)" split
-        in
-          (facts, split :: splits)
-        end
-      else (plain_argument function theorem :: facts, splits)
+      case classify_split_argument function theorem of
+          SOME split => (facts, split :: splits)
+        | NONE => (plain_argument function theorem :: facts, splits)
   in
     foldl add ([], []) arguments
   end
@@ -545,18 +547,15 @@ fun forward_prove premises conclusion =
   let
     val premise_theorems = atomized_assumptions premises
     val premise_terms = map Thm.concl premise_theorems
-    val terms = premise_terms @ [conclusion]
-    fun prove generalized =
-      let
-        val generalized_premises =
-          List.take (generalized, List.length premise_terms)
-        val generalized_conclusion = List.last generalized
-      in
-        linarithReplay.fwd_prove linarithData.default_config
-          (map Thm.ASSUME generalized_premises)
-          generalized_conclusion
-      end
-    val theorem = linarithReplay.generalize terms prove
+    val (generalized, restore) =
+      linarithReplay.generalize (premise_terms @ [conclusion])
+    val (generalized_premises, generalized_conclusion) =
+      Lib.front_last generalized
+    val theorem =
+      restore
+        (linarithReplay.fwd_prove linarithData.default_config
+           (map Thm.ASSUME generalized_premises)
+           generalized_conclusion)
   in
     Lib.rev_itlist PROVE_HYP premise_theorems theorem
   end
@@ -582,13 +581,18 @@ fun LINARITH_PROVE tm =
 
 fun attempt prove tm = SOME (prove tm) handle HOL_ERR _ => NONE
 
-fun LINARITH_CONV tm =
-  case attempt LINARITH_PROVE tm of
+(* The ladder a conversion has to climb: a decision procedure must
+   answer T or F, so a term it cannot prove is offered negated before
+   the failure is reported. *)
+fun decide function prove tm =
+  case attempt prove tm of
       SOME theorem => EQT_INTRO theorem
     | NONE =>
-        (case attempt LINARITH_PROVE (boolSyntax.mk_neg tm) of
+        (case attempt prove (boolSyntax.mk_neg tm) of
              SOME theorem => EQF_INTRO theorem
-           | NONE => no_proof "LINARITH_CONV" (unregistered_hint tm))
+           | NONE => no_proof function (unregistered_hint tm))
+
+fun LINARITH_CONV tm = decide "LINARITH_CONV" LINARITH_PROVE tm
 
 (* forward_prove atomises its premise terms itself, so the context
    theorems only have to be discharged against the result. *)
@@ -608,18 +612,13 @@ fun CTXT_LINARITH theorems tm =
     let
       fun prove goal = context_forward theorems goal
     in
-      case attempt prove tm of
-          SOME theorem => EQT_INTRO theorem
-        | NONE =>
-            if Term.aconv tm boolSyntax.F then
-              raise ERR "CTXT_LINARITH" "linear arithmetic found no proof"
-            else
-              (case attempt prove (boolSyntax.mk_neg tm) of
-                   SOME theorem => EQF_INTRO theorem
-                 | NONE =>
-                     raise ERR "CTXT_LINARITH"
-                       "linear arithmetic could neither prove nor disprove \
-                       \term")
+      (* F is the contradictory-context case: nothing disproves it, so
+         the second rung of the ladder would only spend a search. *)
+      if Term.aconv tm boolSyntax.F then
+        case attempt prove tm of
+            SOME theorem => EQT_INTRO theorem
+          | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm)
+      else decide "CTXT_LINARITH" prove tm
     end
 
 fun add_atom bound atom atoms =
@@ -755,6 +754,15 @@ val linarith_solver : Traverse.ssolver =
 
 fun clear_linarith_caches () = Cache.clear_cache linarith_cache
 
+(* num is registered here, not at the foot of linarithNum the way the
+   int, real and rat instances register themselves.  Those live in
+   instances/, which a client loads by naming the structure it wants, so
+   the load is that client's request for the carrier; num is the carrier
+   this library ships with and has to be there for everyone who opens
+   it.  This is also the library's only mention of linarithNum, so it is
+   what links the structure in at all: registering from linarithNum
+   instead leaves num unregistered for a client that names only
+   linarithLib. *)
 val _ = linarithData.register_instance linarithNum.instance
 
 end
