@@ -382,30 +382,45 @@ fun mult_positive instance n theorem =
       | NONE => mult_by_add n theorem
   end
 
+(* Renormalize the two sides of a relation, which sit one level deeper
+   when the conclusion is a negated one. *)
+fun normalize_sides instance theorem =
+  let
+    val sides = BINOP_CONV (#norm_conv instance)
+  in
+    CONV_RULE
+      (if boolSyntax.is_neg (Thm.concl theorem) then RAND_CONV sides
+       else sides)
+      theorem
+  end
+
+(* Scaling has to renormalize whatever it built, and for both kinds of
+   relation.  Scaling an inequality did not, so a row scaled twice on
+   the way to a refutation kept the shape t * 2 * 3, which cancellation
+   cannot match against the t * 6 on the other side, and replay ended at
+   a true relation instead of at falsity. *)
 fun mult_thm n theorem =
   let
     val instance = instance_of_thm theorem
     val equality = boolSyntax.is_eq (relation_body (Thm.concl theorem))
     val negative = Arbint.< (n, Arbint.zero)
     val magnitude = if negative then Arbint.~ n else n
-    val result =
+    val scaled =
       if n = Arbint.~ Arbint.one then SYM theorem
       else if equality then
         let
           val literal =
             #mk_lit (#dest instance) (Arbrat.fromAInt magnitude)
-          val scaled =
+          val product =
             apply_to_product instance magnitude literal theorem
-          val normalized =
-            CONV_RULE (BINOP_CONV (#norm_conv instance)) scaled
         in
-          if negative then SYM normalized else normalized
+          if negative then SYM product else product
         end
       else if negative then
         raise ERR "mult_thm" "negative multiplier on an inequality"
       else mult_positive instance n theorem
   in
-    result
+    normalize_sides instance scaled
   end
 
 exception FalseReached of thm

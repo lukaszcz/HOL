@@ -113,6 +113,10 @@ sig
   type linarith_config = {neq_limit : int, split_limit : int}
   val default_config : linarith_config
 
+  (* The "linarith" trace, set with Feedback.set_trace.  The helpers
+     render nothing unless the level asks for it; tracing is that same
+     test, for a caller that has to build its message itself. *)
+  val tracing : int -> bool
   val trace : int -> string -> unit
   val trace_thm : int -> string -> thm -> unit
   val trace_terms : int -> string -> term list -> unit

@@ -136,8 +136,7 @@ fun core function config (goal as (assumptions, conclusion)) =
       SOME tactic => tactic goal
     | NONE =>
         (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
-         linarithData.trace 2
-           ("preprocessed conclusion\n" ^ Parse.term_to_string conclusion);
+         linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
          raise ERR function "linear arithmetic found no proof")
 
 fun SIMPLE_LINARITH_TAC arguments =

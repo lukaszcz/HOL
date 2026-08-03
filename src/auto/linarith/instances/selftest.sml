@@ -19,6 +19,13 @@ fun normalized_rhs
 fun clean_norm (instance : linarithData.linarith_instance) tm =
   null (Thm.hyp (#norm_conv instance tm))
 
+(* norm_conv may report no change by raising UNCHANGED, so a test that
+   compares two terms' normal forms has to accept that answer for the
+   one that is already in normal form. *)
+fun canonical_form (instance : linarithData.linarith_instance) tm =
+  #2 (boolSyntax.dest_eq
+        (Thm.concl (Conv.QCONV (#norm_conv instance) tm)))
+
 val int_instance = intLinarith.instance
 val real_instance = realLinarith.instance
 val rat_instance = ratLinarith.instance
@@ -55,6 +62,19 @@ val _ =
          boolSyntax.T andalso
        clean_norm int_instance
          (ileq (iplus ix i3) (iplus ix i2)))
+
+(* Replay normalizes the two sides of a derived relation, so norm_conv is
+   offered bare expressions as well as relations.  It used to answer
+   those by raising UNCHANGED out of the whole conversion, because
+   relation_conv signalled "not a relation" that way and ORELSEC catches
+   HOL_ERR only. *)
+val _ =
+  check
+    ("int norm_conv canonicalizes a bare expression",
+     fn () =>
+       Term.aconv
+         (canonical_form int_instance (iplus i3 ix))
+         (canonical_form int_instance (iplus ix i3)))
 
 val _ =
   check
@@ -117,6 +137,33 @@ val _ =
          boolSyntax.T andalso
        clean_norm real_instance
          (rleq (rplus rx r3) (rplus rx r2)))
+
+val _ =
+  check
+    ("real norm_conv canonicalizes a bare expression",
+     fn () =>
+       Term.aconv
+         (canonical_form real_instance (rplus r3 rx))
+         (canonical_form real_instance (rplus rx r3)))
+
+(* REAL_POLY_CONV turns x / 3 into 1 / 3 * x, and RealField's rational
+   compset did not terminate on that literal, so a real relation
+   containing a division hung the whole tactic. *)
+val rdiv3 = realSyntax.mk_div (rx, r3)
+
+val _ =
+  check
+    ("real norm_conv terminates on a relation containing division",
+     fn () => clean_norm real_instance (rleq rdiv3 ry))
+
+val _ =
+  check
+    ("real battery reasons about division by a literal",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], boolSyntax.mk_imp
+                (rleq rdiv3 ry,
+                 rleq rx (realSyntax.mk_mult (r3, ry)))))
 
 val qx = Term.mk_var ("linarith_rat_x", ratSyntax.rat_ty)
 val qy = Term.mk_var ("linarith_rat_y", ratSyntax.rat_ty)

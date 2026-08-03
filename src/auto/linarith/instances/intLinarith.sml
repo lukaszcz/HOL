@@ -28,28 +28,34 @@ fun expression_conv tm =
      TRY_CONV intReduce.RED_CONV) tm
   else raise UNCHANGED
 
+(* The cancellation theorem for a relation of this carrier, and NONE for
+   anything else.  Deciding this once is what lets norm_conv dispatch:
+   ORELSEC catches HOL_ERR only, so an alternative that signals "not
+   mine" by raising UNCHANGED is never reached past. *)
+fun cancel_rule tm =
+  if intSyntax.is_leq tm then SOME integerTheory.INT_LE_LADD
+  else if intSyntax.is_less tm then SOME integerTheory.INT_LT_LADD
+  else if boolSyntax.is_eq tm andalso
+          Term.type_of (#1 (boolSyntax.dest_eq tm)) = intSyntax.int_ty
+  then SOME integerTheory.INT_EQ_LADD
+  else NONE
+
 fun relation_conv tm =
-  let
-    val cancel =
-      if intSyntax.is_leq tm then integerTheory.INT_LE_LADD
-      else if intSyntax.is_less tm then integerTheory.INT_LT_LADD
-      else if boolSyntax.is_eq tm andalso
-              Term.type_of (#1 (boolSyntax.dest_eq tm)) =
-                intSyntax.int_ty
-      then integerTheory.INT_EQ_LADD
-      else raise UNCHANGED
-  in
-    (BINOP_CONV expression_conv THENC
-     REPEATC (cancel_common cancel) THENC
-     TRY_CONV intReduce.RED_CONV THENC
-     TRY_CONV
-       (simpLib.SIMP_CONV boolSimps.bool_ss
-          [integerTheory.INT_LT_REFL,
-           integerTheory.INT_LE_REFL])) tm
-  end
+  case cancel_rule tm of
+      NONE => raise UNCHANGED
+    | SOME cancel =>
+        (BINOP_CONV expression_conv THENC
+         REPEATC (cancel_common cancel) THENC
+         TRY_CONV intReduce.RED_CONV THENC
+         TRY_CONV
+           (simpLib.SIMP_CONV boolSimps.bool_ss
+              [integerTheory.INT_LT_REFL,
+               integerTheory.INT_LE_REFL])) tm
 
 fun norm_conv tm =
-  (relation_conv ORELSEC expression_conv ORELSEC ALL_CONV) tm
+  case cancel_rule tm of
+      SOME _ => relation_conv tm
+    | NONE => expression_conv tm
 
 fun nonzero_literal divisor =
   if not (intSyntax.is_int_literal divisor) then NONE

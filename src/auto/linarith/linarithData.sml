@@ -185,18 +185,26 @@ val default_config : linarith_config = {neq_limit = 9, split_limit = 9}
 val trace_level = ref 0
 val _ = Feedback.register_trace ("linarith", trace_level, 3)
 
+fun tracing level = !trace_level >= level
+
+(* Rendering a theorem or a term list costs more than the test that
+   decides whether anyone will read it, so every helper asks first.  A
+   caller that has to build its message itself asks with tracing. *)
 fun trace level message =
-  if !trace_level >= level then print ("linarith: " ^ message ^ "\n")
-  else ()
+  if tracing level then print ("linarith: " ^ message ^ "\n") else ()
 
 fun trace_thm level label theorem =
-  trace level (label ^ "\n" ^ Parse.thm_to_string theorem)
+  if tracing level then
+    trace level (label ^ "\n" ^ Parse.thm_to_string theorem)
+  else ()
 
 fun trace_items level label render items =
-  trace level
-    (label ^
-     (if null items then " <none>"
-      else "\n" ^ String.concatWith "\n" (map render items)))
+  if tracing level then
+    trace level
+      (label ^
+       (if null items then " <none>"
+        else "\n" ^ String.concatWith "\n" (map render items)))
+  else ()
 
 fun trace_terms level label terms =
   trace_items level label Parse.term_to_string terms

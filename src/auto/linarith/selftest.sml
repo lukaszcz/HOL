@@ -70,6 +70,13 @@ fun num_leq left right = numSyntax.mk_leq (left, right)
 fun normalized_rhs tm =
   #2 (boolSyntax.dest_eq (Thm.concl (#norm_conv num_instance tm)))
 
+(* norm_conv may report no change by raising UNCHANGED, so a test that
+   compares two terms' normal forms has to accept that answer for the
+   one that is already in normal form. *)
+fun canonical_form tm =
+  #2 (boolSyntax.dest_eq
+        (Thm.concl (Conv.QCONV (#norm_conv num_instance) tm)))
+
 val _ =
   check
     ("num norm_conv turns a contradictory leq into false",
@@ -97,6 +104,19 @@ val _ =
        Term.aconv
          (normalized_rhs (numSyntax.mk_less (num_seven, num_eight)))
          boolSyntax.T)
+
+(* Replay normalizes the two sides of a derived relation, so norm_conv is
+   offered bare expressions as well as relations.  It used to answer
+   those by raising UNCHANGED out of the whole conversion, because
+   relation_conv signalled "not a relation" that way and ORELSEC catches
+   HOL_ERR only. *)
+val _ =
+  check
+    ("num norm_conv canonicalizes a bare expression",
+     fn () =>
+       Term.aconv
+         (canonical_form (num_plus num_three num_x))
+         (canonical_form (num_plus num_x num_three)))
 
 val _ =
   check
@@ -1315,6 +1335,21 @@ val _ =
        valid_closes
          (linarithLib.CFG_LINARITH_TAC one_pipeline_round [])
          nested_div_goal)
+
+(* The certificate for this one scales a row twice, so replay builds
+   q * 2 * 3 while the other side carries q * 6.  Cancellation matches
+   summands syntactically, so until scaling renormalized its result and
+   num canonicalized products, the solver reported a refutation that
+   replay then could not derive falsity from. *)
+val _ =
+  check
+    ("a doubly scaled row replays to falsity",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([], boolSyntax.mk_imp
+                (num_less num_zero nested_div,
+                 num_leq (numSyntax.mk_numeral (Arbnum.fromInt 6))
+                   public_x)))
 
 (* Splitting on demand means the rounds are spent only when the
    arithmetic cannot close the goal without them: a goal refutable as it

@@ -30,28 +30,34 @@ fun expression_conv tm =
      TRY_CONV RealField.REAL_RAT_REDUCE_CONV) tm
   else raise UNCHANGED
 
+(* The cancellation theorem for a relation of this carrier, and NONE for
+   anything else.  Deciding this once is what lets norm_conv dispatch:
+   ORELSEC catches HOL_ERR only, so an alternative that signals "not
+   mine" by raising UNCHANGED is never reached past. *)
+fun cancel_rule tm =
+  if realSyntax.is_leq tm then SOME realTheory.REAL_LE_LADD
+  else if realSyntax.is_less tm then SOME realTheory.REAL_LT_LADD
+  else if boolSyntax.is_eq tm andalso
+          Term.type_of (#1 (boolSyntax.dest_eq tm)) = realSyntax.real_ty
+  then SOME realTheory.REAL_EQ_LADD
+  else NONE
+
 fun relation_conv tm =
-  let
-    val cancel =
-      if realSyntax.is_leq tm then realTheory.REAL_LE_LADD
-      else if realSyntax.is_less tm then realTheory.REAL_LT_LADD
-      else if boolSyntax.is_eq tm andalso
-              Term.type_of (#1 (boolSyntax.dest_eq tm)) =
-                realSyntax.real_ty
-      then realTheory.REAL_EQ_LADD
-      else raise UNCHANGED
-  in
-    (BINOP_CONV expression_conv THENC
-     REPEATC (cancel_common cancel) THENC
-     TRY_CONV RealField.REAL_RAT_REDUCE_CONV THENC
-     TRY_CONV
-       (simpLib.SIMP_CONV boolSimps.bool_ss
-          [realTheory.REAL_LT_REFL,
-           realTheory.REAL_LE_REFL])) tm
-  end
+  case cancel_rule tm of
+      NONE => raise UNCHANGED
+    | SOME cancel =>
+        (BINOP_CONV expression_conv THENC
+         REPEATC (cancel_common cancel) THENC
+         TRY_CONV RealField.REAL_RAT_REDUCE_CONV THENC
+         TRY_CONV
+           (simpLib.SIMP_CONV boolSimps.bool_ss
+              [realTheory.REAL_LT_REFL,
+               realTheory.REAL_LE_REFL])) tm
 
 fun norm_conv tm =
-  (relation_conv ORELSEC expression_conv ORELSEC ALL_CONV) tm
+  case cancel_rule tm of
+      SOME _ => relation_conv tm
+    | NONE => expression_conv tm
 
 fun nonneg tm =
   case Lib.total realSyntax.dest_injected tm of

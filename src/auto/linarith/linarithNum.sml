@@ -23,38 +23,55 @@ val ac_ops : linarithCancel.ac_ops =
 
 val cancel_common = linarithCancel.cancel_common ac_ops
 
-fun relation_conv tm =
-  let
-    val cancel =
-      if numSyntax.is_leq tm then arithmeticTheory.LE_ADD_LCANCEL
-      else if numSyntax.is_less tm then arithmeticTheory.LT_ADD_LCANCEL
-      else if boolSyntax.is_eq tm andalso
-              Term.type_of (#1 (boolSyntax.dest_eq tm)) = numSyntax.num
-      then arithmeticTheory.EQ_ADD_LCANCEL
-      else raise UNCHANGED
-  in
-    (BINOP_CONV numSimps.ADDR_CANON_CONV THENC
-     REPEATC (cancel_common cancel) THENC
-     TRY_CONV reduceLib.REDUCE_CONV THENC
-     TRY_CONV
-       (simpLib.SIMP_CONV boolSimps.bool_ss
-          [prim_recTheory.LESS_REFL,
-           arithmeticTheory.LESS_EQ_REFL])) tm
-  end
+(* The cancellation theorem for a relation of this carrier, and NONE for
+   anything else.  Deciding this once is what lets norm_conv dispatch:
+   ORELSEC catches HOL_ERR only, so an alternative that signals "not
+   mine" by raising UNCHANGED is never reached past. *)
+fun cancel_rule tm =
+  if numSyntax.is_leq tm then SOME arithmeticTheory.LE_ADD_LCANCEL
+  else if numSyntax.is_less tm then SOME arithmeticTheory.LT_ADD_LCANCEL
+  else if boolSyntax.is_eq tm andalso
+          Term.type_of (#1 (boolSyntax.dest_eq tm)) = numSyntax.num
+  then SOME arithmeticTheory.EQ_ADD_LCANCEL
+  else NONE
 
+(* Products need canonicalizing as well as sums.  Replay scales a row by
+   a literal, and a row scaled twice arrives as t * 2 * 3; cancellation
+   matches summands syntactically, so without MUL_CANON_CONV that term
+   never meets the t * 6 on the other side and a correct certificate
+   replays to a true relation rather than to falsity.  The int and real
+   instances get this from their polynomial normalizers; num has no
+   polynomial conversion and composes the two canonicalizers itself. *)
 fun expression_conv tm =
   if Term.type_of tm = numSyntax.num then
-    (numSimps.ADDR_CANON_CONV THENC
+    (Conv.DEPTH_CONV numSimps.MUL_CANON_CONV THENC
+     numSimps.ADDR_CANON_CONV THENC
      TRY_CONV reduceLib.REDUCE_CONV) tm
   else raise Conv.UNCHANGED
+
+fun relation_conv tm =
+  case cancel_rule tm of
+      NONE => raise UNCHANGED
+    | SOME cancel =>
+        (BINOP_CONV expression_conv THENC
+         REPEATC (cancel_common cancel) THENC
+         TRY_CONV reduceLib.REDUCE_CONV THENC
+         TRY_CONV
+           (simpLib.SIMP_CONV boolSimps.bool_ss
+              [prim_recTheory.LESS_REFL,
+               arithmeticTheory.LESS_EQ_REFL])) tm
+
+fun dispatch tm =
+  case cancel_rule tm of
+      SOME _ => relation_conv tm
+    | NONE => expression_conv tm
 
 fun norm_conv tm =
   (Conv.DEPTH_CONV
      (Conv.REWR_CONV arithmeticTheory.ADD1 ORELSEC
       Conv.REWR_CONV arithmeticTheory.LEFT_ADD_DISTRIB ORELSEC
       Conv.REWR_CONV arithmeticTheory.RIGHT_ADD_DISTRIB ORELSEC
-      Conv.CHANGED_CONV reduceLib.REDUCE_CONV) THENC
-   (relation_conv ORELSEC expression_conv ORELSEC Conv.ALL_CONV)) tm
+      Conv.CHANGED_CONV reduceLib.REDUCE_CONV) THENC dispatch) tm
 
 fun positive_literal divisor =
   let

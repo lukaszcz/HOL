@@ -195,7 +195,10 @@ fun distinct_rows rows =
     List.rev kept
   end
 
-fun trace message = linarithData.trace 2 message
+(* Elimination traces one line per pivot, so the message is built only
+   once the level has asked for it. *)
+fun trace message =
+  if linarithData.tracing 2 then linarithData.trace 2 (message ()) else ()
 
 fun elim (ineqs, hist) =
   let
@@ -231,7 +234,7 @@ fun elim (ineqs, hist) =
             val others =
               List.map (elim_var v eq) dependent @ independent
           in
-            trace ("equation pivot " ^ Int.toString v);
+            trace (fn () => "equation pivot " ^ Int.toString v);
             elim (others, (v, nontriv) :: hist)
           end
         else
@@ -255,7 +258,7 @@ fun elim (ineqs, hist) =
                       | products (p :: ps) =
                           List.map (elim_var v p) neg @ products ps
                   in
-                    trace ("inequality pivot " ^ Int.toString v);
+                    trace (fn () => "inequality pivot " ^ Int.toString v);
                     elim (distinct_rows (independent @ products pos),
                           (v, nontriv) :: hist)
                   end
@@ -461,9 +464,11 @@ fun prove ({neq_limit, split_limit = _} : linarith_config)
           val systems = split_items split_neq items
           val _ =
             if split_neq then ()
-            else trace ("neq_limit exceeded (current value is " ^
-                        Int.toString neq_limit ^
-                        "); ignoring disequalities")
+            else trace
+                   (fn () =>
+                      "neq_limit exceeded (current value is " ^
+                      Int.toString neq_limit ^
+                      "); ignoring disequalities")
         in
           (split_neq, refutes is_nonnegative systems)
         end
