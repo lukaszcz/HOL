@@ -597,6 +597,21 @@ val _ =
          first_pivot [p, eq, n] = SOME 1
        end)
 
+(* Two equations hold ~2 and 2: equal magnitudes, so only the
+   tie-break decides the pivot.  The entry met first sits in the
+   second column of the first row, so any rule that preferred the
+   later of the two would pivot on column 0 instead. *)
+val _ =
+  check
+    ("an equation pivot tie goes to the first row-then-column entry",
+     fn () =>
+       let
+         val earlier = Lineq (zero, Eq, [three, Arbint.~ two], Asm 0)
+         val later = Lineq (zero, Eq, [two, three], Asm 1)
+       in
+         first_pivot [earlier, later] = SOME 1
+       end)
+
 val _ =
   check
     ("inequality pivot minimizes Fourier-Motzkin blowup",

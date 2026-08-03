@@ -126,23 +126,55 @@ fun is_contradictory (Lineq (k, ty, _, _)) =
 
 (* The equation pivot is a coefficient of least magnitude among the
    nonzero entries of the equations; ties (only ever c against ~c) go
-   to the one met first in row-then-column order. *)
-fun min_abs_coeff rows =
+   to the one met first in row-then-column order.  The single pass
+   carries the position, so the rule holds by construction: searching
+   the rows again for the winning coefficient's value would have to
+   answer what a row holding its negation means, and would need a
+   handler for a value that cannot have gone missing.
+
+   NONE means no equation has a nonzero coefficient.  elim reaches
+   this only with nontrivial rows, so that is exactly "no equations",
+   and the caller's inequality branch is what NONE asks for. *)
+fun pivot_equation rows =
   let
-    fun better (c, best) =
-      if ai_zero c then best
-      else
-        case best of
-            NONE => SOME c
-          | SOME b =>
-              if Arbint.< (Arbint.abs c, Arbint.abs b) then SOME c
-              else best
-    fun add_row (Lineq (_, _, coeffs, _), best) =
-      List.foldl better best coeffs
+    fun in_row _ [] best = best
+      | in_row j (c :: cs) best =
+          let
+            val magnitude = Arbint.abs c
+            val best' =
+              if ai_zero c then best
+              else
+                case best of
+                    NONE => SOME (j, magnitude)
+                  | SOME (_, m) =>
+                      if Arbint.< (magnitude, m) then SOME (j, magnitude)
+                      else best
+          in
+            in_row (j + 1) cs best'
+          end
+    fun over_rows _ [] best = best
+      | over_rows i (Lineq (_, _, coeffs, _) :: rest) best =
+          let
+            val best' =
+              case (in_row 0 coeffs NONE, best) of
+                  (NONE, _) => best
+                | (SOME (j, magnitude), NONE) => SOME (i, j, magnitude)
+                | (SOME (j, magnitude), SOME (_, _, m)) =>
+                    if Arbint.< (magnitude, m) then SOME (i, j, magnitude)
+                    else best
+          in
+            over_rows (i + 1) rest best'
+          end
+    (* Splitting the pivot row out by index leaves the other equations
+       in their original order, as Lib.pluck did. *)
+    fun split _ [] _ = NONE
+      | split 0 (row :: rest) prefix =
+          SOME (row, List.revAppend (prefix, rest))
+      | split i (row :: rest) prefix = split (i - 1) rest (row :: prefix)
+    fun located (i, j, _) =
+      Option.map (fn (row, others) => (j, row, others)) (split i rows [])
   in
-    case List.foldl add_row NONE rows of
-        SOME c => c
-      | NONE => raise ERR "min_abs_coeff" "no coefficients"
+    Option.mapPartial located (over_rows 0 rows NONE)
   end
 
 (* One pass tallies the sign counts of every column; the pivot is the
@@ -227,54 +259,46 @@ fun elim (ineqs, hist) =
           List.partition
             (fn Lineq (_, ty, _, _) => ty = Eq) nontriv
       in
-        if not (List.null eqs) then
-          let
-            val coeff = min_abs_coeff eqs
-            val (eq as Lineq (_, _, eqcoeffs, _), other_eqs) =
-              Lib.pluck
-                (fn Lineq (_, _, cs, _) => List.exists (ai_eq coeff) cs)
-                eqs
-            fun index _ [] =
-                  raise ERR "elim" "pivot coefficient vanished"
-              | index i (c :: cs) =
-                  if ai_eq c coeff then i else index (i + 1) cs
-            val v = index 0 eqcoeffs
-            val (independent, dependent) =
-              List.partition
-                (fn Lineq (_, _, cs, _) => ai_zero (List.nth (cs, v)))
-                (other_eqs @ noneqs)
-            val others =
-              List.map (elim_var v eq) dependent @ independent
-          in
-            trace (fn () => "equation pivot " ^ Int.toString v);
-            elim (others, v :: hist)
-          end
-        else
-          let
-            val coeff_lists =
-              List.map (fn Lineq (_, _, cs, _) => cs) noneqs
-          in
-            case choose_blowup coeff_lists of
-                NONE => Failure (~1 :: hist)
-              | SOME (_, v) =>
-                  let
-                    val (independent, dependent) =
-                      List.partition
-                        (fn Lineq (_, _, cs, _) =>
-                            ai_zero (List.nth (cs, v))) ineqs
-                    val (pos, neg) =
-                      List.partition
-                        (fn Lineq (_, _, cs, _) =>
-                            ai_pos (List.nth (cs, v))) dependent
-                    fun products [] = []
-                      | products (p :: ps) =
-                          List.map (elim_var v p) neg @ products ps
-                  in
-                    trace (fn () => "inequality pivot " ^ Int.toString v);
-                    elim (distinct_rows (independent @ products pos),
-                          v :: hist)
-                  end
-          end
+        case pivot_equation eqs of
+            SOME (v, eq, other_eqs) =>
+              let
+                val (independent, dependent) =
+                  List.partition
+                    (fn Lineq (_, _, cs, _) => ai_zero (List.nth (cs, v)))
+                    (other_eqs @ noneqs)
+                val others =
+                  List.map (elim_var v eq) dependent @ independent
+              in
+                trace (fn () => "equation pivot " ^ Int.toString v);
+                elim (others, v :: hist)
+              end
+          | NONE =>
+              let
+                val coeff_lists =
+                  List.map (fn Lineq (_, _, cs, _) => cs) noneqs
+              in
+                case choose_blowup coeff_lists of
+                    NONE => Failure (~1 :: hist)
+                  | SOME (_, v) =>
+                      let
+                        val (independent, dependent) =
+                          List.partition
+                            (fn Lineq (_, _, cs, _) =>
+                                ai_zero (List.nth (cs, v))) ineqs
+                        val (pos, neg) =
+                          List.partition
+                            (fn Lineq (_, _, cs, _) =>
+                                ai_pos (List.nth (cs, v))) dependent
+                        fun products [] = []
+                          | products (p :: ps) =
+                              List.map (elim_var v p) neg @ products ps
+                      in
+                        trace
+                          (fn () => "inequality pivot " ^ Int.toString v);
+                        elim (distinct_rows (independent @ products pos),
+                              v :: hist)
+                      end
+              end
       end
   end
 
