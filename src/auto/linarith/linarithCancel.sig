@@ -17,9 +17,16 @@ sig
   }
 
   (* cancel_common ops cancel: given the carrier's left-cancellation
-     theorem, remove one summand common to both sides of a relation.
+     theorem, remove every summand common to both sides of a relation at
+     once, matching summands up to aconv and one occurrence at a time.
      Raises UNCHANGED when there is nothing to cancel. *)
   val cancel_common : ac_ops -> thm -> conv
+
+  (* Development instrumentation, not read by the layer: how many AC
+     rearrangements cancel_common has had to prove.  Cancellation sits in
+     replay's inner loop, so the cost that matters is AC searches per
+     relation; set this to 0 before a norm_conv call to measure one. *)
+  val ac_equality_count : int ref
 
   (* The data an instance's norm_conv is made of: the carrier's three
      left-cancellation theorems, the polynomial normalizer for its

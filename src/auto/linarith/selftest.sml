@@ -97,6 +97,28 @@ val _ =
               (num_plus num_y num_z)))
          (num_leq num_x num_z))
 
+(* Cancellation runs once per Added node of every certificate, so what it
+   costs is AC searches per relation, not per cancelled summand: one
+   rearrangement of each side exposes the whole common multiset. *)
+val _ =
+  check
+    ("num norm_conv cancels three common summands in two AC searches",
+     fn () =>
+       let
+         val num_u = Term.mk_var ("linarith_num_u", numSyntax.num)
+         val num_v = Term.mk_var ("linarith_num_v", numSyntax.num)
+         fun sum terms = List.foldl (fn (t, acc) => num_plus acc t)
+                           (hd terms) (tl terms)
+         val relation =
+           num_leq (sum [num_x, num_y, num_z, num_u])
+             (sum [num_y, num_z, num_x, num_v])
+         val _ = linarithCancel.ac_equality_count := 0
+         val result = normalized_rhs relation
+       in
+         Term.aconv result (num_leq num_u num_v) andalso
+         !linarithCancel.ac_equality_count = 2
+       end)
+
 val _ =
   check
     ("num norm_conv decides a ground relation",

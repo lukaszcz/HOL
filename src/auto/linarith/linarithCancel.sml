@@ -30,18 +30,26 @@ type norm_spec = {
 fun remove_aconv tm items =
   Option.map #2 (Lib.total (Lib.pluck (Term.aconv tm)) items)
 
-fun common_summand [] _ = NONE
-  | common_summand (item :: rest) right =
-      case remove_aconv item right of
-          SOME right' => SOME (item, rest, right')
-        | NONE =>
-            Option.map
-              (fn (common, left, right') =>
-                  (common, item :: left, right'))
-              (common_summand rest right)
+(* The whole common multiset in one pass, as (common, left rest, right
+   rest).  Each left occurrence consumes one right occurrence, so a
+   summand repeated on both sides cancels the right number of times, and
+   every list keeps the order it had on its own side. *)
+fun common_summands left right =
+  let
+    fun scan [] common rest_l rest_r =
+          (List.rev common, List.rev rest_l, rest_r)
+      | scan (item :: items) common rest_l rest_r =
+          case remove_aconv item rest_r of
+              SOME rest_r' => scan items (item :: common) rest_l rest_r'
+            | NONE => scan items common (item :: rest_l) rest_r
+  in
+    case scan left [] [] right of
+        ([], _, _) => NONE
+      | split => SOME split
+  end
 
-(* Only ever asked for the non-empty remainder of a cancellation; the
-   emptied side is handled by the identity theorem instead. *)
+(* Only ever asked for a non-empty list of summands; an emptied side is
+   handled by the identity theorem instead. *)
 fun mk_sum (ops : ac_ops) terms =
   list_mk_lbinop (curry (#mk_plus ops)) terms
 
@@ -53,22 +61,29 @@ fun relation_sides (ops : ac_ops) tm =
              SOME sides => sides
            | NONE => boolSyntax.dest_eq tm)
 
+(* Development instrumentation; see the signature. *)
+val ac_equality_count = ref 0
+
 fun ac_equality (ops : ac_ops) left right =
-  if Term.aconv left right then Thm.REFL left
-  else
-    let
-      val equality = boolSyntax.mk_eq (left, right)
-      fun fallback () =
-        case #ac_fallback ops of
-            NONE => raise ERR "ac_equality" "AC rearrangement failed"
-          | SOME canon =>
-              EQT_ELIM
-                ((BINOP_CONV canon THENC
-                  REWR_CONV boolTheory.EQ_REFL) equality)
-    in
-      EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
-      handle HOL_ERR _ => fallback ()
-    end
+  let
+    val _ = ac_equality_count := !ac_equality_count + 1
+  in
+    if Term.aconv left right then Thm.REFL left
+    else
+      let
+        val equality = boolSyntax.mk_eq (left, right)
+        fun fallback () =
+          case #ac_fallback ops of
+              NONE => raise ERR "ac_equality" "AC rearrangement failed"
+            | SOME canon =>
+                EQT_ELIM
+                  ((BINOP_CONV canon THENC
+                    REWR_CONV boolTheory.EQ_REFL) equality)
+      in
+        EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
+        handle HOL_ERR _ => fallback ()
+      end
+  end
 
 fun cancel_common (ops : ac_ops) cancel tm =
   let
@@ -78,20 +93,35 @@ fun cancel_common (ops : ac_ops) cancel tm =
       case #strip_plus ops expression of
           [] => [expression]
         | terms => terms
+    (* Sides that are equal as multisets would cancel away entirely,
+       leaving the cancellation theorem nothing to relate; hold their last
+       summand back instead, so the result is the reflexive relation the
+       one-at-a-time version stopped at and finish decides.  A lone common
+       summand is that relation already, hence UNCHANGED. *)
+    fun hold_back_last common =
+      case List.rev common of
+          last :: (front as _ :: _) =>
+            SOME (List.rev front, [last], [last])
+        | _ => NONE
+    val split =
+      case common_summands (summands left) (summands right) of
+          NONE => NONE
+        | SOME (common, [], []) => hold_back_last common
+        | SOME parts => SOME parts
   in
-    case common_summand (summands left) (summands right) of
+    case split of
         NONE => raise UNCHANGED
-      | SOME (_, [], []) => raise UNCHANGED
       | SOME (common, left', right') =>
           let
+            val common_sum = mk_sum ops common
             (* An emptied side becomes common + 0 so that both sides share
                the cancellation theorem's shape. *)
             fun cancellation_side original [] =
-                  Thm.TRANS (ac_equality ops original common)
-                    (Thm.SYM (Thm.SPEC common (#rid ops)))
+                  Thm.TRANS (ac_equality ops original common_sum)
+                    (Thm.SYM (Thm.SPEC common_sum (#rid ops)))
               | cancellation_side original rest =
                   ac_equality ops original
-                    (#mk_plus ops (common, mk_sum ops rest))
+                    (#mk_plus ops (common_sum, mk_sum ops rest))
             val relation_thm =
               Thm.MK_COMB
                 (Thm.AP_TERM operator (cancellation_side left left'),
@@ -124,7 +154,7 @@ fun mk_norm_conv (spec : norm_spec) =
           NONE => expression_conv tm
         | SOME cancel =>
             (BINOP_CONV expression_conv THENC
-             REPEATC (cancel_common ops cancel) THENC finish) tm
+             cancel_common ops cancel THENC finish) tm
   end
 
 end
