@@ -453,7 +453,15 @@ val min_tm = “min :real -> real -> real”;
    back, so it takes &1 / &3 to &1 / &3 and REAL_RAT_REDUCE_CONV does not
    terminate on any term containing a non-integral rational literal.  The
    guard therefore belongs on every entry rather than on the one operator
-   (negation) whose no-op was noticed first. *)
+   (negation) whose no-op was noticed first.
+
+   A conversion can report no progress two ways: return a reflexive
+   theorem, or raise UNCHANGED (as ALL_CONV, hence TRY_CONV, does).
+   CHANGED_CONV catches both -- it turns the raise into a HOL_ERR, which
+   is what reduce_cst looks for when moving on to the next rule -- so it
+   needs no QCHANGED_CONV around it.  QCHANGED_CONV alone would not do:
+   it catches only the raise and lets the reflexive theorem through,
+   which is the diverging mode. *)
 fun add_reduce_conv entry compset =
   let
     val (operator, arity, conv) = entry
