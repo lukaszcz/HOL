@@ -58,26 +58,21 @@ fun instance_of_term tm =
 
 fun instance_of_thm theorem = instance_of_term (Thm.concl theorem)
 
-fun implications theorem =
-  if boolSyntax.is_imp
-       (snd (boolSyntax.strip_forall (Thm.concl theorem)))
-  then [theorem]
-  else
-    let
-      val (forward, backward) = EQ_IMP_RULE (SPEC_ALL theorem)
-    in
-      [GEN_ALL forward, GEN_ALL backward]
-    end
-    handle HOL_ERR _ => [theorem]
-
 (* The first application of f that does not raise. *)
 fun first_result f items = Lib.total (Lib.tryfind f) items
+
+(* The first of a rule set's already-derived implications that matches.
+   first_match derives them on the spot, rule by rule so that a match
+   on the first rule pays for no other rule's derivation; a caller
+   holding a set the registry derived once calls this directly. *)
+fun match_implications implications theorem =
+  first_result (fn implication => MATCH_MP implication theorem)
+    implications
 
 fun first_match rules theorem =
   Lib.get_first
     (fn rule =>
-      first_result (fn implication => MATCH_MP implication theorem)
-        (implications rule))
+      match_implications (linarithData.implications rule) theorem)
     rules
 
 fun required_match operation rules theorem =
@@ -95,44 +90,19 @@ fun relation_homs injection =
     [#le hom, #lt hom, #eq hom]
   end
 
-fun injection_at_top injection tm =
-  case Lib.total Term.dest_comb tm of
-      SOME (operator, _) => Term.aconv operator (#inj injection)
-    | NONE => false
-
-fun orient_injection_hom injection theorem =
-  let
-    val opened = SPEC_ALL theorem
-    val (left, right) = boolSyntax.dest_eq (Thm.concl opened)
-  in
-    if injection_at_top injection left then opened
-    else if injection_at_top injection right then Thm.SYM opened
-    else opened
-  end
-
-fun injection_rewrites injection =
-  let
-    val hom = #hom injection
-  in
-    List.mapPartial
-      (Lib.total (orient_injection_hom injection))
-      [#add hom, #mul hom]
-  end
-
-fun rewrite_injections rewrites theorem =
-  if null rewrites then theorem
-  else
-    CONV_RULE
-      (TOP_DEPTH_CONV (FIRST_CONV (map REWR_CONV rewrites))) theorem
-    handle UNCHANGED => theorem
+(* The conversions come from the registry already built; an injection
+   with no usable homomorphism reports that by raising UNCHANGED, which
+   is the same answer as a term the rewrites do not touch. *)
+fun rewrite_injections conversion theorem =
+  CONV_RULE conversion theorem handle UNCHANGED => theorem
 
 fun normalize_lift injection theorem =
-  rewrite_injections (injection_rewrites injection) theorem
+  rewrite_injections (linarithData.injection_rewrite_conv injection)
+    theorem
 
 fun normalize_injections theorem =
-  rewrite_injections
-    (List.concat
-      (map injection_rewrites (linarithData.injections ()))) theorem
+  rewrite_injections (linarithData.all_injection_rewrite_conv ())
+    theorem
 
 fun normalize_relation_sides theorem =
   let
@@ -216,7 +186,8 @@ fun add_equalities instance theorem1 theorem2 =
   end
 
 fun add_direct_raw instance theorem1 theorem2 =
-  first_match (#add_mono (#kit instance)) (CONJ theorem1 theorem2)
+  match_implications (linarithData.instance_add_mono_imps instance)
+    (CONJ theorem1 theorem2)
 
 fun add_direct theorem1 theorem2 =
   let
@@ -318,7 +289,10 @@ fun specialize_literal literal theorem =
 fun prove_positive instance tm =
   EQT_ELIM (#norm_conv instance tm)
 
-fun apply_mult_rule instance literal theorem rule =
+(* One rule's implications, both passes over them made before the next
+   rule is tried: a rule that matches only with a positive premise
+   still wins over a later rule that matches directly. *)
+fun apply_mult_rule instance literal theorem implications =
   let
     fun direct implication =
       specialize_literal literal (MATCH_MP implication theorem)
@@ -354,10 +328,10 @@ fun apply_mult_rule instance literal theorem rule =
           | NONE => raise ERR "apply_mult_rule" "positive premise failed"
       end
   in
-    case first_result direct (implications rule) of
+    case first_result direct implications of
         SOME result => result
       | NONE =>
-          (case first_result with_positive (implications rule) of
+          (case first_result with_positive implications of
                SOME result => result
              | NONE => raise ERR "apply_mult_rule" "rule does not match")
   end
@@ -368,7 +342,7 @@ fun mult_positive instance n theorem =
   in
     case first_result
            (apply_mult_rule instance literal theorem)
-           (#mult_mono (#kit instance)) of
+           (linarithData.instance_mult_mono_imps instance) of
         SOME result => result
       | NONE => mult_by_add n theorem
   end

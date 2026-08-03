@@ -1696,6 +1696,107 @@ val _ =
            (fn () => reducer_succeeds [] nonlinear_closed_goal)
        end)
 
+(* Data the tactic layer derives from the registry and from the
+   [arith_split] table is built once per state of them rather than once
+   per call, so the failure to watch for is a stale rule that silently
+   does not fire.  The two tests below assert the transitions: each
+   state decides the very next tactic call, with no call in between to
+   warm anything. *)
+fun num_instance_with nnf_rules pre_split =
+  {ty = #ty num_instance,
+   discrete = #discrete num_instance,
+   dest = #dest num_instance,
+   kit = #kit num_instance,
+   norm_conv = #norm_conv num_instance,
+   nnf_rules = nnf_rules,
+   pre_split = pre_split,
+   atom_facts = #atom_facts num_instance} :
+     linarithData.linarith_instance
+
+fun with_num_instances stages =
+  let
+    fun restore () = linarithData.register_instance num_instance
+    fun run [] = true
+      | run ((instance, assertion) :: rest) =
+          (linarithData.register_instance instance;
+           assertion () andalso run rest)
+    val result = run stages handle e => (restore (); raise e)
+    val _ = restore ()
+  in
+    result
+  end
+
+(* A tactic that raises has not closed the goal, and reporting that as
+   a failed assertion rather than an escaping exception keeps a stale
+   rule legible as the test that noticed it. *)
+fun linarith_closes tm =
+  valid_closes (linarithLib.LINARITH_TAC []) ([], tm)
+  handle Feedback.HOL_ERR _ => false
+
+fun linarith_fails tm =
+  tactic_fails (linarithLib.LINARITH_TAC []) ([], tm)
+
+(* Only nnf_rules closes this one once pre_split is empty: with the
+   split seeds gone, x - y is an atom the search knows nothing about. *)
+val subtraction_implication =
+  boolSyntax.mk_imp (subtraction_zero, public_x_le_y)
+
+val bare_num_instance = num_instance_with [] []
+
+val nnf_only_num_instance =
+  num_instance_with (#nnf_rules num_instance) []
+
+val _ =
+  check
+    ("a fresh registration decides the very next tactic call",
+     fn () =>
+       with_num_instances
+         [(bare_num_instance,
+           fn () =>
+             linarith_fails subtraction_implication andalso
+             linarith_fails min_le_left),
+          (nnf_only_num_instance,
+           fn () =>
+             linarith_closes subtraction_implication andalso
+             linarith_fails min_le_left)] andalso
+       linarith_closes min_le_left)
+
+fun with_split_export theorem operation =
+  case ThmSetData.data_exportfns {settype = "arith_split"} of
+      NONE => false
+    | SOME export =>
+        let
+          val name = {Thy = "linarithSeed", Name = "NUM_MIN_SPLIT"}
+          fun remove () =
+            #remove export
+              {thy = "linarithSeed",
+               remove = "linarithSeed$NUM_MIN_SPLIT"}
+          val _ = #add export
+            {thy = "linarithSeed", named_thm = (name, theorem)}
+          val result = operation () handle e => (remove (); raise e)
+          val _ = remove ()
+        in
+          result
+        end
+
+(* The [arith_split] table is the half no registration counter sees:
+   AncestryData installs a whole table on an ancestry change without
+   applying a delta, so what the split rules are keyed on is the
+   table's key set. *)
+val _ =
+  check
+    ("an [arith_split] change decides the very next tactic call",
+     fn () =>
+       with_num_instances
+         [(nnf_only_num_instance,
+           fn () =>
+             linarith_fails min_le_left andalso
+             with_split_export linarithSeedTheory.NUM_MIN_SPLIT
+               (fn () => linarith_closes min_le_left) andalso
+             linarith_fails min_le_left)] andalso
+       null (linarithData.arith_split_thms ()) andalso
+       Option.isSome (linarithData.instance_for numSyntax.num))
+
 (* The 34 num/bool goals among the 54 lemma goals in Isabelle's
    Arith_Examples.thy at f7e02b7e1f31.  The instances suite contains all
    54 translations and checks that vendored total; this core partition

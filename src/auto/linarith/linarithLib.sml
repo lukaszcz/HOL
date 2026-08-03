@@ -233,9 +233,18 @@ fun filter_relevant (assumptions, conclusion) =
 
 (* The propositional half of the normalization is normalForms.NNF_CONV.
    What remains here is carrier-specific (truncated subtraction, say) and
-   arrives from the registry rather than being named. *)
+   arrives from the registry rather than being named.
+
+   Both the rewrite list and the rule REWRITE_RULE builds from it are a
+   pure function of the instance registry, so they are built once per
+   registry state rather than once per tactic call: REWRITE_RULE builds
+   a rewrite net, and the net does not depend on the goal. *)
 fun carrier_nnf_rewrites () =
   List.concat (map #nnf_rules (linarithData.all_instances ()))
+
+val carrier_nnf_rule =
+  linarithData.memo
+    (fn () => Rewrite.REWRITE_RULE (carrier_nnf_rewrites ()))
 
 fun opposite_tac (assumptions, conclusion) =
   let
@@ -308,7 +317,7 @@ fun distinct_thms theorems =
     List.rev (foldl add [] theorems)
   end
 
-fun split_rules extra =
+fun compute_split_rules extra =
   let
     val seeds =
       List.concat (map #pre_split (linarithData.all_instances ()))
@@ -321,6 +330,22 @@ fun split_rules extra =
   in
     List.concat (map forms source)
   end
+
+(* Without caller-supplied rules this is a pure function of the
+   instance registry and the [arith_split] table, and it is the case
+   every entry point takes unless the caller passed split arguments, so
+   it is built once per state of the two.
+
+   The caller's rules cannot be appended to that cached list: source
+   deduplicates in arith_split-then-extra-then-seeds order, so an extra
+   that repeats a seed takes the seed's place rather than following it,
+   and appending would both reorder the net splitLib builds and keep
+   the wrong one of the two theorems.  Those calls recompute. *)
+val cached_split_rules =
+  linarithData.memo_with_splits (fn () => compute_split_rules [])
+
+fun split_rules [] = cached_split_rules ()
+  | split_rules extra = compute_split_rules extra
 
 fun decomp_atoms tm =
   case linarithDecomp.decomp tm of
@@ -448,7 +473,7 @@ fun disj_elim_tac config (assumptions, conclusion) =
 fun split_on_demand function config split_tac =
   let
     val limit = #split_limit config
-    val carrier_rule = Rewrite.REWRITE_RULE (carrier_nnf_rewrites ())
+    val carrier_rule = carrier_nnf_rule ()
     val flatten = nnf_flatten carrier_rule
     fun node hint splits goal =
       Tactical.THEN (flatten, decide hint false splits) goal

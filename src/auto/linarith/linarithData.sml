@@ -60,17 +60,88 @@ type linarith_injection = {
   hom : {le : thm, lt : thm, eq : thm, add : thm, mul : thm}
 }
 
-val instance_registry = Sref.new ([] : linarith_instance list)
+(* The registries below are the only mutable state a derivation can be
+   read out of, and register_instance and register_injection are their
+   only mutators, so one counter bumped there is an exact change signal
+   for anything derived from them. *)
+val registry_generation = Sref.new 0
+
+fun generation () = Sref.value registry_generation
+
+fun bump_generation () =
+  Sref.update registry_generation (fn count => count + 1)
+
+(* A false key comparison costs a recomputation and nothing else, so
+   the cache cell needs no more synchronization than the counter it is
+   read against. *)
+fun keyed_memo key compute =
+  let
+    val cache = ref NONE
+    fun recompute current =
+      let
+        val value = compute ()
+      in
+        cache := SOME (current, value); value
+      end
+  in
+    fn () =>
+      let
+        val current = key ()
+      in
+        case !cache of
+            SOME (recorded, value) =>
+              if recorded = current then value else recompute current
+          | NONE => recompute current
+      end
+  end
+
+fun memo compute = keyed_memo generation compute
+
+(* Both directions of an equivalence, or an implication as it stands.
+   Replay MATCH_MPs against the result, so a rule that is neither is
+   offered unchanged and simply fails to match. *)
+fun implications theorem =
+  if boolSyntax.is_imp
+       (snd (boolSyntax.strip_forall (Thm.concl theorem)))
+  then [theorem]
+  else
+    let
+      val (forward, backward) =
+        Thm.EQ_IMP_RULE (Drule.SPEC_ALL theorem)
+    in
+      [Drule.GEN_ALL forward, Drule.GEN_ALL backward]
+    end
+    handle HOL_ERR _ => [theorem]
+
+type instance_derived = {
+  add_mono_imps : thm list,
+  mult_mono_imps : thm list list
+}
+
+fun derive_instance (instance : linarith_instance) =
+  let
+    val kit = #kit instance
+  in
+    {add_mono_imps = List.concat (map implications (#add_mono kit)),
+     mult_mono_imps = map implications (#mult_mono kit)}
+  end
+
+val instance_registry =
+  Sref.new ([] : (linarith_instance * instance_derived) list)
+
+fun instance_entries () = Sref.value instance_registry
 
 fun register_instance instance =
   let
     val ty = #ty instance
-    fun same_carrier entry = same_type ty (#ty entry)
+    fun same_carrier (entry, _) = same_type ty (#ty entry)
+    val entry = (instance, derive_instance instance)
     val replaced =
       Sref.gen_update instance_registry
         (fn entries =>
-          (instance :: List.filter (not o same_carrier) entries,
+          (entry :: List.filter (not o same_carrier) entries,
            List.exists same_carrier entries))
+    val _ = bump_generation ()
   in
     if replaced then
       HOL_WARNING "linarithData" "register_instance"
@@ -81,24 +152,95 @@ fun register_instance instance =
   end
 
 fun instance_for ty =
-  List.find (fn instance => same_type ty (#ty instance))
-    (Sref.value instance_registry)
+  Option.map #1
+    (List.find (fn (entry, _) => same_type ty (#ty entry))
+       (instance_entries ()))
 
-fun all_instances () = Sref.value instance_registry
+fun all_instances () = map #1 (instance_entries ())
 
-val injection_registry = Sref.new ([] : linarith_injection list)
+(* The entry itself is the key, not its carrier type: an instance built
+   and handed straight to replay, or one that has since been replaced,
+   must get its own derivation rather than the registered instance's.
+   Identity is what decides that, and a comparison that says "not this
+   one" when it is costs a recomputation, never a wrong answer. *)
+fun derived_instance instance =
+  case List.find (fn (entry, _) => Portable.pointer_eq (entry, instance))
+         (instance_entries ()) of
+      SOME (_, derived) => derived
+    | NONE => derive_instance instance
+
+fun instance_add_mono_imps instance =
+  #add_mono_imps (derived_instance instance)
+
+fun instance_mult_mono_imps instance =
+  #mult_mono_imps (derived_instance instance)
 
 fun same_injection left right =
   (same_type (#from_ty left) (#from_ty right) andalso
    same_type (#to_ty left) (#to_ty right)) orelse
   Term.aconv (#inj left) (#inj right)
 
-fun register_injection injection =
-  Sref.update injection_registry
-    (fn entries =>
-      injection :: List.filter (not o same_injection injection) entries)
+fun injection_at_top injection tm =
+  case Lib.total Term.dest_comb tm of
+      SOME (operator, _) => Term.aconv operator (#inj injection)
+    | NONE => false
 
-fun injections () = Sref.value injection_registry
+fun orient_injection_hom injection theorem =
+  let
+    val opened = Drule.SPEC_ALL theorem
+    val (left, right) = boolSyntax.dest_eq (Thm.concl opened)
+  in
+    if injection_at_top injection left then opened
+    else if injection_at_top injection right then Thm.SYM opened
+    else opened
+  end
+
+fun injection_rewrites injection =
+  let
+    val hom = #hom injection
+  in
+    List.mapPartial
+      (Lib.total (orient_injection_hom injection))
+      [#add hom, #mul hom]
+  end
+
+(* REWR_CONV precomputes a pattern per rewrite, which is the work this
+   whole derivation exists to do once.  No rewrites means nothing to
+   do, which is what UNCHANGED says. *)
+fun rewrites_conv [] = Conv.ALL_CONV
+  | rewrites_conv rewrites =
+      Conv.TOP_DEPTH_CONV
+        (Conv.FIRST_CONV (map Conv.REWR_CONV rewrites))
+
+type injection_derived = {
+  rewrites : thm list,
+  rewrite_conv : conv
+}
+
+fun derive_injection injection =
+  let
+    val rewrites = injection_rewrites injection
+  in
+    {rewrites = rewrites, rewrite_conv = rewrites_conv rewrites}
+  end
+
+val injection_registry =
+  Sref.new ([] : (linarith_injection * injection_derived) list)
+
+fun injection_entries () = Sref.value injection_registry
+
+fun register_injection injection =
+  let
+    val entry = (injection, derive_injection injection)
+  in
+    Sref.update injection_registry
+      (fn entries =>
+        entry ::
+        List.filter (not o same_injection injection o #1) entries);
+    bump_generation ()
+  end
+
+fun injections () = map #1 (injection_entries ())
 
 fun injection_for from_ty to_ty =
   List.find
@@ -110,6 +252,20 @@ fun injection_for from_ty to_ty =
 fun injection_by_const constant =
   List.find (fn injection => Term.aconv constant (#inj injection))
     (injections ())
+
+(* Keyed by identity for the same reason instances are. *)
+fun injection_rewrite_conv injection =
+  case List.find
+         (fn (entry, _) => Portable.pointer_eq (entry, injection))
+         (injection_entries ()) of
+      SOME (_, derived) => #rewrite_conv derived
+    | NONE => #rewrite_conv (derive_injection injection)
+
+val all_injection_rewrite_conv =
+  memo
+    (fn () =>
+      rewrites_conv
+        (List.concat (map (#rewrites o #2) (injection_entries ()))))
 
 val persistent_name = KernelSig.name_toString
 
@@ -194,6 +350,18 @@ fun remove data apply_delta name =
 fun remove_arith name = remove arith_data apply_arith_delta name
 fun remove_arith_split name =
   remove arith_split_data apply_arith_split_delta name
+
+(* Theorem names are the table's keys, so its key set changes on every
+   add, every remove, and every wholesale replacement by set_parents --
+   the path a counter bumped at the delta sites would miss, because
+   AncestryData's set_ancestry installs a whole table without applying
+   a delta to the old one.  Extracting and comparing the keys costs a
+   fraction of the split-net build it guards. *)
+fun arith_split_keys () =
+  map #1 (Symtab.dest (#get_global_value arith_split_data ()))
+
+fun memo_with_splits compute =
+  keyed_memo (fn () => (generation (), arith_split_keys ())) compute
 
 type linarith_config = {neq_limit : int, split_limit : int}
 

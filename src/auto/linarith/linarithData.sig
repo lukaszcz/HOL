@@ -104,15 +104,70 @@ sig
   val instance_for : hol_type -> linarith_instance option
   val all_instances : unit -> linarith_instance list
 
+  (* The implications of a rule that replay can MATCH_MP against: both
+     directions of an equivalence, or the rule itself.  Exposed because
+     the accessors below precompute it for an instance's kit only, and
+     replay applies the same derivation to rule sets that arrive from
+     elsewhere -- an injection's homomorphisms, a discreteness rule. *)
+  val implications : thm -> thm list
+
+  (* Derived once, at registration.  Each is a pure function of the
+     entry it is asked about, so there is no staleness question and no
+     invalidation rule: an entry that is not the registered one has its
+     derivation recomputed on the spot rather than being answered for
+     out of someone else's.
+
+     add_mono's implications are flat, because replay tries them in
+     order and takes the first that matches.  mult_mono's are grouped
+     by rule, because replay makes two passes over one rule's
+     implications before it moves to the next rule, so flattening would
+     change which rule wins. *)
+  val instance_add_mono_imps : linarith_instance -> thm list
+  val instance_mult_mono_imps : linarith_instance -> thm list list
+
   val register_injection : linarith_injection -> unit
   val injections : unit -> linarith_injection list
   val injection_for : hol_type -> hol_type -> linarith_injection option
   val injection_by_const : term -> linarith_injection option
 
+  (* The injection's add and mul homomorphisms, oriented to push the
+     injection inwards, as a top-depth rewriting conversion built once
+     at registration; it raises UNCHANGED for an injection that has no
+     usable homomorphism, as it does for a term it does not rewrite.
+     all_injection_rewrite_conv is the same over every registered
+     injection at once, and so is registry-dependent: see memo. *)
+  val injection_rewrite_conv : linarith_injection -> conv
+  val all_injection_rewrite_conv : unit -> conv
+
   val arith_facts : unit -> thm list
   val arith_split_thms : unit -> thm list
   val remove_arith : string -> unit
   val remove_arith_split : string -> unit
+
+  (* The registry generation, bumped by register_instance and
+     register_injection.  Those two are the only mutators of the two
+     registries, so it is an exact change signal for them -- and for
+     nothing else.  In particular it says nothing about the [arith] and
+     [arith_split] tables: they are AncestryData values, and
+     set_parents replaces the global table wholesale rather than
+     through a delta, so no counter maintained at the delta sites could
+     see every change to them. *)
+  val generation : unit -> int
+
+  (* memo f re-runs f whenever the registry generation has moved since
+     the call that produced the cached value, and otherwise returns
+     that value; it is for data derived from the instance and injection
+     registries alone.
+
+     memo_with_splits is for data that also reads arith_split_thms: its
+     key carries, besides the generation, that table's key set.
+     Theorem names are the table's keys, so the key set moves on every
+     add, every remove and every wholesale ancestry replacement,
+     whatever path made the change.  Nothing is memoised against the
+     [arith] table, which is read once per tactic call and never
+     derived from. *)
+  val memo : (unit -> 'a) -> unit -> 'a
+  val memo_with_splits : (unit -> 'a) -> unit -> 'a
 
   (* check_asm_split function what th: raise ERR function
      ("Malformed " ^ what) unless th is a split rule in P-form. *)
