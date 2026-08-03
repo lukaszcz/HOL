@@ -104,14 +104,39 @@ fun normalize_injections theorem =
   rewrite_injections (linarithData.all_injection_rewrite_conv ())
     theorem
 
-fun normalize_relation_sides theorem =
-  let
-    val instance = instance_of_thm theorem
-  in
-    CONV_RULE (BINOP_CONV (#norm_conv instance)) theorem
-  end
+(* Where an instance's norm_conv meets a conclusion: at the two sides of
+   its relation, or at the conclusion entire -- which is how norm_conv
+   gets to report that the relation reduces to T or F. *)
+datatype depth = Sides | Whole
+
+fun depth_conv depth instance =
+  case depth of
+      Sides => BINOP_CONV (#norm_conv instance)
+    | Whole => #norm_conv instance
+
+(* Apply an instance's norm_conv at the depth the conclusion needs.  A
+   negated conclusion carries its relation one level deeper, so a caller
+   that is handed one reaches it through normalize_under_negation; the
+   callers that only ever see a plain relation stay with normalize_at,
+   which leaves a negation alone rather than descending into it. *)
+fun normalize_at depth instance theorem =
+  CONV_RULE (depth_conv depth instance) theorem
+
+fun normalize_under_negation depth instance theorem =
+  CONV_RULE (RAND_CONV (depth_conv depth instance)) theorem
+
+(* Normalizing is opportunistic at some call sites: a conclusion whose
+   carrier has no instance, or one norm_conv declines, is answered with
+   the theorem we already had.  CONV_RULE absorbs UNCHANGED itself, so
+   the second handler is for a conv that raises it before CONV_RULE is
+   reached. *)
+fun absorb normalize theorem =
+  normalize theorem
   handle HOL_ERR _ => theorem
        | UNCHANGED => theorem
+
+fun normalize_relation_sides theorem =
+  absorb (fn thm => normalize_at Sides (instance_of_thm thm) thm) theorem
 
 fun lifts theorem =
   let
@@ -348,16 +373,11 @@ fun mult_positive instance n theorem =
   end
 
 (* Renormalize the two sides of a relation, which sit one level deeper
-   when the conclusion is a negated one. *)
+   when the conclusion is a negated one.  Scaling produces both kinds,
+   so this is the one caller that descends. *)
 fun normalize_sides instance theorem =
-  let
-    val sides = BINOP_CONV (#norm_conv instance)
-  in
-    CONV_RULE
-      (if boolSyntax.is_neg (Thm.concl theorem) then RAND_CONV sides
-       else sides)
-      theorem
-  end
+  (if boolSyntax.is_neg (Thm.concl theorem) then normalize_under_negation
+   else normalize_at) Sides instance theorem
 
 (* Scaling has to renormalize whatever it built, and for both kinds of
    relation.  Scaling an inequality did not, so a row scaled again on
@@ -390,15 +410,14 @@ fun mult_thm n theorem =
 
 exception FalseReached of thm
 
+(* Whole, not Sides: norm_conv normalizes both sides of a relation
+   itself, so a BINOP_CONV pass before it would only run the carrier's
+   polynomial conversion -- the most expensive step of the replay loop --
+   a second time for no change. *)
 fun normalize_added theorem =
   let
     val expanded = normalize_injections theorem
-    val instance = instance_of_thm expanded
-    (* norm_conv normalizes both sides of a relation itself, so a
-       BINOP_CONV pass before it would only run the carrier's polynomial
-       conversion -- the most expensive step of the replay loop -- a
-       second time for no change. *)
-    val theorem' = CONV_RULE (#norm_conv instance) expanded
+    val theorem' = normalize_at Whole (instance_of_thm expanded) expanded
   in
     if Term.aconv (Thm.concl theorem') boolSyntax.F then
       raise FalseReached theorem'
@@ -411,9 +430,8 @@ fun normalize_final theorem =
   else
     let
       val expanded = normalize_injections theorem
-      val instance = instance_of_thm expanded
     in
-      CONV_RULE (#norm_conv instance) expanded
+      normalize_at Whole (instance_of_thm expanded) expanded
     end
 
 (* Only a discrete carrier can strengthen a strict inequality to the
