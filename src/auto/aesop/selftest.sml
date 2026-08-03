@@ -3006,29 +3006,6 @@ val _ =
      fn () =>
        closes_goal aesop_linarith_tactic aesop_linarith_goal)
 
-fun with_aesop_arith_fact operation =
-  case ThmSetData.data_exportfns {settype = "arith"} of
-      NONE => false
-    | SOME export =>
-        let
-          val name =
-            {Thy = "arithmetic", Name = "X_LE_X_SQUARED"}
-          fun remove () =
-            #remove export
-              {thy = "arithmetic",
-               remove = "arithmetic$X_LE_X_SQUARED"}
-          val _ =
-            #add export
-              {thy = "arithmetic",
-               named_thm =
-                 (name, arithmeticTheory.X_LE_X_SQUARED)}
-          val result =
-            operation () handle e => (remove (); raise e)
-          val _ = remove ()
-        in
-          result
-        end
-
 val aesop_arith_fact_goal : Abbrev.goal =
   ([``(x:num) ** 2 <= y``], ``MIN x y = x``)
 
@@ -3039,7 +3016,7 @@ val _ =
        not
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal) andalso
-       with_aesop_arith_fact
+       linarithCorpus.with_arith_fact
          (fn () =>
            closes_goal aesop_linarith_tactic
              aesop_arith_fact_goal) andalso

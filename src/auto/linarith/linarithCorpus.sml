@@ -23,6 +23,51 @@ val core_numbering =
    40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
    51]
 
+fun check (name, predicate) =
+  (tprint name;
+   if predicate () then OK () else die "failed")
+
+fun valid_closes tactic goal = null (#1 (Tactical.VALID tactic goal))
+
+fun tactic_fails tactic goal =
+  ((ignore (Tactical.VALID tactic goal); false)
+   handle Feedback.HOL_ERR _ => true)
+
+fun normalized_rhs (instance : linarithData.linarith_instance) tm =
+  #2 (boolSyntax.dest_eq (Thm.concl (#norm_conv instance tm)))
+
+fun canonical_form (instance : linarithData.linarith_instance) tm =
+  #2 (boolSyntax.dest_eq
+        (Thm.concl (Conv.QCONV (#norm_conv instance) tm)))
+
+(* X_LE_X_SQUARED is not linear, so it can only reach a goal as a fact
+   the table supplies.  That is what makes it a usable probe: a caller
+   brackets one goal with it and asserts the goal is closed inside the
+   bracket and refused outside, which no solver that snapshots the
+   table can satisfy. *)
+fun with_arith_fact operation =
+  case ThmSetData.data_exportfns {settype = "arith"} of
+      NONE => false
+    | SOME export =>
+        let
+          val name =
+            {Thy = "arithmetic", Name = "X_LE_X_SQUARED"}
+          fun remove () =
+            #remove export
+              {thy = "arithmetic",
+               remove = "arithmetic$X_LE_X_SQUARED"}
+          val _ =
+            #add export
+              {thy = "arithmetic",
+               named_thm =
+                 (name, arithmeticTheory.X_LE_X_SQUARED)}
+          val result =
+            operation () handle e => (remove (); raise e)
+          val _ = remove ()
+        in
+          result
+        end
+
 fun selftest_level () =
   case Option.mapPartial Int.fromString
          (OS.Process.getEnv "HOLSELFTESTLEVEL") of
@@ -74,8 +119,6 @@ fun check_numbering {suite, numbering} goals =
    actually enforced. *)
 val goal_budget = (Time.fromSeconds 30, "30 seconds")
 val boundary_budget = (Time.fromSeconds 5, "5 seconds")
-
-fun valid_closes tactic goal = null (#1 (Tactical.VALID tactic goal))
 
 (* What running one goal to completion can amount to.  Refused carries
    origin and message together: a goal is refused for the documented

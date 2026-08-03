@@ -1,30 +1,7 @@
 open HolKernel testutils linarithInstTheory linarithCorpus
 
-fun check (name, predicate) =
-  (tprint name;
-   if predicate () then OK () else die "failed")
-
-fun valid_closes tactic goal =
-  null (#1 (Tactical.VALID tactic goal))
-
-fun tactic_fails tactic goal =
-  ((ignore (Tactical.VALID tactic goal); false)
-   handle Feedback.HOL_ERR _ => true)
-
-fun normalized_rhs
-      (instance : linarithData.linarith_instance) tm =
-  #2 (boolSyntax.dest_eq
-        (Thm.concl (#norm_conv instance tm)))
-
 fun clean_norm (instance : linarithData.linarith_instance) tm =
   null (Thm.hyp (#norm_conv instance tm))
-
-(* norm_conv may report no change by raising UNCHANGED, so a test that
-   compares two terms' normal forms has to accept that answer for the
-   one that is already in normal form. *)
-fun canonical_form (instance : linarithData.linarith_instance) tm =
-  #2 (boolSyntax.dest_eq
-        (Thm.concl (Conv.QCONV (#norm_conv instance) tm)))
 
 val int_instance = intLinarith.instance
 val real_instance = realLinarith.instance

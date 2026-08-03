@@ -1050,29 +1050,6 @@ val _ =
     ("AUTO_TAC discharges a linear-arithmetic rewrite condition",
      fn () => solves auto_linarith_tactic auto_linarith_goal)
 
-fun with_auto_arith_fact operation =
-  case ThmSetData.data_exportfns {settype = "arith"} of
-      NONE => false
-    | SOME export =>
-        let
-          val name =
-            {Thy = "arithmetic", Name = "X_LE_X_SQUARED"}
-          fun remove () =
-            #remove export
-              {thy = "arithmetic",
-               remove = "arithmetic$X_LE_X_SQUARED"}
-          val _ =
-            #add export
-              {thy = "arithmetic",
-               named_thm =
-                 (name, arithmeticTheory.X_LE_X_SQUARED)}
-          val result =
-            operation () handle e => (remove (); raise e)
-          val _ = remove ()
-        in
-          result
-        end
-
 val auto_arith_fact_goal : Abbrev.goal =
   ([``(x:num) ** 2 <= y``], ``MIN x y = x``)
 
@@ -1081,7 +1058,7 @@ val _ =
     ("AUTO_TAC reads [arith] facts dynamically and leaves the set clean",
      fn () =>
        tactic_fails auto_linarith_tactic auto_arith_fact_goal andalso
-       with_auto_arith_fact
+       linarithCorpus.with_arith_fact
          (fn () =>
            solves auto_linarith_tactic auto_arith_fact_goal) andalso
        tactic_fails auto_linarith_tactic auto_arith_fact_goal)

@@ -8,10 +8,6 @@ val two = Arbint.two
 val three = Arbint.fromInt 3
 val negone = Arbint.~ one
 
-fun check (name, predicate) =
-  (tprint name;
-   if predicate () then OK () else die "failed")
-
 fun last xs = hd (rev xs)
 
 val _ =
@@ -67,15 +63,10 @@ val num_eight = numSyntax.mk_numeral (Arbnum.fromInt 8)
 fun num_plus left right = numSyntax.mk_plus (left, right)
 fun num_leq left right = numSyntax.mk_leq (left, right)
 
-fun normalized_rhs tm =
-  #2 (boolSyntax.dest_eq (Thm.concl (#norm_conv num_instance tm)))
-
-(* norm_conv may report no change by raising UNCHANGED, so a test that
-   compares two terms' normal forms has to accept that answer for the
-   one that is already in normal form. *)
-fun canonical_form tm =
-  #2 (boolSyntax.dest_eq
-        (Thm.concl (Conv.QCONV (#norm_conv num_instance) tm)))
+(* This directory's suite tests the one carrier it can parse, so the
+   shared normalisation helpers are fixed to it here. *)
+val normalized_rhs = linarithCorpus.normalized_rhs num_instance
+val canonical_form = linarithCorpus.canonical_form num_instance
 
 val _ =
   check
@@ -1130,15 +1121,6 @@ val _ =
          split_conclusion)
 
 (* Public no-preprocessing surface. *)
-
-fun valid_closes tactic goal =
-  case #1 (Tactical.VALID tactic goal) of
-      [] => true
-    | _ => false
-
-fun tactic_fails tactic goal =
-  ((ignore (Tactical.VALID tactic goal); false)
-   handle Feedback.HOL_ERR _ => true)
 
 val public_x = Term.mk_var ("linarith_public_x", numSyntax.num)
 val public_y = Term.mk_var ("linarith_public_y", numSyntax.num)

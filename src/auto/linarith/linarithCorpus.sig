@@ -1,10 +1,13 @@
-(* Test support shared by the two Arith_Examples strength corpora, and
-   not part of linarithLib's surface.  selftest.sml here runs the 34
+(* Test support shared by the suites that exercise linear arithmetic,
+   and not part of linarithLib's surface.  Two of them are the
+   Arith_Examples strength corpora: selftest.sml here runs the 34
    num/bool goals; instances/selftest.sml runs all 54 translations.  The
    goal terms cannot be shared, because this directory is pre-boss and
    cannot parse int, real or rat syntax, so each suite supplies its own
    list while this module owns the driver and the canonical numbering
-   both lists are checked against. *)
+   both lists are checked against.  The assertion helpers below are
+   shared more widely still: clasimp's and aesop's suites reach linear
+   arithmetic through their solvers and check the same [arith] table. *)
 
 signature linarithCorpus =
 sig
@@ -40,6 +43,32 @@ sig
   val core_numbering : int list
 
   val selftest_level : unit -> int
+
+  (* check (name, predicate) is the testutils tprint/OK/die triple the
+     suites state a boolean assertion with. *)
+  val check : string * (unit -> bool) -> unit
+
+  (* The two answers a tactic is asserted to give: closing the goal
+     under Tactical.VALID, so a bad justification is caught rather than
+     scored as a success, and refusing it outright. *)
+  val valid_closes : tactic -> goal -> bool
+  val tactic_fails : tactic -> goal -> bool
+
+  (* The right-hand side of what an instance's norm_conv proves.
+     canonical_form additionally accepts UNCHANGED, which norm_conv may
+     raise instead of proving a reflexive equation, so that a test
+     comparing two terms' normal forms can name a term already in
+     normal form. *)
+  val normalized_rhs : linarithData.linarith_instance -> term -> term
+  val canonical_form : linarithData.linarith_instance -> term -> term
+
+  (* Runs operation with one arithmetic fact temporarily in the [arith]
+     table, removing it again however operation ends, and answers false
+     if the table is not registered at all.  Suites that reach linear
+     arithmetic through a solver use it to check that the solver reads
+     the table on each call rather than snapshotting it, and that
+     nothing is left behind afterwards. *)
+  val with_arith_fact : (unit -> bool) -> bool
 
   (* check_numbering {suite, numbering} goals checks that goals uses
      exactly the numbers in numbering, once each, and that the two
