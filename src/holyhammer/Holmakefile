@@ -1,5 +1,5 @@
 all: $(DEFAULT_TARGETS) hhTptpProblem.uo hhTypeEnc.uo hhLamTrans.uo \
-     hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
+     hhMonomorph.uo hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
      hhEval.uo selftest.exe smoke.exe
 
 hhTptpProblem.uo: hhTptpProblem.sml hhTptpProblem.ui
@@ -7,6 +7,8 @@ hhTptpProblem.uo: hhTptpProblem.sml hhTptpProblem.ui
 hhTypeEnc.uo: hhTypeEnc.sml hhTypeEnc.ui hhTptpProblem.uo
 
 hhLamTrans.uo: hhLamTrans.sml hhLamTrans.ui
+
+hhMonomorph.uo: hhMonomorph.sml hhMonomorph.ui
 
 hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
@@ -24,7 +26,7 @@ holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhSchedule.uo
 
 selftest.uo: selftest.sml hhTptpProblem.uo hhTypeEnc.uo hhLamTrans.uo \
-             hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
+             hhMonomorph.uo hhConfig.uo hhProver.uo hhSlice.uo hhCache.uo hhSchedule.uo \
              hhEval.uo holyHammer.uo
 
 smoke.uo: smoke.sml hhEval.uo

@@ -655,6 +655,107 @@ fun test_hhLamTrans () =
 
 val _ = test_hhLamTrans ()
 
+fun test_hhMonomorph () =
+  let
+    open boolSyntax
+    val alpha = Type.alpha
+    val beta = Type.beta
+    val num = Term.type_of ``0 : num``
+    fun list_ty ty = Type.mk_type ("list", [ty])
+    fun pair_ty left right = Type.mk_type ("prod", [left, right])
+    fun nil_tm ty = Term.inst [{redex = alpha, residue = ty}] ``[]``
+    fun eq_nil ty = mk_eq (nil_tm ty, nil_tm ty)
+    fun conjs [] = boolSyntax.T
+      | conjs (first :: rest) = List.foldl (fn (tm, result) =>
+          mk_conj (result, tm)) first rest
+    fun named name facts =
+      List.filter (fn (other, _) => other = name) facts
+    fun same_output left right =
+      ListPair.allEq (fn ((left_name, left_tm), (right_name, right_tm)) =>
+        left_name = right_name andalso Term.aconv left_tm right_tm)
+        (left, right)
+    val goal = eq_nil (list_ty num)
+    val schematic = eq_nil (list_ty alpha)
+    val expected = Term.inst [{redex = alpha, residue = num}] schematic
+    val basic = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 100} goal
+      [("ground", goal), ("schematic", schematic)]
+    val predicate = Term.mk_var ("P", Type.mk_type ("fun", [alpha,
+      Type.bool]))
+    val x = Term.mk_var ("X", alpha)
+    val ignored = Term.mk_comb (predicate, x)
+    val with_ignored = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 100} goal
+      [("ground", goal), ("ignored", ignored), ("schematic", schematic)]
+    val global_cap = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 1} goal
+      [("first", schematic), ("second", schematic)]
+    fun nested 0 = num
+      | nested count = list_ty (nested (count - 1))
+    val cap_goal = conjs (map (fn index =>
+      eq_nil (list_ty (nested index))) (List.tabulate (11, fn index => index)))
+    val per_fact = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 100} cap_goal
+      [("many", schematic)]
+    val smallest_ten = map (fn index =>
+      Term.inst [{redex = alpha, residue = nested index}] schematic)
+      (List.tabulate (10, fn index => index))
+    val too_many_predicate = Term.mk_var ("Q",
+      List.foldr (fn (_, ty) => Type.mk_type ("fun", [list_ty alpha, ty]))
+        Type.bool (List.tabulate (21, fn index => index)))
+    val too_many = Term.list_mk_comb (too_many_predicate,
+      List.tabulate (21, fn _ => nil_tm alpha))
+    val schematic_cap = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 100} goal
+      [("too-many", too_many)]
+    val pair_alpha_num = pair_ty alpha num
+    val pair_beta_num = pair_ty beta num
+    val chain = conjs [eq_nil (list_ty alpha),
+      eq_nil (list_ty pair_alpha_num)]
+    val downstream = eq_nil (list_ty pair_beta_num)
+    val one_round = hhMonomorph.monomorph
+      {max_iters = 1, max_new_instances = 100} goal
+      [("chain", chain), ("downstream", downstream)]
+    val privileged = hhMonomorph.monomorph
+      {max_iters = 2, max_new_instances = 100} goal
+      [("chain", chain), ("downstream", downstream)]
+    val filler = List.tabulate (10, fn index =>
+      ("filler" ^ Int.toString index, goal))
+    val ordinary = hhMonomorph.monomorph
+      {max_iters = 2, max_new_instances = 100} goal
+      (filler @ [("chain", chain), ("downstream", downstream)])
+    val again = hhMonomorph.monomorph
+      {max_iters = 3, max_new_instances = 100} cap_goal
+      [("many", schematic)]
+    val _ = expect "monomorphization closes the list/num fixture"
+      (length (named "ground" basic) = 1 andalso
+       List.exists (fn (_, tm) => Term.aconv tm expected)
+         (named "schematic" basic))
+    val _ = expect "monomorphization drops ignored facts"
+      (null (named "ignored" with_ignored) andalso
+       ListPair.allEq (fn ((_, actual), (_, expected)) =>
+         Term.aconv actual expected) (named "ground" with_ignored,
+         [("ground", goal)]))
+    val _ = expect "monomorphization enforces its global instance cap"
+      (length global_cap = 1)
+    val _ = expect "monomorphization enforces ten instances per fact"
+      (ListPair.allEq (fn ((_, actual), expected) => Term.aconv actual expected)
+        (named "many" per_fact, smallest_ten))
+    val _ = expect "monomorphization skips facts with over twenty schematics"
+      (null (named "too-many" schematic_cap))
+    val _ = expect "monomorphization enforces its round cap"
+      (null (named "downstream" one_round))
+    val _ = expect "privileged facts advance pair/list chains by one round"
+      (not (null (named "downstream" privileged)) andalso
+       null (named "downstream" ordinary))
+    val _ = expect "monomorphization output order is deterministic"
+      (same_output per_fact again)
+  in
+    ()
+  end
+
+val _ = test_hhMonomorph ()
+
 fun prover name =
   case hhProver.lookup name of
       SOME config => config
