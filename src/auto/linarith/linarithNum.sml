@@ -28,12 +28,11 @@ val ac_ops : linarithCancel.ac_ops =
    falsity.  The int and real instances get this from their polynomial
    normalizers; num has no polynomial conversion and composes the two
    canonicalizers itself. *)
-fun expression_conv tm =
-  if Term.type_of tm = numSyntax.num then
-    (Conv.DEPTH_CONV numSimps.MUL_CANON_CONV THENC
-     numSimps.ADDR_CANON_CONV THENC
-     TRY_CONV reduceLib.REDUCE_CONV) tm
-  else raise Conv.UNCHANGED
+val expression_conv =
+  linarithCancel.mk_expression_conv numSyntax.num
+    [Conv.DEPTH_CONV numSimps.MUL_CANON_CONV,
+     numSimps.ADDR_CANON_CONV,
+     TRY_CONV reduceLib.REDUCE_CONV]
 
 val dispatch =
   linarithCancel.mk_norm_conv
@@ -89,7 +88,7 @@ fun atom_facts tm =
                     (MP (SPEC divisor arithmeticTheory.DIVISION) positive))
 
 fun nonneg tm =
-  if Term.type_of tm = numSyntax.num then
+  if linarithData.same_type (Term.type_of tm) numSyntax.num then
     SOME (SPEC tm arithmeticTheory.ZERO_LESS_EQ)
   else NONE
 

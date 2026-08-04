@@ -61,12 +61,11 @@ val ac_ops : linarithCancel.ac_ops =
    rid = ratTheory.RAT_ADD_RID,
    ac_fallback = NONE}
 
-val safe_conv = QCONV o TRY_CONV
-
 fun division_conv tm =
   let
     val (_, denominator) = ratSyntax.dest_rat_div tm
-    val denominator_thm = safe_conv rat_poly_conv denominator
+    val denominator_thm =
+      linarithCancel.safe_conv rat_poly_conv denominator
     val denominator' =
       #2 (boolSyntax.dest_eq (Thm.concl denominator_thm))
     val normalized =
@@ -86,16 +85,15 @@ fun division_conv tm =
     Thm.TRANS normalized expanded
   end
 
-fun expression_conv tm =
-  if Term.type_of tm = ratSyntax.rat_ty then
-    (safe_conv
+val expression_conv =
+  linarithCancel.mk_expression_conv ratSyntax.rat_ty
+    [linarithCancel.safe_conv
        (TOP_DEPTH_CONV
          (FIRST_CONV
            [REWR_CONV ratTheory.rat_of_int_ainv,
-            REWR_CONV ratTheory.rat_of_int_of_num])) THENC
-     safe_conv (DEPTH_CONV division_conv) THENC
-     safe_conv rat_poly_conv) tm
-  else raise UNCHANGED
+            REWR_CONV ratTheory.rat_of_int_of_num])),
+     linarithCancel.safe_conv (DEPTH_CONV division_conv),
+     linarithCancel.safe_conv rat_poly_conv]
 
 val norm_conv =
   linarithCancel.mk_norm_conv

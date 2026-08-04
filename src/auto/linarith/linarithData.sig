@@ -2,6 +2,14 @@ signature linarithData =
 sig
   include Abbrev
 
+  (* Type equality, spelled once for the whole layer.  Everything here
+     is keyed by carrier, so the test is asked at every level -- of a
+     registry key, of an injection's endpoints, of the carrier a
+     conversion is restricted to, of the type a relation relates -- and
+     it goes through Type.compare, the kernel's own notion of type
+     identity, rather than through the polymorphic equality. *)
+  val same_type : hol_type -> hol_type -> bool
+
   (* One carrier's implementation of everything the generic engine
      needs, keyed in the registry by its ty.
 
@@ -86,11 +94,11 @@ sig
     atom_facts : term -> thm list
   }
 
-  (* Every optional operator of the carrier, as recognisers.  Defined
-     here, beside the record, so that adding a destructor to
-     linarith_instance is a compile error at one site rather than a
-     silent change of meaning at the places that reason about the
-     complement. *)
+  (* Every optional operator of the carrier, as recognisers, derived at
+     registration like the implications below.  Built beside the record,
+     so that adding a destructor to linarith_instance is a compile error
+     at one site rather than a silent change of meaning at the places
+     that reason about the complement. *)
   val compound_ops : linarith_instance -> (term -> bool) list
 
   type linarith_injection = {
@@ -100,43 +108,70 @@ sig
     hom : {le : thm, lt : thm, eq : thm, add : thm, mul : thm}
   }
 
+  (* Decomposition asks instance_for for the carrier of every subterm
+     it examines, so the lookup goes through a table built once per
+     registry generation (see memo) rather than through a scan of the
+     registry; all_instances answers out of the same generation's
+     derivation rather than rebuilding its list per call. *)
   val register_instance : linarith_instance -> unit
   val instance_for : hol_type -> linarith_instance option
   val all_instances : unit -> linarith_instance list
 
-  (* The implications of a rule that replay can MATCH_MP against: both
-     directions of an equivalence, or the rule itself.  Exposed because
-     the accessors below precompute it for an instance's kit only, and
-     replay applies the same derivation to rule sets that arrive from
-     elsewhere -- an injection's homomorphisms, a discreteness rule. *)
-  val implications : thm -> thm list
+  (* Every rule the instance supplies, as the implications replay can
+     MATCH_MP against: both directions of an equivalence, or the rule
+     itself.  Deriving one costs kernel inference, and replay needs
+     them at every node of every certificate, so they are derived once,
+     at registration.
 
-  (* Derived once, at registration.  Each is a pure function of the
-     entry it is asked about, so there is no staleness question and no
-     invalidation rule: an entry that is not the registered one has its
-     derivation recomputed on the spot rather than being answered for
-     out of someone else's.
+     Each is a pure function of the entry it is asked about, so there
+     is no staleness question and no invalidation rule: an entry that
+     is not the registered one has its derivation recomputed on the
+     spot rather than being answered for out of someone else's.
 
-     add_mono's implications are flat, because replay tries them in
-     order and takes the first that matches.  mult_mono's are grouped
-     by rule, because replay makes two passes over one rule's
-     implications before it moves to the next rule, so flattening would
-     change which rule wins. *)
-  val instance_add_mono_imps : linarith_instance -> thm list
-  val instance_mult_mono_imps : linarith_instance -> thm list list
+     All but mult_mono are flat, because replay tries them in order and
+     takes the first that matches.  mult_mono's are grouped by rule,
+     because replay makes two passes over one rule's implications
+     before it moves to the next rule, so flattening would change which
+     rule wins.  lessD is the discreteness field's, and is empty for a
+     dense carrier. *)
+  type instance_implications = {
+    add_mono : thm list,
+    mult_mono : thm list list,
+    not_less : thm list,
+    not_le : thm list,
+    neqE : thm list,
+    lessD : thm list
+  }
+  val instance_implications : linarith_instance -> instance_implications
 
+  (* Keyed the same way, and for the same reason: injection_by_const is
+     asked about the head of every application decomposition meets, and
+     injection_for about every factor whose type it has to restore. *)
   val register_injection : linarith_injection -> unit
   val injections : unit -> linarith_injection list
   val injection_for : hol_type -> hol_type -> linarith_injection option
   val injection_by_const : term -> linarith_injection option
 
-  (* The injection's add and mul homomorphisms, oriented to push the
-     injection inwards, as a top-depth rewriting conversion built once
-     at registration; it raises UNCHANGED for an injection that has no
-     usable homomorphism, as it does for a term it does not rewrite.
-     all_injection_rewrite_conv is the same over every registered
+  (* Every registered injection with what replay derives from it, in
+     registry order: the implications of its le, lt and eq
+     homomorphisms, which is what decides that a relation lifts along
+     it; and its add and mul homomorphisms, oriented to push the
+     injection inwards, both as rewrites and as the top-depth
+     conversion applying them.  rewrite_conv raises UNCHANGED for an
+     injection that has no usable homomorphism, as it does for a term
+     it does not rewrite.
+
+     Replay walks this list once per theorem of a conversion closure,
+     so the list is the registry's own and costs no lookup to obtain.
+     all_injection_rewrite_conv is rewrite_conv over every registered
      injection at once, and so is registry-dependent: see memo. *)
-  val injection_rewrite_conv : linarith_injection -> conv
+  type derived_injection = {
+    injection : linarith_injection,
+    relation_imps : thm list,
+    rewrites : thm list,
+    rewrite_conv : conv
+  }
+  val derived_injections : unit -> derived_injection list
   val all_injection_rewrite_conv : unit -> conv
 
   val arith_facts : unit -> thm list
@@ -163,9 +198,10 @@ sig
      key carries, besides the generation, that table's key set.
      Theorem names are the table's keys, so the key set moves on every
      add, every remove and every wholesale ancestry replacement,
-     whatever path made the change.  Nothing is memoised against the
-     [arith] table, which is read once per tactic call and never
-     derived from. *)
+     whatever path made the change.  Neither is offered for the [arith]
+     table: a tactic reads it once per call, and the reducer path, which
+     does derive from it, keys on the fact list itself rather than on a
+     generation. *)
   val memo : (unit -> 'a) -> unit -> 'a
   val memo_with_splits : (unit -> 'a) -> unit -> 'a
 

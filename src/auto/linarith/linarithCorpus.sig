@@ -1,11 +1,13 @@
 (* Test support shared by the suites that exercise linear arithmetic,
    and not part of linarithLib's surface.  Two of them are the
    Arith_Examples strength corpora: selftest.sml here runs the 34
-   num/bool goals; instances/selftest.sml runs all 54 translations.  The
-   goal terms cannot be shared, because this directory is pre-boss and
-   cannot parse int, real or rat syntax, so each suite supplies its own
-   list while this module owns the driver and the canonical numbering
-   both lists are checked against.  The assertion helpers below are
+   num/bool goals; instances/selftest.sml runs all 54 translations.
+   Those 34 goals are stated here, along with the driver and the
+   canonical numbering both suites are checked against, so that the one
+   proposition each stands for is written once.  What cannot be shared
+   is the other 20: this directory is pre-boss and cannot parse int,
+   real or rat syntax, so the instances suite states those itself and
+   merges them into the numbering.  The assertion helpers below are
    shared more widely still: clasimp's and aesop's suites reach linear
    arithmetic through their solvers and check the same [arith] table. *)
 
@@ -41,6 +43,14 @@ sig
      processes, cannot drift apart. *)
   val full_numbering : int list
   val core_numbering : int list
+
+  (* The core_numbering goals, in source order.  The suite here runs
+     them as they stand; the instances suite merges its own 20 into
+     them, which merge_by_number does because source order is goal
+     number order. *)
+  val core_arith_examples : strength_goal list
+  val merge_by_number :
+    strength_goal list * strength_goal list -> strength_goal list
 
   val selftest_level : unit -> int
 

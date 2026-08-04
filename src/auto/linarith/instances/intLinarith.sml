@@ -18,12 +18,11 @@ val ac_ops : linarithCancel.ac_ops =
    rid = integerTheory.INT_ADD_RID,
    ac_fallback = NONE}
 
-fun expression_conv tm =
-  if Term.type_of tm = intSyntax.int_ty then
-    (TRY_CONV intLib.INT_POLY_CONV THENC
-     TRY_CONV intSimps.ADDR_CANON_CONV THENC
-     TRY_CONV intReduce.RED_CONV) tm
-  else raise UNCHANGED
+val expression_conv =
+  linarithCancel.mk_expression_conv intSyntax.int_ty
+    [TRY_CONV intLib.INT_POLY_CONV,
+     TRY_CONV intSimps.ADDR_CANON_CONV,
+     TRY_CONV intReduce.RED_CONV]
 
 val norm_conv =
   linarithCancel.mk_norm_conv

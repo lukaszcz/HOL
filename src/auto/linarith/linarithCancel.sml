@@ -5,6 +5,8 @@ open Abbrev HolKernel Conv Drule
 
 val ERR = mk_HOL_ERR "linarithCancel"
 
+val same_type = linarithData.same_type
+
 type ac_ops = {
   dest_less : term -> term * term,
   dest_leq : term -> term * term,
@@ -61,29 +63,22 @@ fun relation_sides (ops : ac_ops) tm =
              SOME sides => sides
            | NONE => boolSyntax.dest_eq tm)
 
-(* Development instrumentation; see the signature. *)
-val ac_equality_count = ref 0
-
 fun ac_equality (ops : ac_ops) left right =
-  let
-    val _ = ac_equality_count := !ac_equality_count + 1
-  in
-    if Term.aconv left right then Thm.REFL left
-    else
-      let
-        val equality = boolSyntax.mk_eq (left, right)
-        fun fallback () =
-          case #ac_fallback ops of
-              NONE => raise ERR "ac_equality" "AC rearrangement failed"
-            | SOME canon =>
-                EQT_ELIM
-                  ((BINOP_CONV canon THENC
-                    REWR_CONV boolTheory.EQ_REFL) equality)
-      in
-        EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
-        handle HOL_ERR _ => fallback ()
-      end
-  end
+  if Term.aconv left right then Thm.REFL left
+  else
+    let
+      val equality = boolSyntax.mk_eq (left, right)
+      fun fallback () =
+        case #ac_fallback ops of
+            NONE => raise ERR "ac_equality" "AC rearrangement failed"
+          | SOME canon =>
+              EQT_ELIM
+                ((BINOP_CONV canon THENC
+                  REWR_CONV boolTheory.EQ_REFL) equality)
+    in
+      EQT_ELIM (AC_CONV (#assoc ops, #comm ops) equality)
+      handle HOL_ERR _ => fallback ()
+    end
 
 fun cancel_common (ops : ac_ops) cancel tm =
   let
@@ -134,6 +129,24 @@ fun cancel_common (ops : ac_ops) cancel tm =
           end
   end
 
+val safe_conv = QCONV o TRY_CONV
+
+(* Composed by hand rather than with EVERY_CONV, whose trailing ALL_CONV
+   would turn a chain that leaves the term alone into REFL and so lose
+   the UNCHANGED an expression_conv is read for. *)
+fun chain_convs [] = ALL_CONV
+  | chain_convs [conv] = conv
+  | chain_convs (conv :: convs) = conv THENC chain_convs convs
+
+fun mk_expression_conv ty convs =
+  let
+    val body = chain_convs convs
+  in
+    fn tm =>
+      if same_type (Term.type_of tm) ty then body tm
+      else raise UNCHANGED
+  end
+
 fun mk_norm_conv (spec : norm_spec) =
   let
     val ops = #ac spec
@@ -142,7 +155,8 @@ fun mk_norm_conv (spec : norm_spec) =
       if Lib.can (#dest_leq ops) tm then SOME (#leq_cancel spec)
       else if Lib.can (#dest_less ops) tm then SOME (#less_cancel spec)
       else if boolSyntax.is_eq tm andalso
-              Term.type_of (#1 (boolSyntax.dest_eq tm)) = #ty spec
+              same_type (Term.type_of (#1 (boolSyntax.dest_eq tm)))
+                (#ty spec)
       then SOME (#eq_cancel spec)
       else NONE
     val finish =

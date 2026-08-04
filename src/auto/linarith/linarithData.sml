@@ -39,7 +39,7 @@ type linarith_instance = {
 (* The dest record is matched whole, without a ... wildcard, so that a
    new destructor is a compile error here instead of a silently wrong
    complement at the sites that reason about it. *)
-fun compound_ops
+fun build_compound_ops
       ({dest = {dest_plus = _, dest_minus, dest_neg, dest_mult = _,
                 dest_div, dest_suc, dest_lit = _, mk_lit = _,
                 dest_less = _, dest_leq = _}, ...} : linarith_instance) =
@@ -113,18 +113,46 @@ fun implications theorem =
     end
     handle HOL_ERR _ => [theorem]
 
-type instance_derived = {
-  add_mono_imps : thm list,
-  mult_mono_imps : thm list list
+type instance_implications = {
+  add_mono : thm list,
+  mult_mono : thm list list,
+  not_less : thm list,
+  not_le : thm list,
+  neqE : thm list,
+  lessD : thm list
 }
 
-fun derive_instance (instance : linarith_instance) =
+type instance_derived = {
+  implications : instance_implications,
+  compound_ops : (term -> bool) list
+}
+
+(* The kit is matched whole, for the reason dest is: a rule added to it
+   is then a compile error here rather than a rule replay re-derives
+   per certificate node.  Only a discrete carrier can strengthen a
+   strict inequality to the non-strict one about its successor, so
+   lessD is empty for a dense one and the LessD and NotLeDD
+   justifications never arise for it. *)
+fun derive_implications (instance : linarith_instance) =
   let
-    val kit = #kit instance
+    val {add_mono, mult_mono, not_less, not_le, neqE, nonneg = _} =
+      #kit instance
+    val lessD =
+      case #discrete instance of
+          SOME {lessD} => lessD
+        | NONE => []
   in
-    {add_mono_imps = List.concat (map implications (#add_mono kit)),
-     mult_mono_imps = map implications (#mult_mono kit)}
+    {add_mono = List.concat (map implications add_mono),
+     mult_mono = map implications mult_mono,
+     not_less = implications not_less,
+     not_le = implications not_le,
+     neqE = implications neqE,
+     lessD = List.concat (map implications lessD)}
   end
+
+fun derive_instance instance =
+  {implications = derive_implications instance,
+   compound_ops = build_compound_ops instance}
 
 val instance_registry =
   Sref.new ([] : (linarith_instance * instance_derived) list)
@@ -151,29 +179,40 @@ fun register_instance instance =
       ()
   end
 
-fun instance_for ty =
-  Option.map #1
-    (List.find (fn (entry, _) => same_type ty (#ty entry))
-       (instance_entries ()))
+(* Decomposition asks for the carrier of every subterm it examines, so
+   the registry is indexed rather than scanned; register_instance keeps
+   one entry per carrier, so the index loses nothing. *)
+val instance_table =
+  memo
+    (fn () =>
+      List.foldl
+        (fn (entry as (instance, _), table) =>
+          Redblackmap.insert (table, #ty instance, entry))
+        (Redblackmap.mkDict Type.compare)
+        (instance_entries ()))
 
-fun all_instances () = map #1 (instance_entries ())
+fun instance_entry ty = Redblackmap.peek (instance_table (), ty)
 
-(* The entry itself is the key, not its carrier type: an instance built
-   and handed straight to replay, or one that has since been replaced,
-   must get its own derivation rather than the registered instance's.
-   Identity is what decides that, and a comparison that says "not this
-   one" when it is costs a recomputation, never a wrong answer. *)
+fun instance_for ty = Option.map #1 (instance_entry ty)
+
+val all_instances = memo (fn () => map #1 (instance_entries ()))
+
+(* The entry itself is the key, not just its carrier type: an instance
+   built and handed straight to replay, or one that has since been
+   replaced, must get its own derivation rather than the registered
+   instance's.  Identity is what decides that -- the carrier only says
+   which entry could possibly be it -- and a comparison that says "not
+   this one" when it is costs a recomputation, never a wrong answer. *)
 fun derived_instance instance =
-  case List.find (fn (entry, _) => Portable.pointer_eq (entry, instance))
-         (instance_entries ()) of
-      SOME (_, derived) => derived
+  case instance_entry (#ty instance) of
+      SOME (entry, derived) =>
+        if Portable.pointer_eq (entry, instance) then derived
+        else derive_instance instance
     | NONE => derive_instance instance
 
-fun instance_add_mono_imps instance =
-  #add_mono_imps (derived_instance instance)
+fun instance_implications instance = #implications (derived_instance instance)
 
-fun instance_mult_mono_imps instance =
-  #mult_mono_imps (derived_instance instance)
+fun compound_ops instance = #compound_ops (derived_instance instance)
 
 fun same_injection left right =
   (same_type (#from_ty left) (#from_ty right) andalso
@@ -212,60 +251,89 @@ fun rewrites_conv [] = Conv.ALL_CONV
       Conv.TOP_DEPTH_CONV
         (Conv.FIRST_CONV (map Conv.REWR_CONV rewrites))
 
-type injection_derived = {
+(* The order homomorphisms decide that a relation lifts along the
+   injection, and replay matches against their implications once per
+   injection per theorem of a conversion closure, so they are derived
+   here beside the rewrites that push the injection inwards again. *)
+type derived_injection = {
+  injection : linarith_injection,
+  relation_imps : thm list,
   rewrites : thm list,
   rewrite_conv : conv
 }
 
 fun derive_injection injection =
   let
+    val hom = #hom injection
     val rewrites = injection_rewrites injection
   in
-    {rewrites = rewrites, rewrite_conv = rewrites_conv rewrites}
+    {injection = injection,
+     relation_imps =
+       List.concat (map implications [#le hom, #lt hom, #eq hom]),
+     rewrites = rewrites,
+     rewrite_conv = rewrites_conv rewrites}
   end
 
-val injection_registry =
-  Sref.new ([] : (linarith_injection * injection_derived) list)
+(* The registry holds the derivations themselves, so walking every
+   injection's derivation costs no lookup at all. *)
+val injection_registry = Sref.new ([] : derived_injection list)
 
 fun injection_entries () = Sref.value injection_registry
 
 fun register_injection injection =
   let
-    val entry = (injection, derive_injection injection)
+    val entry = derive_injection injection
   in
     Sref.update injection_registry
       (fn entries =>
         entry ::
-        List.filter (not o same_injection injection o #1) entries);
+        List.filter
+          (not o same_injection injection o #injection) entries);
     bump_generation ()
   end
 
-fun injections () = map #1 (injection_entries ())
+val derived_injections = injection_entries
+
+val injections = memo (fn () => map #injection (injection_entries ()))
+
+(* Indexed like the instances, and for the same reason: decomposition
+   asks about the head of every application it meets and about the type
+   of every factor whose injection it has to restore.  Registration
+   keeps one entry per injected constant and one per ordered pair of
+   types, so neither index loses an entry. *)
+val injection_tables =
+  memo
+    (fn () =>
+      let
+        val entries = injection_entries ()
+        fun add_typed (entry : derived_injection, table) =
+          Redblackmap.insert
+            (table,
+             (#from_ty (#injection entry), #to_ty (#injection entry)),
+             entry)
+        fun add_const (entry : derived_injection, table) =
+          Redblackmap.insert (table, #inj (#injection entry), entry)
+        val by_types =
+          Redblackmap.mkDict (Lib.pair_compare (Type.compare, Type.compare))
+        val by_const = Redblackmap.mkDict Term.compare
+      in
+        (List.foldl add_typed by_types entries,
+         List.foldl add_const by_const entries)
+      end)
 
 fun injection_for from_ty to_ty =
-  List.find
-    (fn injection =>
-      same_type from_ty (#from_ty injection) andalso
-      same_type to_ty (#to_ty injection))
-    (injections ())
+  Option.map #injection
+    (Redblackmap.peek (#1 (injection_tables ()), (from_ty, to_ty)))
 
 fun injection_by_const constant =
-  List.find (fn injection => Term.aconv constant (#inj injection))
-    (injections ())
-
-(* Keyed by identity for the same reason instances are. *)
-fun injection_rewrite_conv injection =
-  case List.find
-         (fn (entry, _) => Portable.pointer_eq (entry, injection))
-         (injection_entries ()) of
-      SOME (_, derived) => #rewrite_conv derived
-    | NONE => #rewrite_conv (derive_injection injection)
+  Option.map #injection
+    (Redblackmap.peek (#2 (injection_tables ()), constant))
 
 val all_injection_rewrite_conv =
   memo
     (fn () =>
       rewrites_conv
-        (List.concat (map (#rewrites o #2) (injection_entries ()))))
+        (List.concat (map #rewrites (injection_entries ()))))
 
 val persistent_name = KernelSig.name_toString
 

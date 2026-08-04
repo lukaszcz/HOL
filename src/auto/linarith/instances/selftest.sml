@@ -462,6 +462,30 @@ val _ =
             ileq (intSyntax.mk_mult (n2_int, n_int)) p_int)
        end)
 
+(* A tactic that raises has not closed the goal, and reporting that as a
+   failed assertion rather than an escaping exception keeps the goal
+   that noticed legible and lets the rest of the suite run. *)
+fun simple_closes goal =
+  valid_closes (linarithLib.SIMPLE_LINARITH_TAC []) goal
+  handle Feedback.HOL_ERR _ => false
+
+(* An injection is stripped from an argument built out of the operators
+   it distributes over, and a successor is one of them: SUC k is the sum
+   k + 1, which is how the source carrier decomposes it as well.  Kept
+   whole, &(SUC n) was an atom unrelated to n, and a goal the naturals
+   close stayed open one carrier up. *)
+val n_suc = numSyntax.mk_suc n
+
+val _ =
+  check
+    ("injected successors decompose in every target carrier",
+     fn () =>
+       simple_closes ([], iless n_int (intSyntax.mk_injected n_suc)) andalso
+       simple_closes
+         ([], rless n_real
+                (inject numSyntax.num realSyntax.real_ty n_suc)) andalso
+       simple_closes ([], qless n_rat (ratSyntax.mk_rat_of_num n_suc)))
+
 val _ =
   check
     ("Nonneg of injected atoms strengthens all target carriers",
@@ -487,6 +511,45 @@ val _ =
        in
          Term.aconv (Thm.concl theorem) boolSyntax.F
        end)
+
+(* Scaling an equality applies (\v. v * n) to both of its sides.  The
+   int and rat instances normalize expressions with polynomial
+   conversions, which rewrite polynomials and not redexes, so a side
+   left unreduced reaches cancellation as an atom distinct from the
+   multiple it has to meet on the other side, and the certificate
+   replays to a true relation rather than to falsity. *)
+val _ =
+  check
+    ("golden Multiplied replay scales an int equality to falsity",
+     fn () =>
+       let
+         val doubled = intSyntax.mk_mult (i2, ix)
+         val contradiction =
+           boolSyntax.mk_eq (doubled, iplus doubled intSyntax.one_tm)
+       in
+         Term.aconv
+           (Thm.concl
+             (linarithReplay.mkthm [Thm.ASSUME contradiction]
+               (linarithSolve.Multiplied
+                 (Arbint.fromInt 3, linarithSolve.Asm 0))))
+           boolSyntax.F
+         handle Feedback.HOL_ERR _ => false
+       end)
+
+(* A rational assumption with a denominator reaches the search already
+   scaled by it, so Multiplied is the top of its certificate and there
+   is no later pass over the whole relation to repair what scaling
+   left. *)
+val qhalf_x = ratSyntax.mk_rat_mul (qhalf, qx)
+val q1 = #mk_lit (#dest rat_instance) Arbrat.one
+
+val _ =
+  check
+    ("rat replay scales a fractional equality to falsity",
+     fn () =>
+       simple_closes
+         ([boolSyntax.mk_eq (qhalf_x, qplus qhalf_x q1)],
+          boolSyntax.F))
 
 val _ =
   check
@@ -583,15 +646,17 @@ val _ =
        valid_closes (simpLib.FULL_SIMP_TAC side_ss [])
          ([qleq qx qy, qleq qy qz], conditional_goal (qleq qx qz)))
 
-(* Translation of all 54 lemma goals in Isabelle's Arith_Examples.thy at
-   f7e02b7e1f31.  Isabelle's nat coercion truncates negative integers, so
-   [20], [21], [53], and [54] use Num (int_max i 0), rather than HOL4's
-   absolute-value Num coercion.  Both upstream "oops" goals are retained:
-   [47] is proved here, because splitting on demand never builds the
-   disjunctive normal form whose size defeated upstream, while [48] is
-   the corpus's one method boundary -- linear arithmetic's documented
-   integer-divisibility incompleteness -- asserted to be reported,
-   promptly and by that name, rather than run into.
+(* Translation of the 20 lemma goals in Isabelle's Arith_Examples.thy at
+   f7e02b7e1f31 that need int, real or rat syntax, in source order.  The
+   other 34 are num/bool and are stated in linarithCorpus, which both
+   this suite and the pre-boss one run; assembling the full corpus is
+   merging the two partitions of the numbering, and the numbering check
+   below is what says the assembled list is all 54, once each.
+
+   Isabelle's nat coercion truncates negative integers, so [20], [21],
+   [53], and [54] use Num (int_max i 0), rather than HOL4's
+   absolute-value Num coercion.  The two upstream "oops" goals, [47] and
+   [48], are among the shared ones and are described there.
 
    On 2026-08-02 the full instances selftest took 10.0s at level 2 versus
    7.7s at level 1 on an AMD Ryzen 9 9950X, down from 50.2s at level 2
@@ -600,43 +665,27 @@ val _ =
    headroom.
 
    linarithCorpus owns the driver, the budgets and the canonical goal
-   numbering; the numbering check below pins this list to all of it. *)
+   numbering; the numbering check below pins the merged list to all of
+   it. *)
 
-val arith_examples_corpus : strength_goal list =
-  [(1, StrengthSuccess, “(i:num) <= MAX i j”),
-   (2, StrengthSuccess, “(i:int) <= int_max i j”),
-   (3, StrengthSuccess, “MIN i j <= (i:num)”),
+val carrier_arith_examples : strength_goal list =
+  [(2, StrengthSuccess, “(i:int) <= int_max i j”),
    (4, StrengthSuccess, “int_min i j <= (i:int)”),
-   (5, StrengthSuccess, “MIN (i:num) j <= MAX i j”),
    (6, StrengthSuccess,
     “int_min (i:int) j <= int_max i j”),
-   (7, StrengthSuccess,
-    “MIN (i:num) j + MAX i j = i + j”),
    (8, StrengthSuccess,
     “int_min (i:int) j + int_max i j = i + j”),
-   (9, StrengthSuccess,
-    “(i:num) < j ==> MIN i j < MAX i j”),
    (10, StrengthSuccess,
     “(i:int) < j ==> int_min i j < int_max i j”),
    (11, StrengthSuccess, “(0:int) <= ABS i”),
    (12, StrengthSuccess, “(i:int) <= ABS i”),
    (13, StrengthSuccess, “ABS (ABS (i:int)) = ABS i”),
-   (14, StrengthSuccess, “(x:num) <= y ==> x - y = 0”),
-   (15, StrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
-   (16, StrengthSuccess, “((x:num) <= y) = (x - y = 0)”),
-   (17, StrengthSuccess,
-    “(x:num) < y /\ d < 1 ==> x - y = d”),
-   (18, StrengthSuccess,
-    “(x:num) < y /\ d < 1 ==> x - y - x = d - x”),
    (19, StrengthSuccess, “(x:int) < y ==> x - y < 0”),
    (20, StrengthSuccess,
     “Num (int_max ((i:int) + j) 0) <=
      Num (int_max i 0) + Num (int_max j 0)”),
    (21, StrengthSuccess,
     “(i:int) < j ==> Num (int_max (i - j) 0) = 0”),
-   (22, StrengthSuccess, “(i:num) MOD 0 = i”),
-   (23, StrengthSuccess, “(i:num) MOD 1 = 0”),
-   (24, StrengthSuccess, “(i:num) MOD 42 <= 41”),
    (* HOL4 int_mod is unspecified at zero.  Isabelle's total zmod
       source goal therefore translates to its specified result. *)
    (25, StrengthSuccess, “(i:int) = i”),
@@ -646,64 +695,7 @@ val arith_examples_corpus : strength_goal list =
    (29, StrengthSuccess,
     “(0:int) < ABS i /\ ABS i * 1 < ABS i * j ==>
      1 < ABS i * j”),
-   (30, StrengthSuccess, “(x:num) < SUC y <=> x <= y”),
-   (31, StrengthSuccess,
-    “((x:num) = z ==> x <> y) ==> x <> y \/ z <> y”),
-   (32, StrengthSuccess, “((x:num) < SUC y) = (x <= y)”),
-   (33, StrengthSuccess,
-    “(x:num) < y /\ y < z ==> x < z”),
-   (34, StrengthSuccess,
-    “(x:num) < y /\ y < z ==> x < z”),
-   (35, StrengthSuccess, “(P:bool) = Q ==> Q = P”),
-   (36, StrengthSuccess,
-    “P = ((x:num) = 0) /\ ~P = (y = 0) ==> MIN x y = 0”),
-   (37, StrengthSuccess,
-    “P = ((x:num) = 0) /\ ~P = (y = 0) ==>
-     MAX x y = x + y”),
-   (38, StrengthSuccess,
-    “(x:num) <> y /\ a + 2 = b /\ a < y /\ y < b /\
-     a < x /\ x < b ==> F”),
-   (39, StrengthSuccess,
-    “y < (x:num) /\ z < y /\ x < z ==> F”),
-   (40, StrengthSuccess, “y < (x:num) - 5 ==> y < x”),
-   (41, StrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
-   (42, StrengthSuccess,
-    “(x:num) <> y /\ x <= y ==> x < y”),
-   (43, StrengthSuccess,
-    “(x:num) < y /\ P (x - y) ==> P 0”),
-   (44, StrengthSuccess,
-    “(x - y) - (x:num) = (x - x) - y”),
-   (45, StrengthSuccess,
-    “(a:num) < b /\ c < d ==> a - b = c - d”),
-   (46, StrengthSuccess,
-    “(a:num) - (b - (c - (d - e))) =
-     a - (b - (c - (d - e)))”),
-   (47, StrengthSuccess,
-    “((n:num) < m /\ m < n') \/
-     (n < m /\ m = n') \/
-     (n < n' /\ n' < m) \/
-     (n = n' /\ n' < m) \/
-     (n = m /\ m < n') \/
-     (n' < m /\ m < n) \/
-     (n' < m /\ m = n) \/
-     (n' < n /\ n < m) \/
-     (n' = n /\ n < m) \/
-     (n' = m /\ m < n) \/
-     (m < n /\ n < n') \/
-     (m < n /\ n' = n) \/
-     (m < n' /\ n' < n) \/
-     (m = n /\ n < n') \/
-     (m = n' /\ n' < n) \/
-     (n' = m /\ m = n)”),
-   (48,
-    StrengthExpectedFailure
-      {error = "CFG_LINARITH_TAC: linear arithmetic found no proof",
-       remedy =
-         "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)"},
-    “2 * (x:num) <> 1”),
-   (49, StrengthSuccess, “(0:num) < 1”),
    (50, StrengthSuccess, “(0:int) < 1”),
-   (51, StrengthSuccess, “(47:num) + 11 < 8 * 15”),
    (52, StrengthSuccess, “(47:int) + 11 < 8 * 15”),
    (53, StrengthSuccess,
     “(a:num) <> b /\ (i:int) <> j /\ a < 2 /\ b < 2 ==>
@@ -711,6 +703,9 @@ val arith_examples_corpus : strength_goal list =
    (54, StrengthSuccess,
     “(i:int) <> j /\ (a:num) <> b /\ a < 2 /\ b < 2 ==>
      a + b <= Num (int_max (ABS i) (ABS j))”)]
+
+val arith_examples_corpus : strength_goal list =
+  merge_by_number (core_arith_examples, carrier_arith_examples)
 
 val _ =
   check_numbering

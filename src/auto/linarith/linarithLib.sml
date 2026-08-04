@@ -5,7 +5,7 @@ open Abbrev HolKernel Drule
 
 val ERR = mk_HOL_ERR "linarithLib"
 
-fun same_type left right = Type.compare (left, right) = EQUAL
+val same_type = linarithData.same_type
 
 fun relation_carrier tm =
   let
@@ -150,18 +150,29 @@ fun core function hint config (goal as (assumptions, conclusion)) =
          linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
          no_proof function hint)
 
+(* Everything the session owns -- the [arith] table here, and the
+   registry and the [arith_split] table at the entry below -- is read
+   where the tactic is applied, not where its value is built.  A script
+   that binds a tactic at its head and proves an [arith] lemma further
+   down would otherwise get a tactic that cannot see the lemma, while
+   the same expression written out at the call site could.  What the
+   caller owns, its own arguments, is still classified where the value
+   is built: a malformed argument is the caller's mistake and is better
+   reported at the tactic than at some later goal.  The per-application
+   reads are what the memos above make cheap -- a generation compare,
+   not a rebuild. *)
 fun SIMPLE_LINARITH_TAC arguments =
   let
     val function = "SIMPLE_LINARITH_TAC"
-    val facts =
-      linarithData.arith_facts () @
-      map (simple_argument function) arguments
+    val argument_facts = map (simple_argument function) arguments
   in
-    Tactical.THEN
-      (clasetLib.INSERT_FACTS_TAC facts,
-       fn goal as (_, conclusion) =>
-         core function (unregistered_hint conclusion)
-           linarithData.default_config goal)
+    fn goal =>
+      Tactical.THEN
+        (clasetLib.INSERT_FACTS_TAC
+           (linarithData.arith_facts () @ argument_facts),
+         fn inner as (_, conclusion) =>
+           core function (unregistered_hint conclusion)
+             linarithData.default_config inner) goal
   end
 
 fun has_registered_subterm tm =
@@ -307,16 +318,28 @@ fun limit_exceeded function limit =
     raise ERR function message
   end
 
+(* One theorem per conclusion, in order of first occurrence -- an order
+   compute_split_rules below depends on.  Keyed on the conclusion
+   rather than scanned for it with aconv: this is the layer's one
+   deduplication idiom, the form linarithSolve's atoms_of_decomps and
+   distinct_rows take, and a scan costs a quadratic number of term
+   comparisons over lists that accumulate across the rounds of a
+   search.  Term.compare, the key here, parts company with aconv only
+   over terms the tables these results reach -- the solver's atom
+   index, the result cache's store and its context graph -- would merge
+   in any case, all three being keyed on Term.compare themselves. *)
 fun distinct_thms theorems =
   let
-    fun add (theorem, result) =
-      if List.exists
-           (fn old => Term.aconv (Thm.concl theorem) (Thm.concl old))
-           result
-      then result
-      else theorem :: result
+    fun add (theorem, entry as (seen, kept)) =
+      let
+        val conclusion = Thm.concl theorem
+      in
+        if Termtab.defined seen conclusion then entry
+        else (Termtab.insert_set conclusion seen, theorem :: kept)
+      end
+    val (_, kept) = List.foldl add (Termtab.empty, []) theorems
   in
-    List.rev (foldl add [] theorems)
+    List.rev kept
   end
 
 fun compute_split_rules extra =
@@ -333,21 +356,25 @@ fun compute_split_rules extra =
     List.concat (map forms source)
   end
 
-(* Without caller-supplied rules this is a pure function of the
-   instance registry and the [arith_split] table, and it is the case
-   every entry point takes unless the caller passed split arguments, so
-   it is built once per state of the two.
+(* Without caller-supplied rules the rules are a pure function of the
+   instance registry and the [arith_split] table, and so is the tactic
+   splitLib derives from them -- which analyses every rule and inserts
+   it into a net by a quadratic key walk, so it is the more expensive
+   half.  This is the case every entry point takes unless the caller
+   passed split arguments, so the tactic is built once per state of the
+   two rather than once per call.
 
-   The caller's rules cannot be appended to that cached list: source
+   The caller's rules cannot be appended to a cached list: source
    deduplicates in arith_split-then-extra-then-seeds order, so an extra
    that repeats a seed takes the seed's place rather than following it,
    and appending would both reorder the net splitLib builds and keep
    the wrong one of the two theorems.  Those calls recompute. *)
-val cached_split_rules =
-  linarithData.memo_with_splits (fn () => compute_split_rules [])
+val cached_split_tac =
+  linarithData.memo_with_splits
+    (fn () => splitLib.SPLIT_TAC (compute_split_rules []))
 
-fun split_rules [] = cached_split_rules ()
-  | split_rules extra = compute_split_rules extra
+fun split_tactic [] = cached_split_tac ()
+  | split_tactic extra = splitLib.SPLIT_TAC (compute_split_rules extra)
 
 fun decomp_atoms tm =
   case linarithDecomp.decomp tm of
@@ -362,37 +389,54 @@ fun facts_for tm =
   List.concat
     (map (fn i => #atom_facts i tm) (linarithData.all_instances ()))
 
-fun augmentation_round processed assumptions =
+(* One round of augmentation: the atom facts of those atoms of terms
+   that processed has not already been asked about, less the ones known
+   already records.  Both tests are needed -- the atom set stops an
+   atom being asked twice, and the conclusion set stops two different
+   atoms contributing the same fact. *)
+fun augmentation_round processed known terms =
   let
-    val candidates = List.concat (map decomp_atoms assumptions)
-    fun inspect (candidate, (seen, facts)) =
-      if List.exists (Term.aconv candidate) seen then (seen, facts)
-      else (candidate :: seen, facts_for candidate @ facts)
+    val candidates = List.concat (map decomp_atoms terms)
+    fun inspect (candidate, entry as (seen, facts)) =
+      if Termtab.defined seen candidate then entry
+      else
+        (Termtab.insert_set candidate seen,
+         facts_for candidate @ facts)
     val (seen, facts) = foldl inspect (processed, []) candidates
     val unique = distinct_thms facts
-    fun known theorem =
-      List.exists (Term.aconv (Thm.concl theorem)) assumptions
-    val novel = List.filter (not o known) unique
+    fun stale theorem = Termtab.defined known (Thm.concl theorem)
   in
-    (seen, novel)
+    (seen, List.filter (not o stale) unique)
   end
 
-fun augment_atom_facts function limit =
+(* Augmentation runs to a fixpoint, because a contributed fact's own
+   atoms are candidates in their turn, and it is bounded by limit
+   rounds.  It answers the facts to assume together with the atom set
+   to carry on with, rather than assuming them itself, because that set
+   travels down the branch of the search: see split_on_demand.  What is
+   already on the branch travels across the rounds as a set too, each
+   round only adding to it. *)
+fun augmentation function limit processed assumptions =
   let
-    fun loop processed rounds (goal as (assumptions, _)) =
+    fun remember terms known =
+      List.foldl (Lib.uncurry Termtab.insert_set) known terms
+    fun loop known processed added rounds terms =
       let
         val (processed', facts) =
-          augmentation_round processed assumptions
+          augmentation_round processed known terms
       in
-        if null facts then Tactical.TRY opposite_tac goal
+        if null facts then (processed', List.rev added)
         else if rounds >= limit then limit_exceeded function limit
         else
-          Tactical.THEN
-            (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts,
-             loop processed' (rounds + 1)) goal
+          let
+            val conclusions = List.map Thm.concl facts
+          in
+            loop (remember conclusions known) processed'
+              (List.revAppend (facts, added)) (rounds + 1) conclusions
+          end
       end
   in
-    loop [] 0
+    loop (remember assumptions Termtab.empty) processed [] 0 assumptions
   end
 
 (* Whether a disjunct can be added to the literals already assumed
@@ -462,56 +506,91 @@ fun disj_elim_tac config (assumptions, conclusion) =
    Fact augmentation comes last, because it is the one step that adds
    assumptions without discharging anything: doing it before the case
    splits would offer the splitter its own output to split, and the
-   splitting would not finish.  It is tried once per goal, after the
-   case splits have run out and before the goal is declared
-   unrefutable.  Coming last is also what keeps it from missing atoms:
+   splitting would not finish.  It is tried after the case splits have
+   run out and before the goal is declared unrefutable, and it runs to
+   a fixpoint there, so a second try at the same goal has nothing left
+   to add.  Coming last is also what keeps it from missing atoms:
    nothing reaches it with a disjunction still standing, so the atoms
    it collects from an assumption are the atoms of a literal.
 
+   Disjunction elimination is what has no budget of its own, and what
+   keeps the search finite is that nothing refills its supply
+   indefinitely.  Both of the other two steps do put disjunctions back:
+   an operator split states its cases as one, and an atom fact in
+   equivalence form becomes two once normalization has expanded it.  So
+   both are bounded along the branch, by split_limit apiece, and
+   augmentation additionally carries the atoms it has already
+   contributed for down the branch.  That last is the substantive one:
+   a fact contributed above a case split is still on the branch below
+   it, in whatever form the split left it, so deriving it again there
+   derives an assumption -- and, for a fact whose normal form is a
+   disjunction, one the split has just consumed, which is an
+   alternation that on its own never finishes.  The bounds are the
+   backstop for an instance whose atom facts have no finite closure.
+
    split_limit keeps its meaning of an operator-splitting and
    augmentation bound, now counted along a branch of the search rather
-   than along a preprocessing chain.  Disjunction elimination needs no
-   bound: every step of it consumes a disjunction, and only an operator
-   split puts one back.
+   than along a preprocessing chain.
 
    The failure hint is an argument of the search rather than of this
    function, so a caller can read it off the goal without rebuilding
    the rewriting the search sets up once. *)
+type search_branch =
+  {splits : int, augmentations : int, processed : Termtab.set}
+
 fun split_on_demand function config split_tac =
   let
     val limit = #split_limit config
     val carrier_rule = carrier_nnf_rule ()
     val flatten = nnf_flatten carrier_rule
-    fun node hint splits goal =
-      Tactical.THEN (flatten, decide hint false splits) goal
-    and decide hint augmented splits goal =
+    val start : search_branch =
+      {splits = 0, augmentations = 0, processed = Termtab.empty}
+    fun node hint spent goal =
+      Tactical.THEN (flatten, decide hint spent) goal
+    and decide hint spent goal =
       case refutation config goal of
           SOME tactic => tactic goal
-        | NONE => branch hint augmented splits goal
-    and branch hint augmented splits goal =
+        | NONE => branch hint spent goal
+    and branch hint (spent as {splits, augmentations, processed}) goal =
       case Lib.total (disj_elim_tac config) goal of
-          SOME split => expand hint splits split
+          SOME split => expand hint spent split
         | NONE =>
             (case Lib.total split_tac goal of
                  SOME split =>
                    if splits >= limit then limit_exceeded function limit
-                   else expand hint (splits + 1) split
-               | NONE => augment hint augmented splits goal)
-    and augment hint augmented splits goal =
-      if augmented then core function hint config goal
-      else
-        Tactical.THEN
-          (augment_atom_facts function limit,
-           Tactical.THEN (flatten, decide hint true splits)) goal
-    and expand hint splits (goals, validation) =
+                   else
+                     expand hint
+                       {splits = splits + 1,
+                        augmentations = augmentations,
+                        processed = processed} split
+               | NONE => augment hint spent goal)
+    and augment hint {splits, augmentations, processed}
+                (goal as (assumptions, _)) =
+      let
+        val (processed', facts) =
+          augmentation function limit processed assumptions
+      in
+        if null facts then core function hint config goal
+        else if augmentations >= limit then limit_exceeded function limit
+        else
+          Tactical.THEN
+            (Tactical.MAP_EVERY Tactic.ASSUME_TAC facts,
+             Tactical.THEN
+               (flatten,
+                decide hint
+                  {splits = splits,
+                   augmentations = augmentations + 1,
+                   processed = processed'})) goal
+      end
+    and expand hint spent (goals, validation) =
       let
         val (result, revalidation) =
-          Tactical.ALLGOALS (node hint splits) goals
+          Tactical.ALLGOALS (node hint spent) goals
       in
         (result, validation o revalidation)
       end
   in
-    fn hint => node hint 0
+    fn hint => node hint start
   end
 
 type linarith_config = linarithData.linarith_config
@@ -520,22 +599,26 @@ val default_config = linarithData.default_config
 fun CFG_LINARITH_TAC config arguments =
   let
     val function = "CFG_LINARITH_TAC"
-    val (argument_facts, argument_splits) =
+    val (reversed_facts, reversed_splits) =
       full_arguments function arguments
-    val facts =
-      linarithData.arith_facts () @ List.rev argument_facts
-    val rules = split_rules (List.rev argument_splits)
-    val split_tac = splitLib.SPLIT_TAC rules
-    val search = split_on_demand function config split_tac
+    val argument_facts = List.rev reversed_facts
+    val argument_splits = List.rev reversed_splits
   in
-    Tactical.THEN
-      (clasetLib.INSERT_FACTS_TAC facts,
-       fn goal as (_, conclusion) =>
-         Tactical.THEN
-           (Tactic.CCONTR_TAC,
-            Tactical.THEN
-              (filter_relevant, search (unregistered_hint conclusion)))
-           goal)
+    fn goal =>
+      Tactical.THEN
+        (clasetLib.INSERT_FACTS_TAC
+           (linarithData.arith_facts () @ argument_facts),
+         let
+           val search =
+             split_on_demand function config (split_tactic argument_splits)
+         in
+           fn inner as (_, conclusion) =>
+             Tactical.THEN
+               (Tactic.CCONTR_TAC,
+                Tactical.THEN
+                  (filter_relevant,
+                   search (unregistered_hint conclusion))) inner
+         end) goal
   end
 
 val LINARITH_TAC = CFG_LINARITH_TAC default_config
@@ -604,7 +687,7 @@ fun context_forward theorems conclusion =
   end
 
 fun CTXT_LINARITH theorems tm =
-  if Type.compare (Term.type_of tm, Type.bool) <> EQUAL orelse
+  if not (same_type (Term.type_of tm) Type.bool) orelse
      (not (linarithDecomp.is_relevant tm) andalso
       not (Term.aconv tm boolSyntax.F))
   then raise ERR "CTXT_LINARITH" "not applicable"
@@ -621,48 +704,75 @@ fun CTXT_LINARITH theorems tm =
       else decide "CTXT_LINARITH" prove tm
     end
 
-fun add_atom bound atom atoms =
-  if List.exists (Term.aconv atom) bound orelse
-     List.exists (Term.aconv atom) atoms
-  then atoms
-  else atom :: atoms
+(* The atoms in order of first occurrence, the bound variables aside.
+   Both the set already collected and the binders in scope are keyed
+   sets, for the reason distinct_thms is one: this walks a whole term
+   once per cache lookup. *)
+fun add_atom bound atom (collected as (seen, atoms)) =
+  if Termtab.defined bound atom orelse Termtab.defined seen atom then
+    collected
+  else (Termtab.insert_set atom seen, atom :: atoms)
 
 fun linarith_vars tm =
   let
-    fun add_side bound (items, atoms) =
+    fun add_side bound (items, collected) =
       List.foldl
         (fn ((atom, _), result) => add_atom bound atom result)
-        atoms items
-    fun recurse bound atoms tm =
+        collected items
+    fun recurse bound collected tm =
       case linarithDecomp.decomp tm of
           SOME (linarithSolve.Decomp {lhs, rhs, ...}) =>
-            add_side bound (rhs, add_side bound (lhs, atoms))
+            add_side bound (rhs, add_side bound (lhs, collected))
         | NONE =>
             (case shape_of tm of
-                 NEG body => recurse bound atoms body
+                 NEG body => recurse bound collected body
                | CONJ (left, right) =>
-                   recurse bound (recurse bound atoms left) right
+                   recurse bound (recurse bound collected left) right
                | DISJ (left, right) =>
-                   recurse bound (recurse bound atoms left) right
+                   recurse bound (recurse bound collected left) right
                | IMP (left, right) =>
-                   recurse bound (recurse bound atoms left) right
+                   recurse bound (recurse bound collected left) right
                | FORALL (variable, body) =>
-                   recurse (variable :: bound) atoms body
+                   recurse (Termtab.insert_set variable bound) collected
+                     body
                | EXISTS (variable, body) =>
-                   recurse (variable :: bound) atoms body
-               | EQUIV _ => atoms
-               | ATOM => atoms)
+                   recurse (Termtab.insert_set variable bound) collected
+                     body
+               | EQUIV _ => collected
+               | ATOM => collected)
   in
-    List.rev (recurse [] [] tm)
+    List.rev (#2 (recurse Termtab.empty (Termtab.empty, []) tm))
   end
 
 fun cache_check tm =
-  Type.compare (Term.type_of tm, Type.bool) = EQUAL andalso
+  same_type (Term.type_of tm) Type.bool andalso
   (linarithDecomp.is_relevant tm orelse Term.aconv tm boolSyntax.F)
 
-val (CACHED_LINARITH, linarith_cache) =
+val (unguarded_cached_linarith, linarith_cache) =
   Cache.RCACHE {capacity = 2000, per_key_cap = 50}
     (linarith_vars, cache_check, CTXT_LINARITH)
+
+fun clear_linarith_caches () = Cache.clear_cache linarith_cache
+
+(* The result cache is derived from the instance and injection
+   registries exactly as the carrier rewrites and the split tactic
+   above are, and it is the one derivation that records failures: a
+   goal no proof was found for under one registry can be provable under
+   the next, and RCACHE answers a repeat of it from the recorded
+   failure without consulting the procedure again.  So it is dropped
+   when the registries move, by the same generation compare the other
+   two pay.
+
+   The [arith] table needs no entry here.  The entry point that reads
+   it assumes its facts into the context it hands the cache, so a
+   change to the table is a change of context, which is what RCACHE
+   already decides staleness by.  Nor does [arith_split]: the cached
+   procedure is the forward one, which does no operator splitting. *)
+val discard_stale_results =
+  linarithData.memo (fn () => clear_linarith_caches ())
+
+fun CACHED_LINARITH context tm =
+  (discard_stale_results (); unguarded_cached_linarith context tm)
 
 fun contains_forall sense tm =
   case shape_of tm of
@@ -689,21 +799,71 @@ fun admissible theorem =
     linarithDecomp.is_relevant conclusion
   end
 
+(* A memo for a derivation whose source is not the registries, and so
+   not the generation counter the memos above are keyed on: the caller
+   reads the source for itself and supplies the equality on it, since a
+   table of theorems is no equality type.  As there, a comparison that
+   answers "moved" when it has not costs a recomputation and nothing
+   else, and the cell needs no more synchronization than that. *)
+fun memo_by same compute =
+  let
+    val cache = ref NONE
+    fun recompute key =
+      let
+        val value = compute key
+      in
+        cache := SOME (key, value); value
+      end
+  in
+    fn key =>
+      case !cache of
+          SOME (recorded, value) =>
+            if same recorded key then value else recompute key
+        | NONE => recompute key
+  end
+
+(* The [arith] table split into literals, and each literal assumed.
+   Both are a pure function of the table, so they are derived once per
+   state of it rather than once per term -- the trade the carrier
+   rewrites and the split tactic above make against the registry, and
+   the one that matters most here, because the reducer below is offered
+   every boolean subterm of a simplification and would otherwise pay a
+   kernel inference per fact for each.
+
+   The table's own theorems are the key, compared by pointer: the table
+   is a value behind an Sref, so an entry stays the same object until
+   something replaces it, and a table rebuilt into equal but fresh
+   theorems recomputes rather than answering out of the old one.
+
+   Assuming the table is also what tells the result cache that the
+   table has moved -- a fact of it is a hypothesis of the context, and
+   context is what RCACHE decides staleness by -- so the memo has to
+   track the table exactly, which is what a key that is the facts
+   themselves does. *)
+val arith_envelope =
+  memo_by (Lib.list_eq (Lib.curry Portable.pointer_eq))
+    (fn facts =>
+      let
+        val literals = List.concat (map CONJUNCTS facts)
+      in
+        (literals, map (Thm.ASSUME o Thm.concl) literals)
+      end)
+
 (* Give dynamic [arith] facts assumption-shaped cache identities.  Their
-   original proofs remove those identities from the conversion result.
+   original proofs remove those identities from the conversion result,
+   which is the half of the envelope that is per result rather than per
+   table state, and so is the half that stays here.
 
    cache_check is the same test CTXT_LINARITH opens with, so a term it
-   rejects is declined before the context is even looked at.  Asking it
-   first is what keeps the reducer, which is offered every boolean
-   subterm of a simplification, from dumping and re-assuming the whole
-   [arith] table for each one. *)
+   rejects is declined before the table is read at all.  Asking it
+   first is what keeps the reducer from carrying the [arith] context
+   around every boolean subterm the arithmetic has no row for. *)
 fun cached_with_arith context tm =
   if not (cache_check tm) then CACHED_LINARITH context tm
   else
     let
-      val facts =
-        List.concat (map CONJUNCTS (linarithData.arith_facts ()))
-      val assumed = map (Thm.ASSUME o Thm.concl) facts
+      val (facts, assumed) =
+        arith_envelope (linarithData.arith_facts ())
       val theorem = CACHED_LINARITH (context @ assumed) tm
     in
       Lib.rev_itlist PROVE_HYP facts theorem
@@ -741,18 +901,25 @@ val LINARITH_ss =
    conditions share the reducer's cache; cached_with_arith is a
    conversion, so EQT_ELIM turns its |- tm = T into the |- tm a solver
    must return, and its HOL_ERR on a |- tm = F correctly reports the
-   refuted condition as undischarged.  Terms the guard rejects keep the
-   direct forward call: they are the "contradictory context proves
-   anything" case, which the cache cannot serve. *)
+   refuted condition as undischarged.
+
+   A condition the guard rejects is one the arithmetic has no row for
+   -- MEM x l, P y, an equation at an unregistered type -- and the
+   procedure adds the negated conclusion as one more row, so refuting
+   it alongside the context is refuting the context alone.  The only
+   way such a condition is discharged is therefore from a contradictory
+   context, which is what asking for F and applying CONTR says, and
+   asking for F asks through the cache, since F is the other term the
+   guard admits.  Traverse offers the solver every side condition of
+   every conditional rewrite, so the alternative is a full refutation
+   run, always failing and never recorded, per non-arithmetic one. *)
 val linarith_solver : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
      if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
      else
-       context_forward
-         (context_thms @ linarithData.arith_facts ()) tm}
-
-fun clear_linarith_caches () = Cache.clear_cache linarith_cache
+       CONTR tm
+         (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))}
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in

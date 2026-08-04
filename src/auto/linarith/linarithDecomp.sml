@@ -8,7 +8,7 @@ type polynomial = (term * Arbrat.rat) list * Arbrat.rat
 val rat_zero = Arbrat.zero
 val rat_one = Arbrat.one
 
-fun same_type left right = Type.compare (left, right) = EQUAL
+val same_type = linarithData.same_type
 
 fun binary_parts tm =
   let
@@ -26,26 +26,35 @@ fun mk_binary operator left right =
 fun instance_of tm = linarithData.instance_for (Term.type_of tm)
 
 (* An injection may be stripped only from an argument built out of the
-   operators it distributes over -- sums, products and literals.  Every
-   other operator of the source carrier keeps the injection, and the
-   injected term stays an atom: num subtraction is the standard reason,
-   since &(m - n) is not &m - &n. *)
+   operators it distributes over -- sums, products, successors and
+   literals.  A successor qualifies because it is the sum SUC k = k + 1,
+   which is also how poly_other reads it, so an injection with an add
+   homomorphism carries it too.  Every other operator of the source
+   carrier keeps the injection, and the injected term stays an atom: num
+   subtraction is the standard reason, since &(m - n) is not &m - &n. *)
 fun supported source tm =
   let
     val dest = #dest source
+    (* Read off the carrier's registration, and read off once for the
+       whole traversal rather than per subterm. *)
+    val compound = linarithData.compound_ops source
+    fun keeps_injection tm =
+      List.exists (fn recognises => recognises tm) compound
+    fun ok tm =
+      case Lib.total (#dest_plus dest) tm of
+          SOME (left, right) => ok left andalso ok right
+        | NONE =>
+      case Lib.total (#dest_mult dest) tm of
+          SOME (left, right) => ok left andalso ok right
+        | NONE =>
+      case Option.mapPartial (fn dest_suc => Lib.total dest_suc tm)
+             (#dest_suc dest) of
+          SOME argument => ok argument
+        | NONE =>
+          Option.isSome (Lib.total (#dest_lit dest) tm) orelse
+          not (keeps_injection tm)
   in
-    case Lib.total (#dest_plus dest) tm of
-        SOME (left, right) =>
-          supported source left andalso supported source right
-      | NONE =>
-    case Lib.total (#dest_mult dest) tm of
-        SOME (left, right) =>
-          supported source left andalso supported source right
-      | NONE =>
-        Option.isSome (Lib.total (#dest_lit dest) tm) orelse
-        not
-          (List.exists (fn recognises => recognises tm)
-             (linarithData.compound_ops source))
+    ok tm
   end
 
 fun injection_arg tm =
@@ -308,11 +317,8 @@ fun relation tm =
                                  | NONE => NONE)
                       end))
 
-val decomp_count = ref 0
-
-fun decomp tm =
+fun decompose tm =
   let
-    val _ = decomp_count := !decomp_count + 1
     val (negated, body) =
       case Lib.total boolSyntax.dest_neg tm of
           SOME inner => (true, inner)
@@ -340,6 +346,53 @@ fun decomp tm =
                          discrete = Option.isSome (#discrete instance),
                          negated = negated'})
                  end)
+  end
+
+(* Decomposing a term is a pure function of it and of the instance and
+   injection registries, and one decision asks for the same terms
+   several times over.  The result cache in linarithLib alone asks
+   is_relevant of the goal, then the atoms of the goal and of every
+   context theorem's conclusion -- twice, once to split the context into
+   connected components and once to attach each theorem to its own --
+   and the procedure behind it asks is_relevant once more.  So the
+   answers are remembered, keyed on the registry generation the lookups
+   inside them read, exactly as the registry's own derivations are.
+
+   The table is bounded, because this sits under the simplifier and is
+   offered every boolean subterm of every simplification: an unbounded
+   one would grow with the length of the session rather than with the
+   work in hand.  What it exists to hold is one decision's working set
+   -- a goal, its context theorems, and the subterms of both -- and
+   enough neighbouring decisions that a simplifier pass over a goal
+   finds its own earlier answers, which a capacity in the thousands is
+   generously above either way.  Overflow discards the table rather than
+   evicting an entry: it is the same recovery as a registry change, it
+   costs no per-entry bookkeeping on the path that matters, and a
+   working set this far below the capacity reaches it rarely enough that
+   which entry is dropped cannot be worth deciding. *)
+val memo_capacity = 2000
+
+val decomp_memo =
+  ref (0, Termtab.empty : linarithSolve.decomp option Termtab.table)
+
+fun decomp tm =
+  let
+    val current = linarithData.generation ()
+    val (recorded, remembered) = !decomp_memo
+    val table = if recorded = current then remembered else Termtab.empty
+  in
+    case Termtab.lookup table tm of
+        SOME answer => answer
+      | NONE =>
+          let
+            val answer = decompose tm
+            val kept =
+              if Termtab.size table < memo_capacity then table
+              else Termtab.empty
+          in
+            decomp_memo := (current, Termtab.update (tm, answer) kept);
+            answer
+          end
   end
 
 fun is_nonnegative tm =

@@ -31,6 +31,113 @@ val core_numbering =
    40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
    51]
 
+(* The core goals themselves, in source order.  They are stated here
+   rather than in either suite because both run them: the suite in this
+   directory runs exactly these, and the instances suite merges them
+   with the 20 that need int, real or rat syntax.  Those 20 are the
+   whole of what the pre-boss grammar cannot state, so they are the
+   whole of what the split has to duplicate; a goal stated in both files
+   instead is one whose two statements can drift apart while both suites
+   still pass, because what check_numbering checks is the numbers.
+
+   Both upstream "oops" goals are retained: [47] is proved, because
+   splitting on demand never builds the disjunctive normal form whose
+   size defeated upstream, and [48] is the corpus's one method boundary
+   -- linear arithmetic's documented integer-divisibility incompleteness
+   -- asserted to be reported, promptly and by that name, rather than
+   run into. *)
+val core_arith_examples : strength_goal list =
+  [(1, StrengthSuccess, “(i:num) <= MAX i j”),
+   (3, StrengthSuccess, “MIN i j <= (i:num)”),
+   (5, StrengthSuccess, “MIN (i:num) j <= MAX i j”),
+   (7, StrengthSuccess,
+    “MIN (i:num) j + MAX i j = i + j”),
+   (9, StrengthSuccess,
+    “(i:num) < j ==> MIN i j < MAX i j”),
+   (14, StrengthSuccess, “(x:num) <= y ==> x - y = 0”),
+   (15, StrengthSuccess, “(x:num) - y = 0 ==> x <= y”),
+   (16, StrengthSuccess,
+    “((x:num) <= y) = (x - y = 0)”),
+   (17, StrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y = d”),
+   (18, StrengthSuccess,
+    “(x:num) < y /\ d < 1 ==> x - y - x = d - x”),
+   (22, StrengthSuccess, “(i:num) MOD 0 = i”),
+   (23, StrengthSuccess, “(i:num) MOD 1 = 0”),
+   (24, StrengthSuccess, “(i:num) MOD 42 <= 41”),
+   (30, StrengthSuccess, “(x:num) < SUC y <=> x <= y”),
+   (31, StrengthSuccess,
+    “((x:num) = z ==> x <> y) ==> x <> y \/ z <> y”),
+   (32, StrengthSuccess,
+    “((x:num) < SUC y) = (x <= y)”),
+   (33, StrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (34, StrengthSuccess,
+    “(x:num) < y /\ y < z ==> x < z”),
+   (35, StrengthSuccess, “(P:bool) = Q ==> Q = P”),
+   (36, StrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==> MIN x y = 0”),
+   (37, StrengthSuccess,
+    “P = ((x:num) = 0) /\ ~P = (y = 0) ==>
+     MAX x y = x + y”),
+   (38, StrengthSuccess,
+    “(x:num) <> y /\ a + 2 = b /\ a < y /\ y < b /\
+     a < x /\ x < b ==> F”),
+   (39, StrengthSuccess,
+    “y < (x:num) /\ z < y /\ x < z ==> F”),
+   (40, StrengthSuccess, “y < (x:num) - 5 ==> y < x”),
+   (41, StrengthSuccess, “(x:num) <> 0 ==> 0 < x”),
+   (42, StrengthSuccess,
+    “(x:num) <> y /\ x <= y ==> x < y”),
+   (43, StrengthSuccess,
+    “(x:num) < y /\ P (x - y) ==> P 0”),
+   (44, StrengthSuccess,
+    “(x - y) - (x:num) = (x - x) - y”),
+   (45, StrengthSuccess,
+    “(a:num) < b /\ c < d ==> a - b = c - d”),
+   (46, StrengthSuccess,
+    “(a:num) - (b - (c - (d - e))) =
+     a - (b - (c - (d - e)))”),
+   (47, StrengthSuccess,
+    “((n:num) < m /\ m < n') \/
+     (n < m /\ m = n') \/
+     (n < n' /\ n' < m) \/
+     (n = n' /\ n' < m) \/
+     (n = m /\ m < n') \/
+     (n' < m /\ m < n) \/
+     (n' < m /\ m = n) \/
+     (n' < n /\ n < m) \/
+     (n' = n /\ n < m) \/
+     (n' = m /\ m < n) \/
+     (m < n /\ n < n') \/
+     (m < n /\ n' = n) \/
+     (m < n' /\ n' < n) \/
+     (m = n /\ n < n') \/
+     (m = n' /\ n' < n) \/
+     (n' = m /\ m = n)”),
+   (48,
+    StrengthExpectedFailure
+      {error = "CFG_LINARITH_TAC: linear arithmetic found no proof",
+       remedy =
+         "requires intLib.ARITH_TAC/COOPER_TAC (integer divisibility)"},
+    “2 * (x:num) <> 1”),
+   (49, StrengthSuccess, “(0:num) < 1”),
+   (51, StrengthSuccess, “(47:num) + 11 < 8 * 15”)]
+
+(* Source order is goal-number order, so a corpus assembled from two
+   partitions of the numbering is their merge by number.  That the
+   partitions are disjoint and between them exhaust the numbering is not
+   asserted here: check_numbering says it, of the assembled list, and
+   says it for a corpus written out in one piece too. *)
+fun merge_by_number ([], goals) = goals
+  | merge_by_number (goals, []) = goals
+  | merge_by_number (left as (first as (left_number, _, _)) :: left_rest,
+                     right as (second as (right_number, _, _)) ::
+                       right_rest) =
+      if left_number <= right_number then
+        first :: merge_by_number (left_rest, right)
+      else second :: merge_by_number (left, right_rest)
+
 fun check (name, predicate) =
   (tprint name;
    if predicate () then OK () else die "failed")

@@ -22,17 +22,12 @@ sig
      Raises UNCHANGED when there is nothing to cancel. *)
   val cancel_common : ac_ops -> thm -> conv
 
-  (* Development instrumentation, not read by the layer: how many AC
-     rearrangements cancel_common has had to prove.  Cancellation sits in
-     replay's inner loop, so the cost that matters is AC searches per
-     relation; set this to 0 before a norm_conv call to measure one. *)
-  val ac_equality_count : int ref
-
   (* The data an instance's norm_conv is made of: the carrier's three
      left-cancellation theorems, the polynomial normalizer for its
      expressions, the literal reducer, and the reflexivity theorems that
      decide a relation between equal sides.  expression_conv is expected
-     to decline a term outside the carrier by raising UNCHANGED. *)
+     to decline a term outside the carrier by raising UNCHANGED; build
+     it with mk_expression_conv, which is that contract. *)
   type norm_spec = {
     ac : ac_ops,
     ty : hol_type,
@@ -43,6 +38,21 @@ sig
     reduce_conv : conv,
     refl_thms : thm list
   }
+
+  (* safe_conv conv is conv made total: neither a HOL_ERR failure nor an
+     UNCHANGED decline escapes it, so a step with nothing to say
+     contributes a reflexivity theorem rather than stopping the chain it
+     sits in. *)
+  val safe_conv : conv -> conv
+
+  (* mk_expression_conv ty convs is the expression_conv of a carrier
+     whose expressions are normalized by convs, applied left to right:
+     it runs them on a term of type ty and declines a term of any other
+     type by raising UNCHANGED, which is the norm_spec contract above.
+     Carriers differ in how far a step may fail — an instance wraps the
+     steps that only sometimes apply in safe_conv or TRY_CONV itself —
+     so the guard is what mk_expression_conv exists to share. *)
+  val mk_expression_conv : hol_type -> conv list -> conv
 
   (* The whole of an instance's norm_conv: cancel down a relation of this
      carrier, and normalize anything else as an expression.  Which of the

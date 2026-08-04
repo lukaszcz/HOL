@@ -10,11 +10,13 @@ sig
   val safe_solver : Traverse.ssolver
 
   (* Installs the unsafe side-condition solvers of the clasimp simpset, in
-     the order the simplifier tries them.  Exported for the same reason as
-     safe_solver, and as the installer rather than the list so that the
-     order too is stated once: a simpset derived elsewhere (aesop) applies
-     this one function, so a decision procedure added here reaches every
-     derived simpset instead of only this one. *)
+     the order the simplifier tries them.  Exported as the installer
+     rather than the list so that the order too is stated once.  It is
+     deliberately not what other simpsets derive from: the simplifier
+     offers unsafe solvers to every traversal regardless of the safe
+     solvers, so a simpset with a normalisation phase to protect (aesop)
+     names the decision procedures it wants rather than inheriting this
+     list, and an entry added here reaches this simpset only. *)
   val add_unsafe_solvers : simpLib.simpset -> simpLib.simpset
 
   val clasimp_ss : unit -> simpLib.simpset

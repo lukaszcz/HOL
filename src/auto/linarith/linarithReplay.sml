@@ -6,6 +6,8 @@ open linarithSolve
 
 val ERR = mk_HOL_ERR "linarithReplay"
 
+val same_type = linarithData.same_type
+
 type config = linarithData.linarith_config
 
 fun is_literal tm =
@@ -55,34 +57,21 @@ fun instance_of_thm theorem = instance_of_term (Thm.concl theorem)
 (* The first application of f that does not raise. *)
 fun first_result f items = Lib.total (Lib.tryfind f) items
 
-(* The first of a rule set's already-derived implications that matches.
-   first_match derives them on the spot, rule by rule so that a match
-   on the first rule pays for no other rule's derivation; a caller
-   holding a set the registry derived once calls this directly. *)
+(* The first of a rule set's implications that matches.  Every set
+   replay uses arrives derived from the registry, in the order the
+   rules were given, so taking the first match over the flattened set
+   is taking the first rule that matches. *)
 fun match_implications implications theorem =
   first_result (fn implication => MATCH_MP implication theorem)
     implications
 
-fun first_match rules theorem =
-  Lib.get_first
-    (fn rule =>
-      match_implications (linarithData.implications rule) theorem)
-    rules
-
-fun required_match operation rules theorem =
-  case first_match rules theorem of
+fun required_match operation implications theorem =
+  case match_implications implications theorem of
       SOME result => result
     | NONE =>
         raise ERR "mkthm"
           ("Linear arithmetic: failed to " ^ operation ^ " theorem\n" ^
            Parse.thm_to_string theorem)
-
-fun relation_homs injection =
-  let
-    val hom = #hom injection
-  in
-    [#le hom, #lt hom, #eq hom]
-  end
 
 (* The conversions come from the registry already built; an injection
    with no usable homomorphism reports that by raising UNCHANGED, which
@@ -90,12 +79,37 @@ fun relation_homs injection =
 fun rewrite_injections conversion theorem =
   CONV_RULE conversion theorem handle UNCHANGED => theorem
 
-fun normalize_lift injection theorem =
-  rewrite_injections (linarithData.injection_rewrite_conv injection)
-    theorem
+(* Decomposition strips an injection from an argument built out of the
+   operators it distributes over, counting the source carrier's
+   successor as the sum that carrier's own normalizer turns it into.
+   Normalizing an injected argument with its carrier's norm_conv is what
+   puts replay in step with that: it is the step that makes &(SUC n) the
+   &(n + 1) the add homomorphism can then split.  It fails, rather than
+   raising UNCHANGED, on a term that is not an injection, because
+   ONCE_DEPTH_CONV descends past a failure and not past UNCHANGED. *)
+fun injected_argument_conv tm =
+  let
+    val (operator, _) = Term.dest_comb tm
+    val injection =
+      case linarithData.injection_by_const operator of
+          SOME injection => injection
+        | NONE => raise ERR "injected_argument_conv" "not an injection"
+  in
+    case linarithData.instance_for (#from_ty injection) of
+        SOME source => RAND_CONV (#norm_conv source) tm
+      | NONE => raise ERR "injected_argument_conv" "no source instance"
+  end
+
+fun with_injected_arguments conversion =
+  ONCE_DEPTH_CONV injected_argument_conv THENC conversion
+
+fun normalize_lift conversion theorem =
+  rewrite_injections (with_injected_arguments conversion) theorem
 
 fun normalize_injections theorem =
-  rewrite_injections (linarithData.all_injection_rewrite_conv ())
+  rewrite_injections
+    (with_injected_arguments
+       (linarithData.all_injection_rewrite_conv ()))
     theorem
 
 (* Where an instance's norm_conv meets a conclusion: at the two sides of
@@ -132,15 +146,19 @@ fun absorb normalize theorem =
 fun normalize_relation_sides theorem =
   absorb (fn thm => normalize_at Sides (instance_of_thm thm) thm) theorem
 
+(* One lift per registered injection whose order homomorphisms the
+   relation matches, pushed inwards again by the rewrite conversion the
+   registry built for that injection. *)
+fun lift_by (entry : linarithData.derived_injection) theorem =
+  Option.map (normalize_lift (#rewrite_conv entry))
+    (match_implications (#relation_imps entry) theorem)
+
 fun lifts theorem =
   let
     val normalized = normalize_relation_sides theorem
   in
-    List.mapPartial
-      (fn injection =>
-        Option.map (normalize_lift injection)
-          (first_match (relation_homs injection) normalized))
-      (linarithData.injections ())
+    List.mapPartial (fn entry => lift_by entry normalized)
+      (linarithData.derived_injections ())
   end
 
 fun same_conclusion theorem1 theorem2 =
@@ -212,7 +230,8 @@ fun add_equalities instance theorem1 theorem2 =
   end
 
 fun add_direct_raw instance theorem1 theorem2 =
-  match_implications (linarithData.instance_add_mono_imps instance)
+  match_implications
+    (#add_mono (linarithData.instance_implications instance))
     (CONJ theorem1 theorem2)
 
 fun add_direct theorem1 theorem2 =
@@ -301,6 +320,12 @@ fun additive_scale instance n variable =
     sum n
   end
 
+(* Beta-reduced before it leaves, as the congruence equality_as_le
+   builds is: an instance's expression conversion normalizes
+   polynomials, not redexes, so a scaled side left as (\v. v * 3) x
+   reaches cancellation as an atom distinct from the 3 * x it has to
+   meet, and the certificate replays to a true relation instead of to
+   falsity. *)
 fun apply_to_product instance n literal theorem =
   let
     val dest = #dest instance
@@ -313,7 +338,7 @@ fun apply_to_product instance n literal theorem =
         | NONE => additive_scale instance n variable
     val function = Term.mk_abs (variable, body)
   in
-    AP_TERM function theorem
+    CONV_RULE (BINOP_CONV BETA_CONV) (AP_TERM function theorem)
   end
 
 fun specialize_literal literal theorem =
@@ -343,7 +368,7 @@ fun apply_mult_rule instance literal theorem implications =
         val variables =
           List.filter
             (fn variable =>
-              Type.compare (Term.type_of variable, #ty instance) = EQUAL)
+              same_type (Term.type_of variable) (#ty instance))
             (Term.free_vars (Thm.concl opened))
         fun try_variable variable =
           let
@@ -382,7 +407,7 @@ fun mult_positive instance n theorem =
   in
     case first_result
            (apply_mult_rule instance literal theorem)
-           (linarithData.instance_mult_mono_imps instance) of
+           (#mult_mono (linarithData.instance_implications instance)) of
         SOME result => result
       | NONE => mult_by_add n theorem
   end
@@ -449,13 +474,8 @@ fun normalize_final theorem =
       normalize_at Whole (instance_of_thm expanded) expanded
     end
 
-(* Only a discrete carrier can strengthen a strict inequality to the
-   non-strict one about its successor; a dense carrier supplies no such
-   rule, and the LessD/NotLeDD justifications never arise for it. *)
-fun lessD_rules (instance : linarithData.linarith_instance) =
-  case #discrete instance of
-      SOME {lessD} => lessD
-    | NONE => []
+fun implications_of theorem =
+  linarithData.instance_implications (instance_of_thm theorem)
 
 fun mkthm assumptions justification =
   let
@@ -482,34 +502,32 @@ fun mkthm assumptions justification =
                         raise ERR "mkthm"
                           ("instance declined nonnegative atom " ^
                            Parse.term_to_string atom)))
-      | one (LessD why) = from_instance "LessD" lessD_rules why
-      | one (NotLessD why) =
-          from_instance "NotLessD"
-            (fn instance => [#not_less (#kit instance)]) why
-      | one (NotLeD why) =
-          from_instance "NotLeD"
-            (fn instance => [#not_le (#kit instance)]) why
+      | one (LessD why) = from_instance "LessD" #lessD why
+      | one (NotLessD why) = from_instance "NotLessD" #not_less why
+      | one (NotLeD why) = from_instance "NotLeD" #not_le why
       | one (NotLeDD why) =
           let
             val theorem = one why
-            val instance = instance_of_thm theorem
+            val imps = implications_of theorem
             val less =
-              required_match "apply NotLeDD to"
-                [#not_le (#kit instance)] theorem
+              required_match "apply NotLeDD to" (#not_le imps) theorem
           in
-            required_match "finish NotLeDD on" (lessD_rules instance) less
+            required_match "finish NotLeDD on" (#lessD imps) less
           end
       | one (Multiplied (n, why)) = mult_thm n (one why)
       | one (Added (left, right)) =
           normalize_added (add_thms (one left) (one right))
-    (* Apply the rules the justification's own carrier supplies. *)
-    and from_instance name select why =
+    (* Apply the rules the justification's own carrier supplies.  Only
+       a discrete carrier supplies the lessD LessD and NotLeDD ask for,
+       and those justifications never arise for a dense one, whose
+       lessD implications are empty. *)
+    and from_instance name
+          (select : linarithData.instance_implications -> thm list) why =
           let
             val theorem = one why
-            val instance = instance_of_thm theorem
           in
             required_match ("apply " ^ name ^ " to")
-              (select instance) theorem
+              (select (implications_of theorem)) theorem
           end
 
     val theorem =
@@ -558,19 +576,41 @@ fun extract_split theorem =
     else raise ERR "extract_split" "neqE has an unexpected conclusion"
   end
 
+(* Which assumptions are splittable is decided by exactly the test the
+   search used -- the disequality-elimination step inside linarithSolve
+   asks whether a row is a disequality and whether it is discrete, which
+   are is_disequality and the instance's discreteness here -- because
+   the search emits one justification per case it generated and replay
+   has to produce the matching goal for each.  Answering NONE for an
+   assumption the search split leaves refute_tac's THENL with more
+   tactics than goals, and the arity mismatch is what the user then
+   sees.  So neqE not applying to an assumption that passed the test is
+   an ill-formed instance, and is reported as one here. *)
 fun split_assumption discrete_only theorem =
-  let
-    val tm = Thm.concl theorem
-    val instance = instance_of_thm theorem
-  in
-    if is_disequality tm andalso
-       (not discrete_only orelse Option.isSome (#discrete instance))
-    then
-      Option.map extract_split
-        (first_match [#neqE (#kit instance)] theorem)
-    else NONE
-  end
-  handle HOL_ERR _ => NONE
+  (* An assumption whose carrier replay cannot even name is one decomp
+     answers NONE for, so reading the instance first costs nothing and
+     spares the traversal.  It is only a short circuit: everything the
+     answer depends on is below. *)
+  case Lib.total instance_of_thm theorem of
+      NONE => NONE
+    | SOME instance =>
+        if not (is_disequality (Thm.concl theorem)) then NONE
+        else if discrete_only andalso
+                not (Option.isSome (#discrete instance))
+        then NONE
+        else
+          (case
+             match_implications
+               (#neqE (linarithData.instance_implications instance))
+               theorem
+           of
+               SOME implication => SOME (extract_split implication)
+             | NONE =>
+                 raise ERR "split_assumption"
+                   ("the neqE of the linarith instance for " ^
+                    Parse.type_to_string (#ty instance) ^
+                    " does not apply to\n" ^
+                    Parse.thm_to_string theorem))
 
 fun finish_forward conclusion negated false_theorem =
   if boolSyntax.is_neg conclusion then
@@ -588,26 +628,39 @@ fun find_split discrete_only assumptions =
     find [] (List.map Thm.ASSUME assumptions)
   end
 
-fun neq_elim_tac discrete_only (assumptions, goal) =
-  if not (Term.aconv goal boolSyntax.F) then
-    raise ERR "neq_elim_tac" "goal is not false"
+fun neq_elim_step (prefix, suffix, Split (split, left, right)) =
+  let
+    val common = List.map Thm.concl (prefix @ suffix)
+    val goals =
+      [(common @ [left], boolSyntax.F),
+       (common @ [right], boolSyntax.F)]
+    fun justify [left_false, right_false] =
+          Thm.MP
+            (Thm.MP split (Thm.DISCH left left_false))
+            (Thm.DISCH right right_false)
+      | justify _ =
+          raise ERR "neq_elim_tac" "invalid justification"
+  in
+    (goals, justify)
+  end
+
+(* Tactical.REPEAT ends its loop on any HOL_ERR, so it cannot tell the
+   "nothing left to split" that legitimately ends this one from the
+   diagnostic split_assumption raises where replay and search disagree,
+   and would leave the user with the arity mismatch that diagnostic
+   exists to replace.  Hence the loop written out: it ends exactly where
+   find_split reports no splittable disequality. *)
+fun neq_elim_tac discrete_only (goal as (assumptions, conclusion)) =
+  if not (Term.aconv conclusion boolSyntax.F) then
+    Tactical.ALL_TAC goal
   else
     case find_split discrete_only assumptions of
-        NONE => raise ERR "neq_elim_tac" "no matching disequality"
-      | SOME (prefix, suffix, Split (split, left, right)) =>
+        NONE => Tactical.ALL_TAC goal
+      | SOME found =>
           let
-            val common = List.map Thm.concl (prefix @ suffix)
-            val goals =
-              [(common @ [left], boolSyntax.F),
-               (common @ [right], boolSyntax.F)]
-            fun justify [left_false, right_false] =
-                  Thm.MP
-                    (Thm.MP split (Thm.DISCH left left_false))
-                    (Thm.DISCH right right_false)
-              | justify _ =
-                  raise ERR "neq_elim_tac" "invalid justification"
+            fun step (_ : goal) = neq_elim_step found
           in
-            (goals, justify)
+            Tactical.THEN (step, neq_elim_tac discrete_only) goal
           end
 
 fun append_negated_tac (assumptions, conclusion) =
@@ -634,9 +687,7 @@ fun refute_tac split_neq justifications =
   let
     val split_tac =
       if split_neq then
-        Tactical.THEN
-          (Tactical.REPEAT (neq_elim_tac true),
-           Tactical.REPEAT (neq_elim_tac false))
+        Tactical.THEN (neq_elim_tac true, neq_elim_tac false)
       else Tactical.ALL_TAC
     val leaves = List.map justification_tac justifications
   in
@@ -657,7 +708,7 @@ fun refute config assumptions conclusion =
    premises' own conclusions.  Reproducing the disequality case split a
    second time as a tree of theorems would have to stay case-for-case in
    step with refute_tac, since both consume the one justification list
-   in the order elim_neq generated it. *)
+   in the order the search's disequality elimination generated it. *)
 fun fwd_prove config theorems conclusion =
   let
     val hypotheses = List.map Thm.concl theorems

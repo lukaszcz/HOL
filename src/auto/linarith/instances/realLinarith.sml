@@ -13,19 +13,16 @@ val ac_ops : linarithCancel.ac_ops =
    rid = realTheory.REAL_ADD_RID,
    ac_fallback = NONE}
 
-val safe_conv = QCONV o TRY_CONV
-
-fun expression_conv tm =
-  if Term.type_of tm = realSyntax.real_ty then
-    (safe_conv
+val expression_conv =
+  linarithCancel.mk_expression_conv realSyntax.real_ty
+    [linarithCancel.safe_conv
        (TOP_DEPTH_CONV
          (FIRST_CONV
            [REWR_CONV intrealTheory.real_of_int_neg,
-            REWR_CONV intrealTheory.real_of_int_num])) THENC
-     TRY_CONV RealField.REAL_POLY_CONV THENC
-     TRY_CONV realSimps.REALADDCANON THENC
-     TRY_CONV RealField.REAL_RAT_REDUCE_CONV) tm
-  else raise UNCHANGED
+            REWR_CONV intrealTheory.real_of_int_num])),
+     TRY_CONV RealField.REAL_POLY_CONV,
+     TRY_CONV realSimps.REALADDCANON,
+     TRY_CONV RealField.REAL_RAT_REDUCE_CONV]
 
 val norm_conv =
   linarithCancel.mk_norm_conv

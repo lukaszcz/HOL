@@ -36,17 +36,22 @@ by configure, not by any Holmakefile rule, so after pulling run
 `poly < tools/smart-configure.sml` — a stale `bin/unquote` reports the
 mis-lex as a syntax error in the theorem, not as a stale filter.
 
-Only `rules/` and `aesop/theory_tests/` have theory scripts; in
-`classical/`, `blast/`, `clasimp/` and `aesop/` plain `Holmake` compiles
-nothing and exits 0 even on type errors.  Build `selftest.exe` there.
+Theory scripts live in `rules/`, `linarith/`, `linarith/instances/`,
+`linarith/theory_tests/` and `aesop/theory_tests/`; in `classical/`,
+`blast/`, `clasimp/` and `aesop/` plain `Holmake` compiles nothing and
+exits 0 even on type errors.  Build `selftest.exe` there.
 
-Per-directory: plain `Holmake` inside `src/auto/rules/` works — its
-Holmakefile pins `HOLHEAP = $(HOLDIR)/bin/hol.state0` itself.  The
-selftest is `selftest.exe` (built by `Holmake`, run directly, or via
+Per-directory: plain `Holmake` inside `src/auto/rules/` and
+`src/auto/linarith/` works — their Holmakefiles pin
+`HOLHEAP = $(HOLDIR)/bin/hol.state0` themselves.
+`src/auto/linarith/instances/` is post-boss and must *not* be given
+that heap; plain `Holmake` is right there too.  The selftest is
+`selftest.exe` (built by `Holmake`, run directly, or via
 `HOLSELFTESTLEVEL` which tees into `ntactical-selftest.log`).
 Cross-theory persistence scenarios live in `rules/theory_tests/` with
 their own Holmakefile (diamond merges, reload idempotence, batched
-delta replay).
+delta replay); `linarith/theory_tests/` holds the round-trip scenarios
+for the `[arith]`/`[arith_split]` tables.
 
 The layer is registered in `SRCRELNAMES` in
 `src/parallel_builds/core/Holmakefile`, so `bin/build -F` exercises it.

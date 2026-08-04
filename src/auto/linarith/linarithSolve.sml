@@ -19,9 +19,6 @@ datatype injust =
 datatype lineq =
   Lineq of Arbint.int * lineq_type * Arbint.int list * injust
 
-type history = int list
-datatype result = Success of injust | Failure of history
-
 type linarith_config = linarithData.linarith_config
 
 (* Relations and negation are structured rather than upstream strings
@@ -244,15 +241,18 @@ fun distinct_rows rows =
 fun trace message =
   if linarithData.tracing 2 then linarithData.trace 2 (message ()) else ()
 
-fun elim (ineqs, hist) =
+(* SOME just is a refutation of the rows; NONE is elimination run to a
+   system with no eliminable column left, which is the rows failing to
+   refute rather than the search giving up early. *)
+fun elim ineqs =
   let
     val (triv, nontriv) = List.partition is_trivial ineqs
   in
     if not (List.null triv) then
       (case List.find is_contradictory triv of
-           SOME (Lineq (_, _, _, just)) => Success just
-         | NONE => elim (nontriv, hist))
-    else if List.null nontriv then Failure hist
+           SOME (Lineq (_, _, _, just)) => SOME just
+         | NONE => elim nontriv)
+    else if List.null nontriv then NONE
     else
       let
         val (eqs, noneqs) =
@@ -270,7 +270,7 @@ fun elim (ineqs, hist) =
                   List.map (elim_var v eq) dependent @ independent
               in
                 trace (fn () => "equation pivot " ^ Int.toString v);
-                elim (others, v :: hist)
+                elim others
               end
           | NONE =>
               let
@@ -278,7 +278,7 @@ fun elim (ineqs, hist) =
                   List.map (fn Lineq (_, _, cs, _) => cs) noneqs
               in
                 case choose_blowup coeff_lists of
-                    NONE => Failure (~1 :: hist)
+                    NONE => NONE
                   | SOME (_, v) =>
                       let
                         val (independent, dependent) =
@@ -295,8 +295,7 @@ fun elim (ineqs, hist) =
                       in
                         trace
                           (fn () => "inequality pivot " ^ Int.toString v);
-                        elim (distinct_rows (independent @ products pos),
-                              v :: hist)
+                        elim (distinct_rows (independent @ products pos))
                       end
               end
       end
@@ -504,9 +503,9 @@ fun refutes is_nonnegative systems =
             val ineqs =
               List.map (mklineq index) items @ nonnegative
           in
-            case elim (ineqs, []) of
-                Success just => refute rest (just :: justs)
-              | Failure _ => NONE
+            case elim ineqs of
+                SOME just => refute rest (just :: justs)
+              | NONE => NONE
           end
   in
     refute systems []
