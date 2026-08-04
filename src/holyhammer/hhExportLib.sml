@@ -8,7 +8,7 @@
 structure hhExportLib :> hhExportLib =
 struct
 
-open HolKernel boolLib aiLib mlThmData hhTranslate (* combinTheory *)
+open HolKernel boolLib aiLib mlThmData hhTranslate
 
 val ERR = mk_HOL_ERR "hhExportLib"
 type thmid = string * string

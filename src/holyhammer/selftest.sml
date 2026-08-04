@@ -1,5 +1,15 @@
 open testutils
 
+(* This quotation is deliberately compiled after hhLamTrans is linked.  A
+   compile-time combin-theory dependency used to install its surface grammar
+   in HolyHammer sessions (b7fca5c48); this ordinary source fixture must
+   retain the ambient grammar. *)
+val grammar_pollution_fixture : Term.term = ``(\x : 'a. x) y = y``
+val _ =
+  (tprint "hhLamTrans does not pollute the term grammar";
+   if boolSyntax.is_eq grammar_pollution_fixture then OK ()
+   else die "FAILED: hhLamTrans grammar fixture")
+
 fun join a b = OS.Path.concat (a, b)
 
 fun write_file path contents =
@@ -557,6 +567,93 @@ fun test_hhTypeEnc () =
   end
 
 val _ = test_hhTypeEnc ()
+
+fun test_hhLamTrans () =
+  let
+    open boolSyntax
+    val num = Term.type_of ``0 : num``
+    val unary = Type.mk_type ("fun", [num, num])
+    val binary = Type.mk_type ("fun", [num, unary])
+    val x = Term.mk_var ("X", num)
+    val y = Term.mk_var ("Y", num)
+    val f = Term.mk_var ("F", binary)
+    val g = Term.mk_var ("G", unary)
+    val h = Term.mk_var ("H", unary)
+    val nested_lam = Term.list_mk_abs ([x, y],
+      Term.list_mk_comb (f, [Term.mk_comb (g, x), y]))
+    val nested = mk_eq (Term.list_mk_comb (nested_lam, [x, y]),
+      Term.list_mk_comb (f, [Term.mk_comb (g, x), y]))
+    val under_quantifier = mk_forall (h,
+      mk_eq (Term.mk_comb (Term.mk_abs (x, Term.mk_comb (h, x)), x),
+        Term.mk_comb (h, x)))
+    val alpha = Type.mk_vartype "'a"
+    val poly_predicate = Type.mk_type ("fun", [alpha, Type.bool])
+    val poly_x = Term.mk_var ("PX", alpha)
+    val poly_p = Term.mk_var ("PP", poly_predicate)
+    val polymorphic_lam =
+      Term.mk_abs (poly_x, Term.mk_comb (poly_p, poly_x))
+    val polymorphic = mk_eq (Term.mk_comb (polymorphic_lam, poly_x),
+      Term.mk_comb (poly_p, poly_x))
+    val fixtures = [nested, under_quantifier, polymorphic]
+    fun nonlogical_abs tm =
+      if is_forall tm then nonlogical_abs (#2 (dest_forall tm))
+      else if is_exists tm then nonlogical_abs (#2 (dest_exists tm))
+      else if Term.is_abs tm then true
+      else if Term.is_comb tm then
+        nonlogical_abs (Term.rator tm) orelse nonlogical_abs (Term.rand tm)
+      else false
+    fun generated_symbol tm =
+      List.all (fn variable =>
+        String.isPrefix "lam." (#1 (Term.dest_var variable)))
+        (Term.free_vars_lr tm)
+    fun normalise tm =
+      (rhs (Thm.concl (simpLib.SIMP_CONV boolSimps.bool_ss
+        [DB.fetch "combin" "I_THM", DB.fetch "combin" "K_THM",
+         DB.fetch "combin" "S_THM", DB.fetch "combin" "C_THM",
+         DB.fetch "combin" "o_THM"] tm)) handle UNCHANGED => tm)
+    fun has_name stem definitions =
+      List.exists (fn (name, _) => name = stem) definitions
+    val (lifted, lift_defs) = hhLamTrans.translate "lifting" fixtures
+    val (combs, comb_defs) = hhLamTrans.translate "combs" fixtures
+    val (both, both_defs) =
+      hhLamTrans.translate "combs_and_lifting" fixtures
+    val (kept, kept_defs) = hhLamTrans.translate "keep_lams" fixtures
+    val _ = expect "lambda lifting has deterministic names"
+      (map #1 lift_defs = List.tabulate (length lift_defs,
+       fn index => "lam." ^ Int.toString index))
+    val _ = expect "lifting removes fixture abstractions"
+      (List.all (not o nonlogical_abs) lifted andalso
+       List.all (fn (_, definition) =>
+         not (nonlogical_abs definition)) lift_defs)
+    val _ = expect "lifting definitions bind their captured variables"
+      (List.all (generated_symbol o #2) lift_defs andalso
+       List.exists (fn (_, definition) =>
+         List.exists (fn ty => ty = alpha) (Term.type_vars_in_term definition))
+         lift_defs)
+    val _ = expect "combs removes fixture abstractions"
+      (null comb_defs andalso List.all (not o nonlogical_abs) combs)
+    val _ = expect "combs beta-normalise to the closed input"
+      (ListPair.allEq (fn (actual, fixture) =>
+         Term.aconv (normalise actual)
+           (normalise (list_mk_forall (Term.free_vars_lr fixture, fixture))))
+       (combs, fixtures))
+    val _ = expect "combs_and_lifting retains both definition forms"
+      (ListPair.allEq (fn (left, right) => Term.aconv left right)
+         (both, lifted) andalso
+       length both_defs = 2 * length lift_defs andalso
+       List.all (fn (name, _) =>
+         has_name (name ^ ".combs") both_defs) lift_defs andalso
+       List.all (not o nonlogical_abs o #2) both_defs)
+    val _ = expect "keep_lams only eta-contracts"
+      (null kept_defs andalso List.exists nonlogical_abs kept andalso
+       length kept = length fixtures)
+    val _ = expect "empty lambda mode is rejected outside the legacy path"
+      ((ignore (hhLamTrans.translate "" fixtures); false) handle Fail _ => true)
+  in
+    ()
+  end
+
+val _ = test_hhLamTrans ()
 
 fun prover name =
   case hhProver.lookup name of
