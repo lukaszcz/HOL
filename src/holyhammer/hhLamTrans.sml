@@ -5,6 +5,10 @@ struct
 
   fun fail message = raise Fail ("hhLamTrans: " ^ message)
 
+  fun valid_mode mode =
+    List.exists (fn known => known = mode)
+      ["lifting", "combs", "combs_and_lifting", "keep_lams"]
+
   fun has_var variable tm =
     List.exists (fn other => aconv variable other) (free_vars_lr tm)
 

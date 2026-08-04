@@ -14,6 +14,11 @@ type hh_options =
    cores : int,
    filter : string,
    max_facts : int option,
+   format : string,
+   type_enc : string,
+   lam_trans : string,
+   mono_iters : int,
+   mono_instances : int option,
    minimize : bool,
    preplay_timeout : real,
    minimize_timeout : real,
@@ -188,6 +193,11 @@ val option_defaults =
    ("cores", fn () => "0"),
    ("filter", fn () => "knn"),
    ("max_facts", fn () => ""),
+   ("format", fn () => ""),
+   ("type_enc", fn () => ""),
+   ("lam_trans", fn () => ""),
+   ("mono_iters", fn () => "3"),
+   ("mono_instances", fn () => "100"),
    ("minimize", fn () => "true"),
    ("preplay_timeout", fn () => "1.0"),
    ("minimize_timeout", fn () => "1.0"),
@@ -333,6 +343,15 @@ fun positive_real value =
 fun optional_positive_int value =
   trim value = "" orelse positive_int value
 
+fun valid_format value =
+  trim value = "" orelse hhTypeEnc.valid_format (trim value)
+
+fun valid_type_enc value =
+  (ignore (hhTypeEnc.of_string (trim value)); true) handle Fail _ => false
+
+fun valid_lam_trans value =
+  trim value = "" orelse hhLamTrans.valid_mode (trim value)
+
 fun one_of choices value =
   List.exists (fn choice => trim value = choice) choices
 
@@ -376,6 +395,25 @@ val option_specs : option_spec list =
     expected = "empty or a positive integer",
     doc = "fact cap (empty means the per-slice default)",
     valid = optional_positive_int},
+   {name = "format", default = option_default "format",
+    expected = "empty or a supported TPTP format",
+    doc = "schedule-wide format override (empty means per-slice)",
+    valid = valid_format},
+   {name = "type_enc", default = option_default "type_enc",
+    expected = "empty or a supported type encoding",
+    doc = "schedule-wide type encoding override (empty means per-slice)",
+    valid = valid_type_enc},
+   {name = "lam_trans", default = option_default "lam_trans",
+    expected = "empty or a supported lambda translation",
+    doc = "schedule-wide lambda translation override (empty means per-slice)",
+    valid = valid_lam_trans},
+   {name = "mono_iters", default = option_default "mono_iters",
+    expected = "a positive integer", doc = "monomorphization rounds",
+    valid = positive_int},
+   {name = "mono_instances", default = option_default "mono_instances",
+    expected = "a positive integer",
+    doc = "new monomorphization-instance cap",
+    valid = positive_int},
    {name = "minimize", default = option_default "minimize",
     expected = "a Boolean (true/false, yes/no, on/off, or 1/0)",
     doc = "minimize reconstructed proofs", valid = Option.isSome o bool_value},
@@ -513,6 +551,21 @@ fun snapshot () =
         (fn value =>
           if trim value = "" then SOME NONE
           else Option.map SOME (int_value value))
+    val format = required "snapshot" "format" (SOME o trim)
+    val type_enc = required "snapshot" "type_enc" (SOME o trim)
+    val lam_trans = required "snapshot" "lam_trans" (SOME o trim)
+    val mono_iters = required "snapshot" "mono_iters" int_value
+    val mono_instances =
+      case value_with_source "mono_instances" of
+          SOME (value, "default") =>
+            (check_value "snapshot" (checked_spec "snapshot" "mono_instances")
+               value;
+             NONE)
+        | SOME (value, _) =>
+            (check_value "snapshot" (checked_spec "snapshot" "mono_instances")
+               value;
+             int_value value)
+        | NONE => NONE
     val minimize = required "snapshot" "minimize" bool_value
     val preplay_timeout =
       required "snapshot" "preplay_timeout" real_value
@@ -527,7 +580,9 @@ fun snapshot () =
     val result : hh_options =
       {timeout = timeout, max_proofs = max_proofs, provers = provers,
        slices = slices, cores = cores, filter = filter,
-       max_facts = max_facts, minimize = minimize,
+       max_facts = max_facts, format = format, type_enc = type_enc,
+       lam_trans = lam_trans, mono_iters = mono_iters,
+       mono_instances = mono_instances, minimize = minimize,
        preplay_timeout = preplay_timeout,
        minimize_timeout = minimize_timeout, cache = cache,
        cache_dir = cache_dir, cache_max_entries = cache_max_entries,

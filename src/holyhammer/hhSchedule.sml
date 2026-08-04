@@ -70,39 +70,69 @@ fun default_progress (SliceStarted slice) =
       print_endline ("  minimized proof:  \n    " ^ #stac suggestion)
   | default_progress (ScheduleDone _) = ()
 
-fun distinct_ints values =
+fun problem_key (slice : hhProver.slice) =
+  String.concatWith "."
+    (map aiLib.escape [#format slice, #type_enc slice, #lam_trans slice,
+                       Int.toString (#nfacts slice)])
+
+fun problem_dir (slice : hhProver.slice) =
+  join (join (hhConfig.state_dir ()) "problems") (problem_key slice)
+
+fun problem_path (slice : hhProver.slice) = join (problem_dir slice) "atp_in"
+
+fun same_problem_key (left : hhProver.slice) (right : hhProver.slice) =
+  #format left = #format right andalso #type_enc left = #type_enc right andalso
+  #lam_trans left = #lam_trans right andalso #nfacts left = #nfacts right
+
+fun distinct_problem_slices slices =
   let
     fun collect _ [] = []
-      | collect seen (value :: rest) =
-          if List.exists (fn other => value = other) seen then
-            collect seen rest
-          else value :: collect (value :: seen) rest
+      | collect seen (slice :: rest) =
+          if List.exists (same_problem_key slice) seen then collect seen rest
+          else slice :: collect (slice :: seen) rest
   in
-    collect [] values
+    collect [] slices
   end
 
-fun problem_dir nfacts =
-  join (join (hhConfig.state_dir ()) "problems") (Int.toString nfacts)
-
-fun problem_path nfacts = join (problem_dir nfacts) "atp_in"
+fun mono_instances options config =
+  case #mono_instances options of
+      SOME value => value
+    | NONE =>
+        (case #mono_instances config of SOME value => value | NONE => 100)
 
 (* This function is called before any scheduler thread is created.  Both
-   thml_of_namel and the FOF exporter touch HOL process-global state. *)
-fun export_problems goal premises schedule =
+   thml_of_namel and the exporters touch HOL process-global state. *)
+fun export_problems options goal premises schedule =
   let
-    val counts = distinct_ints (map (#nfacts o #2) schedule)
+    val slices = distinct_problem_slices (map #2 schedule)
     val conjecture = list_mk_imp goal
-    fun export nfacts =
+    val memo = hhProblemGen.new_export_memo ()
+    fun config_for slice =
+      case List.find (fn (config, other) => same_problem_key slice other) schedule of
+          SOME (config, _) => config
+        | NONE => raise Fail "HolyHammer: missing config for problem slice"
+    fun export slice =
       let
-        val directory = problem_dir nfacts
-        val selected = first_n nfacts premises
+        val config = config_for slice
+        val directory = problem_dir slice
+        val selected = first_n (#nfacts slice) premises
         val named = smlRedirect.hidef mlThmData.thml_of_namel selected
         val _ = hhConfig.ensure_dir directory
       in
-        hhExportFof.fof_export_pb directory (conjecture, named)
+        if #format slice = "fof" andalso #type_enc slice = "" then
+          hhExportFof.fof_export_pb directory (conjecture, named)
+        else
+          hhProblemGen.export_pb_in memo
+            {format = hhTypeEnc.format_of_string (#format slice),
+             type_enc = hhTypeEnc.adjust_type_enc
+               (hhTypeEnc.format_of_string (#format slice))
+               (hhTypeEnc.of_string (#type_enc slice)),
+             lam_trans = #lam_trans slice, mono_iters = #mono_iters options,
+             mono_instances = mono_instances options config}
+            (problem_path slice) (conjecture, named)
       end
   in
-    List.app export counts
+    List.app export slices
   end
 
 fun sorted_lemmas lemmas =
@@ -138,7 +168,7 @@ fun run {options, goal, premises, progress} =
          TextIO.output (TextIO.stdErr,
            "HolyHammer progress callback failed: " ^
            General.exnMessage error ^ "\n"))
-    val _ = export_problems goal premises schedule
+    val _ = export_problems options goal premises schedule
     val _ = if #cache options then hhCache.prune options else ()
     (* Probe once on the calling thread.  Besides keeping version probes out
        of the worker pool, this avoids concurrent access to hhProver's probe
@@ -227,7 +257,7 @@ fun run {options, goal, premises, progress} =
           NONE => NONE
         | SOME {path, version, ...} =>
             let
-              val (_, argv) = #mk_command config path request
+              val (_, argv) = #mk_command config path (#format request) request
             in
               SOME
                 ({prover = #name config, version = version, argv = argv,
@@ -261,8 +291,9 @@ fun run {options, goal, premises, progress} =
         val wanted = hhSlice.slice_budget schedule_length options slice
         val budget = Real.max (0.001, real_min wanted remaining)
         val request : hhProver.run_request =
-          {timeout = Real.ceil budget, problem = problem_path (#nfacts slice),
-           extra = #extra_opts slice, debug_dir = #debug_dir options}
+          {timeout = Real.ceil budget, format = #format slice,
+           problem = problem_path slice, extra = #extra_opts slice,
+           debug_dir = #debug_dir options}
         val _ = emit (SliceStarted slice)
         val parts = if #cache options then cache_parts config request else NONE
         val cached =

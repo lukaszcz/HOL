@@ -17,7 +17,7 @@ sig
      extra_opts : string list, slice_size : int}
 
   type run_request =
-    {timeout : int, problem : string, extra : string list,
+    {timeout : int, format : string, problem : string, extra : string list,
      debug_dir : string option}
 
   type run_result =
@@ -35,9 +35,12 @@ sig
      version_args : string list,
      parse_version : string -> string option,
      tested_versions : string list,
-     mk_command : string -> run_request -> string * string list,
+     supported_formats : string list,
+     format_args : string -> string list,
+     mk_command : string -> string -> run_request -> string * string list,
      parse_output : string list -> szs * string list option,
      default_nfacts : int,
+     mono_instances : int option,
      slices : unit -> slice list,
      legacy : bool}
 

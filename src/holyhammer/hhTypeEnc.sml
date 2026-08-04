@@ -14,6 +14,29 @@ struct
 
   fun fail message = raise Fail ("hhTypeEnc: " ^ message)
 
+  fun format_of_string "fof" = hhTptpProblem.FOF
+    | format_of_string "tf0" =
+        hhTptpProblem.TFF {poly = false, fool = hhTptpProblem.NoFool}
+    | format_of_string "tf1" =
+        hhTptpProblem.TFF {poly = true, fool = hhTptpProblem.NoFool}
+    | format_of_string "tx0" = hhTptpProblem.TFF
+        {poly = false, fool = hhTptpProblem.Fool {with_ite = true,
+                                                  with_let = true}}
+    | format_of_string "tx0-" = hhTptpProblem.TFF
+        {poly = false, fool = hhTptpProblem.Fool {with_ite = false,
+                                                  with_let = false}}
+    | format_of_string "th0" = hhTptpProblem.THF
+        {poly = false, syntax = {with_ite = false, with_let = false},
+         choice = false}
+    | format_of_string "th1" = hhTptpProblem.THF
+        {poly = true, syntax = {with_ite = true, with_let = false},
+         choice = false}
+    | format_of_string format =
+        fail ("unknown format " ^ String.toString format)
+
+  fun valid_format format =
+    (ignore (format_of_string format); true) handle Fail _ => false
+
   fun of_string "mono_native" =
         Native {higher = false, fool = false, poly = false}
     | of_string "mono_native_fool" =

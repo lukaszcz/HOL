@@ -13,6 +13,9 @@ hhMonomorph.uo: hhMonomorph.sml hhMonomorph.ui
 hhProblemGen.uo: hhProblemGen.sml hhProblemGen.ui hhTptpProblem.uo \
                  hhTypeEnc.uo hhLamTrans.uo hhMonomorph.uo
 
+hhConfig.uo: hhConfig.sml hhConfig.ui hhTptpProblem.uo hhTypeEnc.uo \
+             hhLamTrans.uo
+
 hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
 hhSlice.uo: hhSlice.sml hhSlice.ui hhConfig.uo hhProver.uo
@@ -20,7 +23,7 @@ hhSlice.uo: hhSlice.sml hhSlice.ui hhConfig.uo hhProver.uo
 hhCache.uo: hhCache.sml hhCache.ui hhConfig.uo hhProver.uo
 
 hhSchedule.uo: hhSchedule.sml hhSchedule.ui hhConfig.uo hhProver.uo \
-               hhSlice.uo hhCache.uo
+               hhSlice.uo hhCache.uo hhProblemGen.uo
 
 hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
            hhSchedule.uo

@@ -19,6 +19,9 @@ sig
      slices_run : (hhProver.slice * hhProver.szs * real * bool) list,
      stopped : stop_reason, t_total : real}
 
+  val problem_path : hhProver.slice -> string
+  val export_problems : hhConfig.hh_options -> goal -> string list ->
+    (hhProver.prover_config * hhProver.slice) list -> unit
   val run :
     {options : hhConfig.hh_options, goal : goal, premises : string list,
      progress : (event -> unit) option} -> result

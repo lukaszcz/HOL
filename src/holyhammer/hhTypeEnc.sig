@@ -14,6 +14,8 @@ sig
      mono_native_fool, mono_native_higher, mono_native_higher_fool,
      poly_native, mono_guards, mono_guards??, and the empty legacy
      encoding. *)
+  val format_of_string : string -> hhTptpProblem.format
+  val valid_format : string -> bool
   val of_string : string -> type_enc
   val to_string : type_enc -> string
   val adjust_type_enc : hhTptpProblem.format -> type_enc -> type_enc

@@ -43,7 +43,7 @@ rely on its contents being present or committed.
   breaks dependency cycles via `register_*` hooks that later modules
   install at load time — respect that indirection rather than adding a
   direct back-edge.
-- **`hhTranslate`, `hhTptp`, `hhExportLib`, and the `hhExport*`
+- **`hhTranslate`, `hhTptpProblem`, `hhExportLib`, and the `hhExport*`
   dialect writers** (Fof, Tf0/Tf1, Th0/Th1, Sexpr) — HOL term/goal →
   TPTP dialects (FOF / TFF / THF, mono & poly).
   `hhExportLib` also drives the bushy/chainy dependency-export machinery

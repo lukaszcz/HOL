@@ -1187,7 +1187,9 @@ fun schedule_options condition
     {timeout = #timeout condition, max_proofs = max_proofs,
      provers = provers, slices = slices, cores = cores,
      filter = #filter snapshot, max_facts = #max_facts snapshot,
-     minimize = #minimize snapshot,
+     format = #format snapshot, type_enc = #type_enc snapshot,
+     lam_trans = #lam_trans snapshot, mono_iters = #mono_iters snapshot,
+     mono_instances = #mono_instances snapshot, minimize = #minimize snapshot,
      preplay_timeout = #preplay_timeout snapshot,
      minimize_timeout = #minimize_timeout snapshot,
      cache = true, cache_dir = #cache_dir snapshot,
@@ -1291,7 +1293,7 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
       | SOME prover =>
           let
             val result = hhProver.run prover
-              {timeout = #timeout condition,
+              {timeout = #timeout condition, format = "fof",
                problem = join directory "atp_in", extra = [],
                debug_dir = SOME (join expdir "out")}
             val (recon_ok, recon_method, t_recon, stac_or_error) =

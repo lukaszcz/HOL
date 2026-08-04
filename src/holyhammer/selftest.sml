@@ -171,6 +171,20 @@ fun test_child root =
     val _ = hhConfig.hh_set ("preplay_timeout", "2.5")
     val _ = hhConfig.hh_set ("minimize_timeout", "3.5")
     val _ = hhConfig.hh_set ("max_facts", "17")
+    val _ = expect "format vocabulary is validated at set time"
+      (option_error ["format", "supported TPTP format"]
+        (fn () => hhConfig.hh_set ("format", "bad-format")))
+    val _ = expect "type encoding vocabulary is validated at set time"
+      (option_error ["type_enc", "supported type encoding"]
+        (fn () => hhConfig.hh_set ("type_enc", "bad-encoding")))
+    val _ = expect "lambda vocabulary is validated at set time"
+      (option_error ["lam_trans", "supported lambda translation"]
+        (fn () => hhConfig.hh_set ("lam_trans", "bad-lambda")))
+    val _ = hhConfig.hh_set ("format", "tf0")
+    val _ = hhConfig.hh_set ("type_enc", "mono_native")
+    val _ = hhConfig.hh_set ("lam_trans", "lifting")
+    val _ = hhConfig.hh_set ("mono_iters", "4")
+    val _ = hhConfig.hh_set ("mono_instances", "77")
     val _ = hhConfig.hh_set ("minimize", "off")
     val _ = hhConfig.hh_set ("cache", "yes")
     val _ = hhConfig.hh_set ("debug_dir", join root "debug")
@@ -180,7 +194,10 @@ fun test_child root =
        #provers options = ["e", "vampire", "zipperposition"] andalso
        #cores options = 3 andalso #slices options = 72 andalso
        #filter options = "none" andalso #max_facts options = SOME 17 andalso
-       not (#minimize options) andalso #cache options andalso
+       #format options = "tf0" andalso #type_enc options = "mono_native" andalso
+       #lam_trans options = "lifting" andalso #mono_iters options = 4 andalso
+       #mono_instances options = SOME 77 andalso not (#minimize options) andalso
+       #cache options andalso
        #cache_dir options = join (hhConfig.state_dir ()) "cache" andalso
        #cache_max_entries options = 100000 andalso
        #debug_dir options = SOME (join root "debug"))
@@ -192,6 +209,11 @@ fun test_child root =
       (has_parameter "timeout" "23" "set" andalso
        has_parameter "cores" "3" "config" andalso
        has_parameter "filter" "none" "env" andalso
+       has_parameter "format" "tf0" "set" andalso
+       has_parameter "type_enc" "mono_native" "set" andalso
+       has_parameter "lam_trans" "lifting" "set" andalso
+       has_parameter "mono_iters" "4" "set" andalso
+       has_parameter "mono_instances" "77" "set" andalso
        has_parameter "max_proofs" "4" "default")
     val _ = hhConfig.print_params ()
     val _ = holyHammer.set_timeout 19
@@ -210,6 +232,14 @@ fun test_child root =
     val _ = expect "registered prover lists round-trip"
       (#provers (hhConfig.snapshot ()) = ["e", "vampire"])
     val _ = hhConfig.hh_unset "provers"
+    val _ = List.app hhConfig.hh_unset
+      ["format", "type_enc", "lam_trans", "mono_iters", "mono_instances"]
+    val default_options : hhConfig.hh_options = hhConfig.snapshot ()
+    val _ = expect "new option defaults preserve per-slice values"
+      (#format default_options = "" andalso #type_enc default_options = "" andalso
+       #lam_trans default_options = "" andalso #mono_iters default_options = 3 andalso
+       #mono_instances default_options = NONE andalso
+       hhConfig.hh_get "mono_instances" = "100")
     val _ = expect "configuration executable discovery"
       (is_some config_exec (hhConfig.find_exec "e" ["path-exec"]))
     val _ = write_file config
@@ -1115,7 +1145,7 @@ fun prover name =
     | NONE => raise Fail ("missing prover " ^ name)
 
 val sample_request : hhProver.run_request =
-  {timeout = 7, problem = "problem.p", extra = ["--extra"],
+  {timeout = 7, format = "fof", problem = "problem.p", extra = ["--extra"],
    debug_dir = NONE}
 
 fun test_recording file parser expected_szs expected_axioms =
@@ -1187,6 +1217,12 @@ fun test_hhProver () =
       ["alpha", "beta"]
       (hhProver.axioms_from_tstp
         (read_lines "test-data/hhproblemgen-roundtrip.out"))
+    val _ = expect_equal "TSTP parse-back accepts thm copies and dedups"
+      ["alpha"]
+      (hhProver.axioms_from_tstp
+        ["fof(thm_2Ealpha, axiom, p).",
+         "fof(thm2_2Ealpha, axiom, p).",
+         "fof(thm10_2Ealpha, axiom, p)."])
     val _ = expect_equal "E version parser" (SOME "3.2.5-ho")
       (#parse_version e (String.concat (read_lines "test-data/e-version.out")))
     val _ = expect_equal "Vampire version parser" (SOME "5.0.1")
@@ -1200,26 +1236,26 @@ fun test_hhProver () =
     val _ = expect_equal "E command"
       ("e", ["--auto-schedule", "--tstp-in", "--tstp-out", "-s",
              "--cpu-limit=7", "--proof-object=1", "--extra", "problem.p"])
-      (#mk_command e "e" sample_request)
+      (#mk_command e "e" "fof" sample_request)
     val _ = expect_equal "Vampire command"
       ("vampire", ["--mode", "portfolio", "--schedule", "casc",
         "--input_syntax", "tptp", "--proof", "tptp",
         "--output_axiom_names", "on", "-t", "7", "--input_file",
         "--extra", "problem.p"])
-      (#mk_command vampire "vampire" sample_request)
+      (#mk_command vampire "vampire" "fof" sample_request)
     val _ = expect_equal "Zipperposition command"
       ("zipperposition", ["--input", "tptp", "--output", "tptp",
         "--timeout", "7", "--extra", "problem.p"])
-      (#mk_command zipperposition "zipperposition" sample_request)
+      (#mk_command zipperposition "zipperposition" "fof" sample_request)
     val _ = expect_equal "Z3 legacy command"
       ("z3", ["-tptp", "DISPLAY_UNSAT_CORE=true",
         "ELIM_QUANTIFIERS=true", "PULL_NESTED_QUANTIFIERS=true", "-T:7",
         "--extra", "problem.p"])
-      (#mk_command z3 "z3" sample_request)
+      (#mk_command z3 "z3" "fof" sample_request)
     val _ = expect_equal "Z3 standalone TPTP command"
       ("z3_tptp", ["-c", "-smt.pull_nested_quantifiers:true", "-t:7",
         "--extra", "-file:problem.p"])
-      (#mk_command z3 "z3_tptp" sample_request)
+      (#mk_command z3 "z3_tptp" "fof" sample_request)
   in
     ()
   end
@@ -1227,7 +1263,9 @@ fun test_hhProver () =
 fun slice_options provers slices cores timeout filter max_facts
     : hhConfig.hh_options =
   {timeout = timeout, max_proofs = 4, provers = provers, slices = slices,
-   cores = cores, filter = filter, max_facts = max_facts, minimize = true,
+   cores = cores, filter = filter, max_facts = max_facts,
+   format = "", type_enc = "", lam_trans = "", mono_iters = 3,
+   mono_instances = NONE, minimize = true,
    preplay_timeout = 1.0, minimize_timeout = 1.0, cache = false,
    cache_dir = "", cache_max_entries = 100000, debug_dir = NONE}
 
@@ -1314,13 +1352,14 @@ fun test_hhSlice () =
     fun anchor_command_equal (config, slice) =
       let
         val baseline : hhProver.run_request =
-          {timeout = 30, problem = "anchor.p", extra = [], debug_dir = NONE}
-        val scheduled : hhProver.run_request =
-          {timeout = 30, problem = "anchor.p", extra = #extra_opts slice,
+          {timeout = 30, format = "fof", problem = "anchor.p", extra = [],
            debug_dir = NONE}
+        val scheduled : hhProver.run_request =
+          {timeout = 30, format = #format slice, problem = "anchor.p",
+           extra = #extra_opts slice, debug_dir = NONE}
       in
-        #mk_command config "anchor-prover" baseline =
-        #mk_command config "anchor-prover" scheduled
+        #mk_command config "anchor-prover" "fof" baseline =
+        #mk_command config "anchor-prover" (#format slice) scheduled
       end
     val _ = expect "gate anchors are command-equivalent to one-shot B"
       (List.all anchor_command_equal anchors)
@@ -1370,13 +1409,45 @@ fun test_hhSlice () =
        close 10.0 (hhSlice.slice_budget 65 budget_options first_slice) andalso
        close 30.0 (hhSlice.slice_budget 65 budget_options large_slice) andalso
        close 0.0 (hhSlice.slice_budget 0 budget_options first_slice))
+    val triple_options : hhConfig.hh_options =
+      {timeout = 30, max_proofs = 4, provers = ["e"], slices = 1, cores = 1,
+       filter = "knn", max_facts = NONE, format = "tf0",
+       type_enc = "mono_native", lam_trans = "lifting", mono_iters = 3,
+       mono_instances = NONE, minimize = true, preplay_timeout = 1.0,
+       minimize_timeout = 1.0, cache = false, cache_dir = "",
+       cache_max_entries = 100000, debug_dir = NONE}
+    val triple_schedule = hhSlice.mk_schedule triple_options
+    val _ = expect "slice construction accepts a supported full triple"
+      (case triple_schedule of
+           [(_, slice)] => #format slice = "tf0" andalso
+                         #type_enc slice = "mono_native" andalso
+                         #lam_trans slice = "lifting"
+         | _ => false)
+    fun invalid_triple format type_enc lam_trans =
+      let
+        val options : hhConfig.hh_options =
+          {timeout = 30, max_proofs = 4, provers = ["e"], slices = 1,
+           cores = 1, filter = "knn", max_facts = NONE, format = format,
+           type_enc = type_enc, lam_trans = lam_trans, mono_iters = 3,
+           mono_instances = NONE, minimize = true, preplay_timeout = 1.0,
+           minimize_timeout = 1.0, cache = false, cache_dir = "",
+           cache_max_entries = 100000, debug_dir = NONE}
+      in
+        ((ignore (hhSlice.mk_schedule options); false) handle Fail _ => true)
+      end
+    val _ = expect "slice construction rejects incoherent triples"
+      (invalid_triple "tf0" "" "lifting" andalso
+       invalid_triple "th1" "mono_native_higher" "keep_lams" andalso
+       invalid_triple "tf0" "mono_native" "")
   in
     ()
   end
 
 fun cache_options directory maximum enabled : hhConfig.hh_options =
   {timeout = 30, max_proofs = 4, provers = ["e"], slices = 1,
-   cores = 1, filter = "knn", max_facts = NONE, minimize = true,
+   cores = 1, filter = "knn", max_facts = NONE,
+   format = "", type_enc = "", lam_trans = "", mono_iters = 3,
+   mono_instances = NONE, minimize = true,
    preplay_timeout = 1.0, minimize_timeout = 1.0, cache = enabled,
    cache_dir = directory, cache_max_entries = maximum, debug_dir = NONE}
 
@@ -1547,9 +1618,11 @@ fun test_holyHammer_validation () =
 fun fake_config name exec_name args parser : hhProver.prover_config =
   {name = name, exec_names = [exec_name], env_var = "",
    version_args = ["--version"], parse_version = fn _ => SOME "test",
-   tested_versions = ["test"],
-   mk_command = fn executable => fn _ => (executable, args),
-   parse_output = parser, default_nfacts = 0, slices = fn () => [],
+   tested_versions = ["test"], supported_formats = ["fof"],
+   format_args = fn _ => [],
+   mk_command = fn executable => fn _ => fn _ => (executable, args),
+   parse_output = parser, default_nfacts = 0, mono_instances = NONE,
+   slices = fn () => [],
    legacy = false}
 
 fun wait_until deadline predicate =
@@ -1582,7 +1655,8 @@ fun test_runner_load parser =
     val config = fake_config "runner-load" "/bin/echo"
       ["% SZS status Theorem"] parser
     val request : hhProver.run_request =
-      {timeout = 2, problem = "unused", extra = [], debug_dir = NONE}
+      {timeout = 2, format = "fof", problem = "unused", extra = [],
+       debug_dir = NONE}
     val _ = ignore (hhProver.probe config)
     val _ = hhProver.reset_spawn_count ()
     val result_mutex = Mutex.mutex ()
@@ -1637,7 +1711,8 @@ fun test_runner () =
     val debug_dir = OS.FileSys.tmpName ()
     val _ = remove_tree debug_dir
     val good_request : hhProver.run_request =
-      {timeout = 1, problem = "unused", extra = [], debug_dir = SOME debug_dir}
+      {timeout = 1, format = "fof", problem = "unused", extra = [],
+       debug_dir = SOME debug_dir}
     val good_result = hhProver.run good good_request
     val _ = expect "runner parses stdout"
       (#szs good_result = hhProver.SzsTheorem)
@@ -1647,7 +1722,8 @@ fun test_runner () =
     val timeout = fake_config "runner-timeout" "/bin/sleep" ["30"]
       (#parse_output e)
     val timeout_request : hhProver.run_request =
-      {timeout = 0, problem = "unused", extra = [], debug_dir = NONE}
+      {timeout = 0, format = "fof", problem = "unused", extra = [],
+       debug_dir = NONE}
     val timeout_result = hhProver.run timeout timeout_request
     val _ = expect "runner watchdog timeout"
       (#szs timeout_result = hhProver.SzsTimeout orelse
@@ -1655,7 +1731,8 @@ fun test_runner () =
     val killed = fake_config "runner-killed" "/bin/sleep" ["30"]
       (#parse_output e)
     val kill_request : hhProver.run_request =
-      {timeout = 30, problem = "unused", extra = [], debug_dir = NONE}
+      {timeout = 30, format = "fof", problem = "unused", extra = [],
+       debug_dir = NONE}
     val running_sleep = hhProver.run_async killed kill_request
     val _ = #kill running_sleep ()
     val _ = #kill running_sleep ()
@@ -1673,7 +1750,7 @@ fun test_runner () =
     val printer_dir = OS.FileSys.tmpName ()
     val _ = remove_tree printer_dir
     val printer_request : hhProver.run_request =
-      {timeout = 2, problem = "unused", extra = [],
+      {timeout = 2, format = "fof", problem = "unused", extra = [],
        debug_dir = SOME printer_dir}
     val printer_result = hhProver.run printer printer_request
     val printed = String.concat (read_lines (#output_file printer_result))
@@ -1689,7 +1766,7 @@ fun test_runner () =
     val forking_dir = OS.FileSys.tmpName ()
     val _ = remove_tree forking_dir
     val forking_request : hhProver.run_request =
-      {timeout = 30, problem = "unused", extra = [],
+      {timeout = 30, format = "fof", problem = "unused", extra = [],
        debug_dir = SOME forking_dir}
     val running_fork = hhProver.run_async forking forking_request
     val _ = OS.Process.sleep (Time.fromMilliseconds 200)
@@ -1705,21 +1782,23 @@ fun test_runner () =
     val exec_failure : hhProver.prover_config =
       {name = "runner-exec-failure", exec_names = ["/bin/true"],
        env_var = "", version_args = [], parse_version = fn _ => SOME "test",
-       tested_versions = ["test"],
-       mk_command = fn _ => fn _ =>
+       tested_versions = ["test"], supported_formats = ["fof"],
+       format_args = fn _ => [],
+       mk_command = fn _ => fn _ => fn _ =>
          ("/definitely/missing/holyhammer-prover", []),
        parse_output = #parse_output e, default_nfacts = 0,
-       slices = fn () => [], legacy = false}
+       mono_instances = NONE, slices = fn () => [], legacy = false}
     val exec_result = hhProver.run exec_failure timeout_request
     val _ = expect "runner exec failure returns RunFailure"
       (case #szs exec_result of hhProver.RunFailure _ => true | _ => false)
     val missing : hhProver.prover_config =
       {name = "runner-missing", exec_names = ["missing-hh-prover"],
        env_var = "", version_args = [], parse_version = fn _ => NONE,
-       tested_versions = [],
-       mk_command = fn executable => fn _ => (executable, []),
+       tested_versions = [], supported_formats = ["fof"],
+       format_args = fn _ => [],
+       mk_command = fn executable => fn _ => fn _ => (executable, []),
        parse_output = #parse_output e, default_nfacts = 0,
-       slices = fn () => [], legacy = false}
+       mono_instances = NONE, slices = fn () => [], legacy = false}
     val missing_result = hhProver.run missing timeout_request
     val _ = expect "missing prover names downloader"
       (case #szs missing_result of
@@ -1747,7 +1826,8 @@ fun test_installed_prover problem config =
     | SOME _ =>
         let
           val request : hhProver.run_request =
-            {timeout = 5, problem = problem, extra = [], debug_dir = NONE}
+            {timeout = 5, format = "fof", problem = problem, extra = [],
+             debug_dir = NONE}
           val result = hhProver.run config request
         in
           expect ("runner smoke " ^ #name config)
@@ -2245,19 +2325,21 @@ fun fixture_slice name extra size : hhProver.slice =
 fun printer_config name slices note parser : hhProver.prover_config =
   {name = name, exec_names = [schedule_printer], env_var = "",
    version_args = ["--version"], parse_version = fn _ => SOME "test",
-   tested_versions = ["test"],
-   mk_command = fn executable => fn request =>
+   tested_versions = ["test"], supported_formats = ["fof"],
+   format_args = fn _ => [],
+   mk_command = fn executable => fn _ => fn request =>
      (note request; (executable, #extra request)),
-   parse_output = parser, default_nfacts = 0,
+   parse_output = parser, default_nfacts = 0, mono_instances = NONE,
    slices = fn () => slices, legacy = false}
 
 fun sleeper_config name parser : hhProver.prover_config =
   let val slice = fixture_slice name [] 1 in
     {name = name, exec_names = [schedule_sleeper], env_var = "",
      version_args = ["--version"], parse_version = fn _ => SOME "test",
-     tested_versions = ["test"],
-     mk_command = fn executable => fn _ => (executable, []),
-     parse_output = parser, default_nfacts = 0,
+     tested_versions = ["test"], supported_formats = ["fof"],
+     format_args = fn _ => [],
+     mk_command = fn executable => fn _ => fn _ => (executable, []),
+     parse_output = parser, default_nfacts = 0, mono_instances = NONE,
      slices = fn () => [slice], legacy = false}
   end
 
@@ -2265,7 +2347,9 @@ fun fixture_options provers slices cores timeout max_proofs cache cache_dir
     debug_dir : hhConfig.hh_options =
   {timeout = timeout, max_proofs = max_proofs, provers = provers,
    slices = slices, cores = cores, filter = "none", max_facts = NONE,
-   minimize = true, preplay_timeout = 1.0, minimize_timeout = 1.0,
+   format = "", type_enc = "", lam_trans = "", mono_iters = 3,
+   mono_instances = NONE, minimize = true, preplay_timeout = 1.0,
+   minimize_timeout = 1.0,
    cache = cache, cache_dir = cache_dir, cache_max_entries = 100,
    debug_dir = debug_dir}
 
@@ -2389,8 +2473,8 @@ fun test_schedule_max_proofs parser =
       (schedule_events_sane events2)
     val _ = expect "scheduler exports the zero-fact prefix"
       (OS.FileSys.access
-        (join (join (join (hhConfig.state_dir ()) "problems") "0")
-          "atp_in", [OS.FileSys.A_READ]))
+        (hhSchedule.problem_path (fixture_slice name [] 1),
+         [OS.FileSys.A_READ]))
   in
     ()
   end
@@ -2551,6 +2635,55 @@ fun test_schedule_timeout parser =
     ()
   end
 
+fun test_schedule_export_wiring () =
+  let
+    val e = prover "e"
+    fun options mono_instances : hhConfig.hh_options =
+      {timeout = 30, max_proofs = 1, provers = ["e"], slices = 1, cores = 1,
+       filter = "none", max_facts = NONE, format = "", type_enc = "",
+       lam_trans = "", mono_iters = 3, mono_instances = mono_instances,
+       minimize = true, preplay_timeout = 1.0, minimize_timeout = 1.0,
+       cache = false, cache_dir = "", cache_max_entries = 100,
+       debug_dir = NONE}
+    fun slice type_enc lam_trans : hhProver.slice =
+      {prover = "e", format = "fof", type_enc = type_enc,
+       lam_trans = lam_trans, nfacts = 0, filter = "none",
+       extra_opts = [], slice_size = 1}
+    val legacy = slice "" ""
+    val lifting = slice "mono_guards" "lifting"
+    val combs = slice "mono_guards" "combs"
+    val goal = ([], boolSyntax.T)
+    val legacy_path = hhSchedule.problem_path legacy
+    val lifting_path = hhSchedule.problem_path lifting
+    val combs_path = hhSchedule.problem_path combs
+    val _ = List.app (remove_tree o OS.Path.dir)
+      [legacy_path, lifting_path, combs_path]
+    val expected_dir = OS.FileSys.tmpName ()
+    val _ = OS.FileSys.remove expected_dir
+    val _ = mkdir expected_dir
+    val _ = hhExportFof.fof_export_pb expected_dir (boolSyntax.T, [])
+    val _ = hhSchedule.export_problems (options NONE) goal [] [(e, legacy)]
+    val _ = expect "legacy scheduler dispatch is byte-identical"
+      (String.concat (read_lines legacy_path) =
+       String.concat (read_lines (join expected_dir "atp_in")))
+    val _ = hhSchedule.export_problems (options NONE) goal []
+      [(e, lifting), (e, combs), (e, lifting)]
+    val lifting_text = String.concat (read_lines lifting_path)
+    val _ = expect "problem exports re-key full triples"
+      (lifting_path <> combs_path andalso OS.FileSys.access (lifting_path, [])
+       andalso OS.FileSys.access (combs_path, []))
+    val _ = expect "nonlegacy triple dispatches to hhProblemGen"
+      (contains "generated by hhProblemGen" lifting_text)
+    val _ = expect "registry mono-instance override wins over default"
+      (contains "mono_instances=128" lifting_text)
+    val _ = hhSchedule.export_problems (options (SOME 77)) goal [] [(e, lifting)]
+    val _ = expect "explicit mono-instance option beats registry override"
+      (contains "mono_instances=77" (String.concat (read_lines lifting_path)))
+    val _ = remove_tree expected_dir
+  in
+    ()
+  end
+
 fun test_hhSchedule () =
   case OS.Process.getEnv "HHCONFIG_TEST_ROOT" of
       SOME _ => ()
@@ -2569,6 +2702,7 @@ fun test_hhSchedule () =
             (Time.toReal (Time.- (Time.now (), started)) < 60.0)
         end
 
+val _ = test_schedule_export_wiring ()
 val _ = test_hhSchedule ()
 
 fun with_hh_options settings action =
@@ -2621,8 +2755,7 @@ fun test_holyHammer_unverified_failure parser =
       hh_error (fn () => ignore
         (holyHammer.main_hh "/ignored" mlThmData.empty_thmdata
           goal)))
-    val problem = join
-      (join (join (hhConfig.state_dir ()) "problems") "0") "atp_in"
+    val problem = hhSchedule.problem_path (fixture_slice name [] 1)
     val _ = expect "unverified ATP proofs are reported with diagnostics"
       (case message of
            SOME text =>

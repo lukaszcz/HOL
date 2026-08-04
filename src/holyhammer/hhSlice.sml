@@ -51,10 +51,37 @@ fun schedule_of_provers requested count =
 fun cap NONE nfacts = nfacts
   | cap (SOME maximum) nfacts = Int.min (maximum, nfacts)
 
+fun overridden override value = if override = "" then value else override
+
+fun validate_slice (config : hhProver.prover_config)
+    (slice : hhProver.slice) =
+  let
+    val format = #format slice
+    val type_enc = #type_enc slice
+    val lam_trans = #lam_trans slice
+    val _ = ignore (hhTypeEnc.adjust_type_enc
+      (hhTypeEnc.format_of_string format) (hhTypeEnc.of_string type_enc))
+    val _ =
+      if List.exists (fn supported => supported = format) (#supported_formats config)
+      then ()
+      else raise Fail ("HolyHammer prover '" ^ #name config ^
+        "' does not support format '" ^ format ^ "'")
+    val legacy = format = "fof" andalso type_enc = ""
+    val _ =
+      if legacy andalso lam_trans = "" orelse
+         not legacy andalso hhLamTrans.valid_mode lam_trans then ()
+      else raise Fail ("invalid HolyHammer lambda translation '" ^ lam_trans ^
+        "' for (" ^ format ^ ", " ^ type_enc ^ ")")
+  in
+    slice
+  end
+
 fun adjust_slice (options : hhConfig.hh_options)
     (slice : hhProver.slice) : hhProver.slice =
-  {prover = #prover slice, format = #format slice,
-   type_enc = #type_enc slice, lam_trans = #lam_trans slice,
+  {prover = #prover slice,
+   format = overridden (#format options) (#format slice),
+   type_enc = overridden (#type_enc options) (#type_enc slice),
+   lam_trans = overridden (#lam_trans options) (#lam_trans slice),
    nfacts = cap (#max_facts options) (#nfacts slice),
    filter = #filter options, extra_opts = #extra_opts slice,
    slice_size = #slice_size slice}
@@ -93,7 +120,9 @@ fun mk_schedule (options : hhConfig.hh_options) =
           case consume name tables of
               NONE => walk tables seen rest result
             | SOME (config, slice, tables') =>
-                let val adjusted = adjust_slice options slice in
+                let
+                  val adjusted = validate_slice config (adjust_slice options slice)
+                in
                   if List.exists (same_slice adjusted) seen then
                     walk tables' seen rest result
                   else

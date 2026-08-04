@@ -68,7 +68,9 @@ fun interactive_options provers (options : hhConfig.hh_options) :
   {timeout = #timeout options, max_proofs = 1, provers = provers,
    slices = #slices options, cores = #cores options,
    filter = #filter options, max_facts = #max_facts options,
-   minimize = #minimize options,
+   format = #format options, type_enc = #type_enc options,
+   lam_trans = #lam_trans options, mono_iters = #mono_iters options,
+   mono_instances = #mono_instances options, minimize = #minimize options,
    preplay_timeout = #preplay_timeout options,
    minimize_timeout = #minimize_timeout options,
    cache = #cache options, cache_dir = #cache_dir options,
@@ -104,7 +106,10 @@ fun progress found (hhSchedule.SliceStarted slice) =
   | progress _ (hhSchedule.ScheduleDone _) = ()
 
 fun problem_path (slice : hhProver.slice) =
-  pathl [hhConfig.state_dir (), "problems", Int.toString (#nfacts slice),
+  pathl [hhConfig.state_dir (), "problems",
+         String.concatWith "."
+           (map aiLib.escape [#format slice, #type_enc slice,
+                              #lam_trans slice, Int.toString (#nfacts slice)]),
          "atp_in"]
 
 fun output_paths directory prover =
