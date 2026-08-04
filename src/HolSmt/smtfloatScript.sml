@@ -1186,7 +1186,7 @@ Definition smtfp_pack_ieee_bv_def:
     float_pack_ieee_bv (smtfp_rep x)
 End
 
-(* The result index is independent of the field index expression.  Z3's
+(* The result index is independent of the field index expression.  A
    proof-local (_ BitVec n) type has the same dimension as 1 + eb + (sb - 1),
    but need not be syntactically the same HOL index type. *)
 Definition smtfp_pack_bv_def:
@@ -1553,8 +1553,8 @@ Proof
   simp [smtfp_bits_def]
 QED
 
-(* Expose the exact field layout used by Z3's fpa2bv decomposition.  Keeping
-   this as a boundary theorem means replay does not need to unfold either the
+(* Expose the exact field layout used by fpa2bv decompositions.  Keeping this
+   as a boundary theorem means replay does not need to unfold either the
    carrier or the IEEE interchange unpacker. *)
 Theorem smtfp_from_ieee_bv_fields:
   FINITE (UNIV : 'w -> bool) /\ FINITE (UNIV : 't -> bool) ==>
@@ -2046,9 +2046,9 @@ Proof
 QED
 
 (* Proforma forms for the literal-normalization rewrites in the Phase-5
-   Z3 corpus.  Variables are retained in the triples so the replay net can
-   match numeral spellings first and discharge these ground side conditions
-   afterwards. *)
+   proof corpora.  Variables are retained in the triples so the replay net
+   can match numeral spellings first and discharge these ground side
+   conditions afterwards. *)
 Theorem smtfp_bits_pzero:
   s = 0w /\ e = 0w /\ m = 0w ==>
   smtfp_bits s e m = (smtfp_pzero : ('t,'w) smtfp)

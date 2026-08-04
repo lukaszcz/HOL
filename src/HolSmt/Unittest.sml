@@ -5205,7 +5205,7 @@ let
             proof_obligation, ...} =>
             contains "canonical-NaN smtfp" notes andalso
             contains "native_float_transfer_infos" proof_obligation andalso
-            contains "Checked Z3 4.x replay" proof_obligation
+            contains "Checked Z3 4.x and cvc5 CPC replay" proof_obligation
         | _ => false) records
   val has_datatype_matrix_row =
     List.exists
@@ -6960,6 +6960,44 @@ in
   | _ => die "FAIL: CPC parser did not preserve define/assume/step commands"
 end
 
+fun cpc_proof_parser_flattened_fp_indices_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (to_fp 3 5 roundNearestTiesToEven 1/1)) \
+    \(define @t2 () (to_fp_bv 3 5 #b00110000)) \
+    \(define @t3 () (to_fp_unsigned 3 5 \
+    \  roundNearestTiesToEven #b0011)) \
+    \(define @t4 () (fp.to_sbv 4 roundTowardZero \
+    \  (fp #b1 #b100 #b1000))) \
+    \(define @t5 () (fp.to_ubv 4 roundTowardZero \
+    \  (fp #b0 #b100 #b1000))) \
+    \(step @p1 :rule refl :args (@t1)))"
+in
+  assert (List.length (CPC_Proof.proof_commands proof) = 1,
+    "CPC flattened FP conversions did not all parse")
+end
+
+fun cpc_proof_parser_private_fp_terms_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((define @t1 () (@fp.SIGN (_ BitVec 1))) \
+    \(define @t2 () (@fp.NAN (_ BitVec 1))) \
+    \(define @t3 () (bvite @t2 @t1 #b0)) \
+    \(define @t4 () (_ (@const 0 \
+    \  (-> (_ FloatingPoint 3 5) (_ FloatingPoint 3 5) (_ BitVec 1))) \
+    \  (fp #b0 #b000 #b0000) (fp #b1 #b000 #b0000))) \
+    \(define @t5 () (sign_extend 1 @t1)) \
+    \(define @t6 () (bvsltbv @t5 @t5)) \
+    \(define @t7 () (bvultbv @t5 @t5)) \
+    \(define @t8 () (concat @t6 @t7 @t6)) \
+    \(assume @p1 (= @t3 @t3)) (assume @p2 (= @t4 @t4)) \
+    \(assume @p3 (= @t8 @t8)))"
+  val commands = CPC_Proof.proof_commands proof
+in
+  assert (List.length commands = 3,
+    "CPC private FP sort markers and totalized terms did not parse")
+end
+
 fun cpc_string_registry_and_literal_parser_success () =
 let
   val proof = parse_cpc_proof_string
@@ -7561,6 +7599,19 @@ in
     "CPC eq-refl/cong/trans/eq_resolve chain did not replay to false")
 end
 
+fun cpc_proof_replay_cong_consumes_premises_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const p Bool) (assume @p1 (= p true)) \
+    \(step @p2 :rule refl :args (true)) \
+    \(step @p3 :rule cong :premises (@p1 @p2) \
+    \:args ((= p true))))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``(p = T) = (T = T)``,
+    "CPC structural congruence reused a premise in reverse")
+end
+
 fun cpc_proof_replay_and_elim_success () =
 let
   val proof = parse_cpc_proof_string
@@ -7577,16 +7628,58 @@ let
   val proof = parse_cpc_proof_string
     "((step @p1 :rule bool-double-not-elim :args (true)) \
     \(step @p2 :rule bool-impl-false1 :args (true)) \
-    \(step @p3 :rule bool-eq-nrefl :args (true)) \
-    \(step @p4 :rule eq-symm :args (true false)) \
-    \(step @p5 :rule bool-not-eq-elim2 :args (true false)))"
+    \(step @p3 :rule bool-impl-true1 :args (false)) \
+    \(step @p4 :rule bool-eq-nrefl :args (true)) \
+    \(step @p5 :rule eq-symm :args (true false)) \
+    \(step @p6 :rule bool-eq-true :args (false)) \
+    \(step @p7 :rule bool-xor-false :args (true)) \
+    \(step @p8 :rule bool-xor-true :args (false)) \
+    \(step @p9 :rule bool-xor-comm :args (true false)) \
+    \(step @p10 :rule bool-not-eq-elim2 :args (true false)))"
   val commands = CPC_Proof.proof_commands proof
   val thm = CPC_ProofReplay.replay_root_for_test proof
 in
-  assert (List.length commands = 5,
+  assert (List.length commands = 10,
     "CPC boolean rewrite proof did not parse all rewrite steps");
   assert (Thm.concl thm ~~ ``~(T = F) = (T = ~F)``,
     "CPC boolean rewrite replay returned an unexpected final equality")
+end
+
+fun cpc_proof_replay_fp_trust_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((step @p1 :rule trust :args \
+    \((= (fp.add roundNearestTiesToEven \
+    \      (fp #b0 #b011 #b0000) (fp #b0 #b011 #b0000)) \
+    \    (fp #b0 #b100 #b0000)))))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  Library.check_oracle_tags "CPC FP trust unit test" thm;
+  assert (SmtFpProve.has_fp_theory_term (Thm.concl thm),
+    "CPC FP trust did not replay an FP proposition")
+end
+
+fun cpc_proof_replay_fp_context_obligation_diagnostic () =
+let
+  val proof = parse_cpc_proof_string
+    "((declare-const x (_ FloatingPoint 3 5)) \
+    \(assume @p1 (fp.isNaN x)) \
+    \(step @p2 :rule trust :args ((= #b0 #b1))))"
+in
+  expect_hol_error_contains "CPC FP-context trust obligation"
+    "rule=trust; theory=fp"
+    (fn () => ignore (CPC_ProofReplay.replay_root_for_test proof))
+end
+
+fun cpc_proof_replay_equiv_elim1_success () =
+let
+  val proof = parse_cpc_proof_string
+    "((assume @p1 (= true false)) \
+    \(step @p2 :rule equiv_elim1 :premises (@p1)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  assert (Thm.concl thm ~~ ``~T \/ F``,
+    "CPC equiv_elim1 produced the wrong implication clause")
 end
 
 fun cpc_proof_replay_bool_impl_true2_success () =
@@ -10368,6 +10461,66 @@ in
   Portable.finally remove run ()
 end
 
+fun cvc_cpc_proof_pre_gate_precedes_parser () =
+let
+  val path = OS.FileSys.tmpName ()
+  val block = String.implode (List.tabulate (4096, fn _ => #"("))
+  val parser_invoked = ref false
+  val expected = SmtResource.proof_size_diagnostic
+    "cvc5-cpc-proof-text" 16777217
+  fun remove () = OS.FileSys.remove path handle _ => ()
+  fun write_oversized_proof () =
+    let
+      val outstream = TextIO.openOut path
+      fun blocks 0 = ()
+        | blocks n = (TextIO.output (outstream, block); blocks (n - 1))
+    in
+      TextIO.output (outstream, "unsat\n");
+      blocks 4096;
+      TextIO.output (outstream, "x");
+      TextIO.closeOut outstream
+    end
+  fun check_file () =
+    let
+      val instream = TextIO.openIn path
+      fun close () = TextIO.closeIn instream handle _ => ()
+      fun check () =
+        let
+          val (result, proof_start) =
+            CVC.is_sat_stream_with_consumed instream
+          val () =
+            case result of
+              SolverSpec.UNSAT NONE => ()
+            | _ => die
+                "FAIL: oversized CPC output did not start with unsat"
+        in
+          ignore (SmtResource.with_proof_size_gate
+            "cvc5-cpc-proof-text" path proof_start instream
+            (fn _ => (parser_invoked := true; ())))
+        end
+    in
+      Portable.finally close check ()
+    end
+  fun run () =
+    (write_oversized_proof ();
+     check_file ();
+     die "FAIL: oversized CPC proof text passed its pre-gate")
+    handle Feedback.HOL_ERR holerr =>
+      let val observed = Feedback.message_of holerr
+      in
+        assert (SmtResource.is_resource_gate holerr,
+          "oversized CPC proof raised a non-resource diagnostic: " ^
+          observed);
+        assert (observed = expected,
+          "CPC proof pre-gate diagnostic mismatch\nexpected: " ^ expected ^
+          "\nobserved: " ^ observed);
+        assert (not (!parser_invoked),
+          "CPC proof parser callback ran before the proof-size gate")
+      end
+in
+  Portable.finally remove run ()
+end
+
 fun z3_reconstructed_theorem_contract_success () =
   ignore (Z3.check_reconstructed_theorem "unit-test"
     (([], boolSyntax.T), boolTheory.TRUTH))
@@ -10985,6 +11138,10 @@ let
       smtlib_roundtrip_known_gap_matrix_success),
     ("cpc_proof_parser_define_and_optional_conclusion_success",
       cpc_proof_parser_define_and_optional_conclusion_success),
+    ("cpc_proof_parser_flattened_fp_indices_success",
+      cpc_proof_parser_flattened_fp_indices_success),
+    ("cpc_proof_parser_private_fp_terms_success",
+      cpc_proof_parser_private_fp_terms_success),
     ("cpc_string_registry_and_literal_parser_success",
       cpc_string_registry_and_literal_parser_success),
     ("cpc_proof_replay_string_rules_success",
@@ -11020,10 +11177,18 @@ let
       cpc_proof_replay_contra_success),
     ("cpc_proof_replay_eq_refl_cong_chain_success",
       cpc_proof_replay_eq_refl_cong_chain_success),
+    ("cpc_proof_replay_cong_consumes_premises_success",
+      cpc_proof_replay_cong_consumes_premises_success),
     ("cpc_proof_replay_and_elim_success",
       cpc_proof_replay_and_elim_success),
     ("cpc_proof_replay_boolean_rewrites_success",
       cpc_proof_replay_boolean_rewrites_success),
+    ("cpc_proof_replay_fp_trust_success",
+      cpc_proof_replay_fp_trust_success),
+    ("cpc_proof_replay_fp_context_obligation_diagnostic",
+      cpc_proof_replay_fp_context_obligation_diagnostic),
+    ("cpc_proof_replay_equiv_elim1_success",
+      cpc_proof_replay_equiv_elim1_success),
     ("cpc_proof_replay_bool_impl_true2_success",
       cpc_proof_replay_bool_impl_true2_success),
     ("cpc_proof_replay_integer_tightening_success",
@@ -11224,6 +11389,8 @@ let
       smt_resource_diagnostic_contract),
     ("smt_resource_proof_pre_gate_precedes_parser",
       smt_resource_proof_pre_gate_precedes_parser),
+    ("cvc_cpc_proof_pre_gate_precedes_parser",
+      cvc_cpc_proof_pre_gate_precedes_parser),
     ("z3_reconstructed_theorem_contract_success",
       z3_reconstructed_theorem_contract_success),
     ("z3_reconstructed_theorem_contract_rejects_bad_shape",

@@ -1735,8 +1735,9 @@ local
           proof_obligation =
             "The exact smtfp carrier justifies native sort equality, and " ^
             "the native_float_transfer_infos theorem list discharges the " ^
-            "binary_ieee transfer.  Checked Z3 4.x replay covers the native " ^
-            "smtfp surface and transferred classification/comparison goals; " ^
+            "binary_ieee transfer.  Checked Z3 4.x and cvc5 CPC replay " ^
+            "cover the native smtfp surface and transferred " ^
+            "classification/comparison goals; " ^
             "over-budget bit-blasts use the reserved D1 diagnostic, while " ^
             "unsupported symbolic arithmetic uses the structured D2 rung."
         }

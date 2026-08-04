@@ -385,19 +385,40 @@ local
             "quantified congruence expects one nontrivial premise"
       fun structural_cong () =
         let
-          fun exact_rewrite tm premises =
-            case premises of
-              [] => NONE
-            | premise :: rest =>
+          val consume_premises =
+            case conclusion of NONE => true | SOME _ => false
+          val remaining = ref prems
+          fun exact_rewrite tm =
+            let
+              fun search skipped premises =
+                case premises of
+                  [] => NONE
+                | premise :: rest =>
                 let
                   val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+                  fun matched theorem =
+                    let
+                      val _ =
+                        if consume_premises then
+                          remaining := List.revAppend (skipped, rest)
+                        else
+                          ()
+                    in
+                      SOME theorem
+                    end
                 in
-                  if Term.aconv tm left then SOME premise
-                  else if Term.aconv tm right then SOME (Thm.SYM premise)
-                  else exact_rewrite tm rest
+                  if Term.aconv tm left then
+                    matched premise
+                  else if Term.aconv tm right then
+                    matched (Thm.SYM premise)
+                  else
+                    search (premise :: skipped) rest
                 end
+            in
+              search [] (if consume_premises then !remaining else prems)
+            end
           fun rewrite tm =
-            case exact_rewrite tm prems of
+            case exact_rewrite tm of
               SOME theorem => theorem
             | NONE =>
                 if Term.is_abs tm then
@@ -411,6 +432,15 @@ local
           val (left, right) = boolSyntax.dest_eq (Thm.concl result)
           val _ = not (Term.aconv left right) orelse
             raise ERR "cong" "structural congruence made no progress"
+          val _ =
+            case conclusion of
+              SOME _ => ()
+            | NONE =>
+                if List.null (!remaining) then
+                  ()
+                else
+                  raise ERR "cong"
+                    "structural congruence left an unused premise"
         in
           result
         end
@@ -492,11 +522,13 @@ local
               else raise ERR "cong"
                 "congruence strategy does not match certificate conclusion"
         end
+      fun fallback_cong () =
+        matches_conclusion structural_cong
+        handle Feedback.HOL_ERR _ => matches_conclusion sequential_cong
     in
       matches_conclusion quantified_cong
       handle Feedback.HOL_ERR _ => matches_conclusion targeted_cong
-      handle Feedback.HOL_ERR _ => matches_conclusion structural_cong
-      handle Feedback.HOL_ERR _ => matches_conclusion sequential_cong
+      handle Feedback.HOL_ERR _ => fallback_cong ()
     end
 
   fun prove_trans_bridge left right =
@@ -930,6 +962,8 @@ local
     profile "CPC(rung:rewrite/METIS)" Tactical.TAC_PROOF
       (([], target), metisLib.METIS_TAC [])
     handle Feedback.HOL_ERR _ =>
+      profile "CPC(rung:rewrite/TAUT)" tautLib.TAUT_PROVE target
+    handle Feedback.HOL_ERR _ =>
       raise ERR name "could not prove the captured CPC rewrite shape"
 
   fun xor_tautology target =
@@ -1028,6 +1062,9 @@ local
         Term.list_mk_comb
           (Term.prim_mk_const {Thy = "smtstring", Name = constant},
            arguments)
+      fun bool_xor (left, right) = Term.list_mk_comb
+        (Term.prim_mk_const {Thy = "HolSmt", Name = "xor"},
+         [left, right])
       fun int_literal n =
         intSyntax.term_of_int (Arbint.fromInt n)
       fun guard_not_zero term = boolSyntax.mk_neg
@@ -1105,11 +1142,26 @@ local
     | ("bool-eq-false", [p]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_eq (p, boolSyntax.F), boolSyntax.mk_neg p))
+    | ("bool-eq-true", [p]) =>
+        tautology name (boolSyntax.mk_eq
+          (boolSyntax.mk_eq (p, boolSyntax.T), p))
+    | ("bool-xor-comm", [left, right]) =>
+        xor_tautology (boolSyntax.mk_eq
+          (bool_xor (left, right), bool_xor (right, left)))
+    | ("bool-xor-false", [p]) =>
+        xor_tautology (boolSyntax.mk_eq
+          (bool_xor (p, boolSyntax.F), p))
+    | ("bool-xor-true", [p]) =>
+        xor_tautology (boolSyntax.mk_eq
+          (bool_xor (p, boolSyntax.T), boolSyntax.mk_neg p))
     | ("bool-impl-false1", [p]) =>
         Tactical.TAC_PROOF
           (([], boolSyntax.mk_eq
             (boolSyntax.mk_imp (p, boolSyntax.F), boolSyntax.mk_neg p)),
            bossLib.SIMP_TAC boolSimps.bool_ss [])
+    | ("bool-impl-true1", [p]) =>
+        tautology name (boolSyntax.mk_eq
+          (boolSyntax.mk_imp (p, boolSyntax.T), boolSyntax.T))
     | ("bool-impl-true2", [p]) =>
         tautology name (boolSyntax.mk_eq
           (boolSyntax.mk_imp (boolSyntax.T, p), p))
@@ -1733,6 +1785,15 @@ local
         (boolSyntax.mk_disj (left, boolSyntax.mk_neg right))
     end
 
+  fun replay_equiv_elim1 prems =
+    let
+      val premise = expect_one_premise "equiv_elim1" prems
+      val (left, right) = boolSyntax.dest_eq (Thm.concl premise)
+    in
+      tautological_consequence premise
+        (boolSyntax.mk_disj (boolSyntax.mk_neg left, right))
+    end
+
   fun arith_prove target =
     profile "CPC(rung:arith/cases)" Library.arith_prove_with_cases target
     handle Feedback.HOL_ERR _ =>
@@ -2278,10 +2339,49 @@ local
             profile "CPC(rung:trust/rdiv_zero_irrelevant)"
               irrelevant_zero_rewrite ()
         end
+      fun replay_fp () =
+        SmtFpProve.fp_prove_with_decompositions_and_arith
+          arith_prove [] target
+      fun has_symbolic_fp_arithmetic () =
+        let
+          val names = ["smtfp_add", "smtfp_sub", "smtfp_mul",
+            "smtfp_div", "smtfp_fma", "smtfp_sqrt", "smtfp_rem"]
+          fun is_arithmetic tm =
+            Term.is_const tm andalso
+            let val {Thy, Name, ...} = Term.dest_thy_const tm
+            in Thy = "smtfloat" andalso List.exists (Lib.equal Name) names end
+        in
+          not (List.null (Term.free_vars target)) andalso
+          Lib.can (HolKernel.find_term is_arithmetic) target
+        end
+      fun unsupported_fp () =
+        if has_symbolic_fp_arithmetic () then
+          (SmtResource.check_term_size "cvc5-symbolic-arithmetic-residue"
+             (SmtResource.max_bitblast_term_nodes + 1);
+           raise ERR "trust" "unreachable CPC FP resource gate")
+        else
+          raise ERR "trust"
+            ("unsupported CPC FP step: rule=trust; theory=fp; " ^
+             "conclusion=" ^ Library.term_to_string target)
+      fun next prover continuation =
+        prover ()
+        handle Feedback.HOL_ERR holerr =>
+          if SmtResource.is_resource_gate holerr then
+            raise Feedback.HOL_ERR holerr
+          else continuation ()
+      fun fp_context () =
+        SmtFpProve.has_fp_theory_term target orelse
+        Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
+          (#asserted_hyps state)) orelse
+        List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
     in
-      profile "CPC(rung:trust/scoped_arithmetic)" prove_scoped_arithmetic ()
-      handle Feedback.HOL_ERR _ =>
-        profile "CPC(rung:trust/rdiv)" replay_rdiv ()
+      if fp_context () then
+        next (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
+          unsupported_fp
+      else
+        next (fn () => profile "CPC(rung:trust/scoped_arithmetic)"
+          prove_scoped_arithmetic ())
+          (fn () => profile "CPC(rung:trust/rdiv)" replay_rdiv ())
     end
 
   fun replay_ite_eq args =
@@ -3508,6 +3608,7 @@ local
            | "not_equiv_elim1" => replay_not_equiv_elim "not_equiv_elim1" prems
            | "not_equiv_elim2" => replay_not_equiv_elim "not_equiv_elim2" prems
            | "equiv_elim2" => replay_equiv_elim2 prems
+           | "equiv_elim1" => replay_equiv_elim1 prems
            | "arith_rule" => replay_arith_rule (#name rule) args
            | "arith_rel" => replay_arith_rel prems args
            | "arith_abs_eq" => replay_arith_abs_eq args
@@ -3561,9 +3662,12 @@ local
                replay_string state (#name rule) prems conclusion args
            | _ => unsupported_step step)) ()
            handle Feedback.HOL_ERR holerr =>
-             raise ERR "replay_step"
-               ("CPC step " ^ id ^ " (rule " ^ #name rule ^ ") failed: " ^
-                Feedback.message_of holerr))
+             if SmtResource.is_resource_gate holerr then
+               raise Feedback.HOL_ERR holerr
+             else
+               raise ERR "replay_step"
+                 ("CPC step " ^ id ^ " (rule " ^ #name rule ^
+                  ") failed: " ^ Feedback.message_of holerr))
           in (state, thm) end
       val _ = profile "CPC(check:step_conclusion)" (fn () =>
         case conclusion of
@@ -3636,7 +3740,12 @@ local
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:full_simp)" Tactical.TAC_PROOF
             ((boolSyntax.mk_neg g :: asl, hyp),
-             bossLib.FULL_SIMP_TAC (bossLib.srw_ss()) [])
+             bossLib.FULL_SIMP_TAC (bossLib.srw_ss())
+               [smtfloatTheory.smtfp_nan_bits,
+                smtfloatTheory.smtfp_pzero_bits,
+                smtfloatTheory.smtfp_nzero_bits,
+                smtfloatTheory.smtfp_pinf_bits,
+                smtfloatTheory.smtfp_ninf_bits])
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:floor_ceiling_neg)"
             Tactical.TAC_PROOF
@@ -3645,7 +3754,11 @@ local
                [intrealTheory.INT_FLOOR_NEG, intrealTheory.INT_CEILING_NEG])
         handle Feedback.HOL_ERR _ =>
           profile "CPC(remove_extra_hyps:METIS)" Tactical.TAC_PROOF
-            ((boolSyntax.mk_neg g :: asl, hyp), metisLib.METIS_TAC [])
+            ((boolSyntax.mk_neg g :: asl, hyp), metisLib.METIS_TAC
+               [smtfloatTheory.smtfp_bits_pzero,
+                smtfloatTheory.smtfp_pzero_bits,
+                smtfloatTheory.smtfp_bits_nzero,
+                smtfloatTheory.smtfp_nzero_bits])
         handle Feedback.HOL_ERR _ =>
           if Library.contains_conditional hyp then
             profile "CPC(remove_extra_hyps:conditional_arith)"

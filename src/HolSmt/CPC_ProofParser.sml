@@ -105,6 +105,30 @@ local
             wordsSyntax.mk_w2w
               (word, fcpLib.index_type (Arbnum.+ (width, amount)))
           end
+      | ("sign_extend", [amount_tm, word]) =>
+          let
+            val amount = numeral_of_term "sign_extend amount" amount_tm
+            val width = fcpLib.index_to_num (wordsSyntax.dim_of word)
+          in
+            wordsSyntax.mk_sw2sw
+              (word, fcpLib.index_type (Arbnum.+ (width, amount)))
+          end
+      | ("bvsltbv", [left, right]) =>
+          boolSyntax.mk_cond
+            (wordsSyntax.mk_word_lt (left, right),
+             wordsSyntax.mk_word (Arbnum.one, Arbnum.one),
+             wordsSyntax.mk_word (Arbnum.zero, Arbnum.one))
+      | ("bvultbv", [left, right]) =>
+          boolSyntax.mk_cond
+            (wordsSyntax.mk_word_lo (left, right),
+             wordsSyntax.mk_word (Arbnum.one, Arbnum.one),
+             wordsSyntax.mk_word (Arbnum.zero, Arbnum.one))
+      | ("concat", first :: rest) =>
+          if List.null rest then
+            raise ERR "cpc_bv_parsefn" "concat expects at least two words"
+          else List.foldl
+            (fn (right, left) => wordsSyntax.mk_word_concat (left, right))
+            first rest
       | _ => raise ERR "cpc_bv_parsefn" "malformed CPC bit-vector term"
 
   (* A linear-integer source proof can introduce real-valued rational
@@ -122,6 +146,120 @@ local
             (intSyntax.term_of_int (Arbint.fromInt 2),
              intSyntax.mk_Num exponent)
       | _ => raise ERR "cpc_intreal_parsefn" "malformed CPC arithmetic term"
+
+  (* CPC flattens indexed FP applications: `((_ to_fp eb sb) x)` is
+     printed as `(to_fp eb sb x)`, and similarly for FP/BV conversions.
+     Restore the indices and reuse the official dictionary constructors. *)
+  fun cpc_fp_indexed_parsefn token indices args =
+    let
+      fun two_indices constructor =
+        case (indices, args) of
+          ([_, _], _) => constructor indices args
+        | ([], eb :: sb :: rest) => constructor [eb, sb] rest
+        | _ => raise ERR "cpc_fp_indexed_parsefn"
+            (token ^ " expects two FP format indices")
+      fun one_index smt_name hol_name =
+        case (indices, args) of
+          ([_], _) => SmtLib_Theories.FloatingPoint.fp_to_bv
+            smt_name hol_name indices args
+        | ([], width :: rest) =>
+            SmtLib_Theories.FloatingPoint.fp_to_bv
+              smt_name hol_name [width] rest
+        | _ => raise ERR "cpc_fp_indexed_parsefn"
+            (token ^ " expects one bit-vector width index")
+    in
+      case token of
+        "to_fp" => two_indices SmtLib_Theories.FloatingPoint.to_fp
+      | "to_fp_bv" => two_indices SmtLib_Theories.FloatingPoint.to_fp
+      | "to_fp_unsigned" =>
+          two_indices SmtLib_Theories.FloatingPoint.to_fp_unsigned
+      | "fp.to_sbv" => one_index "fp.to_sbv" "smtfp_to_sbv"
+      | "fp.to_ubv" => one_index "fp.to_ubv" "smtfp_to_ubv"
+      | _ => raise ERR "cpc_fp_indexed_parsefn"
+          ("unsupported flattened FP symbol " ^ token)
+    end
+
+  (* cvc5's FP bit-blaster uses sort expressions as proof-term metadata,
+     for example `(@fp.SIGN (_ BitVec 1))`.  HOL has no terms denoting
+     types, so retain only the marker's HOL type.  The internal @fp names
+     then become ordinary free HOL variables of that type; a later `trust`
+     step must still prove every relationship between them and the source FP
+     term.  This interpretation therefore grants no theorem. *)
+  fun cpc_sort_marker_parsefn token indices args =
+    let
+      fun marker name ty = Term.mk_var (name, ty)
+      fun width index = fcpLib.index_type (numeral_of_term token index)
+    in
+      case (token, indices, args) of
+        ("BitVec", [bits], []) =>
+          marker "@cpc.BitVec" (wordsSyntax.mk_word_type (width bits))
+      | ("FloatingPoint", [eb, sb], []) =>
+          marker "@cpc.FloatingPoint"
+            (SmtLib_Theories.smtfp_type
+              (numeral_of_term token eb, numeral_of_term token sb))
+      | ("->", [], domain :: rest) =>
+          if List.null rest then
+            raise ERR "cpc_sort_marker_parsefn"
+              "CPC function-sort marker needs a range"
+          else
+            let
+              val (domains, range) = Lib.front_last (domain :: rest)
+            in
+              marker "@cpc.function"
+                (boolSyntax.list_mk_fun
+                  (List.map Term.type_of domains, Term.type_of range))
+            end
+      | _ => raise ERR "cpc_sort_marker_parsefn"
+          ("malformed CPC sort marker " ^ token)
+    end
+
+  fun cpc_fp_private_parsefn token indices args =
+    if not (List.null indices) then
+      raise ERR "cpc_fp_private_parsefn" "unexpected indices"
+    else
+      case args of
+        [sort_marker] => Term.mk_var (token, Term.type_of sort_marker)
+      | _ => raise ERR "cpc_fp_private_parsefn"
+          (token ^ " expects one sort marker")
+
+  fun cpc_private_const_parsefn token indices args =
+    if token <> "@const" orelse not (List.null indices) then
+      raise ERR "cpc_private_const_parsefn" "malformed private constant"
+    else
+      case args of
+        [index, sort_marker] =>
+          Term.mk_var
+            ("@cpc.const." ^ Arbnum.toString (numeral_of_term token index),
+             Term.type_of sort_marker)
+      | _ => raise ERR "cpc_private_const_parsefn"
+          "@const expects an index and a sort marker"
+
+  fun cpc_bvite_parsefn token indices args =
+    if token <> "bvite" orelse not (List.null indices) then
+      raise ERR "cpc_bvite_parsefn" "malformed bvite"
+    else
+      case args of
+        [condition, then_branch, else_branch] =>
+          boolSyntax.mk_cond
+            (wordsSyntax.mk_word_bit (numSyntax.zero_tm, condition),
+             then_branch, else_branch)
+      | _ => raise ERR "cpc_bvite_parsefn" "bvite expects three arguments"
+
+  (* Totalized FP operators are private bit-blaster vocabulary.  Keep each
+     application as an uninterpreted HOL function: its defining `trust` step
+     is accepted only if the FP re-prover can establish the relationship to
+     the public SMT-LIB operator. *)
+  fun cpc_fp_total_parsefn token indices args =
+    if not (List.null indices) orelse List.null args then
+      raise ERR "cpc_fp_total_parsefn" "malformed private FP operator"
+    else
+      let
+        val result_type = Term.type_of (List.hd args)
+        val function_type = boolSyntax.list_mk_fun
+          (List.map Term.type_of args, result_type)
+      in
+        Term.list_mk_comb (Term.mk_var (token, function_type), args)
+      end
 
   (* cvc5's CPC signature contains totalized arithmetic operators that are
      not SMT-LIB symbols.  Integer totals have specified zero branches;
@@ -211,6 +349,34 @@ local
             (token ^ " expects at least one CPC argument")
       end
 
+  fun with_cpc_fp_entries tmdict =
+    let
+      val tmdict = List.foldl
+        (fn (name, dict) => Library.extend_dict
+          ((name, cpc_sort_marker_parsefn), dict))
+        tmdict ["BitVec", "FloatingPoint", "->"]
+      val tmdict = List.foldl
+        (fn (name, dict) => Library.extend_dict
+          ((name, cpc_fp_private_parsefn), dict))
+        tmdict
+        ["@fp.SIGN", "@fp.EXPONENT", "@fp.SIGNIFICAND", "@fp.ZERO",
+         "@fp.NAN", "@fp.INF"]
+      val tmdict = Library.extend_dict
+        (("@const", cpc_private_const_parsefn), tmdict)
+      val tmdict = Library.extend_dict
+        (("bvite", cpc_bvite_parsefn), tmdict)
+      val tmdict = List.foldl
+        (fn (name, dict) => Library.extend_dict
+          ((name, cpc_fp_total_parsefn), dict))
+        tmdict ["fp.max_total", "fp.min_total"]
+    in
+      List.foldl
+      (fn (name, dict) => Library.extend_dict
+        ((name, cpc_fp_indexed_parsefn), dict))
+      tmdict
+      ["to_fp", "to_fp_bv", "to_fp_unsigned", "fp.to_sbv", "fp.to_ubv"]
+    end
+
   fun with_cpc_literals (tydict, tmdict) =
     let
       (* The source translation dictionary is deliberately as narrow as its
@@ -266,12 +432,16 @@ local
       Library.extend_dict (("**_total", cpc_arith_total_parsefn),
       Library.extend_dict (("extract", cpc_bv_parsefn),
       Library.extend_dict (("zero_extend", cpc_bv_parsefn),
+      Library.extend_dict (("sign_extend", cpc_bv_parsefn),
+      Library.extend_dict (("bvsltbv", cpc_bv_parsefn),
+      Library.extend_dict (("bvultbv", cpc_bv_parsefn),
+      Library.extend_dict (("concat", cpc_bv_parsefn),
       Library.extend_dict (("@bit", cpc_bv_parsefn),
       Library.extend_dict (("@from_bools", cpc_bv_parsefn),
       Library.extend_dict (("@bvsize", cpc_bv_parsefn),
         Library.extend_dict (("@bv", cpc_bv_parsefn),
           Library.extend_dict (("_", cpc_literal_parsefn),
-            tmdict)))))))))))))))))))))
+            with_cpc_fp_entries tmdict)))))))))))))))))))))))))
     end
 
   (* @list is CPC's compact representation for a list of binders or

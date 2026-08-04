@@ -8,26 +8,31 @@ structure CVC = struct
      not abort the scan the way it does for Z3.  Remember the first one and
      use it as the reason when the stream ends with no verdict at all, rather
      than returning a bare UNKNOWN that discards what cvc5 said. *)
-  fun is_sat_stream_with_error first_error instream =
+  fun is_sat_stream_with_error_and_consumed first_error consumed instream =
     case TextIO.inputLine instream of
-      NONE => SolverSpec.UNKNOWN first_error
+      NONE => (SolverSpec.UNKNOWN first_error, consumed)
     | SOME line =>
         let
+          val consumed = consumed + String.size line
           val trimmed = Substring.string
             (Substring.dropl Char.isSpace (Substring.full line))
         in
           if String.isPrefix "(error" trimmed then
-            is_sat_stream_with_error
+            is_sat_stream_with_error_and_consumed
               (case first_error of NONE => SOME line | _ => first_error)
-              instream
+              consumed instream
           else
             case String.tokens Char.isSpace line of
-              ["sat"] => SolverSpec.SAT NONE
-            | ["unsat"] => SolverSpec.UNSAT NONE
-            | _ => is_sat_stream_with_error first_error instream
+              ["sat"] => (SolverSpec.SAT NONE, consumed)
+            | ["unsat"] => (SolverSpec.UNSAT NONE, consumed)
+            | _ => is_sat_stream_with_error_and_consumed first_error
+                consumed instream
         end
 
-  fun is_sat_stream instream = is_sat_stream_with_error NONE instream
+  fun is_sat_stream_with_consumed instream =
+    is_sat_stream_with_error_and_consumed NONE 0 instream
+
+  fun is_sat_stream instream = Lib.fst (is_sat_stream_with_consumed instream)
 
   fun is_sat_file path =
     let
@@ -233,7 +238,7 @@ structure CVC = struct
         end)
       (* Some options were added due to:
          https://github.com/cvc5/cvc5/issues/10293 *)
-      " --macros-quant --macros-quant-mode=all --lang smt "
+      " --macros-quant --macros-quant-mode=all --fp-exp --lang smt "
       (Lib.K is_sat_file)
 
   fun proof_pre goal =
@@ -250,21 +255,29 @@ structure CVC = struct
       ((original_goal, goal, validation), translation) outfile =
     let
       val instream = TextIO.openIn outfile
-      val result = is_sat_stream instream
+      val (result, proof_start) = is_sat_stream_with_consumed instream
     in
       case result of
         SolverSpec.UNSAT NONE =>
         let
           val (ty_dict, tm_dict) = SmtLib.parser_dicts_for_translation translation
-          val proof = parse (ty_dict, tm_dict) instream
+          val proof =
+            SmtResource.with_proof_size_gate "cvc5-cpc-proof-text"
+              outfile proof_start instream (parse (ty_dict, tm_dict))
             handle Feedback.HOL_ERR holerr =>
               (TextIO.closeIn instream;
-               raise_with_context proof_name "proof parse" cmd_stem holerr)
+               if SmtResource.is_resource_gate holerr then
+                 raise Feedback.HOL_ERR holerr
+               else
+                 raise_with_context proof_name "proof parse" cmd_stem holerr)
           val _ = TextIO.closeIn instream
           val (As, g) = goal
           val thm = replay (As, g, proof)
             handle Feedback.HOL_ERR holerr =>
-              raise_with_context proof_name "proof replay" cmd_stem holerr
+              if SmtResource.is_resource_gate holerr then
+                raise Feedback.HOL_ERR holerr
+              else
+                raise_with_context proof_name "proof replay" cmd_stem holerr
           val thm = Thm.CCONTR g thm
           val thm = validation [thm]
           val thm = check_reconstructed_theorem proof_name (original_goal, thm)
@@ -275,7 +288,7 @@ structure CVC = struct
   (* CPC is the sole checked cvc5 proof format. *)
   val cpc_proof_cmd =
     " --produce-proofs --dump-proofs --proof-format-mode=cpc " ^
-    "--proof-granularity=dsl-rewrite --lang smt "
+    "--proof-granularity=dsl-rewrite --fp-exp --lang smt "
 
   val CVC_SMT_CPC_Prover =
     mk_CVC_CPC_fun "CVC_SMT_CPC_Prover" proof_pre cpc_proof_cmd

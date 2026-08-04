@@ -128,8 +128,15 @@ fun cvc_cpc_run path expected_logic =
           (fields @ ["diagnostic=UNSAT result omitted checked theorem"])
   end
   handle Feedback.HOL_ERR holerr =>
-    cvc_cpc_die "CVC_CPC_TAC_FAIL"
-      ["logic=" ^ expected_logic, "diagnostic=" ^ Feedback.message_of holerr]
+    if SmtResource.is_resource_gate holerr then
+      (cvc_cpc_emit "CVC_CPC_TAC_RESOURCE_GATED"
+         ["logic=" ^ expected_logic,
+          "diagnostic=" ^ Feedback.message_of holerr];
+       OS.Process.exit OS.Process.success)
+    else
+      cvc_cpc_die "CVC_CPC_TAC_FAIL"
+        ["logic=" ^ expected_logic,
+         "diagnostic=" ^ Feedback.message_of holerr]
     | exn => cvc_cpc_die "CVC_CPC_TAC_FAIL"
       ["logic=" ^ expected_logic, "diagnostic=" ^ General.exnMessage exn]
 
