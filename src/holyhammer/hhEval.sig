@@ -17,8 +17,8 @@ sig
   type journal_entry =
     {run : string, thy : string, thm : string, goal_id : string,
      cond : string, regime : regime, selector : selector,
-     engine : engine, prover : string, prover_version : string option,
-     nfacts : int,
+     engine : engine, ho : bool option, prover : string,
+     prover_version : string option, nfacts : int,
      timeout : int, szs : string, t_prover : real,
      axioms_used : string list option, recon_ok : bool option,
      recon_method : string option, t_recon : real option,
@@ -45,6 +45,8 @@ sig
 
   val string_of_regime : regime -> string
   val string_of_selector : selector -> string
+  val is_higher_order_goal : Term.term -> bool
+  val is_ho_goal : Term.term -> bool
   val validate_condition : condition -> unit
   val encode_condition : condition -> string
   val parse_condition : string -> condition

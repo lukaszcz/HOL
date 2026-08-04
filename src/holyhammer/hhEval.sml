@@ -30,8 +30,8 @@ type journal_slice =
 type journal_entry =
   {run : string, thy : string, thm : string, goal_id : string,
    cond : string, regime : regime, selector : selector,
-   engine : engine, prover : string, prover_version : string option,
-   nfacts : int,
+   engine : engine, ho : bool option, prover : string,
+   prover_version : string option, nfacts : int,
    timeout : int, szs : string, t_prover : real,
    axioms_used : string list option, recon_ok : bool option,
    recon_method : string option, t_recon : real option,
@@ -81,6 +81,96 @@ fun selector_of_string "deps" = Deps
              SOME count => Knn count
            | NONE => raise Fail ("bad evaluation selector: " ^ text))
       else raise Fail ("unknown evaluation selector: " ^ text)
+
+(* This deliberately examines only the normalized goal, never a translation.
+   Quantifier abstractions are consumed by their binder representation;
+   every other abstraction has survived in term position. *)
+fun beta_eta_contract tm =
+  let
+    fun recurse body =
+      if is_abs body then
+        let
+          val (var, matrix) = dest_abs body
+          val matrix' = recurse matrix
+        in
+          if is_comb matrix' andalso aconv (rand matrix') var andalso
+             not (List.exists (fn other => aconv var other)
+               (free_vars_lr (rator matrix')))
+          then recurse (rator matrix')
+          else mk_abs (var, matrix')
+        end
+      else if is_comb body then
+        let val left = recurse (rator body)
+            val right = recurse (rand body)
+            val combined = mk_comb (left, right)
+        in
+          if is_abs left then recurse (beta_conv combined) else combined
+        end
+      else body
+
+    fun is_fun_type ty =
+      (ignore (dom_rng ty); true) handle HOL_ERR _ => false
+
+    fun member_bound bound tm =
+      List.exists (fn var => aconv var tm) bound
+
+    fun scan bound formula tm =
+      if is_forall tm then
+        if formula then
+          let val (var, body) = dest_forall tm in
+            scan (var :: bound) true body
+          end
+        else true
+      else if is_exists tm then
+        if formula then
+          let val (var, body) = dest_exists tm in
+            scan (var :: bound) true body
+          end
+        else true
+      else if is_neg tm then
+        if formula then scan bound true (dest_neg tm) else true
+      else if is_conj tm then
+        if formula then
+          let val (left, right) = dest_conj tm in
+            scan bound true left orelse scan bound true right
+          end
+        else true
+      else if is_disj tm then
+        if formula then
+          let val (left, right) = dest_disj tm in
+            scan bound true left orelse scan bound true right
+          end
+        else true
+      else if is_imp_only tm then
+        if formula then
+          let val (left, right) = dest_imp tm in
+            scan bound true left orelse scan bound true right
+          end
+        else true
+      else if is_eq tm then
+        if formula then
+          let val (left, right) = dest_eq tm in
+            scan bound false left orelse scan bound false right
+          end
+        else true
+      else if is_abs tm then true
+      else if is_comb tm then
+        let
+          val (head, args) = strip_comb tm
+          val applied_bound_function =
+            not (null args) andalso member_bound bound head andalso
+            is_fun_type (type_of head)
+        in
+          applied_bound_function orelse
+          List.exists (scan bound false) (head :: args)
+        end
+      else false
+  in
+    scan [] true (recurse tm)
+  end
+
+val is_higher_order_goal = beta_eta_contract
+val is_ho_goal = is_higher_order_goal
 
 fun validate_condition (condition : condition) =
   case (#engine condition, #reconstruct condition) of
@@ -299,7 +389,7 @@ fun json_engine_params {provers, slices, cores, max_proofs} =
      ("max_proofs", JSON.INT (IntInf.fromInt max_proofs))]
 
 fun journal_json
-    {run, thy, thm, goal_id, cond, regime, selector, engine, prover,
+    {run, thy, thm, goal_id, cond, regime, selector, engine, ho, prover,
      prover_version, nfacts, timeout, szs, t_prover, axioms_used,
      recon_ok, recon_method, t_recon, stac, error, stop, t_total, slices} =
   let
@@ -308,7 +398,10 @@ fun journal_json
        ("thm", JSON.STRING thm), ("goal_id", JSON.STRING goal_id),
        ("cond", JSON.STRING cond),
        ("regime", JSON.STRING (string_of_regime regime)),
-       ("selector", JSON.STRING (string_of_selector selector))]
+       ("selector", JSON.STRING (string_of_selector selector)),
+       (* A missing flag is only possible after parsing an old journal;
+          rewrites still produce a valid v3 boolean cell field. *)
+       ("ho", JSON.BOOL (case ho of SOME value => value | NONE => false))]
     val winning =
       [("prover", JSON.STRING prover),
        ("prover_version", json_string_option prover_version),
@@ -394,7 +487,8 @@ fun parse_journal_value value : journal_entry =
      cond = string_field "cond" value,
      regime = regime_of_string (string_field "regime" value),
      selector = selector_of_string (string_field "selector" value),
-     engine = parse_journal_engine value prover, prover = prover,
+     engine = parse_journal_engine value prover,
+     ho = nullable_optional JSONUtil.asBool "ho" value, prover = prover,
      prover_version = option_field JSONUtil.asString "prover_version" value,
      nfacts = int_field "nfacts" value, timeout = int_field "timeout" value,
      szs = string_field "szs" value, t_prover = real_field "t_prover" value,
@@ -552,7 +646,7 @@ fun header_json
     {expname, date, host, hol_commit, provers, corpus, added_from_dat,
      conditions, sample} =
   JSON.OBJECT
-    [("schema", JSON.INT 2),
+    [("schema", JSON.INT 3),
      ("expname", JSON.STRING expname), ("date", JSON.STRING date),
      ("host", JSON.STRING host), ("hol_commit", JSON.STRING hol_commit),
      ("provers", JSON.ARRAY (map json_prover provers)),
@@ -696,6 +790,17 @@ fun json_metrics
 fun entries_for_condition name entries =
   List.filter (fn entry => #cond entry = name) entries
 
+fun subset_metrics want entries =
+  if List.exists (fn entry => #ho entry = NONE) entries then NONE
+  else SOME (make_metrics (List.filter (fn entry => #ho entry = SOME want)
+    entries))
+
+fun subset_json label metrics =
+  JSON.OBJECT
+    [("subset", JSON.STRING label),
+     ("metrics", case metrics of NONE => JSON.NULL | SOME value =>
+       json_metrics value)]
+
 fun condition_json name entries =
   let
     val first = hd entries
@@ -714,8 +819,82 @@ fun condition_json name entries =
        ("selector", JSON.STRING (string_of_selector (#selector first))),
        ("prover", JSON.STRING (#prover first)),
        ("timeout", json_int (#timeout first)),
-       ("metrics", json_metrics (make_metrics entries))] @ schedule_fields)
+       ("metrics", json_metrics (make_metrics entries)),
+       ("subsets", JSON.ARRAY
+         [subset_json "HO" (subset_metrics true entries),
+          subset_json "non-HO" (subset_metrics false entries)])] @
+       schedule_fields)
   end
+
+type slice_contribution =
+  {format : string, type_enc : string, lam_trans : string, prover : string,
+   nfacts : int, wins : int, reconstructed : int}
+
+fun winning_slice_fields entry =
+  case #engine entry of
+      Prover _ => SOME ("fof", "", "", #prover entry, #nfacts entry)
+    | Sched _ =>
+        (case List.find (fn {slice, szs, ...} : journal_slice =>
+          szs = "Theorem" andalso #prover slice = #prover entry andalso
+          #nfacts slice = #nfacts entry) (#slices entry) of
+             NONE => NONE
+           | SOME {slice, ...} =>
+               SOME (#format slice, #type_enc slice, #lam_trans slice,
+                 #prover slice, #nfacts slice))
+
+fun slice_contributions entries : slice_contribution list =
+  let
+    fun add entry rows =
+      case winning_slice_fields entry of
+          NONE => rows
+        | SOME (format, type_enc, lam_trans, prover, nfacts) =>
+            let
+              fun same {format = old_format, type_enc = old_enc,
+                        lam_trans = old_lam, prover = old_prover,
+                        nfacts = old_nfacts, ...} =
+                format = old_format andalso type_enc = old_enc andalso
+                lam_trans = old_lam andalso prover = old_prover andalso
+                nfacts = old_nfacts
+              val reconstructed = if reconstructed_cell entry then 1 else 0
+            in
+              case List.partition same rows of
+                  ([], rest) =>
+                    {format = format, type_enc = type_enc,
+                     lam_trans = lam_trans, prover = prover, nfacts = nfacts,
+                     wins = 1, reconstructed = reconstructed} :: rest
+                | (old :: _, rest) =>
+                    {format = #format old, type_enc = #type_enc old,
+                     lam_trans = #lam_trans old, prover = #prover old,
+                     nfacts = #nfacts old, wins = #wins old + 1,
+                     reconstructed = #reconstructed old + reconstructed} :: rest
+            end
+    fun key row =
+      #format row ^ "\000" ^ #type_enc row ^ "\000" ^ #lam_trans row ^
+      "\000" ^ #prover row ^ "\000" ^ Int.toString (#nfacts row)
+  in
+    dict_sort (fn (left, right) => String.compare (key left, key right))
+      (List.foldl (fn (entry, rows) => add entry rows) []
+        (List.filter proven_cell entries))
+  end
+
+fun contribution_json row =
+  JSON.OBJECT
+    [("format", JSON.STRING (#format row)),
+     ("type_enc", JSON.STRING (#type_enc row)),
+     ("lam_trans", JSON.STRING (#lam_trans row)),
+     ("prover", JSON.STRING (#prover row)), ("nfacts", json_int (#nfacts row)),
+     ("wins", json_int (#wins row)),
+     ("reconstructed", json_int (#reconstructed row))]
+
+fun encoding_text "" = "legacy"
+  | encoding_text text = text
+
+fun contribution_markdown row =
+  "| " ^ #format row ^ " | " ^ encoding_text (#type_enc row) ^ " | " ^
+  (if #lam_trans row = "" then "legacy" else #lam_trans row) ^ " | " ^
+  #prover row ^ " | " ^ Int.toString (#nfacts row) ^ " | " ^
+  Int.toString (#wins row) ^ " | " ^ Int.toString (#reconstructed row) ^
+  " |\n"
 
 fun portfolio_key entry =
   string_of_regime (#regime entry) ^ "/" ^
@@ -826,6 +1005,12 @@ fun metrics_markdown metrics =
   option_text (#p50 metrics) ^ " | " ^ option_text (#p90 metrics) ^
   " | " ^ option_text (#maximum metrics)
 
+fun subset_markdown condition label metrics =
+  case metrics of
+      NONE => "| " ^ condition ^ " | " ^ label ^ " | n/a |\n"
+    | SOME value => "| " ^ condition ^ " | " ^ label ^ " | " ^
+        metrics_markdown value ^ " |\n"
+
 fun condition_markdown name entries =
   let
     val first = hd entries
@@ -897,6 +1082,7 @@ fun write_report_markdown expdir entries =
         if null union then NONE else SOME (name, key, cells, union)
       end
     val comparisons = List.mapPartial comparison schedule_conditions
+    val contributions = slice_contributions entries
     val output = TextIO.openOut (join expdir "report.md")
     val _ = TextIO.output (output, "# hhEval report\n\n")
     val _ = TextIO.output (output,
@@ -909,6 +1095,22 @@ fun write_report_markdown expdir entries =
       "---:|---:|---:|\n")
     val _ = app (fn name => TextIO.output (output,
       condition_markdown name (entries_for_condition name entries))) conditions
+    val _ = TextIO.output (output,
+      "\n## HO subsets\n\n| condition | subset | G | A | P | P% | R | R% | " ^
+      "p50 | p90 | max |\n|---|---|---:|---:|---:|---:|---:|---:|" ^
+      "---:|---:|---:|\n")
+    val _ = app (fn name =>
+      let val cells = entries_for_condition name entries in
+        TextIO.output (output, subset_markdown name "HO"
+          (subset_metrics true cells));
+        TextIO.output (output, subset_markdown name "non-HO"
+          (subset_metrics false cells))
+      end) conditions
+    val _ = TextIO.output (output,
+      "\n## Slice contributions\n\n| format | encoding | lambda | prover | " ^
+      "facts | wins | reconstructed |\n|---|---|---|---|---:|---:|---:|\n")
+    val _ = app (fn row => TextIO.output (output, contribution_markdown row))
+      contributions
     val _ = TextIO.output (output,
       "\n## Portfolio unions\n\n| portfolio | G | A | P | P% | R | R% | " ^
       "p50 | p90 | max |\n|---|---:|---:|---:|---:|---:|---:|---:|" ^
@@ -976,6 +1178,7 @@ fun write_summary expdir entries =
     val schedule_conditions = sorted_unique (map #cond schedule_entries)
     val portfolios = sorted_unique (map portfolio_key prover_entries)
     val theories = sorted_unique (map #thy entries)
+    val contributions = slice_contributions entries
     fun comparison name =
       let
         val cells = entries_for_condition name schedule_entries
@@ -991,6 +1194,8 @@ fun write_summary expdir entries =
          (entries_for_condition name entries)) conditions)),
        ("portfolios", JSON.ARRAY (map (fn key => portfolio_json key
          (entries_for_key key prover_entries)) portfolios)),
+       ("slice_contributions", JSON.ARRAY
+         (map contribution_json contributions)),
        ("theories", JSON.ARRAY (map (fn theory => theory_json theory entries)
          theories))]
     val schedule_fields =
@@ -1074,11 +1279,11 @@ fun failed message : outcome =
   {recon_ok = NONE, recon_method = NONE, t_recon = NONE, stac = NONE,
    error = SOME message}
 
-fun base_entry expdir thy name condition nfacts szs t_prover axioms version
+fun base_entry expdir thy name condition ho nfacts szs t_prover axioms version
     (outcome : outcome) =
   {run = run_name expdir, thy = thy, thm = name, goal_id = goal_id thy name,
    cond = #cond_id condition, regime = #regime condition,
-   selector = #selector condition, engine = #engine condition,
+   selector = #selector condition, engine = #engine condition, ho = ho,
    prover = (case #engine condition of Prover name => name | Sched _ => ""),
    prover_version = version, nfacts = nfacts, timeout = #timeout condition,
    szs = szs, t_prover = t_prover, axioms_used = axioms,
@@ -1100,8 +1305,8 @@ fun journal_theory_error expdir thy message =
        engine = Prover "", timeout = 0, reconstruct = false}
   in
     append_journal (journal_path expdir thy)
-      (base_entry expdir thy "__load__" condition 0 "LoadFailure" 0.0 NONE
-         NONE (failed message))
+      (base_entry expdir thy "__load__" condition NONE 0 "LoadFailure" 0.0
+         NONE NONE (failed message))
   end
 
 fun pool_ids (thyl, thmidl) =
@@ -1237,8 +1442,10 @@ fun schedule_cell_entry expdir thy (name, thm) pool condition parameters =
       {run = run_name expdir, thy = thy, thm = name,
        goal_id = goal_id thy name, cond = #cond_id condition,
        regime = #regime condition, selector = #selector condition,
-       engine = #engine condition, prover = prover,
-       prover_version = version_of_prover prover, nfacts = nfacts,
+       engine = #engine condition,
+       ho = SOME (is_higher_order_goal (list_mk_imp goal)),
+       prover = prover, prover_version = version_of_prover prover,
+       nfacts = nfacts,
        timeout = #timeout condition, szs = szs, t_prover = t_prover,
        axioms_used = axioms, recon_ok = recon_ok,
        recon_method = recon_method, t_recon = t_recon, stac = stac,
@@ -1288,8 +1495,10 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
       (list_mk_imp goal, named_premises)
   in
     case hhProver.lookup prover_name of
-        NONE => base_entry expdir thy name condition nfacts "RunFailure" 0.0
-          NONE NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
+        NONE => base_entry expdir thy name condition
+          (SOME (is_higher_order_goal (list_mk_imp goal))) nfacts
+          "RunFailure" 0.0 NONE
+          NONE (failed ("unknown HolyHammer prover: " ^ prover_name))
       | SOME prover =>
           let
             val result = hhProver.run prover
@@ -1309,7 +1518,8 @@ fun prover_cell_entry expdir thy (name, thm) pool condition prover_name =
                            SOME message => SOME message
                          | NONE => run_failure_error (#szs result)}
           in
-            base_entry expdir thy name condition nfacts
+            base_entry expdir thy name condition
+              (SOME (is_higher_order_goal (list_mk_imp goal))) nfacts
               (szs_name (#szs result)) (#time result)
               (#used_axioms result) (#version result) outcome
           end
@@ -1329,18 +1539,20 @@ fun run_cell expdir thy theorem pool condition =
   handle Interrupt => raise Interrupt
        | error =>
            append_journal (journal_path expdir thy)
-             (base_entry expdir thy (#1 theorem) condition 0 "Error" 0.0 NONE NONE
-                (failed (General.exnMessage error)))
+             (base_entry expdir thy (#1 theorem) condition
+                (SOME (is_higher_order_goal
+                  (list_mk_imp (dest_thm (#2 theorem)))))
+                0 "Error" 0.0 NONE NONE (failed (General.exnMessage error)))
 
-fun broken_deps_cell expdir thy name condition =
+fun broken_deps_cell expdir thy name goal condition =
   append_journal (journal_path expdir thy)
-    (base_entry expdir thy name condition 0 "BrokenDeps" 0.0 NONE NONE
-       no_outcome)
+    (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
+       0 "BrokenDeps" 0.0 NONE NONE no_outcome)
 
-fun evaluation_error_cell expdir thy name condition message =
+fun evaluation_error_cell expdir thy name goal condition message =
   append_journal (journal_path expdir thy)
-    (base_entry expdir thy name condition 0 "Error" 0.0 NONE NONE
-       (failed message))
+    (base_entry expdir thy name condition (SOME (is_higher_order_goal goal))
+       0 "Error" 0.0 NONE NONE (failed message))
 
 fun eval_loaded_theory expdir thy =
   let
@@ -1360,12 +1572,14 @@ fun eval_loaded_theory expdir thy =
           if cell_completed completed (id, #cond_id condition) then ()
           else
             case pools of
-                NONE => evaluation_error_cell expdir thy name condition
+                NONE => evaluation_error_cell expdir thy name
+                  (list_mk_imp (dest_thm thm)) condition
                   "could not construct the chainy premise pool"
               | SOME pool_map =>
                   let val pool = lookup_pool name pool_map in
                     if #regime condition = Bushy andalso not dependencies_ok
-                    then broken_deps_cell expdir thy name condition
+                    then broken_deps_cell expdir thy name
+                      (list_mk_imp (dest_thm thm)) condition
                     else run_cell expdir thy (name, thm)
                       (case #regime condition of
                            Bushy => intact_deps
@@ -1606,7 +1820,8 @@ fun run_smoke {expdir, timeout} =
         in
           if dependencies_ok then
             run_cell expdir thy (name, thm) dependencies condition
-          else broken_deps_cell expdir thy name condition
+          else broken_deps_cell expdir thy name
+            (list_mk_imp (dest_thm thm)) condition
         end
       val _ = app run_one smoke_goals
       val (sched_thy, sched_name, _) =
