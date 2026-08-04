@@ -58,9 +58,14 @@ sig
      suites state a boolean assertion with. *)
   val check : string * (unit -> bool) -> unit
 
-  (* The two answers a tactic is asserted to give: closing the goal
-     under Tactical.VALID, so a bad justification is caught rather than
-     scored as a success, and refusing it outright. *)
+  (* Every tactic assertion runs the tactic under Tactical.VALID, so
+     that a bad justification is caught rather than scored as a
+     success.  residual is what the tactic leaves behind; the two
+     answers a tactic is asserted to give are closing the goal outright
+     and refusing it outright.  A suite that wants a third answer --
+     reading a refusal as simply not closing the goal, say -- states
+     that variant itself, over residual. *)
+  val residual : tactic -> goal -> goal list
   val valid_closes : tactic -> goal -> bool
   val tactic_fails : tactic -> goal -> bool
 

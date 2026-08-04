@@ -1506,6 +1506,27 @@ in
   if ok then OK() else die "side condition leaked a captured bound variable"
 end
 
+(* [ThmSetData.toKString] is the one normalisation of a REMOVE delta's
+   name to a theorem-set table's key, shared by every such table.  A name
+   that already spells a key, and a name that can spell no key at all,
+   must both come back unchanged rather than being re-qualified or
+   raising. *)
+val _ =
+  let
+    val thy = current_theory()
+    fun check (input, expected) =
+      (tprint ("ThmSetData.toKString " ^ Lib.quote input);
+       require_msg (check_result (equal expected)) Lib.quote
+                   ThmSetData.toKString input)
+  in
+    List.app check
+      [("thm", thy ^ "$thm"),
+       ("bool.T", "bool$T"),
+       ("bool$T", "bool$T"),
+       ("a$b$c", "a$b$c"),
+       ("a.b.c", "a.b.c")]
+  end
+
 (* Test for #1870: redefinition of bool constants via prim_specification.
    This test must be last because prim_specification retires the old ?
    constant, corrupting state for any subsequent code that uses ?. *)

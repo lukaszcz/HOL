@@ -3,8 +3,9 @@ sig
   include Abbrev
 
   (* Syntax and AC theorems of one carrier's addition, as consumed by
-     cancel_common.  ac_fallback is an optional additive normalizer used
-     when AC_CONV alone cannot justify a rearrangement. *)
+     the cancellation step of mk_norm_conv.  ac_fallback is an optional
+     additive normalizer used when AC_CONV alone cannot justify a
+     rearrangement. *)
   type ac_ops = {
     dest_less : term -> term * term,
     dest_leq : term -> term * term,
@@ -15,12 +16,6 @@ sig
     rid : thm,
     ac_fallback : conv option
   }
-
-  (* cancel_common ops cancel: given the carrier's left-cancellation
-     theorem, remove every summand common to both sides of a relation at
-     once, matching summands up to aconv and one occurrence at a time.
-     Raises UNCHANGED when there is nothing to cancel. *)
-  val cancel_common : ac_ops -> thm -> conv
 
   (* The data an instance's norm_conv is made of: the carrier's three
      left-cancellation theorems, the polynomial normalizer for its

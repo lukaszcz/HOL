@@ -222,19 +222,7 @@ fun compare_key ((ty1, k1, cs1), (ty2, k2, cs2)) =
     | order => order
 
 fun distinct_rows rows =
-  let
-    fun add (row, (seen, kept)) =
-      let
-        val key = row_key row
-      in
-        if HOLset.member (seen, key) then (seen, kept)
-        else (HOLset.add (seen, key), row :: kept)
-      end
-    val (_, kept) =
-      List.foldl add (HOLset.empty compare_key, []) rows
-  in
-    List.rev kept
-  end
+  linarithData.distinct_by compare_key row_key rows
 
 (* Elimination traces one line per pivot, so the message is built only
    once the level has asked for it. *)
@@ -382,15 +370,23 @@ fun mklineq index (item, asm_index) =
   in
     case (rel, negated) of
         (REL_LE, false) => lineq (c, Le, diff, just)
+      (* The strengthening steps below add one to the *unscaled*
+         assumption -- lineq attaches the scaling by m outside them, and
+         replay executes them in that order -- so the constant they
+         contribute to a row whose other constants integ has already
+         multiplied by m is m, not 1.  Using 1 built a row weaker than
+         its own justification by m - 1, which costs no soundness but
+         loses refutations of discrete systems the certificate would
+         have justified. *)
       | (REL_LE, true) =>
           if discrete then
-            lineq (Arbint.- (one, c), Le, negate diff,
+            lineq (Arbint.- (m, c), Le, negate diff,
                    NotLeDD just)
           else
             lineq (Arbint.~ c, Lt, negate diff, NotLeD just)
       | (REL_LT, false) =>
           if discrete then
-            lineq (Arbint.+ (c, one), Le, diff, LessD just)
+            lineq (Arbint.+ (c, m), Le, diff, LessD just)
           else lineq (c, Lt, diff, just)
       | (REL_LT, true) =>
           lineq (Arbint.~ c, Le, negate diff, NotLessD just)
@@ -478,15 +474,10 @@ fun split_items split_neq items =
    split system must come from this one function. *)
 fun atoms_of_decomps decomps =
   let
-    fun add ((tm, _), acc as (seen, atoms)) =
-      if Termtab.defined seen tm then acc
-      else (Termtab.update (tm, ()) seen, tm :: atoms)
-    fun add_decomp (Decomp {lhs, rhs, ...}, acc) =
-      List.foldl add (List.foldl add acc lhs) rhs
-    val (_, atoms) =
-      List.foldl add_decomp (Termtab.empty, []) decomps
+    fun sides (Decomp {lhs, rhs, ...}) = List.map #1 (lhs @ rhs)
   in
-    List.rev atoms
+    linarithData.distinct_by Term.compare Lib.I
+      (List.concat (List.map sides decomps))
   end
 
 fun refutes is_nonnegative systems =

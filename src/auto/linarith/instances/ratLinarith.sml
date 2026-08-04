@@ -12,6 +12,11 @@ val dest_rat_of_int =
   sdest_monop ("rat_of_int", "rat")
     (ERR "dest_rat_of_int" "not a rat_of_int application")
 
+(* A quotient by zero has no rational value to report: ratTheory fixes
+   only 0 / x = 0, and leaves x / 0 = x * rat_minv 0 unspecified.
+   Failing here keeps such a quotient an opaque atom, which is how
+   linarithDecomp's demult already treats a divisor cancelling to
+   zero; every caller reaches dest_lit through Lib.total. *)
 fun dest_lit tm =
   case Lib.total dest_rat_of_int tm of
       SOME integer => Arbrat.fromAInt (intSyntax.int_of_term integer)
@@ -21,7 +26,8 @@ fun dest_lit tm =
                let
                  val d = dest_lit denominator
                in
-                 if d = Arbrat.zero then Arbrat.zero
+                 if d = Arbrat.zero then
+                   raise ERR "dest_lit" "zero denominator"
                  else Arbrat./ (dest_lit numerator, d)
                end
            | NONE => Arbrat.fromAInt (ratSyntax.int_of_term tm))

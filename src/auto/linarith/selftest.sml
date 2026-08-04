@@ -634,6 +634,56 @@ val _ =
             SOME (Asm 2) => true
           | _ => false))
 
+(* Discrete strengthening adds one to the assumption as it stands, and
+   the scaling by the denominator lcm is applied outside it -- mklineq
+   attaches it to the justification, and replay executes the two in that
+   order -- so the constant the strengthening contributes to a row whose
+   other constants are already scaled is that lcm, not one.  A row built
+   with one instead is weaker by lcm - 1 than the theorem its own
+   justification proves, and the system below is exactly that gap:
+   x / 2 < 0 strengthens to 2 <= ~x, which ~x <= 1 contradicts, while
+   the weaker 1 <= ~x does not.
+   The trigger is a discrete carrier whose destructors take division
+   apart, which no shipped instance is -- num and int decline division,
+   real and rat are dense -- but which the registry admits, so it is
+   registered here and taken back out again. *)
+val discrete_decomp_instance =
+  {ty = #ty decomp_instance,
+   discrete = SOME {lessD = [boolTheory.TRUTH]},
+   dest = #dest decomp_instance,
+   kit = #kit decomp_instance,
+   norm_conv = #norm_conv decomp_instance,
+   nnf_rules = #nnf_rules decomp_instance,
+   pre_split = #pre_split decomp_instance,
+   atom_facts = #atom_facts decomp_instance} :
+     linarithData.linarith_instance
+
+val synth_halved_negative =
+  mk_binary synth_less (mk_binary synth_div synth_x synth_two) synth_zero
+val synth_negated_x_bounded =
+  mk_binary synth_leq (Term.mk_comb (synth_neg, synth_x)) synth_one
+
+val _ =
+  check
+    ("discrete strengthening scales by the denominator lcm",
+     fn () =>
+       let
+         val _ = linarithData.register_instance discrete_decomp_instance
+         val result =
+           Lib.total
+             (fn () =>
+                prove fm_config linarithDecomp.decomp (fn _ => false)
+                  [synth_halved_negative, synth_negated_x_bounded]
+                  fm_conclusion) ()
+         val _ = linarithData.register_instance decomp_instance
+       in
+         case result of
+             SOME (_, SOME [Added (Asm 1,
+                                   Multiplied (m, LessD (Asm 0)))]) =>
+               m = two
+           | _ => false
+       end)
+
 (* Elimination that runs out of eliminable columns reports no
    certificate rather than raising, which is how a satisfiable system
    reaches the caller. *)
@@ -1340,6 +1390,22 @@ val _ =
          ([existential_premise], public_x_le_y) andalso
        valid_closes (linarithLib.LINARITH_TAC [])
          ([iff_premise], public_x_le_y))
+
+(* Relevance filtering drops every assumption the arithmetic has no row
+   for, which is every assumption a purely propositional contradiction
+   is made of.  So the immediate-contradiction step runs on the goal as
+   given, ahead of the filter: a goal already carrying F, or a literal
+   alongside its negation, is closed rather than reported unrefutable. *)
+val _ =
+  check
+    ("a propositional contradiction in the assumptions closes the goal",
+     fn () =>
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([boolSyntax.F], num_less public_x num_zero) andalso
+       valid_closes (linarithLib.LINARITH_TAC [])
+         ([irrelevant_premise,
+           boolSyntax.mk_neg irrelevant_premise],
+          num_less public_x num_zero))
 
 (* Choosing which disjunction to eliminate scores every disjunct
    against the same literals.  The goal below is the one that scoring
@@ -2222,6 +2288,61 @@ val _ =
                first andalso repeats andalso 0 < after_first andalso
                !nonneg_calls = after_first
              end)])
+
+fun solver_declines context tm =
+  let
+    val {solve, ...} = linarithLib.linarith_solver
+  in
+    (ignore
+       (solve
+         {stack = [], context_thms = context, recurse = Conv.NO_CONV}
+         tm);
+     false)
+    handle Feedback.HOL_ERR _ => true
+  end
+
+(* The condition outside the guard is discharged only by refuting the
+   context, and a context with nothing arithmetic in it has no row to
+   refute.  So the question is declined where it cannot be answered,
+   which costs no inference at all -- not the assumption of the context
+   the refutation attempt used to open with. *)
+val _ =
+  check
+    ("an arithmetic-free context costs the solver no inference",
+     fn () =>
+       let
+         val context = [Thm.ASSUME public_p]
+         fun decline () =
+           (linarithLib.clear_linarith_caches ();
+            solver_declines context irrelevant_premise)
+         val declined = decline ()
+         val prims = counted (fn () => ignore (decline ()))
+       in
+         null (linarithData.arith_facts ()) andalso declined andalso
+         prims = 0
+       end)
+
+(* The solver asks the first rung of the ladder only, and the cache
+   records what it was asked.  What it records must not stand in for the
+   disproof the conversion goes on to look for: the rungs are different
+   questions and so different cache keys, and a rung the solver ran and
+   lost leaves the other one to be asked. *)
+val _ =
+  check
+    ("a solver failure does not cache away the conversion's disproof",
+     fn () =>
+       let
+         val _ = linarithLib.clear_linarith_caches ()
+         val context = [Thm.ASSUME public_x_lt_y]
+         val disprovable = num_less public_y public_x
+         val declined = solver_declines context disprovable
+         val (left, right) =
+           boolSyntax.dest_eq
+             (Thm.concl (linarithLib.CACHED_LINARITH context disprovable))
+       in
+         declined andalso Term.aconv left disprovable andalso
+         Term.aconv right boolSyntax.F
+       end)
 
 (* One decision asks for the same decompositions several times over: the
    result cache screens the goal, reads its atoms and those of every

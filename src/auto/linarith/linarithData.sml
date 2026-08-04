@@ -7,6 +7,26 @@ val ERR = mk_HOL_ERR "linarithData"
 
 fun same_type left right = Type.compare (left, right) = EQUAL
 
+(* The layer's deduplication idiom, spelled once: one item per key, in
+   order of first occurrence.  Every caller here keys on something
+   ordered -- a conclusion, a coefficient row, an atom -- so the set is
+   the comparison's, and a scan for the key with a linear membership
+   test would cost a quadratic number of those comparisons over lists
+   that accumulate across the rounds of a search. *)
+fun distinct_by compare key items =
+  let
+    fun add (item, entry as (seen, kept)) =
+      let
+        val item_key = key item
+      in
+        if HOLset.member (seen, item_key) then entry
+        else (HOLset.add (seen, item_key), item :: kept)
+      end
+    val (_, kept) = List.foldl add (HOLset.empty compare, []) items
+  in
+    List.rev kept
+  end
+
 type linarith_instance = {
   ty : hol_type,
   discrete : {lessD : thm list} option,
@@ -71,31 +91,38 @@ fun generation () = Sref.value registry_generation
 fun bump_generation () =
   Sref.update registry_generation (fn count => count + 1)
 
-(* A false key comparison costs a recomputation and nothing else, so
-   the cache cell needs no more synchronization than the counter it is
-   read against. *)
-fun keyed_memo key compute =
+(* The equality is the caller's because not every source of a key is an
+   equality type: a derivation keyed on a table of theorems compares
+   them by pointer.  A false key comparison costs a recomputation and
+   nothing else, so the cache cell needs no more synchronization than
+   the source it is read against. *)
+fun keyed_memo same compute =
   let
     val cache = ref NONE
-    fun recompute current =
+    fun recompute key =
       let
-        val value = compute ()
+        val value = compute key
       in
-        cache := SOME (current, value); value
+        cache := SOME (key, value); value
       end
   in
-    fn () =>
-      let
-        val current = key ()
-      in
-        case !cache of
-            SOME (recorded, value) =>
-              if recorded = current then value else recompute current
-          | NONE => recompute current
-      end
+    fn key =>
+      case !cache of
+          SOME (recorded, value) =>
+            if same recorded key then value else recompute key
+        | NONE => recompute key
   end
 
-fun memo compute = keyed_memo generation compute
+(* A memo whose key is read from the session rather than passed in:
+   compute takes no argument, and each call reads key for itself. *)
+fun memo_on key compute =
+  let
+    val cached = keyed_memo Lib.equal (fn _ => compute ())
+  in
+    fn () => cached (key ())
+  end
+
+fun memo compute = memo_on generation compute
 
 (* Both directions of an equivalence, or an implication as it stands.
    Replay MATCH_MPs against the result, so a rule that is neither is
@@ -337,20 +364,12 @@ val all_injection_rewrite_conv =
 
 val persistent_name = KernelSig.name_toString
 
-fun remove_name name table =
-  let
-    val key =
-      if String.isSubstring "$" name then name
-      else persistent_name (ThmSetData.toKName name)
-  in
-    Symtab.delete_safe key table
-  end
-
 fun apply_arith_delta delta table =
   case delta of
       ThmSetData.ADD (name, theorem) =>
         Symtab.update (persistent_name name, theorem) table
-    | ThmSetData.REMOVE name => remove_name name table
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (ThmSetData.toKString name) table
 
 (* The P-form test is the whole of split validation; the two channels
    differ only in how they name what they rejected. *)
@@ -368,7 +387,8 @@ fun apply_arith_split_delta delta table =
         in
           Symtab.update (persistent_name name, theorem) table
         end
-    | ThmSetData.REMOVE name => remove_name name table
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (ThmSetData.toKString name) table
 
 fun guard_registration settype =
   if List.exists (equal settype) (ThmSetData.all_set_types ()) orelse
@@ -429,7 +449,7 @@ fun arith_split_keys () =
   map #1 (Symtab.dest (#get_global_value arith_split_data ()))
 
 fun memo_with_splits compute =
-  keyed_memo (fn () => (generation (), arith_split_keys ())) compute
+  memo_on (fn () => (generation (), arith_split_keys ())) compute
 
 type linarith_config = {neq_limit : int, split_limit : int}
 

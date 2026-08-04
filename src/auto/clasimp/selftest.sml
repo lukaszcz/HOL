@@ -1,20 +1,16 @@
 open HolKernel testutils
 open listTheory optionTheory pred_setTheory
 
-fun test (name, check) =
-  (tprint name;
-   if check () then OK () else die "failed")
+(* check, residual, valid_closes and tactic_fails come from
+   linarithCorpus, which states the assertion helpers once for the
+   suites that reach linear arithmetic; with_arith_fact below is from
+   there too. *)
+open linarithCorpus
 
 (* clasimpLib is loaded before this selftest unit, so this datatype exercises
    the live TypeBase hook rather than the registration catch-up sweep. *)
 val _ = Datatype.Datatype
   `clasimp_hook_after_load = ClasimpHookAfter bool bool`
-
-fun residual tactic goal =
-  #1 (Tactical.VALID tactic goal)
-
-fun solves tactic goal =
-  null (residual tactic goal)
 
 fun same_goals left right =
   ListPair.allEq
@@ -25,33 +21,33 @@ val solver_ss = simpLib.clear_rules (clasimpLib.clasimp_ss ())
 val safe_simp = clasimpLib.safe_asm_full_simp solver_ss []
 
 val _ =
-  test
+  check
     ("safe solver accepts an alpha-matching assumption",
      fn () =>
-       solves safe_simp
+       valid_closes safe_simp
          ([``(\x:'a. P x) a : bool``], ``(\y:'a. P y) a : bool``))
 
 val _ =
-  test
+  check
     ("safe solver proves an alpha-reflexive equality",
      fn () =>
-       solves safe_simp
+       valid_closes safe_simp
          ([], ``(\x:'a. f x) = (\y:'a. f y)``))
 
 val _ =
-  test
+  check
     ("safe solver proves truth",
-     fn () => solves safe_simp ([], boolSyntax.T))
+     fn () => valid_closes safe_simp ([], boolSyntax.T))
 
 val _ =
-  test
+  check
     ("safe solver closes from a false assumption",
      fn () =>
-       solves safe_simp
+       valid_closes safe_simp
          ([boolSyntax.F], ``clasimp_false_goal:bool``))
 
 val _ =
-  test
+  check
     ("safe solver does not instantiate an existential witness",
      fn () =>
        case residual safe_simp
@@ -63,7 +59,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("clasimpset fixes conditional-rewrite depth at forty",
      fn () =>
        #cond_depth
@@ -71,7 +67,7 @@ val _ =
        SOME 40)
 
 val _ =
-  test
+  check
     ("clasimpset carries the splitter",
      fn () =>
        let
@@ -114,7 +110,7 @@ val derived_restored =
     (simpLib.SIMP_CONV (clasimpLib.clasimp_ss ()) []) derived_lhs
 
 val _ =
-  test
+  check
     ("clasimpset cache recomputes around a simpset update",
      fn () =>
        aconv (snd (boolSyntax.dest_eq (concl derived_before)))
@@ -130,7 +126,7 @@ val mutual_expected =
   [([``P (b:'a) : bool``, ``a:'a = b``], ``mutual_q:bool``)]
 
 val _ =
-  test
+  check
     ("asm_full_simp uses later assumptions mutually",
      fn () =>
        same_goals
@@ -147,7 +143,7 @@ val chain_expected =
      ``R (z:'b) : bool``], ``chain_s:bool``)]
 
 val _ =
-  test
+  check
     ("asm_full_simp closes a three-assumption mutual chain",
      fn () =>
        same_goals
@@ -155,10 +151,6 @@ val _ =
             (clasimpLib.asm_full_simp BasicProvers.bool_ss [])
             chain_goal)
          chain_expected)
-
-fun tactic_fails tactic goal =
-  (ignore (Tactical.VALID tactic goal); false)
-  handle HOL_ERR _ => true
 
 fun local_clasimp body base_cs base_ss controls =
   clasimpLib.process_clasimp_args body base_cs base_ss controls
@@ -292,7 +284,7 @@ val iff_derivation_cases =
 val _ =
   List.app
     (fn case_info as (name, _, _, _, _) =>
-      test
+      check
         ("iff decision tree: " ^ name,
          fn () => iff_derivation_case case_info))
     iff_derivation_cases
@@ -311,14 +303,14 @@ val clasimp_iff_attribute_probe_def =
      ``clasimp_iff_attribute_probe (p : bool) = p``)
 
 val _ =
-  test
+  check
     ("iff settype and attribute are registered without collision",
      fn () =>
        List.exists (equal "iff") (ThmSetData.all_set_types ()) andalso
        ThmAttribute.is_attribute "iff")
 
 val _ =
-  test
+  check
     ("Theorem [iff] immediately updates and remove_iff retracts both stores",
      fn () =>
        let
@@ -350,7 +342,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("a rejected remove_iff leaves a colliding claset rule installed",
      fn () =>
        let
@@ -380,7 +372,7 @@ val _ =
    delta that this theory, and every descendant of it, replays as a silent
    no-op -- and a malformed one would make them fail to load outright. *)
 val _ =
-  test
+  check
     ("remove_iff rejects an unresolvable name before recording a delta",
      fn () =>
        let
@@ -399,7 +391,7 @@ val _ =
    retracting one cannot disarm the other.  Neither is a declaration the
    user could correct, so neither warns. *)
 val _ =
-  test
+  check
     ("a derived iff rule duplicating an installed one is kept, unannounced",
      fn () =>
        let
@@ -473,17 +465,17 @@ val hook_tyinfo = tyinfo_named "clasimp_hook_after_load"
 val list_tyinfo = tyinfo_named "list"
 
 val _ =
-  test
+  check
     ("constructor intro arrives through the post-load TypeBase hook",
      fn () => has_constructor_intro hook_tyinfo 0)
 
 val _ =
-  test
+  check
     ("constructor intro arrives through the TypeBase catch-up sweep",
      fn () => has_constructor_intro list_tyinfo 0)
 
 val _ =
-  test
+  check
     ("constructor intros do not duplicate Phase 0 injectivity seeds",
      fn () =>
        let
@@ -523,7 +515,7 @@ fun constructor_safe cs =
   NTactical.DETERM (classicalLib.CS_SAFE_TAC cs)
 
 val _ =
-  test
+  check
     ("classical search cannot prove constructor equality without the intro",
      fn () =>
        tactic_fails
@@ -531,18 +523,18 @@ val _ =
          constructor_intro_goal)
 
 val _ =
-  test
+  check
     ("classical search proves constructor equality with the new intro",
      fn () =>
-       solves
+       valid_closes
          (constructor_safe constructor_intro_cs)
          constructor_intro_goal)
 
 val _ =
-  test
+  check
     ("the base claset proves constructor equality with its safe intro",
      fn () =>
-       solves
+       valid_closes
          (constructor_safe (clasetLib.the_claset ()))
          constructor_intro_goal)
 
@@ -576,12 +568,12 @@ fun claset_marker_routed (_, marker, expected_spec) =
   end
 
 val _ =
-  test
+  check
     ("argument processor routes every claset theorem marker",
      fn () => List.all claset_marker_routed marker_rule_cases)
 
 val _ =
-  test
+  check
     ("argument processor consumes Del in the claset partition",
      fn () =>
        let
@@ -601,7 +593,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("Simp marker adds its theorem to the invocation simpset",
      fn () =>
        let
@@ -612,7 +604,7 @@ val _ =
              [clasetLib.Simp
                 (CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))]
        in
-         solves tactic ([], ``~F``)
+         valid_closes tactic ([], ``~F``)
        end)
 
 val generic_simp_markers =
@@ -630,7 +622,7 @@ val generic_simp_markers =
    markerLib.IgnAsm [QUOTE "clasimp_ignored"]]
 
 val _ =
-  test
+  check
     ("argument processor preserves every generic simp control",
      fn () =>
        let
@@ -648,7 +640,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("Once reaches the simp argument list without being unwrapped",
      fn () =>
        let
@@ -670,7 +662,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("plain theorems are inserted before the clasimp script",
      fn () =>
        let
@@ -687,7 +679,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("Iff marker is temporary and solves through a clasimp tactic",
      fn () =>
        let
@@ -709,7 +701,7 @@ val _ =
          val unavailable_before =
            tactic_fails (tactic []) goal
          val available =
-           solves
+           valid_closes
              (tactic
                [clasetLib.Iff equivalence]) goal
          val rules_after =
@@ -726,7 +718,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("argument processor honors Abbr before partitioning",
      fn () =>
        let
@@ -742,7 +734,7 @@ val _ =
            local_clasimp accept clasetLib.empty_cs simpLib.empty_ss controls
        in
          tactic_fails (tactic []) goal andalso
-         solves
+         valid_closes
            (tactic [markerLib.Abbr [QUOTE name]]) goal
        end)
 
@@ -771,11 +763,11 @@ val wrapper_rungs =
     clasimpLib.add_safe_simp_wrapper)]
 
 fun wrapper_rung (name, rung, add_wrapper) =
-  test
+  check
     (name,
      fn () =>
        tactic_fails (rung clasetLib.empty_cs) wrapper_goal andalso
-       solves
+       valid_closes
          (rung (add_wrapper wrapper_ss [] clasetLib.empty_cs))
          wrapper_goal)
 
@@ -792,7 +784,7 @@ val wrapper_control_ss =
          CONJUNCT2 (CONJUNCT2 boolTheory.NOT_CLAUSES))])
 
 val _ =
-  test
+  check
     ("add_simp_wrapper passes controls to its embedded simp step",
      fn () =>
        let
@@ -802,14 +794,14 @@ val _ =
                 (clasimpLib.add_simp_wrapper wrapper_control_ss controls
                    clasetLib.empty_cs))
        in
-         solves (fast []) wrapper_goal andalso
+         valid_closes (fast []) wrapper_goal andalso
          tactic_fails
            (fast [markerLib.Excl "clasimpSelftest.wrapper_control"])
            wrapper_goal
        end)
 
 val _ =
-  test
+  check
     ("re-adding a simp wrapper overwrites its named slot",
      fn () =>
        let
@@ -833,7 +825,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("safe simp wrapper preserves rigid engine metavariables",
      fn () =>
        let
@@ -885,9 +877,9 @@ val force_tactics =
    ("BESTSIMP_TAC", clasimpLib.BESTSIMP_TAC [])]
 
 fun force_battery (name, tactic) =
-  test
+  check
     (name ^ " solves logical and set/list/option batteries",
-     fn () => List.all (solves tactic) force_goals)
+     fn () => List.all (valid_closes tactic) force_goals)
 
 val _ = List.app force_battery force_tactics
 
@@ -897,11 +889,11 @@ val context_force_tactics =
    ("CS_BESTSIMP_TAC", clasimpLib.CS_BESTSIMP_TAC)]
 
 fun context_force_battery (name, tactic) =
-  test
+  check
     (name ^ " uses the supplied claset and simpset",
      fn () =>
        List.all
-         (solves
+         (valid_closes
             (tactic (clasetLib.the_claset ())
               (clasimpLib.clasimp_ss ())))
          force_logic_goals)
@@ -912,7 +904,7 @@ val force_negative_goal : Abbrev.goal =
   ([], ``clasimp_force_unprovable:bool``)
 
 fun force_must_close (name, tactic) =
-  test
+  check
     (name ^ " fails instead of returning an open residue",
      fn () => tactic_fails tactic force_negative_goal)
 
@@ -928,7 +920,7 @@ val _ =
     context_force_tactics
 
 val _ =
-  test
+  check
     ("CLARSIMP_TAC returns an exact non-closing residue",
      fn () =>
        let
@@ -942,10 +934,10 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("CS_CLARSIMP_TAC uses the supplied claset and simpset",
      fn () =>
-       solves
+       valid_closes
          (clasimpLib.CS_CLARSIMP_TAC
             (clasetLib.the_claset ())
             (clasimpLib.clasimp_ss ()))
@@ -953,7 +945,7 @@ val _ =
                 clasimp_cs_x``))
 
 val _ =
-  test
+  check
     ("CLARSIMP_TAC accepts simplification-only progress",
      fn () =>
        let
@@ -968,15 +960,15 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("CLARSIMP_TAC solves set/list/option simplification goals",
      fn () =>
        List.all
-         (solves (clasimpLib.CLARSIMP_TAC []))
+         (valid_closes (clasimpLib.CLARSIMP_TAC []))
          force_native_goals)
 
 val _ =
-  test
+  check
     ("CLARSIMP_TAC fails exactly when its script changes nothing",
      fn () =>
        tactic_fails
@@ -984,7 +976,7 @@ val _ =
          ([], ``clasimp_clarsimp_unchanged:bool``))
 
 val _ =
-  test
+  check
     ("CS_CLARSIMP_TAC fails exactly when its script changes nothing",
      fn () =>
        tactic_fails
@@ -994,7 +986,7 @@ val _ =
          ([], ``clasimp_cs_clarsimp_unchanged:bool``))
 
 val _ =
-  test
+  check
     ("CLARSIMP_TAC still splits a conditional assumption",
      fn () =>
        let
@@ -1028,11 +1020,11 @@ val auto_native_goals : Abbrev.goal list =
 val auto_goals = auto_logic_goals @ auto_native_goals
 
 val _ =
-  test
+  check
     ("AUTO_TAC solves translated auto regressions and HOL4 goals",
      fn () =>
        List.all
-         (solves (clasimpLib.AUTO_TAC []))
+         (valid_closes (clasimpLib.AUTO_TAC []))
          auto_goals)
 
 val auto_linarith_rewrite =
@@ -1046,36 +1038,36 @@ val auto_linarith_goal : Abbrev.goal =
   ([``(x:num) <= y``, ``y <= z``], ``MIN x z = x``)
 
 val _ =
-  test
+  check
     ("AUTO_TAC discharges a linear-arithmetic rewrite condition",
-     fn () => solves auto_linarith_tactic auto_linarith_goal)
+     fn () => valid_closes auto_linarith_tactic auto_linarith_goal)
 
 val auto_arith_fact_goal : Abbrev.goal =
   ([``(x:num) ** 2 <= y``], ``MIN x y = x``)
 
 val _ =
-  test
+  check
     ("AUTO_TAC reads [arith] facts dynamically and leaves the set clean",
      fn () =>
        tactic_fails auto_linarith_tactic auto_arith_fact_goal andalso
-       linarithCorpus.with_arith_fact
+       with_arith_fact
          (fn () =>
-           solves auto_linarith_tactic auto_arith_fact_goal) andalso
+           valid_closes auto_linarith_tactic auto_arith_fact_goal) andalso
        tactic_fails auto_linarith_tactic auto_arith_fact_goal)
 
 val _ =
-  test
+  check
     ("CS_AUTO_TAC uses the supplied claset and simpset",
      fn () =>
        List.all
-         (solves
+         (valid_closes
             (clasimpLib.CS_AUTO_TAC {blast = 4, depth = 2}
               (clasetLib.the_claset ())
               (clasimpLib.clasimp_ss ())))
          auto_logic_goals)
 
 val _ =
-  test
+  check
     ("AUTO_DEPTH_TAC accepts explicit blast and depth bounds",
      fn () =>
        let
@@ -1104,10 +1096,10 @@ val _ =
              (clasetLib.the_claset ()) simpLib.empty_ss
        in
          tactic_fails (auto 1) goal andalso
-         solves (auto 2) goal andalso
+         valid_closes (auto 2) goal andalso
          tactic_fails (depth_auto 0) depth_goal andalso
-         solves (depth_auto 1) depth_goal andalso
-         solves
+         valid_closes (depth_auto 1) depth_goal andalso
+         valid_closes
            (clasimpLib.AUTO_DEPTH_TAC {blast = 4, depth = 2} [])
            ([], ``(~clasimp_auto_bound_p ==>
                     clasimp_auto_bound_p) ==>
@@ -1115,7 +1107,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("AUTO_TAC returns an exact non-closing residue",
      fn () =>
        let
@@ -1130,7 +1122,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("AUTO_TAC fails exactly when its script changes nothing",
      fn () =>
        tactic_fails
@@ -1138,7 +1130,7 @@ val _ =
          ([], ``clasimp_auto_unchanged:bool``))
 
 val _ =
-  test
+  check
     ("CS_AUTO_TAC fails exactly when its script changes nothing",
      fn () =>
        tactic_fails
@@ -1154,7 +1146,7 @@ val auto_idempotence_goals : Abbrev.goal list =
     ``clasimp_auto_stable_d:bool``)]
 
 val _ =
-  test
+  check
     ("AUTO_TAC residues are idempotent without blast instantiations",
      fn () =>
        List.all
@@ -1176,7 +1168,7 @@ fun goal_has_cond (assumptions, conclusion) =
     (conclusion :: assumptions)
 
 val _ =
-  test
+  check
     ("AUTO_TAC splits if where srw_ss simplification does not",
      fn () =>
        let
@@ -1201,7 +1193,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("AUTO_TAC splits datatype cases where srw_ss does not",
      fn () =>
        let
@@ -1230,26 +1222,26 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("FORCE_TAC solves translated force regressions and HOL4 goals",
      fn () =>
        List.all
-         (solves (clasimpLib.FORCE_TAC []))
+         (valid_closes (clasimpLib.FORCE_TAC []))
          force_goals)
 
 val _ =
-  test
+  check
     ("CS_FORCE_TAC uses the supplied claset and simpset",
      fn () =>
        List.all
-         (solves
+         (valid_closes
             (clasimpLib.CS_FORCE_TAC
               (clasetLib.the_claset ())
               (clasimpLib.clasimp_ss ())))
          force_goals)
 
 val _ =
-  test
+  check
     ("FORCE_TAC and CS_FORCE_TAC fail unless they close the goal",
      fn () =>
        tactic_fails
@@ -1262,7 +1254,7 @@ val _ =
          force_negative_goal)
 
 val _ =
-  test
+  check
     ("AUTO_TAC arguments are temporary and leave no state behind",
      fn () =>
        let

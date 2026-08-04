@@ -14,17 +14,17 @@ val safe_solver =
         Tactic.ACCEPT_TAC boolTheory.TRUTH,
         Tactical.FIRST_ASSUM Tactic.CONTR_TAC])
 
-val unsafe_solvers = [linarithLib.linarith_solver]
-
-fun add_unsafe_solvers ss =
-  Lib.rev_itlist simpLib.add_unsafe_solver unsafe_solvers ss
-
+(* The unsafe side-condition solver added here reaches this simpset only:
+   the simplifier offers unsafe solvers to every traversal regardless of
+   the safe solvers, so a simpset with a normalisation phase to protect
+   (aesop) names the decision procedures it wants rather than inheriting
+   from here. *)
 fun derive_clasimp_ss ss _ =
   ss
   |> simpLib.set_cond_depth 40
   |> (fn ss' => simpLib.++ (ss', simpLib.split_ss))
   |> simpLib.set_safe_solvers [safe_solver]
-  |> add_unsafe_solvers
+  |> simpLib.add_unsafe_solver linarithLib.linarith_solver
 
 (* This accessor is the only visible part of the private derived-value
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)

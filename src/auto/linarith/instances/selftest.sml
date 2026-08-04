@@ -551,6 +551,43 @@ val _ =
          ([boolSyntax.mk_eq (qhalf_x, qplus qhalf_x q1)],
           boolSyntax.F))
 
+(* rat_minv 0 is unspecified -- ratTheory fixes 0 / x = 0 and nothing
+   about x / 0 -- so a quotient by zero has no literal value to report.
+   dest_lit used to answer 0 for one, which made &5 / 0q a constant in
+   the decomposed row: the solver believed it had refuted the negation
+   of &5 / 0q < 1q, replay could not build the theorem from that, and
+   the run ended in an internal-inconsistency warning.  The quotient is
+   an atom instead, as demult already treats a divisor that cancels to
+   zero. *)
+val q5 = #mk_lit (#dest rat_instance) (Arbrat.fromInt 5)
+val qdiv0 = ratSyntax.mk_rat_div (q5, q0)
+
+fun warnings_while operation =
+  let
+    val warnings = ref ([] : string list)
+    val saved = !Feedback.WARNING_outstream
+    fun restore () = Feedback.WARNING_outstream := saved
+    val _ =
+      Feedback.WARNING_outstream :=
+        (fn message => warnings := message :: !warnings)
+    val _ =
+      (ignore (Lib.total operation ()); restore ())
+      handle e => (restore (); raise e)
+  in
+    !warnings
+  end
+
+val _ =
+  check
+    ("a zero denominator leaves a rational quotient an opaque atom",
+     fn () =>
+       not (Option.isSome
+              (Lib.total (#dest_lit (#dest rat_instance)) qdiv0)) andalso
+       null (warnings_while
+               (fn () =>
+                  linarithLib.LINARITH_TAC [] ([], qless qdiv0 q1))) andalso
+       simple_closes ([qless qdiv0 qx], qless qdiv0 (qplus qx q1)))
+
 val _ =
   check
     ("load-time registration warns and does not duplicate entries",

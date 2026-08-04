@@ -80,22 +80,14 @@ fun split_thm_name th =
                    "split theorem has no database name")
   end
 
-fun remove_name name db =
-  let
-    val key =
-      if String.isSubstring "$" name then name
-      else persistent_name (ThmSetData.toKName name)
-  in
-    Symtab.delete_safe key db
-  end
-
 fun apply_split_delta delta db =
   case delta of
       ThmSetData.ADD (name, th) =>
         let val _ = is_asm_split th
         in Symtab.update (persistent_name name, th) db
         end
-    | ThmSetData.REMOVE name => remove_name name db
+    | ThmSetData.REMOVE name =>
+        Symtab.delete_safe (ThmSetData.toKString name) db
 
 val _ =
   if List.exists (equal "split") (ThmSetData.all_set_types ()) orelse

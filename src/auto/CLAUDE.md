@@ -27,8 +27,11 @@ From the repo root:
     bin/build -t --seq=tools/sequences/upto-auto
 
 is the routine development gate building kernel + core theories + this layer,
-with selftests. `bin/build -F -t` (full distribution) is the gate at phase
-boundaries.
+with selftests.  Its real scope is wider than the entries suggest: Holmake
+recurses from `linarith/instances/` into src/integer, src/real, src/rational
+and their closure, and a failure in any of those is reported against the
+`src/auto/linarith/instances` entry.  `bin/build -F -t` (full distribution)
+is the gate at phase boundaries.
 
 Numeric attribute values (`[elim=75]`, `[norm=~3]`) need a quote filter
 built from the current `tools/parsing/HolLex`.  That lexer is generated
@@ -45,9 +48,12 @@ Per-directory: plain `Holmake` inside `src/auto/rules/` and
 `src/auto/linarith/` works — their Holmakefiles pin
 `HOLHEAP = $(HOLDIR)/bin/hol.state0` themselves.
 `src/auto/linarith/instances/` is post-boss and must *not* be given
-that heap; plain `Holmake` is right there too.  The selftest is
-`selftest.exe` (built by `Holmake`, run directly, or via
-`HOLSELFTESTLEVEL` which tees into `ntactical-selftest.log`).
+that heap; plain `Holmake` is right there too.  Every directory builds
+`selftest.exe`; run it directly, or set `HOLSELFTESTLEVEL` to tee into
+the directory's log — `ntactical-selftest.log` in `rules/`,
+`linarith-selftest.log` in `linarith/`,
+`linarith-instances-selftest.log` in `linarith/instances/`,
+`<dir>-selftest.log` elsewhere.
 Cross-theory persistence scenarios live in `rules/theory_tests/` with
 their own Holmakefile (diamond merges, reload idempotence, batched
 delta replay); `linarith/theory_tests/` holds the round-trip scenarios

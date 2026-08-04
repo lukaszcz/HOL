@@ -142,7 +142,9 @@ fun check (name, predicate) =
   (tprint name;
    if predicate () then OK () else die "failed")
 
-fun valid_closes tactic goal = null (#1 (Tactical.VALID tactic goal))
+fun residual tactic goal = #1 (Tactical.VALID tactic goal)
+
+fun valid_closes tactic goal = null (residual tactic goal)
 
 fun tactic_fails tactic goal =
   ((ignore (Tactical.VALID tactic goal); false)

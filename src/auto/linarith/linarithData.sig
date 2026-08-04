@@ -10,6 +10,15 @@ sig
      identity, rather than through the polymorphic equality. *)
   val same_type : hol_type -> hol_type -> bool
 
+  (* distinct_by compare key items keeps one item per key, in order of
+     first occurrence -- an order its callers depend on: the split
+     rules, the atom columns of a coefficient row and the rows of a
+     system are all built in it.  The key is compared with the given
+     order rather than searched for with a linear test, because the
+     lists deduplicated here accumulate across the rounds of a search
+     and a scan would cost a quadratic number of comparisons. *)
+  val distinct_by : ('b * 'b -> order) -> ('a -> 'b) -> 'a list -> 'a list
+
   (* One carrier's implementation of everything the generic engine
      needs, keyed in the registry by its ty.
 
@@ -176,6 +185,10 @@ sig
 
   val arith_facts : unit -> thm list
   val arith_split_thms : unit -> thm list
+  (* The name may be a bare theorem name, a "Thy.Name" qualification or
+     the stored "Thy$Name" key (ThmSetData.toKString normalises all
+     three).  A string that spells none of them denotes nothing in the
+     table, so removing it is a no-op rather than an error. *)
   val remove_arith : string -> unit
   val remove_arith_split : string -> unit
 
@@ -201,9 +214,20 @@ sig
      whatever path made the change.  Neither is offered for the [arith]
      table: a tactic reads it once per call, and the reducer path, which
      does derive from it, keys on the fact list itself rather than on a
-     generation. *)
+     generation -- keyed_memo below is what that path memoizes with. *)
   val memo : (unit -> 'a) -> unit -> 'a
   val memo_with_splits : (unit -> 'a) -> unit -> 'a
+
+  (* keyed_memo same compute caches the value compute returned for the
+     key it last saw, and reuses it for as long as same reports the key
+     has not moved.  It is the cell memo and memo_with_splits are built
+     from, offered directly to a caller whose key is not a generation
+     and comes with the call: the equality is the caller's because not
+     every source of a key is an equality type -- a derivation keyed on
+     a table of theorems compares them by pointer.  A comparison that
+     answers "moved" when it has not costs a recomputation and nothing
+     else. *)
+  val keyed_memo : ('a -> 'a -> bool) -> ('a -> 'b) -> 'a -> 'b
 
   (* check_asm_split function what th: raise ERR function
      ("Malformed " ^ what) unless th is a split rule in P-form. *)

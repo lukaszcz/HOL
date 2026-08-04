@@ -122,14 +122,20 @@ fun simple_argument function theorem =
       SOME _ => reject function "Split"
     | NONE => plain_argument function theorem
 
+(* Both lists come out in argument order.  The fold is still the
+   left-to-right one, and reverses at the end rather than being a
+   foldr, because classification is where a malformed argument is
+   rejected: this way the first bad argument is the one reported, as it
+   is under the map SIMPLE_LINARITH_TAC classifies with. *)
 fun full_arguments function arguments =
   let
     fun add (theorem, (facts, splits)) =
       case classify_split_argument function theorem of
           SOME split => (facts, split :: splits)
         | NONE => (plain_argument function theorem :: facts, splits)
+    val (facts, splits) = List.foldl add ([], []) arguments
   in
-    foldl add ([], []) arguments
+    (List.rev facts, List.rev splits)
   end
 
 (* A goal the arithmetic cannot refute is not yet a failure: the search
@@ -141,14 +147,19 @@ fun refutation config (assumptions, conclusion) =
 
 (* The diagnostics report the goal as preprocessing left it, so they stay
    on this side of the interface; the failure is reported under the
-   caller's name because the public entries report their own. *)
-fun core function hint config (goal as (assumptions, conclusion)) =
+   caller's name because the public entries report their own.  This is
+   split from core because the search below reaches the same dead end
+   already knowing the answer is NONE, and re-entering core there would
+   spend a second full refutation to be told so again. *)
+fun exhausted function hint (assumptions, conclusion) =
+  (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
+   linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
+   no_proof function hint)
+
+fun core function hint config goal =
   case refutation config goal of
       SOME tactic => tactic goal
-    | NONE =>
-        (linarithData.trace_terms 2 "preprocessed assumptions" assumptions;
-         linarithData.trace_terms 2 "preprocessed conclusion" [conclusion];
-         no_proof function hint)
+    | NONE => exhausted function hint goal
 
 (* Everything the session owns -- the [arith] table here, and the
    registry and the [arith_split] table at the entry below -- is read
@@ -234,6 +245,14 @@ fun shell_relevant tm =
      | EXISTS (_, body) => shell_relevant body
      | ATOM => has_registered_subterm tm)
 
+(* The assumptions the arithmetic could build a row from.  What this
+   drops it drops for good, so an immediate propositional contradiction
+   -- F itself, or a literal alongside its negation -- has to be taken
+   before this runs rather than after: none of those has arithmetic
+   content, so this filter removes exactly the assumptions that would
+   have closed the goal.  That is what the opposite_tac step at the
+   entry point below is for; the one inside nnf_flatten sees only what
+   survived here. *)
 fun filter_relevant (assumptions, conclusion) =
   let
     val filtered = List.filter shell_relevant assumptions
@@ -319,28 +338,13 @@ fun limit_exceeded function limit =
   end
 
 (* One theorem per conclusion, in order of first occurrence -- an order
-   compute_split_rules below depends on.  Keyed on the conclusion
-   rather than scanned for it with aconv: this is the layer's one
-   deduplication idiom, the form linarithSolve's atoms_of_decomps and
-   distinct_rows take, and a scan costs a quadratic number of term
-   comparisons over lists that accumulate across the rounds of a
-   search.  Term.compare, the key here, parts company with aconv only
-   over terms the tables these results reach -- the solver's atom
-   index, the result cache's store and its context graph -- would merge
-   in any case, all three being keyed on Term.compare themselves. *)
+   compute_split_rules below depends on.  Term.compare, the order the
+   conclusions are keyed by, parts company with aconv only over terms
+   the tables these results reach -- the solver's atom index, the
+   result cache's store and its context graph -- would merge in any
+   case, all three being keyed on Term.compare themselves. *)
 fun distinct_thms theorems =
-  let
-    fun add (theorem, entry as (seen, kept)) =
-      let
-        val conclusion = Thm.concl theorem
-      in
-        if Termtab.defined seen conclusion then entry
-        else (Termtab.insert_set conclusion seen, theorem :: kept)
-      end
-    val (_, kept) = List.foldl add (Termtab.empty, []) theorems
-  in
-    List.rev kept
-  end
+  linarithData.distinct_by Term.compare Thm.concl theorems
 
 fun compute_split_rules extra =
   let
@@ -570,7 +574,10 @@ fun split_on_demand function config split_tac =
         val (processed', facts) =
           augmentation function limit processed assumptions
       in
-        if null facts then core function hint config goal
+        (* decide has already run the refutation on this goal and been
+           told NONE, and augmentation has nothing to add, so the leaf
+           is exhausted: report it rather than searching it again. *)
+        if null facts then exhausted function hint goal
         else if augmentations >= limit then limit_exceeded function limit
         else
           Tactical.THEN
@@ -599,10 +606,8 @@ val default_config = linarithData.default_config
 fun CFG_LINARITH_TAC config arguments =
   let
     val function = "CFG_LINARITH_TAC"
-    val (reversed_facts, reversed_splits) =
+    val (argument_facts, argument_splits) =
       full_arguments function arguments
-    val argument_facts = List.rev reversed_facts
-    val argument_splits = List.rev reversed_splits
   in
     fn goal =>
       Tactical.THEN
@@ -616,8 +621,10 @@ fun CFG_LINARITH_TAC config arguments =
              Tactical.THEN
                (Tactic.CCONTR_TAC,
                 Tactical.THEN
-                  (filter_relevant,
-                   search (unregistered_hint conclusion))) inner
+                  (Tactical.TRY opposite_tac,
+                   Tactical.THEN
+                     (filter_relevant,
+                      search (unregistered_hint conclusion)))) inner
          end) goal
   end
 
@@ -686,23 +693,40 @@ fun context_forward theorems conclusion =
     Lib.rev_itlist PROVE_HYP theorems theorem
   end
 
+(* What the result cache is keyed on, and the test CTXT_LINARITH opens
+   with.  A doubly negated relation is admitted because it is the
+   second rung of the ladder below asked about a negated one: ~~(x <= y)
+   decomposes nowhere itself, while the question it asks -- is x <= y
+   provable? -- is one the procedure answers. *)
+fun cache_check tm =
+  same_type (Term.type_of tm) Type.bool andalso
+  (linarithDecomp.is_relevant tm orelse
+   Term.aconv tm boolSyntax.F orelse
+   (case Lib.total boolSyntax.dest_neg tm of
+        SOME body => linarithDecomp.is_relevant body
+      | NONE => false))
+
+(* The cached procedure answers one question, "is tm provable from the
+   context?", rather than climbing the T/F ladder itself.  The ladder is
+   climbed a rung at a time by CACHED_LINARITH below, each rung its own
+   cache question, and that is what lets the solver ask the first rung
+   alone: a side-condition solver has no use for a disproof, and asking
+   for one here spent a whole second refutation whose only possible
+   products were a failure and a |- tm = F that EQT_ELIM could only turn
+   into an error.
+
+   Splitting the rungs is also what keeps the cache sound under that
+   asymmetry.  RCACHE records failures as well as successes, so a rung
+   the solver ran and lost is recorded against that rung's own term; the
+   ladder's second rung is a different term and so a different key, and
+   is never answered out of the first rung's recorded failure. *)
 fun CTXT_LINARITH theorems tm =
-  if not (same_type (Term.type_of tm) Type.bool) orelse
-     (not (linarithDecomp.is_relevant tm) andalso
-      not (Term.aconv tm boolSyntax.F))
-  then raise ERR "CTXT_LINARITH" "not applicable"
+  if not (cache_check tm) then
+    raise ERR "CTXT_LINARITH" "not applicable"
   else
-    let
-      fun prove goal = context_forward theorems goal
-    in
-      (* F is the contradictory-context case: nothing disproves it, so
-         the second rung of the ladder would only spend a search. *)
-      if Term.aconv tm boolSyntax.F then
-        case attempt prove tm of
-            SOME theorem => EQT_INTRO theorem
-          | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm)
-      else decide "CTXT_LINARITH" prove tm
-    end
+    case attempt (context_forward theorems) tm of
+        SOME theorem => EQT_INTRO theorem
+      | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm)
 
 (* The atoms in order of first occurrence, the bound variables aside.
    Both the set already collected and the binders in scope are keyed
@@ -744,10 +768,6 @@ fun linarith_vars tm =
     List.rev (#2 (recurse Termtab.empty (Termtab.empty, []) tm))
   end
 
-fun cache_check tm =
-  same_type (Term.type_of tm) Type.bool andalso
-  (linarithDecomp.is_relevant tm orelse Term.aconv tm boolSyntax.F)
-
 val (unguarded_cached_linarith, linarith_cache) =
   Cache.RCACHE {capacity = 2000, per_key_cap = 50}
     (linarith_vars, cache_check, CTXT_LINARITH)
@@ -771,7 +791,7 @@ fun clear_linarith_caches () = Cache.clear_cache linarith_cache
 val discard_stale_results =
   linarithData.memo (fn () => clear_linarith_caches ())
 
-fun CACHED_LINARITH context tm =
+fun cached_prove context tm =
   (discard_stale_results (); unguarded_cached_linarith context tm)
 
 fun contains_forall sense tm =
@@ -799,29 +819,6 @@ fun admissible theorem =
     linarithDecomp.is_relevant conclusion
   end
 
-(* A memo for a derivation whose source is not the registries, and so
-   not the generation counter the memos above are keyed on: the caller
-   reads the source for itself and supplies the equality on it, since a
-   table of theorems is no equality type.  As there, a comparison that
-   answers "moved" when it has not costs a recomputation and nothing
-   else, and the cell needs no more synchronization than that. *)
-fun memo_by same compute =
-  let
-    val cache = ref NONE
-    fun recompute key =
-      let
-        val value = compute key
-      in
-        cache := SOME (key, value); value
-      end
-  in
-    fn key =>
-      case !cache of
-          SOME (recorded, value) =>
-            if same recorded key then value else recompute key
-        | NONE => recompute key
-  end
-
 (* The [arith] table split into literals, and each literal assumed.
    Both are a pure function of the table, so they are derived once per
    state of it rather than once per term -- the trade the carrier
@@ -833,7 +830,9 @@ fun memo_by same compute =
    The table's own theorems are the key, compared by pointer: the table
    is a value behind an Sref, so an entry stays the same object until
    something replaces it, and a table rebuilt into equal but fresh
-   theorems recomputes rather than answering out of the old one.
+   theorems recomputes rather than answering out of the old one.  That
+   is a key the caller brings and no equality type, so this is
+   keyed_memo rather than one of the generation memos above.
 
    Assuming the table is also what tells the result cache that the
    table has moved -- a fact of it is a hypothesis of the context, and
@@ -841,7 +840,7 @@ fun memo_by same compute =
    track the table exactly, which is what a key that is the facts
    themselves does. *)
 val arith_envelope =
-  memo_by (Lib.list_eq (Lib.curry Portable.pointer_eq))
+  linarithData.keyed_memo (Lib.list_eq (Lib.curry Portable.pointer_eq))
     (fn facts =>
       let
         val literals = List.concat (map CONJUNCTS facts)
@@ -859,15 +858,31 @@ val arith_envelope =
    first is what keeps the reducer from carrying the [arith] context
    around every boolean subterm the arithmetic has no row for. *)
 fun cached_with_arith context tm =
-  if not (cache_check tm) then CACHED_LINARITH context tm
+  if not (cache_check tm) then cached_prove context tm
   else
     let
       val (facts, assumed) =
         arith_envelope (linarithData.arith_facts ())
-      val theorem = CACHED_LINARITH (context @ assumed) tm
+      val theorem = cached_prove (context @ assumed) tm
     in
       Lib.rev_itlist PROVE_HYP facts theorem
     end
+
+(* The ladder of decide, climbed with a cache question per rung: a
+   conversion must answer T or F, so a term the first rung leaves
+   unproved is offered negated before the failure is reported.  F is the
+   contradictory-context case and needs no second rung, and gets none:
+   ~F is a term cache_check declines, so the rung is refused before any
+   search is spent on it.  The failure reported is the first rung's, so
+   that the hint names the term the caller asked about. *)
+fun CACHED_LINARITH context tm =
+  case attempt (cached_with_arith context) tm of
+      SOME equation => equation
+    | NONE =>
+        (case attempt (cached_with_arith context)
+                (boolSyntax.mk_neg tm) of
+             SOME equation => EQF_INTRO (EQT_ELIM equation)
+           | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm))
 
 val LINARITH_REDUCER =
   let
@@ -886,7 +901,7 @@ val LINARITH_REDUCER =
       {name = SOME "LINARITH_DP",
        addcontext = addcontext,
        apply = fn args =>
-         cached_with_arith (get_context (#context args)),
+         CACHED_LINARITH (get_context (#context args)),
        initial = CTXT []}
   end
 
@@ -897,11 +912,26 @@ val LINARITH_ss =
         convs = [], rewrs = [], congs = [], filter = NONE,
         ac = [], dprocs = [LINARITH_REDUCER]}]
 
+(* Whether a context could refute F at all.  Every row the procedure
+   builds comes from a premise it can decompose, and the nonnegativity
+   rows come from the atoms of those premises, so a context with no
+   arithmetic in it yields no rows, and no rows refute nothing.  The
+   test is shell_relevant, the one the search itself filters assumptions
+   by, applied through the connectives a premise is atomized along: it
+   answers yes to strictly more than the procedure can use -- any
+   boolean equation, any term with a subterm at a registered type -- so
+   what it declines is declined for cause.  The [arith] table is part of
+   the context cached_with_arith asks about, so it is asked about here
+   too. *)
+fun refutable_context theorems =
+  List.exists (shell_relevant o Thm.concl) theorems
+
 (* Mirrors Isabelle's solver setup at lin_arith.ML:949.  Arithmetic side
    conditions share the reducer's cache; cached_with_arith is a
    conversion, so EQT_ELIM turns its |- tm = T into the |- tm a solver
-   must return, and its HOL_ERR on a |- tm = F correctly reports the
-   refuted condition as undischarged.
+   must return, and its HOL_ERR reports an undischarged condition.  Only
+   the provability of the condition is asked: a solver has no use for
+   the |- tm = F the reducer's second rung would go looking for.
 
    A condition the guard rejects is one the arithmetic has no row for
    -- MEM x l, P y, an equation at an unregistered type -- and the
@@ -911,15 +941,18 @@ val LINARITH_ss =
    context, which is what asking for F and applying CONTR says, and
    asking for F asks through the cache, since F is the other term the
    guard admits.  Traverse offers the solver every side condition of
-   every conditional rewrite, so the alternative is a full refutation
-   run, always failing and never recorded, per non-arithmetic one. *)
+   every conditional rewrite, so that question is worth asking only of a
+   context that could answer it. *)
 val linarith_solver : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
      if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
-     else
+     else if refutable_context context_thms orelse
+             refutable_context (linarithData.arith_facts ())
+     then
        CONTR tm
-         (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))}
+         (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
+     else raise ERR "lin_arith" "no arithmetic in the context"}
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in

@@ -1,11 +1,9 @@
 open HolKernel testutils
 
-fun test (name, check) =
-  (tprint name;
-   if check () then OK () else die "failed")
-
-fun residual tactic goal =
-  #1 (Tactical.VALID tactic goal)
+(* check and residual come from linarithCorpus, which states the
+   assertion helpers once for the suites that reach linear arithmetic;
+   with_arith_fact below is from there too. *)
+open linarithCorpus
 
 fun rewrite_rhs ss tm =
   snd
@@ -13,14 +11,14 @@ fun rewrite_rhs ss tm =
       (concl (Conv.QCONV (simpLib.SIMP_CONV ss []) tm)))
 
 val _ =
-  test
+  check
     ("aesop_simp settype and attribute are registered without collision",
      fn () =>
        List.exists (equal "aesop_simp") (ThmSetData.all_set_types ()) andalso
        ThmAttribute.is_attribute "aesop_simp")
 
 val _ =
-  test
+  check
     ("aesop trace is registered at levels one through three",
      fn () =>
        List.exists
@@ -29,7 +27,7 @@ val _ =
          (Feedback.traces ()))
 
 val _ =
-  test
+  check
     ("aesop simpset fixes conditional-rewrite depth at forty",
      fn () =>
        #cond_depth
@@ -37,7 +35,7 @@ val _ =
        SOME 40)
 
 val _ =
-  test
+  check
     ("aesop simpset uses the clasimp safe solver stack",
      fn () =>
        null
@@ -68,7 +66,7 @@ val derived_restored =
   rewrite_rhs (aesopData.aesop_ss ()) derived_lhs
 
 val _ =
-  test
+  check
     ("aesop simpset cache derives from srw_ss updates",
      fn () =>
        aconv derived_before derived_lhs andalso
@@ -89,14 +87,14 @@ val attribute_after =
   rewrite_rhs (aesopData.aesop_ss ()) attribute_lhs
 
 val _ =
-  test
+  check
     ("aesop_simp additions mark the derived simpset cache stale",
      fn () =>
        aconv attribute_before attribute_lhs andalso
        aconv attribute_after attribute_rhs)
 
 val _ =
-  test
+  check
     ("aesop simpset leaves conditional splitting to safe rules",
      fn () =>
        let
@@ -133,7 +131,7 @@ fun engine_step_succeeds rule goal =
     | _ => false
 
 val _ =
-  test
+  check
     ("aesop closers are safe and ordered assumption before contradiction",
      fn () =>
        let
@@ -184,7 +182,7 @@ val assembled =
      qvars = HOLset.empty Term.compare, simp_args = []}
 
 val _ =
-  test
+  check
     ("aesop claset assembly defaults unsafe rules to fifty percent",
      fn () =>
        case #unsafe assembled of
@@ -217,7 +215,7 @@ val merged_unsafe_order =
     ()
 
 val _ =
-  test
+  check
     ("aesop unsafe order merges tactic rules by declared percentage",
      fn () =>
        rule_names merged_unsafe_order =
@@ -225,7 +223,7 @@ val _ =
           "tactic_fifty"])
 
 val _ =
-  test
+  check
     ("aesop safe-order scaffold locks closers safe0 and safep slots",
      fn () =>
        let
@@ -267,7 +265,7 @@ val elim_dest_rules =
      qvars = HOLset.empty Term.compare, simp_args = []}
 
 val _ =
-  test
+  check
     ("aesop assembly uses plain elim and make-elim dest without variants",
      fn () =>
        let
@@ -302,7 +300,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop apply builder makes one engine step with its supplied phase",
      fn () =>
        let
@@ -318,7 +316,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop constructors builder is multi-step and unsafe by default",
      fn () =>
        let
@@ -342,7 +340,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop simp builder is the built-in penalty-zero rendered rule",
      fn () =>
        let
@@ -390,7 +388,7 @@ val reverse_forward_theorem =
       (CONJ (ASSUME forward_q) (ASSUME forward_p)))
 
 val _ =
-  test
+  check
     ("aesop forward is all-immediate and retains matched assumptions",
      fn () =>
        let
@@ -416,7 +414,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop forward preserves a conjunctive first premise",
      fn () =>
        let
@@ -440,7 +438,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop forward keeps a non-immediate suffix in the new hypothesis",
      fn () =>
        let
@@ -469,7 +467,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop forward records a replayable non-consuming transition",
      fn () =>
        let
@@ -500,7 +498,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop forward duplicate check instantiates before alpha comparison",
      fn () =>
        let
@@ -530,7 +528,7 @@ val forward_assembled =
      qvars = HOLset.empty Term.compare, simp_args = []}
 
 val _ =
-  test
+  check
     ("aesop claset assembly puts forward declarations in their phases",
      fn () =>
        let val safe = #safe forward_assembled
@@ -547,7 +545,7 @@ val cases_theorem =
     (DISCH forward_q (ASSUME forward_q))
 
 val _ =
-  test
+  check
     ("aesop cases consumes its major assumption and honours patterns",
      fn () =>
        let
@@ -571,7 +569,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop TypeBase cases builder constructs a changing rendered rule",
      fn () =>
        let
@@ -584,7 +582,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesop tactic builder rejects no-op results and applies indexes",
      fn () =>
        let
@@ -645,7 +643,7 @@ val registered_after =
   length (aesopRule.registered_tactic_rules ())
 
 val _ =
-  test
+  check
     ("aesop tactic registry retains rules and applies its index",
      fn () =>
        registered_during = registered_before + 1 andalso
@@ -660,7 +658,7 @@ val _ =
            (#unsafe registered_blocked)))
 
 val _ =
-  test
+  check
     ("aesop scoped registration unwinds on return and on exception",
      fn () =>
        let
@@ -690,7 +688,7 @@ val split_assumption_goal =
   (#2 split_goal :: [], forward_target)
 
 val _ =
-  test
+  check
     ("aesop split builders change conclusions and assumptions",
      fn () =>
        rendered_succeeds (#conclusion split_pair) split_goal andalso
@@ -702,7 +700,7 @@ val _ =
          split_assumption_goal)
 
 val _ =
-  test
+  check
     ("aesop split builders occupy conclusion before assumption slots",
      fn () =>
        let
@@ -826,7 +824,7 @@ val norm_restart_outcome =
     norm_restart_root norm_restart_tree0
 
 val _ =
-  test
+  check
     ("aesop norm orders penalties and restarts after every success",
      fn () =>
        case norm_complete norm_restart_outcome of
@@ -857,7 +855,7 @@ val norm_simp_outcome =
     norm_simp_root norm_simp_tree0
 
 val _ =
-  test
+  check
     ("aesop norm runs a negative user rule before penalty-zero simp",
      fn () =>
        case norm_complete norm_simp_outcome of
@@ -874,7 +872,7 @@ val _ =
          | NONE => false)
 
 val _ =
-  test
+  check
     ("aesop norm built-ins have their documented penalty-zero order",
      fn () =>
        rule_names (aesopRule.norm_builtins []) =
@@ -896,7 +894,7 @@ val norm_declaration_rules =
      qvars = HOLset.empty Term.compare, simp_args = []}
 
 val _ =
-  test
+  check
     ("aesop norm declarations are Match-mode apply rules with penalties",
      fn () =>
        case
@@ -935,7 +933,7 @@ val norm_builtin_outcome =
     norm_builtin_root norm_builtin_tree0
 
 val _ =
-  test
+  check
     ("aesop norm introduces assumptions and universals before simp",
      fn () =>
        case norm_complete norm_builtin_outcome of
@@ -966,7 +964,7 @@ val norm_subst_outcome =
     norm_subst_root norm_subst_tree0
 
 val _ =
-  test
+  check
     ("aesop norm hypothesis substitution eliminates variables",
      fn () =>
        case norm_complete norm_subst_outcome of
@@ -1009,7 +1007,7 @@ val (norm_no_asms_root, norm_no_asms_outcome) =
   run_simp_controls [markerLib.NoAsms]
 
 val _ =
-  test
+  check
     ("aesop norm simp uses assumptions unless NoAsms disables them",
      fn () =>
        case
@@ -1043,7 +1041,7 @@ val branching_norm_outcome =
     branching_norm_root branching_norm_tree0
 
 val _ =
-  test
+  check
     ("aesop norm dynamically rejects applications with two subgoals",
      fn () =>
        case norm_complete branching_norm_outcome of
@@ -1072,7 +1070,7 @@ val alternative_norm_outcome =
     alternative_norm_root alternative_norm_tree0
 
 val _ =
-  test
+  check
     ("aesop norm dynamically rejects multiple application alternatives",
      fn () =>
        case norm_complete alternative_norm_outcome of
@@ -1101,7 +1099,7 @@ val binding_norm_outcome =
     binding_norm_root binding_norm_tree0
 
 val _ =
-  test
+  check
     ("aesop norm dynamically rejects metavariable-binding applications",
      fn () =>
        case norm_complete binding_norm_outcome of
@@ -1130,7 +1128,7 @@ val looping_norm_outcome =
     looping_norm_root looping_norm_tree0
 
 val _ =
-  test
+  check
     ("aesop norm iteration bound is clean and installs no partial chain",
      fn () =>
        case looping_norm_outcome of
@@ -1149,7 +1147,7 @@ fun near expected actual =
   Real.abs (expected - actual) < 0.000000001
 
 val _ =
-  test
+  check
     ("aesop tree priorities multiply in the log domain",
      fn () =>
        let
@@ -1179,7 +1177,7 @@ val (fifo_second, _) =
   pop_expected fifo_tree2
 
 val _ =
-  test
+  check
     ("aesop tree queue uses FIFO order for equal priorities",
      fn () =>
        #goals fifo_install = [fifo_first, fifo_second] andalso
@@ -1203,7 +1201,7 @@ val (priority_first, _) =
   pop_expected (#tree priority_high)
 
 val _ =
-  test
+  check
     ("aesop tree queue pops higher log priorities first",
      fn () => #goals priority_high = [priority_first])
 
@@ -1221,7 +1219,7 @@ val proved_rapp =
   #rapp proved_install
 
 val _ =
-  test
+  check
     ("aesop tree proved states wait for every independent cluster",
      fn () =>
        #state (aesopTree.goal proved_tree2 proved_left) =
@@ -1235,7 +1233,7 @@ val proved_tree3 =
   close_tree_goal proved_tree2 proved_right
 
 val _ =
-  test
+  check
     ("aesop tree proved states cascade from clusters to the root",
      fn () =>
        #state (aesopTree.rapp proved_tree3 proved_rapp) =
@@ -1257,7 +1255,7 @@ val stuck_rapp =
   #rapp stuck_install
 
 val _ =
-  test
+  check
     ("aesop tree rapps stick when any child cluster sticks",
      fn () =>
        #state (aesopTree.goal stuck_tree2 stuck_left) =
@@ -1271,7 +1269,7 @@ val stuck_tree3 =
   aesopTree.exhaust_goal stuck_root stuck_tree2
 
 val _ =
-  test
+  check
     ("aesop tree stuck states cascade and make descendants irrelevant",
      fn () =>
        #state (aesopTree.goal stuck_tree3 stuck_root) =
@@ -1293,7 +1291,7 @@ val completion_tree1 =
   |> aesopTree.set_safe_done completion_root true
 
 val _ =
-  test
+  check
     ("aesop goals stick only after every search phase is exhausted",
      fn () =>
        #state (aesopTree.goal completion_tree1 completion_root) =
@@ -1336,7 +1334,7 @@ val [cluster_id1, cluster_id2] =
     (#rapp cluster_install))
 
 val _ =
-  test
+  check
     ("aesop tree clusters close transitive metavariable overlap",
      fn () =>
        #goals (aesopTree.cluster (#tree cluster_install) cluster_id1) =
@@ -1365,7 +1363,7 @@ val coupled_pop =
   aesopTree.pop_goal coupled_tree2
 
 val _ =
-  test
+  check
     ("aesop proof lazily removes every kind of irrelevant queued node",
      fn () =>
        #state (aesopTree.goal coupled_tree2 coupled_root) =
@@ -1396,7 +1394,7 @@ val coupled_stuck_tree3 =
   aesopTree.exhaust_goal coupled_stuck_right coupled_stuck_tree2
 
 val _ =
-  test
+  check
     ("aesop clusters stick only after every coupled goal sticks",
      fn () =>
        #state
@@ -1430,7 +1428,7 @@ val dependency_deps =
   aesopTree.dependencies_of dependency_store6 dependency_goal
 
 val _ =
-  test
+  check
     ("aesop goal dependencies follow term and type binding residues",
      fn () =>
        HOLset.equal
@@ -1483,7 +1481,7 @@ val bookkeeping_rapp =
     (#rapp bookkeeping_install)
 
 val _ =
-  test
+  check
     ("aesop rapps cache created records and parent-to-child assignments",
      fn () =>
        HOLset.equal
@@ -1551,7 +1549,7 @@ val copied_sibling_node =
   aesopTree.goal (#tree copy_assigned) copied_sibling
 
 val _ =
-  test
+  check
     ("aesop copying instantiates coupled siblings without their subtrees",
      fn () =>
        #copy_of copied_sibling_node = SOME copy_sibling andalso
@@ -1611,7 +1609,7 @@ val [transitive_copy1] =
   #goals transitive_second
 
 val _ =
-  test
+  check
     ("aesop copying follows transitive G1-G2-G3 coupling",
      fn () =>
        #copy_of
@@ -1672,7 +1670,7 @@ val [duplicate_only_copy] =
   #goals duplicate_second
 
 val _ =
-  test
+  check
     ("aesop copying suppresses duplicate copies of one original",
      fn () =>
        #copy_of
@@ -1734,7 +1732,7 @@ val dropped_kernel_proof =
   SPEC (boolSyntax.mk_arb Type.bool) (ASSUME dropped_all)
 
 val _ =
-  test
+  check
     ("aesop dropped metas copy related goals without synthesis subgoals",
      fn () =>
        #copy_of
@@ -1789,7 +1787,7 @@ val search_commit_root =
   aesopTree.root search_commit_tree
 
 val _ =
-  test
+  check
     ("aesop safe search uses Match mode and commits the first rule",
      fn () =>
        case aesopTree.child_rapps search_commit_tree search_commit_root of
@@ -1845,7 +1843,7 @@ val search_multi_root =
   aesopTree.root search_multi_tree
 
 val _ =
-  test
+  check
     ("aesop safe search dynamically rejects multi-rule alternatives",
      fn () =>
        case aesopTree.child_rapps search_multi_tree search_multi_root of
@@ -1873,7 +1871,7 @@ val search_postpone_root =
   aesopTree.root search_postpone_tree
 
 val _ =
-  test
+  check
     ("aesop safe search postpones assumption close that assigns a meta",
      fn () =>
        let val root = aesopTree.goal search_postpone_tree
@@ -1922,7 +1920,7 @@ val search_drop_root =
   aesopTree.root search_drop_tree
 
 val _ =
-  test
+  check
     ("aesop installed safe result drops earlier postponed results",
      fn () =>
        case aesopTree.child_rapps search_drop_tree search_drop_root of
@@ -1961,7 +1959,7 @@ val [search_forward_child] =
         (aesopTree.rapp search_forward_tree search_forward_rapp)))
 
 val _ =
-  test
+  check
     ("aesop safe search prevents repeated forward hypotheses",
      fn () =>
        length (aesopTree.rapps search_forward_tree) = 1 andalso
@@ -2009,7 +2007,7 @@ val search_wide_tree =
    leaves the others for the child goal.  A determinism requirement would
    silence such a rule instead. *)
 val _ =
-  test
+  check
     ("aesop safe search installs every forward conclusion in one branch",
      fn () =>
        length (aesopTree.rapps search_wide_tree) = 2 andalso
@@ -2050,7 +2048,7 @@ val search_frontier_tree =
         (tree_cgoal [] [] search_frontier_goal) []))
 
 val _ =
-  test
+  check
     ("aesop safe saturation returns the exact normalised frontier",
      fn () =>
        case aesopSearch.safe_frontier search_frontier_tree of
@@ -2060,7 +2058,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("aesop search defaults bound rapps and depth",
      fn () =>
        aesopSearch.default_config =
@@ -2076,7 +2074,7 @@ val search_unsafe_alternative_outcome =
       (tree_cgoal [] [] boolSyntax.T) [])
 
 val _ =
-  test
+  check
     ("aesop unsafe multi-rules install every alternative as sibling rapps",
      fn () =>
        case search_unsafe_alternative_outcome of
@@ -2109,7 +2107,7 @@ val search_reoffer_outcome =
       (tree_cgoal [] [boolSyntax.T] search_postpone_meta) [])
 
 val _ =
-  test
+  check
     ("aesop re-offers postponed safe results as ninety-percent rapps",
      fn () =>
        case search_reoffer_outcome of
@@ -2172,7 +2170,7 @@ fun rapp_named name ({rule, ...} : aesopTree.rapp) =
   rule = name
 
 val _ =
-  test
+  check
     ("aesop proves a transitivity chain through both witness choices",
      fn () =>
        case transitivity_outcome of
@@ -2217,7 +2215,7 @@ fun kernel_replays tree (goal as (_, target)) =
     | _ => false
 
 val _ =
-  test
+  check
     ("aesop extracts copied transitivity branches positionally",
      fn () =>
        case transitivity_outcome of
@@ -2239,7 +2237,7 @@ val replay_norm_outcome =
       (tree_cgoal [] [] replay_norm_target) [])
 
 val _ =
-  test
+  check
     ("aesop replays each norm chain before its winning rapp",
      fn () =>
        case replay_norm_outcome of
@@ -2263,7 +2261,7 @@ val replay_wrapper_outcome =
       (tree_cgoal [] [] replay_wrapper_target) [])
 
 val _ =
-  test
+  check
     ("aesop replays recorded rendered-tactic actions exactly",
      fn () =>
        case replay_wrapper_outcome of
@@ -2332,7 +2330,7 @@ val replay_dropped_outcome =
         replay_dropped_exists) [])
 
 val _ =
-  test
+  check
     ("aesop grounds a dropped witness to ARB and verifies it kernel-side",
      fn () =>
        case replay_dropped_outcome of
@@ -2412,7 +2410,7 @@ val corrupt_tree =
       [replay_wrapper_record corrupt_close_result])
 
 val _ =
-  test
+  check
     ("aesop treats conflicting winning stores as a hard replay error",
      fn () =>
        ((ignore (aesopSearch.REPLAY_TAC corrupt_tree corrupt_goal);
@@ -2437,7 +2435,7 @@ val interrupt_tree =
 (* The engine-bug diagnostic is a catch-all, so it has to make one
    exception for the interrupt that stopped the user's proof. *)
 val _ =
-  test
+  check
     ("aesop replay diagnostics never reinterpret an interrupt",
      fn () =>
        ((ignore (aesopSearch.REPLAY_TAC interrupt_tree interrupt_goal);
@@ -2457,7 +2455,7 @@ val search_rapp_limit_outcome =
       (tree_cgoal [] [] search_limit_goal) [])
 
 val _ =
-  test
+  check
     ("aesop max_rapps stops cleanly on the failure path",
      fn () =>
        case search_rapp_limit_outcome of
@@ -2495,7 +2493,7 @@ val search_skip_outcome =
    prefix of them would be order-dependent incompleteness, and failing
    outright loses every other rule. *)
 val _ =
-  test
+  check
     ("aesop skips over-budget unsafe rules and keeps searching",
      fn () =>
        case search_skip_outcome of
@@ -2517,7 +2515,7 @@ val search_safe_rapp_limit_outcome =
       (tree_cgoal [] [] search_limit_goal) [])
 
 val _ =
-  test
+  check
     ("aesop max_rapps prevents committed safe applications",
      fn () =>
        case search_safe_rapp_limit_outcome of
@@ -2542,7 +2540,7 @@ val search_depth_limit_outcome =
       (tree_cgoal [] [] search_depth_target) [])
 
 val _ =
-  test
+  check
     ("aesop max_depth exhausts only the offending branch and fails cleanly",
      fn () =>
        case search_depth_limit_outcome of
@@ -2574,7 +2572,7 @@ fun contains_target target =
     (fn (_, ({w, ...} : clasetGoal.cgoal)) => aconv w target)
 
 val _ =
-  test
+  check
     ("aesop failure completes and reports the exhaustive safe goals",
      fn () =>
        case search_safe_goal_outcome of
@@ -2591,7 +2589,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("aesop failure defers its safe-goal report until applied",
      fn () =>
        case search_safe_goal_outcome of
@@ -2610,7 +2608,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("aesop trace levels report outcomes expansions and full nodes",
      fn () =>
        let
@@ -2648,7 +2646,7 @@ val _ =
        end)
 
 val _ =
-  test
+  check
     ("aesopLib exposes the search defaults and TypeBase cases builder",
      fn () =>
        aesopLib.default_config =
@@ -2662,7 +2660,7 @@ val surface_q = Term.mk_var ("aesop_surface_q", Type.bool)
 val surface_r = Term.mk_var ("aesop_surface_r", Type.bool)
 
 val _ =
-  test
+  check
     ("AESOP_TAC has close-or-fail semantics",
      fn () =>
        ((ignore (aesopLib.AESOP_TAC [] ([], surface_p)); false)
@@ -2680,7 +2678,7 @@ val surface_inserted =
     ([surface_q], surface_p)
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC counts fact insertion as progress and retains facts",
      fn () =>
        case surface_inserted of
@@ -2695,7 +2693,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC fails when insertion and safe search change nothing",
      fn () =>
        ((ignore (aesopLib.AESOP_SAFE_TAC [] ([], surface_p)); false)
@@ -2712,7 +2710,7 @@ val surface_safe_residue =
     ([], boolSyntax.mk_conj (surface_p, surface_q))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC consumes claset markers and returns exact residues",
      fn () =>
        case surface_safe_residue of
@@ -2730,7 +2728,7 @@ val surface_norm_residue =
     ([], boolSyntax.mk_disj (surface_p, surface_q))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC consumes Norm markers through the norm builder",
      fn () =>
        case surface_norm_residue of
@@ -2742,7 +2740,7 @@ val surface_implication =
 val surface_forward_rule = ASSUME surface_implication
 
 val _ =
-  test
+  check
     ("AESOP_TAC consumes unsafe Forward markers",
      fn () =>
        null
@@ -2753,7 +2751,7 @@ val _ =
            ([surface_p, surface_implication], surface_q)))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC consumes SForward markers",
      fn () =>
        null
@@ -2772,7 +2770,7 @@ val surface_rewrite =
   ASSUME (boolSyntax.mk_eq (surface_application, surface_p))
 
 val _ =
-  test
+  check
     ("AESOP_TAC installs Simp arguments in the invocation simpset",
      fn () =>
        null
@@ -2791,7 +2789,7 @@ val surface_iff =
   ASSUME (boolSyntax.mk_eq (surface_iff_application, surface_p))
 
 val _ =
-  test
+  check
     ("AESOP_TAC installs Iff arguments as rules and rewrites",
      fn () =>
        null
@@ -2821,7 +2819,7 @@ val surface_without_asms =
   handle HOL_ERR _ => NONE
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC forwards generic simplifier controls",
      fn () =>
        null surface_with_asms andalso
@@ -2835,7 +2833,7 @@ val surface_explicit_simpset =
     (simpLib.empty_ss, simpLib.rewrites [surface_rewrite])
 
 val _ =
-  test
+  check
     ("CS_AESOP_TAC uses its explicit claset and simpset",
      fn () =>
        null
@@ -2859,7 +2857,7 @@ val surface_explicit_residue =
     ([], boolSyntax.mk_conj (surface_p, surface_q))
 
 val _ =
-  test
+  check
     ("CS_AESOP_SAFE_TAC saturates its explicit safe context",
      fn () =>
        case surface_explicit_residue of
@@ -2868,7 +2866,7 @@ val _ =
          | _ => false)
 
 val _ =
-  test
+  check
     ("aesop invocation arguments do not leak into the global claset",
      fn () =>
        map (fn (_, (name, _)) => name)
@@ -2902,7 +2900,7 @@ val list_strength_smoke =
 val _ =
   List.app
     (fn (name, proposition) =>
-      test
+      check
         ("AESOP_TAC listTheory strength smoke: " ^ name,
          fn () => aesop_list_closes proposition))
     list_strength_smoke
@@ -2917,7 +2915,7 @@ val pelletier_propositional_smoke =
 val _ =
   List.app
     (fn (number, proposition) =>
-      test
+      check
         ("AESOP_TAC Pelletier " ^ Int.toString number ^
          " propositional smoke",
          fn () => aesop_closes proposition))
@@ -2931,7 +2929,7 @@ val strength_safe_imp_residue =
        (surface_p, boolSyntax.mk_conj (surface_q, surface_r)))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC returns the exact implication-conjunction frontier",
      fn () =>
        case strength_safe_imp_residue of
@@ -2948,7 +2946,7 @@ val strength_safe_disj_residue =
     ([], boolSyntax.mk_disj (surface_p, surface_q))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC returns the exact safe disjunction frontier",
      fn () =>
        case strength_safe_disj_residue of
@@ -2981,12 +2979,15 @@ val surface_registry_after =
   length (aesopRule.registered_tactic_rules ())
 
 val _ =
-  test
+  check
     ("augment_aesop wires session-only tactics into public search",
      fn () =>
        null surface_augmented_residue andalso
        !surface_augmented_called)
 
+(* Deliberately not valid_closes: the goals below are also asserted not
+   to close, and AESOP_TAC reports that either by leaving the goal or by
+   failing, so a refusal counts as not closing rather than as an error. *)
 fun closes_goal tactic goal =
   null (residual tactic goal) handle HOL_ERR _ => false
 
@@ -3001,7 +3002,7 @@ val aesop_linarith_goal : Abbrev.goal =
   ([``(x:num) <= y``, ``y <= z``], ``MIN x z = x``)
 
 val _ =
-  test
+  check
     ("AESOP_TAC discharges a linear-arithmetic rewrite condition",
      fn () =>
        closes_goal aesop_linarith_tactic aesop_linarith_goal)
@@ -3010,19 +3011,68 @@ val aesop_arith_fact_goal : Abbrev.goal =
   ([``(x:num) ** 2 <= y``], ``MIN x y = x``)
 
 val _ =
-  test
+  check
     ("AESOP_TAC reads [arith] facts dynamically and leaves the set clean",
      fn () =>
        not
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal) andalso
-       linarithCorpus.with_arith_fact
+       with_arith_fact
          (fn () =>
            closes_goal aesop_linarith_tactic
              aesop_arith_fact_goal) andalso
        not
          (closes_goal aesop_linarith_tactic
             aesop_arith_fact_goal))
+
+(* The aesop simpset is derived from srw_ss, so an unsafe solver
+   installed into the shared base -- an augment_srw_ss of a solver_ss
+   fragment -- would be carried along by the derivation, and reach the
+   normalisation phase ahead of linarith: traversedata_for_ss hands the
+   unsafe solvers to every traversal as its side-condition solvers, and
+   Traverse tries them in order.  The sentinel below records that it was
+   asked and then declines, so that the goal is still discharged by the
+   solver that ought to have had it in the first place and the assertion
+   is about who was asked rather than about who succeeded.
+   with_simpset_updates makes the base change temporary, so nothing of
+   this reaches the tests after it. *)
+val aesop_sentinel_name = "aesop-selftest-srw-sentinel"
+val aesop_sentinel_asked = ref false
+val aesop_sentinel_solver : Traverse.ssolver =
+  {name = aesop_sentinel_name,
+   solve =
+     fn _ => fn _ =>
+       (aesop_sentinel_asked := true;
+        raise mk_HOL_ERR "selftest" aesop_sentinel_name
+          "sentinel solvers decline every side condition")}
+
+fun unsafe_solver_names simpset =
+  map (fn ({name, ...} : Traverse.ssolver) => name)
+    (#solvers (simpLib.traversedata_for_ss simpset))
+
+val aesop_sentinel_names_before =
+  unsafe_solver_names (aesopData.aesop_ss ())
+val (aesop_sentinel_names, aesop_sentinel_closes) =
+  BasicProvers.with_simpset_updates
+    (fn base =>
+      simpLib.++ (base, simpLib.solver_ss aesop_sentinel_solver))
+    (fn () =>
+      (unsafe_solver_names (aesopData.aesop_ss ()),
+       closes_goal aesop_linarith_tactic aesop_linarith_goal))
+    ()
+val aesop_sentinel_names_after =
+  unsafe_solver_names (aesopData.aesop_ss ())
+
+val _ =
+  check
+    ("aesop simpset does not inherit unsafe solvers from srw_ss",
+     fn () =>
+       not (List.exists (equal aesop_sentinel_name)
+         aesop_sentinel_names) andalso
+       List.exists (equal "lin_arith") aesop_sentinel_names andalso
+       not (!aesop_sentinel_asked) andalso
+       aesop_sentinel_closes andalso
+       aesop_sentinel_names_after = aesop_sentinel_names_before)
 
 (* A tactic value is routinely bound before the declarations its goals
    need -- [val TAC = AESOP_TAC []] at the head of a script, then the
@@ -3067,7 +3117,7 @@ val stale_simp_closed =
     ()
 
 val _ =
-  test
+  check
     ("AESOP_TAC reads the aesop simpset where it is applied",
      fn () => stale_simp_closed)
 
@@ -3096,7 +3146,7 @@ val stale_claset_restored =
       (clasetLib.rules_of (clasetLib.the_claset ())))
 
 val _ =
-  test
+  check
     ("AESOP_SAFE_TAC reads the claset where it is applied",
      fn () =>
        stale_claset_restored andalso
@@ -3128,7 +3178,7 @@ val cases_registry_after =
   length (aesopRule.registered_tactic_rules ())
 
 val _ =
-  test
+  check
     ("augment_aesop_rule installs a built cases rule into public search",
      fn () =>
        not cases_without_rule andalso
@@ -3136,7 +3186,7 @@ val _ =
        cases_registry_after = surface_registry_before)
 
 val _ =
-  test
+  check
     ("augment_aesop_rule refuses rules the tactic registry cannot hold",
      fn () =>
        let
@@ -3160,7 +3210,7 @@ val _ =
 (* Every registration in this file is scoped, so nothing a test declared is
    still visible to the goals of any later test. *)
 val _ =
-  test
+  check
     ("aesop selftest registrations leave the session registry empty",
      fn () =>
        surface_registry_before = 0 andalso

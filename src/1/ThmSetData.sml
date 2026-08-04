@@ -20,6 +20,17 @@ fun toKName s =
      | [s1,s2] => {Thy = s1, Name = s2}
      | _ => raise mk_HOL_ERR "ThmSetData" "toKName" ("Malformed name: " ^ s)
 
+(* Tables keyed by [name_toString] see REMOVE deltas carrying whatever
+   string the user wrote, so normalise that to the key spelling.  A name
+   containing "$" is already a key: theory names cannot contain "$", so
+   only the kernel separator puts one there.  A name [toKName] rejects
+   cannot be a key either, and so denotes nothing in the table; return it
+   unchanged rather than raising, because removing an absent key is a
+   no-op everywhere else. *)
+fun toKString s =
+    if String.isSubstring "$" s then s
+    else (name_toString (toKName s) handle HOL_ERR _ => s)
+
 fun lookup_exn {Thy,Name} = DB.fetch Thy Name
 fun mk_add s =
     let val nm = toKName s in ADD(nm, lookup_exn nm) end

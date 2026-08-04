@@ -54,7 +54,10 @@ type cached_simpset = {generation : int, simpset : simpLib.simpset}
    traversedata_for_ss hands them to every traversal whatever the safe
    solvers are, so one installed here runs inside the normalisation phase
    and has to be this module's choice rather than whatever clasimp's list
-   happens to hold.  They remain available only to prove simplifier side
+   happens to hold.  The list is set rather than appended to, so that a
+   solver reaching this simpset through the shared srw_ss base -- an
+   augment_srw_ss of a solver_ss fragment -- cannot run there ahead of the
+   ones named here.  They remain available only to prove simplifier side
    conditions in safe mode.  The derivation itself is not shared either:
    clasimp_ss also carries split_ss, which the aesop simpset deliberately
    leaves to the search. *)
@@ -64,7 +67,7 @@ fun derive_aesop_ss ss _ : cached_simpset =
      ss
      |> simpLib.set_cond_depth 40
      |> simpLib.set_safe_solvers [clasimpLib.safe_solver]
-     |> simpLib.add_unsafe_solver linarithLib.linarith_solver
+     |> simpLib.set_unsafe_solvers [linarithLib.linarith_solver]
      |> (fn ss' =>
           simpLib.++ (ss', simpLib.rewrites (aesop_simp_rewrites ())))}
 

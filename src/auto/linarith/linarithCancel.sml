@@ -80,6 +80,10 @@ fun ac_equality (ops : ac_ops) left right =
       handle HOL_ERR _ => fallback ()
     end
 
+(* cancel_common ops cancel: given the carrier's left-cancellation
+   theorem, remove every summand common to both sides of a relation at
+   once, matching summands up to aconv and one occurrence at a time.
+   Raises UNCHANGED when there is nothing to cancel. *)
 fun cancel_common (ops : ac_ops) cancel tm =
   let
     val operator = Term.rator (Term.rator tm)
@@ -135,8 +139,7 @@ val safe_conv = QCONV o TRY_CONV
    would turn a chain that leaves the term alone into REFL and so lose
    the UNCHANGED an expression_conv is read for. *)
 fun chain_convs [] = ALL_CONV
-  | chain_convs [conv] = conv
-  | chain_convs (conv :: convs) = conv THENC chain_convs convs
+  | chain_convs convs = Lib.end_itlist (curry op THENC) convs
 
 fun mk_expression_conv ty convs =
   let
