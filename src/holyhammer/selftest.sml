@@ -931,11 +931,11 @@ fun test_hhProblemGen () =
        facts = List.tabulate (45, fn index =>
          ("f" ^ Int.toString index,
           Term.mk_comb (function_pred, Term.mk_comb (pxy_f, x))))}
-    val _ = expect "hhProblemGen uses app only for sufficient partial applications"
-      (not (String.isSubstring "app_2E(pxy_2Ef" no_function_variable) andalso
+    val _ = expect "hhProblemGen shares final application arities with helpers"
+      (String.isSubstring "app_2E(pxy_2Ef" no_function_variable andalso
        String.isSubstring "app_2E(pxy_2Ef" with_function_variable)
     val _ = expect "hhProblemGen switches to Min_App_Op at forty-five facts"
-      (occurrences "app_2E(pxy_2Ef" forty_four = 1 andalso
+      (occurrences "app_2E(pxy_2Ef" forty_four = 44 andalso
        occurrences "app_2E(pxy_2Ef" forty_five = 45)
     val _ = expect "hhProblemGen inserts pp for non-FOOL boolean terms"
       (String.isSubstring "pp_2E(app_2E" bool_term andalso
@@ -966,15 +966,20 @@ fun test_hhProblemGen () =
     val app_helpers = with_function_variable
     val pp_helpers = bool_term
     val no_helpers = problem fof "mono_guards" (input (mk_eq (x, x)))
-    val _ = expect "hhProblemGen injects COND helpers iff COND occurs"
+    val _ = expect "hhProblemGen injects all COND helpers iff COND occurs"
       (String.isSubstring "help_2Eif__True" cond_helpers andalso
-       not (String.isSubstring "help_2Eif__True" no_helpers))
+       String.isSubstring "help_2Eif__False" cond_helpers andalso
+       String.isSubstring "help_2Ebool__cases" cond_helpers andalso
+       not (String.isSubstring "help_2Eif__True" no_helpers) andalso
+       not (String.isSubstring "help_2Eif__False" no_helpers))
     val _ = expect "hhProblemGen injects EQ_EXT iff app occurs"
       (String.isSubstring "help_2Eeq__ext" app_helpers andalso
        not (String.isSubstring "help_2Eeq__ext" no_helpers))
     val _ = expect "hhProblemGen injects pp laws iff pp occurs"
       (String.isSubstring "help_2Epp_2Etrue" pp_helpers andalso
-       not (String.isSubstring "help_2Epp_2Etrue" no_helpers))
+       String.isSubstring "help_2Epp_2Efalse" pp_helpers andalso
+       not (String.isSubstring "help_2Epp_2Etrue" no_helpers) andalso
+       not (String.isSubstring "help_2Epp_2Efalse" no_helpers))
     val quantifier_use = Term.mk_var ("quantifier_use", Type.mk_type
       ("fun", [Term.type_of universal, Type.bool]))
     val all_helpers = problem fof "mono_guards"
@@ -983,6 +988,8 @@ fun test_hhProblemGen () =
       (input (Term.mk_comb (quantifier_use, existential)))
     val true_helpers = problem fof "mono_guards"
       (input (Term.mk_comb (use_bool, T)))
+    val false_helpers = problem fof "mono_guards"
+      (input (Term.mk_comb (use_bool, F)))
     fun logical_helper constant =
       let val use = Term.mk_var ("logical_helper",
         Type.mk_type ("fun", [Term.type_of constant, Type.bool])) in
@@ -992,13 +999,15 @@ fun test_hhProblemGen () =
     val disj_helpers = logical_helper disjunction
     val imp_helpers = logical_helper implication
     val _ = expect "hhProblemGen injects proxy laws iff their proxies occur"
-      (String.isSubstring "help_2Epxy_2Enot" pp_helpers andalso
+      (String.isSubstring "help_2Epxy_2Eeq" no_helpers andalso
+       String.isSubstring "help_2Epxy_2Enot" pp_helpers andalso
        String.isSubstring "help_2Epxy_2Econj" conj_helpers andalso
        String.isSubstring "help_2Epxy_2Edisj" disj_helpers andalso
        String.isSubstring "help_2Epxy_2Eimp" imp_helpers andalso
        String.isSubstring "help_2Epxy_2Eall" all_helpers andalso
        String.isSubstring "help_2Epxy_2Eex" ex_helpers andalso
        String.isSubstring "help_2Epxy_2Etrue" true_helpers andalso
+       String.isSubstring "help_2Epxy_2Efalse" false_helpers andalso
        not (String.isSubstring "help_2Epxy_2Eall" no_helpers) andalso
        not (String.isSubstring "help_2Epxy_2Eex" no_helpers))
     val memo = new_export_memo ()
@@ -1065,6 +1074,35 @@ fun test_hhProblemGen () =
           (String.concat (read_lines path)) actual
       end
     val _ = List.app golden_problem golden_specs
+    (* This is export-linked: the fake proof names are the exact escaped
+       identifiers the fixture just emitted, including a mono copy. *)
+    val roundtrip_name = "fixtureTheory.roundtrip"
+    val roundtrip_file = OS.FileSys.tmpName ()
+    val roundtrip_theorem = DB.fetch "bool" "TRUTH"
+    val roundtrip_input = (mk_conj (mk_eq (cond_tm, x), lambda),
+      [(roundtrip_name, roundtrip_theorem),
+       (roundtrip_name, roundtrip_theorem)])
+    val _ = export_pb export_options roundtrip_file roundtrip_input
+    val roundtrip_problem = String.concat (read_lines roundtrip_file)
+    val _ = OS.FileSys.remove roundtrip_file
+    val escaped_roundtrip = aiLib.escape ("thm." ^ roundtrip_name)
+    val escaped_copy = aiLib.escape ("thm2." ^ roundtrip_name)
+    val _ = expect "hhProblemGen export-linked parse-back fixture emits all names"
+      (String.isSubstring escaped_roundtrip roundtrip_problem andalso
+       String.isSubstring escaped_copy roundtrip_problem andalso
+       String.isSubstring "lam_2E" roundtrip_problem andalso
+       String.isSubstring "help_2Eif__True" roundtrip_problem)
+    val _ = expect_equal "hhProblemGen export-linked TSTP round trip"
+      [roundtrip_name]
+      (hhProver.axioms_from_tstp
+        ["fof(" ^ escaped_roundtrip ^ ", axiom, p).",
+         "fof(" ^ escaped_copy ^ ", axiom, p).",
+         "fof(lam_2E0, axiom, p).",
+         "fof(help_2Eif__True, axiom, p).",
+         "fof(ty_2Efixture, axiom, p).",
+         "fof(sy_2Efixture, axiom, p).",
+         "fof(gsy_2Efixture, axiom, p).",
+         "fof(wit_2Efixture, axiom, p)."])
   in
     ()
   end

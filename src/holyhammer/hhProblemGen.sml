@@ -415,6 +415,34 @@ struct
       aiLib.escape name
     else "V_" ^ aiLib.escape name
 
+  fun proxy_type_args head =
+    let
+      val name = raw_symbol head
+      fun domains ty =
+        case dom_rng ty of
+            SOME (domain, range) => domain :: domains range
+          | NONE => []
+      val args = domains (type_of head)
+    in
+      case name of
+          "pxy.eq" => (case args of ty :: _ => [ty] | [] => [])
+        | "pxy.all" =>
+            (case args of ty :: _ =>
+              (case dom_rng ty of SOME (domain, _) => [domain] | NONE => [])
+             | [] => [])
+        | "pxy.ex" =>
+            (case args of ty :: _ =>
+              (case dom_rng ty of SOME (domain, _) => [domain] | NONE => [])
+             | [] => [])
+        | "$ite" => (case args of _ :: ty :: _ => [ty] | _ => [])
+        | _ => []
+    end
+
+  fun type_args_of_head head =
+    if is_const head then const_type_args head
+    else if is_generated_var head then proxy_type_args head
+    else []
+
   fun encoded_symbol encoding head =
     if is_var head andalso not (is_generated_var head) then
       variable_name (raw_symbol head)
@@ -422,7 +450,7 @@ struct
       case encoding of
           hhTypeEnc.Native {poly = true, ...} => aiLib.escape (raw_symbol head)
         | _ =>
-            let val args = const_type_args head in
+            let val args = type_args_of_head head in
               if null args then aiLib.escape (raw_symbol head)
               else aiLib.escape (raw_symbol head ^ "." ^
                 String.concatWith "." (map raw_mangle_type args))
@@ -431,7 +459,7 @@ struct
   fun encode_term encoding (FOHead (head, args)) =
         hhTptpProblem.Tm ((encoded_symbol encoding head,
           (case encoding of
-             hhTypeEnc.Native {poly = true, ...} => map native_type (const_type_args head)
+             hhTypeEnc.Native {poly = true, ...} => map native_type (type_args_of_head head)
            | _ => [])), map (encode_term encoding) args)
     | encode_term encoding (FOApp (left, right)) =
         hhTptpProblem.Tm (("app_2E", []),
@@ -536,16 +564,31 @@ struct
           let val (domains, result) = type_parts range in (domain :: domains, result) end
       | NONE => ([], ty)
 
+  fun generic_proxy_type head =
+    let
+      val alpha = Type.alpha
+      fun arrow left right = Type.mk_type ("fun", [left, right])
+      val predicate = arrow alpha Type.bool
+    in
+      case raw_symbol head of
+          "pxy.eq" => arrow alpha (arrow alpha Type.bool)
+        | "pxy.all" => arrow predicate Type.bool
+        | "pxy.ex" => arrow predicate Type.bool
+        | "$ite" => arrow Type.bool (arrow alpha (arrow alpha alpha))
+        | _ => type_of head
+    end
+
   fun declaration_type encoding head =
     let
-      val (domains, result) = type_parts (type_of head)
+      val full_type = generic_proxy_type head
+      val (domains, result) = type_parts full_type
       val ty = List.foldr (fn (domain, range) =>
         hhTptpProblem.TyFun (type_for encoding domain, range))
         (type_for encoding result) domains
     in
       case encoding of
           hhTypeEnc.Native {poly = true, ...} =>
-            let val vars = Type.type_vars (type_of head) in
+            let val vars = Type.type_vars full_type in
               if null vars then ty else hhTptpProblem.TyPi
                 (map (fn var => "A" ^ aiLib.escape (dest_vartype var)) vars, ty)
             end
@@ -643,70 +686,100 @@ struct
     end
 
   fun helper_tm name args = hhTptpProblem.Tm ((aiLib.escape name, []), args)
-  fun helper_var name = helper_tm name []
   fun helper_atom name args = hhTptpProblem.Atom (helper_tm name args)
-  fun helper_quant vars body = hhTptpProblem.Quant (true,
-    map (fn name => (name, SOME (hhTptpProblem.TyCon ("$i", [])))) vars, body)
   fun helper_line name formula = hhTptpProblem.FormLine
     (aiLib.escape ("help." ^ name), hhTptpProblem.Axiom, formula)
 
-  (* Proxy constants are generated variables, so they have no HOL theorem to
-     fetch.  These small characterizations are AST facts; all ordinary
-     helpers below are nevertheless sent through the complete HOL pipeline. *)
-  fun proxy_helpers heads used_pp =
+  (* Proxy characterizations are HOL terms, not pre-encoded TPTP snippets.
+     Consequently they take precisely the same lambda, monomorphization,
+     proxy, application, and type-encoding route as selected premises. *)
+  fun proxy_helpers heads =
     let
-      fun has name = List.exists (fn head => raw_symbol head = name) heads
-      val x = helper_var "X"
-      val y = helper_var "Y"
-      val p = helper_var "P"
-      val pxyeq = helper_atom "pxy.eq" [x, y]
-      val equal = hhTptpProblem.Conn (hhTptpProblem.Equal,
-        [hhTptpProblem.Atom x, hhTptpProblem.Atom y])
-      val q = helper_var "Q"
-      val pxyall = helper_atom "pxy.all" [p]
-      val pxyex = helper_atom "pxy.ex" [p]
-      val px = helper_atom "P" [x]
-      val pxy_not = helper_atom "pxy.not" [p]
-      val pxy_conj = helper_atom "pxy.conj" [p, q]
-      val pxy_disj = helper_atom "pxy.disj" [p, q]
-      val pxy_imp = helper_atom "pxy.imp" [p, q]
-      val p_atom = hhTptpProblem.Atom p
-      val q_atom = hhTptpProblem.Atom q
-      fun iff left right = hhTptpProblem.Conn (hhTptpProblem.Iff, [left, right])
-      fun negate body = hhTptpProblem.Conn (hhTptpProblem.Not, [body])
-      val true_law = helper_atom "pxy.true" []
-      val false_law = hhTptpProblem.Conn (hhTptpProblem.Not,
-        [helper_atom "pxy.false" []])
-      val pp_true = helper_atom "pp." [helper_tm "pxy.true" []]
-      val pp_false = hhTptpProblem.Conn (hhTptpProblem.Not,
-        [helper_atom "pp." [helper_tm "pxy.false" []]])
+      fun app head args = List.foldl (fn (arg, f) => mk_comb (f, arg)) head args
+      fun all vars body = list_mk_forall (vars, body)
+      fun domains ty = fst (type_parts ty)
+      fun helpers head =
+        let
+          val name = raw_symbol head
+          val args = domains (type_of head)
+          fun var stem ty = mk_var (stem, ty)
+          fun binary make =
+            case args of
+                [ty, _] =>
+                  let
+                    val x = var "HX" ty
+                    val y = var "HY" ty
+                    val proxy = app head [x, y]
+                  in
+                    [make (all [x, y] (mk_imp (proxy, mk_eq (x, y)))),
+                     make (all [x, y] (mk_imp (mk_eq (x, y), proxy)))]
+                  end
+              | _ => []
+          fun proposition make =
+            case args of
+                [_, _] =>
+                  let
+                    val p = var "HP" Type.bool
+                    val q = var "HQ" Type.bool
+                    val rhs = case name of
+                        "pxy.conj" => mk_conj (p, q)
+                      | "pxy.disj" => mk_disj (p, q)
+                      | "pxy.imp" => mk_imp (p, q)
+                      | _ => mk_eq (p, q)
+                  in [make (all [p, q] (mk_eq (app head [p, q], rhs)))] end
+              | _ => []
+        in
+          case name of
+              "pxy.eq" => binary (fn tm => ("help.pxy.eq", tm))
+            | "pxy.not" =>
+                (case args of
+                    [_] => let val p = var "HP" Type.bool in
+                      [("help.pxy.not", all [p]
+                        (mk_eq (app head [p], mk_neg p)))]
+                    end
+                  | _ => [])
+            | "pxy.conj" => proposition (fn tm => ("help.pxy.conj", tm))
+            | "pxy.disj" => proposition (fn tm => ("help.pxy.disj", tm))
+            | "pxy.imp" => proposition (fn tm => ("help.pxy.imp", tm))
+            | "pxy.all" =>
+                (case args of
+                    [pty] =>
+                      (case dom_rng pty of
+                          SOME (xty, _) =>
+                            let val p = var "HP" pty
+                                val x = var "HX" xty
+                            in [("help.pxy.all", all [p, x]
+                              (mk_imp (app head [p], app p [x])))] end
+                        | NONE => [])
+                  | _ => [])
+            | "pxy.ex" =>
+                (case args of
+                    [pty] =>
+                      (case dom_rng pty of
+                          SOME (xty, _) =>
+                            let val p = var "HP" pty
+                                val x = var "HX" xty
+                            in [("help.pxy.ex", all [p, x]
+                              (mk_imp (app p [x], app head [p])))] end
+                        | NONE => [])
+                  | _ => [])
+            | "pxy.true" => [("help.pxy.true", mk_eq (head, T))]
+            | "pxy.false" => [("help.pxy.false", mk_eq (head, F))]
+            | _ => []
+        end
     in
-      (if has "pxy.eq" then
-         [helper_line "pxy.eq.forward" (helper_quant ["X", "Y"]
-            (hhTptpProblem.Conn (hhTptpProblem.Implies, [pxyeq, equal]))),
-          helper_line "pxy.eq.backward" (helper_quant ["X", "Y"]
-            (hhTptpProblem.Conn (hhTptpProblem.Implies, [equal, pxyeq])))]
-       else []) @
-      (if has "pxy.not" then [helper_line "pxy.not" (helper_quant ["P"]
-         (iff pxy_not (negate p_atom)))] else []) @
-      (if has "pxy.conj" then [helper_line "pxy.conj" (helper_quant ["P", "Q"]
-         (iff pxy_conj (hhTptpProblem.Conn (hhTptpProblem.And,
-           [p_atom, q_atom]))))] else []) @
-      (if has "pxy.disj" then [helper_line "pxy.disj" (helper_quant ["P", "Q"]
-         (iff pxy_disj (hhTptpProblem.Conn (hhTptpProblem.Or,
-           [p_atom, q_atom]))))] else []) @
-      (if has "pxy.imp" then [helper_line "pxy.imp" (helper_quant ["P", "Q"]
-         (iff pxy_imp (hhTptpProblem.Conn (hhTptpProblem.Implies,
-           [p_atom, q_atom]))))] else []) @
-      (if has "pxy.all" then [helper_line "pxy.all" (helper_quant ["P", "X"]
-         (hhTptpProblem.Conn (hhTptpProblem.Implies, [pxyall, px])))] else []) @
-      (if has "pxy.ex" then [helper_line "pxy.ex" (helper_quant ["P", "X"]
-         (hhTptpProblem.Conn (hhTptpProblem.Implies, [px, pxyex])))] else []) @
-      (if has "pxy.true" then [helper_line "pxy.true" true_law] else []) @
-      (if has "pxy.false" then [helper_line "pxy.false" false_law] else []) @
-      (if used_pp then [helper_line "pp.true" pp_true,
-                        helper_line "pp.false" pp_false] else [])
+      List.concat (map helpers heads)
     end
+
+  (* pp is introduced only after HOL terms have become first-order terms.
+     Its two bridge laws therefore are the sole intentionally AST-level
+     helpers.  pxy.true/false are added to the declaration table below. *)
+  fun pp_helpers used_pp =
+    if not used_pp then []
+    else
+      [helper_line "pp.true" (helper_atom "pp." [helper_tm "pxy.true" []]),
+       helper_line "pp.false" (hhTptpProblem.Conn (hhTptpProblem.Not,
+         [helper_atom "pp." [helper_tm "pxy.false" []]]))]
 
   fun fetched thy name = Thm.concl (DB.fetch thy name)
 
@@ -739,8 +812,7 @@ struct
              mk_disj (mk_eq (b, T), mk_eq (b, F))))]
         end
         else []
-      val ext = if used_app then
-        [("help.eq_ext", Thm.concl boolTheory.EQ_EXT)] else []
+      val ext = []
     in
       combinators @ conds @ ext
     end
@@ -749,7 +821,21 @@ struct
                                                 used_pp} : fo_ir) direct_helpers =
     let
       val all_formulas = conjecture :: map #2 facts
-      val heads = List.foldl heads_of_fo_formula [] all_formulas
+      val base_heads = List.foldl heads_of_fo_formula [] all_formulas
+      val bool_proxies = if used_pp then
+        [mk_var ("pxy.true", Type.bool), mk_var ("pxy.false", Type.bool)] else []
+      val heads = List.foldl (fn (head, result) => add_once
+        (fn left => fn right => same_head left right) head result)
+        base_heads bool_proxies
+      fun declared head = not (String.isPrefix "$" (raw_symbol head))
+      fun unique_symbols [] _ = []
+        | unique_symbols (head :: rest) seen =
+            let val symbol = encoded_symbol encoding head in
+              if List.exists (fn old => old = symbol) seen then
+                unique_symbols rest seen
+              else head :: unique_symbols rest (symbol :: seen)
+            end
+      val declaration_heads = unique_symbols (List.filter declared heads) []
       val all_types = List.foldl (fn (formula, result) =>
         types_of_formula formula @ result) [] all_formulas
       val decls =
@@ -758,7 +844,8 @@ struct
           let
             val sym_decls = map (fn head => hhTptpProblem.SymDecl
               (aiLib.escape ("sy." ^ encoded_symbol encoding head),
-               encoded_symbol encoding head, declaration_type encoding head)) heads
+               encoded_symbol encoding head, declaration_type encoding head))
+              declaration_heads
             val app_decls = if used_app then [hhTptpProblem.SymDecl
               ("sy_2Eapp", "app_2E", hhTptpProblem.TyFun
                 (hhTptpProblem.TyCon ("$i", []), hhTptpProblem.TyFun
@@ -771,7 +858,7 @@ struct
           in
             type_declarations encoding all_types @ sym_decls @ app_decls @ pp_decls
           end
-      val gsy = List.mapPartial (gsy_line encoding needs) heads
+      val gsy = List.mapPartial (gsy_line encoding needs) declaration_heads
       val guard_types = List.foldl (fn (ty, result) =>
         if guarded_type encoding needs ty then add_once same_value ty result else result)
         [] all_types
@@ -818,37 +905,52 @@ struct
       val {format, type_enc, lam_trans, mono_iters, mono_instances} = options
       val caps = {max_iters = mono_iters, max_new_instances = mono_instances}
       val main_terms = pass_monomorph type_enc caps lambda_terms
-      val main_fo = firstorderize format type_enc
-        (introduce_proxies format (formula_skeleton main_terms))
-      val main_heads = heads_of_fo_formula (#conjecture main_fo,
-        List.foldl (fn ((_, formula), heads) =>
-          heads_of_fo_formula (formula, heads)) [] (#facts main_fo))
-      val helper_source = hol_helpers format lam_trans (#used_app main_fo) main_heads
-      (* Re-run helper facts with the problem's facts as their ground pool.
-         This is intentionally local to this export: a helper's mono copies
-         depend on the selected goal and premise set. *)
-      val helper_terms =
-        if null helper_source then []
+      fun firstorder terms = firstorderize format type_enc
+        (introduce_proxies format (formula_skeleton terms))
+      fun heads_of ({conjecture, facts, ...} : fo_ir) =
+        heads_of_fo_formula (conjecture,
+          List.foldl (fn ((_, formula), heads) =>
+            heads_of_fo_formula (formula, heads)) [] facts)
+      (* Helpers have the original problem as their monomorphization ground
+         pool.  They are then firstorderized together with it, so application
+         arities and the final symbol table are shared by every section. *)
+      fun translate_helpers source =
+        if null source then []
         else
-          List.filter (is_helper_name o #1)
-            (#facts (pass_monomorph type_enc caps
-              (pass_lambda format lam_trans
-                (presimp format {conjecture = #conjecture lambda_terms,
-                  facts = #facts lambda_terms @ helper_source}))))
-      val helper_fo = firstorderize format type_enc
-        (introduce_proxies format
-          (formula_skeleton {conjecture = #conjecture main_terms,
-                             facts = helper_terms}))
-      val combined = {conjecture = #conjecture main_fo,
-                      facts = #facts main_fo @ #facts helper_fo,
-                      used_app = #used_app main_fo orelse #used_app helper_fo,
-                      used_pp = #used_pp main_fo orelse #used_pp helper_fo}
-      val direct = proxy_helpers main_heads (#used_pp combined)
-      val needs = needs_of type_enc
+          let
+            val lambda_terms' = pass_lambda format lam_trans
+              (presimp format {conjecture = #conjecture lambda_terms,
+                facts = #facts lambda_terms @ source})
+            val translated = List.filter (is_helper_name o #1)
+              (#facts (pass_monomorph type_enc caps lambda_terms'))
+            (* A schematic proxy law with no ground instance is still sound:
+               the mono printer gives its remaining type variables opaque
+               sorts.  Do not silently lose it as an "ignored" user fact. *)
+            fun found name = List.exists (fn (other, _) => other = name)
+              translated
+            val retained = List.filter (fn (name, _) =>
+              is_helper_name name andalso not (found name)) (#facts lambda_terms')
+          in
+            translated @ retained
+          end
+      fun combined helpers =
         {conjecture = #conjecture main_terms,
-         facts = #facts main_terms @ helper_terms}
+         facts = #facts main_terms @ helpers}
+      val main_fo = firstorder main_terms
+      val initial = hol_helpers format lam_trans (#used_app main_fo)
+        (heads_of main_fo)
+      val preliminary_helpers = translate_helpers initial
+      val preliminary_fo = firstorder (combined preliminary_helpers)
+      val proxy_source = proxy_helpers (heads_of preliminary_fo)
+      val with_proxies = initial @ proxy_source
+      val proxy_terms = translate_helpers with_proxies
+      val extensionality = if #used_app main_fo then
+        [("help.eq_ext", Thm.concl boolTheory.EQ_EXT)] else []
+      val helper_terms = translate_helpers (with_proxies @ extensionality)
+      val final_fo = firstorder (combined helper_terms)
+      val needs = needs_of type_enc (combined helper_terms)
     in
-      generated_problem format type_enc needs combined direct
+      generated_problem format type_enc needs final_fo (pp_helpers (#used_pp final_fo))
     end
 
   fun generate_problem options terms =
