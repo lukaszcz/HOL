@@ -329,6 +329,117 @@ fun read_lines path =
 fun expect_equal message expected actual =
   expect message (expected = actual)
 
+fun test_hhTptpProblem () =
+  let
+    open hhTptpProblem
+    val ind = TyCon ("$i", [])
+    val bool = TyCon ("$o", [])
+    val x = Tm (("X", []), [])
+    val a = Tm (("a", []), [])
+    val f_x_a = Tm (("f", []), [x, a])
+    val predicate =
+      Quant (true, [("X", SOME ind)],
+        Atom (Tm (("p", []), [f_x_a])))
+    val fof : problem =
+      [("Facts", [FormLine ("fact", Axiom, predicate)]),
+       ("Conjecture", [FormLine ("conjecture", Conjecture,
+         Atom (Tm (("p", []), [a])))])]
+    val decls =
+      [TypeDecl ("ty.i", "i", 0),
+       SymDecl ("sy.f", "f", TyFun (ind, TyFun (ind, ind))),
+       SymDecl ("sy.p", "p", TyFun (ind, bool))]
+    fun typed formula : problem =
+      [("Declarations", decls),
+       ("Facts", [FormLine ("fact", Axiom, formula)]),
+       ("Conjecture", [FormLine ("conjecture", Conjecture,
+         Atom (Tm (("p", []), [a])))])]
+    val tf0 = TFF {poly = false, fool = NoFool}
+    val tx0 = TFF {poly = false,
+                   fool = Fool {with_ite = true, with_let = true}}
+    val tf1 = TFF {poly = true, fool = NoFool}
+    val th0 = THF {poly = false,
+                   syntax = {with_ite = false, with_let = false},
+                   choice = false}
+    val th1 = THF {poly = true,
+                   syntax = {with_ite = true, with_let = false},
+                   choice = false}
+    val ite = Tm (("$ite", []),
+      [Tm (("c", []), [x]), f_x_a, a])
+    val tx0_formula =
+      Quant (true, [("X", SOME ind)], Atom (Tm (("p", []), [ite])))
+    val tf1_formula =
+      TyQuant (true, ["A"],
+        Quant (true, [("X", SOME (TyVar "A"))],
+          Atom (Tm (("p", [TyVar "A"]), [x]))))
+    val th0_formula =
+      Atom (Tm (("p", []), [TmAbs (("Y", ind), Tm (("f", []), [x, a]))]))
+    val th1_formula =
+      TyQuant (true, ["A"],
+        Atom (Tm (("p", [TyVar "A"]), [ite])))
+    fun golden name format problem =
+      expect_equal ("TPTP golden " ^ name)
+        (String.concat (read_lines (join "test-data/problems" name)))
+        (string_of_problem format ("hhTptpProblem " ^ name) problem)
+    fun raises thunk = (thunk (); false) handle Fail _ => true
+    val _ = golden "fof.p" FOF fof
+    val _ = golden "tf0.p" tf0 (typed predicate)
+    val _ = golden "tx0.p" tx0 (typed tx0_formula)
+    val _ = golden "tf1.p" tf1 (typed tf1_formula)
+    val _ = golden "th0.p" th0 (typed th0_formula)
+    val _ = golden "th1.p" th1 (typed th1_formula)
+    val uncurry_expected = String.concat
+      ["% uncurry\n", "% Declarations (1)\n", "tff(sy.f, type,\n",
+       "    f : ($i * $i) > $i).\n"]
+    val _ = expect_equal "TFF types are uncurried" uncurry_expected
+      (string_of_problem tf0 "uncurry"
+        [("Declarations", [SymDecl ("sy.f", "f",
+          TyFun (ind, TyFun (ind, ind)))])])
+    val _ = expect_equal "type arguments precede TFF term arguments"
+      "% args\n%  (1)\ntff(fact, axiom,\n    (f($i,X))).\n"
+      (string_of_problem tf0 "args"
+        [("", [FormLine ("fact", Axiom,
+          Atom (Tm (("f", [ind]), [x])))])])
+    val _ = expect_equal "type arguments precede THF term arguments"
+      "% args\n%  (1)\nthf(fact, axiom,\n    ((f @ ($i) @ X))).\n"
+      (string_of_problem th0 "args"
+        [("", [FormLine ("fact", Axiom,
+          Atom (Tm (("f", [ind]), [x])))])])
+    val _ = expect "$ite prints when enabled"
+      (String.isSubstring "$ite(c(X),f(X,a),a)"
+        (string_of_problem tx0 "ite"
+          [("Facts", [FormLine ("fact", Axiom, Atom ite)])]))
+    val _ = expect "$ite rejects disabled syntax"
+      (raises (fn () => string_of_problem tf0 "ite"
+        [("Facts", [FormLine ("fact", Axiom, Atom ite)])]))
+    val let_term = Tm (("$let", []),
+      [a, TmAbs (("Y", ind), Tm (("f", []), [x, a]))])
+    val _ = expect "$let prints when enabled"
+      (String.isSubstring "$let(Y : $i, Y := a, f(X,a))"
+        (string_of_problem tx0 "let"
+          [("Facts", [FormLine ("fact", Axiom, Atom let_term)])]))
+    val _ = expect "$let rejects disabled syntax"
+      (raises (fn () => string_of_problem th1 "let"
+        [("Facts", [FormLine ("fact", Axiom, Atom let_term)])]))
+    val choice = Tm (("@+", []), [TmAbs (("Y", ind), x)])
+    val _ = expect "choice printing is rejected"
+      (raises (fn () => string_of_problem th0 "choice"
+        [("Facts", [FormLine ("fact", Axiom, Atom choice)])]))
+    val sections = string_of_problem FOF "sections"
+      [("First", [FormLine ("one", Axiom, Atom a)]),
+       ("Second", [FormLine ("two", Hypothesis, Atom x),
+                   FormLine ("three", Conjecture, Atom a)])]
+    val _ = expect "sections preserve order and print counts"
+      (String.isSubstring "% First (1)\nfof(one" sections andalso
+       String.isSubstring "% Second (2)\nfof(two" sections andalso
+       String.isSubstring "fof(three" sections andalso
+       String.isSubstring "% First (1)" sections andalso
+       String.isSubstring "% Second (2)" sections)
+  in
+    ()
+  end
+
+val _ = test_hhTptpProblem ()
+
 fun prover name =
   case hhProver.lookup name of
       SOME config => config
