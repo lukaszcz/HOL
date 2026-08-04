@@ -33,8 +33,8 @@ TASK_10 (`TASK_10_slices_smoke.md`)
 - 2026-08-04 TASK_09 — Added the HO classifier, v3 journal `ho` field with v1/v2 compatibility, mixed-journal resume, HO subset metrics, and slice-contribution reports; selftests, build, and h4pedant pass.
 - 2026-08-04 TASK_10 — Froze the 16-slice schedule and rotation, added
   pinned-prover format/reconstruction smoke and cardinality soundness cases
-  for every Phase 2 encoding, and recorded parser-equivalence substitutions:
-  Vampire TF1/poly-native → TH0/mono-native-higher, E
+  for every Phase 2 encoding row, and recorded parser-equivalence
+  substitutions: Vampire TF1/poly-native → TH0/mono-native-higher, E
   TF0/mono-native/combs-and-lifting → TX0-/mono-native-fool/
   combs-and-lifting, and Zipperposition FOF/mono-guards?? → legacy FOF.
   Versioned TSTP recordings, hermetic replay/golden tests, full build, and

@@ -1876,10 +1876,15 @@ val soundness_cases =
       "keep_lams" 128),
    (soundness_config "e",
     soundness_slice "e" "th0" "mono_native_higher" "keep_lams" 512),
+   (soundness_config "e",
+    soundness_slice "e" "tx0-" "mono_native_fool" "combs_and_lifting"
+      1024),
    (soundness_config "vampire",
     soundness_slice "vampire" "tf1" "poly_native" "lifting" 512),
    (soundness_config "e",
     soundness_slice "e" "tf0" "mono_native" "combs_and_lifting" 1024),
+   (soundness_config "vampire",
+    soundness_slice "vampire" "tx0" "mono_native_fool" "combs" 512),
    (soundness_config "zipperposition",
     soundness_slice "zipperposition" "fof" "mono_guards??" "lifting" 32)]
 
