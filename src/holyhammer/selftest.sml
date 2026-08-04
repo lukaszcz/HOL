@@ -862,11 +862,102 @@ fun test_hhProblemGen () =
         {format = fof, type_enc = hhTypeEnc.of_string "mono_guards",
          lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
         (input logical_argument)) = ["not"])
-    val _ = expect "hhProblemGen export_pb is intentionally unwired"
-      ((export_pb {format = fof, type_enc = hhTypeEnc.of_string "mono_guards",
-                   lam_trans = "lifting", mono_iters = 3,
-                   mono_instances = 100} "unused" (p, []); false)
-       handle Fail message => String.isSubstring "not yet wired" message)
+    fun problem format encoding terms =
+      string_of_problem format "hhProblemGen pass 6--8"
+        (generate_problem
+          {format = format, type_enc = hhTypeEnc.of_string encoding,
+           lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
+          terms)
+    fun occurrences needle text =
+      let
+        fun loop start count =
+          case String.fields (fn _ => false) (String.extract (text, start, NONE)) of
+              _ =>
+                (case String.isSubstring needle (String.extract (text, start, NONE)) of
+                   false => count
+                 | true =>
+                     let
+                       fun find index =
+                         if String.isPrefix needle
+                              (String.extract (text, index, NONE)) then index
+                         else find (index + 1)
+                     in
+                       loop (find start + size needle) (count + 1)
+                     end)
+      in
+        loop 0 0
+      end
+    val binary_num = Type.mk_type ("fun", [num, unary_num])
+    val pxy_f = Term.mk_var ("pxy.f", binary_num)
+    val number_pred = Term.mk_var ("NPred", Type.mk_type
+      ("fun", [num, Type.bool]))
+    val function_var = Term.mk_var ("H", unary_num)
+    val function_pred = Term.mk_var ("FPred", Type.mk_type
+      ("fun", [unary_num, Type.bool]))
+    val full_f = Term.list_mk_comb (pxy_f, [x, y])
+    val full_formula = Term.mk_comb (number_pred, full_f)
+    val no_function_variable =
+      problem fof "mono_guards" {conjecture = full_formula, facts = []}
+    val with_function_variable = problem fof "mono_guards"
+      {conjecture = mk_forall (function_var, full_formula), facts = []}
+    val bool_term = problem fof "mono_guards" (input applied_not)
+    val fool_bool_term = problem tx0 "mono_native_fool" (input applied_not)
+    val tf1 = TFF {poly = true, fool = NoFool}
+    val poly_goal = eq_nil (list_ty alpha)
+    val poly_native = problem tf1 "poly_native" (input poly_goal)
+    val mono_native = problem tf0 "mono_native" (input poly_goal)
+    val higher_native = problem th0 "mono_native_higher" (input poly_goal)
+    val higher_fool = problem th0 "mono_native_higher_fool" (input poly_goal)
+    val one_ty = Type.mk_type ("one", [])
+    val one_x = Term.mk_var ("OX", one_ty)
+    val one_y = Term.mk_var ("OY", one_ty)
+    val one_naked = mk_forall (one_x,
+      mk_forall (one_y, mk_eq (one_x, one_x)))
+    val guards_all = problem fof "mono_guards" (input one_naked)
+    val guards_query = problem fof "mono_guards??" (input one_naked)
+    val one_only = mk_forall (one_x, mk_eq (one_x, one_x))
+    val one_all = problem fof "mono_guards" (input one_only)
+    val one_query = problem fof "mono_guards??" (input one_only)
+    val forty_four = problem tf1 "poly_native"
+      {conjecture = full_formula,
+       facts = List.tabulate (44, fn index =>
+         ("f" ^ Int.toString index,
+          Term.mk_comb (function_pred, Term.mk_comb (pxy_f, x))))}
+    val forty_five = problem tf1 "poly_native"
+      {conjecture = full_formula,
+       facts = List.tabulate (45, fn index =>
+         ("f" ^ Int.toString index,
+          Term.mk_comb (function_pred, Term.mk_comb (pxy_f, x))))}
+    val _ = expect "hhProblemGen uses app only for sufficient partial applications"
+      (not (String.isSubstring "app_2E(pxy_2Ef" no_function_variable) andalso
+       String.isSubstring "app_2E(pxy_2Ef" with_function_variable)
+    val _ = expect "hhProblemGen switches to Min_App_Op at forty-five facts"
+      (occurrences "app_2E(pxy_2Ef" forty_four = 1 andalso
+       occurrences "app_2E(pxy_2Ef" forty_five = 45)
+    val _ = expect "hhProblemGen inserts pp for non-FOOL boolean terms"
+      (String.isSubstring "pp_2E(app_2E" bool_term andalso
+       not (String.isSubstring "pp_2E(app_2E" fool_bool_term))
+    val _ = expect "hhProblemGen mangles mono symbols, sorts, and type variables"
+      (String.isSubstring "c_2Elist_2ENIL" mono_native andalso
+       String.isSubstring "ty_2E" mono_native andalso
+       String.isSubstring "var_2E_27a" mono_native)
+    val _ = expect "hhProblemGen binds TF1 type variables and emits declarations"
+      (String.isSubstring "!>[A" poly_native andalso
+       String.isSubstring "tff(ty_" poly_native andalso
+       String.isSubstring "tff(sy_" poly_native)
+    val _ = expect "all native encoding paths produce TPTP structures"
+      (String.isSubstring "tff(conjecture" mono_native andalso
+       String.isSubstring "tff(conjecture" fool_bool_term andalso
+       String.isSubstring "thf(conjecture" higher_native andalso
+       String.isSubstring "thf(conjecture" higher_fool)
+    val _ = expect "mono_guards?? guards fewer naked variables"
+      (occurrences "gd_2E" guards_query < occurrences "gd_2E" guards_all)
+    val _ = expect "mono_guards?? agrees on possibly-finite naked types"
+      (String.isSubstring "![OX]: (gd_2E" one_query andalso
+       String.isSubstring "![OX]: (gd_2E" one_all)
+    val _ = expect "hhProblemGen emits result guards and witnesses"
+      (String.isSubstring "gsy_2E" guards_all andalso
+       String.isSubstring "wit_2E" guards_all)
   in
     ()
   end
