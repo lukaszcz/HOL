@@ -440,6 +440,124 @@ fun test_hhTptpProblem () =
 
 val _ = test_hhTptpProblem ()
 
+fun test_hhTypeEnc () =
+  let
+    open hhTptpProblem hhTypeEnc
+    fun raises fragment thunk =
+      (thunk (); false)
+      handle Fail message => String.isSubstring fragment message
+           | _ => false
+    val encodings =
+      ["mono_native", "mono_native_fool", "mono_native_higher",
+       "mono_native_higher_fool", "poly_native", "mono_guards",
+       "mono_guards??", ""]
+    val rejected = ["native", "mono_guards?", "poly_guards", " ",
+                    "mono_native??"]
+    val fof = FOF
+    val tf0 = TFF {poly = false, fool = NoFool}
+    val tx0 = TFF {poly = false,
+                   fool = Fool {with_ite = true, with_let = true}}
+    val tf1 = TFF {poly = true, fool = NoFool}
+    val th0 = THF {poly = false,
+                   syntax = {with_ite = false, with_let = false},
+                   choice = false}
+    val th1 = THF {poly = true,
+                   syntax = {with_ite = true, with_let = false},
+                   choice = false}
+    fun adjusted format encoding =
+      to_string (adjust_type_enc format (of_string encoding))
+    fun matrix format expected =
+      ListPair.allEq (fn (encoding, result) =>
+        case result of
+            SOME expected => adjusted format encoding = expected
+          | NONE => raises "valid only" (fn () =>
+              ignore (adjust_type_enc format (of_string encoding))))
+        (encodings, expected)
+    val mono = "mono_native"
+    val mono_fool = "mono_native_fool"
+    val _ = expect "type-encoding grammar round-trips"
+      (List.all (fn encoding => to_string (of_string encoding) = encoding)
+       encodings)
+    val _ = expect "type-encoding grammar rejects all other strings"
+      (List.all (fn encoding => raises "unknown type encoding" (fn () =>
+         ignore (of_string encoding))) rejected)
+    val _ = expect "type encoding adjustment matrix: FOF"
+      (matrix fof [SOME "mono_guards", SOME "mono_guards",
+                   SOME "mono_guards", SOME "mono_guards",
+                   SOME "mono_guards", SOME "mono_guards",
+                   SOME "mono_guards??", SOME ""])
+    val _ = expect "type encoding adjustment matrix: TF0"
+      (matrix tf0 [SOME mono, SOME mono, SOME mono, SOME mono,
+                   SOME mono, NONE, NONE, NONE])
+    val _ = expect "type encoding adjustment matrix: TX0"
+      (matrix tx0 [SOME mono, SOME mono_fool, SOME mono, SOME mono_fool,
+                   SOME mono, NONE, NONE, NONE])
+    val _ = expect "type encoding adjustment matrix: TF1"
+      (matrix tf1 [SOME mono, SOME mono, SOME mono, SOME mono,
+                   SOME "poly_native", NONE, NONE, NONE])
+    val _ = expect "type encoding adjustment matrix: TH0"
+      (matrix th0 [SOME mono, SOME mono, SOME "mono_native_higher",
+                   SOME "mono_native_higher", SOME mono, NONE, NONE,
+                   NONE])
+    val _ = expect "type encoding adjustment matrix: TH1"
+      (matrix th1 [SOME mono, SOME mono_fool, SOME "mono_native_higher",
+                   SOME "mono_native_higher_fool", SOME "poly_native",
+                   NONE, NONE, NONE])
+    val _ = bossLib.Hol_datatype
+      `hh_typeenc_enum = HHRed | HHBlue | HHGreen`
+    val _ = bossLib.Hol_datatype
+      `hh_typeenc_recursive = HHStop | HHNext of hh_typeenc_recursive`
+    val num_ty = Term.type_of ``0 : num``
+    val list_num_ty = Term.type_of ``[] : num list``
+    val list_var_ty = Term.type_of ``[] : 'a list``
+    val one_ty = Type.mk_type ("one", [])
+    val enum_ty = Type.mk_type ("hh_typeenc_enum", [])
+    val rec_ty = Type.mk_type ("hh_typeenc_recursive", [])
+    val bool_fun_ty = Type.mk_type ("fun", [Type.bool, Type.bool])
+    val bool_bool_fun_ty = Type.mk_type ("fun", [Type.bool, bool_fun_ty])
+    val num_bool_fun_ty = Type.mk_type ("fun", [num_ty, Type.bool])
+    val _ = expect "infinity oracle recognises hardwired types"
+      (surely_infinite num_ty)
+    val _ = expect "infinity oracle recognises recursive list instances"
+      (surely_infinite list_num_ty andalso surely_infinite list_var_ty)
+    val _ = expect "infinity oracle keeps finite functions finite"
+      (not (surely_infinite bool_fun_ty) andalso
+       not (surely_infinite bool_bool_fun_ty))
+    val _ = expect "infinity oracle composes infinite function domains"
+      (surely_infinite num_bool_fun_ty)
+    val _ = expect "infinity oracle treats unknown finite types conservatively"
+      (not (surely_infinite Type.bool) andalso not (surely_infinite one_ty)
+       andalso not (surely_infinite enum_ty))
+    val _ = expect "infinity oracle detects recursive datatypes"
+      (surely_infinite rec_ty)
+    fun same_types expected actual = expected = actual
+    val x = Term.mk_var ("X", one_ty)
+    val n = Term.mk_var ("N", num_ty)
+    val p = Term.mk_var ("P", Type.mk_type ("fun", [one_ty, Type.bool]))
+    val fequal = Term.mk_var ("fequal",
+      Type.mk_type ("fun", [one_ty,
+        Type.mk_type ("fun", [one_ty, Type.bool])]))
+    val naked = boolSyntax.mk_forall (x, boolSyntax.mk_eq (x, x))
+    val guarded = boolSyntax.mk_forall (x, Term.mk_comb (p, x))
+    val negative = boolSyntax.mk_forall (x,
+      boolSyntax.mk_neg (boolSyntax.mk_eq (x, x)))
+    val fequal_formula = boolSyntax.mk_forall (x,
+      Term.list_mk_comb (fequal, [x, x]))
+    val infinite_naked = boolSyntax.mk_forall (n, boolSyntax.mk_eq (n, n))
+    val _ = expect "monotonicity calculus finds naked variables"
+      (same_types [Type.bool, one_ty] (types_needing_encoding [naked]))
+    val _ = expect "monotonicity calculus ignores guarded and negative variables"
+      (same_types [Type.bool]
+        (types_needing_encoding [guarded, negative, infinite_naked]))
+    val _ = expect "monotonicity calculus finds fequal variables"
+      (same_types [Type.bool, one_ty]
+        (types_needing_encoding [fequal_formula]))
+  in
+    ()
+  end
+
+val _ = test_hhTypeEnc ()
+
 fun prover name =
   case hhProver.lookup name of
       SOME config => config

@@ -1,7 +1,9 @@
-all: $(DEFAULT_TARGETS) hhTptpProblem.uo hhConfig.uo hhProver.uo hhSlice.uo \
+all: $(DEFAULT_TARGETS) hhTptpProblem.uo hhTypeEnc.uo hhConfig.uo hhProver.uo hhSlice.uo \
      hhCache.uo hhSchedule.uo hhEval.uo selftest.exe smoke.exe
 
 hhTptpProblem.uo: hhTptpProblem.sml hhTptpProblem.ui
+
+hhTypeEnc.uo: hhTypeEnc.sml hhTypeEnc.ui hhTptpProblem.uo
 
 hhProver.uo: hhProver.sml hhProver.ui hhConfig.uo
 
@@ -18,7 +20,7 @@ hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhSchedule.uo
 
-selftest.uo: selftest.sml hhTptpProblem.uo hhConfig.uo hhProver.uo \
+selftest.uo: selftest.sml hhTptpProblem.uo hhTypeEnc.uo hhConfig.uo hhProver.uo \
              hhSlice.uo hhCache.uo hhSchedule.uo hhEval.uo holyHammer.uo
 
 smoke.uo: smoke.sml hhEval.uo
