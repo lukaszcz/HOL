@@ -148,17 +148,17 @@ tff(help_2Eif__True_2E3, axiom,
 tff(help_2Eif__True_2E4, axiom,
     ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: app_2E(_24equal(c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29(_24true,HX,HY)),HX))))).
 tff(help_2Eif__True_2E5, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__True_2E6, axiom,
-    ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__True_2E7, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__True_2E8, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__True_2E9, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__True_2E10, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29(_24true,HX,HY),HX))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29(_24true,HX,HY) = HX))))).
 tff(help_2Eif__False, axiom,
     ((![HX : ty_2Emin_2Ebool]: (![HY : ty_2Emin_2Ebool]: (app_2E(c_2Ebool_2ECOND_2Emin_2Ebool(_24false,HX),HY) <=> HY))))).
 tff(help_2Eif__False_2E2, axiom,
@@ -168,39 +168,39 @@ tff(help_2Eif__False_2E3, axiom,
 tff(help_2Eif__False_2E4, axiom,
     ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: app_2E(_24equal(c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29(_24false,HX,HY)),HY))))).
 tff(help_2Eif__False_2E5, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29(_24false,HX,HY) = HY))))).
 tff(help_2Eif__False_2E6, axiom,
-    ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29(_24false,HX,HY) = HY))))).
 tff(help_2Eif__False_2E7, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![HY : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29(_24false,HX,HY) = HY))))).
 tff(help_2Eif__False_2E8, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29(_24false,HX,HY) = HY))))).
 tff(help_2Eif__False_2E9, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29(_24false,HX,HY) = HY))))).
 tff(help_2Eif__False_2E10, axiom,
-    ((![HX : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: _24equal(c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29(_24false,HX,HY),HY))))).
+    ((![HX : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![HY : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (c_2Ebool_2ECOND_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29(_24false,HX,HY) = HY))))).
 tff(help_2Ebool__cases, axiom,
     ((![HB : ty_2Emin_2Ebool]: ((HB <=> _24true) | (HB <=> _24false))))).
 tff(help_2Eeq__ext, axiom,
     ((![V_f : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: ((![V_x : ty_2Emin_2Ebool]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => app_2E(_24equal(V_f),V_g)))))).
 tff(help_2Eeq__ext_2E2, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Ebool]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Ebool_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Ebool]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E3, axiom,
-    ((![V_f : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: ((![V_x : ty_2Enum_2Enum]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Ebool_29]: ((![V_x : ty_2Enum_2Enum]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E4, axiom,
     ((![V_f : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: ((![V_x : ty_2Enum_2Enum]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => app_2E(_24equal(V_f),V_g)))))).
 tff(help_2Eeq__ext_2E5, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![V_g : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: ((![V_x : ty_2Emin_2Ebool]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![V_g : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: ((![V_x : ty_2Emin_2Ebool]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E6, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: ((![V_x : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cmin_2Ebool_29]: ((![V_x : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E7, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28min_2Ebool_2Cmin_2Ebool_29_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E8, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: ((![V_x : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cmin_2Ebool_29]: ((![V_x : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: (app_2E(V_f,V_x) <=> app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E9, axiom,
-    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cnum_2Enum_29]: (![V_g : ty_2Emin_2Efun_28min_2Efun_28num_2Enum_2Cnum_2Enum_29_2Cnum_2Enum_29]: ((![V_x : ty_2Emin_2Efun_28num_2Enum_2Cnum_2Enum_29]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => (V_f = V_g)))))).
 tff(help_2Eeq__ext_2E10, axiom,
-    ((![V_f : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![V_g : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: ((![V_x : ty_2Enum_2Enum]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => _24equal(V_f,V_g)))))).
+    ((![V_f : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: (![V_g : ty_2Emin_2Efun_28num_2Enum_2Cmin_2Efun_28num_2Enum_2Cnum_2Enum_29_29]: ((![V_x : ty_2Enum_2Enum]: app_2E(_24equal(app_2E(V_f,V_x)),app_2E(V_g,V_x))) => (V_f = V_g)))))).
 % Facts (2)
 tff(lam_2E0, axiom,
     ((![X : ty_2Enum_2Enum]: app_2E(_24equal(app_2E(V_lam_2E0,X)),X)))).

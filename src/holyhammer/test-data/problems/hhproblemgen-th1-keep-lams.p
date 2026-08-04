@@ -24,4 +24,4 @@ thf(ty_2Ety__2Emin__2Efun__28min__2Efun__28num__2Enum__2Cnum__2Enum__29__2Cmin__
 % Facts (0)
 % Conjecture (1)
 thf(conjecture, conjecture,
-    ((![P : ty_2Emin_2Ebool]: (![X : ty_2Enum_2Enum]: (![Y : ty_2Enum_2Enum]: (![V_use__bool : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: ((_24equal @ (_24ite_2Enum_2Enum @ P @ X @ Y) @ X) & ((_24equal @ (^[X : ty_2Enum_2Enum]: X) @ (^[X : ty_2Enum_2Enum]: X)) & ((V_use__bool @ (_24not @ P)) & (_24equal @ X @ X)))))))))).
+    ((![P : ty_2Emin_2Ebool]: (![X : ty_2Enum_2Enum]: (![Y : ty_2Enum_2Enum]: (![V_use__bool : ty_2Emin_2Efun_28min_2Ebool_2Cmin_2Ebool_29]: (((_24ite_2Enum_2Enum @ P @ X @ Y) = X) & (((^[X : ty_2Enum_2Enum]: X) = (^[X : ty_2Enum_2Enum]: X)) & ((V_use__bool @ (_24not @ P)) & (X = X)))))))))).

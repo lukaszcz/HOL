@@ -336,13 +336,13 @@ fun mk_slice prover (format, type_enc, lam_trans) nfacts extra_opts : slice =
    slice_size = 1}
 
 fun slices prover entries () =
-  map (fn (nfacts, extra_opts) =>
-    mk_slice prover ("fof", "", "") nfacts extra_opts) entries
+  map (fn (triple, nfacts, extra_opts) =>
+    mk_slice prover triple nfacts extra_opts) entries
 
-(* TASK_10 smoke recordings fix the final dialect flags.  E and
-   Zipperposition auto-detect TPTP formats at their pinned versions.  Vampire
-   is kept on its known TPTP input setting until those recordings validate
-   any format-specific variation. *)
+(* Pinned E 3.2.5-ho, Vampire 5.0.1, and Zipperposition 2.1 smoke
+   recordings validate these TPTP-3 dialect choices for every Phase 2 slice.
+   E's --tstp-in and Zipperposition's --input tptp are base command options;
+   Vampire alone requires its explicit TPTP input selector. *)
 fun e_format_args _ = []
 fun vampire_format_args _ = ["--input_syntax", "tptp"]
 fun zipperposition_format_args _ = []
@@ -386,7 +386,14 @@ val e_config : prover_config =
    format_args = e_format_args, mk_command = e_command,
    parse_output = parse_tstp, default_nfacts = 128, mono_instances = SOME 128,
    slices = slices "e"
-     [(128, []), (512, []), (32, ["--auto"]), (1024, [])],
+     [(("fof", "", ""), 128, []),
+      (("fof", "", ""), 512, []),
+      (("tx0-", "mono_native_fool", "lifting"), 128, []),
+      (("th0", "mono_native_higher", "keep_lams"), 512, []),
+      (* §4.7 substitution: E 3.2.5-ho rejects the generated TF0
+         polymorphic proxy declaration used by combs_and_lifting.  TX0-
+         preserves that lambda mode and is its parser-supported candidate. *)
+      (("tx0-", "mono_native_fool", "combs_and_lifting"), 1024, [])],
    legacy = false}
 
 val vampire_config : prover_config =
@@ -398,7 +405,17 @@ val vampire_config : prover_config =
    parse_output = parse_tstp, default_nfacts = 96,
    mono_instances = SOME 256,
    slices = slices "vampire"
-     [(96, []), (512, []), (32, []), (1024, [])],
+     [(("fof", "", ""), 96, []),
+      (("fof", "", ""), 512, []),
+      (("fof", "", ""), 32, []),
+      (("fof", "", ""), 1024, []),
+      (("tx0", "mono_native_fool", "lifting"), 96, []),
+      (* §4.7 substitution: Vampire 5.0.1 rejects TF1 rank-1 type
+         quantifiers (!>) as higher-order types.  TH0 is its next tested
+         table candidate; this is a parser-equivalence correction, not a
+         tuning change. *)
+      (("th0", "mono_native_higher", "keep_lams"), 512, []),
+      (("tx0", "mono_native_fool", "combs"), 512, [])],
    legacy = false}
 
 val zipperposition_config : prover_config =
@@ -409,7 +426,14 @@ val zipperposition_config : prover_config =
    format_args = zipperposition_format_args,
    mk_command = zipperposition_command, parse_output = parse_tstp,
    default_nfacts = 128, mono_instances = NONE,
-   slices = slices "zipperposition" [(128, []), (512, []), (32, [])],
+   slices = slices "zipperposition"
+     [(("fof", "", ""), 128, []),
+      (("fof", "", ""), 512, []),
+      (("th1", "mono_native_higher_fool", "keep_lams"), 128, []),
+      (* §4.7 substitution: Zipperposition 2.1 rejects FOF guard proxy
+         helpers as a prop/individual type clash.  Its legacy FOF/32
+         candidate parses; this is a parser-equivalence correction. *)
+      (("fof", "", ""), 32, [])],
    legacy = false}
 
 val z3_config : prover_config =

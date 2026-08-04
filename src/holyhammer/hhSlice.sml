@@ -6,9 +6,13 @@
 structure hhSlice :> hhSlice =
 struct
 
+(* The first eight entries are the frozen Phase 1 gate anchors.  The final
+   eight consume the Phase 2 table order in hhProver exactly. *)
 val rotation =
   ["vampire", "e", "zipperposition", "vampire", "e", "vampire",
-   "zipperposition", "vampire", "e", "vampire", "vampire"]
+   "zipperposition", "vampire",
+   "vampire", "e", "zipperposition", "e", "vampire", "e", "vampire",
+   "zipperposition"]
 
 fun member item = List.exists (fn other => item = other)
 

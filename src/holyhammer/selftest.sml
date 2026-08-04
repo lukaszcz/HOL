@@ -1213,6 +1213,27 @@ fun test_hhProver () =
       (#parse_output zipperposition) hhProver.SzsGaveUp NONE
     val _ = test_recording "zipperposition-timeout.out"
       (#parse_output zipperposition) hhProver.SzsResourceOut NONE
+    val _ = test_recording "vampire-5.0.1-tx0-lifting.out"
+      (#parse_output vampire) hhProver.SzsTheorem
+      (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "e-3.2.5-ho-tx0minus-lifting.out"
+      (#parse_output e) hhProver.SzsTheorem (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "zipperposition-2.1-th1-keep-lams.out"
+      (#parse_output zipperposition) hhProver.SzsTheorem
+      (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "e-3.2.5-ho-th0-keep-lams.out"
+      (#parse_output e) hhProver.SzsTheorem (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "vampire-5.0.1-th0-substitute.out"
+      (#parse_output vampire) hhProver.SzsTheorem
+      (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "e-3.2.5-ho-tx0minus-combs-lifting.out"
+      (#parse_output e) hhProver.SzsTheorem (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "vampire-5.0.1-tx0-combs.out"
+      (#parse_output vampire) hhProver.SzsTheorem
+      (SOME ["arithmeticTheory.ADD1"])
+    val _ = test_recording "zipperposition-2.1-fof-substitute.out"
+      (#parse_output zipperposition) hhProver.SzsTheorem
+      (SOME ["arithmeticTheory.ADD1"])
     val _ = expect_equal "TSTP parse-back drops generated names and dedups copies"
       ["alpha", "beta"]
       (hhProver.axioms_from_tstp
@@ -1281,27 +1302,44 @@ fun schedule_summary
 
 fun test_hhSlice () =
   let
-    val vampire_options = []
-    fun expected prover nfacts extra =
-      (prover, "fof", "", "", nfacts, "knn", extra, 1)
+    fun expected prover format type_enc lam_trans nfacts =
+      (prover, format, type_enc, lam_trans, nfacts, "knn", [], 1)
+    val phase1 =
+      [expected "vampire" "fof" "" "" 96,
+       expected "e" "fof" "" "" 128,
+       expected "zipperposition" "fof" "" "" 128,
+       expected "vampire" "fof" "" "" 512,
+       expected "e" "fof" "" "" 512,
+       expected "vampire" "fof" "" "" 32,
+       expected "zipperposition" "fof" "" "" 512,
+       expected "vampire" "fof" "" "" 1024]
+    val phase2 =
+      [expected "vampire" "tx0" "mono_native_fool" "lifting" 96,
+       expected "e" "tx0-" "mono_native_fool" "lifting" 128,
+       expected "zipperposition" "th1" "mono_native_higher_fool"
+         "keep_lams" 128,
+       expected "e" "th0" "mono_native_higher" "keep_lams" 512,
+       expected "vampire" "th0" "mono_native_higher" "keep_lams" 512,
+       expected "e" "tx0-" "mono_native_fool" "combs_and_lifting" 1024,
+       expected "vampire" "tx0" "mono_native_fool" "combs" 512,
+       expected "zipperposition" "fof" "" "" 32]
+    val expected_default = phase1 @ phase2
     val e_slices = map slice_summary (#slices (prover "e") ())
     val vampire_slices = map slice_summary (#slices (prover "vampire") ())
     val zipperposition_slices =
       map slice_summary (#slices (prover "zipperposition") ())
     val _ = expect_equal "E slice table"
-      [expected "e" 128 [],
-       expected "e" 512 [],
-       expected "e" 32 ["--auto"],
-       expected "e" 1024 []] e_slices
+      [List.nth (phase1, 1), List.nth (phase1, 4),
+       List.nth (phase2, 1), List.nth (phase2, 3),
+       List.nth (phase2, 5)] e_slices
     val _ = expect_equal "Vampire slice table"
-      [expected "vampire" 96 vampire_options,
-       expected "vampire" 512 vampire_options,
-       expected "vampire" 32 vampire_options,
-       expected "vampire" 1024 vampire_options] vampire_slices
+      [List.nth (phase1, 0), List.nth (phase1, 3),
+       List.nth (phase1, 5), List.nth (phase1, 7),
+       List.nth (phase2, 0), List.nth (phase2, 4),
+       List.nth (phase2, 6)] vampire_slices
     val _ = expect_equal "Zipperposition slice table"
-      [expected "zipperposition" 128 [],
-       expected "zipperposition" 512 [],
-       expected "zipperposition" 32 []] zipperposition_slices
+      [List.nth (phase1, 2), List.nth (phase1, 6),
+       List.nth (phase2, 2), List.nth (phase2, 7)] zipperposition_slices
     val _ = expect "Z3 stays callable without scheduler slices"
       (List.all (null o (fn config => #slices config ()))
        (map prover ["z3"]))
@@ -1316,29 +1354,19 @@ fun test_hhSlice () =
     val defaults = slice_options ["e", "vampire", "zipperposition"]
       (24 * 32) 32 30 "knn" NONE
     val default_schedule = hhSlice.mk_schedule defaults
-    val expected_default =
-      [("vampire", 96, "knn", vampire_options),
-       ("e", 128, "knn", []),
-       ("zipperposition", 128, "knn", []),
-       ("vampire", 512, "knn", vampire_options),
-       ("e", 512, "knn", []),
-       ("vampire", 32, "knn", vampire_options),
-       ("zipperposition", 512, "knn", []),
-       ("vampire", 1024, "knn", vampire_options),
-       ("e", 32, "knn", ["--auto"]),
-       ("e", 1024, "knn", []),
-       ("zipperposition", 32, "knn", [])]
-    val _ = expect_equal "default options produce all eleven slices"
-      expected_default (schedule_summary default_schedule)
+    val _ = expect_equal "golden 16-slice Phase 2 schedule"
+      expected_default (map (slice_summary o #2) default_schedule)
+    val _ = expect_equal "Phase 1 eight-slice prefix is frozen verbatim"
+      phase1 (List.take (map (slice_summary o #2) default_schedule, 8))
     val gate30 = slice_options ["e", "vampire", "zipperposition"]
       8 8 30 "knn" NONE
     val gate10 = slice_options ["e", "vampire", "zipperposition"]
       8 8 10 "knn" NONE
     val gate30_schedule = hhSlice.mk_schedule gate30
     val gate10_schedule = hhSlice.mk_schedule gate10
-    val expected_gate = List.take (expected_default, 8)
+    val expected_gate = List.take (phase1, 8)
     val _ = expect_equal "gate freezes the first eight schedule slices"
-      expected_gate (schedule_summary gate30_schedule)
+      expected_gate (map (slice_summary o #2) gate30_schedule)
     val _ = expect_equal "S30 and S10 use the same frozen schedule"
       (schedule_summary gate30_schedule) (schedule_summary gate10_schedule)
     fun close expected actual = Real.abs (expected - actual) < 0.000001
@@ -1367,7 +1395,8 @@ fun test_hhSlice () =
       (slice_options ["e", "vampire", "zipperposition"] 5 2 30 "knn"
         NONE)
     val _ = expect_equal "small schedule follows the golden rotation"
-      (List.take (expected_default, 5)) (schedule_summary small)
+      (List.take (schedule_summary default_schedule, 5))
+      (schedule_summary small)
     val subset = hhSlice.mk_schedule
       (slice_options ["zipperposition", "e"] 7 4 30 "knn" NONE)
     val _ = expect_equal "prover subset consumes each table head-first"
@@ -1375,21 +1404,23 @@ fun test_hhSlice () =
        ("zipperposition", 128, "knn", []),
        ("e", 512, "knn", []),
        ("zipperposition", 512, "knn", []),
-       ("e", 32, "knn", ["--auto"]),
-       ("zipperposition", 32, "knn", []),
-       ("e", 1024, "knn", [])]
+       ("e", 128, "knn", []),
+       ("zipperposition", 128, "knn", []),
+       ("e", 512, "knn", [])]
       (schedule_summary subset)
     val overridden = hhSlice.mk_schedule
       (slice_options ["e"] 20 2 30 "none" (SOME 40))
     val _ = expect_equal "fact and filter overrides precede deduplication"
       [("e", 40, "none", []),
-       ("e", 32, "none", ["--auto"])]
+       ("e", 40, "none", []),
+       ("e", 40, "none", []),
+       ("e", 40, "none", [])]
       (schedule_summary overridden)
     val exhausted = hhSlice.mk_schedule
       (slice_options ["e", "vampire", "zipperposition"] 100 8 30 "knn"
         NONE)
-    val _ = expect "rotation exhaustion stops at eleven unique slices"
-      (length exhausted = 11)
+    val _ = expect "rotation exhaustion stops at sixteen unique slices"
+      (length exhausted = 16)
     val _ = expect "Z3 remains outside the slice scheduler"
       (null (hhSlice.mk_schedule
         (slice_options ["z3"] 100 8 30 "knn" NONE)))
@@ -2894,7 +2925,7 @@ fun test_hhEval_integration () =
 
 val _ = test_hhEval_integration ()
 
-val _ = expect "hhEval smoke has twelve prover goals and one schedule goal"
+val _ = expect "hhEval legacy smoke has twelve prover goals and one schedule goal"
   (length hhEval.smoke_goals = 13 andalso
    length (List.filter (fn (_, _, engine) => engine = "sched")
      hhEval.smoke_goals) = 1)

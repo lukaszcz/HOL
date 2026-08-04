@@ -6,7 +6,12 @@ Phase 0 prover binaries:
 The theorem recordings use an escaped HolyHammer axiom name
 `thm_2Ekeep__name`; parser tests therefore check both unescaping and removal
 of the `thm.` prefix.  The E theorem recording also retains its
-`--auto-schedule` comment chatter.  Pigeonhole instances produced E's
+`--auto-schedule` comment chatter.  The versioned Phase 2 recordings were
+captured on 2026-08-04 from the full export/prove/parse-back/reconstruction
+smoke path, each using `arithmeticTheory.ADD1`.  They include the documented
+Vampire TH0, E TX0-minus, and Zipperposition legacy-FOF substitutions for
+pinned-parser rejections of TF1, TF0, and guarded FOF respectively.
+Pigeonhole instances produced E's
 `GaveUp`, Vampire's `Timeout`, and Zipperposition's `ResourceOut` (the
 Zipperposition timeout spelling).  The Zipperposition `GaveUp` recording is
 from a small higher-order counterexample.  Version recordings are the

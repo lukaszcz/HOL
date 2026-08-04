@@ -26,7 +26,7 @@ hhSchedule.uo: hhSchedule.sml hhSchedule.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhCache.uo hhProblemGen.uo
 
 hhEval.uo: hhEval.sml hhEval.ui hhConfig.uo hhProver.uo hhSlice.uo \
-           hhSchedule.uo
+           hhSchedule.uo holyHammer.uo
 
 holyHammer.uo: holyHammer.sml holyHammer.ui hhConfig.uo hhProver.uo \
                hhSlice.uo hhSchedule.uo

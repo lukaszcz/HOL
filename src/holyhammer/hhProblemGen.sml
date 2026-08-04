@@ -533,6 +533,17 @@ struct
               end) (encode body) vars
         | encode (FOConn (conn, bodies)) =
             hhTptpProblem.Conn (conn, map encode bodies)
+        (* Equality of non-boolean HOL terms remains an atomic HOL formula
+           through the skeleton pass.  Its temporary $equal head represents
+           TPTP equality, not a first-class boolean symbol: printing it as a
+           term gives ill-typed TFF/TX0 to Vampire. *)
+        | encode (FOAtom (FOHead (head, [left, right]))) =
+            if raw_symbol head = "$equal" then
+              hhTptpProblem.Conn (hhTptpProblem.Equal,
+                [hhTptpProblem.Atom (encode_term encoding left),
+                 hhTptpProblem.Atom (encode_term encoding right)])
+            else hhTptpProblem.Atom
+              (encode_term encoding (FOHead (head, [left, right])))
         | encode (FOAtom tm) = hhTptpProblem.Atom (encode_term encoding tm)
       val result = encode formula
       val tvars = type_vars_of_formula formula

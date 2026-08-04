@@ -1790,6 +1790,155 @@ fun smoke_condition timeout "sched" : condition =
 
 fun smoke_goal_id (thy, name, _) = goal_id thy name
 
+(* The table is smoke-gated before it is used for the long evaluation runs.
+   Each row below uses the actual scheduler exporter, the row's real prover
+   command, TSTP parse-back, and Metis reconstruction from a named premise. *)
+fun smoke_options expdir timeout : hhConfig.hh_options =
+  let val snapshot = hhConfig.snapshot () in
+    {timeout = timeout, max_proofs = 1,
+     provers = ["e", "vampire", "zipperposition"], slices = 16, cores = 16,
+     filter = "none", max_facts = NONE, format = "", type_enc = "",
+     lam_trans = "", mono_iters = #mono_iters snapshot,
+     mono_instances = NONE, minimize = #minimize snapshot,
+     preplay_timeout = #preplay_timeout snapshot,
+     minimize_timeout = #minimize_timeout snapshot, cache = false,
+     cache_dir = "", cache_max_entries = #cache_max_entries snapshot,
+     debug_dir = SOME (join expdir "out")}
+  end
+
+fun phase2_smoke_slices options =
+  List.drop (hhSlice.mk_schedule options, 8)
+
+fun run_format_smoke expdir timeout options (config, slice) =
+  let
+    val theorem = DB.fetch "arithmetic" "ADD1"
+    val goal = ([], Thm.concl theorem)
+    val premises = ["arithmeticTheory.ADD1"]
+    val condition : condition =
+      {cond_id = "smoke-format-" ^ #prover slice, regime = Bushy,
+       selector = Deps, engine = Prover (#prover slice), timeout = timeout,
+       reconstruct = true}
+    val _ = hhSchedule.export_problems options goal premises [(config, slice)]
+    val result = hhProver.run config
+      {timeout = timeout, format = #format slice,
+       problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
+       debug_dir = #debug_dir options}
+    val (recon_ok, _, _, _) = reconstruct condition result goal
+    val parsed_axioms =
+      case #used_axioms result of SOME axioms => not (null axioms) | NONE => false
+  in
+    if #szs result = hhProver.SzsTheorem andalso parsed_axioms andalso
+       recon_ok = SOME true then ()
+    else raise Fail
+      ("HolyHammer format smoke failed for " ^ #prover slice ^ "/" ^
+       #format slice ^ "/" ^ #type_enc slice ^ "/" ^ #lam_trans slice)
+  end
+
+fun pigeonhole_fixture name count =
+  let
+    val variables = List.tabulate (count, fn n =>
+      mk_var ("pigeonhole_" ^ Int.toString n, Type.bool))
+    fun unequal left right = mk_neg (mk_eq (left, right))
+    fun pairs [] = []
+      | pairs (item :: rest) = map (unequal item) rest @ pairs rest
+  in
+    (name, list_mk_exists (variables, list_mk_conj (pairs variables)))
+  end
+
+val soundness_fixtures =
+  [pigeonhole_fixture "bool-three-pigeonhole" 3,
+   pigeonhole_fixture "bool-four-pigeonhole" 4]
+
+fun soundness_schedule options goal =
+  hhSchedule.run {options = options, goal = ([], goal), premises = [],
+                  progress = NONE}
+
+fun has_theorem (_, status, _, _) = status = hhProver.SzsTheorem
+
+(* The complete Phase 2 encoding matrix.  The final three rows deliberately
+   retain the parser-rejected table triples: a substitution removes a slice
+   from the schedule, but must not remove its encoding from soundness checks. *)
+fun soundness_slice prover format type_enc lam_trans nfacts : hhProver.slice =
+  {prover = prover, format = format, type_enc = type_enc,
+   lam_trans = lam_trans, nfacts = nfacts, filter = "none", extra_opts = [],
+   slice_size = 1}
+
+fun soundness_config name =
+  case hhProver.lookup name of
+      SOME config => config
+    | NONE => raise Fail ("soundness smoke has no prover " ^ name)
+
+val soundness_cases =
+  [(soundness_config "vampire",
+    soundness_slice "vampire" "tx0" "mono_native_fool" "lifting" 96),
+   (soundness_config "zipperposition",
+    soundness_slice "zipperposition" "th1" "mono_native_higher_fool"
+      "keep_lams" 128),
+   (soundness_config "e",
+    soundness_slice "e" "th0" "mono_native_higher" "keep_lams" 512),
+   (soundness_config "vampire",
+    soundness_slice "vampire" "tf1" "poly_native" "lifting" 512),
+   (soundness_config "e",
+    soundness_slice "e" "tf0" "mono_native" "combs_and_lifting" 1024),
+   (soundness_config "zipperposition",
+    soundness_slice "zipperposition" "fof" "mono_guards??" "lifting" 32)]
+
+fun soundness_case options timeout goal (config, slice) =
+  let
+    (* A short query is enough to catch an unsound immediate theorem while
+       keeping the deliberately parser-rejected candidates smoke-friendly. *)
+    val query_timeout = Int.min (timeout, 3)
+    val _ = hhSchedule.export_problems options ([], goal) [] [(config, slice)]
+    val result = hhProver.run config
+      {timeout = query_timeout, format = #format slice,
+       problem = hhSchedule.problem_path slice, extra = #extra_opts slice,
+       debug_dir = #debug_dir options}
+  in
+    #szs result <> hhProver.SzsTheorem
+  end
+
+fun with_smoke_hh_options timeout action =
+  let
+    val settings =
+      [("timeout", Int.toString timeout),
+       ("provers", "e vampire zipperposition"), ("slices", "16"),
+       ("cores", "16"), ("filter", "none"), ("cache", "false"),
+       ("format", ""), ("type_enc", ""), ("lam_trans", "")]
+    fun saved key =
+      case List.find (fn (name, _, source) => name = key andalso source = "set")
+          (hhConfig.hh_params ()) of
+          SOME (_, value, _) => SOME (key, value)
+        | NONE => NONE
+    val previous = List.mapPartial (saved o #1) settings
+    fun restore () =
+      (List.app (hhConfig.hh_unset o #1) settings; List.app hhConfig.hh_set previous)
+    val _ = List.app hhConfig.hh_set settings
+  in
+    (action () before restore ()) handle error => (restore (); raise error)
+  end
+
+fun run_soundness_smoke timeout options =
+  let
+    fun one (name, goal) =
+      let
+        val result = soundness_schedule options goal
+        val matrix_ok = List.all (soundness_case options timeout goal)
+          soundness_cases
+        val no_theorem =
+          length (#slices_run result) = 16 andalso
+          not (List.exists has_theorem (#slices_run result)) andalso
+          matrix_ok andalso null (#suggestions result)
+        val public_result = with_smoke_hh_options timeout (fn () =>
+          holyHammer.main_hh_lemmas "/smoke" mlThmData.empty_thmdata
+            ([], goal))
+      in
+        if no_theorem andalso public_result = NONE then ()
+        else raise Fail ("HolyHammer soundness smoke failed for " ^ name)
+      end
+  in
+    List.app one soundness_fixtures
+  end
+
 fun run_smoke {expdir, timeout} =
   if timeout < 1 then raise Fail "smoke timeout must be positive"
   else
@@ -1807,6 +1956,9 @@ fun run_smoke {expdir, timeout} =
       val _ = ensure_dir (join expdir "out")
       val _ = ensure_dir (join expdir "pb")
       val _ = app load_theory theories
+      val options = smoke_options expdir timeout
+      val _ = app (run_format_smoke expdir timeout options)
+        (phase2_smoke_slices options)
       val corpus = map loaded_corpus_entry theories
       val _ = write_run_header expdir
         (new_run_header {expname = OS.Path.file expdir, corpus = corpus,
@@ -1871,6 +2023,7 @@ fun run_smoke {expdir, timeout} =
            " failed and " ^
            Int.toString (length smoke_goals - length results) ^
            " missing; output: " ^ expdir)
+      val _ = run_soundness_smoke timeout options
     in
       results
     end

@@ -50,8 +50,9 @@ The recommended installation command is:
 
     tools/download-provers
 
-The fixed twelve-goal end-to-end smoke suite exercises E, Vampire, and
-Zipperposition through export, proof search, and reconstruction:
+The end-to-end smoke suite exercises every Phase 2 slice through export,
+proof search, TSTP parse-back, and reconstruction.  It also runs cardinality
+soundness fixtures through the complete 16-slice public `hh` schedule:
 
     cd src/holyhammer
     ../../bin/Holmake smoke.exe
