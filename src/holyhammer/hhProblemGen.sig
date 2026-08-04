@@ -1,0 +1,61 @@
+(* The front half of the unified HolyHammer problem generator.  The IR keeps
+   the original HOL terms until TASK_06 first-orderizes them into
+   hhTptpProblem.tptp_term values. *)
+signature hhProblemGen =
+sig
+
+  type term = Term.term
+  type thm = Thm.thm
+
+  (* Every intermediate fact has the caller's nickname and a HOL formula.
+     Lambda definitions introduced by pass_lambda are ordinary facts named
+     lam.<n>. *)
+  type named_terms = {conjecture : term, facts : (string * term) list}
+
+  (* This deliberately has the shape of hhTptpProblem.tptp_formula, except
+     that atoms still contain HOL terms. *)
+  datatype hol_formula =
+      HQuant of bool * term list * hol_formula
+    | HConn of hhTptpProblem.conn * hol_formula list
+    | HAtom of term
+  type formula_ir = {conjecture : hol_formula,
+                     facts : (string * hol_formula) list}
+  type proxy_ir = {conjecture : hol_formula,
+                   facts : (string * hol_formula) list,
+                   proxies : string list}
+
+  (* Pass 1.  Beta-eta contract every formula and unfold LET exactly when
+     the target syntax lacks $let.  COND remains for the helper/$ite pass. *)
+  val presimp : hhTptpProblem.format -> named_terms -> named_terms
+
+  (* Pass 2.  Runs lambda translation jointly over the conjecture and facts;
+     keep_lams is downgraded to lifting outside THF. *)
+  val pass_lambda : hhTptpProblem.format -> string -> named_terms -> named_terms
+
+  (* Pass 3.  Only mono encodings invoke hhMonomorph; polymorphic native and
+     legacy encodings preserve the ranked premise list unchanged. *)
+  val pass_monomorph : hhTypeEnc.type_enc ->
+    {max_iters : int, max_new_instances : int} -> named_terms -> named_terms
+
+  (* Pass 4 turns the outer HOL logical skeleton into formula constructors.
+     Boolean equality is represented by Iff. *)
+  val formula_skeleton : named_terms -> formula_ir
+
+  (* Pass 5 changes logical constants in term position to proxies or native
+     builtins, according to the target's HO/FOOL/syntax capabilities. *)
+  val introduce_proxies : hhTptpProblem.format -> formula_ir -> proxy_ir
+
+  (* The compositional front end consumed by the remaining generator passes. *)
+  val translate_front :
+    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
+     lam_trans : string, mono_iters : int, mono_instances : int}
+    -> named_terms -> proxy_ir
+
+  val export_pb :
+    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
+     lam_trans : string, mono_iters : int, mono_instances : int}
+    -> string
+    -> term * (string * thm) list
+    -> unit
+
+end

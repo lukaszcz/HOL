@@ -756,6 +756,123 @@ fun test_hhMonomorph () =
 
 val _ = test_hhMonomorph ()
 
+fun test_hhProblemGen () =
+  let
+    open boolSyntax hhTptpProblem hhProblemGen
+    val num = Term.type_of ``0 : num``
+    val unary_num = Type.mk_type ("fun", [num, num])
+    val bool_to_bool = Type.mk_type ("fun", [Type.bool, Type.bool])
+    val x = Term.mk_var ("X", num)
+    val y = Term.mk_var ("Y", num)
+    val f = Term.mk_var ("F", unary_num)
+    val p = Term.mk_var ("P", Type.bool)
+    val use = Term.mk_var ("use", Type.mk_type
+      ("fun", [bool_to_bool, Type.bool]))
+    val use_bool = Term.mk_var ("use_bool", bool_to_bool)
+    val use_num = Term.mk_var ("use_num", Type.mk_type
+      ("fun", [num, Type.bool]))
+    val alpha = Type.alpha
+    fun list_ty ty = Type.mk_type ("list", [ty])
+    fun nil_tm ty = Term.inst [{redex = alpha, residue = ty}] ``[]``
+    fun eq_nil ty = mk_eq (nil_tm ty, nil_tm ty)
+    val fof = FOF
+    val tf0 = TFF {poly = false, fool = NoFool}
+    val tx0 = TFF {poly = false,
+                   fool = Fool {with_ite = true, with_let = true}}
+    val th0 = THF {poly = false,
+                   syntax = {with_ite = false, with_let = false},
+                   choice = false}
+    fun input conjecture : named_terms = {conjecture = conjecture, facts = []}
+    fun head_name tm =
+      let
+        fun head body = if Term.is_comb body then head (Term.rator body)
+                        else body
+        val head = head tm
+      in
+        if Term.is_var head then #1 (Term.dest_var head)
+        else #1 (Term.dest_const head)
+      end
+    fun proxied_atom format tm =
+      let
+        val ir = formula_skeleton (input tm)
+      in
+        case #conjecture (introduce_proxies format ir) of
+            HAtom result => result
+          | _ => raise Fail "expected atom"
+      end
+    val beta = Term.mk_comb (Term.mk_abs (x, x), y)
+    val eta = Term.mk_abs (x, Term.mk_comb (f, x))
+    val let_tm = mk_let (Term.mk_abs (x, Term.mk_comb (f, x)), y)
+    val cond_tm = mk_cond (p, x, y)
+    val beta_result = #conjecture (presimp fof (input beta))
+    val eta_result = #conjecture (presimp fof (input eta))
+    val let_fof = #conjecture (presimp fof (input let_tm))
+    val let_tx0 = #conjecture (presimp tx0 (input let_tm))
+    val cond_tf0 = #conjecture (presimp tf0 (input cond_tm))
+    val cond_tx0 = #conjecture (presimp tx0 (input cond_tm))
+    val lambda = mk_eq (Term.mk_abs (x, x), Term.mk_abs (x, x))
+    val downgraded = pass_lambda tf0 "keep_lams" (input lambda)
+    val kept = pass_lambda th0 "keep_lams" (input lambda)
+    val goal = eq_nil (list_ty num)
+    val schematic = eq_nil (list_ty alpha)
+    val mono = pass_monomorph (hhTypeEnc.of_string "mono_native")
+      {max_iters = 3, max_new_instances = 100}
+      {conjecture = goal, facts = [("schematic", schematic)]}
+    val poly = pass_monomorph (hhTypeEnc.of_string "poly_native")
+      {max_iters = 3, max_new_instances = 100}
+      {conjecture = goal, facts = [("schematic", schematic)]}
+    val iff = formula_skeleton (input (mk_eq (mk_neg p, p)))
+    val logical_argument = Term.mk_comb (use, negation)
+    val applied_not = Term.mk_comb (use_bool, mk_neg p)
+    val ite_atom = Term.mk_comb (use_num, cond_tm)
+    val _ = expect "hhProblemGen presimp beta-contracts"
+      (Term.aconv beta_result y)
+    val _ = expect "hhProblemGen presimp eta-contracts"
+      (Term.aconv eta_result f)
+    val _ = expect "hhProblemGen presimp gates LET on $let"
+      (Term.aconv let_fof (Term.mk_comb (f, y)) andalso is_let let_tx0)
+    val _ = expect "hhProblemGen presimp retains COND for helper routing"
+      (is_cond cond_tf0 andalso is_cond cond_tx0)
+    val _ = expect "hhProblemGen downgrades keep_lams outside THF"
+      (not (null (#facts downgraded)) andalso null (#facts kept))
+    val _ = expect "hhProblemGen dispatches monomorphization by encoding"
+      (List.exists (fn (_, tm) => not (Term.aconv tm schematic)) (#facts mono)
+       andalso ListPair.allEq (fn ((left_name, left), (right_name, right)) =>
+         left_name = right_name andalso Term.aconv left right)
+         (#facts poly, [("schematic", schematic)]))
+    val _ = expect "hhProblemGen skeleton maps boolean equality to iff"
+      (case iff of
+           {conjecture = HConn (Iff, [HConn (Not, _), HAtom _]), ...} => true
+         | _ => false)
+    val _ = expect "hhProblemGen uses proxies in FOF and TF0 term positions"
+      (head_name (rand (proxied_atom fof logical_argument)) = "pxy.not" andalso
+       head_name (rand (proxied_atom tf0 logical_argument)) = "pxy.not")
+    val _ = expect "hhProblemGen uses FOOL and TH0 native logical builtins"
+      (head_name (rand (proxied_atom tx0 applied_not)) = "$not" andalso
+       head_name (rand (proxied_atom th0 logical_argument)) = "$not")
+    val _ = expect "hhProblemGen gates $ite on the format syntax"
+      (head_name (rand (proxied_atom tx0 ite_atom)) = "$ite" andalso
+       is_cond (rand (proxied_atom tf0 ite_atom)))
+    val proxy_ir = introduce_proxies fof
+      (formula_skeleton (input logical_argument))
+    val _ = expect "hhProblemGen records used proxies"
+      (#proxies proxy_ir = ["not"])
+    val _ = expect "hhProblemGen composes its front-end passes"
+      (#proxies (translate_front
+        {format = fof, type_enc = hhTypeEnc.of_string "mono_guards",
+         lam_trans = "lifting", mono_iters = 3, mono_instances = 100}
+        (input logical_argument)) = ["not"])
+    val _ = expect "hhProblemGen export_pb is intentionally unwired"
+      ((export_pb {format = fof, type_enc = hhTypeEnc.of_string "mono_guards",
+                   lam_trans = "lifting", mono_iters = 3,
+                   mono_instances = 100} "unused" (p, []); false)
+       handle Fail message => String.isSubstring "not yet wired" message)
+  in
+    ()
+  end
+
+val _ = test_hhProblemGen ()
+
 fun prover name =
   case hhProver.lookup name of
       SOME config => config
