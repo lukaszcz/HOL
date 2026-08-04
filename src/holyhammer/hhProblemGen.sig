@@ -59,6 +59,19 @@ sig
      lam_trans : string, mono_iters : int, mono_instances : int}
     -> named_terms -> hhTptpProblem.problem
 
+  (* A memo is local to one scheduler export pass.  It deliberately has no
+     process-global backing: lambda translation is goal-dependent. *)
+  type export_memo
+  val new_export_memo : unit -> export_memo
+  val memo_lambda_runs : export_memo -> int
+
+  val export_pb_in : export_memo ->
+    {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
+     lam_trans : string, mono_iters : int, mono_instances : int}
+    -> string
+    -> term * (string * thm) list
+    -> unit
+
   val export_pb :
     {format : hhTptpProblem.format, type_enc : hhTypeEnc.type_enc,
      lam_trans : string, mono_iters : int, mono_instances : int}

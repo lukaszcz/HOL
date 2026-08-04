@@ -106,6 +106,23 @@ fun unescape_axiom raw =
   in
     if String.isPrefix "thm." name then
       SOME (String.extract (name, String.size "thm.", NONE))
+    else if String.isPrefix "thm" name then
+      let
+        val start = String.size "thm"
+        fun digits index =
+          if index < String.size name andalso
+             Char.isDigit (String.sub (name, index)) then digits (index + 1)
+          else index
+        val stop = digits start
+      in
+        (* Monomorphic copies are thm2.<nickname>, thm3.<nickname>, ... .
+           They replay the original theorem, so axioms_from_tstp's distinct
+           pass deliberately collapses them with the thm.<nickname> line. *)
+        if stop > start andalso stop < String.size name andalso
+           String.sub (name, stop) = #"." then
+          SOME (String.extract (name, stop + 1, NONE))
+        else NONE
+      end
     else NONE
   end
 

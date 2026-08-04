@@ -608,8 +608,145 @@ struct
         hhTptpProblem.Axiom, guard_atom encoding ty term)
     end
 
+  fun is_helper_name name = String.isPrefix "help." name
+  fun is_lambda_name name = String.isPrefix "lam." name
+
+  fun premise_lines format encoding needs facts =
+    let
+      fun ident name copies =
+        if is_lambda_name name then aiLib.escape name
+        else
+          let
+            val count = case List.find (fn (old, _) => old = name) copies of
+                NONE => 1 | SOME (_, n) => n + 1
+            val stem = if count = 1 then "thm." else
+              "thm" ^ Int.toString count ^ "."
+          in
+            aiLib.escape (stem ^ name)
+          end
+      fun add name [] = [(name, 1)]
+        | add name ((old, n) :: rest) =
+            if name = old then (old, n + 1) :: rest
+            else (old, n) :: add name rest
+      fun line (name, formula, copies) =
+        (hhTptpProblem.FormLine
+           (ident name copies, hhTptpProblem.Axiom,
+            encode_formula format encoding needs formula),
+         if is_lambda_name name then copies else add name copies)
+      fun loop [] _ result = List.rev result
+        | loop (item :: rest) copies result =
+            let val (output, copies') = line (#1 item, #2 item, copies) in
+              loop rest copies' (output :: result)
+            end
+    in
+      loop facts [] []
+    end
+
+  fun helper_tm name args = hhTptpProblem.Tm ((aiLib.escape name, []), args)
+  fun helper_var name = helper_tm name []
+  fun helper_atom name args = hhTptpProblem.Atom (helper_tm name args)
+  fun helper_quant vars body = hhTptpProblem.Quant (true,
+    map (fn name => (name, SOME (hhTptpProblem.TyCon ("$i", [])))) vars, body)
+  fun helper_line name formula = hhTptpProblem.FormLine
+    (aiLib.escape ("help." ^ name), hhTptpProblem.Axiom, formula)
+
+  (* Proxy constants are generated variables, so they have no HOL theorem to
+     fetch.  These small characterizations are AST facts; all ordinary
+     helpers below are nevertheless sent through the complete HOL pipeline. *)
+  fun proxy_helpers heads used_pp =
+    let
+      fun has name = List.exists (fn head => raw_symbol head = name) heads
+      val x = helper_var "X"
+      val y = helper_var "Y"
+      val p = helper_var "P"
+      val pxyeq = helper_atom "pxy.eq" [x, y]
+      val equal = hhTptpProblem.Conn (hhTptpProblem.Equal,
+        [hhTptpProblem.Atom x, hhTptpProblem.Atom y])
+      val q = helper_var "Q"
+      val pxyall = helper_atom "pxy.all" [p]
+      val pxyex = helper_atom "pxy.ex" [p]
+      val px = helper_atom "P" [x]
+      val pxy_not = helper_atom "pxy.not" [p]
+      val pxy_conj = helper_atom "pxy.conj" [p, q]
+      val pxy_disj = helper_atom "pxy.disj" [p, q]
+      val pxy_imp = helper_atom "pxy.imp" [p, q]
+      val p_atom = hhTptpProblem.Atom p
+      val q_atom = hhTptpProblem.Atom q
+      fun iff left right = hhTptpProblem.Conn (hhTptpProblem.Iff, [left, right])
+      fun negate body = hhTptpProblem.Conn (hhTptpProblem.Not, [body])
+      val true_law = helper_atom "pxy.true" []
+      val false_law = hhTptpProblem.Conn (hhTptpProblem.Not,
+        [helper_atom "pxy.false" []])
+      val pp_true = helper_atom "pp." [helper_tm "pxy.true" []]
+      val pp_false = hhTptpProblem.Conn (hhTptpProblem.Not,
+        [helper_atom "pp." [helper_tm "pxy.false" []]])
+    in
+      (if has "pxy.eq" then
+         [helper_line "pxy.eq.forward" (helper_quant ["X", "Y"]
+            (hhTptpProblem.Conn (hhTptpProblem.Implies, [pxyeq, equal]))),
+          helper_line "pxy.eq.backward" (helper_quant ["X", "Y"]
+            (hhTptpProblem.Conn (hhTptpProblem.Implies, [equal, pxyeq])))]
+       else []) @
+      (if has "pxy.not" then [helper_line "pxy.not" (helper_quant ["P"]
+         (iff pxy_not (negate p_atom)))] else []) @
+      (if has "pxy.conj" then [helper_line "pxy.conj" (helper_quant ["P", "Q"]
+         (iff pxy_conj (hhTptpProblem.Conn (hhTptpProblem.And,
+           [p_atom, q_atom]))))] else []) @
+      (if has "pxy.disj" then [helper_line "pxy.disj" (helper_quant ["P", "Q"]
+         (iff pxy_disj (hhTptpProblem.Conn (hhTptpProblem.Or,
+           [p_atom, q_atom]))))] else []) @
+      (if has "pxy.imp" then [helper_line "pxy.imp" (helper_quant ["P", "Q"]
+         (iff pxy_imp (hhTptpProblem.Conn (hhTptpProblem.Implies,
+           [p_atom, q_atom]))))] else []) @
+      (if has "pxy.all" then [helper_line "pxy.all" (helper_quant ["P", "X"]
+         (hhTptpProblem.Conn (hhTptpProblem.Implies, [pxyall, px])))] else []) @
+      (if has "pxy.ex" then [helper_line "pxy.ex" (helper_quant ["P", "X"]
+         (hhTptpProblem.Conn (hhTptpProblem.Implies, [px, pxyex])))] else []) @
+      (if has "pxy.true" then [helper_line "pxy.true" true_law] else []) @
+      (if has "pxy.false" then [helper_line "pxy.false" false_law] else []) @
+      (if used_pp then [helper_line "pp.true" pp_true,
+                        helper_line "pp.false" pp_false] else [])
+    end
+
+  fun fetched thy name = Thm.concl (DB.fetch thy name)
+
+  fun hol_helpers format mode used_app heads =
+    let
+      fun has name = List.exists (fn head => raw_symbol head = name) heads
+      val has_cond = List.exists is_cond_head heads
+      fun comb name theorem =
+        if (mode = "combs" orelse mode = "combs_and_lifting") andalso
+           has ("c.combin." ^ name) then
+          [("help.combin." ^ name, fetched "combin" theorem)]
+        else []
+      val combinators =
+        comb "I" "I_THM" @ comb "K" "K_THM" @ comb "S" "S_THM" @
+        comb "C" "C_THM" @ comb "o" "o_THM"
+      val {with_ite, ...} = syntax_of format
+      (* COND_CLAUSE1/2 are implementation theorems rather than exported
+         boolTheory bindings.  Construct their closed proposition shapes;
+         they still traverse lambda, mono, proxy, and encoding passes. *)
+      val conds = if not with_ite andalso has_cond then
+        let
+          val x = mk_var ("HX", Type.alpha)
+          val y = mk_var ("HY", Type.alpha)
+          val b = mk_var ("HB", Type.bool)
+          fun cond test = list_mk_comb (conditional, [test, x, y])
+        in
+          [("help.if_True", list_mk_forall ([x, y], mk_eq (cond T, x))),
+           ("help.if_False", list_mk_forall ([x, y], mk_eq (cond F, y))),
+           ("help.bool_cases", mk_forall (b,
+             mk_disj (mk_eq (b, T), mk_eq (b, F))))]
+        end
+        else []
+      val ext = if used_app then
+        [("help.eq_ext", Thm.concl boolTheory.EQ_EXT)] else []
+    in
+      combinators @ conds @ ext
+    end
+
   fun generated_problem format encoding needs ({conjecture, facts, used_app,
-                                                used_pp} : fo_ir) =
+                                                used_pp} : fo_ir) direct_helpers =
     let
       val all_formulas = conjecture :: map #2 facts
       val heads = List.foldl heads_of_fo_formula [] all_formulas
@@ -639,35 +776,150 @@ struct
         if guarded_type encoding needs ty then add_once same_value ty result else result)
         [] all_types
       val witnesses = map (witness_line encoding) guard_types
-      val facts' = map (fn (name, formula) => hhTptpProblem.FormLine
-        (aiLib.escape ("thm." ^ name), hhTptpProblem.Axiom,
-         encode_formula format encoding needs formula)) facts
+      val helpers = List.filter (is_helper_name o #1) facts
+      val ordinary = List.filter (not o is_helper_name o #1) facts
+      fun helper_lines facts =
+        let
+          fun count name [] = 1
+            | count name ((old, n) :: rest) =
+                if name = old then n + 1 else count name rest
+          fun loop [] _ result = List.rev result
+            | loop ((name, formula) :: rest) seen result =
+                let
+                  val n = count name seen
+                  val suffix = if n = 1 then "" else "." ^ Int.toString n
+                  val line = hhTptpProblem.FormLine
+                    (aiLib.escape (name ^ suffix), hhTptpProblem.Axiom,
+                     encode_formula format encoding needs formula)
+                in
+                  loop rest ((name, n) :: seen) (line :: result)
+                end
+        in
+          loop facts [] []
+        end
       val conjecture' = hhTptpProblem.FormLine ("conjecture",
         hhTptpProblem.Conjecture, encode_formula format encoding needs conjecture)
     in
       [("Declarations", decls @ gsy @ witnesses),
-       ("Helpers", []), ("Facts", facts'), ("Conjecture", [conjecture'])]
+       ("Helpers", helper_lines helpers @ direct_helpers),
+       ("Facts", premise_lines format encoding needs ordinary),
+       ("Conjecture", [conjecture'])]
     end
 
-  fun generate_problem options ({conjecture, facts} : named_terms) =
+  fun needs_of encoding terms =
+    case encoding of
+        hhTypeEnc.Guards {level = hhTypeEnc.NonmonoNonUniform, ...} =>
+          hhTypeEnc.types_needing_encoding
+            (#conjecture terms :: map #2 (#facts terms))
+      | _ => []
+
+  fun make_problem options lambda_terms =
     let
       val {format, type_enc, lam_trans, mono_iters, mono_instances} = options
-      val terms = pass_monomorph type_enc
-        {max_iters = mono_iters, max_new_instances = mono_instances}
-        (pass_lambda format lam_trans
-          (presimp format {conjecture = conjecture, facts = facts}))
-      val proxy = introduce_proxies format (formula_skeleton terms)
-      val needs =
-        case type_enc of
-            hhTypeEnc.Guards {level = hhTypeEnc.NonmonoNonUniform, ...} =>
-              hhTypeEnc.types_needing_encoding
-                (#conjecture terms :: map #2 (#facts terms))
-          | _ => []
+      val caps = {max_iters = mono_iters, max_new_instances = mono_instances}
+      val main_terms = pass_monomorph type_enc caps lambda_terms
+      val main_fo = firstorderize format type_enc
+        (introduce_proxies format (formula_skeleton main_terms))
+      val main_heads = heads_of_fo_formula (#conjecture main_fo,
+        List.foldl (fn ((_, formula), heads) =>
+          heads_of_fo_formula (formula, heads)) [] (#facts main_fo))
+      val helper_source = hol_helpers format lam_trans (#used_app main_fo) main_heads
+      (* Re-run helper facts with the problem's facts as their ground pool.
+         This is intentionally local to this export: a helper's mono copies
+         depend on the selected goal and premise set. *)
+      val helper_terms =
+        if null helper_source then []
+        else
+          List.filter (is_helper_name o #1)
+            (#facts (pass_monomorph type_enc caps
+              (pass_lambda format lam_trans
+                (presimp format {conjecture = #conjecture lambda_terms,
+                  facts = #facts lambda_terms @ helper_source}))))
+      val helper_fo = firstorderize format type_enc
+        (introduce_proxies format
+          (formula_skeleton {conjecture = #conjecture main_terms,
+                             facts = helper_terms}))
+      val combined = {conjecture = #conjecture main_fo,
+                      facts = #facts main_fo @ #facts helper_fo,
+                      used_app = #used_app main_fo orelse #used_app helper_fo,
+                      used_pp = #used_pp main_fo orelse #used_pp helper_fo}
+      val direct = proxy_helpers main_heads (#used_pp combined)
+      val needs = needs_of type_enc
+        {conjecture = #conjecture main_terms,
+         facts = #facts main_terms @ helper_terms}
     in
-      generated_problem format type_enc needs (firstorderize format type_enc proxy)
+      generated_problem format type_enc needs combined direct
     end
 
-  fun export_pb _ _ _ =
-    fail "export_pb is not yet wired (TASK_07 completes problem printing)"
+  fun generate_problem options terms =
+    let val {format, lam_trans, ...} = options in
+      make_problem options (pass_lambda format lam_trans (presimp format terms))
+    end
+
+  type export_memo = {entries : (string * named_terms) list ref, runs : int ref}
+
+  fun new_export_memo () = {entries = ref [], runs = ref 0}
+  fun memo_lambda_runs ({runs, ...} : export_memo) = !runs
+
+  fun same_terms left right =
+    Term.aconv (#conjecture left) (#conjecture right) andalso
+    ListPair.allEq (fn ((left_name, left_tm), (right_name, right_tm)) =>
+      left_name = right_name andalso Term.aconv left_tm right_tm)
+      (#facts left, #facts right)
+
+  fun effective_mode format mode =
+    if mode = "keep_lams" andalso not (is_full_ho format) then "lifting" else mode
+
+  fun memoized_lambda ({entries, runs} : export_memo) format mode terms =
+    let val key = effective_mode format mode in
+      case List.find (fn (old_key, old_terms) => old_key = key andalso
+          same_terms old_terms terms) (!entries) of
+          SOME (_, result) => result
+        | NONE =>
+            let val result = pass_lambda format mode terms in
+              entries := (key, result) :: !entries;
+              runs := !runs + 1;
+              result
+            end
+    end
+
+  fun format_name hhTptpProblem.FOF = "fof"
+    | format_name (hhTptpProblem.TFF _) = "tff"
+    | format_name (hhTptpProblem.THF _) = "thf"
+  fun encoding_name (hhTypeEnc.Native {higher, fool, poly}) =
+        (if poly then "poly_native" else "mono_native") ^
+        (if higher then "_higher" else "") ^ (if fool then "_fool" else "")
+    | encoding_name (hhTypeEnc.Guards {poly, level}) =
+        (if poly then "poly_guards" else "mono_guards") ^
+        (case level of hhTypeEnc.AllTypes => "" | hhTypeEnc.NonmonoNonUniform => "??")
+    | encoding_name hhTypeEnc.LegacySP = "legacy"
+
+  fun header {format, type_enc, lam_trans, mono_iters, mono_instances} =
+    "generated by hhProblemGen; format=" ^ format_name format ^
+    "; type_enc=" ^ encoding_name type_enc ^ "; lam_trans=" ^ lam_trans ^
+    "; mono_iters=" ^ Int.toString mono_iters ^
+    "; mono_instances=" ^ Int.toString mono_instances
+
+  fun write_problem file text =
+    let val output = TextIO.openOut file in
+      (TextIO.output (output, text); TextIO.closeOut output)
+      handle error => (TextIO.closeOut output handle _ => (); raise error)
+    end
+
+  fun export_pb_in memo options file (conjecture, named) =
+    let
+      val input = presimp (#format options) {conjecture = conjecture,
+                                              facts = map (fn (name, theorem) =>
+                                                (name, Thm.concl theorem)) named}
+      val lambda_terms = memoized_lambda memo (#format options) (#lam_trans options)
+        input
+      val problem = make_problem options lambda_terms
+    in
+      write_problem file (hhTptpProblem.string_of_problem (#format options)
+        (header options) problem)
+    end
+
+  fun export_pb options file input =
+    export_pb_in (new_export_memo ()) options file input
 
 end
