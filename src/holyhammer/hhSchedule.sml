@@ -107,6 +107,18 @@ fun export_problems options goal premises schedule =
     val slices = distinct_problem_slices (map #2 schedule)
     val conjecture = list_mk_imp goal
     val memo = hhProblemGen.new_export_memo ()
+    val named_memo = ref []
+    fun named_for nfacts =
+      case List.find (fn (old_nfacts, _) => old_nfacts = nfacts) (!named_memo) of
+          SOME (_, named) => named
+        | NONE =>
+            let
+              val selected = first_n nfacts premises
+              val named = smlRedirect.hidef mlThmData.thml_of_namel selected
+            in
+              named_memo := (nfacts, named) :: !named_memo;
+              named
+            end
     fun config_for slice =
       case List.find (fn (config, other) => same_problem_key slice other) schedule of
           SOME (config, _) => config
@@ -115,8 +127,7 @@ fun export_problems options goal premises schedule =
       let
         val config = config_for slice
         val directory = problem_dir slice
-        val selected = first_n (#nfacts slice) premises
-        val named = smlRedirect.hidef mlThmData.thml_of_namel selected
+        val named = named_for (#nfacts slice)
         val _ = hhConfig.ensure_dir directory
       in
         if #format slice = "fof" andalso #type_enc slice = "" then

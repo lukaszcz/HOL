@@ -81,7 +81,9 @@ struct
         | str _ (TyCon ("*", tys)) =
             "(" ^ join " * " (map (str false) tys) ^ ")"
         | str _ (TyCon (name, tys)) =
-            name ^ "(" ^ join "," (map (str false) tys) ^ ")"
+            if is_higher format then
+              "(" ^ join " @ " (name :: map (str false) tys) ^ ")"
+            else name ^ "(" ^ join "," (map (str false) tys) ^ ")"
         | str rhs (TyFun (left, right)) =
             let val text = str false left ^ " > " ^ str true right in
               if rhs then text else "(" ^ text ^ ")"

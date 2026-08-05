@@ -624,13 +624,43 @@ fun test_hhLamTrans () =
       Term.mk_abs (poly_x, Term.mk_comb (poly_p, poly_x))
     val polymorphic = mk_eq (Term.mk_comb (polymorphic_lam, poly_x),
       Term.mk_comb (poly_p, poly_x))
-    val fixtures = [nested, under_quantifier, polymorphic]
-    fun nonlogical_abs tm =
-      if is_forall tm then nonlogical_abs (#2 (dest_forall tm))
-      else if is_exists tm then nonlogical_abs (#2 (dest_exists tm))
-      else if Term.is_abs tm then true
+    val bool_consumer = Term.mk_var ("BC", Type.mk_type
+      ("fun", [Type.bool, Type.bool]))
+    val quantified_argument = Term.mk_comb (bool_consumer,
+      mk_forall (poly_x, Term.mk_comb (poly_p, poly_x)))
+    val t = Term.mk_var ("T0", Type.bool)
+    val t1 = Term.mk_var ("T1", Type.bool)
+    val t2 = Term.mk_var ("T2", Type.bool)
+    val implication_lam = Term.mk_abs (t,
+      mk_imp (mk_imp (t1, t), mk_imp (mk_imp (t2, t), t)))
+    val function_consumer = Term.mk_var ("FC", Type.mk_type
+      ("fun", [Term.type_of implication_lam, Type.bool]))
+    val implication_argument =
+      Term.mk_comb (function_consumer, implication_lam)
+    val nested_quantifier_lam = Term.mk_abs (x,
+      mk_forall (y, mk_imp (mk_conj
+        (mk_eq (x, x), mk_eq (y, y)), mk_eq (x, y))))
+    val nested_function_consumer = Term.mk_var ("NFC", Type.mk_type
+      ("fun", [Term.type_of nested_quantifier_lam, Type.bool]))
+    val nested_quantifier_argument =
+      Term.mk_comb (nested_function_consumer, nested_quantifier_lam)
+    val beta_fixtures = [nested, under_quantifier, polymorphic]
+    val fixtures =
+      beta_fixtures @
+      [quantified_argument, implication_argument, nested_quantifier_argument]
+    fun formula_abs tm =
+      if is_forall tm then formula_abs (#2 (dest_forall tm))
+      else if is_exists tm then formula_abs (#2 (dest_exists tm))
+      else if is_neg tm then formula_abs (dest_neg tm)
+      else if is_conj tm orelse is_disj tm orelse is_imp_only tm then
+        formula_abs (lhand tm) orelse formula_abs (rand tm)
+      else if is_eq tm andalso Term.type_of (lhand tm) = Type.bool then
+        formula_abs (lhand tm) orelse formula_abs (rand tm)
+      else term_abs tm
+    and term_abs tm =
+      if Term.is_abs tm then true
       else if Term.is_comb tm then
-        nonlogical_abs (Term.rator tm) orelse nonlogical_abs (Term.rand tm)
+        term_abs (Term.rator tm) orelse term_abs (Term.rand tm)
       else false
     fun generated_symbol tm =
       List.all (fn variable =>
@@ -652,30 +682,30 @@ fun test_hhLamTrans () =
       (map #1 lift_defs = List.tabulate (length lift_defs,
        fn index => "lam." ^ Int.toString index))
     val _ = expect "lifting removes fixture abstractions"
-      (List.all (not o nonlogical_abs) lifted andalso
+      (List.all (not o formula_abs) lifted andalso
        List.all (fn (_, definition) =>
-         not (nonlogical_abs definition)) lift_defs)
+         not (formula_abs definition)) lift_defs)
     val _ = expect "lifting definitions bind their captured variables"
       (List.all (generated_symbol o #2) lift_defs andalso
        List.exists (fn (_, definition) =>
          List.exists (fn ty => ty = alpha) (Term.type_vars_in_term definition))
          lift_defs)
     val _ = expect "combs removes fixture abstractions"
-      (null comb_defs andalso List.all (not o nonlogical_abs) combs)
+      (null comb_defs andalso List.all (not o formula_abs) combs)
     val _ = expect "combs beta-normalise to the closed input"
       (ListPair.allEq (fn (actual, fixture) =>
          Term.aconv (normalise actual)
            (normalise (list_mk_forall (Term.free_vars_lr fixture, fixture))))
-       (combs, fixtures))
+       (List.take (combs, length beta_fixtures), beta_fixtures))
     val _ = expect "combs_and_lifting retains both definition forms"
       (ListPair.allEq (fn (left, right) => Term.aconv left right)
          (both, lifted) andalso
        length both_defs = 2 * length lift_defs andalso
        List.all (fn (name, _) =>
          has_name (name ^ ".combs") both_defs) lift_defs andalso
-       List.all (not o nonlogical_abs o #2) both_defs)
+       List.all (not o formula_abs o #2) both_defs)
     val _ = expect "keep_lams only eta-contracts"
-      (null kept_defs andalso List.exists nonlogical_abs kept andalso
+      (null kept_defs andalso List.exists formula_abs kept andalso
        length kept = length fixtures)
     val _ = expect "empty lambda mode is rejected outside the legacy path"
       ((ignore (hhLamTrans.translate "" fixtures); false) handle Fail _ => true)
@@ -857,6 +887,7 @@ fun test_hhProblemGen () =
     val iff = formula_skeleton (input (mk_eq (mk_neg p, p)))
     val logical_argument = Term.mk_comb (use, negation)
     val applied_not = Term.mk_comb (use_bool, mk_neg p)
+    val applied_eq = Term.mk_comb (use_bool, mk_eq (x, y))
     val ite_atom = Term.mk_comb (use_num, cond_tm)
     val _ = expect "hhProblemGen presimp beta-contracts"
       (Term.aconv beta_result y)
@@ -880,9 +911,10 @@ fun test_hhProblemGen () =
     val _ = expect "hhProblemGen uses proxies in FOF and TF0 term positions"
       (head_name (rand (proxied_atom fof logical_argument)) = "pxy.not" andalso
        head_name (rand (proxied_atom tf0 logical_argument)) = "pxy.not")
-    val _ = expect "hhProblemGen uses FOOL and TH0 native logical builtins"
-      (head_name (rand (proxied_atom tx0 applied_not)) = "$not" andalso
-       head_name (rand (proxied_atom th0 logical_argument)) = "$not")
+    val _ = expect "hhProblemGen uses logical proxies in term positions"
+      (head_name (rand (proxied_atom tx0 applied_not)) = "pxy.not" andalso
+       head_name (rand (proxied_atom tx0 applied_eq)) = "pxy.eq" andalso
+       head_name (rand (proxied_atom th0 logical_argument)) = "pxy.not")
     val _ = expect "hhProblemGen gates $ite on the format syntax"
       (head_name (rand (proxied_atom tx0 ite_atom)) = "$ite" andalso
        is_cond (rand (proxied_atom tf0 ite_atom)))
@@ -961,8 +993,9 @@ fun test_hhProblemGen () =
        facts = List.tabulate (45, fn index =>
          ("f" ^ Int.toString index,
           Term.mk_comb (function_pred, Term.mk_comb (pxy_f, x))))}
-    val _ = expect "hhProblemGen shares final application arities with helpers"
-      (String.isSubstring "app_2E(pxy_2Ef" no_function_variable andalso
+    val _ = expect "hhProblemGen respects final application arities"
+      (String.isSubstring "pxy_2Ef(" no_function_variable andalso
+       not (String.isSubstring "app_2E(pxy_2Ef" no_function_variable) andalso
        String.isSubstring "app_2E(pxy_2Ef" with_function_variable)
     val _ = expect "hhProblemGen switches to Min_App_Op at forty-five facts"
       (occurrences "app_2E(pxy_2Ef" forty_four = 44 andalso
@@ -983,6 +1016,9 @@ fun test_hhProblemGen () =
        String.isSubstring "tff(conjecture" fool_bool_term andalso
        String.isSubstring "thf(conjecture" higher_native andalso
        String.isSubstring "thf(conjecture" higher_fool)
+    val _ = expect "monomorphic THF flattens applied types to ground sorts"
+      (String.isSubstring
+         "ty_2Elist_2Elist_28var_2E_27a_29 : $tType" higher_native)
     val _ = expect "mono_guards?? guards fewer naked variables"
       (occurrences "gd_2E" guards_query < occurrences "gd_2E" guards_all)
     val _ = expect "mono_guards?? agrees on possibly-finite naked types"
@@ -1376,7 +1412,7 @@ fun test_hhSlice () =
     val _ = expect "eight-core gate gives every S10 slice 10 seconds"
       (List.all (fn (_, slice) =>
          close 10.0 (hhSlice.slice_budget 8 gate10 slice)) gate10_schedule)
-    val anchors = List.take (gate30_schedule, 3)
+    val anchors = gate30_schedule
     fun anchor_command_equal (config, slice) =
       let
         val baseline : hhProver.run_request =

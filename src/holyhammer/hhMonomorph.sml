@@ -9,6 +9,7 @@ struct
 
   val max_thm_instances = 10
   val max_schematic_occurrences = 20
+  val max_substitution_nodes = 20000
   val privileged_facts = 10
 
   datatype fact_info =
@@ -23,17 +24,16 @@ struct
         instances : (int * subst * term) list ref
       }
 
-  fun insert cmp x [] = [x]
-    | insert cmp x (y :: ys) =
-        if cmp (x, y) = GREATER then y :: insert cmp x ys
-        else x :: y :: ys
-
-  fun sort cmp = List.foldl (fn (x, xs) => insert cmp x xs) []
+  val sort = Listsort.sort
 
   fun mem_type ty = List.exists (fn other => other = ty)
 
-  fun insert_type ty tys =
-    if mem_type ty tys then tys else sort Type.compare (ty :: tys)
+  fun insert_type ty [] = [ty]
+    | insert_type ty (old :: rest) =
+        case Type.compare (ty, old) of
+            LESS => ty :: old :: rest
+          | EQUAL => old :: rest
+          | GREATER => old :: insert_type ty rest
 
   fun lookup name table =
     case List.find (fn (other, _) => other = name) table of
@@ -46,10 +46,14 @@ struct
     map (fn (other, old) => if other = name then (other, value)
                             else (other, old)) table
 
-  fun all_consts tm =
+  fun schematic_consts tm =
     let
       fun walk current result =
-        if is_const current then dest_const current :: result
+        if length result > max_schematic_occurrences then result
+        else if is_const current then
+          let val constant as (_, ty) = dest_const current in
+            if Type.polymorphic ty then constant :: result else result
+          end
         else if is_comb current then
           walk (rand current) (walk (rator current) result)
         else if is_abs current then
@@ -58,12 +62,6 @@ struct
     in
       walk tm []
     end
-
-  fun schematic_consts tm =
-    List.filter (Type.polymorphic o snd) (all_consts tm)
-
-  fun all_ground_consts tm =
-    List.filter (not o Type.polymorphic o snd) (all_consts tm)
 
   fun tvar_is_bound tvars ty = mem_type ty tvars
 
@@ -82,6 +80,15 @@ struct
     let
       val tvars = Term.type_vars_in_term theorem
       val schematics = schematic_consts theorem
+      val prioritized = Listsort.sort (fn ((left_name, left_ty),
+          (right_name, right_ty)) =>
+        case Int.compare (length (Type.type_vars right_ty),
+                          length (Type.type_vars left_ty)) of
+            EQUAL =>
+              (case String.compare (left_name, right_name) of
+                   EQUAL => Type.compare (left_ty, right_ty)
+                 | order => order)
+          | order => order) schematics
     in
       if null tvars then Ground (nickname, theorem)
       else if not (groundable tvars schematics) then Ignored
@@ -89,7 +96,7 @@ struct
         nickname = nickname,
         theorem = theorem,
         tvars = tvars,
-        schematics = schematics,
+        schematics = prioritized,
         initial_round = if rank < privileged_facts then 1 else 2,
         instances = ref []
       }
@@ -112,8 +119,20 @@ struct
     else table
 
   fun add_grounds tm table =
-    List.foldl (fn (constant, result) => add_ground constant result)
-      table (all_ground_consts tm)
+    let
+      fun walk current result =
+        if is_const current then
+          let val constant as (_, ty) = dest_const current in
+            if Type.polymorphic ty then result
+            else add_ground constant result
+          end
+        else if is_comb current then
+          walk (rand current) (walk (rator current) result)
+        else if is_abs current then walk (body current) result
+        else result
+    in
+      walk tm table
+    end
 
   fun merge_grounds left right =
     map (fn (name, tys) =>
@@ -169,27 +188,71 @@ struct
       List.concat (map (try_one false) (lookup name known))
     end
 
-  fun substitutions tvars schematics known new require_new =
+  fun substitutions nickname tvars schematics known new require_new limit =
     let
-      fun search [] subst used_new =
-            if complete tvars subst andalso (not require_new orelse used_new)
-            then [subst] else []
-        | search ((name, ty) :: rest) subst used_new =
+      val visited = ref 0
+      fun matches_new subst (name, ty) =
+        List.exists (fn ground =>
+          case match ty ground subst of SOME _ => true | NONE => false)
+          (lookup name new)
+      fun search remaining subst used_new =
+        if !visited >= max_substitution_nodes then []
+        else if complete tvars subst then
+          if not require_new orelse used_new orelse
+             List.exists (matches_new subst) remaining then [subst]
+          else []
+        else
+          (visited := !visited + 1;
+          case remaining of
+              [] => []
+            | (name, ty) :: rest =>
             let
               val matched = matching_grounds name ty subst known new
               val refined = List.concat (map (fn (is_new, subst') =>
                 search rest subst' (used_new orelse is_new)) matched)
             in
               refined @ search rest subst used_new
-            end
+            end)
       fun same_subst left right = subst_compare (left, right) = EQUAL
       fun unique [] result = List.rev result
         | unique (subst :: rest) result =
             if List.exists (fn old => same_subst subst old) result then
               unique rest result
             else unique rest (subst :: result)
+      fun truncate 0 _ = []
+        | truncate _ [] = []
+        | truncate count (item :: items) =
+            item :: truncate (count - 1) items
+      fun add_best subst result =
+        if List.exists (fn old => same_subst subst old) result then result
+        else truncate limit
+          (Listsort.sort subst_compare (subst :: result))
+      fun covers_all ty =
+        let val vars = Type.type_vars ty in
+          List.all (fn tvar => mem_type tvar vars) tvars
+        end
+      fun direct all_schematics (name, ty) initial =
+        let
+          fun consider is_new ground result =
+            case match ty ground [] of
+                SOME subst =>
+                  if complete tvars subst andalso
+                     (not require_new orelse is_new orelse
+                      List.exists (matches_new subst) all_schematics)
+                  then add_best subst result
+                  else result
+              | NONE => result
+          val from_new = List.foldl (fn (ground, result) =>
+            consider true ground result) initial (lookup name new)
+        in
+          List.foldl (fn (ground, result) => consider false ground result)
+            from_new (lookup name known)
+        end
     in
-      unique (sort subst_compare (search schematics [] false)) []
+      case List.filter (covers_all o #2) schematics of
+          [] => unique (sort subst_compare (search schematics [] false)) []
+        | covering => List.foldl (fn (schematic, result) =>
+            direct schematics schematic result) [] covering
     end
 
   fun unique_terms candidates old =
@@ -216,7 +279,8 @@ struct
 
   fun process_fact round known new remaining fact next_new =
     case fact of
-        Schematic {theorem, tvars, schematics, initial_round, instances, ...} =>
+        Schematic {nickname, theorem, tvars, schematics, initial_round,
+                   instances, ...} =>
           if round < initial_round orelse !remaining <= 0 orelse
              length schematics > max_schematic_occurrences then next_new
           else
@@ -224,12 +288,20 @@ struct
               val (old, fresh, require_new) =
                 if round = initial_round then ([], merge_grounds known new, false)
                 else (known, new, true)
-              val candidates = map (fn subst =>
-                (round, subst, Term.inst subst theorem))
-                (substitutions tvars schematics old fresh require_new)
-              val candidates = unique_terms candidates (!instances)
               val room = Int.min (max_thm_instances - length (!instances),
                 !remaining)
+              (* Substitutions are already in canonical preference order.
+                 Different complete substitutions produce differently typed
+                 theorem instances, and at most one per old instance can be
+                 filtered below.  Instantiate only the bounded prefix that
+                 can therefore contribute to this fact. *)
+              val substs = if room <= 0 then [] else
+                substitutions nickname tvars schematics old fresh require_new
+                  (room + length (!instances))
+              val candidates = map (fn subst =>
+                (round, subst, Term.inst subst theorem))
+                substs
+              val candidates = unique_terms candidates (!instances)
               val selected = if room <= 0 then [] else take room candidates
               val _ = instances := !instances @ selected
               val _ = remaining := !remaining - length selected

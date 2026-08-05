@@ -14,7 +14,13 @@ struct
 
   fun mk_fun domain range = Type.mk_type ("fun", [domain, range])
 
-  fun close_formula tm = list_mk_forall (free_vars_lr tm, tm)
+  fun generated_symbol variable =
+    let val name = #1 (dest_var variable) in
+      String.isPrefix "pxy." name orelse String.isPrefix "$" name
+    end
+
+  fun close_formula tm =
+    list_mk_forall (List.filter (not o generated_symbol) (free_vars_lr tm), tm)
 
   fun strip_abs tm =
     let
@@ -36,27 +42,29 @@ struct
       loop [] tm
     end
 
-  fun logical_map recurse tm =
+  (* HOL represents binders as constants applied to abstractions.  Recognise
+     that representation only in formula position.  In term position, as in
+     p (!x. q x), the abstraction is an ordinary argument that lifting or
+     combinator translation must remove. *)
+  fun formula_map formula term tm =
     if is_forall tm then
-      let val (var, body) = dest_forall tm in mk_forall (var, recurse body) end
+      let val (var, body) = dest_forall tm in mk_forall (var, formula body) end
     else if is_exists tm then
-      let val (var, body) = dest_exists tm in mk_exists (var, recurse body) end
-    else if is_neg tm then mk_neg (recurse (dest_neg tm))
+      let val (var, body) = dest_exists tm in mk_exists (var, formula body) end
+    else if is_neg tm then mk_neg (formula (dest_neg tm))
     else if is_conj tm then
-      mk_conj (recurse (lhand tm), recurse (rand tm))
+      mk_conj (formula (lhand tm), formula (rand tm))
     else if is_disj tm then
-      mk_disj (recurse (lhand tm), recurse (rand tm))
+      mk_disj (formula (lhand tm), formula (rand tm))
     else if is_imp_only tm then
       let
         val (left, right) = dest_imp tm
       in
-        mk_imp (recurse left, recurse right)
+        mk_imp (formula left, formula right)
       end
-    else if is_eq tm then
-      mk_eq (recurse (lhand tm), recurse (rand tm))
-    else if is_comb tm then
-      mk_comb (recurse (rator tm), recurse (rand tm))
-    else tm
+    else if is_eq tm andalso type_of (lhand tm) = Type.bool then
+      mk_eq (formula (lhand tm), formula (rand tm))
+    else term tm
 
   (* Do not open the combin theory: doing so changes the session grammar.
      Constants are looked up only when combs is selected.  HOL4 calls the B
@@ -74,60 +82,82 @@ struct
   fun as_function variable tm = rator (ucomb tm variable)
 
   fun abstract variable tm =
-    if aconv variable tm then as_function variable (combin "I")
-    else if not (has_var variable tm) then
-      as_function variable (ucomb (combin "K") tm)
-    else if is_comb tm then
-      let
-        val left = rator tm
-        val right = rand tm
-        val left_has = has_var variable left
-        val right_has = has_var variable right
-      in
-        if left_has andalso right_has then
-          as_function variable
-            (apply2 (combin "S") (abstract variable left)
-              (abstract variable right))
-        else if left_has then
-          as_function variable
-            (apply2 (combin "C") (abstract variable left) right)
-        else if right_has then
-          as_function variable
-            (apply2 (combin "o") left (abstract variable right))
-        else as_function variable (ucomb (combin "K") tm)
-      end
-    else as_function variable (ucomb (combin "K") tm)
+    let
+      (* Return whether the subtree contains [variable] together with its
+         abstraction when it does, or the unchanged subtree when it does
+         not.  This avoids the quadratic free-variable rescans of the direct
+         textbook presentation on large premise sets. *)
+      fun walk body =
+        if aconv variable body then
+          (true, as_function variable (combin "I"))
+        else if is_comb body then
+          let
+            val left = rator body
+            val right = rand body
+            val (left_has, left') = walk left
+            val (right_has, right') = walk right
+          in
+            if not left_has andalso right_has andalso
+               aconv variable right then
+              (true, left)
+            else if left_has andalso right_has then
+              (true, as_function variable
+                (apply2 (combin "S") left' right'))
+            else if left_has then
+              (true, as_function variable
+                (apply2 (combin "C") left' right))
+            else if right_has then
+              (true, as_function variable
+                (apply2 (combin "o") left right'))
+            else (false, body)
+          end
+        else (false, body)
+      val (occurs, result) = walk tm
+    in
+      if occurs then result
+      else as_function variable (ucomb (combin "K") tm)
+    end
 
   fun eliminate_abs tm =
     let
-      fun recurse body =
+      fun formula body = formula_map formula term body
+      and term body =
         if is_abs body then
           let
             val (vars, matrix) = strip_abs body
-            val matrix' = recurse matrix
+            (* Once an abstraction itself is being combinatorized, every
+               abstraction below it is a term-level function, including the
+               representation lambda of a nested logical binder. *)
+            val matrix' = term matrix
           in
             List.foldr (fn (var, result) => abstract var result) matrix' vars
           end
-        else logical_map recurse body
+        else if is_comb body then
+          mk_comb (term (rator body), term (rand body))
+        else body
     in
-      recurse tm
+      formula tm
     end
 
   fun eta_contract tm =
     let
-      fun recurse body =
+      fun formula body = formula_map formula term body
+      and term body =
         if is_abs body then
           let
             val (var, matrix) = dest_abs body
-            val matrix' = recurse matrix
+            val matrix' =
+              if type_of matrix = Type.bool then formula matrix else term matrix
           in
             if is_comb matrix' andalso aconv (rand matrix') var andalso
-               not (has_var var (rator matrix')) then recurse (rator matrix')
+               not (has_var var (rator matrix')) then term (rator matrix')
             else mk_abs (var, matrix')
           end
-        else logical_map recurse body
+        else if is_comb body then
+          mk_comb (term (rator body), term (rand body))
+        else body
     in
-      recurse tm
+      formula tm
     end
 
   fun lift formulas =
@@ -143,13 +173,17 @@ struct
           "lam." ^ Int.toString index
         end
 
-      fun recurse tm =
-        if is_abs tm then lift_abs tm else logical_map recurse tm
+      fun formula tm = formula_map formula term tm
+      and term tm =
+        if is_abs tm then lift_abs tm
+        else if is_comb tm then mk_comb (term (rator tm), term (rand tm))
+        else tm
       and lift_abs tm =
         let
           val (bound, matrix) = strip_abs tm
           val captured = free_vars_lr tm
-          val matrix' = recurse matrix
+          val matrix' =
+            if type_of matrix = Type.bool then formula matrix else term matrix
           val lam_type =
             List.foldr (fn (var, result) => mk_fun (type_of var) result)
               (type_of tm) captured
@@ -164,7 +198,7 @@ struct
           replacement
         end
 
-      val rewritten = map (recurse o close_formula) formulas
+      val rewritten = map (formula o close_formula) formulas
     in
       (rewritten, List.rev (!definitions))
     end

@@ -5,6 +5,7 @@ struct
 
   type term = Term.term
   type thm = Thm.thm
+  type hol_type = Type.hol_type
   type named_terms = {conjecture : term, facts : (string * term) list}
 
   datatype hol_formula =
@@ -19,7 +20,10 @@ struct
 
   datatype fo_term =
       FOHead of term * fo_term list
-    | FOApp of fo_term * fo_term
+    | FOValue of term
+    | FOApp of {left : fo_term, right : fo_term,
+                function_type : hol_type, argument_type : hol_type,
+                result_type : hol_type}
     | FOPred of fo_term
     | FOAbs of term * fo_term
   datatype fo_formula =
@@ -169,8 +173,9 @@ struct
               else if null args then head
               else rebuild (transform_term format seen head) args'
           | SOME (name, card, builtin) =>
-              if is_full_ho format then use_builtin builtin
-              else if is_fool format andalso argc = card then use_builtin builtin
+              if (name = "true" orelse name = "false") andalso
+                 (is_full_ho format orelse is_fool format) then
+                use_builtin builtin
               else use_proxy name
     end
 
@@ -313,17 +318,34 @@ struct
         val used_app = ref false
         val used_pp = ref false
         fun term in_position tm =
-          if is_abs tm then fail "lambda survived first-order lambda handling"
+          if is_abs tm then
+            fail ("lambda survived first-order lambda handling: " ^
+              Parse.term_to_string tm)
           else
             let
               val (head, args) = strip_comb tm
-              val minimum = if is_symbol head then arity_for head arities else 0
+              val minimum =
+                if is_var head andalso #1 (dest_var head) = "$equal" then 2
+                else if is_var head andalso #1 (dest_var head) = "$ite" then 3
+                else if is_symbol head then arity_for head arities else 0
               val direct_arity = if length args < minimum then 0 else minimum
-              val direct = FOHead (head, map (term true)
-                (List.take (args, direct_arity)))
-              val applied = List.foldl (fn (arg, result) =>
-                (used_app := true; FOApp (result, term true arg))) direct
-                (List.drop (args, direct_arity))
+              val direct_args = List.take (args, direct_arity)
+              val direct =
+                if direct_arity = 0 andalso type_is_fun (type_of head) then
+                  FOValue head
+                else FOHead (head, map (term true) direct_args)
+              val direct_term = list_mk_comb
+                (head, direct_args)
+              val (applied, _) = List.foldl (fn (arg, (result, function)) =>
+                let
+                  val application = mk_comb (function, arg)
+                in
+                  used_app := true;
+                  (FOApp {left = result, right = term true arg,
+                          function_type = type_of function,
+                          argument_type = type_of arg,
+                          result_type = type_of application}, application)
+                end) (direct, direct_term) (List.drop (args, direct_arity))
               val boolean = type_of tm = Type.bool
             in
               if in_position andalso boolean andalso not (is_fool format) then
@@ -333,9 +355,14 @@ struct
         fun formula (HQuant (all, vars, body)) = FOQuant (all, vars, formula body)
           | formula (HConn (conn, bodies)) = FOConn (conn, map formula bodies)
           | formula (HAtom tm) = FOAtom (term false tm)
+        fun named_formula (name, body) =
+          (name, formula body)
+          handle Fail message => fail ("fact " ^ name ^ ": " ^ message)
+        val conjecture' = formula conjecture
+          handle Fail message => fail ("conjecture: " ^ message)
       in
-        {conjecture = formula conjecture,
-         facts = map (fn (name, body) => (name, formula body)) facts,
+        {conjecture = conjecture',
+         facts = map named_formula facts,
          used_app = !used_app, used_pp = !used_pp}
       end
 
@@ -353,8 +380,12 @@ struct
     | types_of_formula (FOAtom tm) = types_of_fo_term tm
   and types_of_fo_term (FOHead (head, args)) =
         types_of_type (type_of head) @ List.concat (map types_of_fo_term args)
-    | types_of_fo_term (FOApp (left, right)) =
-        types_of_fo_term left @ types_of_fo_term right
+    | types_of_fo_term (FOValue head) = types_of_type (type_of head)
+    | types_of_fo_term (FOApp {left, right, function_type, argument_type,
+                               result_type}) =
+        types_of_type function_type @ types_of_type argument_type @
+        types_of_type result_type @ types_of_fo_term left @
+        types_of_fo_term right
     | types_of_fo_term (FOPred body) = types_of_fo_term body
     | types_of_fo_term (FOAbs (var, body)) =
         types_of_type (type_of var) @ types_of_fo_term body
@@ -386,7 +417,25 @@ struct
           (aiLib.escape ("ty." ^ Thy ^ "." ^ Tyop), map native_type Args)
       end
 
+  fun mono_higher_type ty =
+    if is_vartype ty then hhTptpProblem.TyCon (mangle_type ty, [])
+    else
+      let val {Thy, Tyop, Args} = Type.dest_thy_type ty in
+        if Thy = "min" andalso Tyop = "fun" then
+          (case Args of
+               [domain, range] => hhTptpProblem.TyFun
+                 (mono_higher_type domain, mono_higher_type range)
+             | _ => fail "malformed function type")
+        else if Thy = "min" andalso Tyop = "bool" then
+          hhTptpProblem.TyCon ("$o", [])
+        else hhTptpProblem.TyCon (mangle_type ty, [])
+      end
+
   fun type_for (hhTypeEnc.Native {poly = true, ...}) = native_type
+    | type_for (hhTypeEnc.Native {higher = true, ...}) = mono_higher_type
+    | type_for (hhTypeEnc.Native {fool = true, ...}) = (fn ty =>
+        if ty = Type.bool then hhTptpProblem.TyCon ("$o", [])
+        else hhTptpProblem.TyCon (mangle_type ty, []))
     | type_for _ = fn ty => hhTptpProblem.TyCon (mangle_type ty, [])
 
   fun const_type_args tm =
@@ -446,23 +495,65 @@ struct
   fun encoded_symbol encoding head =
     if is_var head andalso not (is_generated_var head) then
       variable_name (raw_symbol head)
+    else if raw_symbol head = "$true" orelse raw_symbol head = "$false" orelse
+            raw_symbol head = "$equal" then raw_symbol head
     else
       case encoding of
-          hhTypeEnc.Native {poly = true, ...} => aiLib.escape (raw_symbol head)
+          hhTypeEnc.Native {poly = true, ...} =>
+            aiLib.escape (if raw_symbol head = "$ite" then "pxy.ite"
+                          else raw_symbol head)
         | _ =>
-            let val args = type_args_of_head head in
-              if null args then aiLib.escape (raw_symbol head)
-              else aiLib.escape (raw_symbol head ^ "." ^
+            let
+              val args = type_args_of_head head
+              val base = if raw_symbol head = "$ite" then "pxy.ite"
+                         else raw_symbol head
+            in
+              if null args then aiLib.escape base
+              else aiLib.escape (base ^ "." ^
                 String.concatWith "." (map raw_mangle_type args))
             end
 
+  fun sha1_text text =
+    let
+      val bytes = Byte.stringToBytes text
+      val size = Word8Vector.length bytes
+      fun read (offset, requested) =
+        let
+          val count = Int.min (requested, size - offset)
+          val chunk = Word8Vector.tabulate
+            (count, fn index => Word8Vector.sub (bytes, offset + index))
+        in
+          (chunk, offset + count)
+        end
+    in
+      SHA1.sha1String read 0
+    end
+
+  fun app_symbol (hhTypeEnc.Native {poly = false, ...})
+        (function_type, argument_type, result_type) =
+        "app_" ^ String.substring (sha1_text
+          (raw_mangle_type function_type ^ "\n" ^
+           raw_mangle_type argument_type ^ "\n" ^
+           raw_mangle_type result_type), 0, 16)
+    | app_symbol _ _ = "app_2E"
+
+  fun value_symbol (encoding as hhTypeEnc.Native {poly = false, ...}) head =
+        "value_" ^ aiLib.escape (raw_symbol head) ^ "_" ^
+        String.substring (sha1_text (raw_mangle_type (type_of head)), 0, 12)
+    | value_symbol encoding head = encoded_symbol encoding head
+
   fun encode_term encoding (FOHead (head, args)) =
-        hhTptpProblem.Tm ((encoded_symbol encoding head,
+        hhTptpProblem.Tm (((if raw_symbol head = "$ite" andalso
+          length args = 3 then "$ite" else encoded_symbol encoding head),
           (case encoding of
              hhTypeEnc.Native {poly = true, ...} => map native_type (type_args_of_head head)
            | _ => [])), map (encode_term encoding) args)
-    | encode_term encoding (FOApp (left, right)) =
-        hhTptpProblem.Tm (("app_2E", []),
+    | encode_term encoding (FOValue head) =
+        hhTptpProblem.Tm ((value_symbol encoding head, []), [])
+    | encode_term encoding (FOApp {left, right, function_type,
+                                    argument_type, result_type}) =
+        hhTptpProblem.Tm ((app_symbol encoding
+          (function_type, argument_type, result_type), []),
           [encode_term encoding left, encode_term encoding right])
     | encode_term encoding (FOPred body) =
         hhTptpProblem.Tm (("pp_2E", []), [encode_term encoding body])
@@ -480,7 +571,9 @@ struct
       fun collect_term (FOHead (head, args)) result =
             List.foldl (fn (arg, acc) => collect_term arg acc)
               (collect_ty (type_of head) result) args
-        | collect_term (FOApp (left, right)) result =
+        | collect_term (FOValue head) result =
+            collect_ty (type_of head) result
+        | collect_term (FOApp {left, right, ...}) result =
             collect_term right (collect_term left result)
         | collect_term (FOPred body) result = collect_term body result
         | collect_term (FOAbs (var, body)) result =
@@ -559,7 +652,11 @@ struct
   fun heads_of_fo_term (FOHead (head, args), heads) =
         List.foldl heads_of_fo_term (if is_symbol head then
           add_once (fn left => fn right => same_head left right) head heads else heads) args
-    | heads_of_fo_term (FOApp (left, right), heads) =
+    | heads_of_fo_term (FOValue head, heads) =
+        if is_symbol head then
+          add_once (fn left => fn right => same_head left right) head heads
+        else heads
+    | heads_of_fo_term (FOApp {left, right, ...}, heads) =
         heads_of_fo_term (right, heads_of_fo_term (left, heads))
     | heads_of_fo_term (FOPred body, heads) = heads_of_fo_term (body, heads)
     | heads_of_fo_term (FOAbs (_, body), heads) = heads_of_fo_term (body, heads)
@@ -589,13 +686,32 @@ struct
         | _ => type_of head
     end
 
-  fun declaration_type encoding head =
+  fun declaration_type encoding arity head =
     let
-      val full_type = generic_proxy_type head
-      val (domains, result) = type_parts full_type
-      val ty = List.foldr (fn (domain, range) =>
-        hhTptpProblem.TyFun (type_for encoding domain, range))
-        (type_for encoding result) domains
+      val full_type =
+        case encoding of
+            hhTypeEnc.Native {poly = true, ...} => generic_proxy_type head
+          | _ => type_of head
+      fun consume 0 ty domains = (List.rev domains, ty)
+        | consume count ty domains =
+            (case dom_rng ty of
+                 SOME (domain, range) =>
+                   consume (count - 1) range (domain :: domains)
+               | NONE => fail "symbol arity exceeds its HOL function type")
+      val (domains, result) =
+        case encoding of
+            hhTypeEnc.Native {higher = false, poly = false, ...} =>
+              consume arity full_type []
+          | _ => type_parts full_type
+      val ty =
+        case encoding of
+            hhTypeEnc.Native {poly = false, ...} =>
+              List.foldr (fn (domain, range) =>
+                hhTptpProblem.TyFun (type_for encoding domain, range))
+                (type_for encoding result) domains
+          | _ => List.foldr (fn (domain, range) =>
+              hhTptpProblem.TyFun (type_for encoding domain, range))
+              (type_for encoding result) domains
     in
       case encoding of
           hhTypeEnc.Native {poly = true, ...} =>
@@ -618,11 +734,13 @@ struct
             add_once same_value (symbol, length Args) result
           end
       fun mono_sort ty result = add_once same_value (mangle_type ty) result
+      fun declarations operators =
+        map (fn (symbol, arity) => hhTptpProblem.TypeDecl
+          (aiLib.escape ("ty." ^ symbol), symbol, arity)) operators
     in
       case encoding of
           hhTypeEnc.Native {poly = true, ...} =>
-            map (fn (symbol, arity) => hhTptpProblem.TypeDecl
-              (aiLib.escape ("ty." ^ symbol), symbol, arity))
+            declarations
               (List.foldl (fn (ty, result) => native_op ty result) [] types)
         | _ =>
             map (fn symbol => hhTptpProblem.TypeDecl
@@ -828,17 +946,98 @@ struct
       combinators @ conds @ ext
     end
 
+  fun app_signatures_term (FOHead (_, args), result) =
+        List.foldl app_signatures_term result args
+    | app_signatures_term (FOValue _, result) = result
+    | app_signatures_term
+        (FOApp {left, right, function_type, argument_type, result_type},
+         result) =
+        let
+          fun same (left_function, left_argument, left_result)
+                   (right_function, right_argument, right_result) =
+            left_function = right_function andalso
+            left_argument = right_argument andalso
+            left_result = right_result
+          val result' = add_once same
+            (function_type, argument_type, result_type) result
+        in
+          app_signatures_term
+            (right, app_signatures_term (left, result'))
+        end
+    | app_signatures_term (FOPred body, result) =
+        app_signatures_term (body, result)
+    | app_signatures_term (FOAbs (_, body), result) =
+        app_signatures_term (body, result)
+
+  fun app_signatures_formula (FOQuant (_, _, body), result) =
+        app_signatures_formula (body, result)
+    | app_signatures_formula (FOConn (_, bodies), result) =
+        List.foldl app_signatures_formula result bodies
+    | app_signatures_formula (FOAtom tm, result) =
+        app_signatures_term (tm, result)
+
+  fun add_head_arity head arity [] = [(head, arity)]
+    | add_head_arity head arity ((old, old_arity) :: rest) =
+        if same_head head old then
+          (old, Int.min (arity, old_arity)) :: rest
+        else (old, old_arity) :: add_head_arity head arity rest
+
+  fun head_arities_term (FOHead (head, args), result) =
+        List.foldl head_arities_term
+          (if is_symbol head then add_head_arity head (length args) result
+           else result) args
+    | head_arities_term (FOValue _, result) = result
+    | head_arities_term (FOApp {left, right, ...}, result) =
+        head_arities_term (right, head_arities_term (left, result))
+    | head_arities_term (FOPred body, result) =
+        head_arities_term (body, result)
+    | head_arities_term (FOAbs (_, body), result) =
+        head_arities_term (body, result)
+
+  fun head_arities_formula (FOQuant (_, _, body), result) =
+        head_arities_formula (body, result)
+    | head_arities_formula (FOConn (_, bodies), result) =
+        List.foldl head_arities_formula result bodies
+    | head_arities_formula (FOAtom tm, result) =
+        head_arities_term (tm, result)
+
+  fun value_heads_term (FOHead (_, args), result) =
+        List.foldl value_heads_term result args
+    | value_heads_term (FOValue head, result) =
+        add_once (fn left => fn right => same_head left right) head result
+    | value_heads_term (FOApp {left, right, ...}, result) =
+        value_heads_term (right, value_heads_term (left, result))
+    | value_heads_term (FOPred body, result) =
+        value_heads_term (body, result)
+    | value_heads_term (FOAbs (_, body), result) =
+        value_heads_term (body, result)
+
+  fun value_heads_formula (FOQuant (_, _, body), result) =
+        value_heads_formula (body, result)
+    | value_heads_formula (FOConn (_, bodies), result) =
+        List.foldl value_heads_formula result bodies
+    | value_heads_formula (FOAtom tm, result) =
+        value_heads_term (tm, result)
+
   fun generated_problem format encoding needs ({conjecture, facts, used_app,
                                                 used_pp} : fo_ir) direct_helpers =
     let
       val all_formulas = conjecture :: map #2 facts
+      val app_signatures = List.foldl app_signatures_formula [] all_formulas
+      val head_arities = List.foldl head_arities_formula [] all_formulas
+      val value_heads = List.foldl value_heads_formula [] all_formulas
+      fun head_arity head =
+        case List.find (fn (other, _) => same_head head other) head_arities of
+            SOME (_, arity) => arity
+          | NONE => 0
       val base_heads = List.foldl heads_of_fo_formula [] all_formulas
       val bool_proxies = if used_pp then
         [mk_var ("pxy.true", Type.bool), mk_var ("pxy.false", Type.bool)] else []
       val heads = List.foldl (fn (head, result) => add_once
         (fn left => fn right => same_head left right) head result)
         base_heads bool_proxies
-      fun declared head = not (String.isPrefix "$" (raw_symbol head))
+      fun declared head = raw_symbol head = "$ite" orelse
+        not (String.isPrefix "$" (raw_symbol head))
       fun unique_symbols [] _ = []
         | unique_symbols (head :: rest) seen =
             let val symbol = encoded_symbol encoding head in
@@ -855,19 +1054,42 @@ struct
           let
             val sym_decls = map (fn head => hhTptpProblem.SymDecl
               (aiLib.escape ("sy." ^ encoded_symbol encoding head),
-               encoded_symbol encoding head, declaration_type encoding head))
+               encoded_symbol encoding head,
+               declaration_type encoding (head_arity head) head))
               declaration_heads
-            val app_decls = if used_app then [hhTptpProblem.SymDecl
-              ("sy_2Eapp", "app_2E", hhTptpProblem.TyFun
-                (hhTptpProblem.TyCon ("$i", []), hhTptpProblem.TyFun
-                  (hhTptpProblem.TyCon ("$i", []), hhTptpProblem.TyCon ("$i", []))))]
-              else []
+            val app_decls =
+              case encoding of
+                  hhTypeEnc.Native {poly = false, ...} =>
+                    map (fn app_signature as (function_type, argument_type,
+                                              result_type) =>
+                      let val symbol = app_symbol encoding app_signature in
+                        hhTptpProblem.SymDecl
+                          (aiLib.escape ("sy." ^ symbol), symbol,
+                           hhTptpProblem.TyFun
+                             (type_for encoding function_type,
+                              hhTptpProblem.TyFun
+                                (type_for encoding argument_type,
+                                 type_for encoding result_type)))
+                      end) app_signatures
+                | _ => if used_app then [hhTptpProblem.SymDecl
+                    ("sy_2Eapp", "app_2E", hhTptpProblem.TyFun
+                      (hhTptpProblem.TyCon ("$i", []),
+                       hhTptpProblem.TyFun
+                         (hhTptpProblem.TyCon ("$i", []),
+                          hhTptpProblem.TyCon ("$i", []))))]
+                  else []
+            val value_decls = map (fn head =>
+              hhTptpProblem.SymDecl
+                (aiLib.escape ("sy." ^ value_symbol encoding head),
+                 value_symbol encoding head,
+                 type_for encoding (type_of head))) value_heads
             val pp_decls = if used_pp then [hhTptpProblem.SymDecl
               ("sy_2Epp", "pp_2E", hhTptpProblem.TyFun
                 (hhTptpProblem.TyCon ("$i", []), hhTptpProblem.TyCon ("$o", [])))]
               else []
           in
-            type_declarations encoding all_types @ sym_decls @ app_decls @ pp_decls
+            type_declarations encoding all_types @ sym_decls @ app_decls @
+            value_decls @ pp_decls
           end
       val gsy = List.mapPartial (gsy_line encoding needs) declaration_heads
       val guard_types = List.foldl (fn (ty, result) =>
@@ -911,17 +1133,20 @@ struct
             (#conjecture terms :: map #2 (#facts terms))
       | _ => []
 
-  fun make_problem options lambda_terms =
+  fun make_problem main_is_mono options lambda_terms =
     let
       val {format, type_enc, lam_trans, mono_iters, mono_instances} = options
       val caps = {max_iters = mono_iters, max_new_instances = mono_instances}
-      val main_terms = pass_monomorph type_enc caps lambda_terms
+      val main_terms = if main_is_mono then lambda_terms
+                       else pass_monomorph type_enc caps lambda_terms
       fun firstorder terms = firstorderize format type_enc
         (introduce_proxies format (formula_skeleton terms))
       fun heads_of ({conjecture, facts, ...} : fo_ir) =
         heads_of_fo_formula (conjecture,
           List.foldl (fn ((_, formula), heads) =>
             heads_of_fo_formula (formula, heads)) [] facts)
+      val ground_pool = list_mk_conj
+        (#conjecture main_terms :: map #2 (#facts main_terms))
       (* Helpers have the original problem as their monomorphization ground
          pool.  They are then firstorderized together with it, so application
          arities and the final symbol table are shared by every section. *)
@@ -929,18 +1154,41 @@ struct
         if null source then []
         else
           let
-            val lambda_terms' = pass_lambda format lam_trans
-              (presimp format {conjecture = #conjecture lambda_terms,
-                facts = #facts lambda_terms @ source})
-            val translated = List.filter (is_helper_name o #1)
-              (#facts (pass_monomorph type_enc caps lambda_terms'))
+            (* [lambda_terms] can contain very large combinator expansions.
+               In pure-combs mode the pass creates no lambda definitions, so
+               translate only the new helpers and add the already translated
+               main problem back as the monomorphization ground pool.  The
+               other modes retain their shared naming pass for generated
+               lifting definitions. *)
+            val (lambda_terms', retention_source) =
+              if lam_trans = "combs" then
+                let
+                  val helpers = #facts (pass_lambda format lam_trans
+                    (presimp format {conjecture = T, facts = source}))
+                in
+                  ({conjecture = #conjecture main_terms,
+                    facts = #facts main_terms @ helpers}, helpers)
+                end
+              else
+                let
+                  val translated = pass_lambda format lam_trans
+                    (presimp format
+                      {conjecture = #conjecture lambda_terms,
+                       facts = #facts lambda_terms @ source})
+                in
+                  (translated, #facts translated)
+                end
+            val helper_source = List.filter (is_helper_name o #1)
+              (#facts lambda_terms')
+            val translated = #facts (pass_monomorph type_enc caps
+              {conjecture = ground_pool, facts = helper_source})
             (* A schematic proxy law with no ground instance is still sound:
                the mono printer gives its remaining type variables opaque
                sorts.  Do not silently lose it as an "ignored" user fact. *)
             fun found name = List.exists (fn (other, _) => other = name)
               translated
             val retained = List.filter (fn (name, _) =>
-              is_helper_name name andalso not (found name)) (#facts lambda_terms')
+              is_helper_name name andalso not (found name)) retention_source
           in
             translated @ retained
           end
@@ -965,8 +1213,18 @@ struct
     end
 
   fun generate_problem options terms =
-    let val {format, lam_trans, ...} = options in
-      make_problem options (pass_lambda format lam_trans (presimp format terms))
+    let
+      val {format, type_enc, lam_trans, mono_iters, mono_instances} = options
+      val simplified = presimp format terms
+      val pre_mono = lam_trans = "combs" andalso is_monomorphic type_enc
+      val lambda_input = if pre_mono then
+        pass_monomorph type_enc
+          {max_iters = mono_iters, max_new_instances = mono_instances}
+          simplified
+        else simplified
+    in
+      make_problem pre_mono options
+        (pass_lambda format lam_trans lambda_input)
     end
 
   type export_memo = {entries : (string * named_terms) list ref, runs : int ref}
@@ -1024,9 +1282,16 @@ struct
       val input = presimp (#format options) {conjecture = conjecture,
                                               facts = map (fn (name, theorem) =>
                                                 (name, Thm.concl theorem)) named}
-      val lambda_terms = memoized_lambda memo (#format options) (#lam_trans options)
-        input
-      val problem = make_problem options lambda_terms
+      val {type_enc, lam_trans, mono_iters, mono_instances, ...} = options
+      val pre_mono = lam_trans = "combs" andalso is_monomorphic type_enc
+      val lambda_input = if pre_mono then
+        pass_monomorph type_enc
+          {max_iters = mono_iters, max_new_instances = mono_instances} input
+        else input
+      val lambda_terms = if pre_mono then
+        pass_lambda (#format options) lam_trans lambda_input
+        else memoized_lambda memo (#format options) lam_trans lambda_input
+      val problem = make_problem pre_mono options lambda_terms
     in
       write_problem file (hhTptpProblem.string_of_problem (#format options)
         (header options) problem)
