@@ -2342,27 +2342,10 @@ local
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
-      fun has_symbolic_fp_arithmetic () =
-        let
-          val names = ["smtfp_add", "smtfp_sub", "smtfp_mul",
-            "smtfp_div", "smtfp_fma", "smtfp_sqrt", "smtfp_rem"]
-          fun is_arithmetic tm =
-            Term.is_const tm andalso
-            let val {Thy, Name, ...} = Term.dest_thy_const tm
-            in Thy = "smtfloat" andalso List.exists (Lib.equal Name) names end
-        in
-          not (List.null (Term.free_vars target)) andalso
-          Lib.can (HolKernel.find_term is_arithmetic) target
-        end
       fun unsupported_fp () =
-        if has_symbolic_fp_arithmetic () then
-          (SmtResource.check_term_size "cvc5-symbolic-arithmetic-residue"
-             (SmtResource.max_bitblast_term_nodes + 1);
-           raise ERR "trust" "unreachable CPC FP resource gate")
-        else
-          raise ERR "trust"
-            ("unsupported CPC FP step: rule=trust; theory=fp; " ^
-             "conclusion=" ^ Library.term_to_string target)
+        raise ERR "trust"
+          ("unsupported CPC FP step: rule=trust; theory=fp; " ^
+           "conclusion=" ^ Library.term_to_string target)
       fun next prover continuation =
         prover ()
         handle Feedback.HOL_ERR holerr =>

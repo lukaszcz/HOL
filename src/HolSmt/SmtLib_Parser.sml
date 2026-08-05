@@ -549,6 +549,46 @@ local
         vars
       end
 
+    fun parse_qualified_identifier_from_first tok =
+      if token_text tok = "(" then
+        let
+          val underscore = need_token "parse_term" "'_'"
+          val _ = expect_token "parse_term" "_" underscore
+          val name_tok = need_token "parse_term" "indexed identifier name"
+          val _ =
+            if token_kind name_tok = StringToken then
+              syntax_error "parse_term" (token_loc name_tok)
+                "expected indexed identifier name"
+            else
+              ()
+          fun parse_index index_tok =
+            if token_text index_tok = "(" orelse
+               token_kind index_tok = StringToken then
+              syntax_error "parse_term" (token_loc index_tok)
+                "expected identifier index"
+            else
+              located (token_loc index_tok)
+                (TermIdentifier (token_text index_tok))
+          val (indices, close_tok) =
+            parse_until_rparen "parse_term" parse_index []
+          val _ =
+            if List.null indices then
+              syntax_error "parse_term" (token_loc close_tok)
+                "indexed identifier requires at least one index"
+            else
+              ()
+          val loc = combine_span (token_loc tok) (token_loc close_tok)
+        in
+          located loc
+            (TermIndexed
+              (parse_atom_name "parse_term" name_tok, indices))
+        end
+      else if token_text tok = ")" orelse token_kind tok = StringToken then
+        syntax_error "parse_term" (token_loc tok)
+          "expected qualified identifier"
+      else
+        located (token_loc tok) (TermIdentifier (token_text tok))
+
     fun parse_term_from_first tok =
       if token_text tok = "(" then
         parse_term_list tok
@@ -621,7 +661,7 @@ local
           end
         else if reserved_head andalso head_text = "as" then
           let
-            val term = parse_term_from_first
+            val term = parse_qualified_identifier_from_first
               (need_token "parse_term" "ascribed identifier")
             val sort = parse_sort ()
             val close_tok = need_token "parse_term" "')'"

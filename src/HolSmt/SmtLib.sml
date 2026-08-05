@@ -1526,7 +1526,9 @@ local
          logic packet.  Other word-valued terms, including FP/BV conversions,
          still select the mixed packet. *)
       fun has_nonconstructor_bitvector tm =
-        if is_smtfp_bits_application tm then false
+        if is_smtfp_bits_application tm then
+          let val (_, fields) = boolSyntax.strip_comb tm
+          in not (List.all wordsSyntax.is_word_literal fields) end
         else if type_contains_word (Term.type_of tm) orelse
                 is_bv_const (Lib.fst (boolSyntax.strip_comb tm)) then true
         else if Term.is_comb tm then
@@ -2292,6 +2294,8 @@ local
       let
         val _ = TypeBase.is_constructor rator
         val (doms, data_ty) = boolSyntax.strip_fun (Term.type_of rator)
+        val _ = not (datatype_translation_excluded data_ty) orelse
+          raise ERR "translate_term" "excluded datatype constructor"
         val arity = List.length doms
         val _ =
           if List.length rands = arity then ()
@@ -2409,6 +2413,8 @@ local
         val (select, _) = Term.dest_comb candidate
         val (_, select_ty) = Term.dest_const select
         val (record_ty, rng_ty) = Type.dom_rng select_ty
+        val _ = not (datatype_translation_excluded record_ty) orelse
+          raise ERR "translate_term" "excluded record selector"
         val fields = TypeBase.fields_of record_ty
       in
         List.exists
@@ -2440,6 +2446,8 @@ local
         val (select, x) = Term.dest_comb tm
         val (_, select_ty) = Term.dest_const select
         val (record_ty, rng_ty) = Type.dom_rng select_ty
+        val _ = not (datatype_translation_excluded record_ty) orelse
+          raise ERR "translate_term" "excluded record selector"
         val fields = TypeBase.fields_of record_ty
         val _ = if List.null fields then
             raise ERR "translate_term" "not a record selector"
@@ -2480,6 +2488,8 @@ local
               combinSyntax.dest_K_1 k_tm
             end
         val record_ty = Term.type_of x
+        val _ = not (datatype_translation_excluded record_ty) orelse
+          raise ERR "translate_term" "excluded record update"
         val fields = TypeBase.fields_of record_ty
         val _ = if List.null fields then
             raise ERR "translate_term" "not a record update"

@@ -3940,6 +3940,14 @@ in
     "overloaded/indexed typecheck assertion did not parse as Bool")
 end
 
+fun smtlib_as_qualified_identifier_diagnostic () =
+  expect_hol_error_contains "compound term in ascription"
+    "expected '_', found '+'"
+    (fn () => ignore (parse_smtlib_state
+      ("(set-logic QF_LIA)\n" ^
+       "(assert (= (as (+ 1 2) Int) 3))\n" ^
+       "(exit)\n")))
+
 fun smtlib_and_or_right_assoc_parse_shape_success () =
 let
   val assertions =
@@ -6435,6 +6443,9 @@ let
       ["((_ fp.to_ubv 8)", "((_ fp.to_sbv 9)", "fp.to_real"])
   ]
   val literal = ``(smtfp_bits 0w 3w 4w : (4,3) smtfp) = smtfp_pzero``
+  val symbolic_bits =
+    ``(smtfp_bits (~s) e m : (4,3) smtfp) = (x:(4,3) smtfp)``
+  val symbolic_bits_text = text_of symbolic_bits
   val mixed_real_bv = ``
     (smtfp_from_real RNE 1r : (4,3) smtfp) =
       smtfp_bits 0w 3w 0w``
@@ -6446,6 +6457,16 @@ let
     end
   val raw_float = ``(a:(4,3) binary_ieee$float) = b``
   val raw_float_text = preprocessed_text raw_float
+  val raw_selector =
+    ``(a:(4,3) binary_ieee$float).Sign = b.Sign``
+  val raw_selector_text = preprocessed_text raw_selector
+  val raw_constructor =
+    ``(<| Sign := s; Exponent := e; Significand := m |> :
+       (4,3) binary_ieee$float) = a``
+  val raw_constructor_text = text_of raw_constructor
+  val raw_update =
+    ``((a:(4,3) binary_ieee$float) with Sign := s) = b``
+  val raw_update_text = text_of raw_update
   val transferred_native =
     ``float_less_than
         (SND (float_add roundTiesToEven
@@ -6464,6 +6485,7 @@ in
     roundtrip_cases;
   expect_logic "QF_FP" ``(^x = ^y)``;
   expect_logic "QF_FP" literal;
+  expect_logic "QF_BVFP" symbolic_bits;
   expect_logic "QF_FPLRA"
     ``(smtfp_from_real RNE 1r : (4,3) smtfp) = ^x``;
   expect_logic "QF_FPLRA" mixed_real_bv;
@@ -6509,6 +6531,19 @@ in
       not (contains "RoundingMode" raw_float_text) andalso
       not (contains "fp." raw_float_text),
     "raw binary_ieee float was mapped to the SMT FloatingPoint surface");
+  assert (contains "(bvnot" symbolic_bits_text,
+    "symbolic fp constructor field did not emit its BV operation:\n" ^
+    symbolic_bits_text);
+  List.app
+    (fn (label, text) =>
+      (assert (contains "(declare-sort t0 0)" text andalso
+          contains "(declare-fun" text,
+        label ^ " did not use declared uninterpreted symbols:\n" ^ text);
+       assert (not (contains "recordtype_float" text),
+        label ^ " retained an undeclared TypeBase record symbol:\n" ^ text)))
+    [("raw float selector", raw_selector_text),
+     ("raw float constructor", raw_constructor_text),
+     ("raw float update", raw_update_text)];
   assert (contains "(declare-fun v0 () (_ FloatingPoint 3 5))"
         transferred_text andalso
       contains "(fp.lt (fp.add roundNearestTiesToEven v0 v1) v0)"
@@ -7669,6 +7704,39 @@ in
   expect_hol_error_contains "CPC FP-context trust obligation"
     "rule=trust; theory=fp"
     (fn () => ignore (CPC_ProofReplay.replay_root_for_test proof))
+end
+
+fun cpc_proof_replay_fp_symbolic_unsupported_diagnostic () =
+let
+  val declarations =
+    "(declare-const x (_ FloatingPoint 3 5)) " ^
+    "(declare-const y (_ FloatingPoint 3 5)) " ^
+    "(declare-const z (_ FloatingPoint 3 5)) "
+  val cases = [
+    ("fp.div", "(fp.div roundNearestTiesToEven x y)"),
+    ("fp.fma", "(fp.fma roundNearestTiesToEven x y z)"),
+    ("fp.sqrt", "(fp.sqrt roundNearestTiesToEven x)"),
+    ("fp.rem", "(fp.rem x y)")]
+  fun check (label, application) =
+    let
+      val proof = parse_cpc_proof_string
+        ("((" ^ declarations ^
+         "(step @p1 :rule trust :args ((= " ^ application ^ " x)))))")
+    in
+      (ignore (CPC_ProofReplay.replay_root_for_test proof);
+       die ("FAIL: symbolic CPC " ^ label ^ " replayed successfully"))
+      handle Feedback.HOL_ERR holerr =>
+        let val msg = Feedback.message_of holerr in
+          assert (not (SmtResource.is_resource_gate holerr),
+            "symbolic CPC " ^ label ^ " was mislabeled as a resource gate");
+          assert (contains
+              "unsupported CPC FP step: rule=trust; theory=fp" msg,
+            "symbolic CPC " ^ label ^
+            " did not report its unsupported replay shape: " ^ msg)
+        end
+    end
+in
+  List.app check cases
 end
 
 fun cpc_proof_replay_equiv_elim1_success () =
@@ -11054,6 +11122,8 @@ let
       smtlib_floatingpoint_recognizer_gates_success),
     ("smtlib_typecheck_overloaded_and_indexed_success",
       smtlib_typecheck_overloaded_and_indexed_success),
+    ("smtlib_as_qualified_identifier_diagnostic",
+      smtlib_as_qualified_identifier_diagnostic),
     ("smtlib_and_or_right_assoc_parse_shape_success",
       smtlib_and_or_right_assoc_parse_shape_success),
     ("smtlib_core_symbol_metadata_success",
@@ -11187,6 +11257,8 @@ let
       cpc_proof_replay_fp_trust_success),
     ("cpc_proof_replay_fp_context_obligation_diagnostic",
       cpc_proof_replay_fp_context_obligation_diagnostic),
+    ("cpc_proof_replay_fp_symbolic_unsupported_diagnostic",
+      cpc_proof_replay_fp_symbolic_unsupported_diagnostic),
     ("cpc_proof_replay_equiv_elim1_success",
       cpc_proof_replay_equiv_elim1_success),
     ("cpc_proof_replay_bool_impl_true2_success",
