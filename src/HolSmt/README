@@ -143,7 +143,8 @@ SMT-LIB support matrix:
   ArraysEx select/store        yes    yes        native         yes
   Unicode strings              yes    yes        native         Z3/cvc5 paths
   Regular expressions          yes    yes        native         Z3/cvc5 paths
-  FloatingPoint                yes    yes        no             no
+  FloatingPoint                yes    yes        native smtfp;  Z3/cvc5 checked;
+                                                proved kit      D2/D12 gates
   Datatypes                    yes    yes        native         yes
   Recursive/mutual/parametric
     datatypes                  yes    yes        native         yes
@@ -159,6 +160,17 @@ solver only as a `str_inj` image, and Z3 then answers it with seq th-lemmas
 over that image while cvc5 uses the `trust` and `str-substr-full-eq` CPC
 rules; none of those replay, so such goals are supported on the oracle
 tactics only.
+
+FloatingPoint replay covers goals stated over the canonical-NaN `smtfp`
+carrier.  Native `binary_ieee` goals reach the SMT FloatingPoint sort only
+through the proved `smtfp_intro` transfer kit.  The kit covers record
+literals, binders, special values, classification and sign predicates,
+abs/neg, comparisons, and the native add/sub/mul/div/sqrt/fma operations.
+It does not claim that raw `float` record equality is SMT FloatingPoint
+equality: any residual raw-float term is emitted with an uninterpreted sort,
+never an FP sort.  Checked Z3 and cvc5 replay covers the corpus-demonstrated
+part of this surface; unsupported symbolic shapes are named D2 gates and
+over-budget bit-blasts are named D12 gates.
 
 Logic coverage summary:
 
@@ -203,8 +215,11 @@ Logic coverage summary:
   QF_S, QF_SLIA, QF_SNIA      Native Unicode string and RegLan translation;
                               checked Z3 seq/char/regex replay and cvc5 CPC
                               string replay are manifest-backed.
-  QF_FP, QF_FPBV, QF_BVFP,    FloatingPoint parse/typecheck embeddings; checked
-  QF_UFFP, QF_UFBVFP          replay for FP theory lemmas is unsupported.
+  QF_FP, QF_FPBV, QF_BVFP,    Native smtfloatTheory translation and checked
+  QF_UFFP, QF_UFBVFP          fpa2bv replay.  Ground evaluation and Tier-2
+                              shapes replay; staged symbolic arithmetic is
+                              either checked by the add/sub/mul circuit rung
+                              or reported as an enumerated D2/D12 gate.
   HO_ALL, HO_UF, HO_QF_UF,    cvc5-convention extension logics for the SMT-LIB
   HO_UFLIA, HO_QF_UFLIA,      2.7 HO-Core surface.  Parser/typechecker and
   HO_UFLRA, HO_QF_UFLRA,      Standard27 cvc5-oracle modes are covered; checked
@@ -421,6 +436,9 @@ Z3 th-lemma replay coverage:
               comparisons                    and HOL arithmetic
   regexp      string/regexp aliases for the  routed to the checked seq/string
               emitted seq/char families      prover; aliases are preserved
+  fp          not observed on any supported  defensive route through the
+              Z3 version; observed fpa2bv     checked SmtFpProve ladder;
+              ground/atom/bit shapes          no occurrence is claimed
 
 Indexed th-lemma failures include theory, subkind, remaining proof indices and
 the parsed HOL conclusion in the replay error.

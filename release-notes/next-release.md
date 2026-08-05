@@ -32,6 +32,15 @@ New features
     rewrites use the same checked string prover, with unsupported steps
     reported as named obligations rather than accepted by an oracle.
 
+-   `HolSmt` now supports the native SMT-LIB FloatingPoint surface through
+    the canonical-NaN `smtfp` carrier, including RNA rounding, conversions,
+    checked ground evaluation, word-level correspondence, and staged
+    add/sub/mul circuit replay.  Supported Z3 fpa2bv and cvc5 CPC proof
+    shapes are reconstructed in HOL without oracle tags; remaining shapes
+    are reported as named obligations.  Resource-limited cases form a
+    visible, enumerated D12 gate category rather than failing or being
+    silently skipped.
+
 -   `HolSmt` now supports the higher-order SMT-LIB 2.7 surface, including
     function sorts, lambda abstractions, both application spellings,
     application omission sugar, and strict partial application.  The
@@ -182,6 +191,10 @@ Bugs fixed
 
 New theories
 ------------
+
+-  `smtfloatTheory`: the canonical-NaN SMT-LIB FloatingPoint carrier,
+   rounding modes and operations, native-float transfer kit, certifying
+   evaluation support, and checked replay correspondence lemmas.
 
 -  `smtstringTheory`: SMT-LIB Unicode strings as well-formed code-point lists,
    the complete String operator surface, regular languages, and a

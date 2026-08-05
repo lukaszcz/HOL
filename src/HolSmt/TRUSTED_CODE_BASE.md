@@ -36,3 +36,29 @@ SMT-LIB meanings and to the decoder/encoder that crosses the textual
 boundary.  Z3's reverse-engineered internal string symbols are defined in
 `smtstringz3Theory`, then their emitted clauses are re-proved in HOL rather
 than assumed.
+
+Native FloatingPoint printing is also part of the trusted translation
+surface.  `smtfloatTheory` defines the canonical-NaN `smtfp` carrier and the
+SMT-LIB FloatingPoint operations.  Trust attaches to choosing these
+definitions as the SMT-LIB meanings: in particular, the RNA rounding rule,
+the totalizations of min/max/rem and the conversions, the specified choices
+for SMT-LIB's underspecified results, and the one chosen canonical NaN.
+
+The carrier is a HOL type definition over exactly the canonical floats, not
+an assumed quotient.  Its exact-universe property, the `smtfp_intro`
+transfer kit for native `binary_ieee` terms, and the word-level and staged
+circuit correspondence lemmas are proved in HOL.  They are not trusted
+axioms.  The transfer kit covers the enumerated invariant operation surface;
+a residual raw `float`, including raw record equality, is emitted using an
+uninterpreted sort and is never treated as an SMT FloatingPoint value.
+
+`SmtResource.sml` is the single budget module for checked FP replay.  It
+defines the fixed D12 limits: 16 MiB of proof text before parsing, 10 seconds
+per bit-blast step, and 200,000 term nodes.  A limit breach is an explicit
+`resource-gated: fp-bitblast;` outcome, distinct from the D2 unsupported-
+shape diagnostic; neither outcome accepts a theorem.
+
+Replay uses the certifying `binary_ieeeLib`/Arbrat evaluation path.
+`native_ieeeLib`, `fp64_machineLib`, and hardware evaluation are never
+enabled in replay because they produce oracle-tagged theorems.  Every
+accepted Z3 or cvc5 theorem is checked for unexpected oracle tags.
