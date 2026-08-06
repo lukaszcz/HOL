@@ -19,6 +19,13 @@ fun typecheck_args () =
   | args as [_, _, "--placeholder-datatypes"] => args
   | _ => typecheck_extra_args ()
 
+(* A build heap has no active theory.  Native SMT datatypes create HOL
+   types, so establish an ephemeral theory before a driver elaborates them. *)
+val _ =
+  case Thm.getCT () of
+    NONE => Theory.new_theory "HolSmtDriver"
+  | SOME _ => ()
+
 val _ = SmtLib_Datatypes.empty_name_map
 
 fun typecheck_datatype_options elaborate =

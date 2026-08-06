@@ -20,6 +20,13 @@ fun z3_tac_args () =
     args as [_, _] => args
   | _ => z3_tac_extra_args ()
 
+(* A build heap has no active theory.  Native SMT datatypes create HOL
+   types, so establish an ephemeral theory before a driver elaborates them. *)
+val _ =
+  case Thm.getCT () of
+    NONE => Theory.new_theory "HolSmtDriver"
+  | SOME _ => ()
+
 val _ = SmtLib_Datatypes.empty_name_map
 
 val z3_tac_datatype_options =
