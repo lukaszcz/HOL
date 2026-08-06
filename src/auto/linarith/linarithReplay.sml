@@ -303,6 +303,19 @@ fun mult_by_add n theorem =
       multiple n
     end
 
+(* Linear, and deliberately not doubled the way the multiplication above
+   it is.  What is built here is a term, not a chain of inferences, and
+   apply_to_product abstracts the variable out of it and beta-reduces on
+   the spot.  The variable occurs at every node a doubled construction
+   would share, so substitution copies each shared path back out: the
+   term that reaches cancellation has n summands and n nodes whichever
+   shape it was assembled in, and the instance's norm_conv walks it in
+   O(n) either way.  Doubling would bound the recursion depth here and
+   buy nothing else.
+
+   This is the path an instance takes whose mult_mono mentions no
+   multiplication, which is a registration the layer supports rather
+   than a malformed one. *)
 fun additive_scale instance n variable =
   let
     val dest = #dest instance

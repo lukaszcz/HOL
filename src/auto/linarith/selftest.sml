@@ -441,6 +441,51 @@ val _ =
             | NONE => false)
        end)
 
+(* poly reaches demult through one arm for products and quotients
+   alike, and both halves of what that arm does are asked of a quotient
+   here.  A quotient demult scales is handed back to poly, which goes on
+   decomposing what came out of it; a quotient it leaves alone -- a
+   non-literal divisor, or a zero one -- is an atom carrying the
+   coefficient it arrived with, and it is the self-check for that case
+   that stops the poly/demult recursion, bare or inside a product demult
+   did take apart. *)
+val _ =
+  check
+    ("poly decomposes a quotient through demult and stops where it must",
+     fn () =>
+       let
+         val atom_division = mk_binary synth_div synth_x synth_y
+         val zero_division = mk_binary synth_div synth_x synth_zero
+         val scaled_atom_division =
+           mk_binary synth_mult synth_two atom_division
+         val sum_division =
+           mk_binary synth_div
+             (mk_binary synth_plus synth_x synth_y) synth_two
+         val half = Arbrat./ (Arbrat.one, Arbrat.two)
+         fun atoms_of expression =
+           case linarithDecomp.decomp
+                  (mk_binary synth_leq expression synth_zero) of
+               SOME (Decomp {lhs, lhs_const, ...}) =>
+                 if lhs_const = Arbrat.zero then SOME lhs else NONE
+             | NONE => NONE
+         fun single_atom expression atom value =
+           case atoms_of expression of
+               SOME lhs =>
+                 List.length lhs = 1 andalso
+                 coefficient lhs atom = value
+             | NONE => false
+       in
+         single_atom atom_division atom_division Arbrat.one andalso
+         single_atom zero_division zero_division Arbrat.one andalso
+         single_atom scaled_atom_division atom_division Arbrat.two andalso
+         (case atoms_of sum_division of
+              SOME lhs =>
+                List.length lhs = 2 andalso
+                coefficient lhs synth_x = half andalso
+                coefficient lhs synth_y = half
+            | NONE => false)
+       end)
+
 val synth_injected = Term.mk_comb (synth_inj, synth_bool_atom)
 val synth_injected_relation =
   mk_binary synth_leq synth_injected synth_zero
@@ -584,6 +629,17 @@ val fm_rat = Arbrat.fromInt
 val no_atoms : (Term.term * Arbrat.rat) list = []
 fun fm_scaled_x c = [(fm_x, fm_rat c)]
 
+(* Two-column premises, k <= ax + bz and k = ax + bz.  Both atoms are
+   named by every one of them, whatever their coefficients, so
+   atoms_of_decomps gives x column 0 and z column 1 throughout and the
+   pivot the checks below name is the pivot the system offers. *)
+fun fm_columns (a, b) = [(fm_x, fm_rat a), (fm_z, fm_rat b)]
+
+fun fm_row coeffs k = fm_le (no_atoms, fm_rat k) (fm_columns coeffs, fm_rat 0)
+
+fun fm_equation coeffs k =
+  fm_eq (no_atoms, fm_rat k) (fm_columns coeffs, fm_rat 0)
+
 (* 0 <= x against 1 <= ~x: the two rows add as they stand to 1 <= 0. *)
 val _ =
   check
@@ -611,6 +667,90 @@ val _ =
                        (fm_scaled_x ~3, fm_rat 0))] of
            SOME (Added (Multiplied (m, Asm 0), Multiplied (n, Asm 1))) =>
              m = three andalso n = two
+         | _ => false)
+
+(* Which column a round eliminates is not reported anywhere, but the
+   certificate it derives is, and a refutable system whose two columns
+   are reached in either order derives a different one each way.  The
+   three checks below are that: each states a system whose certificate
+   is the pivot rule's, and would derive some other tree under any
+   other rule.
+
+   Equations first, on a coefficient of least magnitude.  0 = 5x + 2z
+   with 1 <= x and 1 <= z clears z, the smaller of the equation's two
+   coefficients, leaving 2 <= ~5x for 1 <= x to close, so the equation
+   is scaled by ~1 and z's bound by 2.  Pivoting on x would scale them
+   5 and 1 the other way about; and there is nothing here for the
+   inequality rule to eliminate at all, every column being positive
+   throughout, so a rule reaching for it first would report no
+   refutation. *)
+val _ =
+  check
+    ("equations take priority and use the smallest coefficient",
+     fn () =>
+       case fm_refute
+              [SOME (fm_equation (5, 2) 0),
+               SOME (fm_row (1, 0) 1),
+               SOME (fm_row (0, 1) 1)] of
+           SOME (Added (Multiplied (a, Asm 1),
+                        Added (Multiplied (b, Asm 0),
+                               Multiplied (c, Asm 2)))) =>
+             a = Arbint.fromInt 5 andalso
+             b = Arbint.fromInt ~1 andalso c = two
+         | _ => false)
+
+(* Equal magnitudes tie, and the entry met first scanning rows outer
+   and columns inner wins.  The tie in 0 = 2x - 2z is inside one row:
+   x is the earlier column, and clearing it leaves 2 <= 2z against
+   0 <= ~z.  The tie between 0 = 3x - 2z and 0 = 2x + 3z is across
+   rows, at column 1 of the first against column 0 of the second, and
+   taking the first collapses the pair to 0 = 13x, which 1 <= x
+   closes.  Either preference reversed pivots on the other entry and
+   builds its certificate from the other row. *)
+val _ =
+  check
+    ("an equation pivot tie goes to the first row-then-column entry",
+     fn () =>
+       (case fm_refute
+               [SOME (fm_equation (2, ~2) 0),
+                SOME (fm_row (1, 0) 1),
+                SOME (fm_row (0, ~1) 0)] of
+            SOME (Added (Added (Multiplied (a, Asm 0),
+                                Multiplied (b, Asm 1)),
+                         Multiplied (c, Asm 2))) =>
+              a = Arbint.fromInt ~1 andalso b = two andalso c = two
+          | _ => false) andalso
+       (case fm_refute
+               [SOME (fm_equation (3, ~2) 0),
+                SOME (fm_equation (2, 3) 0),
+                SOME (fm_row (1, 0) 1)] of
+            SOME (Added (Multiplied (a, Added (Multiplied (b, Asm 0),
+                                               Multiplied (c, Asm 1))),
+                         Multiplied (d, Asm 2))) =>
+              a = Arbint.fromInt ~1 andalso b = three andalso
+              c = two andalso d = Arbint.fromInt 13
+          | _ => false))
+
+(* With no equation left the pivot is the column whose eliminations
+   are fewest, one per positive-negative pair.  Column x of the four
+   rows below is signed +, +, ~, ~ and so costs four; column z is
+   signed + and ~ once each and costs one.  Taking z emits the single
+   row 1 <= ~x, which 0 <= x closes in one further step, and the
+   certificate is that pair of additions with nothing scaled.  Taking
+   x emits four rows -- one of them trivial -- and reaches falsity a
+   round later through the doubled 0 <= x + z, so maximising the
+   product rather than minimising it is visible in the tree and not
+   only in the time. *)
+val _ =
+  check
+    ("inequality pivot minimizes Fourier-Motzkin blowup",
+     fn () =>
+       case fm_refute
+              [SOME (fm_row (1, 1) 0),
+               SOME (fm_row (1, 0) 0),
+               SOME (fm_row (~2, ~1) 1),
+               SOME (fm_row (~1, 0) 0)] of
+           SOME (Added (Asm 1, Added (Asm 0, Asm 2))) => true
          | _ => false)
 
 (* 0 <= 0 is trivial and says nothing, so a refutation has to come from
@@ -1077,9 +1217,15 @@ val _ =
            (fn tm => List.exists (Term.aconv tm) (Thm.hyp theorem)) terms
        end)
 
-(* TODO: Add the injection add-fallback golden with the first real cross-type
-   instance kit.  The only injection available here is decomposition-only;
-   its placeholder hom theorems are not valid replay rules. *)
+(* The injection add-fallback -- summing two assumptions stated in
+   different carriers, which mkthm can only do by lifting one of them
+   through the conversion closure -- is pinned in instances/, by the
+   golden "Added replay sums two carriers through the injection" and by
+   the "mixed ... replay uses the registered injection" tactic checks
+   that reach it from the surface.  It cannot be pinned here: this
+   directory's Holmakefile has no integer, real or rational includes,
+   and the one injection it registers is decomposition-only, its
+   placeholder hom theorems not being valid replay rules. *)
 
 val split_x = Term.mk_var ("linarith_split_x", numSyntax.num)
 val split_y = Term.mk_var ("linarith_split_y", numSyntax.num)
@@ -2079,7 +2225,7 @@ fun with_split_export theorem operation =
 (* The [arith_split] table is the half no registration counter sees:
    AncestryData installs a whole table on an ancestry change without
    applying a delta, so what the split rules are keyed on is the
-   table's key set. *)
+   table's own theorems. *)
 val _ =
   check
     ("an [arith_split] change decides the very next tactic call",
@@ -2093,6 +2239,159 @@ val _ =
              linarith_fails min_le_left)] andalso
        null (linarithData.arith_split_thms ()) andalso
        Option.isSome (linarithData.instance_for numSyntax.num))
+
+(* Both tables key an entry on the theory its declaration was made in,
+   and a retraction written without one is resolved against the theory
+   it is written in.  This binary starts with no theory segment at all,
+   so the tests from here on open one -- which is the state anything
+   declaring or retracting is called in anyway. *)
+val _ = Theory.new_theory "linarithRemovalSelftest"
+
+(* A declaration goes through the attribute's own local function, which
+   is the [local] annotation's path and the one that takes the theorem
+   it is handed rather than a name to fetch from the database. *)
+fun declare_local settype name theorem =
+  ThmAttribute.local_attribute
+    {name = name, attrname = settype, args = [], thm = theorem}
+
+(* A retraction by key goes through the export the replay of a recorded
+   delta goes through, which is what makes it the descendant's view. *)
+fun retract_by_key settype key =
+  case ThmSetData.data_exportfns {settype = settype} of
+      NONE => false
+    | SOME export =>
+        (#remove export
+           {thy = Theory.current_theory (), remove = key};
+         true)
+
+(* A declaration under a name the table already holds replaces the
+   theorem in place and leaves the key set exactly as it was, which is
+   what a user editing a split rule and re-running its declaration
+   does.  The split tactic is derived from the table once per state of
+   it, so the state it is derived against has to be the table itself. *)
+val replaced_split_name = "linarith_replaced_split_selftest"
+
+val replaced_split_key =
+  Theory.current_theory () ^ "$" ^ replaced_split_name
+
+fun replaced_split_decides () =
+  let
+    fun declare theorem =
+      declare_local "arith_split" replaced_split_name theorem
+    fun retract () = retract_by_key "arith_split" replaced_split_key
+    val _ = declare linarithSeedTheory.NUM_MAX_SPLIT
+    val before_replacement = linarith_fails min_le_left
+    val _ = declare linarithSeedTheory.NUM_MIN_SPLIT
+    val after_replacement =
+      linarith_closes min_le_left handle e => (retract (); raise e)
+  in
+    retract () andalso before_replacement andalso after_replacement
+  end
+
+val _ =
+  check
+    ("an [arith_split] rule replaced in place decides the next call",
+     fn () =>
+       with_num_instances
+         [(nnf_only_num_instance, replaced_split_decides)] andalso
+       null (linarithData.arith_split_thms ()))
+
+(* A REMOVE delta is replayed by every theory below the one that wrote
+   it, so what it names has to designate the same entry there as here.
+   The two halves are checked against each other: an unqualified name
+   is resolved where the retraction is written, and the applier -- the
+   one replay goes through -- deletes with the recorded string as it
+   stands. *)
+fun recorded_removals settype =
+  List.mapPartial
+    (fn ThmSetData.REMOVE key => SOME key | _ => NONE)
+    (ThmSetData.current_data {settype = settype})
+
+fun retraction_records settype key =
+  List.exists (fn recorded => recorded = key) (recorded_removals settype)
+
+val bare_retraction_name = "linarith_bare_retraction_selftest"
+
+val bare_retraction_key =
+  Theory.current_theory () ^ "$" ^ bare_retraction_name
+
+val bare_retraction_thm = arithmeticTheory.LESS_EQ_REFL
+
+fun arith_holds theorem =
+  List.exists
+    (fn candidate => Term.aconv (Thm.concl candidate) (Thm.concl theorem))
+    (linarithData.arith_facts ())
+
+val _ =
+  check
+    ("an unqualified [arith] retraction records the key it denotes",
+     fn () =>
+       let
+         fun declare () =
+           declare_local "arith" bare_retraction_name bare_retraction_thm
+         val _ = declare ()
+         val declared = arith_holds bare_retraction_thm
+         val _ = linarithData.remove_arith bare_retraction_name
+         val retracted = not (arith_holds bare_retraction_thm)
+         (* What a descendant replays is the recorded string, applied as
+            it stands. *)
+         val _ = declare ()
+         val redeclared = arith_holds bare_retraction_thm
+         val applied = retract_by_key "arith" bare_retraction_key
+       in
+         declared andalso retracted andalso redeclared andalso applied
+         andalso retraction_records "arith" bare_retraction_key andalso
+         not (arith_holds bare_retraction_thm)
+       end)
+
+val _ =
+  check
+    ("an unqualified [arith_split] retraction records a key too",
+     fn () =>
+       let
+         val name = "linarith_bare_split_retraction_selftest"
+         val _ = linarithData.remove_arith_split name
+       in
+         retraction_records "arith_split"
+           (Theory.current_theory () ^ "$" ^ name)
+       end)
+
+(* A name that spells no key at all denotes nothing anywhere, and a
+   retraction that recorded it would be a delta every descendant
+   inherits and none can act on.  The one point at which the user is
+   there to be told is the call. *)
+fun retraction_rejects retract name =
+  ((retract name; false)
+   handle Feedback.HOL_ERR error =>
+     String.isSubstring "Malformed name" (Feedback.message_of error))
+
+val _ =
+  check
+    ("a retraction spelling no key at all is rejected and records none",
+     fn () =>
+       let
+         val arith_before = List.length (recorded_removals "arith")
+         val split_before = List.length (recorded_removals "arith_split")
+         val rejected =
+           retraction_rejects linarithData.remove_arith
+             "linarithThy.linarith_fact.aux" andalso
+           retraction_rejects linarithData.remove_arith_split
+             "linarithThy.linarith_split.aux"
+       in
+         rejected andalso
+         List.length (recorded_removals "arith") = arith_before andalso
+         List.length (recorded_removals "arith_split") = split_before
+       end)
+
+val _ =
+  check
+    ("retracting an absent but well-spelled name is a no-op",
+     fn () =>
+       ((linarithData.remove_arith "linarith_absent_selftest";
+         linarithData.remove_arith_split
+           "linarithAbsentThy.linarith_absent_selftest";
+         true)
+        handle Feedback.HOL_ERR _ => false))
 
 (* An atom fact in equivalence form is the shape that lets fact
    augmentation and disjunction elimination feed each other:
@@ -2406,6 +2705,218 @@ val _ =
                !plus_dest_calls = after_first
              end)])
 
+(* That memo is bounded, and bounded by discarding its table rather than
+   by evicting from it: what it exists to hold is one decision's working
+   set, and a session's worth of boolean subterms is not that.  So a
+   decision far enough back is decomposed again rather than answered for,
+   and answered the same way when it is.  The count that says so is the
+   destructor's, read through the instance, so the bound is stated
+   without reading the table it bounds. *)
+val memo_overflow = 2500
+
+fun bounded_probe i =
+  num_leq
+    (num_plus num_x (numSyntax.mk_numeral (Arbnum.fromInt i))) num_y
+
+val _ =
+  check
+    ("the decomposition memo is bounded by discarding its table",
+     fn () =>
+       with_num_instances
+         [(counting_dest_num_instance,
+           fn () =>
+             let
+               val probe = bounded_probe 0
+               val _ = ignore (linarithDecomp.decomp probe)
+               val _ = plus_dest_calls := 0
+               val remembered =
+                 Option.isSome (linarithDecomp.decomp probe) andalso
+                 !plus_dest_calls = 0
+               fun fill i =
+                 ignore (linarithDecomp.decomp (bounded_probe (i + 1)))
+               val _ = List.app fill (List.tabulate (memo_overflow, Lib.I))
+               val _ = plus_dest_calls := 0
+               val again = linarithDecomp.decomp probe
+             in
+               remembered andalso Option.isSome again andalso
+               0 < !plus_dest_calls
+             end)])
+
+(* The carrier half of preprocessing normalizes with the rules the
+   registry holds and with the propositional set those rules' output
+   asks for, and with nothing else.  Reading Rewrite.implicit_rewrites
+   would add whatever theories a session had loaded -- and the rule is
+   built once per registry state, so which of those states it froze
+   would depend on when the first call happened.  The assertion is
+   therefore about call order: a goal decided one way before a theory
+   touches the implicit set is decided the same way after, whether or
+   not a registry change has rebuilt the rule in between. *)
+val empty_num_list = listSyntax.mk_list ([], numSyntax.num)
+
+val empty_length_goal =
+  num_leq (listSyntax.mk_length empty_num_list) num_zero
+
+fun with_implicit_rewrites theorems operation =
+  let
+    val saved = Rewrite.implicit_rewrites ()
+    fun restore () = Rewrite.set_implicit_rewrites saved
+    val _ = Rewrite.add_implicit_rewrites theorems
+    val result = operation () handle e => (restore (); raise e)
+    val _ = restore ()
+  in
+    result
+  end
+
+val _ =
+  check
+    ("the carrier normalization reads no implicit rewrite set",
+     fn () =>
+       let
+         (* LENGTH [] is an atom the arithmetic knows nothing about, and
+            the rewrite that says it is 0 closes the goal.  This call
+            also leaves the carrier rule built. *)
+         val refused_before = linarith_fails empty_length_goal
+       in
+         refused_before andalso
+         with_implicit_rewrites [listTheory.LENGTH]
+           (fn () =>
+              linarith_fails empty_length_goal andalso
+              with_num_instances
+                [(num_instance,
+                  fn () => linarith_fails empty_length_goal)]) andalso
+         linarith_fails empty_length_goal
+       end)
+
+(* An instance whose norm_conv fails is a malformed instance, and replay
+   is where it is discovered: the search runs over rows of rationals and
+   finds its certificate, and the failure comes of trying to state that
+   certificate as theorems.  What the entry points must not do is report
+   that as a refusal -- the goal is provable, the instance is at fault,
+   and the message that says so is the only one that locates it. *)
+val broken_norm_message = "deliberately broken norm_conv"
+
+val broken_norm_instance =
+  {ty = #ty num_instance,
+   discrete = #discrete num_instance,
+   dest = #dest num_instance,
+   kit = #kit num_instance,
+   norm_conv =
+     fn _ =>
+       raise Feedback.mk_HOL_ERR "linarithSelftest" "broken_norm_conv"
+         broken_norm_message,
+   nnf_rules = #nnf_rules num_instance,
+   pre_split = #pre_split num_instance,
+   atom_facts = #atom_facts num_instance} :
+     linarithData.linarith_instance
+
+fun error_of operation =
+  ((operation (); NONE) handle Feedback.HOL_ERR error => SOME error)
+
+val successor_implication =
+  boolSyntax.mk_imp (public_x_lt_y, public_successor_le_y)
+
+(* The instance's own message, verbatim: what an entry point may not do
+   is replace it with a report that no proof was found. *)
+fun reports_the_instance_failure operation =
+  case error_of operation of
+      NONE => false
+    | SOME error => Feedback.message_of error = broken_norm_message
+
+val _ =
+  check
+    ("a malformed instance surfaces its own failure, not a refusal",
+     fn () =>
+       with_num_instances
+         [(num_instance,
+           fn () =>
+             valid_closes (linarithLib.LINARITH_TAC [])
+               ([], successor_implication)),
+          (broken_norm_instance,
+           fn () =>
+             reports_the_instance_failure
+               (fn () =>
+                  ignore
+                    (linarithLib.LINARITH_PROVE successor_implication))
+             andalso
+             reports_the_instance_failure
+               (fn () =>
+                  ignore
+                    (linarithLib.LINARITH_CONV successor_implication)))])
+
+(* The [arith] table refutes nothing on its own, so a context with no
+   arithmetic in it cannot be refuted with the table's help either, and
+   the guard has to say so however many [arith] facts a session has
+   declared.  Otherwise one declaration anywhere in the ancestry sends
+   every non-arithmetic side condition of every conditional rewrite
+   through a contradiction search that cannot succeed. *)
+val _ =
+  check
+    ("declared [arith] facts do not open a bare context to the solver",
+     fn () =>
+       let
+         val context = [Thm.ASSUME public_p]
+         fun decline () =
+           (linarithLib.clear_linarith_caches ();
+            solver_declines context irrelevant_premise)
+       in
+         case with_arith_exports envelope_facts
+                (fn () =>
+                   let
+                     val declared =
+                       not (null (linarithData.arith_facts ()))
+                     val declined = decline ()
+                     val prims = counted (fn () => ignore (decline ()))
+                   in
+                     declared andalso declined andalso prims = 0
+                   end) of
+             NONE => false
+           | SOME result => result
+       end)
+
+(* A failure names an entry point the caller who reads it can look up.
+   The cached procedure behind this one is private, and named nowhere a
+   caller could find it. *)
+val _ =
+  check
+    ("CACHED_LINARITH reports its failure under its own name",
+     fn () =>
+       (linarithLib.clear_linarith_caches ();
+        case error_of
+               (fn () =>
+                  ignore (linarithLib.CACHED_LINARITH [] public_x_le_y)) of
+            NONE => false
+          | SOME error =>
+              Feedback.top_structure_of error = "linarithLib" andalso
+              Feedback.top_function_of error = "CACHED_LINARITH" andalso
+              String.isPrefix "linear arithmetic found no proof"
+                (Feedback.message_of error)))
+
+(* A tactic carrying Split arguments derives its rule set outside the
+   shared memo, and the derivation still has to happen where the tactic
+   is applied rather than where it is built: what the tactic value
+   caches is one rule set per state of the registry and the
+   [arith_split] table, not one for good. *)
+val _ =
+  check
+    ("a hoisted Split tactic tracks the [arith_split] table",
+     fn () =>
+       let
+         val hoisted =
+           linarithLib.LINARITH_TAC [markerLib.Split public_bool_split]
+         fun closes tm =
+           valid_closes hoisted ([], tm)
+           handle Feedback.HOL_ERR _ => false
+         fun fails tm = tactic_fails hoisted ([], tm)
+       in
+         with_num_instances
+           [(nnf_only_num_instance,
+             fn () =>
+               fails min_le_left andalso
+               with_split_export linarithSeedTheory.NUM_MIN_SPLIT
+                 (fn () => closes min_le_left) andalso
+               fails min_le_left)]
+       end)
+
 (* The 34 num/bool goals among the 54 lemma goals in Isabelle's
    Arith_Examples.thy at f7e02b7e1f31, which linarithCorpus states along
    with the driver, the budgets and the canonical numbering.  The
@@ -2433,3 +2944,92 @@ val _ =
        expected_boundaries = 1}
       core_arith_examples
   else ()
+
+(* The guard the solver asks before spending a refutation search on a
+   side condition it cannot decide directly answers out of a memo, so
+   what has to hold is that the memo is keyed on everything the verdict
+   reads: the context, which arrives with the call, and the registry
+   generation, which the relevance test reads for itself.  The two
+   tests below move one of those and hold the other, so a key missing
+   either half serves the previous call's verdict here.
+
+   The verdict is read off which of the three things the solver can do
+   it did: prove the condition from a contradictory context, decline it
+   for want of arithmetic, or attempt the refutation and fail.  The last
+   two both raise, and the guard is the difference between them. *)
+fun solver_verdict context tm =
+  case error_of
+         (fn () =>
+            ignore
+              (#solve linarithLib.linarith_solver
+                 {stack = [], context_thms = context,
+                  recurse = Conv.NO_CONV} tm)) of
+      NONE => "proved"
+    | SOME error =>
+        if Feedback.message_of error = "no arithmetic in the context"
+        then "declined"
+        else "searched"
+
+val _ =
+  check
+    ("the refutable-context guard tracks the context, registry fixed",
+     fn () =>
+       let
+         val contradictory = [Thm.ASSUME public_successor_bound]
+         val bare = [Thm.ASSUME irrelevant_premise]
+         fun verdict context = solver_verdict context public_p
+       in
+         [verdict contradictory, verdict bare,
+          verdict contradictory, verdict bare] =
+         ["proved", "declined", "proved", "declined"]
+       end)
+
+(* A carrier of its own, registered nowhere else, so that the context
+   term below is arithmetic-free until the registration and carries a
+   subterm at a registered type after it -- with the context list, and
+   the theorem in it, the same objects across both calls. *)
+val guard_ty = Type.mk_type ("fun", [Type.bool, registry_ty])
+
+val guard_atom = Term.mk_var ("linarith_guard_atom", guard_ty)
+val guard_predicate =
+  Term.mk_var ("linarith_guard_predicate", function_ty guard_ty Type.bool)
+val guard_premise = Term.mk_comb (guard_predicate, guard_atom)
+
+val guard_instance : linarithData.linarith_instance =
+  {ty = guard_ty,
+   discrete = NONE,
+   dest =
+     {dest_plus = decline,
+      dest_minus = NONE,
+      dest_neg = NONE,
+      dest_mult = decline,
+      dest_div = NONE,
+      dest_suc = NONE,
+      dest_lit = decline,
+      mk_lit = decline,
+      dest_less = decline,
+      dest_leq = decline},
+   kit =
+     {add_mono = [],
+      mult_mono = [],
+      not_less = boolTheory.TRUTH,
+      not_le = boolTheory.TRUTH,
+      neqE = boolTheory.TRUTH,
+      nonneg = (fn _ => NONE)},
+   norm_conv = Conv.ALL_CONV,
+   nnf_rules = [],
+   pre_split = [],
+   atom_facts = (fn _ => [])}
+
+val _ =
+  check
+    ("the refutable-context guard tracks the registry, context fixed",
+     fn () =>
+       let
+         val context = [Thm.ASSUME guard_premise]
+         val unregistered = solver_verdict context public_p
+         val _ = linarithData.register_instance guard_instance
+         val registered = solver_verdict context public_p
+       in
+         unregistered = "declined" andalso registered = "searched"
+       end)

@@ -80,14 +80,20 @@ fun split_thm_name th =
                    "split theorem has no database name")
   end
 
+(* A REMOVE delta carries a table key and is applied as it stands.  This
+   is the path every descendant theory's replay takes, so resolving an
+   unqualified name against the loading theory would make one delta
+   designate a different entry in every theory below it; a retraction
+   has to be resolved where it is written, as [ThmSetData.toKName] and
+   [KernelSig.name_toString] do for a caller that has the writing
+   theory current. *)
 fun apply_split_delta delta db =
   case delta of
       ThmSetData.ADD (name, th) =>
         let val _ = is_asm_split th
         in Symtab.update (persistent_name name, th) db
         end
-    | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (ThmSetData.toKString name) db
+    | ThmSetData.REMOVE key => Symtab.delete_safe key db
 
 val _ =
   if List.exists (equal "split") (ThmSetData.all_set_types ()) orelse
@@ -109,11 +115,14 @@ fun named_split_thms () = Symtab.dest (#get_global_value split_data ())
 fun split_thms () = map #2 (named_split_thms ())
 
 (* Turn a conclusion split rule [!P. P (c ...) = ...] into the rule for a
-   negated predicate, which is the form that splits an assumption. *)
-fun mk_asm_split split =
+   negated predicate, which is the form that splits an assumption.  The
+   predicate is a parameter of the derivation rather than read from the
+   rule here, so that a caller who has already analysed the rule --
+   split_forms below -- does not pay a second walk over it for the one
+   part of the analysis this needs. *)
+fun mk_asm_split_of pred split =
   let
     val (qvars, _) = strip_forall (concl split)
-    val {pred,...} = rule_parts split
     val (domain, _) = dom_rng (type_of pred)
     val arg =
       variant (qvars @ free_vars (concl split)) (mk_var ("x", domain))
@@ -129,6 +138,29 @@ fun mk_asm_split split =
       |> CONV_RULE cleanup
       |> CONV_RULE (RAND_CONV (REWRITE_CONV [boolTheory.EQ_CLAUSES]))
       |> GENL qvars
+  end
+
+fun mk_asm_split split = mk_asm_split_of (#pred (rule_parts split)) split
+
+(* The forms of one rule the splitter applies: an assumption rule
+   stands alone, a conclusion rule is accompanied by the assumption
+   rule derived from it.  A rule set built through here is walked once
+   per rule rather than once per question asked about it, the analysis
+   that decides which of the two cases a rule is in being the analysis
+   the splitter goes on to use.  The derived rule is analysed in its
+   turn rather than assembled from the parts of the rule it came from:
+   mk_asm_split_of finishes with a rewriting pass over the derived
+   right side, so whether that side is negated -- which is the whole of
+   what the analysis decides -- is a question about the theorem in hand
+   and not about the one it came from. *)
+fun split_forms th =
+  let
+    val {pred, pattern, head, args, asm} = rule_parts th
+    val rule =
+      {thm=th, head=head, pattern=pattern, arity=length args, asm=asm}
+  in
+    if asm then [rule]
+    else [rule, analyse_rule (mk_asm_split_of pred th)]
   end
 
 (* [rules] is the derived form the splitter actually applies; it is cached
@@ -193,8 +225,10 @@ fun insert_rule rule [] =
           (key, rules) :: insert_rule rule rest
       end
 
-fun cmap_of_rules thms =
-  foldl (fn (th, cmap) => insert_rule (analyse_rule th) cmap) [] thms
+fun cmap_of_split_rules rules =
+  foldl (fn (rule, cmap) => insert_rule rule cmap) [] rules
+
+fun cmap_of_rules thms = cmap_of_split_rules (map analyse_rule thms)
 
 (* Paths are in [Conv.PATH_CONV] notation: "l" rator, "r" rand, "a" body. *)
 type binder_info =
@@ -415,11 +449,13 @@ fun split_asm_tac cmap =
 fun SPLIT_ASM_TAC thms = split_asm_tac (cmap_of_rules thms)
 
 (* Analyse the rules once and share the result between both attempts. *)
-fun SPLIT_TAC thms =
-  let val cmap = cmap_of_rules thms
+fun SPLIT_RULE_TAC rules =
+  let val cmap = cmap_of_split_rules rules
   in
     CHANGED_TAC (CONV_TAC (split_conv cmap)) ORELSE
     CHANGED_TAC (split_asm_tac cmap)
   end
+
+fun SPLIT_TAC thms = SPLIT_RULE_TAC (map analyse_rule thms)
 
 end

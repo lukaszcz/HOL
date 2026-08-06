@@ -186,9 +186,11 @@ sig
   val arith_facts : unit -> thm list
   val arith_split_thms : unit -> thm list
   (* The name may be a bare theorem name, a "Thy.Name" qualification or
-     the stored "Thy$Name" key (ThmSetData.toKString normalises all
-     three).  A string that spells none of them denotes nothing in the
-     table, so removing it is a no-op rather than an error. *)
+     the stored "Thy$Name" key.  A bare name is resolved against the
+     current theory here, where the retraction is written, so that the
+     REMOVE delta recorded designates the same entry in every
+     descendant theory that replays it.  Removing an absent key is a
+     no-op; a string that spells no key at all is an error. *)
   val remove_arith : string -> unit
   val remove_arith_split : string -> unit
 
@@ -208,13 +210,16 @@ sig
      registries alone.
 
      memo_with_splits is for data that also reads arith_split_thms: its
-     key carries, besides the generation, that table's key set.
-     Theorem names are the table's keys, so the key set moves on every
-     add, every remove and every wholesale ancestry replacement,
-     whatever path made the change.  Neither is offered for the [arith]
-     table: a tactic reads it once per call, and the reducer path, which
-     does derive from it, keys on the fact list itself rather than on a
-     generation -- keyed_memo below is what that path memoizes with. *)
+     key carries, besides the generation, that table's theorems,
+     compared by pointer.  The theorems rather than their names,
+     because a re-declaration under a name the table already holds
+     replaces the theorem in place and leaves the key set untouched;
+     and read from the table rather than counted at the delta sites,
+     because a wholesale ancestry replacement applies no delta.
+     Neither is offered for the [arith] table: a tactic reads it once
+     per call, and the reducer path, which does derive from it, keys on
+     the fact list itself rather than on a generation -- keyed_memo
+     below is what that path memoizes with. *)
   val memo : (unit -> 'a) -> unit -> 'a
   val memo_with_splits : (unit -> 'a) -> unit -> 'a
 

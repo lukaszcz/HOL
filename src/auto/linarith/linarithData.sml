@@ -364,12 +364,16 @@ val all_injection_rewrite_conv =
 
 val persistent_name = KernelSig.name_toString
 
+(* A REMOVE delta carries a table key and is applied as it stands.  It
+   is resolved where the retraction is written (see removal_key below),
+   not here: this is the path every descendant theory's replay takes, so
+   resolving an unqualified name against the loading theory would make
+   one delta designate a different entry in every theory below it. *)
 fun apply_arith_delta delta table =
   case delta of
       ThmSetData.ADD (name, theorem) =>
         Symtab.update (persistent_name name, theorem) table
-    | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (ThmSetData.toKString name) table
+    | ThmSetData.REMOVE key => Symtab.delete_safe key table
 
 (* The P-form test is the whole of split validation; the two channels
    differ only in how they name what they rejected. *)
@@ -387,8 +391,7 @@ fun apply_arith_split_delta delta table =
         in
           Symtab.update (persistent_name name, theorem) table
         end
-    | ThmSetData.REMOVE name =>
-        Symtab.delete_safe (ThmSetData.toKString name) table
+    | ThmSetData.REMOVE key => Symtab.delete_safe key table
 
 fun guard_registration settype =
   if List.exists (equal settype) (ThmSetData.all_set_types ()) orelse
@@ -427,29 +430,52 @@ fun table_thms data = map #2 (Symtab.dest (#get_global_value data ()))
 fun arith_facts () = table_thms arith_data
 fun arith_split_thms () = table_thms arith_split_data
 
-fun remove data apply_delta name =
+(* The key the retraction denotes, computed here because here is where
+   the theory it was written in is the current one, and here is where
+   the user is present to be told that it denotes nothing.  A name
+   containing "$" is already a key: theory names cannot contain "$", so
+   only the kernel separator puts one there. *)
+fun removal_key function name =
+  if String.isSubstring "$" name then name
+  else
+    (persistent_name (ThmSetData.toKName name)
+     handle HOL_ERR _ => raise ERR function ("Malformed name: " ^ name))
+
+fun remove data apply_delta function name =
   let
-    val delta = ThmSetData.REMOVE name
+    val delta = ThmSetData.REMOVE (removal_key function name)
     val _ = #update_global_value data (apply_delta delta)
   in
     #record_delta data delta
   end
 
-fun remove_arith name = remove arith_data apply_arith_delta name
-fun remove_arith_split name =
-  remove arith_split_data apply_arith_split_delta name
+fun remove_arith name =
+  remove arith_data apply_arith_delta "remove_arith" name
 
-(* Theorem names are the table's keys, so its key set changes on every
-   add, every remove, and every wholesale replacement by set_parents --
-   the path a counter bumped at the delta sites would miss, because
+fun remove_arith_split name =
+  remove arith_split_data apply_arith_split_delta "remove_arith_split" name
+
+(* The table's own theorems are the key, compared by pointer.  Its key
+   set is not enough: an add under a name the table already holds --
+   the re-declaration of an edited rule, in the session that edited it
+   -- replaces the theorem in place and leaves the key set exactly as
+   it was.  Nor would a counter bumped at the delta sites be, because
    AncestryData's set_ancestry installs a whole table without applying
-   a delta to the old one.  Extracting and comparing the keys costs a
-   fraction of the split-net build it guards. *)
-fun arith_split_keys () =
-  map #1 (Symtab.dest (#get_global_value arith_split_data ()))
+   a delta to the old one.  The theorems move under all three, and a
+   table rebuilt into equal but fresh theorems recomputes rather than
+   answering out of the old one -- which costs a recomputation and
+   nothing else.  Reading and comparing them costs a fraction of the
+   split-net build it guards. *)
+fun same_splits (left_generation, left_thms) (right_generation, right_thms) =
+  left_generation = right_generation andalso
+  Lib.list_eq (Lib.curry Portable.pointer_eq) left_thms right_thms
 
 fun memo_with_splits compute =
-  memo_on (fn () => (generation (), arith_split_keys ())) compute
+  let
+    val cached = keyed_memo same_splits (fn _ => compute ())
+  in
+    fn () => cached (generation (), arith_split_thms ())
+  end
 
 type linarith_config = {neq_limit : int, split_limit : int}
 

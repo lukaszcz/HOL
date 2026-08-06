@@ -14,6 +14,18 @@ sig
   (* Derive the assumption-splitting form of a conclusion split rule. *)
   val mk_asm_split : thm -> thm
 
+  (* A rule as the splitter analyses it.  [split_forms] answers the
+     forms of one rule the splitter applies -- an assumption rule as it
+     stands, a conclusion rule together with the assumption rule
+     [mk_asm_split] derives from it -- already analysed, so that a
+     caller deciding which of the two a rule is gets that answer out of
+     the analysis the splitter goes on to use rather than out of a walk
+     of its own.  [SPLIT_RULE_TAC] is [SPLIT_TAC] over rules so
+     analysed. *)
+  type split_rule
+  val split_forms : thm -> split_rule list
+  val SPLIT_RULE_TAC : split_rule list -> tactic
+
   (* Cached datatype split rules.  [type_split_rules] is the derived pair
      the splitter applies. *)
   val type_split_of : hol_type -> thm

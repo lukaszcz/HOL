@@ -15,7 +15,11 @@ arithmetic, without the operator splitting and Boolean preprocessing of
 `LINARITH_TAC`. Arithmetic propositions share the cache of
 `LINARITH_ss`, so `clear_linarith_caches` applies to them; a
 proposition outside linear arithmetic is not cached and is proved only
-when the context is itself arithmetically contradictory. The solver is
+when the simplifier's own context is itself arithmetically
+contradictory. A context with no arithmetic in it is declined at once,
+whatever `[arith]` facts have been declared: those facts hold together,
+so they refute nothing without an arithmetic context assumption to
+refute it with. The solver is
 already installed in the clasimp and Aesop
 simpsets. It can be added to another simpset with
 `simpLib.add_unsafe_solver`, suppressed for one invocation with

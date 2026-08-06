@@ -20,7 +20,10 @@ syntax.
 ### Failure
 
 Fails if neither `tm` nor its negation follows by supported direct linear
-arithmetic, or if a needed carrier has no registered instance.
+arithmetic, or if a needed carrier has no registered instance. As with
+`LINARITH_PROVE`, a failure of the replay machinery itself is reported as
+it stands rather than as a failure to find a proof; the second attempt is
+made only when the first was an honest refusal.
 
 ### Example
 

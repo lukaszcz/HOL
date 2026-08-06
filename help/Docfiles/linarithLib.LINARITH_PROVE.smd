@@ -24,7 +24,9 @@ filtering, or atom-fact augmentation.
 
 Fails if `tm` is not a supported linear-arithmetic consequence, a carrier
 has no registered instance, or required goal-level preprocessing is
-absent.
+absent. A failure of the replay machinery itself — a registered instance
+whose rules cannot be applied, say — is reported as it stands rather than
+as a failure to find a proof.
 
 ### Example
 

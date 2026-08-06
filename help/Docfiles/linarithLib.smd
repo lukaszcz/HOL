@@ -24,10 +24,12 @@ path before loading them. Mixed-carrier problems also require the
 instances at both ends of the relevant registered injection.
 
 The public surface consists of the full and simple tactics, a
-configuration-explicit tactic, a forward prover, a conversion, a simpset
-fragment, and an unsafe simplifier solver. `LINARITH_ss` is not part of
-`srw_ss()`. The solver, whose name is `"lin_arith"`, is already installed
-in the clasimp and Aesop simpsets.
+configuration-explicit tactic, a forward prover, a conversion,
+`CACHED_LINARITH` — the same forward decision taken against a supplied
+context and answered from a result cache — a simpset fragment, and an
+unsafe simplifier solver. `LINARITH_ss` is not part of `srw_ss()`. The
+solver, whose name is `"lin_arith"`, is already installed in the clasimp
+and Aesop simpsets.
 
 Persistent `[arith]` declarations supply extra facts. Persistent
 `[arith_split]` declarations supply P-form operator-splitting rules to the
@@ -50,7 +52,11 @@ detail at levels 1 through 3.
 
 Individual operations fail when no registered instance covers a relation,
 when preprocessing or certificate search finds no proof, or when a
-supplied marker or split theorem is malformed.
+supplied marker or split theorem is malformed. Each reports its failure
+under its own name. A failure of the replay machinery itself — a
+registered instance whose rules cannot be applied, say — is reported as
+it stands rather than as a failure to find a proof, so that a malformed
+instance is not mistaken for an unprovable goal.
 
 ### Example
 

@@ -54,11 +54,51 @@ fun unregistered_hint conclusion =
         " (no linarith instance for " ^ Parse.type_to_string ty ^
         "; registered: " ^ registered_carriers () ^ ")"
 
+val search_failed = "linear arithmetic found no proof"
+
+val not_applicable = "not applicable"
+
+(* Cache.RCACHE's, spelled here because a caller of the cached
+   procedure meets it in place of that procedure's own refusal. *)
+val no_false_context = "No (more) possibly false contexts"
+
 (* The hint travels with the search rather than being recomputed at the
    failure site: CCONTR_TAC has replaced the conclusion by F long before
    the search gives up. *)
-fun no_proof function hint =
-  raise ERR function ("linear arithmetic found no proof" ^ hint)
+fun no_proof function hint = raise ERR function (search_failed ^ hint)
+
+(* The failures an entry point below may report as an honest refusal,
+   and the only ones: the search's own report of a certificate it did
+   not find, this structure's no_proof under whichever name raised it,
+   the cached procedure's refusal of a term it has no row for, and the
+   two refusals Cache.RCACHE raises on its own account -- a term its
+   relevance check declines, and a contradiction search with no context
+   left to try -- which a caller of the cached procedure meets where it
+   would otherwise meet that procedure's own.
+
+   Everything else a call into the replay machinery can raise -- a
+   registered rule MATCH_MP cannot use, a replay that leaves a subgoal
+   open, a kernel error -- says that an instance is malformed, and is
+   the one diagnostic that says so.  Reporting that as "found no proof"
+   answers a provable goal with an untruth and discards the message
+   that would have located the fault. *)
+fun declined error =
+  case Feedback.origins_of error of
+      [] => false
+    | {origin_structure, origin_function, ...} :: _ =>
+        let
+          val message = Feedback.message_of error
+        in
+          case (origin_structure, origin_function) of
+              ("linarithReplay", "fwd_prove") => message = search_failed
+            | ("linarithLib", _) =>
+                String.isPrefix search_failed message orelse
+                message = not_applicable
+            | ("Cache", "RCACHE") =>
+                message = not_applicable orelse
+                message = no_false_context
+            | _ => false
+        end
 
 val classical_markers =
   [(clasetLib.destSIntro, "SIntro"),
@@ -267,16 +307,32 @@ fun filter_relevant (assumptions, conclusion) =
    What remains here is carrier-specific (truncated subtraction, say) and
    arrives from the registry rather than being named.
 
-   Both the rewrite list and the rule REWRITE_RULE builds from it are a
-   pure function of the instance registry, so they are built once per
-   registry state rather than once per tactic call: REWRITE_RULE builds
-   a rewrite net, and the net does not depend on the goal. *)
+   The rule is built over Rewrite.bool_rewrites rather than over
+   Rewrite.implicit_rewrites, which is what Rewrite.REWRITE_RULE would
+   read.  What the pass wants beyond the registry's rules is the
+   propositional tidy-up their output asks for, and that is a fixed
+   set; the implicit set is neither fixed nor anything this layer
+   chose.  A theory loaded halfway through a session adds to it
+   (pairLib, listScript) or replaces it wholesale (integerScript), so
+   reading it would decide the same goal one way or the other according
+   to which theories a session had loaded and in what order -- and
+   REWRITE_RULE reads it where the partial application is built, so the
+   memo below would additionally freeze whichever state that was, and
+   the order that decided a goal would be the order of the loads
+   against the first call rather than against the goal.
+
+   With that, both the rewrite list and the rule are a pure function of
+   the instance registry, so they are built once per registry state
+   rather than once per tactic call: the rule builds a rewrite net, and
+   the net does not depend on the goal. *)
 fun carrier_nnf_rewrites () =
   List.concat (map #nnf_rules (linarithData.all_instances ()))
 
 val carrier_nnf_rule =
   linarithData.memo
-    (fn () => Rewrite.REWRITE_RULE (carrier_nnf_rewrites ()))
+    (fn () =>
+      Rewrite.GEN_REWRITE_RULE Conv.TOP_DEPTH_CONV Rewrite.bool_rewrites
+        (carrier_nnf_rewrites ()))
 
 fun opposite_tac (assumptions, conclusion) =
   let
@@ -353,11 +409,12 @@ fun compute_split_rules extra =
     val source =
       distinct_thms
         (linarithData.arith_split_thms () @ extra @ seeds)
-    fun forms theorem =
-      if splitLib.is_asm_split theorem then [theorem]
-      else [theorem, splitLib.mk_asm_split theorem]
   in
-    List.concat (map forms source)
+    (* splitLib.split_forms answers the rules already analysed, so a
+       source theorem is walked once here rather than once to ask
+       whether it splits an assumption, once again to derive the form
+       that does, and once more when the tactic below is built. *)
+    List.concat (map splitLib.split_forms source)
   end
 
 (* Without caller-supplied rules the rules are a pure function of the
@@ -372,13 +429,22 @@ fun compute_split_rules extra =
    deduplicates in arith_split-then-extra-then-seeds order, so an extra
    that repeats a seed takes the seed's place rather than following it,
    and appending would both reorder the net splitLib builds and keep
-   the wrong one of the two theorems.  Those calls recompute. *)
+   the wrong one of the two theorems.  So a caller that passed splits
+   gets a memo of its own instead of the shared one: the rules are a
+   pure function of the same two sources once that caller's own
+   arguments are fixed, which they are as soon as the tactic value is
+   built, and it is the tactic value the memo cell belongs to.  Without
+   it a tactic applied to twenty subgoals derives and analyses the
+   whole rule set twenty times, since the derivation has to happen
+   where the tactic is applied rather than where it is built. *)
 val cached_split_tac =
   linarithData.memo_with_splits
-    (fn () => splitLib.SPLIT_TAC (compute_split_rules []))
+    (fn () => splitLib.SPLIT_RULE_TAC (compute_split_rules []))
 
-fun split_tactic [] = cached_split_tac ()
-  | split_tactic extra = splitLib.SPLIT_TAC (compute_split_rules extra)
+fun split_tactic [] = cached_split_tac
+  | split_tactic extra =
+      linarithData.memo_with_splits
+        (fn () => splitLib.SPLIT_RULE_TAC (compute_split_rules extra))
 
 fun decomp_atoms tm =
   case linarithDecomp.decomp tm of
@@ -608,6 +674,7 @@ fun CFG_LINARITH_TAC config arguments =
     val function = "CFG_LINARITH_TAC"
     val (argument_facts, argument_splits) =
       full_arguments function arguments
+    val split_tac = split_tactic argument_splits
   in
     fn goal =>
       Tactical.THEN
@@ -615,7 +682,7 @@ fun CFG_LINARITH_TAC config arguments =
            (linarithData.arith_facts () @ argument_facts),
          let
            val search =
-             split_on_demand function config (split_tactic argument_splits)
+             split_on_demand function config (split_tac ())
          in
            fn inner as (_, conclusion) =>
              Tactical.THEN
@@ -654,12 +721,18 @@ fun LINARITH_PROVE tm =
   let
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
-    (* Reported here rather than left to fwd_prove, so that a public
-       entry names itself and carries the carrier hint. *)
+    (* A search that found nothing is reported here rather than left to
+       fwd_prove, so that a public entry names itself and carries the
+       carrier hint.  Nothing else is: a malformed instance fails
+       somewhere in the replay machinery, and reporting that as a
+       refusal makes a provable goal look unprovable to the one person
+       who could fix it. *)
     val theorem =
       forward_prove premises conclusion
-      handle HOL_ERR _ =>
-        no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
+      handle HOL_ERR error =>
+        if declined error then
+          no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
+        else raise HOL_ERR error
     val implication = Lib.itlist Thm.DISCH premises theorem
     val result = GENL variables implication
   in
@@ -669,7 +742,15 @@ fun LINARITH_PROVE tm =
         "internal error: reconstructed theorem has the wrong conclusion"
   end
 
-fun attempt prove tm = SOME (prove tm) handle HOL_ERR _ => NONE
+(* NONE is "asked and refused", which is the only failure a rung of the
+   ladders below is entitled to treat as an answer: a rung that fails
+   because an instance is malformed has not answered the question, and
+   letting that stand for "no" would send the caller up the next rung
+   and report the whole term undecided under this structure's name. *)
+fun attempt prove tm =
+  SOME (prove tm)
+  handle HOL_ERR error =>
+    if declined error then NONE else raise HOL_ERR error
 
 (* The ladder a conversion has to climb: a decision procedure must
    answer T or F, so a term it cannot prove is offered negated before
@@ -693,8 +774,8 @@ fun context_forward theorems conclusion =
     Lib.rev_itlist PROVE_HYP theorems theorem
   end
 
-(* What the result cache is keyed on, and the test CTXT_LINARITH opens
-   with.  A doubly negated relation is admitted because it is the
+(* What the result cache is keyed on, and the test the cached procedure
+   opens with.  A doubly negated relation is admitted because it is the
    second rung of the ladder below asked about a negated one: ~~(x <= y)
    decomposes nowhere itself, while the question it asks -- is x <= y
    provable? -- is one the procedure answers. *)
@@ -719,14 +800,22 @@ fun cache_check tm =
    asymmetry.  RCACHE records failures as well as successes, so a rung
    the solver ran and lost is recorded against that rung's own term; the
    ladder's second rung is a different term and so a different key, and
-   is never answered out of the first rung's recorded failure. *)
-fun CTXT_LINARITH theorems tm =
+   is never answered out of the first rung's recorded failure.
+
+   It reports under the name of the entry point it is the machinery of,
+   not under one of its own: this is a private function, and a failure
+   naming it names nothing the caller who reads the failure can look
+   up.  Every path that reaches it comes through CACHED_LINARITH or
+   through the solver, and the solver reaches it only for terms the
+   guard admits, so "not applicable" is a message CACHED_LINARITH's
+   ladder consumes rather than one a caller is shown. *)
+fun cached_procedure theorems tm =
   if not (cache_check tm) then
-    raise ERR "CTXT_LINARITH" "not applicable"
+    raise ERR "CACHED_LINARITH" not_applicable
   else
     case attempt (context_forward theorems) tm of
         SOME theorem => EQT_INTRO theorem
-      | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm)
+      | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm)
 
 (* The atoms in order of first occurrence, the bound variables aside.
    Both the set already collected and the binders in scope are keyed
@@ -770,7 +859,7 @@ fun linarith_vars tm =
 
 val (unguarded_cached_linarith, linarith_cache) =
   Cache.RCACHE {capacity = 2000, per_key_cap = 50}
-    (linarith_vars, cache_check, CTXT_LINARITH)
+    (linarith_vars, cache_check, cached_procedure)
 
 fun clear_linarith_caches () = Cache.clear_cache linarith_cache
 
@@ -853,9 +942,9 @@ val arith_envelope =
    which is the half of the envelope that is per result rather than per
    table state, and so is the half that stays here.
 
-   cache_check is the same test CTXT_LINARITH opens with, so a term it
-   rejects is declined before the table is read at all.  Asking it
-   first is what keeps the reducer from carrying the [arith] context
+   cache_check is the same test the cached procedure opens with, so a
+   term it rejects is declined before the table is read at all.  Asking
+   it first is what keeps the reducer from carrying the [arith] context
    around every boolean subterm the arithmetic has no row for. *)
 fun cached_with_arith context tm =
   if not (cache_check tm) then cached_prove context tm
@@ -882,7 +971,7 @@ fun CACHED_LINARITH context tm =
         (case attempt (cached_with_arith context)
                 (boolSyntax.mk_neg tm) of
              SOME equation => EQF_INTRO (EQT_ELIM equation)
-           | NONE => no_proof "CTXT_LINARITH" (unregistered_hint tm))
+           | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm))
 
 val LINARITH_REDUCER =
   let
@@ -920,11 +1009,41 @@ val LINARITH_ss =
    by, applied through the connectives a premise is atomized along: it
    answers yes to strictly more than the procedure can use -- any
    boolean equation, any term with a subterm at a registered type -- so
-   what it declines is declined for cause.  The [arith] table is part of
-   the context cached_with_arith asks about, so it is asked about here
-   too. *)
+   what it declines is declined for cause.
+
+   The answer is remembered, because the answer this guard exists to
+   give is the expensive one.  List.exists stops at a yes; a no is
+   reached only after every context theorem has been walked, and
+   shell_relevant's ATOM leaf answers no only after find_term has
+   visited every subterm and asked the registry about the type of each.
+   Traverse offers the solver every side condition of every conditional
+   rewrite, and the context is the traversal region's rather than the
+   condition's, so the same walk would otherwise be repeated per
+   condition.
+
+   The key is the context itself, compared element-wise by pointer: it
+   is what the answer is about, it arrives with the call, and it is no
+   equality type, so this is keyed_memo rather than one of the
+   generation memos.  A single entry suffices -- the context does not
+   move between the side conditions of one region -- and the list
+   final_solver_tac freshly conses out of reducer_context @
+   solver_context is still hit by the pointer compare.
+
+   The generation is in the key beside it because shell_relevant reads
+   the registry, through is_relevant and through the instance_for behind
+   has_registered_subterm, so the same context answers differently
+   across a registration. *)
+fun same_context_key (left_generation : int, left_thms)
+                     (right_generation, right_thms) =
+  left_generation = right_generation andalso
+  Lib.list_eq (Lib.curry Portable.pointer_eq) left_thms right_thms
+
+val refutable_for_key =
+  linarithData.keyed_memo same_context_key
+    (fn (_, theorems) => List.exists (shell_relevant o Thm.concl) theorems)
+
 fun refutable_context theorems =
-  List.exists (shell_relevant o Thm.concl) theorems
+  refutable_for_key (linarithData.generation (), theorems)
 
 (* Mirrors Isabelle's solver setup at lin_arith.ML:949.  Arithmetic side
    conditions share the reducer's cache; cached_with_arith is a
@@ -942,14 +1061,34 @@ fun refutable_context theorems =
    asking for F asks through the cache, since F is the other term the
    guard admits.  Traverse offers the solver every side condition of
    every conditional rewrite, so that question is worth asking only of a
-   context that could answer it. *)
+   context that could answer it.
+
+   The context asked about is the simplifier's alone, the [arith] table
+   the refutation would also see notwithstanding.  The table is a set
+   of theorems, so its facts hold together and refute nothing by
+   themselves; every further row comes from a premise the procedure can
+   decompose, and if not one context theorem carries arithmetic --
+   which is what shell_relevant over-approximates, so it misses none --
+   the table's rows are all there is and the question is answered
+   before it is asked.  Adding the table to the guard would therefore
+   never turn a refusal into a proof; what it would do is make the
+   guard true at every call in a session where a single [arith] fact
+   has been declared anywhere in the ancestry, which is what the
+   attribute is for, and send every non-arithmetic side condition of
+   every conditional rewrite under the simpsets that carry this solver
+   through a contradiction search that cannot succeed.
+
+   A table that did refute F by itself -- possible only of facts
+   carrying hypotheses, which the envelope discharges again -- would be
+   a self-contradictory table, and would say so at the same volume on
+   every call, since neither the question nor its answer would depend
+   on the condition being asked about.  That is a state to report, not
+   one to spend a search per side condition rediscovering. *)
 val linarith_solver : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
      if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
-     else if refutable_context context_thms orelse
-             refutable_context (linarithData.arith_facts ())
-     then
+     else if refutable_context context_thms then
        CONTR tm
          (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
      else raise ERR "lin_arith" "no arithmetic in the context"}

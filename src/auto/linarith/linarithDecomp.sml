@@ -252,44 +252,35 @@ and poly_non_suc (tm, multiplier, polynomial) =
         (case dest_lit tm of
              SOME literal => add_constant multiplier literal polynomial
            | NONE =>
-               (case dest_mult tm of
-                    SOME _ =>
-                      let
-                        val (atom, coefficient) = demult (tm, multiplier)
-                      in
-                        case atom of
-                            SOME atom' =>
-                              if Term.aconv atom' tm then
-                                add_atom atom' coefficient polynomial
-                              else
-                                poly_acc (atom', coefficient, polynomial)
-                          | NONE =>
-                              add_constant rat_one coefficient polynomial
-                      end
-                  | NONE =>
-                      (case dest_div tm of
-                           SOME _ =>
-                             let
-                               val (atom, coefficient) =
-                                 demult (tm, multiplier)
-                             in
-                               case atom of
-                                   SOME atom' =>
-                                     if Term.aconv atom' tm then
-                                       add_atom atom' coefficient polynomial
-                                     else
-                                       poly_acc
-                                         (atom', coefficient, polynomial)
-                                 | NONE =>
-                                     add_constant rat_one coefficient
-                                       polynomial
-                             end
-                         | NONE =>
-                             (case injection_arg tm of
-                                  SOME arg =>
-                                    poly_acc (arg, multiplier, polynomial)
-                                | NONE =>
-                                    add_atom tm multiplier polynomial))))
+               (* One arm for both, because demult re-dispatches on the
+                  term itself: what is asked here is only whether it has
+                  a product or a quotient to take apart, and the answer
+                  decides nothing beyond that.  The aconv self-check is
+                  what stops the mutual recursion with demult when demult
+                  hands the term back unchanged -- a division by a
+                  non-literal, say -- and it is a rule about the
+                  recursion rather than about the operator, so it is
+                  written once.  The order is unchanged: orelse asks
+                  about division only for a term that is no product. *)
+               if Option.isSome (dest_mult tm) orelse
+                  Option.isSome (dest_div tm)
+               then
+                 let
+                   val (atom, coefficient) = demult (tm, multiplier)
+                 in
+                   case atom of
+                       SOME atom' =>
+                         if Term.aconv atom' tm then
+                           add_atom atom' coefficient polynomial
+                         else
+                           poly_acc (atom', coefficient, polynomial)
+                     | NONE =>
+                         add_constant rat_one coefficient polynomial
+                 end
+               else
+                 (case injection_arg tm of
+                      SOME arg => poly_acc (arg, multiplier, polynomial)
+                    | NONE => add_atom tm multiplier polynomial))
 
 fun poly tm = poly_acc (tm, rat_one, ([], rat_zero))
 
@@ -372,25 +363,32 @@ fun decompose tm =
    which entry is dropped cannot be worth deciding. *)
 val memo_capacity = 2000
 
-val decomp_memo =
-  ref (0, Termtab.empty : linarithSolve.decomp option Termtab.table)
+(* The generation rule itself is linarithData's, taken from there rather
+   than restated: what the helper holds per generation is the table's
+   cell, so a change to when a derivation goes stale reaches this table
+   along with the registry's own.  The capacity is not the helper's
+   business -- everything else it serves is one value per generation, and
+   a bound belongs to the table that can grow -- so it stays here, at the
+   one insertion that can reach it. *)
+val decomp_table =
+  linarithData.memo
+    (fn () =>
+      ref (Termtab.empty : linarithSolve.decomp option Termtab.table))
 
 fun decomp tm =
   let
-    val current = linarithData.generation ()
-    val (recorded, remembered) = !decomp_memo
-    val table = if recorded = current then remembered else Termtab.empty
+    val table = decomp_table ()
   in
-    case Termtab.lookup table tm of
+    case Termtab.lookup (!table) tm of
         SOME answer => answer
       | NONE =>
           let
             val answer = decompose tm
             val kept =
-              if Termtab.size table < memo_capacity then table
+              if Termtab.size (!table) < memo_capacity then !table
               else Termtab.empty
           in
-            decomp_memo := (current, Termtab.update (tm, answer) kept);
+            table := Termtab.update (tm, answer) kept;
             answer
           end
   end

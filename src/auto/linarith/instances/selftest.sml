@@ -512,6 +512,28 @@ val _ =
          Term.aconv (Thm.concl theorem) boolSyntax.F
        end)
 
+(* Both sides of the golden above are int -- Nonneg answers in the
+   carrier of the atom it names -- so it does not reach the add
+   fallback.  This one does: mkthm returns each assumption in the
+   carrier it was stated in, so summing a num premise with an int one
+   has no direct addition available, and only the conversion closure's
+   lift of m < n to &m < &n closes it.  The mixed-carrier tactic checks
+   above drive the same path from the surface. *)
+val _ =
+  check
+    ("golden Added replay sums two carriers through the injection",
+     fn () =>
+       let
+         val theorem =
+           linarithReplay.mkthm
+             [Thm.ASSUME (numSyntax.mk_less (m, n)),
+              Thm.ASSUME (ileq n_int m_int)]
+             (linarithSolve.Added
+               (linarithSolve.Asm 0, linarithSolve.Asm 1))
+       in
+         Term.aconv (Thm.concl theorem) boolSyntax.F
+       end)
+
 (* Scaling an equality applies (\v. v * n) to both of its sides.  The
    int and rat instances normalize expressions with polynomial
    conversions, which rewrite polynomials and not redexes, so a side
