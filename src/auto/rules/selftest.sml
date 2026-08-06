@@ -5,6 +5,10 @@ fun test (name, check) =
   (tprint name;
    if check () then OK () else die "failed")
 
+(* A selftest binary starts with no theory segment open, so a datatype
+   has nowhere to be declared until one is. *)
+val _ = Theory.new_theory "clasetHookSelftest"
+
 (* This deliberately precedes the first [the_claset] demand below. *)
 val _ = Datatype.Datatype
   `claset_hook_before_demand = ClasetHookA | ClasetHookB num`

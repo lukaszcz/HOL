@@ -73,6 +73,7 @@ fun derive_aesop_ss ss _ : cached_simpset =
 
 val {get = get_cached_aesop_ss, set = set_cached_aesop_ss} =
   BasicProvers.make_simpset_derived_value
+    "aesopData.aesop_ss"
     derive_aesop_ss
     {generation = ~1, simpset = simpLib.empty_ss}
 

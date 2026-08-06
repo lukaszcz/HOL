@@ -30,7 +30,7 @@ fun derive_clasimp_ss ss _ =
    record.  BasicProvers marks the cache stale whenever srw_ss changes. *)
 val {get = clasimp_ss, set = _} =
   BasicProvers.make_simpset_derived_value
-    derive_clasimp_ss simpLib.empty_ss
+    "clasimpLib.clasimp_ss" derive_clasimp_ss simpLib.empty_ss
 
 (* Isabelle's asm_full_simp_tac simplifies premises mutually and turns the
    mksimps_pairs decomposition of premises into usable rewrites.

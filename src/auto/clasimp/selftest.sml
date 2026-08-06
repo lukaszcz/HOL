@@ -7,6 +7,10 @@ open listTheory optionTheory pred_setTheory
    there too. *)
 open linarithCorpus
 
+(* A selftest binary starts with no theory segment open, so a datatype
+   has nowhere to be declared until one is. *)
+val _ = Theory.new_theory "clasimpHookSelftest"
+
 (* clasimpLib is loaded before this selftest unit, so this datatype exercises
    the live TypeBase hook rather than the registration catch-up sweep. *)
 val _ = Datatype.Datatype

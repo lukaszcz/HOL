@@ -3687,17 +3687,36 @@ val _ =
                 (tableauLib.CS_BLAST_DEPTH_TAC cs 2) goal) ()
        end)
 
+(* This binary starts with no theory segment at all, and the tests from
+   here on declare constants and read the current theory back, which is
+   the state anything doing either is called in anyway. *)
+val _ = Theory.new_theory "blastSelftest"
+
+(* The kernel typechecks every term it hands out, so the goal the
+   translator cannot translate is one that has gone out of date: a
+   deleted constant survives in a retained term, and the translator's
+   constant encoding fails when it looks the constant's generic type up
+   again.  The message check keeps the test on that failure rather than
+   on the ordinary exhausted-search failure of a depth-0 run. *)
 val _ =
   test
     ("CS_BLAST_DEPTH_TAC translation errors are ordinary failures",
      fn () =>
        let
-         val malformed = Term.read_raw (Vector.fromList []) "$0"
+         val name = "blast_deleted_constant"
+         val _ = Theory.new_constant (name, bool)
+         val stale =
+           Term.prim_mk_const {Thy = Theory.current_theory (), Name = name}
+         val _ = Theory.delete_const name
          val tactic =
            tableauLib.CS_BLAST_DEPTH_TAC clasetLib.empty_cs 0
+         val message =
+           blast_error_message (fn () => ignore (tactic ([], stale)))
        in
-         (ignore (tactic ([], malformed)); false)
-         handle HOL_ERR _ => true
+         not (Term.uptodate_term stale) andalso
+         (case message of
+              NONE => false
+            | SOME text => String.isSubstring name text)
        end)
 
 val _ =

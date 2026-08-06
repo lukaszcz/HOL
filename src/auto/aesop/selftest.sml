@@ -73,6 +73,12 @@ val _ =
        aconv derived_after derived_rhs andalso
        aconv derived_restored derived_lhs)
 
+(* An attribute declaration is keyed on the theory it is made in.  This
+   binary starts with no theory segment at all, so the tests from here
+   on open one -- which is the state anything declaring is called in
+   anyway. *)
+val _ = Theory.new_theory "aesopSelftest"
+
 val attribute_lhs = ``aesop_attribute_lhs:'a``
 val attribute_rhs = ``aesop_attribute_rhs:'a``
 val attribute_rule =
