@@ -166,8 +166,13 @@ fun split_forms th =
 (* [rules] is the derived form the splitter actually applies; it is cached
    with the rules it comes from, as deriving it costs real inference. *)
 type type_splits = {split : thm, asm_split : thm, rules : thm list}
+(* A TypeBase replacement keeps the same external type name.  Retain the
+   exact tyinfo used for derivation so that updates and context changes miss
+   this cache even when they select that same name again. *)
+type cached_type_splits =
+  {tyinfo : TypeBasePure.tyinfo, splits : type_splits}
 val type_split_cache =
-  Sref.new (Symtab.empty : type_splits Symtab.table)
+  Sref.new (Symtab.empty : cached_type_splits Symtab.table)
 
 fun type_key tyinfo =
   let val (thy, tyop) = TypeBasePure.ty_name_of tyinfo
@@ -182,21 +187,25 @@ fun type_splits_of ty =
         | NONE =>
             raise ERR "type_splits_of" "type has no TypeBase information"
     val key = type_key tyinfo
+    fun derive () =
+      let
+        val split = TypeBase.case_pred_imp_of ty
+        val asm_split = TypeBasePure.case_elim_of tyinfo
+        val splits =
+          {split=split, asm_split=asm_split,
+           rules=[split, mk_asm_split asm_split]}
+        val entry = {tyinfo=tyinfo, splits=splits}
+        val _ =
+          Sref.update type_split_cache (Symtab.update (key, entry))
+      in
+        splits
+      end
   in
     case Symtab.lookup (Sref.value type_split_cache) key of
-        SOME splits => splits
-      | NONE =>
-          let
-            val split = TypeBase.case_pred_imp_of ty
-            val asm_split = TypeBasePure.case_elim_of tyinfo
-            val splits =
-              {split=split, asm_split=asm_split,
-               rules=[split, mk_asm_split asm_split]}
-            val _ =
-              Sref.update type_split_cache (Symtab.update (key, splits))
-          in
-            splits
-          end
+        SOME {tyinfo=cached_tyinfo, splits} =>
+          if Portable.pointer_eq (cached_tyinfo, tyinfo) then splits
+          else derive ()
+      | NONE => derive ()
   end
 
 fun type_split_of ty = #split (type_splits_of ty)

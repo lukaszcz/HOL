@@ -1769,6 +1769,22 @@ val _ = let
     then OK()
     else die "cached datatype splits changed"
 
+  val context = Context.snapshot ()
+  val bool_info = valOf (TypeBase.fetch ``:bool``)
+  val nchotomy = TypeBasePure.nchotomy_of bool_info
+  val fresh_nchotomy = EQ_MP (REFL (concl nchotomy)) nchotomy
+  val fresh_info = TypeBasePure.put_nchotomy fresh_nchotomy bool_info
+  val _ = TypeBase.write [fresh_info]
+  val updated_if_split = type_split_of ``:bool``
+  val _ = Context.restore context
+  val restored_if_split = type_split_of ``:bool``
+  val _ = tprint "datatype split cache tracks TypeBase replacements"
+  val _ =
+    if not (Portable.pointer_eq (if_split, updated_if_split)) andalso
+       not (Portable.pointer_eq (updated_if_split, restored_if_split))
+    then OK()
+    else die "datatype split cache retained stale TypeBase rules"
+
   val split_goal =
     ([], ``P (if b then x:'a else y) : bool``)
   val split_result =
