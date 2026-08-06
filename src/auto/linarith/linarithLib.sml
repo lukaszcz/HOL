@@ -817,6 +817,31 @@ fun cached_procedure theorems tm =
         SOME theorem => EQT_INTRO theorem
       | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm)
 
+(* RCACHE calls its procedure through Lib.total, because its ordinary
+   clients use every exception as a negative cache answer.  Linarith's
+   distinction is narrower: only declined errors are negative answers;
+   every other exception diagnoses a malformed registered extension.
+   A dynamically scoped slot carries such an exception through
+   RCACHE's total call.  Dynamic scoping keeps a custom instance that
+   recursively invokes the cached entry point from overwriting its
+   caller's diagnostic. *)
+val cached_error_slots = ref ([] : exn option ref list)
+
+fun remember_cached_error error =
+  case !cached_error_slots of
+      [] => ()
+    | slot :: _ =>
+        (case !slot of
+             NONE => slot := SOME error
+           | SOME _ => ())
+
+fun cache_visible_procedure theorems tm =
+  cached_procedure theorems tm
+  handle error as HOL_ERR details =>
+    if declined details then raise error
+    else (remember_cached_error error; raise error)
+       | error => (remember_cached_error error; raise error)
+
 (* The atoms in order of first occurrence, the bound variables aside.
    Both the set already collected and the binders in scope are keyed
    sets, for the reason distinct_thms is one: this walks a whole term
@@ -859,7 +884,7 @@ fun linarith_vars tm =
 
 val (unguarded_cached_linarith, linarith_cache) =
   Cache.RCACHE {capacity = 2000, per_key_cap = 50}
-    (linarith_vars, cache_check, cached_procedure)
+    (linarith_vars, cache_check, cache_visible_procedure)
 
 fun clear_linarith_caches () = Cache.clear_cache linarith_cache
 
@@ -881,7 +906,26 @@ val discard_stale_results =
   linarithData.memo (fn () => clear_linarith_caches ())
 
 fun cached_prove context tm =
-  (discard_stale_results (); unguarded_cached_linarith context tm)
+  let
+    val slot = ref (NONE : exn option)
+    val outer_slots = !cached_error_slots
+    fun leave () = cached_error_slots := outer_slots
+    fun raise_recorded fallback =
+      (case !slot of
+           SOME error =>
+             (clear_linarith_caches (); raise error)
+         | NONE => raise fallback)
+    val _ = discard_stale_results ()
+    val _ = cached_error_slots := slot :: outer_slots
+    val result =
+      unguarded_cached_linarith context tm
+      handle error => (leave (); raise_recorded error)
+    val _ = leave ()
+  in
+    case !slot of
+        SOME error => (clear_linarith_caches (); raise error)
+      | NONE => result
+  end
 
 fun contains_forall sense tm =
   case shape_of tm of

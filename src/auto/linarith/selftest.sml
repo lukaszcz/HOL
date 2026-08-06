@@ -2843,6 +2843,64 @@ val _ =
                   ignore
                     (linarithLib.LINARITH_CONV successor_implication)))])
 
+val malformed_cached_context = [Thm.ASSUME public_x_lt_y]
+val malformed_cached_goal = public_successor_le_y
+
+fun cached_reports_instance_failure () =
+  reports_the_instance_failure
+    (fn () =>
+       ignore
+         (linarithLib.CACHED_LINARITH malformed_cached_context
+            malformed_cached_goal))
+
+(* LINARITH_ss contains this reducer.  Drive it directly because the
+   surrounding simplifier deliberately treats any dproc HOL_ERR as
+   "this dproc made no rewrite". *)
+fun reducer_reports_instance_failure () =
+  reports_the_instance_failure
+    (fn () =>
+       ignore
+         (reducer_conversion malformed_cached_context
+            malformed_cached_goal))
+
+fun solver_reports_instance_failure () =
+  reports_the_instance_failure
+    (fn () =>
+       ignore
+         (#solve linarithLib.linarith_solver
+            {stack = [], context_thms = malformed_cached_context,
+             recurse = Conv.NO_CONV} malformed_cached_goal))
+
+fun with_broken_cache assertion =
+  with_num_instances
+    [(broken_norm_instance,
+      fn () => (linarithLib.clear_linarith_caches (); assertion ()))]
+
+(* RCACHE turns callback exceptions into negative answers internally.
+   The linarith wrapper has to recover the diagnostic at each public
+   cached surface and discard the negative entry RCACHE made for it, so
+   a repeat must report the same instance failure too. *)
+val _ =
+  check
+    ("CACHED_LINARITH preserves malformed-instance replay failures",
+     fn () =>
+       with_broken_cache
+         (fn () =>
+            cached_reports_instance_failure () andalso
+            cached_reports_instance_failure ()))
+
+val _ =
+  check
+    ("LINARITH_ss reducer preserves malformed-instance replay failures",
+     fn () =>
+       with_broken_cache reducer_reports_instance_failure)
+
+val _ =
+  check
+    ("lin_arith solver preserves malformed-instance replay failures",
+     fn () =>
+       with_broken_cache solver_reports_instance_failure)
+
 (* The [arith] table refutes nothing on its own, so a context with no
    arithmetic in it cannot be refuted with the table's help either, and
    the guard has to say so however many [arith] facts a session has
@@ -3032,4 +3090,66 @@ val _ =
          val registered = solver_verdict context public_p
        in
          unregistered = "declined" andalso registered = "searched"
+       end)
+
+(* A conversion closure may revisit a carrier through a different
+   injection, but doing so only nests the conversions around the same
+   arithmetic and admits an infinite num -> synth -> num path.  This
+   sits last because the two test-only registrations are session state;
+   replay proves that both directions are usable. *)
+val cycle_num_to_synth =
+  Term.mk_var
+    ("linarith_cycle_num_to_synth",
+     function_ty numSyntax.num registry_ty)
+val cycle_synth_to_num =
+  Term.mk_var
+    ("linarith_cycle_synth_to_num",
+     function_ty registry_ty numSyntax.num)
+
+fun assumed_lift variables premise conclusion =
+  Thm.ASSUME
+    (boolSyntax.list_mk_forall
+       (variables, boolSyntax.mk_imp (premise, conclusion)))
+
+val cycle_num_synth_rule =
+  assumed_lift
+    [public_x, public_y] public_x_le_y
+    (mk_binary synth_leq
+       (Term.mk_comb (cycle_num_to_synth, public_x))
+       (Term.mk_comb (cycle_num_to_synth, public_y)))
+val cycle_synth_num_rule =
+  assumed_lift
+    [synth_x, synth_y] (mk_binary synth_leq synth_x synth_y)
+    (num_leq
+       (Term.mk_comb (cycle_synth_to_num, synth_x))
+       (Term.mk_comb (cycle_synth_to_num, synth_y)))
+
+val _ =
+  check
+    ("conversion closure terminates across cyclic injections",
+     fn () =>
+       let
+         fun register from_ty to_ty inj rule =
+           linarithData.register_injection
+             {from_ty = from_ty, to_ty = to_ty, inj = inj,
+              hom =
+                 {le = rule, lt = rule, eq = rule,
+                  add = boolTheory.TRUTH, mul = boolTheory.TRUTH}}
+         val _ =
+           register numSyntax.num registry_ty cycle_num_to_synth
+             cycle_num_synth_rule
+         val _ =
+           register registry_ty numSyntax.num cycle_synth_to_num
+             cycle_synth_num_rule
+         val left = mk_binary synth_leq synth_x synth_y
+       in
+         (ignore
+            (linarithReplay.mkthm
+               [Thm.ASSUME left, Thm.ASSUME public_x_le_y]
+               (Added (Asm 0, Asm 1)));
+          false)
+         handle Feedback.HOL_ERR error =>
+           Feedback.message_of error =
+             "Linear arithmetic should have refuted the assumptions " ^
+             "but failed to."
        end)

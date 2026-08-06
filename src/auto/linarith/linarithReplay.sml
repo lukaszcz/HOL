@@ -40,16 +40,21 @@ fun relation_body tm =
       SOME body => body
     | NONE => tm
 
-fun instance_of_term tm =
+fun relation_carrier tm =
   let
     val (_, left, _) = dest_binary (relation_body tm)
   in
-    case linarithData.instance_for (Term.type_of left) of
+    Term.type_of left
+  end
+
+fun instance_of_term tm =
+  let val carrier = relation_carrier tm in
+    case linarithData.instance_for carrier of
         SOME instance => instance
       | NONE =>
           raise ERR "mkthm"
             ("no linarith instance for " ^
-             Parse.type_to_string (Term.type_of left))
+             Parse.type_to_string carrier)
   end
 
 fun instance_of_thm theorem = instance_of_term (Thm.concl theorem)
@@ -153,11 +158,19 @@ fun lift_by (entry : linarithData.derived_injection) theorem =
   Option.map (normalize_lift (#rewrite_conv entry))
     (match_implications (#relation_imps entry) theorem)
 
-fun lifts theorem =
+fun lifts visited theorem =
   let
     val normalized = normalize_relation_sides theorem
+    fun unseen_lift entry =
+      case lift_by entry normalized of
+          NONE => NONE
+        | SOME lifted =>
+            let val carrier = relation_carrier (Thm.concl lifted) in
+              if List.exists (same_type carrier) visited then NONE
+              else SOME (lifted, carrier :: visited)
+            end
   in
-    List.mapPartial (fn entry => lift_by entry normalized)
+    List.mapPartial unseen_lift
       (linarithData.derived_injections ())
   end
 
@@ -166,21 +179,28 @@ fun same_conclusion theorem1 theorem2 =
 
 (* Breadth-first, because try_add_pairs takes the first pair that adds
    and so depends on this order: the theorem itself, then its lifts,
-   then theirs.  The queue is kept as a front list and a reversed back
-   list, and the result is accumulated reversed, so neither the
-   enqueueing nor the appending walks what it has already built. *)
+   then theirs.  Each queued theorem also carries the carriers already
+   visited on its path.  An injection cycle may return to an earlier
+   carrier with a newly nested conclusion, so conclusion equality alone
+   cannot close it.  The carrier-simple paths retain conversions between
+   sibling carriers through their common source and are bounded by the
+   finite registry.
+
+   The queue is kept as a front list and a reversed back list, and the
+   result is accumulated reversed, so neither the enqueueing nor the
+   appending walks what it has already built. *)
 fun conversion_closure theorem =
   let
     fun explore ([], []) found = List.rev found
       | explore ([], back) found = explore (List.rev back, []) found
-      | explore (current :: front, back) found =
+      | explore ((current, visited) :: front, back) found =
           if List.exists (same_conclusion current) found then
             explore (front, back) found
           else
-            explore (front, List.revAppend (lifts current, back))
+            explore (front, List.revAppend (lifts visited current, back))
               (current :: found)
   in
-    explore ([theorem], []) []
+    explore ([(theorem, [relation_carrier (Thm.concl theorem)])], []) []
   end
 
 (* The relation's operator constant, read off the first subterm of the
