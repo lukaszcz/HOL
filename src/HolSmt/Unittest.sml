@@ -3856,12 +3856,14 @@ fun smtlib_checked_replay_gap_diagnostics () =
        "(declare-const s String)\n" ^
        "(assert (str.in_re s (str.to_re s)))\n" ^
        "(check-sat)\n");
-    expect_gap "Z3 sequence replay" "ALL"
+    (* Native list terms have no smtlib_* sequence placeholder for the
+       pre-flight recognizer to reject.  TASK_22 removes that obsolete gate;
+       until then this pin keeps parser/typecheck mode usable. *)
+    expect_no_gap "Z3 sequence typecheck" "ALL"
       ("(set-logic ALL)\n" ^
        "(declare-const xs (Seq Int))\n" ^
        "(assert (= (seq.len xs) 0))\n" ^
-       "(check-sat)\n")
-      "theory:Z3_Extensions:seq-set-bag:checked-replay";
+       "(check-sat)\n");
     expect_no_gap "nonlinear arithmetic replay" "NIA"
       ("(set-logic NIA)\n" ^
        "(declare-const x Int)\n" ^
@@ -4477,6 +4479,190 @@ in
     "Z3 extension signature script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "Z3 extension signature assertion did not parse as Bool")
+end
+
+fun smtlib_seq_dialect_builders_success () =
+let
+  val z3_options = {
+    dict_logic = NONE,
+    solver = SOME "Z3",
+    elaborate_datatypes = false
+  }
+  val cvc5_options = {
+    dict_logic = NONE,
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
+  val seq_ty = listSyntax.mk_list_type intSyntax.int_ty
+  val xs = Term.mk_var ("xs", seq_ty)
+  val ys = Term.mk_var ("ys", seq_ty)
+  val zs = Term.mk_var ("zs", seq_ty)
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val fold = Term.mk_var ("fold", Type.--> (intSyntax.int_ty,
+    Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
+  val zero = intSyntax.zero_tm
+  val minus_one = intSyntax.term_of_int (Arbint.fromInt ~1)
+  val ninety_nine = intSyntax.term_of_int (Arbint.fromInt 99)
+  val three = intSyntax.term_of_int (Arbint.fromInt 3)
+  fun holsmt_app name args =
+    let
+      val const = Term.prim_mk_const {Thy = "HolSmt", Name = name}
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+        in
+          Term.mk_comb (Term.inst (Type.match_type domain (Term.type_of arg))
+            rator, arg)
+        end
+    in
+      List.foldl apply_one const args
+    end
+  fun rich_list_app name args =
+    let
+      val const = Term.prim_mk_const {Thy = "rich_list", Name = name}
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+        in
+          Term.mk_comb (Term.inst (Type.match_type domain (Term.type_of arg))
+            rator, arg)
+        end
+    in
+      List.foldl apply_one const args
+    end
+  fun typecheck options text =
+    SmtLib_Parser.typecheck_script_string_with_options options text
+  fun assertion options body =
+    let
+      val state = typecheck options
+        ("(set-logic ALL)\n" ^
+         "(declare-const xs (Seq Int))\n" ^
+         "(declare-const ys (Seq Int))\n" ^
+         "(declare-const zs (Seq Int))\n" ^
+         "(declare-const x Int)\n" ^
+         "(declare-const f (-> Int Int))\n" ^
+         "(declare-const fold (-> Int (-> Int Int)))\n" ^
+         "(assert " ^ body ^ ")\n")
+    in
+      case #assertions state of
+        [tm] => tm
+      | _ => die "seq-builder test did not produce one assertion"
+    end
+  fun is_placeholder tm =
+    Term.is_var tm andalso
+    String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))
+  fun assert_builder label options body expected =
+    let val actual = assertion options body in
+      assert (Term.aconv actual expected,
+        label ^ " did not construct the expected listTheory term\nexpected: " ^
+        term_with_types expected ^ "\nactual: " ^ term_with_types actual);
+      assert (not (term_has_subterm is_placeholder actual),
+        label ^ " retained an smtlib_* placeholder")
+    end
+  fun reject options label text =
+    let
+      val rejected =
+        ((ignore (typecheck options text); false)
+         handle Feedback.HOL_ERR _ => true)
+    in
+      assert (rejected, label ^ " was accepted in the wrong dialect")
+    end
+  val empty = listSyntax.mk_nil intSyntax.int_ty
+  val unit_x = listSyntax.mk_cons (x, empty)
+  val extract_invalid = boolSyntax.list_mk_disj [
+    intSyntax.mk_less (x, zero),
+    intSyntax.mk_leq (x, zero),
+    numSyntax.mk_leq (listSyntax.mk_length xs, intSyntax.mk_Num x)]
+  val extract = boolSyntax.mk_cond (extract_invalid, empty,
+    listSyntax.mk_take (intSyntax.mk_Num x,
+      listSyntax.mk_drop (intSyntax.mk_Num x, xs)))
+  val at_invalid = boolSyntax.mk_disj
+    (intSyntax.mk_less (x, zero),
+     numSyntax.mk_leq (listSyntax.mk_length xs, intSyntax.mk_Num x))
+  val at = boolSyntax.mk_cond (at_invalid, empty,
+    listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num x, xs), empty))
+in
+  assert_builder "shared seq.++" z3_options "(= (seq.++ xs ys zs) xs)"
+    (boolSyntax.mk_eq (listSyntax.mk_append
+      (listSyntax.mk_append (xs, ys), zs), xs));
+  assert_builder "shared seq.len" cvc5_options "(= (seq.len xs) 0)"
+    (boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
+      listSyntax.mk_length xs), zero));
+  assert_builder "shared seq.unit" z3_options "(= (seq.unit x) xs)"
+    (boolSyntax.mk_eq (unit_x, xs));
+  assert_builder "shared seq.empty" cvc5_options
+    "(= (as seq.empty (Seq Int)) (as seq.empty (Seq Int)))"
+    (boolSyntax.mk_eq (empty, empty));
+  assert_builder "shared seq.extract" z3_options
+    "(= (seq.extract xs x x) ys)" (boolSyntax.mk_eq (extract, ys));
+  assert_builder "seq.extract negative start" cvc5_options
+    "(= (seq.extract xs (- 1) 3) ys)"
+    (boolSyntax.mk_eq (boolSyntax.mk_cond
+       (boolSyntax.list_mk_disj [
+          intSyntax.mk_less (minus_one, zero),
+          intSyntax.mk_leq (three, zero),
+          numSyntax.mk_leq (listSyntax.mk_length xs,
+            intSyntax.mk_Num minus_one)],
+        empty, listSyntax.mk_take (intSyntax.mk_Num three,
+          listSyntax.mk_drop (intSyntax.mk_Num minus_one, xs))), ys));
+  assert_builder "seq.extract past end" z3_options
+    "(= (seq.extract xs 99 3) ys)"
+    (boolSyntax.mk_eq (boolSyntax.mk_cond
+       (boolSyntax.list_mk_disj [
+          intSyntax.mk_less (ninety_nine, zero),
+          intSyntax.mk_leq (three, zero),
+          numSyntax.mk_leq (listSyntax.mk_length xs,
+            intSyntax.mk_Num ninety_nine)],
+        empty, listSyntax.mk_take (intSyntax.mk_Num three,
+          listSyntax.mk_drop (intSyntax.mk_Num ninety_nine, xs))), ys));
+  assert_builder "shared seq.at" cvc5_options "(= (seq.at xs x) ys)"
+    (boolSyntax.mk_eq (at, ys));
+  assert_builder "shared seq.nth" z3_options "(= (seq.nth xs x) x)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_nth" [xs, x], x));
+  assert_builder "seq.nth underflow totalization" cvc5_options
+    "(= (seq.nth xs (- 1)) x)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_nth" [xs, minus_one], x));
+  assert_builder "seq.nth overflow totalization" z3_options
+    "(= (seq.nth xs 99) x)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_nth" [xs, ninety_nine], x));
+  assert_builder "shared seq.contains" cvc5_options "(seq.contains xs ys)"
+    (rich_list_app "IS_SUBLIST" [xs, ys]);
+  assert_builder "shared seq.indexof" z3_options
+    "(= (seq.indexof xs ys x) 0)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_indexof" [xs, ys, x], zero));
+  assert_builder "shared seq.replace" cvc5_options
+    "(= (seq.replace xs ys zs) xs)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_replace" [xs, ys, zs], xs));
+  assert_builder "shared seq.prefixof" z3_options "(seq.prefixof xs ys)"
+    (listSyntax.mk_isprefix (ys, xs));
+  assert_builder "shared seq.suffixof" cvc5_options "(seq.suffixof xs ys)"
+    (rich_list_app "IS_SUFFIX" [ys, xs]);
+  assert_builder "cvc5 seq.update" cvc5_options
+    "(= (seq.update xs x zs) ys)"
+    (boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys));
+  assert_builder "cvc5 seq.rev" cvc5_options "(= (seq.rev xs) ys)"
+    (boolSyntax.mk_eq (listSyntax.mk_reverse xs, ys));
+  assert_builder "Z3 seq.map" z3_options "(= (seq.map f xs) ys)"
+    (boolSyntax.mk_eq (listSyntax.mk_map (f, xs), ys));
+  assert_builder "Z3 seq.foldl" z3_options "(= (seq.foldl fold 0 xs) 0)"
+    (boolSyntax.mk_eq (listSyntax.mk_foldl (fold, zero, xs), zero));
+  assert_builder "Z3 seq.fold_left" z3_options
+    "(= (seq.fold_left fold 0 xs) 0)"
+    (boolSyntax.mk_eq (listSyntax.mk_foldl (fold, zero, xs), zero));
+  reject z3_options "Z3 seq.update"
+    ("(set-logic ALL)\n(declare-const xs (Seq Int))\n" ^
+     "(assert (= (seq.update xs 0 xs) xs))\n");
+  reject z3_options "Z3 seq.rev"
+    ("(set-logic ALL)\n(declare-const xs (Seq Int))\n" ^
+     "(assert (= (seq.rev xs) xs))\n");
+  reject cvc5_options "cvc5 seq.foldl"
+    ("(set-logic ALL)\n(declare-const xs (Seq Int))\n" ^
+     "(assert (= (seq.foldl (lambda ((a Int) (b Int)) a) 0 xs) 0))\n");
+  reject cvc5_options "cvc5 seq.fold_left"
+    ("(set-logic ALL)\n(declare-const xs (Seq Int))\n" ^
+     "(assert (= (seq.fold_left (lambda ((a Int) (b Int)) a) 0 xs) 0))\n");
+  ()
 end
 
 fun smtlib_set_dialect_builders_success () =
@@ -9077,12 +9263,24 @@ fun z3_proof_parser_string_internal_symbols_success () =
 let
   val fragment =
     "((declare-fun x () String)\n\
+    \(declare-fun q () (Seq Char))\n\
+    \(declare-fun r () (Seq Int))\n\
     \(declare-fun ch () Char)\n\
     \(proof\n\
     \(asserted\n\
     \(and\n\
     \ (= x \"a\")\n\
     \ (= ch (_ Char 97))\n\
+    \ (= q (seq.unit (_ Char 97)))\n\
+    \ (= r (seq.++ r r))\n\
+    \ (= (seq.len r) 0)\n\
+    \ (= (seq.extract r 0 1) r)\n\
+    \ (= (seq.nth r 0) 0)\n\
+    \ (= q (seq.++ q q))\n\
+    \ (= (seq.len q) 0)\n\
+    \ (= (seq.extract q 0 1) q)\n\
+    \ (= (seq.at q 0) q)\n\
+    \ (= (seq.nth q 0) ch)\n\
     \ (= (seq.unit (_ Char 97)) (seq.unit (_ Char 97)))\n\
     \ (= (seq.nth_i x 0) (seq.nth_i x 0))\n\
     \ ((_ seq.eq seq.eq) x ((_ seq.tail seq.tail) x 0))\n\
@@ -9136,12 +9334,23 @@ let
     List.exists (fn tm =>
       Term.is_var tm andalso Lib.fst (Term.dest_var tm) = name)
       (Term.free_vars concl)
+  fun has_smtstring_constant name concl =
+    Lib.can (HolKernel.find_term (fn tm =>
+      Term.is_const tm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const tm
+      in Thy = "smtstring" andalso Name = name end)) concl
   fun check_version version =
     let
       val proof = parse_z3_proof_string version fragment
       val concl = root_conclusion proof
       val ch = List.find (fn tm =>
         Term.is_var tm andalso Lib.fst (Term.dest_var tm) = "ch")
+        (Term.free_vars concl)
+      val seq_char = List.find (fn tm =>
+        Term.is_var tm andalso Lib.fst (Term.dest_var tm) = "q")
+        (Term.free_vars concl)
+      val seq_int = List.find (fn tm =>
+        Term.is_var tm andalso Lib.fst (Term.dest_var tm) = "r")
         (Term.free_vars concl)
     in
       List.app (fn name => assert (has_constant name concl,
@@ -9150,6 +9359,9 @@ let
       List.app (fn name => assert (has_witness name concl,
         "Z3 " ^ version ^ " did not retain proof-local witness " ^
         name)) expected_witnesses;
+      List.app (fn name => assert (has_smtstring_constant name concl,
+        "Z3 " ^ version ^ " (Seq Char) did not share String's " ^ name))
+        ["smtstr_concat", "smtstr_len", "smtstr_substr", "smtstr_at"];
       if version = "4.15.3" then
         assert (HOLset.member (Z3_Proof.proof_vars proof,
             Term.mk_var ("seq.p.suffix",
@@ -9162,7 +9374,18 @@ let
         SOME tm => assert (Term.type_of tm = expected_char_ty,
           "Z3 " ^ version ^ " Char sort did not resolve to 18 word")
       | NONE => die ("FAIL: Z3 " ^ version ^
-          " string-internal fragment lost its Char variable")
+          " string-internal fragment lost its Char variable");
+      case seq_char of
+        SOME tm => assert (Term.type_of tm = smt_string_ty,
+          "Z3 " ^ version ^ " (Seq Char) did not use smtstr")
+      | NONE => die ("FAIL: Z3 " ^ version ^
+          " string-internal fragment lost its Seq Char variable");
+      case seq_int of
+        SOME tm => assert (Term.type_of tm =
+            listSyntax.mk_list_type intSyntax.int_ty,
+          "Z3 " ^ version ^ " (Seq Int) did not retain its list carrier")
+      | NONE => die ("FAIL: Z3 " ^ version ^
+          " string-internal fragment lost its Seq Int variable")
     end
 in
   check_version "4.11.2";
@@ -11989,6 +12212,8 @@ let
       smtlib_string_regex_parse_signatures_success),
     ("smtlib_z3_extension_parse_signatures_success",
       smtlib_z3_extension_parse_signatures_success),
+    ("smtlib_seq_dialect_builders_success",
+      smtlib_seq_dialect_builders_success),
     ("smtlib_set_dialect_builders_success",
       smtlib_set_dialect_builders_success),
     ("smtlib_bag_dialect_builders_success",

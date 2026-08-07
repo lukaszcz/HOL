@@ -182,6 +182,61 @@ local
   fun z3_string_app name args =
     Term.list_mk_comb (z3_string_const name, args)
 
+  fun smtstring_app name args =
+    Term.list_mk_comb
+      (Term.prim_mk_const {Thy = "smtstring", Name = name}, args)
+
+  fun apply_native_const const args =
+    let
+      fun apply_one (arg, rator) =
+        let
+          val (domain, _) = Type.dom_rng (Term.type_of rator)
+        in
+          Term.mk_comb (Term.inst
+            (Type.match_type domain (Term.type_of arg)) rator, arg)
+        end
+    in
+      List.foldl apply_one const args
+    end
+
+  fun holsmt_app name args =
+    apply_native_const
+      (Term.prim_mk_const {Thy = "HolSmt", Name = name}) args
+
+  fun rich_list_app name args =
+    apply_native_const
+      (Term.prim_mk_const {Thy = "rich_list", Name = name}) args
+
+  fun is_z3_string tm = Type.compare (Term.type_of tm, z3_string_ty) = EQUAL
+
+  fun seq_extract (s, i, n) =
+    if is_z3_string s then smtstring_app "smtstr_substr" [s, i, n]
+    else
+      let
+        val invalid = boolSyntax.list_mk_disj [
+          intSyntax.mk_less (i, intSyntax.zero_tm),
+          intSyntax.mk_leq (n, intSyntax.zero_tm),
+          numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i)]
+      in
+        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
+          listSyntax.mk_take (intSyntax.mk_Num n,
+            listSyntax.mk_drop (intSyntax.mk_Num i, s)))
+      end
+
+  fun seq_at (s, i) =
+    if is_z3_string s then smtstring_app "smtstr_at" [s, i]
+    else
+      let
+        val invalid = boolSyntax.mk_disj
+          (intSyntax.mk_less (i, intSyntax.zero_tm),
+           numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i))
+        val empty = listSyntax.mk_nil (listSyntax.eltype s)
+      in
+        boolSyntax.mk_cond (invalid, empty,
+          listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num i, s),
+            empty))
+      end
+
   fun z3_natural tm =
     numSyntax.mk_numeral (Arbint.toNat (intSyntax.int_of_term tm))
 
@@ -282,8 +337,17 @@ local
       add_bit (bits, 0, zero)
     end
 
+  (* Z3 treats String as (Seq Char).  Keep the Phase-4 smtstr carrier at
+     that one sequence instance; every other Seq A remains A list. *)
+  fun z3_sequence_ty element =
+    if Type.compare (element, z3_char_ty) = EQUAL then
+      Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+    else
+      SmtLib_Theories.sequence_ty element
+
   val z3_string_tydict = Library.dict_from_list [
-    ("Char", SmtLib_Theories.K_zero_zero z3_char_ty)
+    ("Char", SmtLib_Theories.K_zero_zero z3_char_ty),
+    ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty)
   ]
 
   fun z3_string_tmdict version =
@@ -317,8 +381,48 @@ local
             ([code], []) => z3_num_to_char (z3_natural code)
           | _ => raise ERR "<z3_string_dict.Char>"
               "one code-point index and no arguments expected"),
+        (* These aliases keep Z3's public (Seq Char) surface on the same
+           smtstr carrier as String, rather than falling through to the
+           generic list builders. *)
+        ("seq.++", SmtLib_Theories.K_zero_two
+          (fn (s, t) => if is_z3_string s then
+             smtstring_app "smtstr_concat" [s, t]
+           else listSyntax.mk_append (s, t))),
+        ("seq.len", SmtLib_Theories.K_zero_one
+          (fn s => if is_z3_string s then smtstring_app "smtstr_len" [s]
+                   else Term.mk_comb
+                     (intSyntax.int_injection, listSyntax.mk_length s))),
+        ("seq.extract", SmtLib_Theories.K_zero_three seq_extract),
+        ("seq.at", SmtLib_Theories.K_zero_two seq_at),
+        ("seq.nth", SmtLib_Theories.K_zero_two
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
+           else holsmt_app "smt_seq_nth" [s, i])),
+        ("seq.contains", SmtLib_Theories.K_zero_two
+          (fn (s, t) => if is_z3_string s then
+             smtstring_app "smtstr_contains" [s, t]
+           else rich_list_app "IS_SUBLIST" [s, t])),
+        ("seq.indexof", SmtLib_Theories.K_zero_three
+          (fn (s, t, i) => if is_z3_string s then
+             smtstring_app "smtstr_indexof" [s, t, i]
+           else holsmt_app "smt_seq_indexof" [s, t, i])),
+        ("seq.replace", SmtLib_Theories.K_zero_three
+          (fn (s, t, u) => if is_z3_string s then
+             smtstring_app "smtstr_replace" [s, t, u]
+           else holsmt_app "smt_seq_replace" [s, t, u])),
+        ("seq.prefixof", SmtLib_Theories.K_zero_two
+          (fn (s, t) => if is_z3_string s then
+             smtstring_app "smtstr_prefixof" [s, t]
+           else listSyntax.mk_isprefix (t, s))),
+        ("seq.suffixof", SmtLib_Theories.K_zero_two
+          (fn (s, t) => if is_z3_string s then
+             smtstring_app "smtstr_suffixof" [s, t]
+           else rich_list_app "IS_SUFFIX" [t, s])),
         ("seq.unit", SmtLib_Theories.K_zero_one
-          (fn c => z3_string_app "seq_unit" [z3_char_to_num c])),
+          (fn c => if Type.compare (Term.type_of c, z3_char_ty) = EQUAL then
+             z3_string_app "seq_unit" [z3_char_to_num c]
+           else listSyntax.mk_cons
+             (c, listSyntax.mk_nil (Term.type_of c)))),
         ("seq.nth_i", SmtLib_Theories.K_zero_two
           (fn (s, i) => z3_num_to_char
             (z3_string_app "seq_nth_i" [s, z3_natural i]))),

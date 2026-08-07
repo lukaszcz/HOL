@@ -1157,6 +1157,16 @@ in
 
   val _ = List.app (fn logic =>
     register_dialect_dictionary {
+      solver = "Z3", logic = logic,
+      dictionaries = (Z3_Seq.tydict, Z3_Seq.tmdict)}) set_dialect_logics
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "cvc5", logic = logic,
+      dictionaries = (CVC5_Seq.tydict, CVC5_Seq.tmdict)}) set_dialect_logics
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
       solver = "cvc5", logic = logic,
       dictionaries = (CVC5_Set.tydict, CVC5_Set.tmdict)}) set_dialect_logics
 

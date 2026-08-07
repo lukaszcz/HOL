@@ -1095,32 +1095,95 @@ in
 
   end
 
-  (* Z3 sequence, set, and bag extensions *)
-
+  (* The shared first-order sequence surface is solver-neutral.  Z3-only
+     HO operations and cvc5-only operations live in their dialect packets
+     below, so solver-targeted parsing rejects the other dialect. *)
   structure Z3_Extensions =
   struct
 
+    fun shared_term name attrs decl parse =
+      extension_entry "shared" name attrs decl parse
+
+    fun holsmt_const name =
+      Term.prim_mk_const {Thy = "HolSmt", Name = name}
+
+    fun holsmt_app name args =
+      apply_native_const (holsmt_const name) args
+
+    fun rich_list_app name args =
+      apply_native_const
+        (Term.prim_mk_const {Thy = "rich_list", Name = name}) args
+
+    fun mk_seq_extract (s, i, n) =
+      let
+        val invalid = boolSyntax.list_mk_disj [
+          intSyntax.mk_less (i, intSyntax.zero_tm),
+          intSyntax.mk_leq (n, intSyntax.zero_tm),
+          numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i)]
+      in
+        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
+          listSyntax.mk_take (intSyntax.mk_Num n,
+            listSyntax.mk_drop (intSyntax.mk_Num i, s)))
+      end
+
+    fun mk_seq_at (s, i) =
+      let
+        val invalid = boolSyntax.mk_disj
+          (intSyntax.mk_less (i, intSyntax.zero_tm),
+           numSyntax.mk_leq (listSyntax.mk_length s, intSyntax.mk_Num i))
+      in
+        boolSyntax.mk_cond (invalid, listSyntax.mk_nil (listSyntax.eltype s),
+          listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num i, s),
+            listSyntax.mk_nil (listSyntax.eltype s)))
+      end
+
+    fun mk_seq_len s =
+      Term.mk_comb (intSyntax.int_injection, listSyntax.mk_length s)
+
+    fun mk_seq_unit x =
+      listSyntax.mk_cons (x, listSyntax.mk_nil (Term.type_of x))
+
     val tyentries = [
-      extension_entry "Z3" "Seq" (parametric_attributes ["Element"])
+      extension_entry "shared" "Seq" (parametric_attributes ["Element"])
         ["(Seq Element)"] (K_zero_one sequence_ty),
       extension_entry "Z3" "Set" (parametric_attributes ["Element"])
         ["(Set Element)"] (K_zero_one set_ty)
     ]
 
-    fun ext_term name attrs decl parse =
-      extension_entry "Z3" name attrs decl parse
-
     val tmentries = [
-      ext_term "seq.++" left_assoc_attributes
+      shared_term "seq.++" left_assoc_attributes
         ["(seq.++ (Seq A) (Seq A) (Seq A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "seq.++" (Term.type_of x) [x, y])),
-      ext_term "seq.len" no_attributes ["(seq.len (Seq A) Int)"]
-        (K_zero_one (fn s => abstract_const "seq.len" intSyntax.int_ty [s])),
-      ext_term "seq.extract" no_attributes ["(seq.extract (Seq A) Int Int (Seq A))"]
-        (K_zero_three (fn (s, i, n) =>
-          abstract_const "seq.extract" (Term.type_of s) [s, i, n])),
-      ext_term "seq.contains" no_attributes ["(seq.contains (Seq A) (Seq A) Bool)"]
-        (K_zero_two (fn (x, y) => abstract_bool "seq.contains" [x, y])),
+        (leftassoc listSyntax.mk_append),
+      shared_term "seq.len" no_attributes ["(seq.len (Seq A) Int)"]
+        (K_zero_one mk_seq_len),
+      shared_term "seq.unit" no_attributes ["(seq.unit A (Seq A))"]
+        (K_zero_one mk_seq_unit),
+      shared_term "seq.empty" no_attributes ["(seq.empty (Seq A))"]
+        (K_zero_zero (listSyntax.mk_nil Type.bool)),
+      shared_term "seq.extract" no_attributes
+        ["(seq.extract (Seq A) Int Int (Seq A))"]
+        (K_zero_three mk_seq_extract),
+      shared_term "seq.at" no_attributes ["(seq.at (Seq A) Int (Seq A))"]
+        (K_zero_two mk_seq_at),
+      shared_term "seq.nth" no_attributes ["(seq.nth (Seq A) Int A)"]
+        (K_zero_two (fn (s, i) => holsmt_app "smt_seq_nth" [s, i])),
+      shared_term "seq.contains" no_attributes
+        ["(seq.contains (Seq A) (Seq A) Bool)"]
+        (K_zero_two (fn (s, t) => rich_list_app "IS_SUBLIST" [s, t])),
+      shared_term "seq.indexof" no_attributes
+        ["(seq.indexof (Seq A) (Seq A) Int Int)"]
+        (K_zero_three (fn (s, t, i) =>
+          holsmt_app "smt_seq_indexof" [s, t, i])),
+      shared_term "seq.replace" no_attributes
+        ["(seq.replace (Seq A) (Seq A) (Seq A) (Seq A))"]
+        (K_zero_three (fn (s, t, u) =>
+          holsmt_app "smt_seq_replace" [s, t, u])),
+      shared_term "seq.prefixof" no_attributes
+        ["(seq.prefixof (Seq A) (Seq A) Bool)"]
+        (K_zero_two (fn (s, t) => listSyntax.mk_isprefix (t, s))),
+      shared_term "seq.suffixof" no_attributes
+        ["(seq.suffixof (Seq A) (Seq A) Bool)"]
+        (K_zero_two (fn (s, t) => rich_list_app "IS_SUFFIX" [t, s]))
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -1129,6 +1192,59 @@ in
       metadata_of_entries "Z3_Extensions" "sort" tyentries @
       metadata_of_entries "Z3_Extensions" "term" tmentries
 
+  end
+
+  structure CVC5_Seq =
+  struct
+
+    fun cvc_term name attrs decl parse =
+      extension_entry "cvc5" name attrs decl parse
+
+    fun holsmt_app name args =
+      apply_native_const
+        (Term.prim_mk_const {Thy = "HolSmt", Name = name}) args
+
+    val tmentries = [
+      cvc_term "seq.update" no_attributes
+        ["(seq.update (Seq A) Int (Seq A) (Seq A))"]
+        (K_zero_three (fn (s, i, t) =>
+          holsmt_app "smt_seq_update" [s, i, t])),
+      cvc_term "seq.rev" no_attributes ["(seq.rev (Seq A) (Seq A))"]
+        (K_zero_one listSyntax.mk_reverse)
+    ]
+
+    val tydict :
+      (string, (string -> Term.term list -> Type.hol_type list ->
+        Type.hol_type) list) Redblackmap.dict =
+      Redblackmap.mkDict String.compare
+    val tmdict = dictionary_of_entries tmentries
+    val metadata = metadata_of_entries "CVC5_Seq" "term" tmentries
+  end
+
+  structure Z3_Seq =
+  struct
+
+    fun z3_term name attrs decl parse =
+      extension_entry "Z3" name attrs decl parse
+
+    val tmentries = [
+      z3_term "seq.map" no_attributes
+        ["(seq.map (-> A B) (Seq A) (Seq B))"]
+        (K_zero_two listSyntax.mk_map),
+      z3_term "seq.foldl" no_attributes
+        ["(seq.foldl (-> B A B) B (Seq A) B)"]
+        (K_zero_three listSyntax.mk_foldl),
+      z3_term "seq.fold_left" no_attributes
+        ["(seq.fold_left (-> B A B) B (Seq A) B)"]
+        (K_zero_three listSyntax.mk_foldl)
+    ]
+
+    val tydict :
+      (string, (string -> Term.term list -> Type.hol_type list ->
+        Type.hol_type) list) Redblackmap.dict =
+      Redblackmap.mkDict String.compare
+    val tmdict = dictionary_of_entries tmentries
+    val metadata = metadata_of_entries "Z3_Seq" "term" tmentries
   end
 
   (* cvc5's finite-set dialect.  These entries deliberately live outside

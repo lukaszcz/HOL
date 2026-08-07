@@ -1259,6 +1259,9 @@ local
         else CVC5ArrayBag
     | _ => Z3ArrayBag
 
+  fun contains_bag_card tm =
+    Lib.can (HolKernel.find_term bagSyntax.is_card) tm
+
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
   val num_of_int_tm = Term.prim_mk_const {Thy="integer", Name="Num"}
@@ -3857,6 +3860,15 @@ local
       collect_native_bag_terms term acc) [] (t :: original_ts)
     val backend = backend_for_target target goal set_terms
     val bag_backend = bag_backend_for_target target goal bag_terms
+    val _ =
+      case target of
+        SOME {solver = "cvc5", ...} =>
+          if bag_backend = CVC5ArrayBag andalso
+             List.exists contains_bag_card (t :: original_ts) then
+            raise ERR "goal_to_SmtLib_aux_inner"
+              "bag.card requires a finiteness-entailing cvc5 goal"
+          else ()
+      | _ => ()
     val _ = current_set_backend := backend
     val _ = current_set_terms := set_terms
     val _ = current_bag_backend := bag_backend

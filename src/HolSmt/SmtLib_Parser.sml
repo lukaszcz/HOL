@@ -4279,6 +4279,23 @@ local
         in
           checked_term_with_surface_sort expected_surface set_tm
         end
+      fun as_seq_empty sort =
+        let
+          val expected = typecheck_sort context tydict sort
+          val expected_surface = surface_sort_of_ast context tydict sort
+          val smtstr_ty =
+            Type.mk_thy_type {Thy = "smtstring", Tyop = "smtstr", Args = []}
+          val empty =
+            if listSyntax.is_list_type expected then
+              listSyntax.mk_nil (listSyntax.dest_list_type expected)
+            else if Type.compare (expected, smtstr_ty) = EQUAL then
+              SmtLib_String_Literal.mk_string_term ""
+            else
+              type_error "typecheck_term" context (loc_of term_ast)
+                NONE (SOME expected) "seq.empty result must have Seq sort"
+        in
+          checked_term_with_surface_sort expected_surface empty
+        end
       fun as_cvc5_bag_empty sort =
         let
           val expected = typecheck_sort context tydict sort
@@ -4354,6 +4371,8 @@ local
           if (name = "set.empty" orelse name = "set.universe") andalso
              cvc5_or_neutral () then
             as_cvc5_set_constant name sort
+          else if name = "seq.empty" then
+            as_seq_empty sort
           else if name = "bag.empty" andalso cvc5_or_neutral () then
             as_cvc5_bag_empty sort
           else

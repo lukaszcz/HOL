@@ -3,7 +3,7 @@
 (* Various theorems for HolSmtLib *)
 Theory HolSmt
 Ancestors[qualified]
-  bool realax real intreal integer combin words
+  bool realax real intreal integer combin words rich_list
 
   val op >> = Tactical.>>
 
@@ -120,6 +120,77 @@ Theorem smt_rinv_inv:
 Proof
   simp [smt_rinv_def, realTheory.REAL_INV_INV]
 QED
+
+(* SMT sequence access is specified only for in-range indices.  This
+   polymorphic choice is deliberately introduced by specification, rather
+   than defining an out-of-range value: the latter is solver-underspecified.
+   It is the list counterpart of smtstringz3Theory.seq_nth_i. *)
+Theorem smt_seq_nth_exists[local]:
+  ?f : 'a list -> int -> 'a.
+    !s i. (0 <= i /\ Num i < LENGTH s) ==>
+      (f s i = EL (Num i) s)
+Proof
+  qexists `\s i.
+    if 0 <= i /\ Num i < LENGTH s then EL (Num i) s else @x. T` >>
+  simp []
+QED
+
+val smt_seq_nth_spec =
+  new_specification
+    ("smt_seq_nth_spec", ["smt_seq_nth"], smt_seq_nth_exists);
+
+Theorem smt_seq_nth_def = smt_seq_nth_spec
+
+(* Generic list counterparts of the shared SMT sequence operations whose
+   semantics are not a single stock list constant. *)
+Definition smt_seq_extract_def:
+  smt_seq_extract (s : 'a list) (i : int) (n : int) =
+    if i < 0 \/ n <= 0 \/ LENGTH s <= Num i then []
+    else TAKE (Num n) (DROP (Num i) s)
+End
+
+Definition smt_seq_at_def:
+  smt_seq_at (s : 'a list) (i : int) =
+    if i < 0 \/ LENGTH s <= Num i then [] else [EL (Num i) s]
+End
+
+Definition smt_seq_indexof_aux_def:
+  (smt_seq_indexof_aux (t : 'a list) n [] =
+     if t = [] then SOME n else NONE) /\
+  (smt_seq_indexof_aux t n (h::s) =
+     if IS_PREFIX (h::s) t then SOME n
+     else smt_seq_indexof_aux t (SUC n) s)
+End
+
+Definition smt_seq_indexof_def:
+  smt_seq_indexof (s : 'a list) t (i : int) : int =
+    if i < 0 \/ LENGTH s < Num i then -1
+    else
+      case smt_seq_indexof_aux t (Num i) (DROP (Num i) s) of
+        NONE => -1
+      | SOME n => &n
+End
+
+Definition smt_seq_replace_raw_def:
+  smt_seq_replace_raw (s : 'a list) t u =
+    case smt_seq_indexof_aux t 0 s of
+      NONE => s
+    | SOME n => TAKE n s ++ u ++ DROP (n + LENGTH t) s
+End
+
+Definition smt_seq_replace_def:
+  smt_seq_replace (s : 'a list) t u = smt_seq_replace_raw s t u
+End
+
+(* cvc5's update replaces the segment beginning at i.  Like LUPDATE it is
+   a no-op outside the source sequence; its replacement is clipped at the
+   end of that source sequence. *)
+Definition smt_seq_update_def:
+  smt_seq_update (s : 'a list) (i : int) (t : 'a list) =
+    if i < 0 \/ LENGTH s <= Num i then s
+    else TAKE (Num i) s ++ TAKE (LENGTH s - Num i) t ++
+      DROP (Num i + LENGTH t) s
+End
 
 (* cvc5's CPC proof format totalizes integer Euclidean division and modulus.
    Unlike HOL's ediv/emod, these operators have specified zero-divisor
