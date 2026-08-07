@@ -292,7 +292,7 @@ fun rendered_record node rendered (result as (goals, validation)) =
           created = {terms = [], types = []},
           eigenvariables = new_free_names rendered goals,
           validation = validation,
-          action = clasetReplay.fixed_action result,
+          action = clasetReplay.fixed_action_on rendered result,
           children = map (fn _ => NONE) goals},
        next))
     (clasetGoal.unrender node 1 result)
@@ -361,19 +361,85 @@ fun cluster_with_state state
 fun same_states left right =
   ListPair.allEq (fn (x, y) => x = y) (left, right)
 
-(* The goals of a cluster are the conjunctive subgoals one rule application
-   emitted, coupled by shared metavariables, so all of them must hold.  A
-   member proved in a branch that assigned the shared metavariables
-   discharges its siblings through the copies [install_rapp] makes of them
-   in that branch, and [derive_goal] reads those copies back; the coupling
-   therefore needs no weakening here.  Sticking stays the conservative
-   all-members reading: a stuck member may yet be discharged by a copy the
-   search is still working on. *)
+(* A copy is useful to its original only through the proved applications
+   connecting it to the application that emitted the original.  The latter
+   application is excluded: its state is what the copy helps derive.  Each
+   pair records the goal and the exact child application extraction must
+   choose to retain that path. *)
+fun copy_support_path tree original copy =
+  case #parent (goal tree original) of
+      NONE => NONE
+    | SOME original_parent =>
+        let
+          fun walk current rev_path =
+            case #parent (goal tree current) of
+                NONE => NONE
+              | SOME rid =>
+                  if rid = original_parent then SOME (List.rev rev_path)
+                  else
+                    let val application = rapp tree rid
+                    in
+                      if #state application <> Proved then NONE
+                      else
+                        walk (#parent application)
+                          ((#parent application, rid) :: rev_path)
+                    end
+        in
+          if #state (goal tree copy) = Proved then walk copy []
+          else NONE
+        end
+
+fun copy_supports tree original =
+  List.mapPartial
+    (fn copy =>
+      Option.map (fn path => (copy, path))
+        (copy_support_path tree original copy))
+    (copy_goals tree original)
+
+fun independently_proved tree id =
+  let val current = goal tree id
+  in
+    case #norm current of
+        NormProved _ => true
+      | _ =>
+          List.exists
+            (fn rid => #state (rapp tree rid) = Proved)
+            (child_rapps tree id)
+  end
+
+fun add_support_path [] required = SOME required
+  | add_support_path ((goal_id, rid) :: rest) required =
+      (case List.find (fn (id, _) => id = goal_id) required of
+           NONE => add_support_path rest ((goal_id, rid) :: required)
+         | SOME (_, rid') =>
+             if rid = rid' then add_support_path rest required else NONE)
+
+fun compatible_copy_supports tree goals =
+  let
+    fun choose [] _ = false
+      | choose ((_, path) :: rest) (goals, required) =
+          (case add_support_path path required of
+               SOME required' => support goals required'
+             | NONE => choose rest (goals, required))
+    and support [] _ = true
+      | support (id :: rest) required =
+          if independently_proved tree id then support rest required
+          else choose (copy_supports tree id) (rest, required)
+  in
+    support goals []
+  end
+
+(* The goals of a cluster are conjunctive, and copy-derived proofs must also
+   admit one compatible selection of all applications on their support
+   paths.  Sticking stays conservative: a stuck member may yet be discharged
+   by a copy the search is still working on. *)
 fun derive_cluster tree ({goals, ...} : cluster) =
   let
     val states = map (#state o goal tree) goals
   in
-    if List.all (fn state => state = Proved) states then Proved
+    if List.all (fn state => state = Proved) states andalso
+       compatible_copy_supports tree goals
+    then Proved
     else if List.all (fn state => state = Stuck) states then Stuck
     else Unknown
   end
@@ -398,7 +464,8 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
 fun derive_goal tree (current : goal) =
   let
     val states = map (#state o rapp tree) (child_rapps tree (#id current))
-    val copy_states = map (#state o goal tree) (copy_goals tree (#id current))
+    val supported_copy =
+      not (null (copy_supports tree (#id current)))
     val norm_proved =
       case #norm current of NormProved _ => true | _ => false
     val exhausted =
@@ -407,7 +474,7 @@ fun derive_goal tree (current : goal) =
   in
     if norm_proved orelse
        List.exists (fn state => state = Proved) states orelse
-       List.exists (fn state => state = Proved) copy_states
+       supported_copy
     then Proved
     else if exhausted andalso
             List.all (fn state => state = Stuck) states

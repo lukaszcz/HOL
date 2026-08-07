@@ -789,29 +789,73 @@ fun swapped_builtin_action pos store =
   NORMALIZED_SWAPPED_BUILTIN_TAC store pos
 fun move_assumption_to_back_action pos _ =
   MOVE_ASSUMPTION_TO_BACK_TAC pos
+fun same_goal ((left_asl, left_w), (right_asl, right_w)) =
+  aconv left_w right_w andalso
+  ListPair.allEq (fn (left, right) => aconv left right)
+    (left_asl, right_asl)
+
 (* Opaque wrapper results mention the marked frees visible when the wrapper
-   ran.  A complete driver replays them after earlier records have grounded
-   those frees, so ground both the children and the resulting theorem.  A
-   direct replay on an engine goal deliberately keeps its visible markers. *)
-fun fixed_action (result as (goals, validation)) store (asl, w) =
+   ran.  Replay may have grounded only some of them, so apply every binding
+   the covering store already has to both the children and a theorem schema
+   for the validation.  The schema makes instantiation happen before the
+   opaque closure consumes the replayed child theorems. *)
+fun grounded_fixed_action (goals, validation) store _ =
+  let
+    fun ground_goal (child_asl, child_w) =
+      (map (clasetMeta.norm store) child_asl,
+       clasetMeta.norm store child_w)
+    val (type_subst, term_subst) = clasetMeta.collapse store
+
+    fun package_term (child_asl, child_w) =
+      List.foldr boolSyntax.mk_imp child_w child_asl
+
+    fun assume_package (child as (child_asl, _)) =
+      let
+        fun apply_assumptions [] theorem = theorem
+          | apply_assumptions (asm :: rest) theorem =
+              apply_assumptions rest (MP theorem (ASSUME asm))
+      in
+        apply_assumptions child_asl (ASSUME (package_term child))
+      end
+
+    val validation_schema = validation (map assume_package goals)
+    val grounded_schema =
+      Drule.INST_TY_TERM (term_subst, type_subst) validation_schema
+
+    fun ground_validation theorems =
+      let
+        fun package_theorem ((child_asl, _), theorem) =
+          List.foldr (fn (asm, result) => DISCH asm result)
+            theorem child_asl
+        val packaged =
+          ListPair.map package_theorem
+            (map ground_goal goals, theorems)
+      in
+        List.foldl
+          (fn (theorem, result) => Drule.PROVE_HYP theorem result)
+          grounded_schema packaged
+      end
+  in
+    (map ground_goal goals, ground_validation)
+  end
+
+fun fixed_action_on recorded result store current =
+  if same_goal (recorded, current) then result
+  else grounded_fixed_action result store current
+
+(* Compatibility for callers that did not record the wrapper's input.  A
+   marked direct replay keeps the symbolic result, as it did historically;
+   complete engine records use [fixed_action_on]. *)
+fun fixed_action (result as (goals, validation)) store (goal as (asl, w)) =
   let
     val input_terms = w :: asl
     val marked_input =
       List.exists clasetMeta.is_meta (free_varsl input_terms) orelse
       List.exists clasetMeta.is_tymeta
         (List.concat (map type_vars_in_term input_terms))
-
-    fun ground_goal (child_asl, child_w) =
-      (map (clasetMeta.norm store) child_asl,
-       clasetMeta.norm store child_w)
-    val (type_subst, term_subst) = clasetMeta.collapse store
-
-    fun ground_validation theorems =
-      Drule.INST_TY_TERM (term_subst, type_subst)
-        (validation theorems)
   in
     if marked_input then result
-    else (map ground_goal goals, ground_validation)
+    else grounded_fixed_action (goals, validation) store goal
   end
 
 fun empty count =

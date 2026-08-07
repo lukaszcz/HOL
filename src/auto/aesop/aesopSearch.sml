@@ -709,7 +709,36 @@ fun independently_proved tree id =
 fun winning_forest tree =
   let
     type selection = (gid, gid) Redblackmap.dict
+    type rapp_selection = (gid, aesopTree.rid) Redblackmap.dict
+    type requirements = (gid, aesopTree.rid) Redblackmap.dict
     val empty_selection : selection = Redblackmap.mkDict Int.compare
+    val empty_rapp_selection : rapp_selection =
+      Redblackmap.mkDict Int.compare
+    val empty_requirements : requirements =
+      Redblackmap.mkDict Int.compare
+
+    fun add_path [] required = SOME required
+      | add_path ((goal, rid) :: rest) required =
+          (case Redblackmap.peek (required, goal) of
+               NONE =>
+                 add_path rest (Redblackmap.insert (required, goal, rid))
+             | SOME rid' =>
+                 if rid = rid' then add_path rest required else NONE)
+
+    fun choose_supports _ [] required = SOME required
+      | choose_supports supports_of (id :: rest) required =
+          let
+            fun choose [] = NONE
+              | choose ((_, path) :: candidates) =
+                  (case add_path path required of
+                       SOME required' =>
+                         (case choose_supports supports_of rest required' of
+                              SOME result => SOME result
+                            | NONE => choose candidates)
+                     | NONE => choose candidates)
+          in
+            choose (supports_of id)
+          end
 
     (* One obligation can be discharged more than once in the same tree:
        a goal may carry its own proof and also have a proved copy of it
@@ -718,7 +747,8 @@ fun winning_forest tree =
        the walk reaches -- and does not descend a second time.  Taking both
        would make [clasetMeta.absorb] fold two stores for one goal and
        linearise its records twice. *)
-    fun select actual (accumulated as (selection, stores)) =
+    fun select actual
+      (accumulated as (selection, rapp_selection, stores, required)) =
       let
         val current = aesopTree.goal tree actual
         val original =
@@ -735,17 +765,37 @@ fun winning_forest tree =
           in
             case #norm current of
                 aesopTree.NormProved {store, ...} =>
-                  (selection', store :: stores)
+                  (selection', rapp_selection, store :: stores, required)
               | _ =>
                   let
-                    val rid = proved_rapp tree actual
+                    val rid =
+                      case Redblackmap.peek (required, actual) of
+                          NONE => proved_rapp tree actual
+                        | SOME required_rid =>
+                            if
+                              #state (aesopTree.rapp tree required_rid) =
+                                aesopTree.Proved andalso
+                              List.exists
+                                (fn child => child = required_rid)
+                                (aesopTree.child_rapps tree actual)
+                            then required_rid
+                            else
+                              raise ERR "extract"
+                                ("a required copy-support application " ^
+                                 "is not proved")
                     val application = aesopTree.rapp tree rid
+                    val rapp_selection' =
+                      Redblackmap.insert
+                        (rapp_selection, actual, rid)
                     (* A cluster's goals are conjunctive, so every one of
                        them needs a proof in the forest.  The members
                        proved only by copy are picked up where the walk
                        meets the copy, which is itself a cluster goal of
                        some rapp below. *)
-                    fun select_cluster (cid, accumulated) =
+                    fun select_cluster
+                      (cid,
+                       accumulated as
+                         (selection, rapp_selection, stores, required)) =
                       let
                         val cluster = aesopTree.cluster tree cid
                         val _ =
@@ -754,26 +804,50 @@ fun winning_forest tree =
                             raise ERR "extract"
                               ("winning rule application contains " ^
                                "unproved cluster " ^ Int.toString cid)
+                        val all_members = #goals cluster
                         val members =
                           List.filter (independently_proved tree)
-                            (#goals cluster)
+                            all_members
                         val _ =
                           if null members then
                             raise ERR "extract"
                               ("proved cluster " ^ Int.toString cid ^
                                " has no independently proved goal")
                           else ()
+                        val copy_members =
+                          List.filter
+                            (fn id =>
+                              not (independently_proved tree id) andalso
+                              not
+                                (Option.isSome
+                                  (Redblackmap.peek (selection, id))))
+                            all_members
+                        val required' =
+                          case
+                            choose_supports
+                              (aesopTree.copy_supports tree)
+                              copy_members required
+                          of
+                              SOME result => result
+                            | NONE =>
+                                raise ERR "extract"
+                                  ("proved cluster " ^ Int.toString cid ^
+                                   " has no compatible copy-support paths")
+                        val prepared =
+                          (selection, rapp_selection, stores, required')
                       in
                         List.foldl
                           (fn (id, current) => select id current)
-                          accumulated members
+                          prepared members
                       end
                   in
                     if null (#clusters application) then
-                      (selection', #store application :: stores)
+                      (selection', rapp_selection',
+                       #store application :: stores, required)
                     else
                       List.foldl select_cluster
-                        (selection', stores) (#clusters application)
+                        (selection', rapp_selection', stores, required)
+                        (#clusters application)
                   end
           end
       end
@@ -784,7 +858,12 @@ fun winning_forest tree =
       if #state root_goal = aesopTree.Proved then ()
       else raise ERR "extract" "the root goal is not proved"
   in
-    select root (empty_selection, [])
+    case
+      select root
+        (empty_selection, empty_rapp_selection, [], empty_requirements)
+    of
+        (selection, rapp_selection, stores, _) =>
+          (selection, rapp_selection, stores)
   end
 
 fun selected_goal selection original =
@@ -794,6 +873,14 @@ fun selected_goal selection original =
         raise ERR "extract"
           ("winning forest has no proof of goal " ^
            Int.toString original)
+
+fun selected_rapp rapp_selection actual =
+  case Redblackmap.peek (rapp_selection, actual) of
+      SOME rid => rid
+    | NONE =>
+        raise ERR "extract"
+          ("winning forest has no application for goal " ^
+           Int.toString actual)
 
 fun append_records records script =
   List.foldl
@@ -807,7 +894,7 @@ fun append_records records script =
 
 fun extract tree =
   let
-    val (selection, final_stores) = winning_forest tree
+    val (selection, rapp_selection, final_stores) = winning_forest tree
     val root = aesopTree.root tree
     val root_store = #store (aesopTree.goal tree root)
     val covering_store =
@@ -834,7 +921,7 @@ fun extract tree =
             aesopTree.NormProved _ => with_norm
           | _ =>
               let
-                val rid = proved_rapp tree actual
+                val rid = selected_rapp rapp_selection actual
                 val application = aesopTree.rapp tree rid
                 val with_application =
                   append_records (#records application) with_norm

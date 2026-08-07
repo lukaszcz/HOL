@@ -475,7 +475,8 @@ fun unrender node pos (result as (new_goals, validation)) =
                        created = {terms = [], types = []},
                        eigenvariables = eigenvariables,
                        validation = validation,
-                       action = clasetReplay.fixed_action result,
+                       action =
+                         clasetReplay.fixed_action_on (asl, w) result,
                        children = map (fn _ => NONE) new_goals}
                 in
                   SOME (record_step record next)

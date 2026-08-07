@@ -2473,6 +2473,70 @@ val _ =
          not (named old_name) andalso named new_name
        end)
 
+val tyinfo_collision_p = ``claset_tyinfo_collision_p : bool``
+val tyinfo_collision_q = ``claset_tyinfo_collision_q : bool``
+val tyinfo_collision_rule =
+  DISCH tyinfo_collision_p
+    (DISJ1 (ASSUME tyinfo_collision_p) tyinfo_collision_q)
+
+val _ =
+  test
+    ("replacing a TypeBase provider preserves an ambient duplicate",
+     fn () =>
+       let
+         val key = "claset-selftest-unowned-provider"
+         val name = "claset-tyinfo-unowned-provider"
+         fun provider _ =
+           [(tyinfo_idempotence_spec, (name, tyinfo_collision_rule))]
+         fun empty_provider _ = []
+         fun cleanup () =
+           (register_tyinfo_contribution (key, empty_provider);
+            temp_delrule name)
+         fun check () =
+           let
+             val _ = temp_add_rule tyinfo_idempotence_spec
+               (name, tyinfo_collision_rule)
+             val _ = register_tyinfo_contribution (key, provider)
+             val _ = register_tyinfo_contribution (key, empty_provider)
+           in
+             has_named_rule name (the_claset ())
+           end
+       in
+         Portable.finally cleanup check ()
+       end)
+
+val _ =
+  test
+    ("replacing a TypeBase entry reconciles its derived claset rules",
+     fn () =>
+       let
+         val original = typebase_hook_tyinfo ()
+         val ty = TypeBasePure.ty_of original
+         val (thy, tyop) = TypeBasePure.ty_name_of original
+         val stem = "__claset_tyinfo_" ^ thy ^ "_" ^ tyop ^ "_"
+         val replacement =
+           TypeBasePure.mk_nondatatype_info
+             (ty,
+              {nchotomy = NONE, induction = NONE, size = NONE,
+               encode = NONE})
+         fun contributed_names () =
+           List.filter (String.isPrefix stem)
+             (map (#1 o #2) (rules_of (the_claset ())))
+         fun restore () = TypeBase.write [original]
+         fun check () =
+           let
+             val original_names = contributed_names ()
+             val _ = TypeBase.write [replacement]
+             val removed = null (contributed_names ())
+             val _ = restore ()
+           in
+             not (null original_names) andalso removed andalso
+             not (null (contributed_names ()))
+           end
+       in
+         Portable.finally restore check ()
+       end)
+
 
 (* clasetLib: per-invocation markers. *)
 fun has_marker_rule spec th cs =

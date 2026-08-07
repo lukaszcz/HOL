@@ -135,4 +135,5 @@ sig
   val swapped_builtin_action : int -> replay_action
   val move_assumption_to_back_action : int -> replay_action
   val fixed_action : goal list * validation -> replay_action
+  val fixed_action_on : goal -> goal list * validation -> replay_action
 end

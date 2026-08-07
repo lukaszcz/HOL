@@ -296,9 +296,12 @@ fun TRAVERSE_IN_CONTEXT root_only
            solving is hot enough that the unconfigured path should
            allocate nothing extra. *)
         fun pipeline tm = let
-          fun recurse tm =
+          fun recurse tm = let
+            val recurse_old = !lim_r
+          in
             raw_recurse tm
-            handle HOL_ERR _ => (lim_r := old; REFL tm)
+            handle HOL_ERR _ => (lim_r := recurse_old; REFL tm)
+          end
           val prover_ctxt =
             {stack=stack, context_thms=context_thms, recurse=recurse}
           fun first_solver [] _ =

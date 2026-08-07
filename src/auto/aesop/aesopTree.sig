@@ -81,6 +81,10 @@ sig
      obligations, which replay discharges through their originals. *)
   val direct_children : tree -> rid -> gid list
 
+  (* Proved copies together with the exact proved application path that
+     connects them to their original obligation. *)
+  val copy_supports : tree -> gid -> (gid * (gid * rid) list) list
+
   (* The goal's engine node.  Normalisation rewrites a goal in place and
      uses [goal_node]; a rule application descends, so it uses
      [child_node]. *)

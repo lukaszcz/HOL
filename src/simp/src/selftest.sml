@@ -676,6 +676,34 @@ in
      ``(h : 'b -> bool -> 'c) ((f : 'a -> 'b) x) (q /\ T)``,
      ``(h : 'b -> bool -> 'c) (f x) q``)
 
+  val repeated_recurse_rwt =
+    Q.ASSUME
+      `(T /\ T) ==>
+       ((repeated_recurse_f : 'a -> 'b) repeated_recurse_x =
+        repeated_recurse_y)`
+  val repeated_recurse_probe = ``repeated_recurse_probe : bool``
+  fun repeated_recurse_subgoaler {recurse, ...} tm =
+    let
+      val solved = recurse tm
+      val _ = recurse repeated_recurse_probe
+    in
+      solved
+    end
+  val repeated_recurse_data =
+    {rewriters= #rewriters bool_data, dprocs= #dprocs bool_data,
+     relation= #relation bool_data, travrules= #travrules bool_data,
+     limit=SOME 2, subgoaler=SOME repeated_recurse_subgoaler, solvers=[],
+     cond_depth=NONE, term_ord=NONE}
+  val repeated_recurse_conv =
+    Traverse.TRAVERSE repeated_recurse_data [repeated_recurse_rwt]
+
+  val _ = convtest
+    ("solver pipeline: each recurse call restores its own limit snapshot",
+     repeated_recurse_conv,
+     ``(h : 'b -> bool -> 'c)
+         (repeated_recurse_f repeated_recurse_x) (q /\ T)``,
+     ``(h : 'b -> bool -> 'c) repeated_recurse_y (q /\ T)``)
+
   val passthrough_reducer =
     Traverse.REDUCER
       {name=SOME "solver exception test reducer",

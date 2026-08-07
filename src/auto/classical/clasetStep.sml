@@ -141,7 +141,7 @@ fun tactic_direct kind consumed node pos tactic =
       (Direct
         {kind = kind, consumed = consumed, created = no_created,
          eigenvariables = eigens, result = result, children = NONE,
-         action = clasetReplay.fixed_action result,
+         action = clasetReplay.fixed_action_on rendered result,
          closed = map (fn _ => NONE) goals,
          store = clasetGoal.store node})
   end
@@ -1931,7 +1931,7 @@ fun wrapper_direct rendered goals validation store =
       {kind = Wrapper, consumed = NONE, created = no_created,
        eigenvariables = new_free_names_by_goal rendered goals,
        result = result, children = NONE,
-       action = clasetReplay.fixed_action result,
+       action = clasetReplay.fixed_action_on rendered result,
        closed = map (fn _ => NONE) goals, store = store}
   end
 

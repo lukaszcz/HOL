@@ -1482,6 +1482,42 @@ val _ =
        #state (aesopTree.goal bound_coupled_tree3 bound_coupled_root) =
          aesopTree.Proved)
 
+(* A proved copy below a partially open application is not yet connected to
+   the application that emitted its original.  An unrelated proof of the
+   path goal must not make that orphaned copy prove the root. *)
+val orphaned_copy_tree0 =
+  new_tree cluster_store1 fifo_goal []
+val (orphaned_copy_root, orphaned_copy_tree1) =
+  pop_expected orphaned_copy_tree0
+val orphaned_copy_created =
+  install_tree_rapp orphaned_copy_tree1 orphaned_copy_root
+    aesopRule.RSafe "orphaned_copy_root" cluster_store1
+    [coupled_goal, coupled_goal] []
+val [orphaned_copy_path, orphaned_copy_original] =
+  #goals orphaned_copy_created
+val orphaned_copy_branch =
+  install_tree_rapp (#tree orphaned_copy_created) orphaned_copy_path
+    aesopRule.RSafe "orphaned_copy_branch" bound_coupled_store
+    [fifo_goal] []
+val [orphaned_copy_open, orphaned_copy] = #goals orphaned_copy_branch
+val orphaned_copy_tree2 =
+  close_tree_goal (#tree orphaned_copy_branch) orphaned_copy
+val orphaned_copy_tree3 =
+  close_tree_goal orphaned_copy_tree2 orphaned_copy_path
+
+val _ =
+  check
+    ("aesop copy-derived goals require their proved support path",
+     fn () =>
+       #copy_of (aesopTree.goal orphaned_copy_tree3 orphaned_copy) =
+         SOME orphaned_copy_original andalso
+       #state (aesopTree.goal orphaned_copy_tree3 orphaned_copy_open) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.goal orphaned_copy_tree3 orphaned_copy_original) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.goal orphaned_copy_tree3 orphaned_copy_root) =
+         aesopTree.Unknown)
+
 val coupled_stuck_tree0 =
   new_tree cluster_store1 fifo_goal []
 val (coupled_stuck_root, coupled_stuck_tree1) =
@@ -3151,12 +3187,10 @@ val _ =
    with it the root, proved, and [extract] then walked into a sibling it
    had no proof of and reported "winning forest has no proof of goal N".
    That is the engine contradicting itself, which is what the assertions
-   below are about; whether either goal closes is a matter of search
-   strength and is deliberately left free.  Pelletier 30 is only asserted
-   free of that one diagnostic: it now gets as far as kernel replay and
-   stops there on a distinct defect outside this layer, where a wrapper
-   record taken before an assignment is replayed against goals the
-   assignment has since grounded. *)
+   below are about.  Pelletier 30 also exercises a wrapper record made
+   before one shared marker is assigned while another remains open; final
+   replay must apply the available assignment rather than returning the
+   stale wrapper result unchanged. *)
 val aesop_coupled_goals =
   [(30,
     ([],
@@ -3187,6 +3221,18 @@ val _ =
              (String.isSubstring
                "winning forest has no proof of goal" diagnostic)))
     aesop_coupled_diagnostics
+
+val _ =
+  check
+    ("AESOP_TAC Pelletier 30 grounds assigned wrapper markers in replay",
+     fn () =>
+       case aesop_coupled_diagnostics of
+           (30, diagnostic) :: _ =>
+             if diagnostic = "" then true
+             else
+               (print ("Pelletier 30 diagnostic: " ^ diagnostic ^ "\n");
+                false)
+         | _ => false)
 
 val _ =
   check
