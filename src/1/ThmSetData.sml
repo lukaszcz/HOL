@@ -25,8 +25,10 @@ fun toKName s =
    containing "$" is already a key: theory names cannot contain "$", so
    only the kernel separator puts one there.  A name [toKName] rejects
    cannot be a key either, and so denotes nothing in the table; return it
-   unchanged rather than raising, because removing an absent key is a
-   no-op everywhere else. *)
+   unchanged rather than raising, leaving each table to decide whether a
+   name spelling no key is a silent no-op (clasetLib's retraction, which
+   tries the source spelling too) or an error worth telling the user
+   about at the call (linarithData's). *)
 fun toKString s =
     if String.isSubstring "$" s then s
     else (name_toString (toKName s) handle HOL_ERR _ => s)

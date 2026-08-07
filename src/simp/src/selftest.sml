@@ -711,8 +711,8 @@ in
        addcontext=fn (ctxt,_) => ctxt,
        apply=fn {solver,stack,...} => solver stack}
   fun raising_solver _ _ =
-    if !Cond_rewr.stack_limit = 31 andalso
-       (!Cond_rewr.term_ord) (boolSyntax.T, boolSyntax.F) = GREATER
+    if Cond_rewr.cur_stack_limit () = 31 andalso
+       Cond_rewr.cur_term_ord (boolSyntax.T, boolSyntax.F) = GREATER
     then raise Fail "non-HOL solver exception"
     else raise Fail "dynamic flags not installed before solver exception"
   val exception_data =
@@ -829,8 +829,103 @@ in
 
   val order_probe = (``nested_order_x:'a``, ``nested_order_y:'a``)
   fun has_dynamic_flags depth expected =
-    !Cond_rewr.stack_limit = depth andalso
-    (!Cond_rewr.term_ord) order_probe = expected
+    Cond_rewr.cur_stack_limit () = depth andalso
+    Cond_rewr.cur_term_ord order_probe = expected
+
+  (* A traversal whose simpset configures neither knob must run at the
+     documented defaults even when a traversal that did configure them is
+     still on the stack: aesop/clasimp set cond_depth 40, and a nested
+     SIMP_CONV bool_ss [] used to inherit it and recurse ten levels deeper
+     than SIMP_TAC bool_ss [] does on its own. *)
+  val leak_depth_result = ref (NONE : thm option)
+  val leak_order_result = ref (NONE : thm option)
+  val leak_flags_result = ref (~1, EQUAL)
+  val leak_order_lhs = ``nested_y:'a = nested_x``
+  val leak_outer_lhs = ``(leak_f : 'a -> 'b) leak_x``
+  val leak_outer_rhs = ``leak_y:'b``
+  val leak_outer_rwt = ASSUME (mk_eq (leak_outer_lhs,leak_outer_rhs))
+
+  (* The flags have to be read from inside a nested traversal, not from
+     the outer reducer: there the outer simpset's own settings are in
+     force, and reporting those would say nothing about inheritance. *)
+  val leak_probe_lhs = ``leak_probe_x:'a``
+  fun leak_flags_apply _ tm =
+    (leak_flags_result :=
+       (Cond_rewr.cur_stack_limit (),
+        Cond_rewr.cur_term_ord order_probe);
+     NO_CONV tm)
+  val leak_flags_reducer =
+    Traverse.REDUCER
+      {name=SOME "nested dynamic flag probe", initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt, apply=leak_flags_apply}
+  val leak_flags_data =
+    {rewriters=[leak_flags_reducer], dprocs=[],
+     relation= #relation pure_data, travrules= #travrules pure_data,
+     limit=NONE, subgoaler=NONE, solvers=[],
+     cond_depth=NONE, term_ord=NONE}
+  val leak_flags_conv = Traverse.TRAVERSE leak_flags_data []
+
+  fun leak_outer_apply _ tm =
+    if not (aconv tm leak_outer_lhs) then NO_CONV tm
+    else
+      (leak_depth_result :=
+         SOME (unchanged_on_hol_err depth_default_conv depth10_lhs);
+       leak_order_result :=
+         SOME (unchanged_on_hol_err default_order_conv leak_order_lhs);
+       unchanged_on_hol_err leak_flags_conv leak_probe_lhs;
+       leak_outer_rwt)
+  val leak_outer_reducer =
+    Traverse.REDUCER
+      {name=SOME "cond_depth/term_ord leak probe", initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt, apply=leak_outer_apply}
+  val leak_outer_data =
+    {rewriters=[leak_outer_reducer], dprocs=[],
+     relation= #relation pure_data, travrules= #travrules pure_data,
+     limit=NONE, subgoaler=NONE, solvers=[],
+     cond_depth=SOME 40, term_ord=SOME reverse_order}
+  val leak_outer_conv = Traverse.TRAVERSE leak_outer_data []
+
+  val _ = convtest
+    ("nested traversal probe runs under cond_depth forty",
+     leak_outer_conv, leak_outer_lhs, leak_outer_rhs)
+
+  val _ = tprint "nested traversal does not inherit an outer cond_depth"
+  val _ =
+    case !leak_depth_result of
+        NONE => die "leak probe did not run"
+      | SOME th =>
+          if aconv (rhs (concl th)) depth10_lhs then OK()
+          else die "nested traversal inherited the outer stack limit"
+
+  val _ = tprint "nested traversal does not inherit an outer term_ord"
+  val _ =
+    case !leak_order_result of
+        NONE => die "leak probe did not run"
+      | SOME th =>
+          if aconv (rhs (concl th)) ``nested_x:'a = nested_y`` then OK()
+          else die "nested traversal inherited the outer term order"
+
+  val _ = tprint "nested traversal reports the default dynamic flags"
+  val _ =
+    if !leak_flags_result = (4, Cond_rewr.ac_term_ord order_probe) then OK()
+    else die "nested traversal saw the outer traversal's flags"
+
+  (* The user-level globals are what an unconfigured traversal falls back
+     to, so raising Cond_rewr.stack_limit still reaches a traversal nested
+     inside one that set its own depth (examples/arm relies on the global
+     reaching ordinary simpsets). *)
+  val _ = tprint "nested traversal honours the global stack limit"
+  val _ =
+    Lib.with_flag (Cond_rewr.stack_limit,40)
+      (fn () =>
+          (leak_outer_conv leak_outer_lhs;
+           case !leak_depth_result of
+               NONE => die "leak probe did not run"
+             | SOME th =>
+                 if aconv (rhs (concl th)) depth10_rhs then OK()
+                 else die "global stack limit did not reach the nested \
+                          \traversal")) ()
+
   val nested_inner_condition =
     SPEC ``nested_inner_q:bool`` boolTheory.EXCLUDED_MIDDLE
   val nested_inner_lhs =
@@ -940,9 +1035,9 @@ in
     let
       val _ = conglib_solver_calls := !conglib_solver_calls + 1
       val flags_ok =
-        !Cond_rewr.stack_limit = 29 andalso
-        (!Cond_rewr.term_ord) (``conglib_order_x:'a``,
-                               ``conglib_order_y:'a``) = GREATER
+        Cond_rewr.cur_stack_limit () = 29 andalso
+        Cond_rewr.cur_term_ord (``conglib_order_x:'a``,
+                                ``conglib_order_y:'a``) = GREATER
     in
       if aconv tm (concl conglib_condition) andalso flags_ok then
         conglib_condition
@@ -1750,13 +1845,36 @@ val _ = let
      checkexn=fn HOL_ERR _ => true | _ => false}
     asm_goal
 
+  (* The first assumption names COND but applies it to one argument, so
+     no rule reaches it.  Naming a key is not splitting, so the splitter
+     has to carry on to the assumption that does split. *)
+  val partial_cond_asm = ``COND b = (f:'a -> 'a -> 'a)``
+  val later_asm_goal =
+    ([partial_cond_asm, ``R (if b then x:'a else y) : bool``],
+     ``G:bool``)
+  val _ =
+    tprint "splitter: a later assumption is split when the first cannot"
+  val _ =
+    case #1 (VALID (SPLIT_ASM_TAC [if_asm_split]) later_asm_goal) of
+        [(left, left_concl), (right, right_concl)] =>
+          if aconv left_concl ``G:bool`` andalso
+             aconv right_concl ``G:bool`` andalso
+             has ``b:bool`` left andalso
+             has ``R (x:'a) : bool`` left andalso
+             has partial_cond_asm left andalso
+             has ``~b`` right andalso
+             has ``R (y:'a) : bool`` right andalso
+             has partial_cond_asm right
+          then OK()
+          else die "SPLIT_ASM_TAC split the wrong assumption"
+      | _ => die "SPLIT_ASM_TAC did not reach the later assumption"
+
   val _ = shouldfail
     {testfn= #1 o VALID (SPLIT_ASM_TAC [if_asm_split]),
      printresult=K "unexpected tactic result",
-     printarg=K "splitter: first syntactic assumption match is selected",
+     printarg=K "splitter: naming a key does not make an assumption split",
      checkexn=fn HOL_ERR _ => true | _ => false}
-    ([``COND b = (f:'a -> 'a -> 'a)``,
-      ``R (if b then x:'a else y) : bool``], ``G:bool``)
+    ([partial_cond_asm], ``G:bool``)
 
   val _ = shouldfail
     {testfn= #1 o VALID (SPLIT_TAC [if_split, if_asm_split]),
@@ -1920,6 +2038,80 @@ val _ = let
     case #1 (VALID (SIMP_TAC with_asm_split []) asm_goal) of
         [_, _] => OK()
       | _ => die "assumption split rule was not routed to the asm looper"
+in
+  ()
+end
+
+(* ---------------------------------------------------------------------- *)
+(* Split markers that cannot become split rules.                           *)
+
+val _ = let
+  (* Two theorems that [add_split] cannot turn into a looper: one of the
+     right shape but under no name in the theorem database, and one that
+     has a name but is not a split rule at all.  Neither may stop a
+     tactic, and the rule list is the path on which the user hears about
+     it. *)
+  val bool_split = type_split_of ``:bool``
+  val unnamed_split =
+    INST_TYPE (map (fn v => v |-> ``:'zz -> 'zz``)
+                   (type_vars_in_term (concl bool_split)))
+              bool_split
+  val split_goal = ([], ``P (if b then x:'a else y) : bool``)
+
+  val warnings = ref ([] : string list)
+  val saved_outstream = !Feedback.WARNING_outstream
+  val _ = Feedback.WARNING_outstream := (fn s => warnings := s :: !warnings)
+  fun warned () = List.exists (String.isSubstring "Split") (!warnings)
+  fun run tac goal = Lib.total (fn () => #1 (VALID tac goal)) ()
+
+  val _ = warnings := []
+  val _ = tprint "unnamed Split rule leaves SIMP_TAC alone"
+  val _ =
+    case run (SIMP_TAC bool_ss [Split unnamed_split]) split_goal of
+        NONE => die "unnamed Split rule aborted SIMP_TAC"
+      | SOME [([], result)] =>
+          if not (aconv result (#2 split_goal)) then
+            die "unnamed Split rule changed the goal"
+          else if not (warned ()) then
+            die "unnamed Split rule was dropped without a warning"
+          else OK()
+      | SOME _ => die "unnamed Split rule produced the wrong subgoals"
+
+  val _ = warnings := []
+  val _ = tprint "malformed Split rule leaves SIMP_TAC alone"
+  val _ =
+    case run (SIMP_TAC bool_ss [Split boolTheory.CONJ_COMM]) split_goal of
+        NONE => die "malformed Split rule aborted SIMP_TAC"
+      | SOME [([], result)] =>
+          if not (aconv result (#2 split_goal)) then
+            die "malformed Split rule changed the goal"
+          else if not (warned ()) then
+            die "malformed Split rule was dropped without a warning"
+          else OK()
+      | SOME _ => die "malformed Split rule produced the wrong subgoals"
+
+  (* An assumption headed by the marker is a term the user is reasoning
+     about rather than a rule the user asked for, and the tactics that
+     scan assumptions are documented never to fail. *)
+  val split_asm = concl (Split (ASSUME ``p /\ q``))
+  val asm_goal = ([split_asm], ``r:bool``)
+  val gcfg = {droptrues=true,elimvars=false,strip=true,oldestfirst=true}
+
+  val _ = warnings := []
+  val _ = tprint "Split-headed assumption does not abort global_simp_tac"
+  val _ =
+    case run (global_simp_tac gcfg bool_ss []) asm_goal of
+        NONE => die "Split-headed assumption aborted global_simp_tac"
+      | SOME _ => OK()
+
+  val _ = warnings := []
+  val _ = tprint "Split-headed assumption does not abort ASM_SIMP_TAC"
+  val _ =
+    case run (ASM_SIMP_TAC bool_ss []) asm_goal of
+        NONE => die "Split-headed assumption aborted ASM_SIMP_TAC"
+      | SOME _ => OK()
+
+  val _ = Feedback.WARNING_outstream := saved_outstream
 in
   ()
 end

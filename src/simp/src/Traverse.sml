@@ -379,9 +379,15 @@ end
  * TRAVERSE
  *
  * ---------------------------------------------------------------------*)
-fun with_option_flag _ NONE f x = f x
-  | with_option_flag flag (SOME value) f x =
-      Lib.with_flag (flag,value) f x
+(* The simpset-scoped rewriting knobs are installed as overrides for the
+   extent of the traversal, and are installed even when this simpset
+   configures neither: binding them to NONE is what makes a nested
+   traversal fall back to the user-level default (Cond_rewr.stack_limit,
+   Cond_rewr.term_ord) rather than silently inherit the settings of the
+   traversal it was launched from. *)
+fun with_dynamic_flags (cond_depth,term_ord) f x =
+  Lib.with_flag (Cond_rewr.stack_limit_override,cond_depth)
+    (Lib.with_flag (Cond_rewr.term_ord_override,term_ord) f) x
 
 (* Reducer contexts contain mutable rewrite controls, so rebuild the context
    for every application of a reusable conversion. *)
@@ -396,10 +402,8 @@ fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
           solver_context)
      fun traverse tm =
        TRAVERSE_IN_CONTEXT root_only data [] context' tm
-     fun with_order tm =
-       with_option_flag Cond_rewr.term_ord term_ord traverse tm
    in
-     with_option_flag Cond_rewr.stack_limit cond_depth with_order tm
+     with_dynamic_flags (cond_depth,term_ord) traverse tm
    end;
 
 fun GEN_TRAVERSE root_only data thms =

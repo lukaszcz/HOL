@@ -352,11 +352,33 @@ fun partition_ssfrags names ssdata =
 
 val empty_excluded : string Binaryset.set = Binaryset.empty String.compare
 
+(* The functional-record-update combinator (boolLib's [Fld] and [$$]) for
+   the record inside [SS]: every operation below rebuilds a simpset
+   through it, naming only the fields it changes, so that a new field is
+   declared here and defaulted in [empty_ss] instead of being re-listed
+   at each of them. *)
+fun updSS z =
+  let
+    fun from mk_rewrs history initial_net dprocs travrules limit excluded
+             strategy =
+      {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
+       dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
+       strategy=strategy}
+    (* fields in reverse order to the above *)
+    fun from' strategy excluded limit travrules dprocs initial_net history
+              mk_rewrs =
+      {mk_rewrs=mk_rewrs, history=history, initial_net=initial_net,
+       dprocs=dprocs, travrules=travrules, limit=limit, excluded=excluded,
+       strategy=strategy}
+    fun to f {mk_rewrs,history,initial_net,dprocs,travrules,limit,excluded,
+              strategy} =
+      f mk_rewrs history initial_net dprocs travrules limit excluded strategy
+  in
+    FunctionalRecordUpdate.makeUpdate8 (from, from', to)
+  end z
+
 fun ssupd_net f (SS s) =
-  SS{mk_rewrs= #mk_rewrs s, history= #history s,
-     initial_net=f (#initial_net s), dprocs= #dprocs s,
-     travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     strategy= #strategy s}
+  SS (updSS s (Fld #initial_net (f (#initial_net s))) $$)
 
 val empty_strategy : strategy_data =
   {loopers=[], unsafe_solvers=[], safe_solvers=[], subgoaler=NONE,
@@ -413,12 +435,11 @@ fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 fun (ss as SS s) -* nms =
     if null nms then ss
     else
-      SS{initial_net=filter_net_by_names nms (#initial_net s),
-         history=DELETE_EVENT nms :: #history s,
-         mk_rewrs= #mk_rewrs s,
-         dprocs=filter_dprocs_by_names nms (#dprocs s),
-         travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-         strategy= #strategy s}
+      SS (updSS s
+            (Fld #initial_net (filter_net_by_names nms (#initial_net s)))
+            (Fld #history (DELETE_EVENT nms :: #history s))
+            (Fld #dprocs (filter_dprocs_by_names nms (#dprocs s)))
+            $$)
 fun remove_simps nms ss = ss -* nms
 
 
@@ -482,10 +503,7 @@ fun remove_simps nms ss = ss -* nms
           |> Lib.mk_set
 
  fun fupdlimit f (SS s) =
-   SS{mk_rewrs= #mk_rewrs s, history= #history s,
-      travrules= #travrules s, initial_net= #initial_net s,
-      dprocs= #dprocs s, limit=f (#limit s), excluded= #excluded s,
-      strategy= #strategy s}
+   SS (updSS s (Fld #limit (f (#limit s))) $$)
 
  fun limit n = fupdlimit (fn _ => SOME n)
 
@@ -494,54 +512,49 @@ val unlimit = fupdlimit (fn _ => NONE)
 fun getlimit (SS ss) = #limit ss
 
 fun map_strategy f (SS s) =
-  SS{mk_rewrs= #mk_rewrs s, history= #history s,
-     initial_net= #initial_net s, dprocs= #dprocs s,
-     travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     strategy=f (#strategy s)}
+  SS (updSS s (Fld #strategy (f (#strategy s))) $$)
+
+(* As [updSS], but for [strategy_data]. *)
+fun updstrategy z =
+  let
+    fun from loopers unsafe_solvers safe_solvers subgoaler cond_depth
+             term_ord excl_loopers =
+      {loopers=loopers, unsafe_solvers=unsafe_solvers,
+       safe_solvers=safe_solvers, subgoaler=subgoaler,
+       cond_depth=cond_depth, term_ord=term_ord, excl_loopers=excl_loopers}
+    (* fields in reverse order to the above *)
+    fun from' excl_loopers term_ord cond_depth subgoaler safe_solvers
+              unsafe_solvers loopers =
+      {loopers=loopers, unsafe_solvers=unsafe_solvers,
+       safe_solvers=safe_solvers, subgoaler=subgoaler,
+       cond_depth=cond_depth, term_ord=term_ord, excl_loopers=excl_loopers}
+    fun to f {loopers,unsafe_solvers,safe_solvers,subgoaler,cond_depth,
+              term_ord,excl_loopers} =
+      f loopers unsafe_solvers safe_solvers subgoaler cond_depth term_ord
+        excl_loopers
+  in
+    FunctionalRecordUpdate.makeUpdate7 (from, from', to)
+  end z
 
 (* Field updaters for [strategy_data]; every strategy change is expressed
    as a composition of these. *)
 fun upd_loopers f (s:strategy_data) : strategy_data =
-  {loopers=f (#loopers s), unsafe_solvers= #unsafe_solvers s,
-   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-   cond_depth= #cond_depth s, term_ord= #term_ord s,
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #loopers (f (#loopers s))) $$
 fun upd_unsafe_solvers f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers=f (#unsafe_solvers s),
-   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-   cond_depth= #cond_depth s, term_ord= #term_ord s,
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #unsafe_solvers (f (#unsafe_solvers s))) $$
 fun upd_safe_solvers f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-   safe_solvers=f (#safe_solvers s), subgoaler= #subgoaler s,
-   cond_depth= #cond_depth s, term_ord= #term_ord s,
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #safe_solvers (f (#safe_solvers s))) $$
 fun upd_subgoaler f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-   safe_solvers= #safe_solvers s, subgoaler=f (#subgoaler s),
-   cond_depth= #cond_depth s, term_ord= #term_ord s,
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #subgoaler (f (#subgoaler s))) $$
 fun upd_cond_depth f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-   cond_depth=f (#cond_depth s), term_ord= #term_ord s,
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #cond_depth (f (#cond_depth s))) $$
 fun upd_term_ord f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-   cond_depth= #cond_depth s, term_ord=f (#term_ord s),
-   excl_loopers= #excl_loopers s}
+  updstrategy s (Fld #term_ord (f (#term_ord s))) $$
 fun upd_excl_loopers f (s:strategy_data) : strategy_data =
-  {loopers= #loopers s, unsafe_solvers= #unsafe_solvers s,
-   safe_solvers= #safe_solvers s, subgoaler= #subgoaler s,
-   cond_depth= #cond_depth s, term_ord= #term_ord s,
-   excl_loopers=f (#excl_loopers s)}
+  updstrategy s (Fld #excl_loopers (f (#excl_loopers s))) $$
 
 fun fupdhistory f (SS s) =
-  SS{mk_rewrs= #mk_rewrs s, history=f (#history s),
-     initial_net= #initial_net s, dprocs= #dprocs s,
-     travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     strategy= #strategy s}
+  SS (updSS s (Fld #history (f (#history s))) $$)
 
 fun record_strategy event =
   fupdhistory (fn history => STRATEGY_EVENT event::history)
@@ -677,25 +690,58 @@ fun applied_arities tms =
     List.foldl visit (Binarymap.mkDict String.compare) tms
   end
 
+(* The key and the arity of a case constant, and the type it decides. *)
+type case_entry = {key : string, arity : int, ty : hol_type}
+
+(* The splitter asks [case_types] the same question of the TypeBase on
+   every looper round of every subgoal, and answering it costs a
+   [dest_thy_const] and a [strip_fun] per registered datatype.  Only the
+   goal-dependent half of the answer has to be recomputed, so the table
+   is cached and checked against the entries it was derived from, in the
+   manner of the datatype split cache in splitLib: a check against the
+   entries themselves cannot go stale, whatever changed the TypeBase,
+   and its cost is one pointer comparison per datatype. *)
+val case_entry_cache =
+  Sref.new (NONE : (TypeBasePure.tyinfo list * case_entry list) option)
+
+fun case_entries () =
+  let
+    val elts = TypeBase.elts ()
+    fun case_entry tyinfo =
+      let val head = TypeBasePure.case_const_of tyinfo
+      in
+        SOME {key=const_key head,
+              arity=length (#1 (strip_fun (type_of head))),
+              ty=TypeBasePure.ty_of tyinfo}
+      end handle HOL_ERR _ => NONE
+    fun same ([], []) = true
+      | same (tyi1::rest1, tyi2::rest2) =
+          Portable.pointer_eq (tyi1, tyi2) andalso same (rest1, rest2)
+      | same _ = false
+    fun derive () =
+      let val entries = List.mapPartial case_entry elts
+      in
+        Sref.update case_entry_cache (K (SOME (elts, entries)));
+        entries
+      end
+  in
+    case Sref.value case_entry_cache of
+        SOME (cached, entries) => if same (cached, elts) then entries
+                                  else derive ()
+      | NONE => derive ()
+  end
+
 fun case_types goal_terms =
   let
-    fun case_info tyinfo =
-      SOME (TypeBasePure.case_const_of tyinfo,
-            TypeBasePure.ty_of tyinfo)
-      handle HOL_ERR _ => NONE
-    val cases = List.mapPartial case_info (TypeBase.elts ())
     val arities = applied_arities goal_terms
-    fun occurs head =
-      let val arity = length (#1 (strip_fun (type_of head)))
-      in
-        case Binarymap.peek (arities, const_key head) of
-            SOME n => n >= arity
-          | NONE => false
-      end
-    fun add ((head, ty), result) =
-      if occurs head then ty :: result else result
+    fun occurs ({key,arity,...} : case_entry) =
+      case Binarymap.peek (arities, key) of
+          SOME n => n >= arity
+        | NONE => false
+    fun add (entry, result) =
+      if occurs entry then #ty entry :: result else result
   in
-    List.foldl add [] cases
+    List.foldl add [] (case_entries ())
   end
 
 fun splitter_looper ss (asms, goal) =
@@ -766,12 +812,12 @@ fun mk_tactic_solver (name,tac) =
  end
 
  fun add_weakener (wd as (rels,congs,dp)) (SS s) =
-   SS{mk_rewrs= #mk_rewrs s,
-      history=ADDWEAKENER wd :: #history s,
-      travrules=merge_travrules
-                  [#travrules s,wk_mk_travrules(rels,congs)],
-      initial_net= #initial_net s, dprocs= #dprocs s @ [dp],
-      limit= #limit s, excluded= #excluded s, strategy= #strategy s}
+   SS (updSS s
+         (Fld #history (ADDWEAKENER wd :: #history s))
+         (Fld #travrules
+            (merge_travrules [#travrules s,wk_mk_travrules(rels,congs)]))
+         (Fld #dprocs (#dprocs s @ [dp]))
+         $$)
 
 (* ----------------------------------------------------------------------
     add_relsimp : {trans,refl,weakenings,subsets} -> simpset -> simpset
@@ -1028,23 +1074,24 @@ fun mk_tactic_solver (name,tac) =
        |> upd_safe_solvers
             (fn ss => List.foldl add_solver ss (#safe_solvers ssf))
  in
-   SS{mk_rewrs=mk_rewrs, history=ADDFRAG f :: history,
-      initial_net=net, limit= #limit sset, dprocs=new_dprocs,
-      excluded= #excluded sset,
-      travrules=merge_travrules
-                  (travrules::
-                   add_congprocs congprocs
-                     (mk_travrules relations congs)::reltravs),
-      strategy=strategy}
+   SS (updSS sset
+         (Fld #mk_rewrs mk_rewrs)
+         (Fld #history (ADDFRAG f :: history))
+         (Fld #initial_net net)
+         (Fld #dprocs new_dprocs)
+         (Fld #travrules
+            (merge_travrules
+               (travrules::
+                add_congprocs congprocs
+                  (mk_travrules relations congs)::reltravs)))
+         (Fld #strategy strategy)
+         $$)
  end
 
 val mk_simpset = foldl (fn (f,ss) => ss ++ f) empty_ss
 
 fun set_mk_rewrs mk_rewrs (SS s) =
-  SS{mk_rewrs=mk_rewrs, history= #history s,
-     initial_net= #initial_net s, dprocs= #dprocs s,
-     travrules= #travrules s, limit= #limit s, excluded= #excluded s,
-     strategy= #strategy s}
+  SS (updSS s (Fld #mk_rewrs mk_rewrs) $$)
 
 fun build_from_history h0 =
     let
@@ -1062,10 +1109,7 @@ fun build_from_history h0 =
     end
 
 fun setexcluded e (SS s) =
-  SS{mk_rewrs= #mk_rewrs s, history= #history s,
-     initial_net= #initial_net s, dprocs= #dprocs s,
-     travrules= #travrules s, limit= #limit s, excluded=e,
-     strategy= #strategy s}
+  SS (updSS s (Fld #excluded e) $$)
 
 fun remove_ssfrags names (ss as SS{history,limit,excluded,...}) =
     let
@@ -1138,9 +1182,13 @@ fun clear_rules (SS s) =
        STRATEGY_EVENT (SET_UNSAFE_SOLVERS_EVENT (#unsafe_solvers strategy)),
        SET_MK_REWRS (#mk_rewrs s)]
   in
-    SS{mk_rewrs= #mk_rewrs s, history=history, initial_net=empty,
-       dprocs=[], travrules=EQ_tr, limit= #limit s,
-       excluded= #excluded s, strategy=upd_loopers (K []) strategy}
+    SS (updSS s
+          (Fld #history history)
+          (Fld #initial_net empty)
+          (Fld #dprocs [])
+          (Fld #travrules EQ_tr)
+          (Fld #strategy (upd_loopers (K []) strategy))
+          $$)
   end
 
 (*---------------------------------------------------------------------------*)
@@ -1275,7 +1323,27 @@ fun SF ssfrag =
                        | _ => ());
                     markerLib.FRAG nm)
 
-fun process_tags ss thl =
+(* A [Split] marker whose theorem cannot be turned into a split rule --
+   one with no database name to build a looper name from, or one that is
+   not shaped like a split rule at all -- drops the marker instead of
+   aborting.  [process_tags] is applied to the goal's own assumptions as
+   well as to a rule list (see [counted_psr] and the implication rebuild
+   in [GEN_GLOBAL_SIMP_TAC]), and there a marker-headed assumption is a
+   term the user is reasoning about rather than an instruction to the
+   simplifier; the tactics that scan assumptions are documented never to
+   fail.  Where the marker was written explicitly the drop is reported,
+   because silently ignoring a rule that was asked for is worse than a
+   warning. *)
+fun add_split_marker report th ss =
+    add_split (destSplit th) ss
+    handle HOL_ERR e =>
+      (if report then
+         HOL_WARNING "simpLib" "process_tags"
+                     ("Ignoring unusable Split rule: " ^ message_of e)
+       else ();
+       ss)
+
+fun process_tags0 {report} ss thl =
     let
       val (Congs,rst) = Lib.partition is_Cong thl
       val (Splits,rst) = Lib.partition is_Split rst
@@ -1303,7 +1371,7 @@ fun process_tags ss thl =
           val withFrags =
             List.foldl (fn (f,ss) => force_add ss f) withCongAc frags
           val withSplits =
-            List.foldl (fn (th,ss) => add_split (destSplit th) ss)
+            List.foldl (fn (th,ss) => add_split_marker report th ss)
                        withFrags Splits
           fun splitter_exclusion name =
             String.isPrefix "split " name orelse
@@ -1337,6 +1405,12 @@ fun process_tags ss thl =
           (invocation, rst)
         end
     end
+
+(* [process_tags] handles a rule list the user wrote; [process_asm_tags]
+   handles theorems taken from the goal's assumptions, where a marker is
+   an accident of the terms being reasoned about. *)
+fun process_tags ss thl = process_tags0 {report=true} ss thl
+fun process_asm_tags ss thl = process_tags0 {report=false} ss thl
 
 fun SIMP_CONV ss l tm =
   let val (ss', l') = process_tags ss l
@@ -1617,7 +1691,8 @@ fun counted_psr cfg ss prepared solver_context g =
         ASSUM_LIST
           (fn asms => fn popped_goal =>
              let
-               val (invocation_ss,reducer_context) = process_tags ss asms
+               val (invocation_ss,reducer_context) =
+                 process_asm_tags ss asms
                val simplified =
                  simp_rule_with_prepared_context
                    invocation_ss prepared reducer_context solver_context th
@@ -1703,18 +1778,46 @@ fun GEN_GLOBAL_SIMP_TAC mode
 
                val pop_head_mp = POP_ASSUM MP_TAC
 
-               fun find_rebuild nested outer count =
-                 case outer of
-                     [] => NONE
-                   | a::rest =>
+               (* The scan below asks its question of every suffix of the
+                  assumption list, and compiling the traversal state costs
+                  a pass over the invocation's rules.  Markers among the
+                  assumptions are the exception, so the suffixes almost
+                  always present the same simpset and get the same state
+                  back; the state is a function of that simpset and of the
+                  prepared rules alone, so one built for an earlier suffix
+                  serves a later one and the scan stays linear. *)
+               val traversal_cache = ref NONE
+               fun traversal_state invocation_ss =
+                 let
+                   fun build () =
+                     let
+                       val data =
+                         traversedata_for_ss_prepared invocation_ss prepared
+                     in
+                       traversal_cache := SOME (invocation_ss,data);
+                       data
+                     end
+                 in
+                   case !traversal_cache of
+                       SOME (cached_ss,data) =>
+                         if Portable.pointer_eq (cached_ss,invocation_ss)
+                         then data else build ()
+                     | NONE => build ()
+                 end
+
+               (* [outer] is a suffix of the assumption list and [assumed]
+                  the matching suffix of its theorems, so that the scan
+                  does not re-[ASSUME] the tail it is about to walk. *)
+               fun find_rebuild nested (outer,assumed) count =
+                 case (outer,assumed) of
+                     (a::rest, _::assumed_rest) =>
                        let
                          val target = mk_imp (a,nested)
                          val (invocation_ss,reducer_context) =
-                           process_tags ss (map ASSUME rest)
+                           process_asm_tags ss assumed_rest
                          val root_rewrite =
                            Traverse.ROOT_REWRITE_WITH_CONTEXT
-                             (traversedata_for_ss_prepared
-                                invocation_ss prepared)
+                             (traversal_state invocation_ss)
                        in
                          case SOME
                                 (root_rewrite
@@ -1724,8 +1827,10 @@ fun GEN_GLOBAL_SIMP_TAC mode
                                    | Conv.UNCHANGED => NONE of
                              SOME eq => SOME (count,target,eq)
                            | NONE =>
-                               find_rebuild target rest (count + 1)
+                               find_rebuild target (rest,assumed_rest)
+                                            (count + 1)
                        end
+                   | _ => NONE
 
                fun fixpoint k goal =
                  let
@@ -1773,7 +1878,7 @@ fun GEN_GLOBAL_SIMP_TAC mode
                  end
 
                and rebuild (goal as (asl,w)) =
-                 case find_rebuild w asl 1 of
+                 case find_rebuild w (asl,map ASSUME asl) 1 of
                      NONE => ALL_TAC goal
                    | SOME (count,target,eq) =>
                        let

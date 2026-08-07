@@ -25,7 +25,6 @@ sig
   val Split     : thm -> thm
   val destSplit : thm -> thm
 
-  val mk_marker_const : string -> term
   val genmktagged : thm -> string -> thm
   val gendest_tagged : term -> thm -> string option
   val genCong : thm -> thm -> thm

@@ -557,12 +557,11 @@ fun live_owned cs owned =
 
 fun persistent_name name = KernelSig.name_toString name
 
-fun normalise_rule_name name =
-  case String.fields (equal #"$") name of
-      [_, _] => name
-    | _ =>
-        (persistent_name (ThmSetData.toKName name)
-         handle HOL_ERR _ => name)
+(* Every theorem-set table spells its keys the same way, so the
+   normalisation is ThmSetData's, not ours: a bare or "Thy.Name" source
+   name becomes the "Thy$Name" key, and a name that can spell no key at
+   all -- which therefore denotes nothing here -- comes back unchanged. *)
+val normalise_rule_name = ThmSetData.toKString
 
 (* Reconstruction replays deltas recorded by ancestor theories.  A rule that
    is ill-formed for its declared kind makes add_rule/make_rule_decl raise, so

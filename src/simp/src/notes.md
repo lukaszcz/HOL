@@ -192,12 +192,20 @@ compatibility, but a simpset can override them with `set_cond_depth` and
 `set_term_ord`.  The corresponding fields in `Traverse.traverse_data` are
 options.
 
-At entry to `TRAVERSE` or `ROOT_REWRITE`, a present value is dynamically
-bound around the complete traversal with `Lib.with_flag`.  Restoration is
-exception-safe, and nested traversals restore the outer binding correctly.
-`NONE` leaves the global reference untouched.  Consequently old code which
-sets `Cond_rewr.stack_limit` still works for simpsets without an override,
-while different simpsets can select independent settings.
+At entry to `TRAVERSE` or `ROOT_REWRITE`, the traversal always binds the
+scoped overrides `Cond_rewr.stack_limit_override` and
+`Cond_rewr.term_ord_override` — `NONE` included — around the complete
+traversal.  Restoration is exception-safe, and nested traversals restore
+the outer binding correctly.  Binding `NONE` rather than leaving the
+override alone is what stops a nested traversal from inheriting the
+enclosing simpset's setting: without it a `SIMP_CONV bool_ss` reached from
+inside `AESOP_TAC` ran at that tactic's `cond_depth` of 40 instead of the
+default 4.  A traversal that configures nothing therefore falls back to the
+user-level globals `Cond_rewr.stack_limit` and `Cond_rewr.term_ord`, which
+the engine never writes, so old code which sets them still works for
+simpsets without an override, while different simpsets can select
+independent settings.  `COND_REWR_CONV` reads whichever value is in force
+through `Cond_rewr.cur_stack_limit` and `Cond_rewr.cur_term_ord`.
 
 The depth setting bounds nested conditional-rewrite attempts.  The term
 order controls the orientation guard for unbounded permutative rewrites;

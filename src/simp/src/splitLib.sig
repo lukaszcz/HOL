@@ -5,7 +5,9 @@ sig
   (* Analyse the supplied rules when the conversion is constructed. *)
   val SPLIT_CONV : thm list -> conv
 
-  (* Split the first assumption containing an assumption-rule key. *)
+  (* Split the first assumption an assumption rule applies to.  Naming a
+     rule's head constant does not make an assumption splittable, so a
+     later assumption is reached when an earlier one only mentions it. *)
   val SPLIT_ASM_TAC : thm list -> tactic
 
   (* Perform one split, preferring the conclusion to assumptions. *)

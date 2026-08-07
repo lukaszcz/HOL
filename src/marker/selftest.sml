@@ -27,6 +27,39 @@ val _ =
     if not (is_generic_simp_marker TRUTH) then OK ()
     else die "plain theorem was recognised as a generic simplifier marker"
 
+(* The theorem list handed to the recursive pass must be stripped of
+   Req0/ReqD just like the outer one.  simpLib re-enters through [recur]
+   after a looper fires; a marker surviving there is used as an ordinary
+   rewrite, and the marker$Req0 hypothesis it carries then lands in the
+   justification of the subgoal it rewrote, which fails the enclosing
+   proof. *)
+val _ =
+  let
+    val leaked = ref ([] : term list)
+    val calls = ref 0
+    fun marker_hyps th =
+        List.filter (fn t => #Thy (dest_thy_const t) = "marker"
+                             handle HOL_ERR _ => false)
+                    (hyp th)
+    fun start recur =
+        let
+          fun main thl =
+              (leaked := !leaked @ List.concat (map marker_hyps thl);
+               calls := !calls + 1;
+               if !calls >= 2 then ALL_TAC else recur main)
+        in
+          main
+        end
+  in
+    tprint "process_taclist_then_recur strips Req0 for recursion";
+    ignore (process_taclist_then_recur
+              {arg = [mk_Req0 TRUTH]} start ([], “p:bool”));
+    if !calls < 2 then die "the recursive pass never ran"
+    else if null (!leaked) then OK()
+    else die ("marker hypotheses reached the tactic: " ^
+              String.concatWith ", " (map term_to_string (!leaked)))
+  end
+
 fun testtac tac = #1 o VALID tac
 val goal_print = HOLPP.pp_to_string 75 goalStack.pp_goal
 

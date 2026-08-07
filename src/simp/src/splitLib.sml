@@ -19,7 +19,13 @@ type split_rule =
    asm : bool}
 
 type split_key = {head : term, asm : bool}
-type cmap = (split_key * split_rule list) list
+(* Bucketed by the head constant's name.  [same_const] identifies only
+   constants of the same name, so the name is a prefilter that never
+   hides a key: the keys sharing one name are still told apart by
+   [same_key] below.  Bucketing is what keeps a lookup from running
+   [Type.match_type] against every rule in the set, which the splitter
+   would otherwise pay for at every node of every term it scans. *)
+type cmap = (split_key * split_rule list) list Symtab.table
 
 fun rule_parts th =
   let
@@ -222,20 +228,24 @@ fun same_key ({head=h1,asm=a1} : split_key,
   a1 = a2 andalso same_const h1 h2 andalso
   same_type_shape (type_of h1, type_of h2)
 
-fun insert_rule rule [] =
-      [({head= #head rule, asm= #asm rule}, [rule])]
-  | insert_rule rule ((key, rules) :: rest) =
-      let
-        val rule_key = {head= #head rule, asm= #asm rule}
-      in
-        if same_key (rule_key, key) then
-          (key, rule :: rules) :: rest
-        else
-          (key, rules) :: insert_rule rule rest
-      end
+fun head_key head =
+  let val {Thy,Name,...} = dest_thy_const head
+  in persistent_name {Thy=Thy, Name=Name}
+  end
+
+fun insert_rule rule cmap =
+  let
+    val rule_key = {head= #head rule, asm= #asm rule}
+    fun insert [] = [(rule_key, [rule])]
+      | insert ((key, rules) :: rest) =
+          if same_key (rule_key, key) then (key, rule :: rules) :: rest
+          else (key, rules) :: insert rest
+  in
+    Symtab.map_default (head_key (#head rule), []) insert cmap
+  end
 
 fun cmap_of_split_rules rules =
-  foldl (fn (rule, cmap) => insert_rule rule cmap) [] rules
+  foldl (fn (rule, cmap) => insert_rule rule cmap) Symtab.empty rules
 
 fun cmap_of_rules thms = cmap_of_split_rules (map analyse_rule thms)
 
@@ -255,13 +265,14 @@ type split_pack =
 
 fun candidates want_asm cmap head =
   let
+    val head_type = type_of head
     fun add (({head=key_head,asm,...}, rules), acc) =
       if asm = want_asm andalso same_const key_head head andalso
-         can (Type.match_type (type_of key_head)) (type_of head)
+         can (Type.match_type (type_of key_head)) head_type
       then rules @ acc
       else acc
   in
-    foldr add [] cmap
+    foldr add [] (Symtab.lookup_list cmap (head_key head))
   end
 
 (* Reach argument [i] of an [n]-ary application: strip the later arguments
@@ -308,7 +319,13 @@ fun scan want_asm cmap tm =
           end
       end
 
-    fun walk scan_path enter_path binders node =
+    (* [packs] accumulates in reverse, so that a node neither appends its
+       own packs to those of its arguments nor the arguments' to each
+       other; the traversal order is restored by one reversal at the end.
+       The order matters: [first_success] tries the packs in the order
+       [sort] leaves them in, and [sort] settles a [pack_le] tie out of
+       the order it received the two packs in. *)
+    fun walk scan_path enter_path binders node packs =
       if is_abs node then
         let
           val (var, body) = dest_abs node
@@ -316,30 +333,31 @@ fun scan want_asm cmap tm =
           val info = {var=var, body_type=type_of body,
                       body_path=body_path, depth=length binders + 1}
         in
-          walk (0 :: scan_path) body_path (info :: binders) body
+          walk (0 :: scan_path) body_path (info :: binders) body packs
         end
       else
         let
           val (head, args) = strip_comb node
           val arity = length args
+          fun collect (rule, packs) =
+            case mk_pack scan_path enter_path binders node rule of
+                SOME pack => pack :: packs
+              | NONE => packs
           val here =
             if is_const head then
-              List.mapPartial
-                (mk_pack scan_path enter_path binders node)
-                (candidates want_asm cmap head)
-            else []
+              foldl collect packs (candidates want_asm cmap head)
+            else packs
           fun descend (arg, (i, packs)) =
             let
               val arg_path = enter_path ^ prefix_path arity i
             in
-              (i + 1,
-               packs @ walk (i :: scan_path) arg_path binders arg)
+              (i + 1, walk (i :: scan_path) arg_path binders arg packs)
             end
         in
           #2 (foldl descend (0, here) args)
         end
   in
-    walk [] "" [] tm
+    List.rev (walk [] "" [] tm [])
   end
 
 fun path_le paths = Lib.list_compare Int.compare paths <> GREATER
@@ -436,21 +454,35 @@ fun asm_eq cmap asm =
 fun split_asm_tac cmap =
   let
     val heads =
-      map (#head o #1)
-        (List.filter (fn ({asm,...}, _) => asm) cmap)
+      List.mapPartial
+        (fn ({head,asm}, _) => if asm then SOME head else NONE)
+        (List.concat (map #2 (Symtab.dest cmap)))
+
+    (* [contains_head] sees only the head constant, so an assumption it
+       admits may still yield no pack -- a partial application, or a rule
+       whose pattern or binder-body type test the occurrence fails.  Go
+       on to the next assumption in that case rather than failing the
+       tactic; committing to the first assumption merely mentioning a key
+       would hide a genuinely splittable one behind it.  The head test
+       still keeps the [asm_eq] scan off the assumptions that cannot
+       split, so the assumptions walked twice are only those that named a
+       key and then declined. *)
+    fun first_split [] =
+          raise ERR "SPLIT_ASM_TAC" "no assumption contains a split key"
+      | first_split (asm :: rest) =
+          if contains_head heads asm then
+            case Lib.total (asm_eq cmap) asm of
+                SOME eq => (asm, eq)
+              | NONE => first_split rest
+          else first_split rest
 
     fun tac (asms, goal) =
-      case List.find (contains_head heads) asms of
-          NONE =>
-            raise ERR "SPLIT_ASM_TAC" "no assumption contains a split key"
-        | SOME asm =>
-            let
-              val eq = asm_eq cmap asm
-              val cases = EQ_MP eq (ASSUME asm)
-            in
-              PRED_ASSUM (aconv asm) (K (STRIP_ASSUME_TAC cases))
-                (asms, goal)
-            end
+      let
+        val (asm, eq) = first_split asms
+        val cases = EQ_MP eq (ASSUME asm)
+      in
+        PRED_ASSUM (aconv asm) (K (STRIP_ASSUME_TAC cases)) (asms, goal)
+      end
   in
     tac
   end

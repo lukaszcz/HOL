@@ -432,14 +432,17 @@ fun arith_split_thms () = table_thms arith_split_data
 
 (* The key the retraction denotes, computed here because here is where
    the theory it was written in is the current one, and here is where
-   the user is present to be told that it denotes nothing.  A name
-   containing "$" is already a key: theory names cannot contain "$", so
-   only the kernel separator puts one there. *)
+   the user is present to be told that it denotes nothing.  The spelling
+   is ThmSetData's, shared with every other theorem-set table; it leaves
+   a name that can spell no key at all alone, and such a name is exactly
+   one without the kernel separator, so that is what we reject. *)
 fun removal_key function name =
-  if String.isSubstring "$" name then name
-  else
-    (persistent_name (ThmSetData.toKName name)
-     handle HOL_ERR _ => raise ERR function ("Malformed name: " ^ name))
+  let
+    val key = ThmSetData.toKString name
+  in
+    if String.isSubstring "$" key then key
+    else raise ERR function ("Malformed name: " ^ name)
+  end
 
 fun remove data apply_delta function name =
   let
