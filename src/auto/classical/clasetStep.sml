@@ -27,14 +27,11 @@ fun trace level message =
     Feedback.HOL_MESG ("Classical reasoner: " ^ message)
   else ()
 
-val normalize_conv = clasetNorm.normalize_conv
-
 fun normalize_term store tm = clasetMeta.norm store tm
 
 fun closing_equal store left right =
   aconv (normalize_term store left) (normalize_term store right)
 
-val normalize_thm = clasetNorm.normalize_thm
 val normalize_rule_thm = clasetNorm.normalize_rule_thm
 
 fun split_imp_prefix function_name arity tm =
@@ -1284,7 +1281,8 @@ fun plain_tactic_results kind action tactic (node, pos) =
 
 (* T1 affectedness is computed on the branch syntax, before beta/eta
    normalization.  Instantiate engine bindings structurally, but preserve
-   those redexes so this transition agrees with blastSearch.equalSubst. *)
+   those redexes so this transition agrees with
+   blastSearch.equalTrackedSubstMeasured. *)
 fun instantiate_without_reduction store tm =
   clasetMeta.instantiate store tm
 
@@ -1620,6 +1618,39 @@ fun prepare_unifying_contradiction node pos :
     {asl = asl, w = w, params = params, store = clasetGoal.store node}
   end
 
+(* Both entry points below reach the same closure once unification has
+   settled the negative and positive assumptions, so the node they emit
+   is built here: a change to the CONTR reconstruction or to the replay
+   action must not be able to reach only one of them.  [caller] is the
+   reporting function name, the sole difference between the two. *)
+fun contradiction_direct caller {w, major, positive, candidate, created}
+      (negative_pos, positive_pos) store =
+  let
+    fun validation [] =
+          let
+            val normalized_major = normalize_term store major
+            val normalized_positive = normalize_term store positive
+            val negative_thm = assumption_thm major normalized_major
+            val positive_thm =
+              assumption_thm candidate normalized_positive
+            val false_thm = MP (NOT_ELIM negative_thm) positive_thm
+          in
+            Drule.CONTR (normalize_term store w) false_thm
+          end
+      | validation _ =
+          raise mk_HOL_ERR "clasetStep" caller
+            "contradiction validation has children"
+  in
+    Direct
+      {kind = Contradiction (negative_pos, positive_pos),
+       consumed = SOME negative_pos, created = created,
+       eigenvariables = [], result = ([], validation),
+       children = SOME [],
+       action =
+         clasetReplay.contradiction_action (negative_pos, positive_pos),
+       closed = [], store = store}
+  end
+
 fun unifying_contradiction_in
       ({asl, w, params, store = initial_store} :
         unifying_contradiction_context)
@@ -1658,44 +1689,10 @@ fun unifying_contradiction_in
                              (positive, candidate)
                      in
                        Option.map
-                         (fn store =>
-                           let
-                             fun validation [] =
-                                   let
-                                     val normalized_major =
-                                       normalize_term store major
-                                     val normalized_positive =
-                                       normalize_term store positive
-                                     val negative_thm =
-                                       assumption_thm major normalized_major
-                                     val positive_thm =
-                                       assumption_thm candidate
-                                         normalized_positive
-                                     val false_thm =
-                                       MP (NOT_ELIM negative_thm)
-                                         positive_thm
-                                   in
-                                     Drule.CONTR (normalize_term store w)
-                                       false_thm
-                                   end
-                               | validation _ =
-                                   raise mk_HOL_ERR "clasetStep"
-                                     "unifying_contradiction_at"
-                                     "contradiction validation has children"
-                           in
-                             Direct
-                               {kind =
-                                  Contradiction
-                                    (negative_pos, positive_pos),
-                                consumed = SOME negative_pos,
-                                created = created, eigenvariables = [],
-                                result = ([], validation),
-                                children = SOME [],
-                                action =
-                                  clasetReplay.contradiction_action
-                                    (negative_pos, positive_pos),
-                                closed = [], store = store}
-                           end)
+                         (contradiction_direct "unifying_contradiction_at"
+                            {w = w, major = major, positive = positive,
+                             candidate = candidate, created = created}
+                            (negative_pos, positive_pos))
                          selected_store
                      end)
     end
@@ -1758,41 +1755,11 @@ fun unifying_contradiction_results (node, pos) =
                               remaining
 
                     fun make (positive_pos, candidate, store) =
-                      let
-                        fun validation [] =
-                              let
-                                val normalized_major =
-                                  normalize_term store major
-                                val normalized_positive =
-                                  normalize_term store positive
-                                val negative_thm =
-                                  assumption_thm major normalized_major
-                                val positive_thm =
-                                  assumption_thm candidate
-                                    normalized_positive
-                                val false_thm =
-                                  MP (NOT_ELIM negative_thm) positive_thm
-                              in
-                                Drule.CONTR (normalize_term store w)
-                                  false_thm
-                              end
-                          | validation _ =
-                              raise mk_HOL_ERR "clasetStep"
-                                "unifying_contradiction_results"
-                                "contradiction validation has children"
-                      in
-                        Direct
-                          {kind =
-                             Contradiction (major_pos, positive_pos),
-                           consumed = SOME major_pos, created = created,
-                           eigenvariables = [],
-                           result = ([], validation),
-                           children = SOME [],
-                           action =
-                             clasetReplay.contradiction_action
-                               (major_pos, positive_pos),
-                           closed = [], store = store}
-                      end
+                      contradiction_direct
+                        "unifying_contradiction_results"
+                        {w = w, major = major, positive = positive,
+                         candidate = candidate, created = created}
+                        (major_pos, positive_pos) store
                   in
                     map make stores
                   end

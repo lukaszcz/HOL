@@ -5,8 +5,8 @@ struct
    Branches and initialization map lines 93--99 and 1179--1184.
    Equality maps lines 692--790; closers map lines 797--815.
    Child md flags map lines 817--826.  Backtracking and pruning map
-   lines 829--874; addLit maps lines 876--894; the penalty and recursive
-   check map lines 897--915.
+   lines 829--874; addTrackedLit maps lines 876--894; the penalty and
+   recursive check map lines 897--915.
 
    The five prv clauses map lines 938--940, 941--1064, 1065--1072,
    1073--1174, and 1175--1176.  Within clause 2, safe expansion maps
@@ -196,33 +196,19 @@ fun isNot (Const (name, _) $ _) = name = not_name
 fun negOfGoal formula =
   if isGoal formula then negate (rand formula) else formula
 
-fun negOfPair (formula, md) = (negOfGoal formula, md)
-
 fun negOfTracked formula =
   withTrackedTerm (negOfGoal (trackedTerm formula)) formula
 
 fun negOfTrackedPair (formula, md) = (negOfTracked formula, md)
 
-fun negOfGoals pairs =
-  map (fn (safe, unsafe) => (map negOfPair safe, unsafe)) pairs
+(* Every search worker below comes as one [...With] body taking the
+   cooperative checkpoint, and any term primitive whose measured variant
+   polls, as parameters.  The plain entry point passes a checkpoint that
+   does nothing and the unpolled primitives; the measured one passes the
+   run's checkpoint and the polling primitives.  Keeping a single body
+   is what stops the two families from drifting apart. *)
 
-fun negOfTrackedGoals pairs =
-  map (fn (safe, unsafe) => (map negOfTrackedPair safe, unsafe)) pairs
-
-fun negOfGoalsMeasured checkpoint pairs =
-  let
-    fun negate_pairs [] = []
-      | negate_pairs (pair :: rest) =
-          (checkpoint (); negOfPair pair :: negate_pairs rest)
-    fun negate_levels [] = []
-      | negate_levels ((safe, unsafe) :: rest) =
-          (checkpoint ();
-           (negate_pairs safe, unsafe) :: negate_levels rest)
-  in
-    negate_levels pairs
-  end
-
-fun negOfTrackedGoalsMeasured checkpoint pairs =
+fun negOfTrackedGoalsWith checkpoint pairs =
   let
     fun negate_pairs [] = []
       | negate_pairs (pair :: rest) =
@@ -235,40 +221,12 @@ fun negOfTrackedGoalsMeasured checkpoint pairs =
     negate_levels pairs
   end
 
-fun hasSkolem (Skolem _) = true
-  | hasSkolem (Abs (_, body)) = hasSkolem body
-  | hasSkolem (left $ right) =
-      hasSkolem left orelse hasSkolem right
-  | hasSkolem _ = false
+fun negOfTrackedGoals pairs = negOfTrackedGoalsWith (fn () => ()) pairs
 
-fun joinMd _ [] = []
-  | joinMd md (formula :: formulas) =
-      (formula, hasSkolem formula orelse md) :: joinMd md formulas
+fun negOfTrackedGoalsMeasured checkpoint pairs =
+  negOfTrackedGoalsWith checkpoint pairs
 
-fun joinTrackedMd _ [] = []
-  | joinTrackedMd md (formula :: formulas) =
-      (formula, hasSkolem (trackedTerm formula) orelse md) ::
-      joinTrackedMd md formulas
-
-fun joinMdMeasured checkpoint md formulas =
-  let
-    fun has term =
-      (checkpoint ();
-       case term of
-           Skolem _ => true
-         | Abs (_, body) => has body
-         | left $ right => has left orelse has right
-         | _ => false)
-    fun join [] = []
-      | join (formula :: rest) =
-          (checkpoint ();
-           (formula, has formula orelse md) :: join rest)
-  in
-    join formulas
-  end
-
-
-fun joinTrackedMdMeasured checkpoint md formulas =
+fun joinTrackedMdWith checkpoint md formulas =
   let
     fun has term =
       (checkpoint ();
@@ -285,53 +243,19 @@ fun joinTrackedMdMeasured checkpoint md formulas =
     join formulas
   end
 
+fun joinTrackedMd md formulas =
+  joinTrackedMdWith (fn () => ()) md formulas
+
+fun joinTrackedMdMeasured checkpoint md formulas =
+  joinTrackedMdWith checkpoint md formulas
+
 fun initBranch (formulas, lim) =
   {pairs = [(map (fn formula => (formula, true)) formulas, [])],
    lits = [],
    vars = add_terms_vars (formulas, []),
    lim = lim}
 
-fun initBranchMeasured checkpoint (formulas, lim) =
-  let
-    fun pairs [] = []
-      | pairs (formula :: rest) =
-          (checkpoint (); (formula, true) :: pairs rest)
-    val vars = add_terms_vars_measured checkpoint (formulas, [])
-  in
-    {pairs = [(pairs formulas, [])], lits = [], vars = vars, lim = lim}
-  end
-
-fun trackedInitial fresh formulas =
-  let
-    fun make [] = ([], [])
-      | make (term :: rest) =
-          let
-            val (tracked, assumptions) = make rest
-          in
-            if isGoal term then
-              (Tracked {term = term, token = NONE} :: tracked,
-               assumptions)
-            else
-              let val token = fresh ()
-              in
-                (Tracked {term = term, token = SOME token} :: tracked,
-                 (token, term) :: assumptions)
-              end
-          end
-  in
-    make formulas
-  end
-
-fun initSearchBranch fresh (formulas, lim) : search_branch =
-  let
-    val (tracked, assumptions) = trackedInitial fresh formulas
-  in
-    {pairs = [(map (fn formula => (formula, true)) tracked, [])],
-     lits = [], vars = add_terms_vars (formulas, []), lim = lim,
-     assumptions = assumptions}
-  end
-
-fun initSearchBranchMeasured checkpoint fresh (formulas, lim) :
+fun initSearchBranchWith checkpoint addVars fresh (formulas, lim) :
       search_branch =
   let
     fun make [] = ([], [])
@@ -351,11 +275,18 @@ fun initSearchBranchMeasured checkpoint fresh (formulas, lim) :
               end
           end
     val (tracked, assumptions) = make formulas
-    val vars = add_terms_vars_measured checkpoint (formulas, [])
+    val vars = addVars (formulas, [])
   in
     {pairs = [(map (fn formula => (formula, true)) tracked, [])],
      lits = [], vars = vars, lim = lim, assumptions = assumptions}
   end
+
+fun initSearchBranch fresh arguments =
+  initSearchBranchWith (fn () => ()) add_terms_vars fresh arguments
+
+fun initSearchBranchMeasured checkpoint fresh arguments =
+  initSearchBranchWith checkpoint (add_terms_vars_measured checkpoint)
+    fresh arguments
 
 fun appendMeasured checkpoint [] right = right
   | appendMeasured checkpoint (item :: items) right =
@@ -370,25 +301,17 @@ fun lengthMeasured checkpoint values =
     count values 0
   end
 
+fun mapMeasured checkpoint transform values =
+  let
+    fun project [] = []
+      | project (item :: rest) =
+          (checkpoint (); transform item :: project rest)
+  in
+    project values
+  end
+
 fun mapFirstMeasured checkpoint values =
-  let
-    fun project [] = []
-      | project (pair :: rest) =
-          (checkpoint (); first pair :: project rest)
-  in
-    project values
-  end
-
-fun mapTrackedFirst values = map (trackedTerm o first) values
-
-fun mapTrackedFirstMeasured checkpoint values =
-  let
-    fun project [] = []
-      | project (pair :: rest) =
-          (checkpoint (); trackedTerm (first pair) :: project rest)
-  in
-    project values
-  end
+  mapMeasured checkpoint first values
 
 fun trackPremise fresh premise =
   let
@@ -407,30 +330,6 @@ fun trackPremise fresh premise =
               (Tracked {term = term, token = SOME token} :: tracked,
                (token, term) :: entries)
             end
-  in
-    track premise
-  end
-
-fun trackPremiseMeasured checkpoint fresh premise =
-  let
-    fun track [] = ([], [])
-      | track (term :: rest) =
-          let val _ = checkpoint ()
-          in
-            if isGoal term then
-              let val (tracked, entries) = track rest
-              in
-                (Tracked {term = term, token = NONE} :: tracked, entries)
-              end
-            else
-              let
-                val token = fresh ()
-                val (tracked, entries) = track rest
-              in
-                (Tracked {term = term, token = SOME token} :: tracked,
-                 (token, term) :: entries)
-              end
-          end
   in
     track premise
   end
@@ -492,42 +391,17 @@ fun childAssumptions function rule duplicate formula assumptions
             end
   end
 
-fun sameVars ([], []) = true
-  | sameVars (left :: lefts, right :: rights) =
-      left = right andalso sameVars (lefts, rights)
-  | sameVars _ = false
-
-fun sameVarsMeasured checkpoint ([], []) = true
-  | sameVarsMeasured checkpoint (left :: lefts, right :: rights) =
+fun sameVarsWith checkpoint ([], []) = true
+  | sameVarsWith checkpoint (left :: lefts, right :: rights) =
       (checkpoint ();
-       left = right andalso
-       sameVarsMeasured checkpoint (lefts, rights))
-  | sameVarsMeasured checkpoint _ = false
+       left = right andalso sameVarsWith checkpoint (lefts, rights))
+  | sameVarsWith checkpoint _ = false
 
 fun log4 n = if n < 4 then 0 else 1 + log4 (n div 4)
 
 fun instantiationPenalty n = 1 + log4 n
 
-fun match (Var _) _ = true
-  | match (Const (a, ats)) (Const (b, bts)) =
-      (a = goal_name andalso b = not_name) orelse
-      (a = not_name andalso b = goal_name) orelse
-      (a = b andalso matchs (ats, bts))
-  | match (Free a) (Free b) = a = b
-  | match (Bound i) (Bound j) = i = j
-  | match (Abs (_, left)) (Abs (_, right)) = match left right
-  | match (f $ x) (g $ y) = match f g andalso match x y
-  | match _ _ = false
-
-and matchs ([], []) = true
-  | matchs (left :: lefts, right :: rights) =
-      match left right andalso matchs (lefts, rights)
-  | matchs _ = false
-
-fun recursivePremise pattern premise =
-  List.exists (fn formula => match pattern formula) premise
-
-fun recursivePremiseMeasured checkpoint pattern premise =
+fun recursivePremiseWith checkpoint pattern premise =
   let
     fun matches (Var _) _ = (checkpoint (); true)
       | matches (Const (a, ats)) (Const (b, bts)) =
@@ -555,27 +429,17 @@ fun recursivePremiseMeasured checkpoint pattern premise =
     any premise
   end
 
+fun recursivePremise pattern premise =
+  recursivePremiseWith (fn () => ()) pattern premise
+
+fun recursivePremiseMeasured checkpoint pattern premise =
+  recursivePremiseWith checkpoint pattern premise
+
 fun requeueGamma (formula, md) remaining duplicate =
   if duplicate then remaining @ [(negOfGoal formula, md)]
   else remaining
 
-fun requeueGammaMeasured checkpoint (formula, md) remaining duplicate =
-  if not duplicate then remaining
-  else
-    let
-      fun append [] = [(negOfGoal formula, md)]
-        | append (item :: items) =
-            (checkpoint (); item :: append items)
-    in
-      append remaining
-    end
-
-fun requeueTrackedGamma (formula, md) remaining duplicate =
-  if duplicate then remaining @ [(negOfTracked formula, md)]
-  else remaining
-
-fun requeueTrackedGammaMeasured checkpoint
-      (formula, md) remaining duplicate =
+fun requeueTrackedGammaWith checkpoint (formula, md) remaining duplicate =
   if not duplicate then remaining
   else
     let
@@ -586,16 +450,22 @@ fun requeueTrackedGammaMeasured checkpoint
       append remaining
     end
 
+fun requeueTrackedGamma pair remaining duplicate =
+  requeueTrackedGammaWith (fn () => ()) pair remaining duplicate
+
+fun requeueTrackedGammaMeasured checkpoint pair remaining duplicate =
+  requeueTrackedGammaWith checkpoint pair remaining duplicate
+
 fun killsAllAlternatives limit prems =
   limit < 0 andalso not (null prems)
 
-fun mayUndo {other_rules, updated, old_vars, new_vars} =
-  other_rules orelse updated orelse sameVars (old_vars, new_vars)
-
-fun mayUndoMeasured checkpoint
-      {other_rules, updated, old_vars, new_vars} =
+fun mayUndoWith checkpoint {other_rules, updated, old_vars, new_vars} =
   other_rules orelse updated orelse
-  sameVarsMeasured checkpoint (old_vars, new_vars)
+  sameVarsWith checkpoint (old_vars, new_vars)
+
+fun mayUndo arguments = mayUndoWith (fn () => ()) arguments
+
+fun mayUndoMeasured checkpoint arguments = mayUndoWith checkpoint arguments
 
 (* The trail is newest first.  As in blast.ML:831--838, assignments in
    instantiations of next_vars count as clashes too. *)
@@ -612,94 +482,89 @@ fun clashVar [] _ = false
         clash (n, trail)
       end
 
-fun drop (0, values) = values
-  | drop (_, []) = []
-  | drop (n, _ :: values) = drop (n - 1, values)
+(* The measured clash test polls once per trail entry and once per next
+   variable.  It therefore cannot take clashVar's shortcut on an empty
+   next_vars without losing those checkpoints, so the clash test stays a
+   parameter of the shared pruning body below. *)
+fun clashVarMeasured checkpoint vars (n, trail) =
+  let
+    fun occurs_in _ [] = false
+      | occurs_in variable (next :: rest) =
+          (checkpoint ();
+           varOccurMeasured checkpoint variable (Var next) orelse
+           occurs_in variable rest)
+    fun clash (0, _) = false
+      | clash (_, []) = false
+      | clash (left, variable :: variables) =
+          (checkpoint ();
+           occurs_in variable vars orelse clash (left - 1, variables))
+  in
+    clash (n, trail)
+  end
 
-(* Pure projection of prune, exported so its clash/no-clash boundary can be
-   regression-tested without manufacturing exception values. *)
-fun prunePlan
+fun dropWith checkpoint (0, values) = values
+  | dropWith checkpoint (_, []) = []
+  | dropWith checkpoint (n, _ :: values) =
+      (checkpoint (); dropWith checkpoint (n - 1, values))
+
+fun prunePlanWith checkpoint clashes
       {branches, next_vars, trail_mark, trail, choices} =
   if branches = 1 then choices
   else
     let
       fun scan (last, _, _, []) = last
         | scan (last, mark, current, (oldmark, oldbrs) :: older) =
-            if oldbrs < branches then last
-            else if oldbrs > branches then
-              scan (last, mark, current, older)
-            else if clashVar next_vars (mark - oldmark, current) then
-              last
-            else
-              scan (older, oldmark,
-                    drop (mark - oldmark, current), older)
-    in
-      scan (choices, trail_mark, trail, choices)
-    end
-
-fun choiceMark (Choice (mark, branches, _)) = (mark, branches)
-
-fun prune state pruned (branches, next_vars, choices) =
-  if branches = 1 then choices
-  else
-    let
-      val marks = map choiceMark choices
-      val remaining =
-        prunePlan
-          {branches = branches,
-           next_vars = next_vars,
-           trail_mark = trailSize state,
-           trail = trailVars state,
-           choices = marks}
-      val removed = length choices - length remaining
-      val _ = pruned := !pruned + removed
-    in
-      drop (removed, choices)
-    end
-
-fun pruneMeasured checkpoint state pruned
-      (branches, next_vars, choices) =
-  if branches = 1 then choices
-  else
-    let
-      fun occurs_in _ [] = false
-        | occurs_in variable (next :: rest) =
-            (checkpoint ();
-             varOccurMeasured checkpoint variable (Var next) orelse
-             occurs_in variable rest)
-      fun clash _ (0, _) = false
-        | clash _ (_, []) = false
-        | clash vars (left, variable :: variables) =
-            (checkpoint ();
-             occurs_in variable vars orelse
-             clash vars (left - 1, variables))
-      fun drop_m (0, values) = values
-        | drop_m (_, []) = []
-        | drop_m (n, _ :: values) =
-            (checkpoint (); drop_m (n - 1, values))
-      fun marks [] = []
-        | marks (choice :: rest) =
-            (checkpoint (); choiceMark choice :: marks rest)
-      fun scan (last, _, _, []) = last
-        | scan (last, mark, current, (oldmark, oldbrs) :: older) =
             (checkpoint ();
              if oldbrs < branches then last
              else if oldbrs > branches then
                scan (last, mark, current, older)
-             else if clash next_vars (mark - oldmark, current) then last
+             else if clashes next_vars (mark - oldmark, current) then
+               last
              else
                scan (older, oldmark,
-                     drop_m (mark - oldmark, current), older))
+                     dropWith checkpoint (mark - oldmark, current),
+                     older))
+    in
+      scan (choices, trail_mark, trail, choices)
+    end
+
+(* Pure projection of prune, exported so its clash/no-clash boundary can be
+   regression-tested without manufacturing exception values. *)
+fun prunePlan arguments =
+  prunePlanWith (fn () => ()) clashVar arguments
+
+fun choiceMark (Choice (mark, branches, _)) = (mark, branches)
+
+fun pruneWith checkpoint clashes state pruned
+      (branches, next_vars, choices) =
+  if branches = 1 then choices
+  else
+    let
+      fun marks [] = []
+        | marks (choice :: rest) =
+            (checkpoint (); choiceMark choice :: marks rest)
       val all_marks = marks choices
       val remaining =
-        scan (all_marks, trailSize state, trailVars state, all_marks)
+        prunePlanWith checkpoint clashes
+          {branches = branches,
+           next_vars = next_vars,
+           trail_mark = trailSize state,
+           trail = trailVars state,
+           choices = all_marks}
       val removed =
         lengthMeasured checkpoint choices -
         lengthMeasured checkpoint remaining
       val _ = pruned := !pruned + removed
     in
-      drop_m (removed, choices)
+      dropWith checkpoint (removed, choices)
     end
+
+fun prune state pruned arguments =
+  pruneWith (fn () => ()) clashVar state pruned arguments
+
+fun pruneMeasured checkpoint state pruned arguments =
+  pruneWith checkpoint (clashVarMeasured checkpoint) state pruned
+    arguments
 
 fun nextVars ({vars, ...} : search_branch) = vars
 
@@ -709,118 +574,7 @@ fun remainingVars [] = []
 fun backtrack [] = raise PROVE
   | backtrack (Choice (_, _, jump) :: _) = raise jump
 
-fun addLit (Const (name, args) $ formula, lits) =
-      if name <> goal_name then
-        ins_term (Const (name, args) $ formula, lits)
-      else
-        let
-          fun bad (Const (head, _) $ other) =
-                head = goal_name orelse
-                (head = not_name andalso aconv (formula, other))
-            | bad _ = false
-          fun change [] = []
-            | change (lit :: rest) =
-                (case lit of
-                     Const (head, _) $ other =>
-                       if head = goal_name orelse head = not_name then
-                         if aconv (formula, other) then change rest
-                         else negate other :: change rest
-                       else lit :: change rest
-                   | _ => lit :: change rest)
-          val rest =
-            if List.exists bad lits then change lits else lits
-        in
-          Const (goal_name, args) $ formula :: rest
-        end
-  | addLit (formula, lits) = ins_term (formula, lits)
-
-fun addLitMeasured checkpoint (original, lits) =
-  let
-    fun ins term =
-      let
-        fun member [] = false
-          | member (other :: rest) =
-              (checkpoint ();
-               aconvMeasured checkpoint (term, other) orelse member rest)
-      in
-        if member lits then lits else term :: lits
-      end
-  in
-    case original of
-        Const (name, args) $ formula =>
-          if name <> goal_name then ins original
-          else
-            let
-              fun bad (Const (head, _) $ other) =
-                    head = goal_name orelse
-                    (head = not_name andalso
-                     aconvMeasured checkpoint (formula, other))
-                | bad _ = false
-              fun exists [] = false
-                | exists (lit :: rest) =
-                    (checkpoint (); bad lit orelse exists rest)
-              fun change [] = []
-                | change (lit :: rest) =
-                    (checkpoint ();
-                     case lit of
-                         Const (head, _) $ other =>
-                           if head = goal_name orelse head = not_name then
-                             if aconvMeasured checkpoint
-                                  (formula, other) then
-                               change rest
-                             else negate other :: change rest
-                           else lit :: change rest
-                       | _ => lit :: change rest)
-              val rest = if exists lits then change lits else lits
-            in
-              Const (goal_name, args) $ formula :: rest
-            end
-      | formula => ins formula
-  end
-
-fun addTrackedLit (original, lits) =
-  let
-    val original_term = trackedTerm original
-    fun ins formula =
-      if List.exists
-           (fn other => aconv (trackedTerm formula, trackedTerm other)) lits
-      then lits
-      else formula :: lits
-  in
-    case original_term of
-        Const (name, args) $ formula =>
-          if name <> goal_name then ins original
-          else
-            let
-              fun bad other =
-                case trackedTerm other of
-                    Const (head, _) $ other_term =>
-                      head = goal_name orelse
-                      (head = not_name andalso
-                       aconv (formula, other_term))
-                  | _ => false
-              fun change [] = []
-                | change (lit :: rest) =
-                    (case trackedTerm lit of
-                         Const (head, _) $ other =>
-                           if head = goal_name orelse head = not_name then
-                             if aconv (formula, other) then change rest
-                             else
-                               withTrackedTerm (negate other) lit ::
-                               change rest
-                           else lit :: change rest
-                       | _ => lit :: change rest)
-              val rest =
-                if List.exists bad lits then change lits else lits
-            in
-              Tracked
-                {term = Const (goal_name, args) $ formula,
-                 token = trackedToken original} :: rest
-            end
-      | _ => ins original
-  end
-
-fun addTrackedLitMeasured checkpoint (original, lits) =
+fun addTrackedLitWith checkpoint equal (original, lits) =
   let
     val original_term = trackedTerm original
     fun ins formula =
@@ -828,8 +582,7 @@ fun addTrackedLitMeasured checkpoint (original, lits) =
         fun member [] = false
           | member (other :: rest) =
               (checkpoint ();
-               aconvMeasured checkpoint
-                 (trackedTerm formula, trackedTerm other) orelse
+               equal (trackedTerm formula, trackedTerm other) orelse
                member rest)
       in
         if member lits then lits else formula :: lits
@@ -844,8 +597,7 @@ fun addTrackedLitMeasured checkpoint (original, lits) =
                 case trackedTerm lit of
                     Const (head, _) $ other =>
                       head = goal_name orelse
-                      (head = not_name andalso
-                       aconvMeasured checkpoint (formula, other))
+                      (head = not_name andalso equal (formula, other))
                   | _ => false
               fun exists [] = false
                 | exists (lit :: rest) =
@@ -856,9 +608,7 @@ fun addTrackedLitMeasured checkpoint (original, lits) =
                      case trackedTerm lit of
                          Const (head, _) $ other =>
                            if head = goal_name orelse head = not_name then
-                             if aconvMeasured checkpoint
-                                  (formula, other) then
-                               change rest
+                             if equal (formula, other) then change rest
                              else
                                withTrackedTerm (negate other) lit ::
                                change rest
@@ -873,23 +623,13 @@ fun addTrackedLitMeasured checkpoint (original, lits) =
       | _ => ins original
   end
 
-fun substAtomic (old, replacement) term =
-  let
-    fun subst (Var variable) =
-          (case !variable of
-               SOME value => subst value
-             | NONE =>
-                 if aconv (Var variable, old) then replacement
-                 else Var variable)
-      | subst (Abs (name, body)) = Abs (name, subst body)
-      | subst (left $ right) = subst left $ subst right
-      | subst value =
-          if aconv (value, old) then replacement else value
-  in
-    subst term
-  end
+fun addTrackedLit arguments =
+  addTrackedLitWith (fn () => ()) aconv arguments
 
-fun substAtomicMeasured checkpoint (old, replacement) term =
+fun addTrackedLitMeasured checkpoint arguments =
+  addTrackedLitWith checkpoint (aconvMeasured checkpoint) arguments
+
+fun substAtomicWith checkpoint (old, replacement) term =
   let
     fun subst value =
       (checkpoint ();
@@ -907,60 +647,13 @@ fun substAtomicMeasured checkpoint (old, replacement) term =
     subst term
   end
 
-fun etaContractAtom original =
-  case original of
-      Abs (name, body) =>
-        (case etaContract2 body of
-             f $ Bound 0 =>
-               if List.exists (fn i => i = 0) (loose_bnos f) then
-                 original
-               else etaContractAtom (incr_boundvars ~1 f)
-           | _ => original)
-    | _ => original
+fun substAtomic pair term = substAtomicWith (fn () => ()) pair term
 
-and etaContract2 (left $ right) =
-      left $ etaContractAtom right
-  | etaContract2 term = etaContractAtom term
-
-fun substOccur target =
-  let
-    val allowed =
-      case target of
-          Skolem (_, variables) => variables
-        | _ => []
-    fun occursEqual value =
-      aconv (target, value) orelse occurs value
-    and occurs (Var variable) =
-          (case !variable of
-               SOME value => occursEqual value
-             | NONE => not (mem_var (variable, allowed)))
-      | occurs (Abs (_, body)) = occursEqual body
-      | occurs (left $ right) =
-          occursEqual right orelse occursEqual left
-      | occurs _ = false
-  in
-    occursEqual
-  end
-
-fun destEq (Const (name, _) $ left $ right) =
-      if name = equality_name then
-        (etaContractAtom left, etaContractAtom right)
-      else raise DEST_EQ
-  | destEq _ = raise DEST_EQ
-
-fun checked (old, replacement) =
-  if substOccur old replacement then raise DEST_EQ
-  else (old, replacement)
-
-fun orientGoal (left, right) =
-  case (left, right) of
-      (Skolem _, _) => checked (left, right)
-    | (_, Skolem _) => checked (right, left)
-    | (Free _, _) => checked (left, right)
-    | (_, Free _) => checked (right, left)
-    | _ => raise DEST_EQ
-
-fun orientGoalMeasured checkpoint (left0, right0) =
+(* Eta-contraction, the occurs check and the Skolem/Free orientation of
+   blast.ML:692--790, as one body.  loose and decrement are the local
+   equivalents of loose_bnos and incr_boundvars ~1; they exist so the
+   measured run can poll inside them. *)
+fun destEqWith checkpoint equal term =
   let
     fun member_zero [] = false
       | member_zero (i :: rest) =
@@ -1019,186 +712,57 @@ fun orientGoalMeasured checkpoint (left0, right0) =
           | member variable (item :: items) =
               (checkpoint ();
                variable = item orelse member variable items)
-        fun equal value =
-          aconvMeasured checkpoint (target, value) orelse visit value
+        fun occursEqual value =
+          equal (target, value) orelse visit value
         and visit value =
           (checkpoint ();
            case value of
                Var variable =>
                  (case !variable of
-                      SOME assigned => equal assigned
+                      SOME assigned => occursEqual assigned
                     | NONE => not (member variable allowed))
-             | Abs (_, body) => equal body
-             | left $ right => equal right orelse equal left
+             | Abs (_, body) => occursEqual body
+             | left $ right => occursEqual right orelse occursEqual left
              | _ => false)
       in
-        equal
+        occursEqual
       end
 
-    fun checked_measured (old, replacement) =
+    fun checked (old, replacement) =
       if occurs old replacement then raise DEST_EQ
       else (old, replacement)
-    val left = contract left0
-    val right = contract right0
+
+    fun orient (left, right) =
+      case (left, right) of
+          (Skolem _, _) => checked (left, right)
+        | (_, Skolem _) => checked (right, left)
+        | (Free _, _) => checked (left, right)
+        | (_, Free _) => checked (right, left)
+        | _ => raise DEST_EQ
   in
-    case (left, right) of
-        (Skolem _, _) => checked_measured (left, right)
-      | (_, Skolem _) => checked_measured (right, left)
-      | (Free _, _) => checked_measured (left, right)
-      | (_, Free _) => checked_measured (right, left)
+    checkpoint ();
+    case term of
+        Const (name, _) $ left0 $ right0 =>
+          if name = equality_name then
+            let
+              val left = contract left0
+              val right = contract right0
+            in
+              orient (left, right)
+            end
+          else raise DEST_EQ
       | _ => raise DEST_EQ
   end
 
-fun destEqMeasured checkpoint (Const (name, _) $ left $ right) =
-      (checkpoint ();
-       if name = equality_name then
-         orientGoalMeasured checkpoint (left, right)
-       else raise DEST_EQ)
-  | destEqMeasured checkpoint _ = (checkpoint (); raise DEST_EQ)
-
-fun equalSubst
-      (formula,
-       {pairs, lits, vars, lim} : branch) =
-  let
-    val (old, replacement) = orientGoal (destEq formula)
-    val subst = substAtomic (old, replacement)
-    fun subForm ((item, md), (changed, unchanged)) =
-      let val result = subst item
-      in
-        if aconv (result, item) then
-          (changed, (item, md) :: unchanged)
-        else ((result, md) :: changed, unchanged)
-      end
-    fun subFrame ((safe, unsafe), (changed, frames)) =
-      let
-        val (changed', safe') =
-          List.foldr subForm (changed, []) safe
-        val (changed'', unsafe') =
-          List.foldr subForm (changed', []) unsafe
-      in
-        (changed'', (safe', unsafe') :: frames)
-      end
-    fun subLit (lit, (changed, unchanged)) =
-      let val result = subst lit
-      in
-        if aconv (result, lit) then
-          (changed, result :: unchanged)
-        else ((result, true) :: changed, unchanged)
-      end
-    val (changed, lits') = List.foldr subLit ([], []) lits
-    val (changed', pairs') =
-      List.foldr subFrame (changed, []) pairs
-  in
-    {pairs = (changed', []) :: pairs',
-     lits = lits', vars = vars, lim = lim}
-  end
-
-fun equalSubstMeasured checkpoint
-      (formula,
-       {pairs, lits, vars, lim} : branch) =
-  let
-    val (old, replacement) = destEqMeasured checkpoint formula
-    val subst = substAtomicMeasured checkpoint (old, replacement)
-    fun subForm ((item, md), (changed, unchanged)) =
-      let
-        val _ = checkpoint ()
-        val result = subst item
-      in
-        if aconvMeasured checkpoint (result, item) then
-          (changed, (item, md) :: unchanged)
-        else ((result, md) :: changed, unchanged)
-      end
-    fun subFrame ((safe, unsafe), (changed, frames)) =
-      let
-        val _ = checkpoint ()
-        val (changed', safe') =
-          List.foldr subForm (changed, []) safe
-        val (changed'', unsafe') =
-          List.foldr subForm (changed', []) unsafe
-      in
-        (changed'', (safe', unsafe') :: frames)
-      end
-    fun subLit (lit, (changed, unchanged)) =
-      let
-        val _ = checkpoint ()
-        val result = subst lit
-      in
-        if aconvMeasured checkpoint (result, lit) then
-          (changed, result :: unchanged)
-        else ((result, true) :: changed, unchanged)
-      end
-    val (changed, lits') = List.foldr subLit ([], []) lits
-    val (changed', pairs') =
-      List.foldr subFrame (changed, []) pairs
-    val _ = checkpoint ()
-  in
-    {pairs = (changed', []) :: pairs',
-     lits = lits', vars = vars, lim = lim}
-  end
-
-fun equalTrackedSubst
-      (formula,
-       {pairs, lits, vars, lim, assumptions} : search_branch) =
-  let
-    val (old, replacement) = orientGoal (destEq (trackedTerm formula))
-    val equality = trackedPosition "equalTrackedSubst" formula assumptions
-    val token = valOf (trackedToken formula)
-    val subst = substAtomic (old, replacement)
-    fun substitute tracked =
-      withTrackedTerm (subst (trackedTerm tracked)) tracked
-    fun subForm ((item, md), (changed, unchanged)) =
-      let val result = substitute item
-      in
-        if aconv (trackedTerm result, trackedTerm item) then
-          (changed, (item, md) :: unchanged)
-        else ((result, md) :: changed, unchanged)
-      end
-    fun subFrame ((safe, unsafe), (changed, frames)) =
-      let
-        val (changed', safe') = List.foldr subForm (changed, []) safe
-        val (changed'', unsafe') =
-          List.foldr subForm (changed', []) unsafe
-      in
-        (changed'', (safe', unsafe') :: frames)
-      end
-    fun subLit (lit, (changed, unchanged)) =
-      let val result = substitute lit
-      in
-        if aconv (trackedTerm result, trackedTerm lit) then
-          (changed, result :: unchanged)
-        else ((result, true) :: changed, unchanged)
-      end
-    fun subEntry
-          ((entry as (_, term)), (mask, changed, unchanged)) =
-      let val result = subst term
-      in
-        if aconv (result, term) then
-          (false :: mask, changed, entry :: unchanged)
-        else
-          (true :: mask, (#1 entry, result) :: changed, unchanged)
-      end
-    val remaining = deleteToken "equalTrackedSubst" token assumptions
-    val (changed_mask, changed_assumptions, unchanged_assumptions) =
-      List.foldr subEntry ([], [], []) remaining
-    val (changed, lits') = List.foldr subLit ([], []) lits
-    val (changed', pairs') = List.foldr subFrame (changed, []) pairs
-  in
-    (equality, changed_mask,
-     {pairs = (changed', []) :: pairs', lits = lits', vars = vars,
-      lim = lim,
-      assumptions = changed_assumptions @ unchanged_assumptions})
-  end
-
-fun equalTrackedSubstMeasured checkpoint
+fun equalTrackedSubstWith checkpoint equal function
       (formula,
        {pairs, lits, vars, lim, assumptions} : search_branch) =
   let
     val (old, replacement) =
-      destEqMeasured checkpoint (trackedTerm formula)
-    val equality =
-      trackedPosition "equalTrackedSubstMeasured" formula assumptions
+      destEqWith checkpoint equal (trackedTerm formula)
+    val equality = trackedPosition function formula assumptions
     val token = valOf (trackedToken formula)
-    val subst = substAtomicMeasured checkpoint (old, replacement)
+    val subst = substAtomicWith checkpoint (old, replacement)
     (* The model mirrors work already polled while traversing the search
        queues.  Keep this bounded positional bookkeeping pure so provenance
        does not perturb the established measured checkpoint counters. *)
@@ -1210,8 +774,7 @@ fun equalTrackedSubstMeasured checkpoint
         val _ = checkpoint ()
         val result = substitute item
       in
-        if aconvMeasured checkpoint
-             (trackedTerm result, trackedTerm item) then
+        if equal (trackedTerm result, trackedTerm item) then
           (changed, (item, md) :: unchanged)
         else ((result, md) :: changed, unchanged)
       end
@@ -1229,8 +792,7 @@ fun equalTrackedSubstMeasured checkpoint
         val _ = checkpoint ()
         val result = substitute lit
       in
-        if aconvMeasured checkpoint
-             (trackedTerm result, trackedTerm lit) then
+        if equal (trackedTerm result, trackedTerm lit) then
           (changed, result :: unchanged)
         else ((result, true) :: changed, unchanged)
       end
@@ -1243,8 +805,7 @@ fun equalTrackedSubstMeasured checkpoint
         else
           (true :: mask, (#1 entry, result) :: changed, unchanged)
       end
-    val remaining =
-      deleteToken "equalTrackedSubstMeasured" token assumptions
+    val remaining = deleteToken function token assumptions
     val (changed_mask, changed_assumptions, unchanged_assumptions) =
       List.foldr subEntry ([], [], []) remaining
     val (changed, lits') = List.foldr subLit ([], []) lits
@@ -1256,6 +817,13 @@ fun equalTrackedSubstMeasured checkpoint
       lim = lim,
       assumptions = changed_assumptions @ unchanged_assumptions})
   end
+
+fun equalTrackedSubst arguments =
+  equalTrackedSubstWith (fn () => ()) aconv "equalTrackedSubst" arguments
+
+fun equalTrackedSubstMeasured checkpoint arguments =
+  equalTrackedSubstWith checkpoint (aconvMeasured checkpoint)
+    "equalTrackedSubstMeasured" arguments
 
 fun closeStep function assumptions (formula, literal) =
   let
@@ -1278,13 +846,13 @@ fun closeStep function assumptions (formula, literal) =
         "a successful literal close has no supported polarity"
   end
 
-fun tryTrackedClose state assumptions (formula, literal) =
+fun tryTrackedCloseWith unifier function assumptions (formula, literal) =
   let
     val formula_term = trackedTerm formula
     val literal_term = trackedTerm literal
     fun close (left, right) =
-      if unify state ([], left, right) then
-        SOME (closeStep "tryTrackedClose" assumptions (formula, literal))
+      if unifier ([], left, right) then
+        SOME (closeStep function assumptions (formula, literal))
       else NONE
   in
     if isGoal formula_term then
@@ -1297,47 +865,31 @@ fun tryTrackedClose state assumptions (formula, literal) =
       close (formula_term, rand literal_term)
     else NONE
   end
+
+fun tryTrackedClose state assumptions arguments =
+  tryTrackedCloseWith (unify state) "tryTrackedClose" assumptions
+    arguments
 
 fun tryTrackedCloseMeasured cleanup checkpoint state assumptions
-      (formula, literal) =
-  let
-    val formula_term = trackedTerm formula
-    val literal_term = trackedTerm literal
-    fun close (left, right) =
-      if unifyMeasuredWith cleanup checkpoint state ([], left, right) then
-        SOME
-          (closeStep "tryTrackedCloseMeasured" assumptions
-            (formula, literal))
-      else NONE
-  in
-    if isGoal formula_term then
-      close (rand formula_term, literal_term)
-    else if isGoal literal_term then
-      close (formula_term, rand literal_term)
-    else if isNot formula_term then
-      close (rand formula_term, literal_term)
-    else if isNot literal_term then
-      close (formula_term, rand literal_term)
-    else NONE
-  end
+      arguments =
+  tryTrackedCloseWith (unifyMeasuredWith cleanup checkpoint state)
+    "tryTrackedCloseMeasured" assumptions arguments
 
-fun foldPremVars prems vars =
-  List.foldr
-    (fn (premise, accumulated) =>
-       add_terms_vars (premise, accumulated))
-    vars prems
-
-fun foldPremVarsMeasured checkpoint prems vars =
+fun foldPremVarsWith checkpoint addVars prems vars =
   let
     fun fold [] accumulated = accumulated
       | fold (premise :: rest) accumulated =
-          (checkpoint ();
-           fold rest
-             (add_terms_vars_measured checkpoint
-                (premise, accumulated)))
+          (checkpoint (); fold rest (addVars (premise, accumulated)))
   in
     fold (rev prems) vars
   end
+
+fun foldPremVars prems vars =
+  foldPremVarsWith (fn () => ()) add_terms_vars prems vars
+
+fun foldPremVarsMeasured checkpoint prems vars =
+  foldPremVarsWith checkpoint (add_terms_vars_measured checkpoint)
+    prems vars
 
 fun termString term =
   case term of
@@ -2502,8 +2054,6 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
 fun searchTerms claset depth formulas cont =
   #result
     (runTerms Restore Off claset depth (FormulaTerms formulas) cont)
-
-fun goalTerms goal = map first (blastRule.initialBranch goal)
 
 fun searchGoalMeasured options claset depth goal cont =
   runTerms AbandonOwned (On options) claset depth (GoalTerms goal) cont

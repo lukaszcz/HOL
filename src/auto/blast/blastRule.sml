@@ -133,7 +133,7 @@ val blast_trace = ref 0
 val _ = Feedback.register_trace ("blast", blast_trace, 7)
 
 (* [const_name] is the identity stored in blast terms and decoded by
-   [query_skeleton], so it is also the stable cache key. *)
+   [query_skeleton_measured], so it is also the stable cache key. *)
 val generic_cache :
   (string, hol_type * hol_type list) Redblackmap.dict ref =
   ref (Redblackmap.mkDict String.compare)
@@ -165,39 +165,6 @@ fun generic_info {Thy, Name} =
             info
           end
   end
-
-fun encode_type rigid type_map ty =
-  if Type.is_vartype ty then
-    if rigid then Free (Type.dest_vartype ty)
-    else
-      (case Redblackmap.peek (!type_map, ty) of
-           SOME value => value
-         | NONE =>
-             let
-               val value = Var (ref NONE)
-             in
-               type_map := Redblackmap.insert (!type_map, ty, value);
-               value
-             end)
-  else
-    let
-      val {Thy, Tyop, Args} = Type.dest_thy_type ty
-      val head = Const (const_name {Thy = Thy, Name = Tyop}, [])
-    in
-      list_comb (head, map (encode_type rigid type_map) Args)
-    end
-
-fun const_tyargs rigid type_map hol_const =
-  let
-    val {Thy, Name, Ty} = dest_thy_const hol_const
-    val (generic, generic_vars) = generic_info {Thy = Thy, Name = Name}
-    val subst = Type.match_type generic Ty
-  in
-    map (encode_type rigid type_map o Type.type_subst subst)
-      generic_vars
-  end
-
-fun member_term tm = List.exists (fn other => Term.aconv tm other)
 
 fun member_term_measured checkpoint tm =
   let
@@ -366,17 +333,7 @@ fun fromGoalTerm tm =
   translator
     {rigid_types = true, goal_frees = true, rule_vars = []} tm
 
-fun initialBranch (assumptions, conclusion) =
-  let
-    val from =
-      translator
-        {rigid_types = true, goal_frees = true, rule_vars = []}
-  in
-    map (fn formula => (formula, true))
-      (mkGoal (from conclusion) :: map from assumptions)
-  end
-
-fun initialBranchMeasured checkpoint (assumptions, conclusion) =
+fun initialBranchWith checkpoint (assumptions, conclusion) =
   let
     val from =
       translatorMeasured checkpoint
@@ -390,6 +347,11 @@ fun initialBranchMeasured checkpoint (assumptions, conclusion) =
     (mkGoal conclusion', true) :: translate assumptions
   end
 
+fun initialBranch goal = initialBranchWith (fn () => ()) goal
+
+fun initialBranchMeasured checkpoint goal =
+  initialBranchWith checkpoint goal
+
 fun proto_imp term =
   case strip_comb term of
       (Const (name, _), [left, right]) =>
@@ -397,13 +359,6 @@ fun proto_imp term =
         then SOME (left, right)
         else NONE
     | _ => NONE
-
-fun strip_imp term =
-  case proto_imp term of
-      SOME (premise, rest) =>
-        let val (premises, conclusion) = strip_imp rest
-        in (premise :: premises, conclusion) end
-    | NONE => ([], term)
 
 fun dest_forall_body term =
   case strip_comb term of
@@ -413,28 +368,11 @@ fun dest_forall_body term =
         else NONE
     | _ => NONE
 
-fun apply_predicate predicate argument =
-  case predicate of
-      Abs (_, body) => subst_bound (argument, body)
-    | _ => predicate $ argument
-
 fun apply_predicate_measured checkpoint predicate argument =
   (checkpoint ();
    case predicate of
        Abs (_, body) => subst_bound_measured checkpoint (argument, body)
      | _ => predicate $ argument)
-
-fun skoPrem cache vars term =
-  case dest_forall_body term of
-      SOME predicate =>
-        skoPrem cache vars
-          (apply_predicate predicate
-             (Skolem (freshName cache "S", vars)))
-    | NONE => term
-
-fun convertPrem term =
-  let val (hypotheses, conclusion) = strip_imp term
-  in mkGoal conclusion :: hypotheses end
 
 fun skoPremMeasured checkpoint cache vars term =
   (checkpoint ();
@@ -473,49 +411,6 @@ fun is_false_var term =
              SOME (Const (name, _)) => name = false_name
            | _ => false)
     | _ => false
-
-fun delete_concl_from _ [] = raise ElimBadPrem
-  | delete_concl_from assumption_index (formula :: formulas) =
-      (case formula of
-           Const (name, _) $ value =>
-             if (name = goal_name orelse
-                 name = const_name {Thy = "bool", Name = "~"}) andalso
-                is_false_var value
-             then
-               (formulas,
-                if name = goal_name then NONE else SOME assumption_index)
-             else
-               let
-                 val next =
-                   if name = goal_name then assumption_index
-                   else assumption_index + 1
-                 val (remaining, hidden) =
-                   delete_concl_from next formulas
-               in
-                 (formula :: remaining, hidden)
-               end
-         | _ =>
-             let
-               val (remaining, hidden) =
-                 delete_concl_from (assumption_index + 1) formulas
-             in
-               (formula :: remaining, hidden)
-             end)
-
-fun delete_concl formulas = delete_concl_from 0 formulas
-
-fun canonical_data is_elim theorem =
-  let
-    val kind = if is_elim then clasetRules.Elim else clasetRules.Intro
-    val form = clasetRules.canonical_form_of kind theorem
-    val (outer, _) = strip_forall (concl (#thm form))
-    val from =
-      translator
-        {rigid_types = false, goal_frees = false, rule_vars = outer}
-  in
-    {outer = outer, hol_conclusion = #concl form,
-     premises = map from (#prems form), conclusion = from (#concl form)}
-  end
 
 fun canonical_dataMeasured checkpoint is_elim theorem =
   let
@@ -582,45 +477,6 @@ fun bad_conclusion_message theorem =
   "Ignoring ill-formed elimination rule:\n" ^
   "conclusion should be a variable\n" ^ Parse.thm_to_string theorem
 
-fun convertElim cache vars theorem =
-  let
-    val _ = countConversion cache
-    val data = canonical_data true theorem
-    val outer = #outer data
-    val hol_conclusion = #hol_conclusion data
-    val premises = #premises data
-    val conclusion = #conclusion data
-    val formula_variable =
-      is_var hol_conclusion andalso
-      type_of hol_conclusion = bool andalso
-      member_term hol_conclusion outer
-    val _ = if formula_variable then () else raise ElimBadConcl
-    val false_var =
-      case conclusion of
-          Var variable => variable
-        | _ => raise ElimBadConcl
-    val (major, minors) =
-      case premises of
-          premise :: rest => (premise, rest)
-        | [] => raise ElimBadConcl
-    val _ = false_var := SOME (Const (false_name, []))
-    fun one premise =
-      delete_concl (convertPrem (skoPrem cache vars premise))
-    val converted = map one minors
-  in
-    SOME
-      {origin = Stored {is_elim = true, theorem = theorem},
-       pattern = major,
-       premises = map #1 converted,
-       hidden_assumptions = map #2 converted}
-  end
-  handle ElimBadPrem => (weak_warning theorem; NONE)
-       | ElimBadConcl =>
-           (if Feedback.current_trace "blast" >= 1 then
-              Feedback.HOL_MESG (bad_conclusion_message theorem)
-            else ();
-            NONE)
-
 fun delete_concl_measured_from checkpoint _ [] =
       (checkpoint (); raise ElimBadPrem)
   | delete_concl_measured_from checkpoint assumption_index
@@ -656,7 +512,7 @@ fun delete_concl_measured_from checkpoint _ [] =
 fun delete_concl_measured checkpoint formulas =
   delete_concl_measured_from checkpoint 0 formulas
 
-fun convertElimMeasured checkpoint cache vars theorem =
+fun convertElimWith checkpoint cache vars theorem =
   let
     val _ = countConversion cache
     val data = canonical_dataMeasured checkpoint true theorem
@@ -705,10 +561,11 @@ fun convertElimMeasured checkpoint cache vars theorem =
             else ();
             NONE)
 
-fun same_vars ([], []) = true
-  | same_vars (left :: lefts, right :: rights) =
-      left = right andalso same_vars (lefts, rights)
-  | same_vars _ = false
+fun convertElim cache vars theorem =
+  convertElimWith (fn () => ()) cache vars theorem
+
+fun convertElimMeasured checkpoint cache vars theorem =
+  convertElimWith checkpoint cache vars theorem
 
 fun bucket entries key =
   case Redblackmap.peek (entries, key) of
@@ -774,9 +631,6 @@ fun cachedWith checkpoint (Cache {entries, hits, ...})
            SOME (#rules entry))
   end
 
-fun cached cache safe vars formula =
-  cachedWith (fn () => ()) cache safe vars formula
-
 fun cachedMeasured checkpoint cache safe vars formula =
   cachedWith checkpoint cache safe vars formula
 
@@ -791,89 +645,6 @@ fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
   in
     next_stamp := stamp + 1;
     entries := Redblackmap.insert (!entries, key, entry :: values)
-  end
-
-fun query_skeleton formula =
-  let
-    val goal = isGoal formula
-    val body = if goal then rand formula else formula
-    val depth = if goal then 2 else 3
-    val decoded = ref []
-
-    fun decode term =
-      case term of
-          Free name => Type.mk_vartype name
-        | Var variable =>
-            (case !variable of
-                 SOME value => decode value
-               | NONE =>
-                   (case List.find
-                            (fn (key, _) => key = variable) (!decoded) of
-                        SOME (_, ty) => ty
-                      | NONE =>
-                          let val ty = Type.gen_tyvar ()
-                          in
-                            decoded := (variable, ty) :: !decoded;
-                            ty
-                          end))
-        | _ =>
-            let
-              val (head, args) = strip_comb term
-            in
-              case head of
-                  Const (encoded, []) =>
-                    (case split_name encoded of
-                         SOME (thy, tyop) =>
-                           Type.mk_thy_type
-                             {Thy = thy, Tyop = tyop,
-                              Args = map decode args}
-                       | NONE => raise Fail "bad type encoding")
-                | _ => raise Fail "bad type encoding"
-            end
-
-    fun constant (name, proto_args) =
-      case split_name name of
-          NONE => raise Fail "pseudo-constant in net query"
-        | SOME (Thy, Name) =>
-            let
-              val (generic, generic_vars) =
-                generic_info {Thy = Thy, Name = Name}
-              val _ =
-                if length generic_vars = length proto_args then ()
-                else raise Fail "bad constant type arguments"
-              val subst =
-                ListPair.map (fn (variable, arg) => variable |-> decode arg)
-                  (generic_vars, proto_args)
-            in
-              mk_thy_const
-                {Thy = Thy, Name = Name,
-                 Ty = Type.type_subst subst generic}
-            end
-
-    fun build expected 0 _ = genvar expected
-      | build expected level term =
-          (case strip_comb term of
-               (Const (name, proto_args), actual_args) =>
-                 let
-                   fun apply (head, []) = head
-                     | apply (head, arg :: args) =
-                         let
-                           val (domain, _) = Type.dom_rng (type_of head)
-                           val arg' = build domain (level - 1) arg
-                         in
-                           apply (mk_comb (head, arg'), args)
-                         end
-                   val result =
-                     apply (constant (name, proto_args), actual_args)
-                 in
-                   if type_of result = expected then result
-                   else genvar expected
-                 end
-             | _ => genvar expected)
-          handle HOL_ERR _ => genvar expected
-               | Fail _ => genvar expected
-  in
-    build bool depth body
   end
 
 fun query_skeleton_measured checkpoint formula =
@@ -984,31 +755,6 @@ fun query_skeleton_measured checkpoint formula =
     build bool depth body
   end
 
-fun pseudoRules cache vars formula =
-  if not (isGoal formula) then []
-  else
-    let
-      val body = rand formula
-    in
-      case proto_imp body of
-          SOME (premise, conclusion) =>
-            [{origin = ImpIntro, pattern = formula,
-              premises = [[mkGoal conclusion, premise]],
-              hidden_assumptions = [NONE]}]
-        | NONE =>
-            (case dest_forall_body body of
-                 SOME predicate =>
-                   let
-                     val skolem = Skolem (freshName cache "S", vars)
-                   in
-                     [{origin = AllIntro, pattern = formula,
-                       premises = [[mkGoal
-                         (apply_predicate predicate skolem)]],
-                       hidden_assumptions = [NONE]}]
-                   end
-               | NONE => [])
-    end
-
 fun pseudoRulesMeasured checkpoint cache vars formula =
   if not (isGoal formula) then []
   else
@@ -1042,27 +788,6 @@ fun isVarForm (Var _) = true
   | isVarForm (Const (name, _) $ Var _) =
       name = const_name {Thy = "bool", Name = "~"}
   | isVarForm _ = false
-
-fun candidates claset safe formula =
-  if not (isGoal formula) andalso isVarForm formula then []
-  else let
-    val query = query_skeleton formula
-    fun intros part = clasetLib.unify_intro_candidates part query
-    fun elims part = clasetLib.unify_elim_candidates part query
-    val tagged =
-      if safe then
-        if isGoal formula then
-          intros (clasetLib.safe0_part claset) @
-          intros (clasetLib.safep_part claset)
-        else
-          elims (clasetLib.safe0_part claset) @
-          elims (clasetLib.safep_part claset)
-      else if isGoal formula then
-        intros (clasetLib.unsafe_part claset)
-      else elims (clasetLib.unsafe_part claset)
-  in
-    clasetRules.candidate_order tagged
-  end
 
 fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
   if not (isGoal formula) andalso isVarForm formula then []
@@ -1309,14 +1034,6 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint})
         in
           rules
         end
-
-fun copyRules cache vars formula fresh_skolems rules =
-  copyRulesWith (fn () => ())
-    cache vars formula fresh_skolems rules
-
-fun copyRulesMeasured ({checkpoint, ...} : monitor)
-      cache vars formula fresh_skolems rules =
-  copyRulesWith checkpoint cache vars formula fresh_skolems rules
 
 fun acquire cache claset safe vars formula =
   acquireWith

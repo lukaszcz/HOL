@@ -5,7 +5,7 @@
  * query is rigid) is exactly what src/1/Ho_Net provides.  This net is a
  * separate implementation because it must ALSO support [unify], where the
  * query's own variables act as wildcards and so may match any stored
- * subterm.  That reverse direction needs [skip_one] to step over a whole
+ * subterm.  That reverse direction needs [skip_one_m] to step over a whole
  * stored subterm, which relies on the uniform one-node-per-application
  * labelling below (Cmb/Lam/Cnst/V).  Ho_Net folds the argument count into
  * its labels (Cnet of ... * int), so it cannot skip a subterm without
@@ -93,17 +93,6 @@ fun insert ({pat, patvars}, value) net =
           end
   in
     enter (stored_labels patvars [] pat) net
-  end
-
-fun skip_one (NODE (_, edges)) =
-  let
-    fun skip_edge (V, net) = [net]
-      | skip_edge (Cnst _, net) = [net]
-      | skip_edge (Lam, net) = skip_one net
-      | skip_edge (Cmb, net) =
-          List.concat (map skip_one (skip_one net))
-  in
-    List.concat (map skip_edge edges)
   end
 
 fun follow normal_walk (tm, bvars) rest (NODE (_, edges)) =

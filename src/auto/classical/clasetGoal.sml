@@ -173,19 +173,19 @@ fun nth1 function_name =
 
 fun goal_at node pos = nth1 "goal_at" (goals node) pos
 
+fun delete_nth function_name pos values =
+  clasetNorm.delete_nth ("clasetGoal", function_name) values pos
+
+(* A splice is the deletion at [pos] with the replacements dropped into
+   the vacated slot, so the one-based bounds checking (and hence the
+   errors reported for a bad position) has a single implementation. *)
 fun splice1 function_name values pos replacements =
-  if pos < 1 then
-    raise mk_HOL_ERR "clasetGoal" function_name
-      "positions are one-based"
-  else
-    let
-      val prefix = List.take (values, pos - 1)
-      val suffix = List.drop (values, pos)
-    in
-      prefix @ replacements @ suffix
-    end
-    handle Subscript =>
-      raise mk_HOL_ERR "clasetGoal" function_name "position out of range"
+  let
+    val remaining = delete_nth function_name pos values
+  in
+    List.take (remaining, pos - 1) @ replacements @
+    List.drop (remaining, pos - 1)
+  end
 
 fun child_paths parent count =
   if count = 1 then [parent]
@@ -221,9 +221,6 @@ fun cons_assumption asm ({params, asl, w} : cgoal) =
 fun cons_assumptions assumptions cgoal =
   List.foldl (fn (asm, child) => cons_assumption asm child)
     cgoal assumptions
-
-fun delete_nth function_name pos values =
-  clasetNorm.delete_nth ("clasetGoal", function_name) values pos
 
 fun delete_assumption pos ({params, asl, w} : cgoal) =
   {params = params, asl = delete_nth "delete_assumption" pos asl, w = w}
