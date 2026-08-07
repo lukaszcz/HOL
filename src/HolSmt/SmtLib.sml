@@ -3572,17 +3572,31 @@ local
   fun num_binder_to_int_once_conv tm =
   let
     fun is_num_var v = Type.compare (Term.type_of v, numSyntax.num) = EQUAL
+    fun is_bag_var v =
+      case Lib.total Type.dom_rng (Term.type_of v) of
+        SOME (_, rng) => Type.compare (rng, numSyntax.num) = EQUAL
+      | NONE => false
     val is_num_forall =
       boolSyntax.is_forall tm andalso
       is_num_var (Lib.fst (boolSyntax.dest_forall tm))
     val is_num_exists =
       boolSyntax.is_exists tm andalso
       is_num_var (Lib.fst (boolSyntax.dest_exists tm))
+    val is_bag_forall =
+      boolSyntax.is_forall tm andalso
+      is_bag_var (Lib.fst (boolSyntax.dest_forall tm))
+    val is_bag_exists =
+      boolSyntax.is_exists tm andalso
+      is_bag_var (Lib.fst (boolSyntax.dest_exists tm))
   in
     if is_num_forall then
       Conv.HO_REWR_CONV HolSmtTheory.NUM_FORALL_TO_INT tm
     else if is_num_exists then
       Conv.HO_REWR_CONV HolSmtTheory.NUM_EXISTS_TO_INT tm
+    else if is_bag_forall then
+      Conv.HO_REWR_CONV HolSmtTheory.BAG_FORALL_TO_INT tm
+    else if is_bag_exists then
+      Conv.HO_REWR_CONV HolSmtTheory.BAG_EXISTS_TO_INT tm
     else
       Conv.NO_CONV tm
   end
@@ -3905,11 +3919,16 @@ local
     fun is_num_var v =
       Term.is_var v andalso
       Type.compare (Term.type_of v, numSyntax.num) = EQUAL
+    fun is_bag_var v =
+      Term.is_var v andalso
+      (case Lib.total Type.dom_rng (Term.type_of v) of
+         SOME (_, rng) => Type.compare (rng, numSyntax.num) = EQUAL
+       | NONE => false)
     val asm_fvs = List.concat (List.map Term.free_vars asms)
     fun free_in_asms v = List.exists (fn w => Term.aconv v w) asm_fvs
   in
-    List.filter (fn v => is_num_var v andalso not (free_in_asms v))
-      (Term.free_vars concl)
+    List.filter (fn v => (is_num_var v orelse is_bag_var v) andalso
+      not (free_in_asms v)) (Term.free_vars concl)
   end
 
   fun SPEC_NUM_FREE_VARS_TAC g =
@@ -4252,8 +4271,7 @@ in
       | _ => false
 
   fun atom_needs_num_transfer atom =
-    (Term.is_var atom andalso
-     Type.compare (Term.type_of atom, numSyntax.num) = EQUAL) orelse
+    (Term.is_var atom andalso type_mentions_num (Term.type_of atom)) orelse
     is_num_transfer_const atom
 
   fun term_is_num tm =

@@ -1104,9 +1104,7 @@ in
       extension_entry "Z3" "Seq" (parametric_attributes ["Element"])
         ["(Seq Element)"] (K_zero_one sequence_ty),
       extension_entry "Z3" "Set" (parametric_attributes ["Element"])
-        ["(Set Element)"] (K_zero_one set_ty),
-      extension_entry "Z3" "Bag" (parametric_attributes ["Element"])
-        ["(Bag Element)"] (K_zero_one bag_ty)
+        ["(Set Element)"] (K_zero_one set_ty)
     ]
 
     fun ext_term name attrs decl parse =
@@ -1123,25 +1121,6 @@ in
           abstract_const "seq.extract" (Term.type_of s) [s, i, n])),
       ext_term "seq.contains" no_attributes ["(seq.contains (Seq A) (Seq A) Bool)"]
         (K_zero_two (fn (x, y) => abstract_bool "seq.contains" [x, y])),
-      ext_term "bag.union_disjoint" left_assoc_attributes
-        ["(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "bag.union_disjoint"
-          (Term.type_of x) [x, y])),
-      ext_term "bag.union_max" left_assoc_attributes
-        ["(bag.union_max (Bag A) (Bag A) (Bag A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "bag.union_max"
-          (Term.type_of x) [x, y])),
-      ext_term "bag.inter_min" left_assoc_attributes
-        ["(bag.inter_min (Bag A) (Bag A) (Bag A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "bag.inter_min"
-          (Term.type_of x) [x, y])),
-      ext_term "bag.difference_subtract" no_attributes
-        ["(bag.difference_subtract (Bag A) (Bag A) (Bag A))"]
-        (K_zero_two (fn (x, y) => abstract_const "bag.difference_subtract"
-          (Term.type_of x) [x, y])),
-      ext_term "bag.count" no_attributes ["(bag.count A (Bag A) Int)"]
-        (K_zero_two (fn (x, b) => abstract_const "bag.count" intSyntax.int_ty
-          [x, b]))
     ]
 
     val tydict = dictionary_of_entries tyentries
@@ -1298,6 +1277,190 @@ in
     val metadata =
       metadata_of_entries "CVC5_Set" "sort" tyentries @
       metadata_of_entries "CVC5_Set" "term" tmentries
+  end
+
+  (* cvc5's finite-bag dialect.  A bag is represented by its stock HOL
+     multiplicity function, [A -> num].  The Int-valued cvc5 count boundary
+     is made explicit with [int_of_num].  A bag literal clamps a negative
+     Int count to zero, as confirmed by the matrix probe. *)
+  structure CVC5_Bag =
+  struct
+
+    fun cvc_term name attrs decl parse =
+      extension_entry "cvc5" name attrs decl parse
+
+    fun bag_const name ty =
+      Term.mk_thy_const {Thy = "bag", Name = name, Ty = ty}
+
+    fun mk_bag_in (x, b) =
+      let
+        val element = Term.type_of x
+        val bag = Type.--> (element, numSyntax.num)
+      in
+        Term.list_mk_comb (bag_const "BAG_IN"
+          (Type.--> (element, Type.--> (bag, Type.bool))), [x, b])
+      end
+
+    fun mk_bag_count (x, b) =
+      Term.mk_comb (intSyntax.int_injection, Term.mk_comb (b, x))
+
+    fun mk_bag_binary name (b, c) =
+      let val bag = Term.type_of b in
+        Term.list_mk_comb (bag_const name (Type.--> (bag, Type.--> (bag, bag))),
+          [b, c])
+      end
+
+    fun mk_bag_filter (p, b) =
+      let val bag = Term.type_of b in
+        Term.list_mk_comb (bag_const "BAG_FILTER"
+          (Type.--> (Term.type_of p, Type.--> (bag, bag))), [p, b])
+      end
+
+    fun mk_set_of_bag b =
+      let
+        val bag = Term.type_of b
+        val element = bagSyntax.base_type b
+      in
+        Term.mk_comb (bag_const "SET_OF_BAG"
+          (Type.--> (bag, Type.--> (element, Type.bool))), b)
+      end
+
+    fun mk_bag_of_set set =
+      let
+        val set_ty = Term.type_of set
+        val (element, _) = Type.dom_rng set_ty
+      in
+        Term.mk_comb (bag_const "BAG_OF_SET"
+          (Type.--> (set_ty, Type.--> (element, numSyntax.num))), set)
+      end
+
+    fun mk_bag_literal (x, n) =
+      let
+        val z = Term.mk_var ("bag_literal_x", Term.type_of x)
+        val count = boolSyntax.mk_cond
+          (intSyntax.mk_leq (intSyntax.zero_tm, n), intSyntax.mk_Num n,
+           numSyntax.zero_tm)
+      in
+        Term.mk_abs (z, boolSyntax.mk_cond
+          (boolSyntax.mk_eq (z, x), count, numSyntax.zero_tm))
+      end
+
+    fun mk_bag_difference_remove (b, c) =
+      let val x = Term.mk_var ("bag_difference_remove_x", bagSyntax.base_type b)
+      in
+        mk_bag_filter
+          (Term.mk_abs (x, boolSyntax.mk_neg (mk_bag_in (x, c))), b)
+      end
+
+    fun mk_bag_some (p, b) =
+      let val x = Term.mk_var ("bag_some_x", bagSyntax.base_type b)
+      in
+        boolSyntax.mk_exists (x, boolSyntax.mk_conj
+          (mk_bag_in (x, b), Term.mk_comb (p, x)))
+      end
+
+    fun mk_bag_setof b =
+      mk_bag_of_set (mk_set_of_bag b)
+
+    fun mk_bag_partition (relation, b) =
+      let
+        val x = Term.mk_var ("bag_partition_x", bagSyntax.base_type b)
+        val group = mk_bag_filter (Term.mk_comb (relation, x), b)
+        val groups = pred_setSyntax.mk_image
+          (Term.mk_abs (x, group), mk_set_of_bag b)
+      in
+        mk_bag_of_set groups
+      end
+
+    (* cvc5's unqualified polymorphic literal defaults to [Bag Bool], just
+       as its parser does when no explicit [as] qualification is present.
+       HOL applications require exact types rather than SMT's bidirectional
+       type inference, so retain that documented default here; explicitly
+       ascribed literals are handled in the parser below. *)
+    val unqualified_empty = Term.inst
+      [{redex = Type.alpha, residue = Type.bool}] bagSyntax.EMPTY_BAG_tm
+
+    val tyentries = [
+      extension_entry "cvc5" "Bag" (parametric_attributes ["Element"])
+        ["(Bag Element)"] (K_zero_one bag_ty)
+    ]
+
+    (* Probe-backed semantic pin: cvc5 1.3.4 with [--sets-exp] makes
+       [(not (= (bag.count 0 (bag.union_max (bag 0 2) (bag 0 3))) 3))]
+       and the analogous [inter_min]/2 query both unsatisfiable.  bagTheory
+       defines BAG_MERGE pointwise with the greater multiplicity and
+       BAG_INTER pointwise with the lesser one.  Therefore union_max and
+       inter_min map respectively to those constants, rather than merely
+       being guessed from their names. *)
+    val tmentries = [
+      cvc_term "bag" no_attributes ["(bag A Int (Bag A))"]
+        (K_zero_two mk_bag_literal),
+      cvc_term "bag.empty" no_attributes ["(bag.empty (Bag A))"]
+        (K_zero_zero unqualified_empty),
+      cvc_term "bag.count" no_attributes ["(bag.count A (Bag A) Int)"]
+        (K_zero_two mk_bag_count),
+      cvc_term "bag.member" no_attributes ["(bag.member A (Bag A) Bool)"]
+        (K_zero_two mk_bag_in),
+      cvc_term "bag.union_disjoint" left_assoc_attributes
+        ["(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc bagSyntax.mk_union),
+      cvc_term "bag.union_max" left_assoc_attributes
+        ["(bag.union_max (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc (mk_bag_binary "BAG_MERGE")),
+      cvc_term "bag.inter_min" left_assoc_attributes
+        ["(bag.inter_min (Bag A) (Bag A) (Bag A) :left-assoc)"]
+        (leftassoc (mk_bag_binary "BAG_INTER")),
+      cvc_term "bag.difference_subtract" no_attributes
+        ["(bag.difference_subtract (Bag A) (Bag A) (Bag A))"]
+        (K_zero_two bagSyntax.mk_diff),
+      cvc_term "bag.difference_remove" no_attributes
+        ["(bag.difference_remove (Bag A) (Bag A) (Bag A))"]
+        (K_zero_two mk_bag_difference_remove),
+      cvc_term "bag.subbag" no_attributes ["(bag.subbag (Bag A) (Bag A) Bool)"]
+        (K_zero_two bagSyntax.mk_sub_bag),
+      cvc_term "bag.choose" no_attributes ["(bag.choose (Bag A) A)"]
+        (K_zero_one (fn b =>
+          Term.mk_comb (bag_const "BAG_CHOICE"
+            (Type.--> (Term.type_of b, bagSyntax.base_type b)), b))),
+      cvc_term "bag.card" no_attributes ["(bag.card (Bag A) Int)"]
+        (K_zero_one (fn b =>
+          Term.mk_comb (intSyntax.int_injection, bagSyntax.mk_card b))),
+      cvc_term "bag.map" no_attributes
+        ["(bag.map (-> A B) (Bag A) (Bag B))"]
+        (K_zero_two bagSyntax.mk_image),
+      cvc_term "bag.filter" no_attributes
+        ["(bag.filter (-> A Bool) (Bag A) (Bag A))"]
+        (K_zero_two mk_bag_filter),
+      cvc_term "bag.all" no_attributes ["(bag.all (-> A Bool) (Bag A) Bool)"]
+        (K_zero_two bagSyntax.mk_every),
+      cvc_term "bag.some" no_attributes
+        ["(bag.some (-> A Bool) (Bag A) Bool)"]
+        (K_zero_two mk_bag_some),
+      cvc_term "bag.fold" no_attributes
+        ["(bag.fold (-> A B B) B (Bag A) B)"]
+        (K_zero_three (fn (f, init, b) =>
+          let
+            val element = bagSyntax.base_type b
+            val accumulator = Term.type_of init
+            val bag = Term.type_of b
+            val itbag_ty = Type.--> (Type.--> (element,
+              Type.--> (accumulator, accumulator)), Type.--> (bag,
+                Type.--> (accumulator, accumulator)))
+          in
+            Term.list_mk_comb (bag_const "ITBAG" itbag_ty, [f, b, init])
+          end)),
+      cvc_term "bag.setof" no_attributes ["(bag.setof (Bag A) (Bag A))"]
+        (K_zero_one mk_bag_setof),
+      cvc_term "bag.partition" no_attributes
+        ["(bag.partition (-> A A Bool) (Bag A) (Bag (Bag A)))"]
+        (K_zero_two mk_bag_partition)
+    ]
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "CVC5_Bag" "sort" tyentries @
+      metadata_of_entries "CVC5_Bag" "term" tmentries
   end
 
   (* Z3 represents sets as Bool-valued arrays. *)

@@ -324,6 +324,22 @@ fun num_binder_relativization_non_num_noop_success () =
      ``!i :int. i <= i``,
      ``!i :int. i <= i``)
 
+fun bag_count_relativization_success () =
+let
+  val input = ``!b : int -> num. b 0 = b 0``
+  val expected =
+    ``!c : int -> int.
+        (!x : int. 0 <= c x) ==> Num (c 0) = Num (c 0)``
+  val count_expected = ``!b x. (0 : int) <= (&(b x) : int)``
+in
+  assert_num_binder_conv
+    ("bag count function relativization", input, expected);
+  assert_no_hyps ("BAG_COUNT_INT_NONNEG", HolSmtTheory.BAG_COUNT_INT_NONNEG);
+  assert_concl_alpha
+    ("BAG_COUNT_INT_NONNEG", HolSmtTheory.BAG_COUNT_INT_NONNEG,
+     count_expected)
+end
+
 fun num_to_int_under_abstraction_success () =
 let
   val input =
@@ -4119,8 +4135,8 @@ let
     SmtLib_Theories.CVC5_Set.metadata
   val z3_union = find_symbol_metadata "Z3_Set" "term" "union"
     SmtLib_Theories.Z3_Set.metadata
-  val bag_count = find_symbol_metadata "Z3_Extensions" "term" "bag.count"
-    all_metadata
+  val bag_count = find_symbol_metadata "CVC5_Bag" "term" "bag.count"
+    SmtLib_Theories.CVC5_Bag.metadata
 in
   assert (metadata_is_official rm_sort,
     "RoundingMode sort metadata is not marked official");
@@ -4651,6 +4667,245 @@ in
   reject cvc5_options "cvc5 Z3 const"
     ("(set-logic ALL)\n(assert (= ((as const (Set Int)) false)\n" ^
      "((as const (Set Int)) false)))\n")
+end
+
+fun smtlib_bag_dialect_builders_success () =
+let
+  val z3_options = {
+    dict_logic = NONE,
+    solver = SOME "Z3",
+    elaborate_datatypes = false
+  }
+  val cvc5_options = {
+    dict_logic = NONE,
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
+  val bag_ty = Type.--> (intSyntax.int_ty, numSyntax.num)
+  val b = Term.mk_var ("b", bag_ty)
+  val c = Term.mk_var ("c", bag_ty)
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val p = Term.mk_var ("p", Type.--> (intSyntax.int_ty, Type.bool))
+  val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val fold = Term.mk_var ("fold", Type.--> (intSyntax.int_ty,
+    Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
+  val relation = Term.mk_var ("relation", Type.--> (intSyntax.int_ty,
+    Type.--> (intSyntax.int_ty, Type.bool)))
+  val zero = intSyntax.zero_tm
+  fun bag_const name ty =
+    Term.mk_thy_const {Thy = "bag", Name = name, Ty = ty}
+  fun bag_in (element, bag) =
+    let
+      val element_ty = Term.type_of element
+      val bag_ty = Term.type_of bag
+    in
+      Term.list_mk_comb (bag_const "BAG_IN"
+        (Type.--> (element_ty, Type.--> (bag_ty, Type.bool))), [element, bag])
+    end
+  fun bag_binary name (left, right) =
+    let val bag_ty = Term.type_of left in
+      Term.list_mk_comb (bag_const name
+        (Type.--> (bag_ty, Type.--> (bag_ty, bag_ty))), [left, right])
+    end
+  fun bag_filter (predicate, bag) =
+    let val bag_ty = Term.type_of bag in
+      Term.list_mk_comb (bag_const "BAG_FILTER"
+        (Type.--> (Term.type_of predicate, Type.--> (bag_ty, bag_ty))),
+        [predicate, bag])
+    end
+  fun set_of_bag bag =
+    let
+      val element_ty = bagSyntax.base_type bag
+      val set_ty = Type.--> (element_ty, Type.bool)
+    in
+      Term.mk_comb (bag_const "SET_OF_BAG"
+        (Type.--> (Term.type_of bag, set_ty)), bag)
+    end
+  fun bag_of_set set =
+    let
+      val (element_ty, _) = Type.dom_rng (Term.type_of set)
+    in
+      Term.mk_comb (bag_const "BAG_OF_SET"
+        (Type.--> (Term.type_of set, Type.--> (element_ty, numSyntax.num))),
+        set)
+    end
+  fun bag_choice bag =
+    Term.mk_comb (bag_const "BAG_CHOICE"
+      (Type.--> (Term.type_of bag, bagSyntax.base_type bag)), bag)
+  fun finite_bag bag =
+    Term.mk_comb (bag_const "FINITE_BAG" (Type.--> (Term.type_of bag,
+      Type.bool)), bag)
+  fun itbag (function, bag, init) =
+    let
+      val element_ty = bagSyntax.base_type bag
+      val accumulator_ty = Term.type_of init
+      val bag_ty = Term.type_of bag
+    in
+      Term.list_mk_comb (bag_const "ITBAG" (Type.-->
+        (Type.--> (element_ty, Type.--> (accumulator_ty, accumulator_ty)),
+         Type.--> (bag_ty, Type.--> (accumulator_ty, accumulator_ty)))),
+        [function, bag, init])
+    end
+  fun bag_count (element, bag) =
+    Term.mk_comb (intSyntax.int_injection, Term.mk_comb (bag, element))
+  fun typecheck options text =
+    SmtLib_Parser.typecheck_script_string_with_options options text
+  fun assertion options body =
+    let
+      val state = typecheck options
+        ("(set-logic ALL)\n" ^
+         "(declare-const b (Bag Int))\n" ^
+         "(declare-const c (Bag Int))\n" ^
+         "(declare-const x Int)\n" ^
+         "(declare-const p (-> Int Bool))\n" ^
+         "(declare-const f (-> Int Int))\n" ^
+         "(declare-const fold (-> Int (-> Int Int)))\n" ^
+         "(declare-const relation (-> Int (-> Int Bool)))\n" ^
+         "(assert " ^ body ^ ")\n")
+    in
+      case #assertions state of
+        [tm] => tm
+      | _ => die "bag-builder test did not produce one assertion"
+    end
+  fun assert_builder label body expected =
+    let val actual = assertion cvc5_options body in
+      assert (Term.aconv actual expected,
+        label ^ " did not construct the expected bagTheory term\nexpected: " ^
+        term_with_types expected ^ "\nactual: " ^ term_with_types actual);
+      assert (not (term_has_subterm
+        (fn tm => Term.is_var tm andalso
+          String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
+        label ^ " retained an smtlib_* placeholder")
+    end
+  fun reject options label text =
+    let
+      val rejected =
+        ((ignore (typecheck options text); false)
+         handle Feedback.HOL_ERR _ => true)
+    in
+      assert (rejected, label ^ " was accepted in the wrong dialect")
+    end
+  fun literal_count count = boolSyntax.mk_cond
+    (intSyntax.mk_leq (zero, count), intSyntax.mk_Num count, numSyntax.zero_tm)
+  val literal_x = Term.mk_var ("bag_literal_x", intSyntax.int_ty)
+  val remove_x = Term.mk_var ("bag_difference_remove_x", intSyntax.int_ty)
+  val some_x = Term.mk_var ("bag_some_x", intSyntax.int_ty)
+  val partition_x = Term.mk_var ("bag_partition_x", intSyntax.int_ty)
+  val two = intSyntax.term_of_int (Arbint.fromInt 2)
+  val minus_two = intSyntax.mk_negated two
+  val literal = Term.mk_abs (literal_x, boolSyntax.mk_cond
+    (boolSyntax.mk_eq (literal_x, x), literal_count two, numSyntax.zero_tm))
+  val negative_literal = Term.mk_abs (literal_x, boolSyntax.mk_cond
+    (boolSyntax.mk_eq (literal_x, x), literal_count minus_two,
+     numSyntax.zero_tm))
+  val remove_in = bag_in (remove_x, c)
+  val remove_predicate = Term.mk_abs (remove_x, boolSyntax.mk_neg remove_in)
+  val remove = bag_filter (remove_predicate, b)
+  val some_in = bag_in (some_x, b)
+  val some = boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
+    (some_in, Term.mk_comb (p, some_x)))
+  val partition_predicate = Term.mk_comb (relation, partition_x)
+  val partition_group = bag_filter (partition_predicate, b)
+  val partition_set = pred_setSyntax.mk_image
+    (Term.mk_abs (partition_x, partition_group), set_of_bag b)
+  val partition = bag_of_set partition_set
+  val cvc5_state = typecheck cvc5_options
+    ("(set-logic ALL)\n" ^
+     "(declare-const b (Bag Int))\n" ^
+     "(assert (bag.member 0 b))\n(check-sat)\n")
+  val transfer_hypotheses =
+    case #queries cvc5_state of
+      [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
+        transfer_hypotheses
+    | _ => die "cvc5 bag test did not produce one check-sat query"
+  val bagfun = Term.mk_var ("bagfun", Type.-->
+    (intSyntax.int_ty, bag_ty))
+  val bagfun_arg = Term.mk_var ("finite_bag_arg0", intSyntax.int_ty)
+  val bagfun_finite = boolSyntax.mk_forall (bagfun_arg,
+    finite_bag (Term.mk_comb (bagfun, bagfun_arg)))
+  val bagfun_state = typecheck cvc5_options
+    ("(set-logic HO_ALL)\n" ^
+     "(declare-fun bagfun (Int) (Bag Int))\n" ^
+     "(assert (bag.member 0 (bagfun 0)))\n(check-sat)\n")
+  val bagfun_transfer_hypotheses =
+    case #queries bagfun_state of
+      [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
+        transfer_hypotheses
+    | _ => die "cvc5 bag-function test did not produce one check-sat query"
+  val alias_state = typecheck cvc5_options
+    ("(set-logic ALL)\n" ^
+     "(define-sort IntBag () (Bag Int))\n" ^
+     "(declare-const alias_b IntBag)\n" ^
+     "(assert (bag.member 0 alias_b))\n(check-sat)\n")
+  val alias_b = Term.mk_var ("alias_b", bag_ty)
+  val alias_transfer_hypotheses =
+    case #queries alias_state of
+      [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
+        transfer_hypotheses
+    | _ => die "cvc5 bag-alias test did not produce one check-sat query"
+  val inferred_empty = assertion cvc5_options "(= (bag.card bag.empty) 0)"
+  val bool_empty = bagSyntax.mk_bag ([], Type.bool)
+in
+  assert_builder "cvc5 bag literal" "(= (bag x 2) b)"
+    (boolSyntax.mk_eq (literal, b));
+  assert_builder "cvc5 negative bag literal" "(= (bag x (- 2)) b)"
+    (boolSyntax.mk_eq (negative_literal, b));
+  assert_builder "cvc5 bag.empty"
+    "(= (as bag.empty (Bag Int)) (as bag.empty (Bag Int)))"
+    (boolSyntax.mk_eq (bagSyntax.mk_bag ([], intSyntax.int_ty),
+      bagSyntax.mk_bag ([], intSyntax.int_ty)));
+  assert (Term.aconv inferred_empty (boolSyntax.mk_eq
+    (Term.mk_comb (intSyntax.int_injection, bagSyntax.mk_card bool_empty),
+     zero)), "cvc5 unqualified bag.empty did not default to Bag Bool");
+  assert_builder "cvc5 bag.count" "(= (bag.count x b) 0)"
+    (boolSyntax.mk_eq (bag_count (x, b), zero));
+  assert_builder "cvc5 bag count non-negativity" "(<= 0 (bag.count x b))"
+    (intSyntax.mk_leq (zero, bag_count (x, b)));
+  assert_builder "cvc5 bag.member" "(bag.member x b)" (bag_in (x, b));
+  assert_builder "cvc5 bag.union_disjoint"
+    "(= (bag.union_disjoint b c) b)"
+    (boolSyntax.mk_eq (bagSyntax.mk_union (b, c), b));
+  assert_builder "cvc5 bag.union_max" "(= (bag.union_max b c) b)"
+    (boolSyntax.mk_eq (bag_binary "BAG_MERGE" (b, c), b));
+  assert_builder "cvc5 bag.inter_min" "(= (bag.inter_min b c) b)"
+    (boolSyntax.mk_eq (bag_binary "BAG_INTER" (b, c), b));
+  assert_builder "cvc5 bag.difference_subtract"
+    "(= (bag.difference_subtract b c) b)"
+    (boolSyntax.mk_eq (bagSyntax.mk_diff (b, c), b));
+  assert_builder "cvc5 bag.difference_remove"
+    "(= (bag.difference_remove b c) b)" (boolSyntax.mk_eq (remove, b));
+  assert_builder "cvc5 bag.subbag" "(bag.subbag b c)"
+    (bagSyntax.mk_sub_bag (b, c));
+  assert_builder "cvc5 bag.choose" "(= (bag.choose b) x)"
+    (boolSyntax.mk_eq (bag_choice b, x));
+  assert_builder "cvc5 bag.card" "(= (bag.card b) 0)"
+    (boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
+      bagSyntax.mk_card b), zero));
+  assert_builder "cvc5 bag.map" "(= (bag.map f b) b)"
+    (boolSyntax.mk_eq (bagSyntax.mk_image (f, b), b));
+  assert_builder "cvc5 bag.filter" "(= (bag.filter p b) b)"
+    (boolSyntax.mk_eq (bag_filter (p, b), b));
+  assert_builder "cvc5 bag.all" "(bag.all p b)"
+    (bagSyntax.mk_every (p, b));
+  assert_builder "cvc5 bag.some" "(bag.some p b)" some;
+  assert_builder "cvc5 bag.fold" "(= (bag.fold fold 0 b) 0)"
+    (boolSyntax.mk_eq (itbag (fold, b, zero), zero));
+  assert_builder "cvc5 bag.setof" "(= (bag.setof b) b)"
+    (boolSyntax.mk_eq (bag_of_set (set_of_bag b), b));
+  assert_builder "cvc5 bag.partition"
+    "(= (bag.partition relation b) (bag.partition relation b))"
+    (boolSyntax.mk_eq (partition, partition));
+  assert (List.exists (Term.aconv (finite_bag b)) transfer_hypotheses,
+    "cvc5 Bag declaration did not attach a FINITE_BAG hypothesis");
+  assert (List.exists (Term.aconv bagfun_finite) bagfun_transfer_hypotheses,
+    "cvc5 Bag function did not attach pointwise FINITE_BAG hypotheses");
+  assert (List.exists (Term.aconv (finite_bag alias_b))
+    alias_transfer_hypotheses,
+    "cvc5 Bag sort alias did not attach a FINITE_BAG hypothesis");
+  reject z3_options "Z3 Bag"
+    "(set-logic ALL)\n(declare-const b (Bag Int))\n(assert (= b b))\n";
+  reject z3_options "Z3 bag.member"
+    "(set-logic ALL)\n(declare-const b (Bag Int))\n(assert (bag.member 0 b))\n"
 end
 
 fun smtlib_ho_logic_packets_success () =
@@ -9571,6 +9826,62 @@ fun array_prove_ladder_rungs_success () =
      SmtArrayProve.metis_array_prove
      ``(i =+ e) ((i =+ e) (a :'i -> 'v)) = (i =+ e) a``)
 
+fun array_prove_set_ladder_rungs_success () =
+  (assert_array_prover "set union pointwise rung"
+     SmtArrayProve.array_prove
+     ``(x:'a) IN (s UNION t) <=> x IN s \/ x IN t``;
+   assert_array_prover "set intersection pointwise rung"
+     SmtArrayProve.array_prove
+     ``(x:'a) IN (s INTER t) <=> x IN s /\ x IN t``;
+   assert_array_prover "set difference pointwise rung"
+     SmtArrayProve.array_prove
+     ``(x:'a) IN (s DIFF t) <=> x IN s /\ x NOTIN t``;
+   assert_array_prover "set complement pointwise rung"
+     SmtArrayProve.array_prove
+     ``(x:'a) IN COMPL s <=> x NOTIN s``;
+   assert_array_prover "set subset pointwise rung"
+     SmtArrayProve.array_prove
+     ``((s:'a set) SUBSET t) = !x. x IN s ==> x IN t``;
+   assert_array_prover "set extensionality rung"
+     SmtArrayProve.array_prove
+     ``(!x:'a. x IN s <=> x IN t) ==> (s = t)``;
+   assert_array_prover "set empty const-array rung"
+     SmtArrayProve.array_prove
+     ``F = ((x:'a) IN (EMPTY:'a set))``;
+   assert_array_prover "set universe const-array rung"
+     SmtArrayProve.array_prove
+     ``((x:'a) IN (UNIV:'a set)) = T``)
+
+(* Pins for the post-parser forms of the Z3 captures in
+   tools/proof-corpus/seq_set_bag/z3-*/proofs/{z3_set_subset,
+   theory_z3_extensions_z3_set_{union,intersection,minus,complement,
+   empty,universe}_unsat_proof}-*.proof.  Keeping the pins at this boundary
+   means they exercise the common Z3 rewrite/th-lemma ladders without making
+   the unit test depend on an external validation checkout. *)
+fun assert_z3_set_captured_shape (name, tm) =
+  (let
+     val thm = SmtArrayProve.array_prove tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       "captured Z3 set shape " ^ name ^ " proved the wrong conclusion: " ^
+       Library.thm_to_string thm);
+     check_oracle_tags ("captured Z3 set shape " ^ name) thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: captured Z3 set shape " ^ name ^ " did not replay: " ^
+       Feedback.message_of holerr))
+
+fun z3_set_captured_shapes_replay_success () =
+  List.app assert_z3_set_captured_shape [
+    ("union map/select", ``(x:'a) IN (s UNION t) <=> x IN s \/ x IN t``),
+    ("intersection map/select",
+      ``(x:'a) IN (s INTER t) <=> x IN s /\ x IN t``),
+    ("difference map/select", ``(x:'a) IN (s DIFF t) <=> x IN s /\ x NOTIN t``),
+    ("complement map/select", ``(x:'a) IN COMPL s <=> x NOTIN s``),
+    ("empty const-array", ``F = ((x:'a) IN (EMPTY:'a set))``),
+    ("universe const-array", ``((x:'a) IN (UNIV:'a set)) = T``)
+  ]
+
 fun array_prove_unsupported_diagnostic () =
   (ignore (SmtArrayProve.array_prove ``F``);
    die "FAIL: unsupported array th-lemma replayed successfully")
@@ -11382,6 +11693,7 @@ let
       num_binder_relativization_nested_mixed_success),
     ("num_binder_relativization_non_num_noop_success",
       num_binder_relativization_non_num_noop_success),
+    ("bag_count_relativization_success", bag_count_relativization_success),
     ("num_to_int_under_abstraction_success",
       num_to_int_under_abstraction_success),
     ("native_float_to_smt_conversion_success",
@@ -11551,6 +11863,8 @@ let
       smtlib_z3_extension_parse_signatures_success),
     ("smtlib_set_dialect_builders_success",
       smtlib_set_dialect_builders_success),
+    ("smtlib_bag_dialect_builders_success",
+      smtlib_bag_dialect_builders_success),
     ("smtlib_ho_logic_packets_success",
       smtlib_ho_logic_packets_success),
     ("smtlib_scoped_logic_dictionary_success",
@@ -11790,6 +12104,10 @@ let
       z3_nonlinear_missing_csdp_diagnostic),
     ("array_prove_ladder_rungs_success",
       array_prove_ladder_rungs_success),
+    ("array_prove_set_ladder_rungs_success",
+      array_prove_set_ladder_rungs_success),
+    ("z3_set_captured_shapes_replay_success",
+      z3_set_captured_shapes_replay_success),
     ("array_prove_unsupported_diagnostic",
       array_prove_unsupported_diagnostic),
     ("datatype_prove_ladder_rungs_success",

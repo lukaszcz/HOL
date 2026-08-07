@@ -103,6 +103,30 @@ struct
 
   val array_thms = thm_net_from_list array_thm_list
 
+  (* Z3 encodes sets as Bool-valued arrays.  The proof parser restores the
+     D13 carrier 'a -> bool, so the pointwise pred_set facts below are the
+     checked counterparts of Z3's map/select and constant-array shapes.
+     These are precisely the operations recorded in the Phase-6 Z3 corpus. *)
+  val set_thm_list = [
+    pred_setTheory.IN_UNION,
+    pred_setTheory.IN_INTER,
+    pred_setTheory.IN_DIFF,
+    pred_setTheory.IN_COMPL,
+    pred_setTheory.SUBSET_DEF,
+    pred_setTheory.EXTENSION,
+    Tactical.prove
+      (``(!x:'a. x IN s <=> x IN t) ==> (s = t)``,
+       bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.EXTENSION]),
+    Tactical.prove
+      (``F = ((x:'a) IN (EMPTY:'a set))``,
+       bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.NOT_IN_EMPTY]),
+    Tactical.prove
+      (``((x:'a) IN (UNIV:'a set)) = T``,
+       bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.IN_UNIV])
+  ]
+
+  val set_thms = thm_net_from_list set_thm_list
+
   (* Floating-point rewrite seed.  The literal facts are stored with their
      side conditions in the sequent: the net first matches the concrete
      triple printed by Z3, then [prove] discharges its numeral conditions.
@@ -205,7 +229,7 @@ in
     [i001, i002, i003, i004, i005, i006]
 
   val rewrite_thms = thm_net_from_list
-    [r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
+    ([r001, r002, r003, r004, r005, r006, r007, r008, r009, r010, r011, r012,
      r013, r014, r015, r016, r017, r018, r019, r020, r021, r022, r023, r024,
      r025, r026, r027, r028, r029, r030, r031, r032, r033, r034, r035, r036,
      r037, r038, r039, r040, r041, r042, r043, r044, r045, r046, r047, r048,
@@ -226,13 +250,15 @@ in
      r217, r218, r219, r220, r221, r222, r223, r224, r225, r226, r227, r228,
      r229, r230, r231, r232, r233, r234, r235, r236, r237, r238, r239, r240,
      r241, r242, r243, r244, r245, r246, r247, r248, r249, r250, r251, r252,
-     r253, r254, r255, r256, r257, r258, r259, r260, r261]
+     r253, r254, r255, r256, r257, r258, r259, r260, r261] @
+    set_thm_list)
 
   val th_lemma_thms = thm_net_from_list
     ([t001, t002, t003, t004, t005, t006, t007, t008, t009, t010, t011,
       t012, t013, t014, t015, t016, t017, t018, t019, t020, t021, t022,
       t023, t024, t025, t026, t027, t028, t029, t030, t031, t032, t033,
-      t034, t035] @ array_thm_list @ datatype_thm_list @ string_thm_list)
+      t034, t035] @ array_thm_list @ set_thm_list @ datatype_thm_list @
+     string_thm_list)
 
   val prove_hyp_thms = thm_net_from_list
     [p001, p002, p003, p004, p005, p006, p007, p008, p009]

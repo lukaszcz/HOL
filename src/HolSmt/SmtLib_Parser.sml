@@ -3173,6 +3173,35 @@ local
         local_definitions = typecheck_frame_local_definitions frame
       }) state
 
+  fun finite_bag_term bag_tm =
+    Term.mk_comb
+      (Term.mk_thy_const {Thy = "bag", Name = "FINITE_BAG",
+        Ty = Type.--> (Term.type_of bag_tm, Type.bool)}, bag_tm)
+
+  (* A cvc5 declaration returning a Bag promises a finite result at every
+     argument tuple, not only when it happens to be a nullary declaration. *)
+  fun add_typechecked_finite_bag bag_tm domain state =
+    let
+      fun mk_vars _ [] = []
+        | mk_vars index (ty :: tys) =
+            Term.mk_var ("finite_bag_arg" ^ Int.toString index, ty) ::
+            mk_vars (index + 1) tys
+      val vars = mk_vars 0 domain
+      val finite = boolSyntax.list_mk_forall
+        (vars, finite_bag_term (Term.list_mk_comb (bag_tm, vars)))
+    in
+      update_current_typecheck_frame
+        (fn frame => {
+          tydict = typecheck_frame_tydict frame,
+          tmdict = typecheck_frame_tmdict frame,
+          sigdict = typecheck_frame_sigdict frame,
+          finite_sets = finite :: typecheck_frame_finite_sets frame,
+          assertions = typecheck_frame_assertions frame,
+          named_assertions = typecheck_frame_named_assertions frame,
+          local_definitions = typecheck_frame_local_definitions frame
+        }) state
+    end
+
   fun active_typechecked_assertions ({frames, ...}: typecheck_state) =
     List.concat
       (List.map
@@ -4250,6 +4279,20 @@ local
         in
           checked_term_with_surface_sort expected_surface set_tm
         end
+      fun as_cvc5_bag_empty sort =
+        let
+          val expected = typecheck_sort context tydict sort
+          val expected_surface = surface_sort_of_ast context tydict sort
+          val _ =
+            if bagSyntax.is_bag_ty expected then ()
+            else type_error "typecheck_term" context (loc_of term_ast)
+              NONE (SOME expected) "bag.empty result must have Bag sort"
+          val (element, _) = Type.dom_rng expected
+          val bag_tm = Term.inst [{redex = Type.alpha, residue = element}]
+            bagSyntax.EMPTY_BAG_tm
+        in
+          checked_term_with_surface_sort expected_surface bag_tm
+        end
       fun apply_head loc head args =
         case node_of head of
           TermIdentifier name =>
@@ -4311,6 +4354,8 @@ local
           if (name = "set.empty" orelse name = "set.universe") andalso
              cvc5_or_neutral () then
             as_cvc5_set_constant name sort
+          else if name = "bag.empty" andalso cvc5_or_neutral () then
+            as_cvc5_bag_empty sort
           else
           let
             val checked = check ascribed
@@ -5143,6 +5188,13 @@ local
             #solver (context "set declaration") = SOME "cvc5" andalso
             located_string_node head = "Set"
         | _ => false
+      (* Sort aliases have already been expanded when this is called.  Unlike
+         the cvc5 Set transfer inherited from TASK_08, test the resulting HOL
+         type so a declared alias for [Bag A] cannot lose its finiteness
+         invariant. *)
+      fun cvc5_bag_type ty =
+        #solver (context "bag declaration") = SOME "cvc5" andalso
+        bagSyntax.is_bag_ty ty
       fun parsedicts_for logic =
         parsedicts_for_solver (dictionary_logic logic)
       fun typecheck_define_fun_command command_name name vars range body state =
@@ -5237,6 +5289,8 @@ local
             val command_state =
               if cvc5_set_sort sort then
                 add_typechecked_finite_set set_tm command_state
+              else if cvc5_bag_type range then
+                add_typechecked_finite_bag set_tm [] command_state
               else command_state
           in
             finish command_state
@@ -5266,6 +5320,8 @@ local
             val command_state =
               if List.null domain andalso cvc5_set_sort range then
                 add_typechecked_finite_set set_tm command_state
+              else if cvc5_bag_type range_ty then
+                add_typechecked_finite_bag set_tm domain command_state
               else command_state
           in
             finish command_state

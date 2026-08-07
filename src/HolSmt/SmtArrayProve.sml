@@ -43,6 +43,28 @@ struct
     boolTheory.EQ_SYM_EQ
   ]
 
+  (* The Z3 Set encoding is an array with Bool range.  The parser's D13
+     model makes it a HOL set, so these are the pointwise characterizations
+     of the map/select and const-array terms recorded in the set corpus. *)
+  val set_rewrites = [
+    pred_setTheory.IN_UNION,
+    pred_setTheory.IN_INTER,
+    pred_setTheory.IN_DIFF,
+    pred_setTheory.IN_COMPL,
+    pred_setTheory.SUBSET_DEF,
+    pred_setTheory.EXTENSION,
+    pred_setTheory.SPECIFICATION,
+    pred_setTheory.EMPTY_applied,
+    pred_setTheory.UNIV_applied
+  ]
+
+  fun set_simp_prove t =
+    simpLib.SIMP_PROVE boolSimps.bool_ss set_rewrites t
+
+  fun has_set_term t =
+    Lib.can (HolKernel.find_term
+      (fn tm => pred_setSyntax.is_set_type (Term.type_of tm))) t
+
   (* A minimal, array-oriented simpset for the RW_TAC-based provers below.
      It deliberately avoids the general arithmetic decision procedures that
      srw_ss() pulls in (the source of nonlinear-arithmetic blowups), while
@@ -125,8 +147,12 @@ struct
   fun array_prove t =
     trivial_prove t
     handle Feedback.HOL_ERR _ =>
-    if is_array_goal t then
+    if is_array_goal t orelse has_set_term t then
       Z3_ProformaThms.prove Z3_ProformaThms.array_thms t
+      handle Feedback.HOL_ERR _ =>
+      Z3_ProformaThms.prove Z3_ProformaThms.set_thms t
+      handle Feedback.HOL_ERR _ =>
+      set_simp_prove t
       handle Feedback.HOL_ERR _ =>
       simp_prove_update t
       handle Feedback.HOL_ERR _ =>

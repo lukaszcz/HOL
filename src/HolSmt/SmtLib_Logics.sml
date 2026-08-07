@@ -1160,6 +1160,11 @@ in
       solver = "cvc5", logic = logic,
       dictionaries = (CVC5_Set.tydict, CVC5_Set.tmdict)}) set_dialect_logics
 
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "cvc5", logic = logic,
+      dictionaries = (CVC5_Bag.tydict, CVC5_Bag.tmdict)}) set_dialect_logics
+
   val _ = default_dialect_dictionary_registrations :=
     !dialect_dictionary_registrations
 

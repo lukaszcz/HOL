@@ -464,6 +464,42 @@ QED
     M [integerTheory.INT_OF_NUM]
       ``!i :int. 0 <= i ==> (integer$int_of_num (Num i) = i)``)
 
+  (* Bags are functions into num.  Relativizing that codomain by the same
+     proved R1 pass used for a bare num gives the Int-array representation
+     exactly its required pointwise non-negativity condition. *)
+Theorem BAG_FORALL_TO_INT:
+  !P. (!b : 'a -> num. P b) <=>
+      (!c : 'a -> int. (!x. 0 <= c x) ==> P (\x. Num (c x)))
+Proof
+  gen_tac >> eq_tac
+  >- (strip_tac >> gen_tac >> strip_tac >>
+      qpat_x_assum `!b. P b`
+        (fn th => ACCEPT_TAC (Q.SPEC `\x. Num (c x)` th)))
+  >> strip_tac >> gen_tac >>
+     qpat_x_assum `!c. (!x. 0 <= c x) ==> P (\x. Num (c x))`
+       (mp_tac o Q.SPEC `\x. &(b x)`) >>
+     Q.SUBGOAL_THEN `(\x. b x) = b` (fn th => simp[th]) >>
+     simp[boolTheory.FUN_EQ_THM]
+QED
+
+Theorem BAG_EXISTS_TO_INT:
+  !P. (?b : 'a -> num. P b) <=>
+      (?c : 'a -> int. (!x. 0 <= c x) /\ P (\x. Num (c x)))
+Proof
+  gen_tac >> eq_tac
+  >- (strip_tac >> qexists_tac `\x. &(b x)` >>
+      Q.SUBGOAL_THEN `(\x. b x) = b` (fn th => simp[th]) >>
+      simp[boolTheory.FUN_EQ_THM])
+  >> strip_tac >> qexists_tac `\x. Num (c x)` >>
+     qpat_x_assum `P (\x. Num (c x))` ACCEPT_TAC
+QED
+
+Theorem BAG_COUNT_INT_NONNEG:
+  !b x. 0 <= integer$int_of_num (b x)
+Proof
+  simp[]
+QED
+
   (* NUM_FLOOR is the natural-valued floor.  Below zero it is definitionally
      zero, so this closes the non-positive branch before num-to-int transfer
      instead of leaving a num-valued operator for the SMT encoder. *)
