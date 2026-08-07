@@ -4777,6 +4777,16 @@ let
           String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
         label ^ " retained an smtlib_* placeholder")
     end
+  fun assert_semantics label tm =
+    let
+      val thm = simpLib.SIMP_PROVE
+        (simpLib.++ (bossLib.arith_ss, intSimps.INT_ARITH_ss))
+        [bagTheory.BAG_MERGE, bagTheory.BAG_INTER,
+         integerTheory.INT_OF_NUM] tm
+    in
+      assert_no_hyps (label, thm);
+      check_oracle_tags label thm
+    end
   fun reject options label text =
     let
       val rejected =
@@ -4792,12 +4802,19 @@ let
   val some_x = Term.mk_var ("bag_some_x", intSyntax.int_ty)
   val partition_x = Term.mk_var ("bag_partition_x", intSyntax.int_ty)
   val two = intSyntax.term_of_int (Arbint.fromInt 2)
+  val three = intSyntax.term_of_int (Arbint.fromInt 3)
   val minus_two = intSyntax.mk_negated two
   val literal = Term.mk_abs (literal_x, boolSyntax.mk_cond
     (boolSyntax.mk_eq (literal_x, x), literal_count two, numSyntax.zero_tm))
   val negative_literal = Term.mk_abs (literal_x, boolSyntax.mk_cond
     (boolSyntax.mk_eq (literal_x, x), literal_count minus_two,
      numSyntax.zero_tm))
+  fun literal_at_zero count =
+    Term.mk_abs (literal_x, boolSyntax.mk_cond
+      (boolSyntax.mk_eq (literal_x, zero), literal_count count,
+       numSyntax.zero_tm))
+  val literal_two_at_zero = literal_at_zero two
+  val literal_three_at_zero = literal_at_zero three
   val remove_in = bag_in (remove_x, c)
   val remove_predicate = Term.mk_abs (remove_x, boolSyntax.mk_neg remove_in)
   val remove = bag_filter (remove_predicate, b)
@@ -4869,6 +4886,28 @@ in
     (boolSyntax.mk_eq (bag_binary "BAG_MERGE" (b, c), b));
   assert_builder "cvc5 bag.inter_min" "(= (bag.inter_min b c) b)"
     (boolSyntax.mk_eq (bag_binary "BAG_INTER" (b, c), b));
+  (* These are the two non-tautological cvc5 probe observations recorded
+     beside the builders: max(2,3) is 3 and min(2,3) is 2.  Proving their
+     parsed HOL forms pins the BAG_MERGE/BAG_INTER correspondence rather
+     than merely checking the selected constant names. *)
+  assert_builder "cvc5 bag.union_max max-count"
+    "(= (bag.count 0 (bag.union_max (bag 0 2) (bag 0 3))) 3)"
+    (boolSyntax.mk_eq (bag_count (zero,
+      bag_binary "BAG_MERGE" (literal_two_at_zero, literal_three_at_zero)),
+      three));
+  assert_semantics "cvc5 bag.union_max max-count"
+    (boolSyntax.mk_eq (bag_count (zero,
+      bag_binary "BAG_MERGE" (literal_two_at_zero, literal_three_at_zero)),
+      three));
+  assert_builder "cvc5 bag.inter_min min-count"
+    "(= (bag.count 0 (bag.inter_min (bag 0 2) (bag 0 3))) 2)"
+    (boolSyntax.mk_eq (bag_count (zero,
+      bag_binary "BAG_INTER" (literal_two_at_zero, literal_three_at_zero)),
+      two));
+  assert_semantics "cvc5 bag.inter_min min-count"
+    (boolSyntax.mk_eq (bag_count (zero,
+      bag_binary "BAG_INTER" (literal_two_at_zero, literal_three_at_zero)),
+      two));
   assert_builder "cvc5 bag.difference_subtract"
     "(= (bag.difference_subtract b c) b)"
     (boolSyntax.mk_eq (bagSyntax.mk_diff (b, c), b));
