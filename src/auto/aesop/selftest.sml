@@ -1348,38 +1348,139 @@ val _ =
        #goals (aesopTree.cluster (#tree cluster_install) cluster_id2) =
          [List.nth (#goals cluster_install, 3)])
 
-val coupled_tree0 =
-  new_tree cluster_store1 fifo_goal []
-val (coupled_root, coupled_tree1) =
-  pop_expected coupled_tree0
 val coupled_goal =
   tree_cgoal [] [] cluster_m1
-val coupled_install =
-  install_tree_rapp coupled_tree1 coupled_root aesopRule.RSafe
-    "coupled" cluster_store1 [coupled_goal, coupled_goal] []
-val [coupled_left, coupled_right] =
-  #goals coupled_install
-val coupled_tree2 =
-  close_tree_goal (#tree coupled_install) coupled_left
-val coupled_closer =
-  hd (aesopTree.child_rapps coupled_tree2 coupled_left)
-val coupled_cluster =
-  #cluster (aesopTree.goal coupled_tree2 coupled_right)
-val coupled_pop =
-  aesopTree.pop_goal coupled_tree2
+
+(* Irrelevance has to be readable off every kind of node, so the tree
+   below takes it from a settled ancestor: the root offers two
+   alternative rule applications, one of them is closed, and everything
+   under the other stays open while no longer being worth expanding.  A
+   coupled cluster cannot stand in here -- its goals are conjunctive, so
+   closing one member settles nothing above it. *)
+val irrelevant_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (irrelevant_root, irrelevant_tree1) =
+  pop_expected irrelevant_tree0
+val irrelevant_open_install =
+  install_tree_rapp irrelevant_tree1 irrelevant_root aesopRule.RSafe
+    "open_alternative" clasetMeta.empty [fifo_goal] []
+val [irrelevant_open] = #goals irrelevant_open_install
+val irrelevant_deep_install =
+  install_tree_rapp (#tree irrelevant_open_install) irrelevant_open
+    aesopRule.RSafe "open_continuation" clasetMeta.empty [fifo_goal] []
+val [irrelevant_deep] = #goals irrelevant_deep_install
+val irrelevant_deep_rapp = #rapp irrelevant_deep_install
+val irrelevant_deep_cluster =
+  #cluster
+    (aesopTree.goal (#tree irrelevant_deep_install) irrelevant_deep)
+val irrelevant_closed_install =
+  install_tree_rapp (#tree irrelevant_deep_install) irrelevant_root
+    aesopRule.RSafe "closing_alternative" clasetMeta.empty [fifo_goal] []
+val [irrelevant_closed] = #goals irrelevant_closed_install
+val irrelevant_tree2 =
+  close_tree_goal (#tree irrelevant_closed_install) irrelevant_closed
+val irrelevant_pop =
+  aesopTree.pop_goal irrelevant_tree2
 
 val _ =
   check
     ("aesop proof lazily removes every kind of irrelevant queued node",
      fn () =>
-       #state (aesopTree.goal coupled_tree2 coupled_root) =
+       #state (aesopTree.goal irrelevant_tree2 irrelevant_root) =
          aesopTree.Proved andalso
-       #state (aesopTree.goal coupled_tree2 coupled_right) =
+       #state (aesopTree.goal irrelevant_tree2 irrelevant_deep) =
          aesopTree.Unknown andalso
-       aesopTree.goal_irrelevant coupled_tree2 coupled_right andalso
-       aesopTree.rapp_irrelevant coupled_tree2 coupled_closer andalso
-       aesopTree.cluster_irrelevant coupled_tree2 coupled_cluster andalso
-       #1 coupled_pop = NONE)
+       aesopTree.goal_irrelevant irrelevant_tree2 irrelevant_deep andalso
+       aesopTree.rapp_irrelevant irrelevant_tree2
+         irrelevant_deep_rapp andalso
+       aesopTree.cluster_irrelevant irrelevant_tree2
+         irrelevant_deep_cluster andalso
+       #1 irrelevant_pop = NONE)
+
+(* The goals of one cluster are conjunctive, and a member proved without
+   assigning the metavariable they share discharges only itself: it
+   installs no application that could copy its siblings, and a norm-proved
+   member has no application at all.  Reading such a cluster as proved is
+   what used to send [extract] into "winning forest has no proof of goal
+   N" on Pelletier 30. *)
+val norm_coupled_tree0 =
+  new_tree cluster_store1 fifo_goal []
+val (norm_coupled_root, norm_coupled_tree1) =
+  pop_expected norm_coupled_tree0
+val norm_coupled_install =
+  install_tree_rapp norm_coupled_tree1 norm_coupled_root
+    aesopRule.RSafe "norm_coupled" cluster_store1
+    [coupled_goal, coupled_goal] []
+val [norm_coupled_left, norm_coupled_right] =
+  #goals norm_coupled_install
+val norm_coupled_rapp = #rapp norm_coupled_install
+val norm_coupled_cluster =
+  #cluster
+    (aesopTree.goal (#tree norm_coupled_install) norm_coupled_left)
+val norm_coupled_tree2 =
+  aesopTree.set_norm_proved norm_coupled_left
+    {records = [], store = cluster_store1}
+    (#tree norm_coupled_install)
+
+val _ =
+  check
+    ("aesop coupled clusters ignore a member that assigns nothing",
+     fn () =>
+       #state (aesopTree.goal norm_coupled_tree2 norm_coupled_left) =
+         aesopTree.Proved andalso
+       #state (aesopTree.goal norm_coupled_tree2 norm_coupled_right) =
+         aesopTree.Unknown andalso
+       #state
+         (aesopTree.cluster norm_coupled_tree2 norm_coupled_cluster) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.rapp norm_coupled_tree2 norm_coupled_rapp) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.goal norm_coupled_tree2 norm_coupled_root) =
+         aesopTree.Unknown)
+
+(* The same cluster driven the way the coupling intends: the application
+   that closes the left member binds the shared metavariable, so
+   [install_rapp] copies the right member into that branch, and proving
+   the copy is what proves the original. *)
+val bound_coupled_store =
+  valOf (clasetMeta.bind (cluster_m1, boolSyntax.T) cluster_store1)
+val bound_coupled_tree0 =
+  new_tree cluster_store1 fifo_goal []
+val (bound_coupled_root, bound_coupled_tree1) =
+  pop_expected bound_coupled_tree0
+val bound_coupled_install =
+  install_tree_rapp bound_coupled_tree1 bound_coupled_root
+    aesopRule.RSafe "bound_coupled" cluster_store1
+    [coupled_goal, coupled_goal] []
+val [bound_coupled_left, bound_coupled_right] =
+  #goals bound_coupled_install
+val bound_coupled_cluster =
+  #cluster
+    (aesopTree.goal (#tree bound_coupled_install) bound_coupled_left)
+val bound_coupled_closer =
+  install_tree_rapp (#tree bound_coupled_install) bound_coupled_left
+    aesopRule.RSafe "bind_and_close" bound_coupled_store [] []
+val [bound_coupled_copy] = #goals bound_coupled_closer
+val bound_coupled_tree2 = #tree bound_coupled_closer
+val bound_coupled_tree3 =
+  close_tree_goal bound_coupled_tree2 bound_coupled_copy
+
+val _ =
+  check
+    ("aesop coupled clusters close through the copy of every sibling",
+     fn () =>
+       #copy_of
+         (aesopTree.goal bound_coupled_tree2 bound_coupled_copy) =
+         SOME bound_coupled_right andalso
+       #state (aesopTree.goal bound_coupled_tree2 bound_coupled_right) =
+         aesopTree.Unknown andalso
+       #state (aesopTree.goal bound_coupled_tree3 bound_coupled_right) =
+         aesopTree.Proved andalso
+       #state
+         (aesopTree.cluster bound_coupled_tree3 bound_coupled_cluster) =
+         aesopTree.Proved andalso
+       #state (aesopTree.goal bound_coupled_tree3 bound_coupled_root) =
+         aesopTree.Proved)
 
 val coupled_stuck_tree0 =
   new_tree cluster_store1 fifo_goal []
@@ -1567,6 +1668,56 @@ val _ =
        null
          (aesopTree.child_rapps
            (#tree copy_assigned) copied_sibling))
+
+(* One metavariable reaches the dependency sets under two spellings:
+   [clasetMeta.bindings] reports the redex as [new_meta] created it, at a
+   type that was still a type metavariable, while the goal dependencies go
+   through [clasetMeta.metas_of], which normalises first and so carries the
+   refined type.  Read as two terms they never intersect, and the coupled
+   sibling below is left behind unproved instead of being copied. *)
+val (respelt_type, respelt_store1) =
+  clasetMeta.new_tymeta clasetMeta.empty
+val (respelt_meta, respelt_store2) =
+  clasetMeta.new_meta
+    {allow = [], ty = respelt_type} respelt_store1
+val respelt_store3 =
+  case clasetMeta.bind_ty (respelt_type, Type.bool) respelt_store2 of
+      SOME result => result
+    | NONE => raise Fail "expected an aesop tree type binding"
+val respelt_predicate =
+  Term.mk_var
+    ("aesop_respelt_predicate", respelt_type --> Type.bool)
+val respelt_cgoal =
+  tree_cgoal [] [] (Term.mk_comb (respelt_predicate, respelt_meta))
+val respelt_tree0 =
+  new_tree clasetMeta.empty fifo_goal []
+val (respelt_root, respelt_tree1) =
+  pop_expected respelt_tree0
+val respelt_created =
+  install_tree_rapp respelt_tree1 respelt_root aesopRule.RSafe
+    "respelt_creator" respelt_store3 [respelt_cgoal, respelt_cgoal]
+    [tree_creation_record [respelt_meta] [respelt_type]]
+val [respelt_path, respelt_sibling] =
+  #goals respelt_created
+val respelt_explored =
+  install_tree_rapp (#tree respelt_created) respelt_sibling
+    aesopRule.RSafe "respelt_existing_subtree" respelt_store3
+    [respelt_cgoal] []
+val respelt_store4 =
+  bind_tree_meta respelt_meta boolSyntax.T respelt_store3
+val respelt_assigned =
+  install_tree_rapp (#tree respelt_explored) respelt_path
+    aesopRule.RSafe "respelt_assign" respelt_store4 [] []
+
+val _ =
+  check
+    ("aesop copying identifies a metavariable respelt by a type binding",
+     fn () =>
+       case #goals respelt_assigned of
+           [copied] =>
+             #copy_of (aesopTree.goal (#tree respelt_assigned) copied) =
+               SOME respelt_sibling
+         | _ => false)
 
 val (transitive_x, transitive_store1) =
   clasetMeta.new_meta
@@ -2871,6 +3022,71 @@ val _ =
              aconv left surface_p andalso aconv right surface_q
          | _ => false)
 
+(* A polymorphic [Dest] rule applied to a lambda binds the rule's type
+   metavariable, and that respells the metavariable its two child goals
+   share -- the created spelling the store's bindings report and the
+   refined spelling a normalised goal carries.  Read as two metavariables
+   the goals are uncoupled: they fall into separate clusters and the
+   branch that assigns the shared metavariable copies neither of them, so
+   nothing discharges the sibling and kernel replay of the winning tree
+   fails.  Constants are needed rather than free variables: only a
+   constant's type variable can be instantiated by the match. *)
+val aesop_lambda_subp_def =
+  new_definition
+    ("aesop_lambda_subp_def",
+     ``aesop_lambda_subp (s : 'a -> bool) t <=> !x. s x ==> t x``)
+
+val aesop_lambda_inhab_def =
+  new_definition
+    ("aesop_lambda_inhab_def",
+     ``aesop_lambda_inhab (s : 'a -> bool) <=> ?x. s x``)
+
+local
+  infix THEN
+  val op THEN = Tactical.THEN
+in
+val aesop_lambda_intro =
+  Tactical.prove
+    (``!s t. (!x. (s : 'a -> bool) x ==> t x) ==>
+             aesop_lambda_subp s t``,
+     Rewrite.PURE_REWRITE_TAC [aesop_lambda_subp_def] THEN
+     Tactical.REPEAT Tactic.GEN_TAC THEN
+     Tactic.DISCH_TAC THEN
+     Tactical.FIRST_ASSUM Tactic.ACCEPT_TAC)
+
+val aesop_lambda_dest =
+  Tactical.prove
+    (``!s t x. aesop_lambda_subp (s : 'a -> bool) t ==> s x ==> t x``,
+     Rewrite.PURE_REWRITE_TAC [aesop_lambda_subp_def] THEN
+     Tactical.REPEAT Tactic.GEN_TAC THEN
+     Tactic.DISCH_TAC THEN
+     Tactical.FIRST_ASSUM Tactic.MATCH_ACCEPT_TAC)
+
+val aesop_lambda_forward =
+  Tactical.prove
+    (``!s t. aesop_lambda_subp (s : 'a -> bool) t ==>
+             aesop_lambda_inhab s ==> aesop_lambda_inhab t``,
+     Rewrite.PURE_REWRITE_TAC
+       [aesop_lambda_subp_def, aesop_lambda_inhab_def] THEN
+     Tactical.REPEAT Tactic.GEN_TAC THEN
+     Tactic.MATCH_ACCEPT_TAC boolTheory.MONO_EXISTS)
+end
+
+val aesop_lambda_goal : Abbrev.goal =
+  ([``aesop_lambda_inhab (\x. x = (a:'a))``],
+   ``aesop_lambda_subp (\x. x = (a:'a)) s ==> aesop_lambda_inhab s``)
+
+val _ =
+  check
+    ("AESOP_TAC proves a goal whose coupling metavariable is respelt",
+     fn () =>
+       valid_closes
+         (aesopLib.AESOP_TAC
+           [clasetLib.SIntro aesop_lambda_intro,
+            clasetLib.Dest aesop_lambda_dest,
+            clasetLib.Forward aesop_lambda_forward])
+         aesop_lambda_goal)
+
 val _ =
   check
     ("aesop invocation arguments do not leak into the global claset",
@@ -2926,6 +3142,60 @@ val _ =
          " propositional smoke",
          fn () => aesop_closes proposition))
     pelletier_propositional_smoke
+
+(* Both goals below reach a rule application whose two coupled subgoals
+   are discharged unevenly: one member closes without assigning the
+   metavariable they share -- on Pelletier 30 normalisation alone proves
+   it -- so no copy of the sibling is made anywhere and the sibling stays
+   open.  Reading the cluster disjunctively declared the application, and
+   with it the root, proved, and [extract] then walked into a sibling it
+   had no proof of and reported "winning forest has no proof of goal N".
+   That is the engine contradicting itself, which is what the assertions
+   below are about; whether either goal closes is a matter of search
+   strength and is deliberately left free.  Pelletier 30 is only asserted
+   free of that one diagnostic: it now gets as far as kernel replay and
+   stops there on a distinct defect outside this layer, where a wrapper
+   record taken before an assignment is replayed against goals the
+   assignment has since grounded. *)
+val aesop_coupled_goals =
+  [(30,
+    ([],
+     ``(!x:'a. P x \/ Q x ==> ~R x) /\
+       (!x. (Q x ==> ~ss x) ==> P x /\ R x) ==> !x. ss x``)
+    : Abbrev.goal),
+   (31,
+    ([],
+     ``~(?x:'a. P x /\ (Q x \/ R x)) /\ (?x. L x /\ P x) /\
+       (!x. ~R x ==> M x) ==> ?x. L x /\ M x``))]
+
+fun aesop_diagnostic goal =
+  (ignore (residual (aesopLib.AESOP_TAC []) goal); "")
+  handle error as HOL_ERR _ => General.exnMessage error
+
+val aesop_coupled_diagnostics =
+  map (fn (number, goal) => (number, aesop_diagnostic goal))
+    aesop_coupled_goals
+
+val _ =
+  List.app
+    (fn (number, diagnostic) =>
+      check
+        ("AESOP_TAC Pelletier " ^ Int.toString number ^
+         " proves no cluster it cannot extract",
+         fn () =>
+           not
+             (String.isSubstring
+               "winning forest has no proof of goal" diagnostic)))
+    aesop_coupled_diagnostics
+
+val _ =
+  check
+    ("AESOP_TAC Pelletier 31 reports no proof instead of an engine bug",
+     fn () =>
+       case aesop_coupled_diagnostics of
+           _ :: (31, diagnostic) :: _ =>
+             not (String.isSubstring "aesop engine bug" diagnostic)
+         | _ => false)
 
 val strength_safe_imp_residue =
   residual

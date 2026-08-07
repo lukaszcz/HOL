@@ -82,6 +82,40 @@ val _ =
              Term.aconv (clasetMeta.norm store1 m) fixed
        end)
 
+(* A metavariable created at a type that is still a type metavariable has
+   two spellings once that type metavariable is bound: the one it was
+   created with, which [bindings] keeps reporting, and the refined one a
+   normalized term carries.  Whoever keys a set or a lookup on metavariable
+   identity must see those as one metavariable. *)
+val _ =
+  test
+    ("metavariable identity ignores a type binding respelling",
+     fn () =>
+       let
+         val (tymeta, store0) = clasetMeta.new_tymeta clasetMeta.empty
+         val (m, store1) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} store0
+         val (other, store2) =
+           clasetMeta.new_meta {allow = [], ty = tymeta} store1
+         val store3 =
+           the_store (clasetMeta.bind_ty (tymeta, bool_ty) store2)
+         val predicate =
+           Term.mk_var ("respelling_predicate", tymeta --> bool_ty)
+         val respelt =
+           case
+             clasetMeta.metas_of store3 (Term.mk_comb (predicate, m))
+           of
+               [only] => only
+             | _ => fixed
+       in
+         Term.compare (m, respelt) <> EQUAL andalso
+         clasetMeta.meta_compare (m, respelt) = EQUAL andalso
+         clasetMeta.meta_compare (m, other) <> EQUAL andalso
+         clasetMeta.meta_compare (fixed, fixed) = EQUAL andalso
+         clasetMeta.meta_compare (m, fixed) = LESS andalso
+         clasetMeta.meta_compare (fixed, m) = GREATER
+       end)
+
 val _ =
   test
     ("normalization follows bindings and contracts beta and eta",

@@ -27,6 +27,13 @@ sig
   val norm_type : store -> hol_type -> hol_type
   val metas_of : store -> term -> meta list
   val is_meta : term -> bool
+  (* A metavariable is identified by its name alone.  Its type is refined as
+     the type metavariables inside it are bound, so one metavariable has
+     several spellings as a term: [bindings] reports the one it was created
+     with, while a normalized term carries the refined one.  Comparing whole
+     terms therefore reads a single metavariable as two, so any set or
+     lookup keyed on metavariable identity must use this order. *)
+  val meta_compare : meta * meta -> order
   val is_tymeta : hol_type -> bool
   val is_eigen : store -> term -> bool
   val ground : store -> store

@@ -29,6 +29,18 @@ fun tymeta_name ty =
 
 fun string_compare (left : string, right) = String.compare (left, right)
 
+(* Metavariables come first and are ordered by name, so the two spellings a
+   type binding gives one metavariable compare equal; everything else keeps
+   [Term.compare].  Discriminating on being a metavariable before comparing
+   keeps the whole thing a total order on terms. *)
+fun meta_compare (left, right) =
+  case (meta_name left, meta_name right) of
+      (SOME left_name, SOME right_name) =>
+        String.compare (left_name, right_name)
+    | (SOME _, NONE) => LESS
+    | (NONE, SOME _) => GREATER
+    | (NONE, NONE) => Term.compare (left, right)
+
 type store =
   {allows : (string, term list) Redblackmap.dict,
    eigens : (string, term list) Redblackmap.dict,

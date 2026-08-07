@@ -37,9 +37,11 @@ fun ordered_rules rules =
     map #3 (Listsort.sort compare positioned)
   end
 
+(* Metavariable identity, not term equality: a type binding respells a
+   metavariable, and a respelling is not a new metavariable. *)
 fun member_term candidate =
   List.exists
-    (fn existing => Term.compare (candidate, existing) = EQUAL)
+    (fn existing => clasetMeta.meta_compare (candidate, existing) = EQUAL)
 
 fun member_type candidate =
   List.exists

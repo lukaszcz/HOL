@@ -49,12 +49,19 @@ type cluster =
 
 type queue_entry = {goal : gid, prio : real, insertion : int}
 
-(* The parent links of goals and rapps, inverted.  Both maps list their
-   entries in creation order, which is ascending id order because
-   [install_rapp] is the only place either kind of child appears. *)
+(* The parent links of goals and rapps, inverted, plus the copy links of
+   goals inverted alongside them: [copy_children] sends an original goal to
+   the copies of it installed elsewhere in the tree.  All three maps list
+   their entries in creation order, which is ascending id order because
+   [install_rapp] is the only place either kind of child, or a copy, ever
+   appears.  Inverting the copy links matters for cost, not just
+   convenience: [derive_goal] reads them on every node of every refresh
+   round, and scanning the goal table for [copy_of] there would make each
+   round quadratic in trees that routinely reach hundreds of goals. *)
 type parent_index =
   {rapp_children : (gid, rid list) Redblackmap.dict,
-   goal_children : (rid, gid list) Redblackmap.dict}
+   goal_children : (rid, gid list) Redblackmap.dict,
+   copy_children : (gid, gid list) Redblackmap.dict}
 
 datatype tree =
   Tree of
@@ -70,8 +77,14 @@ datatype tree =
 val ERR = mk_HOL_ERR "aesopTree"
 val root_cluster = 0
 
+(* Dependency sets are keyed on metavariable identity, not on the term
+   spelling: the same metavariable reaches them both as [clasetMeta.bindings]
+   created it and as a normalized goal now spells it, and those differ once a
+   type metavariable inside its type is bound.  Under [Term.compare] the two
+   spellings do not meet, and every intersection below silently reports no
+   dependency at all. *)
 fun empty_dependencies () =
-  {terms = HOLset.empty Term.compare,
+  {terms = HOLset.empty clasetMeta.meta_compare,
    types = HOLset.empty Type.compare}
 
 fun type_dependencies store terms =
@@ -92,7 +105,7 @@ fun dependencies_of store ({params, asl, w} : cgoal) =
   let
     val formulas = asl @ [w]
     val terms =
-      HOLset.fromList Term.compare
+      HOLset.fromList clasetMeta.meta_compare
         (List.concat (map (clasetMeta.metas_of store) formulas))
     val formula_types = type_dependencies store formulas
     fun parameter_type (parameter, types) =
@@ -190,27 +203,42 @@ fun rapp_count (Tree {rapps, ...}) = Redblackmap.numItems rapps
 
 fun empty_index () : parent_index =
   {rapp_children = Redblackmap.mkDict Int.compare,
-   goal_children = Redblackmap.mkDict Int.compare}
+   goal_children = Redblackmap.mkDict Int.compare,
+   copy_children = Redblackmap.mkDict Int.compare}
 
 fun index_lookup table key =
   case Redblackmap.peek (table, key) of
       NONE => []
     | SOME entries => entries
 
+(* [copy] is fresh and larger than every copy already recorded against
+   [original], so appending keeps the copies in id order too. *)
+fun index_copy ((original, copy), table) =
+  Redblackmap.insert
+    (table, original, index_lookup table original @ [copy])
+
 (* [rid] is fresh and larger than every rapp already recorded under
    [parent], so appending keeps the sibling list in id order. *)
-fun index_install {parent, rid, children}
-      ({rapp_children, goal_children} : parent_index) : parent_index =
+fun index_install {parent, rid, children, copies}
+      ({rapp_children, goal_children, copy_children} : parent_index)
+      : parent_index =
   {rapp_children =
      Redblackmap.insert
        (rapp_children, parent, index_lookup rapp_children parent @ [rid]),
-   goal_children = Redblackmap.insert (goal_children, rid, children)}
+   goal_children = Redblackmap.insert (goal_children, rid, children),
+   copy_children = List.foldl index_copy copy_children copies}
 
 fun child_rapps (Tree {index, ...}) parent =
   index_lookup (#rapp_children index) parent
 
 fun rapp_goals (Tree {index, ...}) parent =
   index_lookup (#goal_children index) parent
+
+(* The copies of [original] installed anywhere in the tree.  [install_rapp]
+   canonicalises the key through [original_goal], so a copy never keys
+   copies of its own and this relation is one level deep. *)
+fun copy_goals (Tree {index, ...}) original =
+  index_lookup (#copy_children index) original
 
 fun active_cgoal ({cgoal, norm, ...} : goal) =
   case norm of
@@ -333,11 +361,19 @@ fun cluster_with_state state
 fun same_states left right =
   ListPair.allEq (fn (x, y) => x = y) (left, right)
 
+(* The goals of a cluster are the conjunctive subgoals one rule application
+   emitted, coupled by shared metavariables, so all of them must hold.  A
+   member proved in a branch that assigned the shared metavariables
+   discharges its siblings through the copies [install_rapp] makes of them
+   in that branch, and [derive_goal] reads those copies back; the coupling
+   therefore needs no weakening here.  Sticking stays the conservative
+   all-members reading: a stuck member may yet be discharged by a copy the
+   search is still working on. *)
 fun derive_cluster tree ({goals, ...} : cluster) =
   let
     val states = map (#state o goal tree) goals
   in
-    if List.exists (fn state => state = Proved) states then Proved
+    if List.all (fn state => state = Proved) states then Proved
     else if List.all (fn state => state = Stuck) states then Stuck
     else Unknown
   end
@@ -351,9 +387,18 @@ fun derive_rapp tree ({clusters, ...} : rapp) =
     else Unknown
   end
 
+(* A copy carries the very obligation of its original under a store that
+   has assigned more, so proving the copy proves the original.  Reading
+   that back here is what lets a cluster be the plain conjunction its
+   subgoals are: the branch that assigns the shared metavariables proves
+   the copies it made, and the originals become proved with them.
+   Sticking deliberately ignores copies -- a goal whose own alternatives
+   are exhausted is stuck until some copy of it is actually proved, and
+   the copy's branch may still be under search. *)
 fun derive_goal tree (current : goal) =
   let
     val states = map (#state o rapp tree) (child_rapps tree (#id current))
+    val copy_states = map (#state o goal tree) (copy_goals tree (#id current))
     val norm_proved =
       case #norm current of NormProved _ => true | _ => false
     val exhausted =
@@ -361,7 +406,8 @@ fun derive_goal tree (current : goal) =
       null (#unsafe_cursor current) andalso null (#postponed current)
   in
     if norm_proved orelse
-       List.exists (fn state => state = Proved) states
+       List.exists (fn state => state = Proved) states orelse
+       List.exists (fn state => state = Proved) copy_states
     then Proved
     else if exhausted andalso
             List.all (fn state => state = Stuck) states
@@ -496,7 +542,7 @@ fun cgoal_under store ({params, asl, w} : cgoal) : cgoal =
 
 fun term_bound bindings meta =
   List.exists
-    (fn (redex, _) => Term.compare (redex, meta) = EQUAL)
+    (fn (redex, _) => clasetMeta.meta_compare (redex, meta) = EQUAL)
     (#terms bindings)
 
 fun type_bound bindings tymeta =
@@ -510,7 +556,7 @@ fun assigned_between parent_store child_store =
     val child = clasetMeta.bindings child_store
   in
     {terms =
-       HOLset.fromList Term.compare
+       HOLset.fromList clasetMeta.meta_compare
          (map #1
            (List.filter
              (fn (redex, _) => not (term_bound parent redex))
@@ -741,8 +787,17 @@ fun install_rapp parent_id
     val (next_gid', child_entries, reversed_child_ids) =
       List.foldl make_child (next_gid, [], []) all_specs
     val child_ids = List.rev reversed_child_ids
+    val ordered_children = List.rev child_entries
+    (* The copy links this application adds, for the inverted index.  This
+       is the only place a copy is ever created, so the index needs no
+       other maintenance. *)
+    val copy_links =
+      List.mapPartial
+        (fn (id, {copy_of, ...} : goal) =>
+          Option.map (fn source => (source, id)) copy_of)
+        ordered_children
     val goals_with_children =
-      Redblackmap.insertList (goals, List.rev child_entries)
+      Redblackmap.insertList (goals, ordered_children)
     (* The rapp itself is installed below, so [provisional] keeps the old
        index: it exists only to group the new goals by dependency
        overlap, which reads the goal table alone. *)
@@ -790,7 +845,8 @@ fun install_rapp parent_id
              (clusters, List.rev cluster_entries),
          index =
            index_install
-             {parent = parent_id, rid = rid, children = child_ids}
+             {parent = parent_id, rid = rid, children = child_ids,
+              copies = copy_links}
              index,
          queue = queue, next_gid = next_gid',
          next_rid = next_rid + 1, next_cid = next_cid',

@@ -685,19 +685,20 @@ fun proved_rapp tree id =
           ("proved goal " ^ Int.toString id ^
            " has no proved rule application")
 
-fun proved_cluster_goal tree id =
-  let val current = aesopTree.cluster tree id
+(* A goal carrying its own proof, as opposed to one the tree proved through
+   a copy of it made elsewhere.  Only the former can be descended into
+   here: a goal proved solely by copy has no proved rule application, and
+   its records are reached when the walk gets to the copy. *)
+fun independently_proved tree id =
+  let val current = aesopTree.goal tree id
   in
-    case
-      List.find
-        (fn gid => #state (aesopTree.goal tree gid) = aesopTree.Proved)
-        (#goals current)
-    of
-        SOME gid => gid
-      | NONE =>
-          raise ERR "extract"
-            ("proved cluster " ^ Int.toString id ^
-             " has no proved goal")
+    #state current = aesopTree.Proved andalso
+    (case #norm current of
+         aesopTree.NormProved _ => true
+       | _ =>
+           List.exists
+             (fn rid => #state (aesopTree.rapp tree rid) = aesopTree.Proved)
+             (aesopTree.child_rapps tree id))
   end
 
 (* A copied goal discharges the corresponding original sibling, but it is
@@ -710,51 +711,71 @@ fun winning_forest tree =
     type selection = (gid, gid) Redblackmap.dict
     val empty_selection : selection = Redblackmap.mkDict Int.compare
 
-    fun select actual (selection, stores) =
+    (* One obligation can be discharged more than once in the same tree:
+       a goal may carry its own proof and also have a proved copy of it
+       somewhere in the winning branch.  Both are genuine proofs of that
+       single obligation, so replay takes exactly one of them -- the first
+       the walk reaches -- and does not descend a second time.  Taking both
+       would make [clasetMeta.absorb] fold two stores for one goal and
+       linearise its records twice. *)
+    fun select actual (accumulated as (selection, stores)) =
       let
         val current = aesopTree.goal tree actual
         val original =
           case #copy_of current of
               NONE => actual
             | SOME id => id
-        val selection' =
-          case Redblackmap.peek (selection, original) of
-              NONE =>
-                Redblackmap.insert (selection, original, actual)
-            | SOME previous =>
-                if previous = actual then selection
-                else
-                  raise ERR "extract"
-                    ("winning forest selects goal " ^
-                     Int.toString original ^ " twice")
       in
-        case #norm current of
-            aesopTree.NormProved {store, ...} =>
-              (selection', store :: stores)
-          | _ =>
-              let
-                val rid = proved_rapp tree actual
-                val application = aesopTree.rapp tree rid
-                fun select_cluster
-                      (cid, accumulated) =
+        if Option.isSome (Redblackmap.peek (selection, original)) then
+          accumulated
+        else
+          let
+            val selection' =
+              Redblackmap.insert (selection, original, actual)
+          in
+            case #norm current of
+                aesopTree.NormProved {store, ...} =>
+                  (selection', store :: stores)
+              | _ =>
                   let
-                    val cluster = aesopTree.cluster tree cid
-                    val _ =
-                      if #state cluster = aesopTree.Proved then ()
-                      else
-                        raise ERR "extract"
-                          ("winning rule application contains unproved " ^
-                           "cluster " ^ Int.toString cid)
+                    val rid = proved_rapp tree actual
+                    val application = aesopTree.rapp tree rid
+                    (* A cluster's goals are conjunctive, so every one of
+                       them needs a proof in the forest.  The members
+                       proved only by copy are picked up where the walk
+                       meets the copy, which is itself a cluster goal of
+                       some rapp below. *)
+                    fun select_cluster (cid, accumulated) =
+                      let
+                        val cluster = aesopTree.cluster tree cid
+                        val _ =
+                          if #state cluster = aesopTree.Proved then ()
+                          else
+                            raise ERR "extract"
+                              ("winning rule application contains " ^
+                               "unproved cluster " ^ Int.toString cid)
+                        val members =
+                          List.filter (independently_proved tree)
+                            (#goals cluster)
+                        val _ =
+                          if null members then
+                            raise ERR "extract"
+                              ("proved cluster " ^ Int.toString cid ^
+                               " has no independently proved goal")
+                          else ()
+                      in
+                        List.foldl
+                          (fn (id, current) => select id current)
+                          accumulated members
+                      end
                   in
-                    select (proved_cluster_goal tree cid) accumulated
+                    if null (#clusters application) then
+                      (selection', #store application :: stores)
+                    else
+                      List.foldl select_cluster
+                        (selection', stores) (#clusters application)
                   end
-              in
-                if null (#clusters application) then
-                  (selection', #store application :: stores)
-                else
-                  List.foldl select_cluster
-                    (selection', stores) (#clusters application)
-              end
+          end
       end
 
     val root = aesopTree.root tree
