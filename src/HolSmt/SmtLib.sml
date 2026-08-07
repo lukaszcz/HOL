@@ -1101,8 +1101,167 @@ local
         else CVC5ArraySet
     | _ => Z3Set
 
+  (* Bags are likewise functions in HOL, but their integer-valued array
+     representation must remain distinct from arbitrary functions. *)
+  datatype bag_backend = Z3ArrayBag | CVC5NativeBag | CVC5ArrayBag
+
+  val current_bag_backend = ref Z3ArrayBag
+  val current_bag_terms = ref ([] : Term.term list)
+  val current_bag_helpers = ref ([] : string list)
+
+  fun bag_const name = Term.prim_mk_const {Thy = "bag", Name = name}
+
+  val bag_in_tm = bag_const "BAG_IN"
+  val bag_merge_tm = bag_const "BAG_MERGE"
+  val bag_inter_tm = bag_const "BAG_INTER"
+  val finite_bag_tm = bag_const "FINITE_BAG"
+
+  val native_bag_heads = [
+    bag_in_tm, bagSyntax.BAG_INSERT_tm, bagSyntax.BAG_UNION_tm,
+    bagSyntax.BAG_DIFF_tm, bag_merge_tm, bag_inter_tm,
+    bagSyntax.SUB_BAG_tm, bagSyntax.BAG_CARD_tm, bagSyntax.EMPTY_BAG_tm
+  ]
+
+  fun is_native_bag_head tm =
+    List.exists (fn head => same_const head tm) native_bag_heads
+
+  fun is_bag_type tm = bagSyntax.is_bag_ty (Term.type_of tm)
+
+  fun bag_element_type tm =
+    if is_bag_type tm then bagSyntax.base_type tm
+    else raise ERR "bag_element_type" "not a bag-valued term"
+
+  fun add_bag_term tm terms =
+    if is_bag_type tm andalso not (mem_aconv tm terms) then tm :: terms
+    else terms
+
+  fun dest_bag_binary head tm =
+    let val (rator, rands) = boolSyntax.strip_comb tm in
+      if same_const rator head then
+        case rands of [left, right] => (left, right)
+        | _ => raise ERR "dest_bag_binary" "wrong arity"
+      else
+        raise ERR "dest_bag_binary" "wrong head"
+    end
+
+  fun native_bag_term tm =
+    Term.is_var tm orelse bagSyntax.is_empty tm orelse
+    (case Lib.total bagSyntax.dest_insert tm of
+       SOME (_, bag) => native_bag_term bag
+     | NONE =>
+       (case Lib.total bagSyntax.dest_union tm of
+          SOME (left, right) =>
+            native_bag_term left andalso native_bag_term right
+        | NONE =>
+          (case Lib.total bagSyntax.dest_diff tm of
+             SOME (left, right) =>
+               native_bag_term left andalso native_bag_term right
+           | NONE =>
+             (case Lib.total (dest_bag_binary bag_merge_tm) tm of
+                SOME (left, right) =>
+                  native_bag_term left andalso native_bag_term right
+              | NONE =>
+                (case Lib.total (dest_bag_binary bag_inter_tm) tm of
+                   SOME (left, right) =>
+                     native_bag_term left andalso native_bag_term right
+                 | NONE => false)))))
+
+  fun collect_native_bag_terms tm terms =
+  let
+    fun collect_bag bag terms = add_bag_term bag terms
+    val (rator, rands) = boolSyntax.strip_comb tm
+    val terms =
+      (let val (_, body) = Term.dest_abs tm in
+         collect_native_bag_terms body terms
+       end
+       handle Feedback.HOL_ERR _ =>
+         List.foldl (fn (arg, acc) => collect_native_bag_terms arg acc)
+           terms rands)
+    fun binary () =
+      case rands of [left, right] =>
+        collect_bag tm (collect_bag left (collect_bag right terms))
+      | _ => terms
+  in
+    if same_const rator bag_in_tm then
+      (case rands of [_, bag] => collect_bag bag terms | _ => terms)
+    else if same_const rator bagSyntax.BAG_CARD_tm orelse
+            same_const rator finite_bag_tm then
+      (case rands of [bag] => collect_bag bag terms | _ => terms)
+    else if same_const rator bagSyntax.BAG_INSERT_tm then
+      (case rands of [_, bag] => collect_bag tm (collect_bag bag terms)
+       | _ => terms)
+    else if same_const rator bagSyntax.BAG_UNION_tm orelse
+            same_const rator bagSyntax.BAG_DIFF_tm orelse
+            same_const rator bag_merge_tm orelse same_const rator bag_inter_tm
+    then binary ()
+    else if same_const rator bagSyntax.SUB_BAG_tm then
+      (case rands of [left, right] =>
+         collect_bag left (collect_bag right terms)
+       | _ => terms)
+    else if bagSyntax.is_empty tm then add_bag_term tm terms
+    else if same_const rator boolSyntax.equality then
+      (case rands of [left, right] =>
+         if is_bag_type left andalso is_bag_type right then
+           collect_bag left (collect_bag right terms)
+         else terms
+       | _ => terms)
+    else terms
+  end
+
+  fun is_marked_bag_term tm = mem_aconv tm (!current_bag_terms)
+
+  fun finite_bag_term finite_terms tm =
+    mem_aconv tm finite_terms orelse bagSyntax.is_empty tm orelse
+    finite_element_type (bag_element_type tm) orelse
+    (case Lib.total bagSyntax.dest_insert tm of
+       SOME (_, bag) => finite_bag_term finite_terms bag
+     | NONE =>
+       (case Lib.total bagSyntax.dest_union tm of
+          SOME (left, right) =>
+            finite_bag_term finite_terms left andalso
+            finite_bag_term finite_terms right
+        | NONE =>
+          (case Lib.total bagSyntax.dest_diff tm of
+             SOME (left, _) => finite_bag_term finite_terms left
+           | NONE =>
+             let val (rator, rands) = boolSyntax.strip_comb tm in
+               if same_const rator bag_merge_tm then
+                 (case rands of [left, right] =>
+                    finite_bag_term finite_terms left andalso
+                    finite_bag_term finite_terms right
+                  | _ => false)
+               else if same_const rator bag_inter_tm then
+                 (case rands of [left, right] =>
+                    finite_bag_term finite_terms left orelse
+                    finite_bag_term finite_terms right
+                  | _ => false)
+               else false
+             end)))
+
+  fun finite_bag_hypothesis tm =
+    let val (rator, rands) = boolSyntax.strip_comb tm in
+      if same_const rator finite_bag_tm then
+        case rands of [bag] => SOME bag | _ => NONE
+      else NONE
+    end
+
+  fun cvc5_native_bags goal bag_terms =
+  let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
+  in
+    List.all (fn bag => native_bag_term bag andalso
+      finite_bag_term finite_terms bag) bag_terms
+  end
+
+  fun bag_backend_for_target target goal bag_terms =
+    case target of
+      SOME {solver = "cvc5", ...} =>
+        if cvc5_native_bags goal bag_terms then CVC5NativeBag
+        else CVC5ArrayBag
+    | _ => Z3ArrayBag
+
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
+  val num_of_int_tm = Term.prim_mk_const {Thy="integer", Name="Num"}
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
 
@@ -2013,22 +2172,29 @@ local
         HOLTheoryEncoding {
           feature = "sequences, sets, and bags",
           smt_theory = "Z3 sequence/set/bag extensions",
-          mode = if sets then NativeSMTLIB else ConservativeEmbedding,
+          mode = if sets orelse bags then NativeSMTLIB
+                 else ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = sets,
+          translate = sets orelse bags,
           replay = false,
           notes =
-            if sets then
+            if sets andalso bags then
+              "Stock pred_set and bag operations emit their native dual " ^
+              "dialects; non-finite cvc5 goals use quantified arrays."
+            else if sets then
               "Stock pred_set operations emit Z3 array-sets or cvc5 finite " ^
               "set.* terms; non-finite cvc5 goals use quantified arrays."
+            else if bags then
+              "Stock bag operations emit Z3 Int arrays with (_ map ...) or " ^
+              "finite cvc5 bag.* terms; non-finite cvc5 goals use arrays."
             else
               "Z3 extension symbols are parser/typechecker entries only; " ^
               "generic HOL lists and bags are not emitted as Seq/Set/Bag.",
           proof_obligation =
-            "Checked replay of the native set surface is deferred to " ^
-            "TASK_10/11; the parser and oracle paths already use faithful " ^
-            "pred_set terms."
+            "Checked replay of the native set and bag surfaces is deferred " ^
+            "to TASK_10/11 and TASK_14/15; parser and oracle paths already " ^
+            "use faithful pred_set and bag terms."
         }
       val regex_record =
         HOLTheoryEncoding {
@@ -2604,6 +2770,205 @@ local
         else
           raise ERR "native_set_builtin" "unsupported native set term"
       end
+    fun bag_sort tydict bag =
+      let
+        val element_ty = bag_element_type bag
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Bag " ^ element_sort ^ ")"))
+      end
+    fun bag_array_sort tydict bag =
+      let
+        val element_ty = bag_element_type bag
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Array " ^ element_sort ^ " Int)"))
+      end
+    fun selected_bag_sort tydict bag =
+      case !current_bag_backend of
+        CVC5NativeBag => bag_sort tydict bag
+      | _ => bag_array_sort tydict bag
+    fun bag_constant tydict bag =
+      let
+        val element_ty = bag_element_type bag
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+        val text =
+          case !current_bag_backend of
+            CVC5NativeBag => "(as bag.empty (Bag " ^ element_sort ^ "))"
+          | _ => "((as const (Array " ^ element_sort ^ " Int)) 0)"
+      in
+        (tydict, (decls, text))
+      end
+    fun fallback_bag_definition acc bag args body =
+      case Redblackmap.peek (Lib.snd acc, (bag, 0)) of
+        SOME name => (acc, ([], name))
+      | NONE =>
+        let
+          val element_ty = bag_element_type bag
+          val (tydict, (typedecls, element_sort)) =
+            translate_type regime (Lib.fst acc, element_ty)
+          val tmdict = Lib.snd acc
+          val name = "bag" ^ Int.toString (Redblackmap.numItems tmdict)
+          val tmdict = Redblackmap.insert (tmdict, (bag, 0), name)
+          val binder = "bag_x" ^ Int.toString (Redblackmap.numItems tmdict)
+          val declaration = "(declare-const " ^ name ^ " (Array " ^
+            element_sort ^ " Int))\n"
+          val definition = "(assert (forall ((" ^ binder ^ " " ^
+            element_sort ^ ")) (= (select " ^ name ^ " " ^ binder ^ ") " ^
+            body binder args ^ ")))\n"
+        in
+          ((tydict, tmdict), (typedecls @ [declaration, definition], name))
+        end
+    fun z3_bag_helper name definition =
+      if List.exists (fn known => known = name) (!current_bag_helpers) then []
+      else
+        (current_bag_helpers := name :: !current_bag_helpers; [definition])
+    fun native_bag_symbol rator rands =
+      is_native_bag_head rator orelse
+      ((same_const rator intSyntax.int_injection orelse
+        same_const rator int_of_num_tm) andalso
+       (case rands of [arg] => bagSyntax.is_card arg | _ => false))
+    fun native_bag_builtin (rator, rands) =
+      if same_const rator intSyntax.int_injection orelse
+         same_const rator int_of_num_tm then
+        (case rands of [card] =>
+           let
+             val bag = bagSyntax.dest_card card
+             val (acc, (decls, name)) =
+               translate_term regime apply_operator (acc, (bounds, bag))
+           in
+             case !current_bag_backend of
+               CVC5NativeBag => (acc, (decls, sexpr "bag.card" [name]))
+             | Z3ArrayBag => raise ERR "native_bag_builtin"
+                 "bag.card is unavailable for solver Z3"
+             | CVC5ArrayBag => raise ERR "native_bag_builtin"
+                 "bag.card requires a finiteness-entailing cvc5 goal"
+           end
+         | _ => raise ERR "native_bag_builtin" "wrong card arity")
+      else
+      let
+        (* NUM_TO_INT_TAC represents a free HOL bag as [\x. Num (c x)].
+           Discard that carrier embedding here: [c] is the Int-array count
+           function, while its proved non-negativity remains a hypothesis. *)
+        fun int_count_bag tm =
+          let
+            val (x, body) = Term.dest_abs tm
+            val (head, args) = boolSyntax.strip_comb body
+          in
+            if same_const head num_of_int_tm then
+              case args of [count] => SOME (Term.mk_abs (x, count))
+              | _ => NONE
+            else NONE
+          end
+          handle Feedback.HOL_ERR _ => NONE
+        fun translate_bag_arg (a, t) =
+          case int_count_bag t of
+            SOME counts =>
+              translate_term regime apply_operator (a, (bounds, counts))
+          | NONE => translate_term regime apply_operator (a, (bounds, t))
+        val (acc, declnames) = Lib.foldl_map translate_bag_arg (acc, rands)
+        val (declss, names) = Lib.split declnames
+        val decls = List.concat declss
+        fun fallback body =
+          let
+            val (acc, (defs, name)) =
+              fallback_bag_definition acc tm names body
+          in (acc, (decls @ defs, name)) end
+        fun binary native z3 fallback_body =
+          case names of [left, right] =>
+            (case !current_bag_backend of
+               CVC5NativeBag => (acc, (decls, sexpr native [left, right]))
+             | Z3ArrayBag =>
+                 let val (map_decls, map_name) = z3 in
+                   (acc, (decls @ map_decls,
+                     "((_ map " ^ map_name ^ ") " ^ left ^ " " ^ right ^ ")"))
+                 end
+             | CVC5ArrayBag => fallback fallback_body)
+          | _ => raise ERR "native_bag_builtin" "wrong binary bag arity"
+      in
+        if same_const rator bag_in_tm then
+          (case names of [element, bag] =>
+             (acc, (decls,
+               case !current_bag_backend of
+                 CVC5NativeBag => sexpr "bag.member" [element, bag]
+               | _ => sexpr "<" ["0", sexpr "select" [bag, element]]))
+           | _ => raise ERR "native_bag_builtin" "wrong membership arity")
+        else if same_const rator bagSyntax.BAG_INSERT_tm then
+          (case names of [element, bag] =>
+             (acc, (decls,
+               case !current_bag_backend of
+                 CVC5NativeBag => sexpr "bag.union_disjoint"
+                   [sexpr "bag" [element, "1"], bag]
+               | _ => sexpr "store" [bag, element,
+                   sexpr "+" [sexpr "select" [bag, element], "1"]]))
+           | _ => raise ERR "native_bag_builtin" "wrong insert arity")
+        else if same_const rator bagSyntax.BAG_UNION_tm then
+          binary "bag.union_disjoint"
+            ([], "(+ (Int Int) Int)")
+            (fn x => fn [left, right] =>
+              sexpr "+" [sexpr "select" [left, x],
+                sexpr "select" [right, x]]
+              | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
+        else if same_const rator bagSyntax.BAG_DIFF_tm then
+          binary "bag.difference_subtract"
+            (z3_bag_helper "holsmt_bag_nat_sub"
+              ("(define-fun holsmt_bag_nat_sub ((x Int) (y Int)) Int " ^
+               "(ite (< x y) 0 (- x y)))\n"), "holsmt_bag_nat_sub")
+            (fn x => fn [left, right] =>
+              sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
+                sexpr "select" [right, x]], "0",
+                sexpr "-" [sexpr "select" [left, x],
+                  sexpr "select" [right, x]]]
+              | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
+        else if same_const rator bag_merge_tm then
+          binary "bag.union_max"
+            (z3_bag_helper "holsmt_bag_max"
+              ("(define-fun holsmt_bag_max ((x Int) (y Int)) Int " ^
+               "(ite (< x y) y x))\n"), "holsmt_bag_max")
+            (fn x => fn [left, right] =>
+              sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
+                sexpr "select" [right, x]], sexpr "select" [right, x],
+                sexpr "select" [left, x]]
+              | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
+        else if same_const rator bag_inter_tm then
+          binary "bag.inter_min"
+            (z3_bag_helper "holsmt_bag_min"
+              ("(define-fun holsmt_bag_min ((x Int) (y Int)) Int " ^
+               "(ite (< x y) x y))\n"), "holsmt_bag_min")
+            (fn x => fn [left, right] =>
+              sexpr "ite" [sexpr "<" [sexpr "select" [left, x],
+                sexpr "select" [right, x]], sexpr "select" [left, x],
+                sexpr "select" [right, x]]
+              | _ => raise ERR "native_bag_builtin" "wrong fallback arity")
+        else if same_const rator bagSyntax.SUB_BAG_tm then
+          (case names of [left, right] =>
+             (case !current_bag_backend of
+                CVC5NativeBag =>
+                  (acc, (decls, sexpr "bag.subbag" [left, right]))
+              | _ =>
+                  let
+                    val element_ty = bag_element_type (List.hd rands)
+                    val (tydict, (typedecls, element_sort)) =
+                      translate_type regime (Lib.fst acc, element_ty)
+                    val binder = "bag_x" ^ Int.toString
+                      (Redblackmap.numItems (Lib.snd acc))
+                  in
+                    ((tydict, Lib.snd acc), (decls @ typedecls,
+                      "(forall ((" ^ binder ^ " " ^ element_sort ^ ")) " ^
+                      "(<= (select " ^ left ^ " " ^ binder ^ ") (select " ^
+                      right ^ " " ^ binder ^ ")))"))
+                  end)
+           | _ => raise ERR "native_bag_builtin" "wrong subbag arity")
+        else if bagSyntax.is_empty tm then
+          let val (tydict, (constant_decls, text)) =
+            bag_constant (Lib.fst acc) tm
+          in ((tydict, Lib.snd acc), (constant_decls, text)) end
+        else
+          raise ERR "native_bag_builtin" "unsupported native bag term"
+      end
     (* creates a mapping from bound variables to their SMT-LIB names; if a
        variable is already mapped, we return its existing SMT-LIB name *)
     fun create_bound_name (bounds, v) =
@@ -3007,6 +3372,8 @@ local
         if !current_set_backend <> CVC5ArraySet andalso
            is_marked_set_term var then
           set_sort tydict var
+        else if is_marked_bag_term var then
+          selected_bag_sort tydict var
         else
           translate_type regime (tydict, Term.type_of var)
       val (tydict, vardecltys) =
@@ -3098,6 +3465,7 @@ local
        built-in symbols; however, only do this if 'tm' has base type *)
     (if tm_has_base_type then
       if native_set_symbol tm [] then native_set_builtin (tm, [])
+      else if native_bag_symbol tm [] then native_bag_builtin (tm, [])
       else builtin_symbol (tm, [])
     else
       raise ERR "translate_term" "not first-order")  (* handled below *)
@@ -3110,6 +3478,7 @@ local
       (* In an HO regime a fully ranked built-in may itself return a map.
          Translate that ranked prefix before any remaining map applications. *)
       (if native_set_symbol rator rands orelse
+            native_bag_symbol rator rands orelse
             (case regime of
                FirstOrder => tm_has_base_type
              | HigherOrder _ =>
@@ -3117,6 +3486,8 @@ local
                  List.length rands = declared_const_arity rator)
        then
         if native_set_symbol rator rands then native_set_builtin (rator, rands)
+        else if native_bag_symbol rator rands then
+          native_bag_builtin (rator, rands)
         else builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
@@ -3288,6 +3659,10 @@ local
                      declaration_arity = 0 andalso is_marked_set_term rator
                   then
                     set_sort tydict rator
+                  else if declaration_arity = 0 andalso
+                          is_marked_bag_term rator
+                  then
+                    selected_bag_sort tydict rator
                   else
                     translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
@@ -3478,17 +3853,23 @@ local
   let
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
+    val bag_terms = List.foldl (fn (term, acc) =>
+      collect_native_bag_terms term acc) [] (t :: original_ts)
     val backend = backend_for_target target goal set_terms
+    val bag_backend = bag_backend_for_target target goal bag_terms
     val _ = current_set_backend := backend
     val _ = current_set_terms := set_terms
-    (* FINITE hypotheses are the evidence selecting cvc5's finite Set model;
-       once selected they are semantic facts of that model and must not be
-       serialized as an unsupported HOL predicate. *)
-    val ts =
-      case backend of
-        CVC5NativeSet => List.filter (fn tm =>
-          not (Option.isSome (finite_set_hypothesis tm))) original_ts
-      | _ => original_ts
+    val _ = current_bag_backend := bag_backend
+    val _ = current_bag_terms := bag_terms
+    val _ = current_bag_helpers := []
+    (* FINITE hypotheses are the evidence selecting cvc5's finite Set/Bag
+       models; once selected they are semantic facts of those models and must
+       not be serialized as unsupported HOL predicates. *)
+    val ts = List.filter (fn tm =>
+      not (backend = CVC5NativeSet andalso
+           Option.isSome (finite_set_hypothesis tm)) andalso
+      not (bag_backend = CVC5NativeBag andalso
+           Option.isSome (finite_bag_hypothesis tm))) original_ts
     val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
@@ -3560,11 +3941,17 @@ local
   let
     val saved_backend = !current_set_backend
     val saved_set_terms = !current_set_terms
+    val saved_bag_backend = !current_bag_backend
+    val saved_bag_terms = !current_bag_terms
+    val saved_bag_helpers = !current_bag_helpers
     fun work () =
       goal_to_SmtLib_aux_inner request apply_operator policy target goal
     fun restore () =
       (current_set_backend := saved_backend;
-       current_set_terms := saved_set_terms)
+       current_set_terms := saved_set_terms;
+       current_bag_backend := saved_bag_backend;
+       current_bag_terms := saved_bag_terms;
+       current_bag_helpers := saved_bag_helpers)
   in
     Portable.finally restore work ()
   end
@@ -4236,6 +4623,11 @@ in
      same structured availability diagnostic before serialization begins. *)
   val _ = register_operator_availability {
     hol_head = pred_setSyntax.card_tm, operator = "set.card", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
+    hol_head = bagSyntax.BAG_CARD_tm, operator = "bag.card", solver = "cvc5",
     versions = ["1.3.4"]
   }
 

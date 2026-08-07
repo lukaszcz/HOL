@@ -5895,6 +5895,95 @@ in
     "set.card availability diagnostic changed: " ^ card_message)
 end
 
+fun smtlib_native_bag_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 goal = text_of
+    (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal)
+  fun cvc goal = text_of (CVC.goal_to_SmtLib_translation goal)
+  val x = ``x:int``
+  val b = ``b:int -> num``
+  val c = ``c:int -> num``
+  val union = ``BAG_UNION (b:int -> num) c``
+  val diff = ``BAG_DIFF (b:int -> num) c``
+  val merge = ``BAG_MERGE (b:int -> num) c``
+  val inter = ``BAG_INTER (b:int -> num) c``
+  val insert = ``BAG_INSERT (x:int) (b:int -> num)``
+  fun bag_in bag =
+    Term.list_mk_comb (Term.mk_thy_const {Thy = "bag", Name = "BAG_IN",
+      Ty = Type.--> (intSyntax.int_ty,
+        Type.--> (Term.type_of bag, Type.bool))}, [x, bag])
+  val surface_goal = ([], boolSyntax.list_mk_conj [
+    bag_in insert, bag_in union, bag_in diff, bag_in merge, bag_in inter,
+    bagSyntax.mk_sub_bag (b, c),
+    boolSyntax.mk_eq (bagSyntax.mk_bag ([], intSyntax.int_ty),
+      bagSyntax.mk_bag ([], intSyntax.int_ty))])
+  val z3_text = z3 surface_goal
+  val oracle_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC false)
+    ([], bag_in union))
+  val oracle_text = z3 oracle_goal
+  val cvc_native_text = cvc
+    ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
+     bag_in union)
+  val cvc_fallback_text = cvc ([], bag_in union)
+  val cvc_surface_text = cvc
+    ([``FINITE_BAG (b:int -> num)``, ``FINITE_BAG (c:int -> num)``],
+     boolSyntax.list_mk_conj [bag_in insert, bag_in union, bag_in diff,
+       bag_in merge, bag_in inter, bagSyntax.mk_sub_bag (b, c)])
+  val cvc_card_text = cvc
+    ([``FINITE_BAG (b:int -> num)``], boolSyntax.mk_eq
+      (Term.mk_comb (intSyntax.int_injection, bagSyntax.mk_card b),
+       intSyntax.zero_tm))
+  val card_message =
+    (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
+       ([], ``BAG_CARD (b:int -> num) = 0``));
+     die "FAIL: Z3 accepted BAG_CARD")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  val cvc_card_message =
+    (ignore (cvc ([], boolSyntax.mk_eq
+       (Term.mk_comb (intSyntax.int_injection, bagSyntax.mk_card b),
+        intSyntax.zero_tm)));
+     die "FAIL: cvc5 accepted non-finite BAG_CARD")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+in
+  assert (contains "(Array Int Int)" z3_text andalso
+      contains "((_ map (+ (Int Int) Int))" z3_text,
+    "Z3 native bag union did not use the Int-array map encoding:\n" ^ z3_text);
+  assert (List.all (fn symbol => contains symbol z3_text)
+      ["(store", "holsmt_bag_nat_sub", "holsmt_bag_max",
+       "holsmt_bag_min", "(forall ((bag_x", "(select", " 0)"] ,
+    "Z3 native bag surface is incomplete:\n" ^ z3_text);
+  assert (not (contains "bag." z3_text),
+    "Z3 native bag translation leaked a cvc5 symbol:\n" ^ z3_text);
+  assert (contains "((_ map (+ (Int Int) Int))" oracle_text andalso
+      contains "(<= 0 (select" oracle_text andalso
+      not (contains "(declare-sort" oracle_text),
+    "Z3 bag oracle translation lost its Int count encoding:\n" ^ oracle_text);
+  assert (contains "(Bag Int)" cvc_native_text andalso
+      contains "bag.member" cvc_native_text andalso
+      contains "bag.union_disjoint" cvc_native_text,
+    "finite cvc5 bag translation did not use bag.*:\n" ^ cvc_native_text);
+  assert (not (contains "(Bag Int)" cvc_fallback_text) andalso
+      not (contains "bag.union_disjoint" cvc_fallback_text) andalso
+      not (contains "(_ map" cvc_fallback_text) andalso
+      contains "(forall ((bag_x" cvc_fallback_text,
+    "non-finite cvc5 bag translation did not use quantified arrays:\n" ^
+    cvc_fallback_text);
+  assert (List.all (fn symbol => contains symbol cvc_surface_text)
+      ["bag.union_disjoint", "bag.difference_subtract", "bag.union_max",
+       "bag.inter_min", "bag.subbag"],
+    "finite cvc5 bag surface is incomplete:\n" ^ cvc_surface_text);
+  assert (contains "bag.card" cvc_card_text,
+    "finite cvc5 BAG_CARD did not emit bag.card:\n" ^ cvc_card_text);
+  assert (card_message =
+      "SMT-LIB operator 'bag.card' is unavailable for solver 'Z3' at " ^
+      "version '4.15.3'",
+    "bag.card availability diagnostic changed: " ^ card_message);
+  assert (cvc_card_message =
+      "bag.card requires a finiteness-entailing cvc5 goal",
+    "non-finite cvc5 bag.card diagnostic changed: " ^ cvc_card_message)
+end
+
 fun smtlib_operator_availability_diagnostic_success () =
 let
   val goal = ([], ``LENGTH (xs:int list) = 0``)
@@ -11930,6 +12019,8 @@ let
       smtlib_seq_set_bag_feature_inference_success),
     ("smtlib_native_set_translation_success",
       smtlib_native_set_translation_success),
+    ("smtlib_native_bag_translation_success",
+      smtlib_native_bag_translation_success),
     ("smtlib_operator_availability_diagnostic_success",
       smtlib_operator_availability_diagnostic_success),
     ("smtlib_dialect_dictionary_dispatch_success",
