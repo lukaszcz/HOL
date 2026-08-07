@@ -4654,7 +4654,7 @@ let
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
       reals = reals, floating_point = false, strings = strings,
-      datatypes = false,
+      sequences = false, sets = false, bags = false, datatypes = false,
       nonlinear = nonlinear, higher_order = false}
   fun mk_datatype_features (quantifiers, uninterpreted, arrays, bitvectors,
                             integers, reals, strings, nonlinear) =
@@ -4662,7 +4662,7 @@ let
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
       reals = reals, floating_point = false, strings = strings,
-      datatypes = true,
+      sequences = false, sets = false, bags = false, datatypes = true,
       nonlinear = nonlinear, higher_order = false}
   fun expect_features expected (name, feature_tuple) =
     let
@@ -4896,7 +4896,8 @@ let
   fun features arrays = SmtLib.LogicFeatures {
     quantifiers = true, uninterpreted = false, arrays = arrays,
     bitvectors = false, integers = true, reals = false,
-    floating_point = false, strings = false, datatypes = true,
+    floating_point = false, strings = false, sequences = false,
+    sets = false, bags = false, datatypes = true,
     nonlinear = false, higher_order = false}
   fun selection version logic arrays =
     Z3.z3_414_logic_policy version {
@@ -5225,9 +5226,7 @@ let
   val has_bag_matrix_row =
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
-            smt_theory = "Z3 sequence/set/bag extensions",
-            translate = false, replay = false, notes, ...} =>
-            contains "Seq/Set/Bag" notes
+            smt_theory = "Z3 sequence/set/bag extensions", ...} => true
         | _ => false) records
   val has_regex_translation_row =
     List.exists
@@ -5248,10 +5247,132 @@ in
     "translation records lacked FloatingPoint proof-obligation row");
   assert (has_datatype_matrix_row,
     "translation records lacked native Datatypes encoding row");
-  assert (has_bag_matrix_row,
-    "translation records lacked sequence/set/bag matrix row");
+  assert (not has_bag_matrix_row,
+    "goal without Seq/Set/Bag content emitted its extension matrix row");
   assert (has_regex_translation_row,
     "translation records lacked native RegLan translation row")
+end
+
+fun smtlib_seq_set_bag_feature_inference_success () =
+let
+  fun translation_of tm =
+    Lib.fst (SmtLib.goal_to_SmtLib_translation NONE ([], tm))
+  fun features_of translation =
+    case List.find
+      (fn SmtLib.LogicSelection _ => true | _ => false)
+      (SmtLib.translation_records translation) of
+      SOME (SmtLib.LogicSelection {features, ...}) => features
+    | _ => die "FAIL: translation lacked LogicSelection features"
+  fun has_extension_record translation =
+    List.exists
+      (fn SmtLib.HOLTheoryEncoding {
+            smt_theory = "Z3 sequence/set/bag extensions", ...} => true
+        | _ => false)
+      (SmtLib.translation_records translation)
+  fun assert_feature label select tm =
+    let
+      val translation = translation_of tm
+    in
+      assert (select (features_of translation),
+        label ^ " did not select its LogicFeatures field");
+      assert (SmtLib.translation_logic translation = "ALL",
+        label ^ " did not select ALL");
+      assert (has_extension_record translation,
+        label ^ " did not emit the Seq/Set/Bag encoding record")
+    end
+  val no_feature_translation = translation_of ``(x:int) = y``
+  val SmtLib.LogicFeatures {
+    sequences = no_sequences, sets = no_sets, bags = no_bags, ...} =
+    features_of no_feature_translation
+  val ho_features = SmtLib.LogicFeatures {
+    quantifiers = false, uninterpreted = false, arrays = false,
+    bitvectors = false, integers = false, reals = false,
+    floating_point = false, strings = false, sequences = true,
+    sets = false, bags = false, datatypes = false, nonlinear = false,
+    higher_order = true}
+  val (ho_logic, _) = SmtLib.infer_logic_from_features_with_regime
+    (SmtLib.HigherOrder SmtLib.Standard27) ho_features
+  val ho_translation = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation_with_regime
+      (SmtLib.HigherOrder SmtLib.Standard27) NONE
+      ([], ``LENGTH (xs:int list) = 0``))
+  val has_regime_record = List.exists
+    (fn SmtLib.RegimeSelection {
+          regime = SmtLib.HigherOrder SmtLib.Standard27, ...} => true
+      | _ => false)
+    (SmtLib.translation_records ho_translation)
+in
+  assert_feature "sequence"
+    (fn SmtLib.LogicFeatures {sequences, ...} => sequences)
+    ``LENGTH (xs:int list) = 0``;
+  assert_feature "set" (fn SmtLib.LogicFeatures {sets, ...} => sets)
+    ``(x:int) IN (s:int -> bool)``;
+  assert_feature "bag" (fn SmtLib.LogicFeatures {bags, ...} => bags)
+    ``BAG_CARD (b:int -> num) = 0``;
+  assert (not no_sequences andalso not no_sets andalso not no_bags,
+    "core arithmetic goal selected a Seq/Set/Bag feature");
+  assert (not (has_extension_record no_feature_translation),
+    "core arithmetic goal emitted the Seq/Set/Bag encoding record");
+  assert (ho_logic = "HO_ALL" andalso
+      SmtLib.translation_logic ho_translation = "HO_ALL",
+    "higher-order Seq/Set/Bag feature did not select HO_ALL");
+  assert (SmtLib.translation_regime ho_translation =
+      SmtLib.HigherOrder SmtLib.Standard27 andalso has_regime_record,
+    "Seq/Set/Bag higher-order translation did not record its regime")
+end
+
+fun smtlib_operator_availability_diagnostic_success () =
+let
+  val goal = ([], ``LENGTH (xs:int list) = 0``)
+  fun unavailable_message () =
+    (SmtLib.check_goal_operator_availability
+       {solver = "cvc5", version = SOME "1.3.4"} goal;
+     die "FAIL: unavailable operator was accepted")
+    handle Feedback.HOL_ERR holerr => Feedback.message_of holerr
+  val _ = SmtLib.clear_operator_availabilities ()
+  val _ = SmtLib.register_operator_availability {
+    hol_head = listSyntax.length_tm, operator = "seq.len", solver = "Z3",
+    versions = ["4.15.3"]}
+  val message = unavailable_message ()
+  val _ = SmtLib.check_goal_operator_availability
+    {solver = "Z3", version = SOME "4.15.3"} goal
+  val _ = SmtLib.clear_operator_availabilities ()
+in
+  assert (message =
+      "SMT-LIB operator 'seq.len' is unavailable for solver 'cvc5' at " ^
+      "version '1.3.4'",
+    "availability diagnostic changed: " ^ message)
+end
+
+fun smtlib_dialect_dictionary_dispatch_success () =
+let
+  val empty_tydict = Redblackmap.mkDict String.compare
+  fun stub_parse _ indices args =
+    if List.null indices andalso List.null args then
+      boolSyntax.T
+    else
+      raise Feedback.mk_HOL_ERR "Unittest" "stub_parse"
+        "dialect.stub expects no indices or arguments"
+  val stub_tmdict = Library.dict_from_list [
+    ("dialect_stub", stub_parse)]
+  val dictionaries = (empty_tydict, stub_tmdict)
+  fun has_stub dicts = Lib.can (fn () =>
+    Redblackmap.find (Lib.snd dicts, "dialect_stub")) ()
+  val _ = SmtLib_Logics.clear_dialect_dictionaries ()
+  val _ = SmtLib_Logics.register_dialect_dictionary {
+    solver = "cvc5", logic = "QF_UF", dictionaries = dictionaries}
+  val cvc_dicts = SmtLib_Logics.parsedicts_of_solver_logic "cvc5" "QF_UF"
+  val z3_dicts = SmtLib_Logics.parsedicts_of_solver_logic "Z3" "QF_UF"
+  val _ = assert (has_stub cvc_dicts,
+    "cvc5 dialect dictionary was not selected")
+  val [stub] = Redblackmap.find (Lib.snd cvc_dicts, "dialect_stub")
+  val parsed = stub "dialect_stub" [] []
+  val _ = SmtLib_Logics.clear_dialect_dictionaries ()
+in
+  assert (Term.aconv parsed boolSyntax.T,
+    "cvc5 dialect dictionary did not parse its registered symbol");
+  assert (not (has_stub z3_dicts),
+    "Z3 accepted a cvc5-only dialect dictionary symbol")
 end
 
 fun smtlib_hol_string_injection_translation_success () =
@@ -5794,7 +5915,8 @@ let
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = integers,
       reals = reals, floating_point = false, strings = strings,
-      datatypes = datatypes, nonlinear = nonlinear, higher_order = true}
+      sequences = false, sets = false, bags = false, datatypes = datatypes,
+      nonlinear = nonlinear, higher_order = true}
   fun expect_ho_logic expected name fields =
     let
       val (logic, _) = SmtLib.infer_logic_from_features_with_regime
@@ -6385,7 +6507,8 @@ let
       quantifiers = quantifiers, uninterpreted = uninterpreted,
       arrays = arrays, bitvectors = bitvectors, integers = false,
       reals = reals, floating_point = true, strings = false,
-      datatypes = false, nonlinear = false, higher_order = false}
+      sequences = false, sets = false, bags = false, datatypes = false,
+      nonlinear = false, higher_order = false}
   fun expect_feature_logic expected fields =
     let
       val (actual, _) =
@@ -11168,6 +11291,12 @@ let
       smtlib_datatype_type_translation_success),
     ("smtlib_extended_hol_encoding_records_success",
       smtlib_extended_hol_encoding_records_success),
+    ("smtlib_seq_set_bag_feature_inference_success",
+      smtlib_seq_set_bag_feature_inference_success),
+    ("smtlib_operator_availability_diagnostic_success",
+      smtlib_operator_availability_diagnostic_success),
+    ("smtlib_dialect_dictionary_dispatch_success",
+      smtlib_dialect_dictionary_dispatch_success),
     ("smtlib_hol_string_injection_translation_success",
       smtlib_hol_string_injection_translation_success),
     ("smtlib_native_string_translation_success",

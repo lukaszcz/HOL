@@ -148,13 +148,17 @@ structure Z3 = struct
     else
       NONE
 
+  fun z3_translation get_proof version =
+    SmtLib.goal_to_SmtLib_translation_for_solver
+      {policy = z3_414_logic_policy version, dialect = SmtLib.Z3LambdaArray,
+       apply_operator = SmtLib.ApplyUnderscore, get_proof = get_proof,
+       target = SOME {solver = "Z3", version = version}}
+
   fun goal_to_SmtLib_translation_for_version version =
-    SmtLib.goal_to_SmtLib_translation_with_policy_and_dialect
-      (z3_414_logic_policy version) SmtLib.Z3LambdaArray
+    z3_translation false version
 
   fun goal_to_SmtLib_with_get_proof_translation_for_version version =
-    SmtLib.goal_to_SmtLib_with_get_proof_translation_with_policy_and_dialect
-      (z3_414_logic_policy version) SmtLib.Z3LambdaArray
+    z3_translation true version
 
   (* Z3 (Linux/Unix), SMT-LIB file format, no proofs *)
   val Z3_SMT_Oracle =

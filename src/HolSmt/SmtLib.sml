@@ -13,6 +13,9 @@ datatype logic_features = LogicFeatures of {
   reals : bool,
   floating_point : bool,
   strings : bool,
+  sequences : bool,
+  sets : bool,
+  bags : bool,
   datatypes : bool,
   nonlinear : bool,
   higher_order : bool
@@ -65,6 +68,66 @@ type logic_selection_policy = {
   inferred_logic : string,
   reason : string
 } -> {logic : string, reason : string} option
+
+(* The per-theory emitters register the exact stock HOL head that implements
+   an SMT operator, together with every solver/version that accepts it.  The
+   check deliberately ignores unregistered heads: this infrastructure lands
+   before the Seq/Set/Bag emitters, and ordinary pre-existing translations
+   must retain their behaviour. *)
+type operator_availability = {
+  hol_head : Term.term,
+  operator : string,
+  solver : string,
+  versions : string list
+}
+
+val operator_availabilities = ref ([] : operator_availability list)
+
+fun register_operator_availability availability =
+  operator_availabilities := availability :: !operator_availabilities
+
+fun clear_operator_availabilities () = operator_availabilities := []
+
+fun term_heads tm =
+  let
+    fun walk tm acc =
+      let val (head, args) = boolSyntax.strip_comb tm in
+        List.foldl (fn (arg, acc) => walk arg acc) (head :: acc) args
+      end
+      handle Feedback.HOL_ERR _ =>
+        (let val (_, body) = Term.dest_abs tm in walk body acc end
+         handle Feedback.HOL_ERR _ => acc)
+  in
+    walk tm []
+  end
+
+fun check_goal_operator_availability {solver, version} (assumptions, conclusion) =
+  let
+    val heads = List.concat (List.map term_heads (conclusion :: assumptions))
+    fun occurs head = List.exists (fn tm =>
+      Term.same_const tm head handle Feedback.HOL_ERR _ => false) heads
+    fun available ({solver = registered_solver, versions, ...}
+                   : operator_availability) =
+      solver = registered_solver andalso
+      (case version of NONE => true
+       | SOME target_version =>
+           List.exists (fn registered => registered = target_version) versions)
+    fun check ({hol_head, operator, ...} : operator_availability) =
+      if occurs hol_head andalso
+         not (List.exists available (List.filter
+           (fn ({hol_head = candidate, operator = candidate_name, ...}
+                : operator_availability) =>
+             Term.same_const hol_head candidate andalso operator = candidate_name)
+           (!operator_availabilities))) then
+        raise Feedback.mk_HOL_ERR "SmtLib" "check_goal_operator_availability"
+          ("SMT-LIB operator '" ^ operator ^ "' is unavailable for solver '" ^
+           solver ^ "'" ^
+           (case version of NONE => "" | SOME v => " at version '" ^ v ^ "'"))
+      else
+        ()
+  in
+    List.app check (!operator_availabilities)
+  end
 
 local
 
@@ -1005,7 +1068,8 @@ local
 
   fun features_to_string (LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      floating_point, strings, datatypes, nonlinear, higher_order}) =
+      floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
+      higher_order}) =
     String.concatWith "," (List.map Lib.fst (List.filter Lib.snd [
       ("quantifiers", quantifiers),
       ("uninterpreted", uninterpreted),
@@ -1015,6 +1079,9 @@ local
       ("reals", reals),
       ("floating-point", floating_point),
       ("strings", strings),
+      ("sequences", sequences),
+      ("sets", sets),
+      ("bags", bags),
       ("datatypes", datatypes),
       ("nonlinear", nonlinear),
       ("higher-order", higher_order)
@@ -1023,7 +1090,8 @@ local
   fun infer_logic_from_features_for_regime regime
       (features as LogicFeatures {
       quantifiers, uninterpreted, arrays, bitvectors, integers, reals,
-      floating_point, strings, datatypes, nonlinear, higher_order}) =
+      floating_point, strings, sequences, sets, bags, datatypes, nonlinear,
+      higher_order}) =
     let
       val qf = if quantifiers then "" else "QF_"
       fun datatype_arith_logic () =
@@ -1132,7 +1200,9 @@ local
         else
           qf ^ (if bitvectors then "BVFP" else "FP")
       val logic =
-        if floating_point then
+        if sequences orelse sets orelse bags then
+          "ALL"
+        else if floating_point then
           floating_point_logic ()
         else if strings then
           (* RegLan and dedicated smtstring symbols are classified as the
@@ -1561,6 +1631,31 @@ local
             (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) orelse
         List.exists (fn tm => is_string_const
           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      fun thy_const_named theory names tm =
+        case Lib.total Term.dest_thy_const tm of
+          SOME {Thy, Name, ...} =>
+            Thy = theory andalso List.exists (fn name => name = Name) names
+        | NONE => false
+      val sequence_names =
+        ["APPEND", "LENGTH", "TAKE", "DROP", "EL", "MAP", "FOLDL",
+         "REVERSE", "isPREFIX", "LUPDATE"]
+      val set_names =
+        ["INSERT", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
+         "EMPTY", "UNIV", "SING", "CARD"]
+      val bag_names =
+        ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_MERGE", "BAG_INTER",
+         "BAG_DIFF", "BAG_CARD", "EMPTY_BAG", "SUB_BAG"]
+      fun is_native_sequence_const tm = thy_const_named "list" sequence_names tm
+      fun is_native_set_const tm =
+        thy_const_named "pred_set" set_names tm orelse
+        thy_const_named "bool" ["IN"] tm
+      fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
+      val sequences = List.exists (fn tm => is_native_sequence_const
+        (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val sets = List.exists (fn tm => is_native_set_const
+        (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val bags = List.exists (fn tm => is_native_bag_const
+        (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       fun term_is_native_string_surface tm =
         let val (rator, _) = boolSyntax.strip_comb tm
         in
@@ -1661,11 +1756,13 @@ local
       LogicFeatures {quantifiers = quantifiers, uninterpreted = uninterpreted,
         arrays = arrays, bitvectors = bitvectors, integers = integers,
         reals = reals, floating_point = floating_point, strings = strings,
+        sequences = sequences, sets = sets, bags = bags,
         datatypes = datatypes, nonlinear = nonlinear,
         higher_order = higher_order}
     end
 
-  fun advanced_encoding_records regime terms =
+  fun advanced_encoding_records regime terms
+      (LogicFeatures {sequences, sets, bags, ...}) =
     let
       val all_subterms = List.concat (List.map subterms terms)
       fun subterm_types p =
@@ -1805,8 +1902,9 @@ local
         }
     in
       (if has_strings then [string_record] else []) @
-      [datatype_record, fp_record, z3_ext_record, regex_record,
-       ho_core_record]
+      [datatype_record, fp_record] @
+      (if sequences orelse sets orelse bags then [z3_ext_record] else []) @
+      [regex_record, ho_core_record]
     end
 
   fun build_translation_records regime regime_reason terms logic reason
@@ -1831,7 +1929,7 @@ local
         term_decl_for_tmdict regime tydict (key, name) :: acc)
         [] tmdict
       val builtin_records = encoded_symbol_records terms
-      val advanced_records = advanced_encoding_records regime terms
+      val advanced_records = advanced_encoding_records regime terms features
     in
       regime_record :: logic_record :: List.rev type_records @
       List.rev term_records @ List.rev builtin_records @ advanced_records
@@ -3652,11 +3750,19 @@ in
        dialect rather than a full regime request: overriding the regime and
        asking for a proof are not combinations any boundary needs. *)
     fun goal_to_SmtLib_translation_for_solver
-        {policy, dialect, apply_operator, get_proof} =
-      goal_to_SmtLib_translation_gen
-        (emit_options [with_request (AutomaticRegime dialect),
-                       with_apply_operator apply_operator,
-                       with_policy policy, with_get_proof get_proof])
+        {policy, dialect, apply_operator, get_proof, target} goal =
+      let
+        val _ =
+          case target of
+            NONE => ()
+          | SOME solver_target =>
+              check_goal_operator_availability solver_target goal
+      in
+        goal_to_SmtLib_translation_gen
+          (emit_options [with_request (AutomaticRegime dialect),
+                         with_apply_operator apply_operator,
+                         with_policy policy, with_get_proof get_proof]) goal
+      end
 
     fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
       goal_to_SmtLib_translation_gen

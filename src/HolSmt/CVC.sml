@@ -219,7 +219,9 @@ structure CVC = struct
   fun cvc_translation get_proof goal =
     SmtLib.goal_to_SmtLib_translation_for_solver
       {policy = cvc_logic_policy, dialect = SmtLib.Standard27,
-       apply_operator = SmtLib.ApplyAt, get_proof = get_proof} goal
+       apply_operator = SmtLib.ApplyAt, get_proof = get_proof,
+       target = SOME {solver = "cvc5", version = SOME (version_string ())}}
+      goal
 
   fun goal_to_SmtLib_translation goal = cvc_translation false goal
 

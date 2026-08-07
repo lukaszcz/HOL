@@ -100,6 +100,31 @@ local
 
 in
 
+  (* A parser normally has only a logic name, so `parsedicts_of_logic` stays
+     deliberately solver-neutral.  Seq/Set/Bag add non-standard dialects;
+     their entries are registered against both the solver and logic, then
+     selected explicitly by solver-facing parsers and proof readers. *)
+  type type_parse_fn =
+    string -> Term.term list -> Type.hol_type list -> Type.hol_type
+  type term_parse_fn = string -> Term.term list -> Term.term list -> Term.term
+  type dialect_dicts =
+    (string, type_parse_fn list) Redblackmap.dict *
+    (string, term_parse_fn list) Redblackmap.dict
+  type dialect_dictionary_registration = {
+    solver : string,
+    logic : string,
+    dictionaries : dialect_dicts
+  }
+
+  val dialect_dictionary_registrations =
+    ref ([] : dialect_dictionary_registration list)
+
+  fun register_dialect_dictionary registration =
+    dialect_dictionary_registrations :=
+      registration :: !dialect_dictionary_registrations
+
+  fun clear_dialect_dictionaries () = dialect_dictionary_registrations := []
+
   (* In general, parsing is too liberal -- for instance, we do not
      check that the input satisfies the linearity constraints that are
      defined by various logics. Our aim is not to validate the SMT-LIB
@@ -1087,6 +1112,25 @@ in
       (UFNRA.tydict, UFNRA.tmdict)
     | _ =>
       raise ERR "parsedicts_of_logic" ("unknown logic '" ^ logic ^ "'")
+
+  (* Extends the standard logic packet with entries for exactly one solver
+     dialect.  Multiple registrations compose, so the theory tasks can add
+     solver-neutral Seq, cvc5 Set/Bag, and Z3 Set entries independently. *)
+  fun parsedicts_of_solver_logic solver logic =
+    let
+      val (base_tydict, base_tmdict) = parsedicts_of_logic logic
+      val registrations = List.filter
+        (fn ({solver = registered_solver, logic = registered_logic, ...}
+             : dialect_dictionary_registration) =>
+          solver = registered_solver andalso logic = registered_logic)
+        (!dialect_dictionary_registrations)
+      fun add ({dictionaries = (tydict, tmdict), ...}
+               : dialect_dictionary_registration) (tys, tms) =
+        (union_dicts [tys, tydict], union_dicts [tms, tmdict])
+    in
+      List.foldl (fn (registration, dictionaries) =>
+        add registration dictionaries) (base_tydict, base_tmdict) registrations
+    end
 
   (* returns the symbol metadata used to build the parse dictionaries of
      the given SMT-LIB 2 logic *)
