@@ -29,10 +29,10 @@ val _ =
 val _ = SmtLib_Datatypes.empty_name_map
 
 fun typecheck_datatype_options elaborate =
-  {dict_logic = NONE, elaborate_datatypes = elaborate}
+  {dict_logic = NONE, solver = NONE, elaborate_datatypes = elaborate}
 
 fun typecheck_datatype_options_with_logic elaborate logic =
-  {dict_logic = SOME logic, elaborate_datatypes = elaborate}
+  {dict_logic = SOME logic, solver = NONE, elaborate_datatypes = elaborate}
 
 fun typecheck_count_assertions
     (state: SmtLib_Parser.command_state_snapshot) =
@@ -63,7 +63,7 @@ fun typecheck_query_fragment_terms queries =
   List.concat (List.map (fn query =>
     case query of
       SmtLib_Parser.QueryCheckSat
-        {assumptions, assertions, local_definitions} =>
+        {assumptions, assertions, local_definitions, ...} =>
           List.concat
             (List.map typecheck_definition_terms local_definitions) @
           assertions @ assumptions

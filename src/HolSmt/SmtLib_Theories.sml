@@ -1123,24 +1123,6 @@ in
           abstract_const "seq.extract" (Term.type_of s) [s, i, n])),
       ext_term "seq.contains" no_attributes ["(seq.contains (Seq A) (Seq A) Bool)"]
         (K_zero_two (fn (x, y) => abstract_bool "seq.contains" [x, y])),
-      ext_term "set.member" no_attributes ["(set.member A (Set A) Bool)"]
-        (K_zero_two (fn (x, s) => abstract_bool "set.member" [x, s])),
-      ext_term "set.insert" no_attributes ["(set.insert A (Set A) (Set A))"]
-        (K_zero_two (fn (x, s) => abstract_const "set.insert" (Term.type_of s)
-          [x, s])),
-      ext_term "set.union" left_assoc_attributes
-        ["(set.union (Set A) (Set A) (Set A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "set.union" (Term.type_of x)
-          [x, y])),
-      ext_term "set.intersect" left_assoc_attributes
-        ["(set.intersect (Set A) (Set A) (Set A) :left-assoc)"]
-        (leftassoc (fn (x, y) => abstract_const "set.intersect" (Term.type_of x)
-          [x, y])),
-      ext_term "set.minus" no_attributes ["(set.minus (Set A) (Set A) (Set A))"]
-        (K_zero_two (fn (x, y) => abstract_const "set.minus" (Term.type_of x)
-          [x, y])),
-      ext_term "set.subset" no_attributes ["(set.subset (Set A) (Set A) Bool)"]
-        (K_zero_two (fn (x, y) => abstract_bool "set.subset" [x, y])),
       ext_term "bag.union_disjoint" left_assoc_attributes
         ["(bag.union_disjoint (Bag A) (Bag A) (Bag A) :left-assoc)"]
         (leftassoc (fn (x, y) => abstract_const "bag.union_disjoint"
@@ -1168,6 +1150,184 @@ in
       metadata_of_entries "Z3_Extensions" "sort" tyentries @
       metadata_of_entries "Z3_Extensions" "term" tmentries
 
+  end
+
+  (* cvc5's finite-set dialect.  These entries deliberately live outside
+     Z3_Extensions: the two solvers accept disjoint operator spellings. *)
+  structure CVC5_Set =
+  struct
+
+    fun cvc_term name attrs decl parse =
+      extension_entry "cvc5" name attrs decl parse
+
+    fun mk_set_filter (p, s) =
+      let val x = Term.mk_var ("set_filter_x", pred_setSyntax.eltype s)
+      in
+        pred_setSyntax.prim_mk_set_spec
+          (x, Term.list_mk_comb (boolSyntax.conjunction,
+            [pred_setSyntax.mk_in (x, s), Term.mk_comb (p, x)]), [x])
+      end
+
+    fun mk_set_all (p, s) =
+      let val x = Term.mk_var ("set_all_x", pred_setSyntax.eltype s)
+      in
+        boolSyntax.mk_forall (x, boolSyntax.mk_imp
+          (pred_setSyntax.mk_in (x, s), Term.mk_comb (p, x)))
+      end
+
+    fun mk_set_some (p, s) =
+      let val x = Term.mk_var ("set_some_x", pred_setSyntax.eltype s)
+      in
+        boolSyntax.mk_exists (x, boolSyntax.mk_conj
+          (pred_setSyntax.mk_in (x, s), Term.mk_comb (p, x)))
+      end
+
+    fun mk_set_insert args =
+      case List.rev args of
+        s :: element :: elements =>
+          List.foldr (fn (x, acc) => pred_setSyntax.mk_insert (x, acc))
+            s (List.rev (element :: elements))
+      | _ => raise ERR "<set.insert>" "at least two arguments expected"
+
+    fun strip_abs tm =
+      let
+        fun strip tm (vars, body) =
+          case Lib.total Term.dest_abs tm of
+            SOME (v, tm) => strip tm (v :: vars, tm)
+          | NONE => (List.rev vars, tm)
+      in
+        strip tm ([], tm)
+      end
+
+    fun mk_set_comprehension (predicate, value) =
+      let
+        val (predicate_vars, predicate_body) = strip_abs predicate
+        val (value_vars, value_body) = strip_abs value
+        val _ =
+          if List.length predicate_vars = List.length value_vars andalso
+             ListPair.allEq (Lib.uncurry Term.aconv)
+               (predicate_vars, value_vars) then ()
+          else raise ERR "<set.comprehension>"
+            "predicate and value must bind the same variables"
+        val result_var =
+          Term.mk_var ("set_comprehension_x", Term.type_of value_body)
+        val body = boolSyntax.list_mk_exists (predicate_vars,
+          boolSyntax.mk_conj (predicate_body,
+            boolSyntax.mk_eq (result_var, value_body)))
+      in
+        pred_setSyntax.prim_mk_set_spec (result_var, body, [result_var])
+      end
+
+    fun mk_set_fold (f, b, s) =
+      let
+        val element_ty = pred_setSyntax.eltype s
+        val accumulator_ty = Term.type_of b
+        val function_ty = Type.-->
+          (element_ty, Type.--> (accumulator_ty, accumulator_ty))
+        val itset_ty = Type.-->
+          (function_ty, Type.-->
+            (Term.type_of s, Type.--> (accumulator_ty, accumulator_ty)))
+        val itset = Term.mk_thy_const {
+          Thy = "pred_set", Name = "ITSET", Ty = itset_ty
+        }
+      in
+        Term.list_mk_comb (itset, [f, s, b])
+      end
+
+    fun mk_set_singleton x =
+      pred_setSyntax.mk_insert
+        (x, pred_setSyntax.mk_empty (Term.type_of x))
+
+    fun mk_set_is_empty s =
+      boolSyntax.mk_eq (s, pred_setSyntax.mk_empty (pred_setSyntax.eltype s))
+
+    fun mk_set_is_singleton s = pred_setSyntax.mk_sing s
+
+    val tyentries = [
+      extension_entry "cvc5" "Set" (parametric_attributes ["Element"])
+        ["(Set Element)"] (K_zero_one set_ty)
+    ]
+
+    val tmentries = [
+      cvc_term "set.member" no_attributes ["(set.member A (Set A) Bool)"]
+        (K_zero_two pred_setSyntax.mk_in),
+      cvc_term "set.insert" no_attributes ["(set.insert A ... (Set A))"]
+        (K_zero_list mk_set_insert),
+      cvc_term "set.singleton" no_attributes ["(set.singleton A (Set A))"]
+        (K_zero_one mk_set_singleton),
+      cvc_term "set.union" left_assoc_attributes
+        ["(set.union (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc pred_setSyntax.mk_union),
+      cvc_term "set.inter" left_assoc_attributes
+        ["(set.inter (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc pred_setSyntax.mk_inter),
+      cvc_term "set.minus" no_attributes
+        ["(set.minus (Set A) (Set A) (Set A))"]
+        (K_zero_two pred_setSyntax.mk_diff),
+      cvc_term "set.subset" no_attributes ["(set.subset (Set A) (Set A) Bool)"]
+        (K_zero_two pred_setSyntax.mk_subset),
+      cvc_term "set.complement" no_attributes ["(set.complement (Set A) (Set A))"]
+        (K_zero_one pred_setSyntax.mk_compl),
+      cvc_term "set.choose" no_attributes ["(set.choose (Set A) A)"]
+        (K_zero_one pred_setSyntax.mk_choice),
+      cvc_term "set.card" no_attributes ["(set.card (Set A) Int)"]
+        (K_zero_one (fn s => Term.mk_comb (intSyntax.int_injection,
+          pred_setSyntax.mk_card s))),
+      cvc_term "set.map" no_attributes ["(set.map (-> A B) (Set A) (Set B))"]
+        (K_zero_two pred_setSyntax.mk_image),
+      cvc_term "set.filter" no_attributes ["(set.filter (-> A Bool) (Set A) (Set A))"]
+        (K_zero_two mk_set_filter),
+      cvc_term "set.all" no_attributes ["(set.all (-> A Bool) (Set A) Bool)"]
+        (K_zero_two mk_set_all),
+      cvc_term "set.some" no_attributes ["(set.some (-> A Bool) (Set A) Bool)"]
+        (K_zero_two mk_set_some),
+      cvc_term "set.fold" no_attributes ["(set.fold (-> A B B) B (Set A) B)"]
+        (K_zero_three mk_set_fold),
+      cvc_term "set.is_empty" no_attributes ["(set.is_empty (Set A) Bool)"]
+        (K_zero_one mk_set_is_empty),
+      cvc_term "set.is_singleton" no_attributes
+        ["(set.is_singleton (Set A) Bool)"]
+        (K_zero_one mk_set_is_singleton),
+      cvc_term "set.comprehension" no_attributes
+        ["(set.comprehension ((x A)) Bool A (Set A))"]
+        (K_zero_two mk_set_comprehension)
+    ]
+
+    val tydict = dictionary_of_entries tyentries
+    val tmdict = dictionary_of_entries tmentries
+    val metadata =
+      metadata_of_entries "CVC5_Set" "sort" tyentries @
+      metadata_of_entries "CVC5_Set" "term" tmentries
+  end
+
+  (* Z3 represents sets as Bool-valued arrays. *)
+  structure Z3_Set =
+  struct
+
+    fun z3_term name attrs decl parse =
+      extension_entry "Z3" name attrs decl parse
+
+    val tmentries = [
+      z3_term "union" left_assoc_attributes
+        ["(union (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc pred_setSyntax.mk_union),
+      z3_term "intersection" left_assoc_attributes
+        ["(intersection (Set A) (Set A) (Set A) :left-assoc)"]
+        (leftassoc pred_setSyntax.mk_inter),
+      z3_term "setminus" no_attributes ["(setminus (Set A) (Set A) (Set A))"]
+        (K_zero_two pred_setSyntax.mk_diff),
+      z3_term "complement" no_attributes ["(complement (Set A) (Set A))"]
+        (K_zero_one pred_setSyntax.mk_compl),
+      z3_term "subset" no_attributes ["(subset (Set A) (Set A) Bool)"]
+        (K_zero_two pred_setSyntax.mk_subset)
+    ]
+
+    val tydict :
+      (string, (string -> Term.term list -> Type.hol_type list ->
+        Type.hol_type) list) Redblackmap.dict =
+      Redblackmap.mkDict String.compare
+    val tmdict = dictionary_of_entries tmentries
+    val metadata = metadata_of_entries "Z3_Set" "term" tmentries
   end
 
   (* HO-Core *)

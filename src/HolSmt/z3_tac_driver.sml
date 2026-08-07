@@ -30,10 +30,10 @@ val _ =
 val _ = SmtLib_Datatypes.empty_name_map
 
 val z3_tac_datatype_options =
-  {dict_logic = NONE, elaborate_datatypes = true}
+  {dict_logic = NONE, solver = SOME "Z3", elaborate_datatypes = true}
 
 fun z3_tac_datatype_options_with_logic logic =
-  {dict_logic = SOME logic, elaborate_datatypes = true}
+  {dict_logic = SOME logic, solver = SOME "Z3", elaborate_datatypes = true}
 
 fun z3_tac_query_name query =
   case query of
@@ -73,7 +73,7 @@ fun z3_tac_query_diagnostic queries =
 fun z3_tac_query_assertions queries =
   case queries of
     SmtLib_Parser.QueryCheckSat
-      {assumptions, assertions, local_definitions} :: _ =>
+      {assumptions, assertions, local_definitions, ...} :: _ =>
         local_definitions @ assertions @ assumptions
   | _ => []
 
@@ -103,7 +103,7 @@ fun z3_tac_definition_terms definition =
 fun z3_tac_query_fragment_terms queries =
   case queries of
     SmtLib_Parser.QueryCheckSat
-      {assumptions, assertions, local_definitions} :: _ =>
+      {assumptions, assertions, local_definitions, ...} :: _ =>
         List.concat (List.map z3_tac_definition_terms local_definitions) @
         assertions @ assumptions
   | _ => []

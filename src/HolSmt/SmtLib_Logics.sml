@@ -118,12 +118,15 @@ in
 
   val dialect_dictionary_registrations =
     ref ([] : dialect_dictionary_registration list)
+  val default_dialect_dictionary_registrations =
+    ref ([] : dialect_dictionary_registration list)
 
   fun register_dialect_dictionary registration =
     dialect_dictionary_registrations :=
       registration :: !dialect_dictionary_registrations
 
-  fun clear_dialect_dictionaries () = dialect_dictionary_registrations := []
+  fun clear_dialect_dictionaries () =
+    dialect_dictionary_registrations := !default_dialect_dictionary_registrations
 
   (* In general, parsing is too liberal -- for instance, we do not
      check that the input satisfies the linearity constraints that are
@@ -1131,6 +1134,34 @@ in
       List.foldl (fn (registration, dictionaries) =>
         add registration dictionaries) (base_tydict, base_tmdict) registrations
     end
+
+  (* The source parser is intentionally usable without a solver target for
+     corpus/typecheck inspection.  Such a caller gets the union of the two
+     non-conflicting dialect dictionaries; solver-facing callers must use the
+     selector above and therefore retain dialect rejection. *)
+  fun parsedicts_of_any_solver_logic logic =
+    let
+      val z3 = parsedicts_of_solver_logic "Z3" logic
+      val cvc5 = parsedicts_of_solver_logic "cvc5" logic
+    in
+      (union_dicts [Lib.fst z3, Lib.fst cvc5],
+       union_dicts [Lib.snd z3, Lib.snd cvc5])
+    end
+
+  val set_dialect_logics = ["ALL", "HO_ALL"]
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "Z3", logic = logic,
+      dictionaries = (Z3_Set.tydict, Z3_Set.tmdict)}) set_dialect_logics
+
+  val _ = List.app (fn logic =>
+    register_dialect_dictionary {
+      solver = "cvc5", logic = logic,
+      dictionaries = (CVC5_Set.tydict, CVC5_Set.tmdict)}) set_dialect_logics
+
+  val _ = default_dialect_dictionary_registrations :=
+    !dialect_dictionary_registrations
 
   (* returns the symbol metadata used to build the parse dictionaries of
      the given SMT-LIB 2 logic *)

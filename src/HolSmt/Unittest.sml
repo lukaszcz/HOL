@@ -2044,7 +2044,7 @@ end
 
 fun parse_file_datatype_elaboration_options_success () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   fun typecheck script =
     SmtLib_Parser.typecheck_script_string_with_options options script
   (* 'TypeBase.is_constructor' is total, so wrapping it in 'Lib.can' would
@@ -2131,7 +2131,7 @@ fun expect_smtlib_typecheck_failure label options script diagnostic =
 
 fun parse_file_datatype_match_elaboration_success () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   val state =
     SmtLib_Parser.typecheck_script_string_with_options options
       ("(set-logic ALL)\n" ^
@@ -2163,7 +2163,7 @@ end
 
 fun parse_file_match_binder_surface_sort_success () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   val state =
     SmtLib_Parser.typecheck_script_string_with_options options
       ("(set-logic ALL)\n" ^
@@ -2185,7 +2185,7 @@ end
 
 fun parse_file_datatype_dependency_elaboration_success () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   val state =
     SmtLib_Parser.typecheck_script_string_with_options options
       ("(set-logic ALL)\n" ^
@@ -2217,7 +2217,7 @@ end
 
 fun parse_file_datatype_match_source_order_success () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   val state =
     SmtLib_Parser.typecheck_script_string_with_options options
       ("(set-logic ALL)\n" ^
@@ -2234,7 +2234,7 @@ end
 
 fun parse_file_datatype_match_negatives () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = true}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
   val base =
     "(set-logic ALL)\n" ^
     "(declare-datatype MatchColorA2_16 ((redA2_16) (greenA2_16)))\n" ^
@@ -2265,7 +2265,7 @@ end
 
 fun parse_file_datatype_match_placeholder_rejection () =
 let
-  val options = {dict_logic = NONE, elaborate_datatypes = false}
+  val options = {dict_logic = NONE, solver = NONE, elaborate_datatypes = false}
 in
   expect_smtlib_typecheck_failure
     "placeholder match rejection" options
@@ -2632,7 +2632,7 @@ in
       case query of
         SmtLib_Parser.QueryCheckSat
           {assertions = query_assertions, local_definitions = query_defs,
-           assumptions = []} =>
+           assumptions = [], transfer_hypotheses = _} =>
           List.length query_assertions = 1 andalso
           List.length query_defs = 1
       | _ => false) queries,
@@ -2691,7 +2691,7 @@ in
       case query of
         SmtLib_Parser.QueryCheckSat
           {assertions = query_assertions, local_definitions = query_defs,
-           assumptions = []} =>
+           assumptions = [], transfer_hypotheses = _} =>
           List.length query_assertions = 1 andalso
           List.length query_defs = 1
       | _ => false) queries,
@@ -2720,7 +2720,7 @@ in
       case query of
         SmtLib_Parser.QueryCheckSat
           {assertions = query_assertions, local_definitions = query_defs,
-           assumptions = []} =>
+           assumptions = [], transfer_hypotheses = _} =>
           List.length query_assertions = 4 andalso List.null query_defs
       | _ => false) queries,
     "legacy check-sat query did not preserve recursive hypotheses")
@@ -3178,7 +3178,7 @@ let
      "(assert (= (_ mixed 1 2) (@ mixed 1 2)))\n")
   val elaborated_state =
     SmtLib_Parser.typecheck_script_string_with_options
-      {dict_logic = NONE, elaborate_datatypes = true}
+      {dict_logic = NONE, solver = NONE, elaborate_datatypes = true}
       ("(set-logic ALL)\n" ^
        "(declare-datatype ApplyBoxA2_06 " ^
        "(par (T) ((applyBoxA2_06 (applyValueA2_06 T)))))\n" ^
@@ -3581,9 +3581,9 @@ fun smtlib_logic_fragment_diagnostics () =
       "(set-logic " ^ logic ^ ")\n" ^ body ^ "(check-sat)\n"
     fun script_for_checker parse_logic body =
       script parse_logic body
-    val all_dicts = {dict_logic = SOME "ALL", elaborate_datatypes = false}
+    val all_dicts = {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = false}
     val all_elaborated =
-      {dict_logic = SOME "ALL", elaborate_datatypes = true}
+      {dict_logic = SOME "ALL", solver = NONE, elaborate_datatypes = true}
   in
     expect_fragment "FO arrow sort" "QF_LIA"
       (script "QF_LIA"
@@ -3773,7 +3773,7 @@ fun smtlib_logic_fragment_diagnostics () =
        "(declare-const d D)\n" ^
        "(assert (= d mkD))\n");
     expect_no_fragment_with_options "TypeBase datatype sort available"
-      {dict_logic = NONE, elaborate_datatypes = true} "QF_DT"
+      {dict_logic = NONE, solver = NONE, elaborate_datatypes = true} "QF_DT"
       (script "QF_DT"
        "(declare-datatype E ((mkE)))\n" ^
        "(declare-const e E)\n" ^
@@ -3840,11 +3840,10 @@ fun smtlib_checked_replay_gap_diagnostics () =
        "(declare-const s String)\n" ^
        "(assert (str.in_re s (str.to_re s)))\n" ^
        "(check-sat)\n");
-    expect_gap "Z3 set replay" "ALL"
+    expect_gap "Z3 sequence replay" "ALL"
       ("(set-logic ALL)\n" ^
-       "(declare-const x Int)\n" ^
-       "(declare-const xs (Set Int))\n" ^
-       "(assert (set.member x xs))\n" ^
+       "(declare-const xs (Seq Int))\n" ^
+       "(assert (= (seq.len xs) 0))\n" ^
        "(check-sat)\n")
       "theory:Z3_Extensions:seq-set-bag:checked-replay";
     expect_no_gap "nonlinear arithmetic replay" "NIA"
@@ -4116,8 +4115,10 @@ let
   ]
   val seq_sort = find_symbol_metadata "Z3_Extensions" "sort" "Seq"
     all_metadata
-  val set_member = find_symbol_metadata "Z3_Extensions" "term" "set.member"
-    all_metadata
+  val set_member = find_symbol_metadata "CVC5_Set" "term" "set.member"
+    SmtLib_Theories.CVC5_Set.metadata
+  val z3_union = find_symbol_metadata "Z3_Set" "term" "union"
+    SmtLib_Theories.Z3_Set.metadata
   val bag_count = find_symbol_metadata "Z3_Extensions" "term" "bag.count"
     all_metadata
 in
@@ -4153,8 +4154,9 @@ in
         "missing official UnicodeStrings metadata for " ^ name))
     string_term_names;
   assert (metadata_is_extension seq_sort andalso
-    metadata_is_extension set_member andalso metadata_is_extension bag_count,
-    "Z3 sequence/set/bag metadata was not marked as extension")
+    metadata_is_extension set_member andalso metadata_is_extension z3_union
+    andalso metadata_is_extension bag_count,
+    "sequence/set/bag metadata was not marked as extension")
 end
 
 fun smtlib_arith_array_parse_signatures_success () =
@@ -4451,7 +4453,7 @@ let
        "(= (seq.++ xs ys) xs) (= (seq.len xs) 0) " ^
        "(seq.contains xs ys) " ^
        "(set.member 1 (set.insert 1 s)) " ^
-       "(set.subset (set.union s s) (set.intersect s s)) " ^
+       "(set.subset (set.union s s) (set.inter s s)) " ^
        "(= (bag.count 1 (bag.union_disjoint b b)) 0)))\n" ^
        "(exit)\n")
 in
@@ -4459,6 +4461,196 @@ in
     "Z3 extension signature script produced the wrong assertion count");
   assert (Term.type_of (List.hd assertions) = Type.bool,
     "Z3 extension signature assertion did not parse as Bool")
+end
+
+fun smtlib_set_dialect_builders_success () =
+let
+  val z3_options = {
+    dict_logic = NONE,
+    solver = SOME "Z3",
+    elaborate_datatypes = false
+  }
+  val cvc5_options = {
+    dict_logic = NONE,
+    solver = SOME "cvc5",
+    elaborate_datatypes = false
+  }
+  val int_set_ty = Type.--> (intSyntax.int_ty, Type.bool)
+  val s = Term.mk_var ("s", int_set_ty)
+  val t = Term.mk_var ("t", int_set_ty)
+  val x = Term.mk_var ("x", intSyntax.int_ty)
+  val y = Term.mk_var ("y", intSyntax.int_ty)
+  val p = Term.mk_var ("p", Type.--> (intSyntax.int_ty, Type.bool))
+  val f = Term.mk_var ("f", Type.--> (intSyntax.int_ty, intSyntax.int_ty))
+  val fold = Term.mk_var ("fold", Type.-->
+    (intSyntax.int_ty, Type.--> (intSyntax.int_ty, intSyntax.int_ty)))
+  val zero = intSyntax.zero_tm
+  val empty = pred_setSyntax.mk_empty intSyntax.int_ty
+  val univ = pred_setSyntax.mk_univ intSyntax.int_ty
+  fun mk_set_fold (f, b, s) =
+    let
+      val accumulator_ty = Term.type_of b
+      val function_ty = Type.-->
+        (pred_setSyntax.eltype s,
+         Type.--> (accumulator_ty, accumulator_ty))
+      val itset_ty = Type.-->
+        (function_ty, Type.-->
+          (Term.type_of s, Type.--> (accumulator_ty, accumulator_ty)))
+      val itset = Term.mk_thy_const {
+        Thy = "pred_set", Name = "ITSET", Ty = itset_ty
+      }
+    in
+      Term.list_mk_comb (itset, [f, s, b])
+    end
+  fun typecheck options text =
+    SmtLib_Parser.typecheck_script_string_with_options options text
+  fun assertion options body =
+    let
+      val state = typecheck options
+        ("(set-logic ALL)\n" ^
+         "(declare-const s (Set Int))\n" ^
+         "(declare-const t (Set Int))\n" ^
+         "(declare-const x Int)\n" ^
+         "(declare-const y Int)\n" ^
+         "(declare-const p (-> Int Bool))\n" ^
+         "(declare-const f (-> Int Int))\n" ^
+         "(declare-const fold (-> Int (-> Int Int)))\n" ^
+         "(assert " ^ body ^ ")\n")
+    in
+      case #assertions state of
+        [tm] => tm
+      | _ => die "set-builder test did not produce one assertion"
+    end
+  fun assert_builder label options body expected =
+    let val actual = assertion options body in
+      assert (Term.aconv actual expected,
+        label ^ " did not construct the expected pred_setTheory term\n" ^
+        "expected: " ^ term_with_types expected ^ "\nactual: " ^
+        term_with_types actual);
+      assert (not (term_has_subterm
+        (fn tm => Term.is_var tm andalso
+          String.isPrefix "smtlib_" (Lib.fst (Term.dest_var tm))) actual),
+        label ^ " retained an smtlib_* placeholder")
+    end
+  fun reject options label text =
+    let
+      val rejected =
+        ((ignore (typecheck options text); false)
+         handle Feedback.HOL_ERR _ => true)
+    in
+      assert (rejected, label ^ " was accepted in the wrong dialect")
+    end
+  val filter_x = Term.mk_var ("set_filter_x", intSyntax.int_ty)
+  val all_x = Term.mk_var ("set_all_x", intSyntax.int_ty)
+  val some_x = Term.mk_var ("set_some_x", intSyntax.int_ty)
+  val comprehension_x =
+    Term.mk_var ("set_comprehension_x", intSyntax.int_ty)
+  val set_spec = pred_setSyntax.prim_mk_set_spec
+  val cvc5_script =
+    "(set-logic ALL)\n" ^
+    "(declare-const s (Set Int))\n" ^
+    "(assert (set.member 0 s))\n" ^
+    "(check-sat)\n"
+  val cvc5_state = typecheck cvc5_options cvc5_script
+  val finite_hypotheses =
+    case #queries cvc5_state of
+      [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
+        transfer_hypotheses
+    | _ => die "cvc5 set test did not produce one check-sat query"
+in
+  assert_builder "cvc5 set.member" cvc5_options "(set.member x s)"
+    (pred_setSyntax.mk_in (x, s));
+  assert_builder "cvc5 set.insert" cvc5_options
+    "(= (set.insert x y s) s)"
+    (boolSyntax.mk_eq
+      (pred_setSyntax.mk_insert (x, pred_setSyntax.mk_insert (y, s)), s));
+  assert_builder "cvc5 set.singleton" cvc5_options
+    "(= (set.singleton x) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_insert (x, empty), s));
+  assert_builder "cvc5 set.union" cvc5_options "(= (set.union s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_union (s, t), s));
+  assert_builder "cvc5 set.inter" cvc5_options "(= (set.inter s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "cvc5 set.minus" cvc5_options "(= (set.minus s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_diff (s, t), s));
+  assert_builder "cvc5 set.subset" cvc5_options "(set.subset s t)"
+    (pred_setSyntax.mk_subset (s, t));
+  assert_builder "cvc5 set.complement" cvc5_options
+    "(= (set.complement s) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_compl s, s));
+  assert_builder "cvc5 set.choose" cvc5_options "(= (set.choose s) x)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_choice s, x));
+  assert_builder "cvc5 set.card" cvc5_options "(= (set.card s) 0)"
+    (boolSyntax.mk_eq
+      (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s), zero));
+  assert_builder "cvc5 set.map" cvc5_options "(= (set.map f s) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_image (f, s), s));
+  assert_builder "cvc5 set.filter" cvc5_options "(= (set.filter p s) s)"
+    (boolSyntax.mk_eq
+      (set_spec (filter_x, boolSyntax.mk_conj
+        (pred_setSyntax.mk_in (filter_x, s), Term.mk_comb (p, filter_x)),
+        [filter_x]), s));
+  assert_builder "cvc5 set.all" cvc5_options "(set.all p s)"
+    (boolSyntax.mk_forall (all_x, boolSyntax.mk_imp
+      (pred_setSyntax.mk_in (all_x, s), Term.mk_comb (p, all_x))));
+  assert_builder "cvc5 set.some" cvc5_options "(set.some p s)"
+    (boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
+      (pred_setSyntax.mk_in (some_x, s), Term.mk_comb (p, some_x))));
+  assert_builder "cvc5 set.fold" cvc5_options "(= (set.fold fold 0 s) 0)"
+    (boolSyntax.mk_eq (mk_set_fold (fold, zero, s), zero));
+  assert_builder "cvc5 set.is_empty" cvc5_options "(set.is_empty s)"
+    (boolSyntax.mk_eq (s, empty));
+  assert_builder "cvc5 set.is_singleton" cvc5_options "(set.is_singleton s)"
+    (pred_setSyntax.mk_sing s);
+  assert_builder "cvc5 set.comprehension" cvc5_options
+    "(= (set.comprehension ((z Int)) (> z 0) z) s)"
+    (boolSyntax.mk_eq
+      (set_spec (comprehension_x, boolSyntax.mk_exists
+        (Term.mk_var ("z", intSyntax.int_ty), boolSyntax.mk_conj
+          (intSyntax.mk_greater (Term.mk_var ("z", intSyntax.int_ty), zero),
+           boolSyntax.mk_eq (comprehension_x,
+             Term.mk_var ("z", intSyntax.int_ty)))), [comprehension_x]), s));
+  assert_builder "cvc5 set.empty" cvc5_options
+    "(= (as set.empty (Set Int)) (as set.empty (Set Int)))"
+    (boolSyntax.mk_eq (empty, empty));
+  assert_builder "cvc5 set.universe" cvc5_options
+    "(= (as set.universe (Set Int)) (as set.universe (Set Int)))"
+    (boolSyntax.mk_eq (univ, univ));
+  assert_builder "Z3 select[Set]" z3_options "(select s x)"
+    (pred_setSyntax.mk_in (x, s));
+  assert_builder "Z3 store[Set] true" z3_options "(= (store s x true) t)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_insert (x, s), t));
+  assert_builder "Z3 store[Set] false" z3_options "(= (store s x false) t)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_delete (s, x), t));
+  assert_builder "Z3 union" z3_options "(= (union s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_union (s, t), s));
+  assert_builder "Z3 intersection" z3_options "(= (intersection s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
+  assert_builder "Z3 setminus" z3_options "(= (setminus s t) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_diff (s, t), s));
+  assert_builder "Z3 complement" z3_options "(= (complement s) s)"
+    (boolSyntax.mk_eq (pred_setSyntax.mk_compl s, s));
+  assert_builder "Z3 subset" z3_options "(subset s t)"
+    (pred_setSyntax.mk_subset (s, t));
+  assert_builder "Z3 const false" z3_options
+    "(= ((as const (Set Int)) false) ((as const (Set Int)) false))"
+    (boolSyntax.mk_eq (empty, empty));
+  assert_builder "Z3 const true" z3_options
+    "(= ((as const (Set Int)) true) ((as const (Set Int)) true))"
+    (boolSyntax.mk_eq (univ, univ));
+  assert (List.exists (Term.aconv (pred_setSyntax.mk_finite s))
+      finite_hypotheses,
+    "cvc5 Set declaration did not attach a FINITE hypothesis to its goal");
+  reject z3_options "Z3 set.member"
+    "(set-logic ALL)\n(declare-const s (Set Int))\n(assert (set.member 0 s))\n";
+  reject cvc5_options "cvc5 union"
+    "(set-logic ALL)\n(declare-const s (Set Int))\n(assert (= (union s s) s))\n";
+  reject z3_options "Z3 set.empty"
+    ("(set-logic ALL)\n(assert (= (as set.empty (Set Int))\n" ^
+     "(as set.empty (Set Int))))\n");
+  reject cvc5_options "cvc5 Z3 const"
+    ("(set-logic ALL)\n(assert (= ((as const (Set Int)) false)\n" ^
+     "((as const (Set Int)) false)))\n")
 end
 
 fun smtlib_ho_logic_packets_success () =
@@ -11269,6 +11461,8 @@ let
       smtlib_string_regex_parse_signatures_success),
     ("smtlib_z3_extension_parse_signatures_success",
       smtlib_z3_extension_parse_signatures_success),
+    ("smtlib_set_dialect_builders_success",
+      smtlib_set_dialect_builders_success),
     ("smtlib_ho_logic_packets_success",
       smtlib_ho_logic_packets_success),
     ("smtlib_scoped_logic_dictionary_success",

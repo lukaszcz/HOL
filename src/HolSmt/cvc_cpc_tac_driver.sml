@@ -41,7 +41,7 @@ fun cvc_cpc_query_fragment_terms queries =
   List.concat (List.map (fn query =>
     case query of
       SmtLib_Parser.QueryCheckSat
-        {assumptions, assertions, local_definitions} =>
+        {assumptions, assertions, local_definitions, ...} =>
           List.concat (List.map cvc_cpc_definition_terms local_definitions) @
           assertions @ assumptions
     | _ => []) queries)
@@ -57,11 +57,12 @@ fun cvc_cpc_goal queries =
         "only check-sat followed optionally by get-proof is supported"
   in
     case check_sat of
-      {assumptions = [], assertions, local_definitions} =>
-      ([], boolSyntax.mk_neg
+      {assumptions = [], assertions, local_definitions, transfer_hypotheses} =>
+      (transfer_hypotheses, boolSyntax.mk_neg
         (cvc_cpc_conjunction (local_definitions @ assertions)))
-    | {assertions, assumptions, local_definitions, ...} =>
-      (local_definitions @ assertions @ assumptions, boolSyntax.F)
+    | {assertions, assumptions, local_definitions, transfer_hypotheses, ...} =>
+      (transfer_hypotheses @ local_definitions @ assertions @ assumptions,
+       boolSyntax.F)
   end
   (*** Removed obsolete direct query matching. ***)
   (***
@@ -80,10 +81,10 @@ fun cvc_cpc_run path expected_logic =
     val _ = Library.trace := 0
     val (state, scoped_parse_error) =
       (SmtLib_Parser.parse_file_state_with_options
-         {dict_logic = NONE, elaborate_datatypes = true} path, NONE)
+         {dict_logic = NONE, solver = SOME "cvc5", elaborate_datatypes = true} path, NONE)
       handle Feedback.HOL_ERR holerr =>
         (SmtLib_Parser.parse_file_state_with_options
-           {dict_logic = SOME "ALL", elaborate_datatypes = true} path,
+           {dict_logic = SOME "ALL", solver = SOME "cvc5", elaborate_datatypes = true} path,
          SOME holerr)
     val observed_logic = #logic state
     val fragment_diagnostic =

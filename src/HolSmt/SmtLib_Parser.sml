@@ -114,6 +114,7 @@ struct
 
   type typecheck_options = {
     dict_logic : string option,
+    solver : string option,
     elaborate_datatypes : bool
   }
 
@@ -168,7 +169,8 @@ struct
       QueryCheckSat of {
         assumptions: Term.term list,
         assertions: Term.term list,
-        local_definitions: Term.term list
+        local_definitions: Term.term list,
+        transfer_hypotheses: Term.term list
       }
     | QueryGetProof
     | QueryGetUnsatAssumptions
@@ -669,6 +671,24 @@ local
             val loc = combine_span (token_loc open_tok) (token_loc close_tok)
           in
             located loc (TermAscribed (term, sort))
+          end
+        else if reserved_head andalso head_text = "set.comprehension" then
+          let
+            val vars = parse_sorted_var_list ()
+            val predicate = parse_term_from_first
+              (need_token "parse_term" "set comprehension predicate")
+            val value = parse_term_from_first
+              (need_token "parse_term" "set comprehension value")
+            val close_tok = need_token "parse_term" "')'"
+            val _ = expect_token "parse_term" ")" close_tok
+            val loc = combine_span (token_loc open_tok) (token_loc close_tok)
+            val head = located (token_loc head_tok)
+              (TermIdentifier "set.comprehension")
+            val predicate = located (loc_of predicate)
+              (TermLambda (vars, predicate))
+            val value = located (loc_of value) (TermLambda (vars, value))
+          in
+            located loc (TermApply (head, [predicate, value]))
           end
         else if reserved_head andalso head_text = "let" then
           let
@@ -2360,7 +2380,8 @@ local
     QueryCheckSat {
       assumptions = assumptions,
       assertions = active_assertions state,
-      local_definitions = active_local_definitions state
+      local_definitions = active_local_definitions state,
+      transfer_hypotheses = []
     }
 
   fun new_state logic tydict tmdict =
@@ -2778,6 +2799,11 @@ local
     | ArraySort of surface_sort * surface_sort
     | MapSort of surface_sort * surface_sort
 
+  fun is_set_surface surface =
+    case surface of
+      ConstructorSort (ty, _) => pred_setSyntax.is_set_type ty
+    | _ => false
+
   type function_signature = {
     tm: Term.term,
     domain: Type.hol_type list,
@@ -2793,6 +2819,7 @@ local
     tydict: Type.hol_type dict,
     tmdict: Term.term dict,
     sigdict: function_signature_dict,
+    finite_sets: Term.term list,
     assertions: Term.term list,
     named_assertions: (string * Term.term) list,
     local_definitions: Term.term list
@@ -2810,6 +2837,7 @@ local
 
   type typecheck_context = {
     description: string,
+    solver: string option,
     surface_flags: surface_flags ref,
     metadata_index: metadata_index
   }
@@ -2963,9 +2991,10 @@ local
       (Redblackmap.mkDict String.compare)
       dictionary_metadata
 
-  fun command_context surface_flags metadata_index command =
+  fun command_context solver surface_flags metadata_index command =
     {
       description = "command '" ^ command ^ "'",
+      solver = solver,
       surface_flags = surface_flags,
       metadata_index = metadata_index
     } : typecheck_context
@@ -3046,6 +3075,8 @@ local
   fun typecheck_frame_tydict ({tydict, ...}: typecheck_frame) = tydict
   fun typecheck_frame_tmdict ({tmdict, ...}: typecheck_frame) = tmdict
   fun typecheck_frame_sigdict ({sigdict, ...}: typecheck_frame) = sigdict
+  fun typecheck_frame_finite_sets ({finite_sets, ...}: typecheck_frame) =
+    finite_sets
   fun typecheck_frame_assertions ({assertions, ...}: typecheck_frame) = assertions
   fun typecheck_frame_named_assertions ({named_assertions, ...}: typecheck_frame) =
     named_assertions
@@ -3059,6 +3090,7 @@ local
     tydict = tydict,
     tmdict = tmdict,
     sigdict = sigdict,
+    finite_sets = [],
     assertions = [],
     named_assertions = [],
     local_definitions = []
@@ -3090,6 +3122,7 @@ local
         tydict = tydict,
         tmdict = tmdict,
         sigdict = sigdict,
+        finite_sets = typecheck_frame_finite_sets frame,
         assertions = typecheck_frame_assertions frame,
         named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = typecheck_frame_local_definitions frame
@@ -3101,6 +3134,7 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
+        finite_sets = typecheck_frame_finite_sets frame,
         assertions = assertion :: typecheck_frame_assertions frame,
         named_assertions =
           (case name of
@@ -3115,6 +3149,7 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
+        finite_sets = typecheck_frame_finite_sets frame,
         assertions = typecheck_frame_assertions frame,
         named_assertions = typecheck_frame_named_assertions frame,
         local_definitions = assertion :: typecheck_frame_local_definitions frame
@@ -3124,6 +3159,19 @@ local
       ({logic, frames, queries, surface_flags}: typecheck_state) =
     {logic = logic, frames = frames, queries = query :: queries,
      surface_flags = surface_flags}
+
+  fun add_typechecked_finite_set set_tm state =
+    update_current_typecheck_frame
+      (fn frame => {
+        tydict = typecheck_frame_tydict frame,
+        tmdict = typecheck_frame_tmdict frame,
+        sigdict = typecheck_frame_sigdict frame,
+        finite_sets = pred_setSyntax.mk_finite set_tm ::
+          typecheck_frame_finite_sets frame,
+        assertions = typecheck_frame_assertions frame,
+        named_assertions = typecheck_frame_named_assertions frame,
+        local_definitions = typecheck_frame_local_definitions frame
+      }) state
 
   fun active_typechecked_assertions ({frames, ...}: typecheck_state) =
     List.concat
@@ -3135,6 +3183,10 @@ local
     List.concat
       (List.map (List.rev o typecheck_frame_named_assertions) (List.rev frames))
 
+  fun active_typechecked_finite_sets ({frames, ...}: typecheck_state) =
+    List.concat
+      (List.map (List.rev o typecheck_frame_finite_sets) (List.rev frames))
+
   fun active_typechecked_local_definitions ({frames, ...}: typecheck_state) =
     List.concat
       (List.map (List.rev o typecheck_frame_local_definitions) (List.rev frames))
@@ -3143,7 +3195,8 @@ local
     QueryCheckSat {
       assumptions = assumptions,
       assertions = active_typechecked_assertions state,
-      local_definitions = active_typechecked_local_definitions state
+      local_definitions = active_typechecked_local_definitions state,
+      transfer_hypotheses = active_typechecked_finite_sets state
     }
 
   val reset_logic_prefix = "__HOLSMT_RESET__:"
@@ -3237,6 +3290,7 @@ local
         tydict = typecheck_frame_tydict frame,
         tmdict = typecheck_frame_tmdict frame,
         sigdict = typecheck_frame_sigdict frame,
+        finite_sets = typecheck_frame_finite_sets frame,
         assertions = [],
         named_assertions = [],
         local_definitions = []
@@ -3648,10 +3702,19 @@ local
         if not (List.null indices) then ()
         else
           case (name, List.map checked_surface_sort args) of
-            ("select", [ArraySort (index, _), actual_index]) =>
-              if surface_sort_compatible index actual_index then ()
-              else type_error fn_name context loc NONE NONE
-                "ArraysEx select surface sort mismatch"
+            ("select", [set_surface, actual_index]) =>
+              if is_set_surface set_surface then
+                if #solver context = SOME "cvc5" then
+                  type_error fn_name context loc NONE NONE
+                    "Z3 Set select is unavailable in the cvc5 dialect"
+                else ()
+              else
+                (case set_surface of
+                   ArraySort (index, _) =>
+                     if surface_sort_compatible index actual_index then ()
+                     else type_error fn_name context loc NONE NONE
+                       "ArraysEx select surface sort mismatch"
+                 | _ => ())
           | ("store", [ArraySort (index, element), actual_index,
                         actual_element]) =>
               if surface_sort_compatible index actual_index andalso
@@ -3711,7 +3774,28 @@ local
                val _ = check_array_builtin arg_sorts
                val _ = check_surface_builtin ()
                val t =
-                 t_with_term_args tmdict name [] arg_terms
+                 (case (name, args) of
+                    ("select", [set_tm, element]) =>
+                      if is_set_surface (checked_surface_sort set_tm) andalso
+                         #solver context <> SOME "cvc5" then
+                        pred_setSyntax.mk_in
+                          (checked_term element, checked_term set_tm)
+                      else
+                        t_with_term_args tmdict name [] arg_terms
+                  | ("store", [set_tm, element, value]) =>
+                      if is_set_surface (checked_surface_sort set_tm) andalso
+                         #solver context <> SOME "cvc5" andalso
+                         Term.aconv (checked_term value) boolSyntax.T then
+                        pred_setSyntax.mk_insert
+                          (checked_term element, checked_term set_tm)
+                      else if is_set_surface (checked_surface_sort set_tm) andalso
+                              #solver context <> SOME "cvc5" andalso
+                              Term.aconv (checked_term value) boolSyntax.F then
+                        pred_setSyntax.mk_delete
+                          (checked_term set_tm, checked_term element)
+                      else
+                        t_with_term_args tmdict name [] arg_terms
+                  | _ => t_with_term_args tmdict name [] arg_terms)
                  handle Feedback.HOL_ERR holerr =>
                    type_error fn_name context loc NONE NONE
                      ("could not resolve symbol '" ^ name ^
@@ -4126,6 +4210,46 @@ local
                else raise original
            | NONE => raise original)
 
+      fun z3_or_neutral () =
+        case #solver context of SOME "cvc5" => false | _ => true
+      fun cvc5_or_neutral () =
+        case #solver context of SOME "Z3" => false | _ => true
+      fun as_const_set sort payload =
+        let
+          val expected = typecheck_sort context tydict sort
+          val expected_surface = surface_sort_of_ast context tydict sort
+          val payload = check payload
+          val _ =
+            if pred_setSyntax.is_set_type expected then ()
+            else type_error "typecheck_term" context (loc_of term_ast)
+              NONE (SOME expected) "Z3 const result must have Set sort"
+          val set_tm =
+            if Term.aconv (checked_term payload) boolSyntax.F then
+              pred_setSyntax.mk_empty (pred_setSyntax.dest_set_type expected)
+            else if Term.aconv (checked_term payload) boolSyntax.T then
+              pred_setSyntax.mk_univ (pred_setSyntax.dest_set_type expected)
+            else type_error "typecheck_term" context (loc_of term_ast)
+              (SOME Type.bool) (SOME (checked_sort payload))
+              "Z3 Set const payload must be true or false"
+        in
+          checked_term_with_surface_sort expected_surface set_tm
+        end
+      fun as_cvc5_set_constant name sort =
+        let
+          val expected = typecheck_sort context tydict sort
+          val expected_surface = surface_sort_of_ast context tydict sort
+          val _ =
+            if pred_setSyntax.is_set_type expected then ()
+            else type_error "typecheck_term" context (loc_of term_ast)
+              NONE (SOME expected)
+              (name ^ " result must have Set sort")
+          val element = pred_setSyntax.dest_set_type expected
+          val set_tm =
+            if name = "set.empty" then pred_setSyntax.mk_empty element
+            else pred_setSyntax.mk_univ element
+        in
+          checked_term_with_surface_sort expected_surface set_tm
+        end
       fun apply_head loc head args =
         case node_of head of
           TermIdentifier name =>
@@ -4171,11 +4295,37 @@ local
                NONE NONE detail)
       | TermIndexed (name, indices) =>
           indexed_or_apply (loc_of term_ast) name indices []
+      | TermApply
+          (Located {node = TermAscribed
+             (Located {node = TermIdentifier "const", ...}, sort), ...}, [payload]) =>
+          if z3_or_neutral () then as_const_set sort payload
+          else type_error "typecheck_term" context (loc_of term_ast) NONE NONE
+            "Z3 const Set syntax is unavailable in the cvc5 dialect"
       | TermApply (head, args) =>
           apply_head (loc_of term_ast) head args
       | TermApplyOperator (operator, head, args) =>
           apply_operator (loc_of term_ast) (located_string_node operator)
             (check head) (List.map check args)
+      | TermAscribed
+          (ascribed as Located {node = TermIdentifier name, ...}, sort) =>
+          if (name = "set.empty" orelse name = "set.universe") andalso
+             cvc5_or_neutral () then
+            as_cvc5_set_constant name sort
+          else
+          let
+            val checked = check ascribed
+            val expected = typecheck_sort context tydict sort
+            val expected_surface = surface_sort_of_ast context tydict sort
+            val _ =
+              if checked_sort checked = expected then ()
+              else
+                type_error "typecheck_term" context (loc_of term_ast)
+                  (SOME expected) (SOME (checked_sort checked))
+                  "qualified identifier sort ascription mismatch"
+          in
+            checked_term_with_surface_sort expected_surface
+              (checked_term checked)
+          end
       | TermAscribed (term, sort) =>
           let
             val checked = check term
@@ -4954,11 +5104,15 @@ local
             "assumption literal must have Bool sort"
       end) terms
 
-  fun typecheck_command ({dict_logic, elaborate_datatypes}: typecheck_options)
-      command state =
+  fun typecheck_command
+      ({dict_logic, solver, elaborate_datatypes}: typecheck_options) command state =
     let
       fun dictionary_logic logic =
         case dict_logic of SOME broad_logic => broad_logic | NONE => logic
+      fun parsedicts_for_solver logic =
+        case solver of
+          SOME target => SmtLib_Logics.parsedicts_of_solver_logic target logic
+        | NONE => SmtLib_Logics.parsedicts_of_any_solver_logic logic
       (* A command handler asks for several `context` values (one per phase
          that reports errors), all sharing the same logic.  The metadata index
          depends only on that logic, so derive it once and reuse it; only the
@@ -4980,11 +5134,17 @@ local
                   context_shared := SOME shared; shared
                 end
         in
-          command_context surface_flags metadata_index command
+          command_context solver surface_flags metadata_index command
         end
       fun finish state = SOME state
+      fun cvc5_set_sort sort =
+        case node_of sort of
+          SortApply (head, [_]) =>
+            #solver (context "set declaration") = SOME "cvc5" andalso
+            located_string_node head = "Set"
+        | _ => false
       fun parsedicts_for logic =
-        SmtLib_Logics.parsedicts_of_logic (dictionary_logic logic)
+        parsedicts_for_solver (dictionary_logic logic)
       fun typecheck_define_fun_command command_name name vars range body state =
         let
           val command_state = dest_typecheck_state command_name state
@@ -5068,12 +5228,16 @@ local
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-const")
               (loc_of name) name_text [] range sigdict
-            val (_, tmdict, sigdict) =
+            val (set_tm, tmdict, sigdict) =
               add_value_signature_with_surface name_text [] [] range
                 (surface_sort_of_ast (context "declare-const") tydict sort)
                 (tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
+            val command_state =
+              if cvc5_set_sort sort then
+                add_typechecked_finite_set set_tm command_state
+              else command_state
           in
             finish command_state
           end
@@ -5089,15 +5253,20 @@ local
               (typecheck_sort (context "declare-fun") tydict) domain
             val range_surface =
               surface_sort_of_ast (context "declare-fun") tydict range
-            val range = typecheck_sort (context "declare-fun") tydict range
+            val range_ty =
+              typecheck_sort (context "declare-fun") tydict range
             val name_text = located_string_node name
             val _ = reject_duplicate_signature (context "declare-fun")
-              (loc_of name) name_text domain range sigdict
-            val (_, tmdict, sigdict) =
+              (loc_of name) name_text domain range_ty sigdict
+            val (set_tm, tmdict, sigdict) =
               add_value_signature_with_surface name_text domain domain_surface
-                range range_surface (tmdict, sigdict)
+                range_ty range_surface (tmdict, sigdict)
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
+            val command_state =
+              if List.null domain andalso cvc5_set_sort range then
+                add_typechecked_finite_set set_tm command_state
+              else command_state
           in
             finish command_state
           end
@@ -5301,6 +5470,7 @@ local
 
   val default_typecheck_options = {
     dict_logic = NONE,
+    solver = NONE,
     elaborate_datatypes = false
   }
 
@@ -5317,7 +5487,7 @@ local
 
   fun typecheck_script_with_dict_logic dict_logic script =
     typecheck_script_with_options
-      {dict_logic = dict_logic, elaborate_datatypes = false} script
+      {dict_logic = dict_logic, solver = NONE, elaborate_datatypes = false} script
 
   fun typecheck_script script =
     typecheck_script_with_options default_typecheck_options script
@@ -5412,7 +5582,8 @@ in
   fun parse_file_state_with_dict_logic dict_logic (path : string)
       : command_state_snapshot =
     parse_file_state_with_options
-      {dict_logic = SOME dict_logic, elaborate_datatypes = false} path
+      {dict_logic = SOME dict_logic, solver = NONE,
+       elaborate_datatypes = false} path
 
   fun parse_file (path : string)
       : string * Type.hol_type dict * Term.term dict * Term.term list =
