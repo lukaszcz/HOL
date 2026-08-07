@@ -5513,6 +5513,94 @@ in
     "Seq/Set/Bag higher-order translation did not record its regime")
 end
 
+fun smtlib_native_set_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 goal = text_of
+    (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal)
+  fun cvc goal = text_of (CVC.goal_to_SmtLib_translation goal)
+  val set_goal = ([], ``(x:int) IN ((s:int set) UNION (t:int set))``)
+  val x = ``x:int``
+  val y = ``y:int``
+  val s = ``s:int set``
+  val t = ``t:int set``
+  fun member set = pred_setSyntax.mk_in (x, set)
+  val native_surface_atoms = [
+    member (pred_setSyntax.mk_insert (y, s)),
+    member (pred_setSyntax.mk_delete (s, y)),
+    member (pred_setSyntax.mk_inter (s, t)),
+    member (pred_setSyntax.mk_diff (s, t)),
+    pred_setSyntax.mk_subset (s, t),
+    member (pred_setSyntax.mk_insert
+      (y, pred_setSyntax.mk_empty intSyntax.int_ty)),
+    member (pred_setSyntax.mk_empty intSyntax.int_ty)]
+  val surface_goal =
+    ([], boolSyntax.list_mk_conj (native_surface_atoms @
+      [member (pred_setSyntax.mk_compl s),
+       member (pred_setSyntax.mk_univ intSyntax.int_ty)]))
+  val z3_text = z3 set_goal
+  val z3_surface_text = z3 surface_goal
+  val oracle_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC false)
+    set_goal)
+  val oracle_text = z3 oracle_goal
+  val cvc_native_text = cvc
+    ([``FINITE (s:int set)``, ``FINITE (t:int set)``],
+     ``(x:int) IN ((s:int set) UNION (t:int set))``)
+  val cvc_fallback_text = cvc
+    ([], ``(x:int) IN ((s:int set) UNION (t:int set))``)
+  val cvc_surface_text = cvc
+    ([``FINITE (s:int set)``, ``FINITE (t:int set)``],
+     boolSyntax.list_mk_conj native_surface_atoms)
+  val cvc_finite_bool_text = cvc
+    ([], ``(x:bool) IN (COMPL (UNIV:bool set))``)
+  val cvc_card_text = cvc
+    ([``FINITE (s:int set)``], boolSyntax.mk_eq
+      (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s),
+       intSyntax.zero_tm))
+  val card_message =
+    (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
+       ([], ``CARD (s:int set) = 0``));
+     die "FAIL: Z3 accepted set CARD")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+in
+  assert (contains "(Set Int)" z3_text andalso
+      contains "(select" z3_text andalso contains "(union" z3_text,
+    "Z3 native set translation used the wrong dialect:\n" ^ z3_text);
+  assert (not (contains "set.union" z3_text),
+    "Z3 native set translation leaked a cvc5 symbol:\n" ^ z3_text);
+  assert (List.all (fn symbol => contains symbol z3_surface_text)
+      ["(store", "(intersection", "(setminus", "(complement",
+       "(subset", "((as const (Set Int)) false)",
+       "((as const (Set Int)) true)"],
+    "Z3 native set surface is incomplete:\n" ^ z3_surface_text);
+  assert (contains "(union" oracle_text,
+    "oracle preprocessing unfolded a native set operation:\n" ^ oracle_text);
+  assert (contains "(Set Int)" cvc_native_text andalso
+      contains "set.member" cvc_native_text andalso
+      contains "set.union" cvc_native_text,
+    "finite cvc5 set translation did not use set.*:\n" ^ cvc_native_text);
+  assert (not (contains "(Set Int)" cvc_fallback_text) andalso
+      not (contains "set.union" cvc_fallback_text) andalso
+      contains "(forall ((set_x" cvc_fallback_text,
+    "non-finite cvc5 set translation did not use quantified arrays:\n" ^
+    cvc_fallback_text);
+  assert (List.all (fn symbol => contains symbol cvc_surface_text)
+      ["set.insert", "set.minus", "set.inter", "set.subset",
+       "set.singleton", "set.empty"],
+    "finite cvc5 set surface is incomplete:\n" ^ cvc_surface_text);
+  assert (contains "set.member" cvc_finite_bool_text andalso
+      contains "set.complement" cvc_finite_bool_text andalso
+      contains "set.universe" cvc_finite_bool_text,
+    "finite-element cvc5 sets did not use set.complement/set.universe:\n" ^
+    cvc_finite_bool_text);
+  assert (contains "set.card" cvc_card_text,
+    "finite cvc5 CARD did not emit set.card:\n" ^ cvc_card_text);
+  assert (card_message =
+      "SMT-LIB operator 'set.card' is unavailable for solver 'Z3' at " ^
+      "version '4.15.3'",
+    "set.card availability diagnostic changed: " ^ card_message)
+end
+
 fun smtlib_operator_availability_diagnostic_success () =
 let
   val goal = ([], ``LENGTH (xs:int list) = 0``)
@@ -11487,6 +11575,8 @@ let
       smtlib_extended_hol_encoding_records_success),
     ("smtlib_seq_set_bag_feature_inference_success",
       smtlib_seq_set_bag_feature_inference_success),
+    ("smtlib_native_set_translation_success",
+      smtlib_native_set_translation_success),
     ("smtlib_operator_availability_diagnostic_success",
       smtlib_operator_availability_diagnostic_success),
     ("smtlib_dialect_dictionary_dispatch_success",

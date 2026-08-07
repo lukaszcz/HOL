@@ -240,7 +240,8 @@ structure CVC = struct
         end)
       (* Some options were added due to:
          https://github.com/cvc5/cvc5/issues/10293 *)
-      " --macros-quant --macros-quant-mode=all --fp-exp --lang smt "
+      (" --macros-quant --macros-quant-mode=all --fp-exp --sets-exp " ^
+       "--arrays-exp --lang smt ")
       (Lib.K is_sat_file)
 
   fun proof_pre goal =

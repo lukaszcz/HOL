@@ -933,7 +933,176 @@ local
 
   val same_const = Library.same_const
 
+  (* HOL represents a set as an ordinary predicate, so the outbound boundary
+     records set *terms*, rather than treating every `a -> bool` as a Set.
+     The context is installed for one translation only (see
+     goal_to_SmtLib_aux).  It lets cvc5 print its finite-set sort without
+     changing the representation of unrelated predicates. *)
+  datatype set_backend = Z3Set | CVC5NativeSet | CVC5ArraySet
+
+  val current_set_backend = ref Z3Set
+  val current_set_terms = ref ([] : Term.term list)
+
+  val native_set_heads = [
+    pred_setSyntax.in_tm, pred_setSyntax.insert_tm, pred_setSyntax.delete_tm,
+    pred_setSyntax.union_tm, pred_setSyntax.inter_tm, pred_setSyntax.diff_tm,
+    pred_setSyntax.compl_tm, pred_setSyntax.subset_tm, pred_setSyntax.empty_tm,
+    pred_setSyntax.univ_tm, pred_setSyntax.card_tm
+  ]
+
+  fun is_native_set_head tm =
+    List.exists (fn head => same_const head tm) native_set_heads
+
+  fun is_set_type tm =
+    let
+      val (element_ty, result_ty) = Type.dom_rng (Term.type_of tm)
+    in
+      Type.compare (result_ty, Type.bool) = EQUAL andalso
+      not (Lib.can Type.dom_rng element_ty)
+    end
+    handle Feedback.HOL_ERR _ => false
+
+  fun set_element_type tm =
+    if is_set_type tm then Lib.fst (Type.dom_rng (Term.type_of tm))
+    else raise ERR "set_element_type" "not a set-valued term"
+
+  fun mem_aconv tm = List.exists (Term.aconv tm)
+
+  fun add_set_term tm terms =
+    if is_set_type tm andalso not (mem_aconv tm terms) then tm :: terms
+    else terms
+
+  (* A set expression is native precisely when the printer has a direct
+     representation for every constructor in it.  In particular, GSPEC and
+     IMAGE retain the old predicate expansion before outbound translation. *)
+  fun native_set_term tm =
+    Term.is_var tm orelse pred_setSyntax.is_empty tm orelse
+    pred_setSyntax.is_univ tm orelse
+    (case Lib.total pred_setSyntax.dest_insert tm of
+       SOME (_, set) => native_set_term set
+     | NONE =>
+       (case Lib.total pred_setSyntax.dest_delete tm of
+          SOME (set, _) => native_set_term set
+        | NONE =>
+          (case Lib.total pred_setSyntax.dest_union tm of
+             SOME (left, right) =>
+               native_set_term left andalso native_set_term right
+           | NONE =>
+             (case Lib.total pred_setSyntax.dest_inter tm of
+                SOME (left, right) =>
+                  native_set_term left andalso native_set_term right
+              | NONE =>
+                (case Lib.total pred_setSyntax.dest_diff tm of
+                   SOME (left, right) =>
+                     native_set_term left andalso native_set_term right
+                 | NONE =>
+                   (case Lib.total pred_setSyntax.dest_compl tm of
+                      SOME set => native_set_term set
+                    | NONE => false))))))
+
+  (* Record only terms at set-typed positions.  Recording all arguments of
+     INSERT, for example, incorrectly declares its element as a Set. *)
+  fun collect_native_set_terms tm terms =
+  let
+    fun collect_set set terms = add_set_term set terms
+    val (rator, rands) = boolSyntax.strip_comb tm
+    val terms =
+      (let val (_, body) = Term.dest_abs tm in collect_native_set_terms body terms end
+       handle Feedback.HOL_ERR _ =>
+         List.foldl (fn (arg, acc) => collect_native_set_terms arg acc)
+           terms rands)
+  in
+    if same_const rator pred_setSyntax.in_tm then
+      (case rands of [_, set] => collect_set set terms | _ => terms)
+    else if same_const rator pred_setSyntax.card_tm orelse
+            same_const rator pred_setSyntax.finite_tm then
+      (case rands of [set] => collect_set set terms | _ => terms)
+    else if same_const rator pred_setSyntax.insert_tm then
+      (case rands of [_, set] => collect_set tm (collect_set set terms)
+       | _ => terms)
+    else if same_const rator pred_setSyntax.delete_tm then
+      (case rands of [set, _] => collect_set tm (collect_set set terms)
+       | _ => terms)
+    else if same_const rator pred_setSyntax.union_tm orelse
+            same_const rator pred_setSyntax.inter_tm orelse
+            same_const rator pred_setSyntax.diff_tm then
+      (case rands of [left, right] =>
+         collect_set tm (collect_set left (collect_set right terms))
+       | _ => terms)
+    else if same_const rator pred_setSyntax.compl_tm then
+      (case rands of [set] => collect_set tm (collect_set set terms)
+       | _ => terms)
+    else if same_const rator pred_setSyntax.subset_tm then
+      (case rands of [left, right] =>
+         collect_set left (collect_set right terms)
+       | _ => terms)
+    else if pred_setSyntax.is_empty tm orelse pred_setSyntax.is_univ tm then
+      add_set_term tm terms
+    else if same_const rator boolSyntax.equality then
+      (case rands of [left, right] =>
+         if is_set_type left andalso is_set_type right then
+           collect_set left (collect_set right terms)
+         else terms
+       | _ => terms)
+    else
+      terms
+  end
+
+  fun is_marked_set_term tm = mem_aconv tm (!current_set_terms)
+
+  fun finite_set_hypothesis tm =
+    SOME (pred_setSyntax.dest_finite tm) handle Feedback.HOL_ERR _ => NONE
+
+  (* Bool is the only finite element sort currently present in HOL's stock
+     outbound type dictionary.  Additional finite sorts can be added here
+     together with their cardinality transfer facts. *)
+  fun finite_element_type ty = Type.compare (ty, Type.bool) = EQUAL
+
+  fun finite_set_term finite_terms tm =
+    mem_aconv tm finite_terms orelse
+    pred_setSyntax.is_empty tm orelse
+    (pred_setSyntax.is_univ tm andalso finite_element_type (set_element_type tm))
+    orelse
+    (case Lib.total pred_setSyntax.dest_insert tm of
+       SOME (_, set) => finite_set_term finite_terms set
+     | NONE =>
+       (case Lib.total pred_setSyntax.dest_delete tm of
+          SOME (set, _) => finite_set_term finite_terms set
+        | NONE =>
+          (case Lib.total pred_setSyntax.dest_union tm of
+             SOME (left, right) =>
+               finite_set_term finite_terms left andalso
+               finite_set_term finite_terms right
+           | NONE =>
+             (case Lib.total pred_setSyntax.dest_inter tm of
+                SOME (left, right) =>
+                  finite_set_term finite_terms left orelse
+                  finite_set_term finite_terms right
+              | NONE =>
+                (case Lib.total pred_setSyntax.dest_diff tm of
+                   SOME (left, _) => finite_set_term finite_terms left
+                 | NONE =>
+                   (case Lib.total pred_setSyntax.dest_compl tm of
+                      SOME _ => finite_element_type (set_element_type tm)
+                    | NONE => false))))))
+
+  fun cvc5_native_sets goal set_terms =
+  let
+    val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
+  in
+    List.all (fn set => native_set_term set andalso
+      finite_set_term finite_terms set) set_terms
+  end
+
+  fun backend_for_target target goal set_terms =
+    case target of
+      SOME {solver = "cvc5", ...} =>
+        if cvc5_native_sets goal set_terms then CVC5NativeSet
+        else CVC5ArraySet
+    | _ => Z3Set
+
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
+  val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
   val int_ediv_tm = Term.prim_mk_const {Thy="integer", Name="ediv"}
   val int_emod_tm = Term.prim_mk_const {Thy="integer", Name="emod"}
 
@@ -1844,15 +2013,22 @@ local
         HOLTheoryEncoding {
           feature = "sequences, sets, and bags",
           smt_theory = "Z3 sequence/set/bag extensions",
-          mode = ConservativeEmbedding,
+          mode = if sets then NativeSMTLIB else ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = false,
+          translate = sets,
           replay = false,
           notes =
-            "Z3 extension symbols are parser/typechecker entries only; generic HOL lists, predicates-as-sets, and bags are not emitted as Seq/Set/Bag.",
+            if sets then
+              "Stock pred_set operations emit Z3 array-sets or cvc5 finite " ^
+              "set.* terms; non-finite cvc5 goals use quantified arrays."
+            else
+              "Z3 extension symbols are parser/typechecker entries only; " ^
+              "generic HOL lists and bags are not emitted as Seq/Set/Bag.",
           proof_obligation =
-            "A checked soundness argument must establish list/sequence, predicate/set, and multiplicity/bag correspondences before replay support."
+            "Checked replay of the native set surface is deferred to " ^
+            "TASK_10/11; the parser and oracle paths already use faithful " ^
+            "pred_set terms."
         }
       val regex_record =
         HOLTheoryEncoding {
@@ -2243,6 +2419,190 @@ local
         val (declss, names) = Lib.split declnames
       in
         (acc, (List.concat declss, sexpr name names))
+      end
+    fun set_sort tydict set =
+      let
+        val element_ty = set_element_type set
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+      in
+        (tydict, (decls, "(Set " ^ element_sort ^ ")"))
+      end
+    fun set_constant tydict set value =
+      let
+        val element_ty = set_element_type set
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, element_ty)
+        val sort = "(Set " ^ element_sort ^ ")"
+        val text =
+          case !current_set_backend of
+            Z3Set => "((as const " ^ sort ^ ") " ^ value ^ ")"
+          | CVC5NativeSet =>
+              "(as set." ^ (if value = "true" then "universe" else "empty") ^
+              " " ^ sort ^ ")"
+          | CVC5ArraySet => "((as const (Array " ^ element_sort ^
+              " Bool)) " ^ value ^ ")"
+      in
+        (tydict, (decls, text))
+      end
+    (* cvc5's non-finite bridge deliberately stays in the ordinary array
+       model.  Pointwise set operations are named arrays constrained by a
+       quantified definition, rather than cvc5's finite set operators. *)
+    fun fallback_set_definition acc set args body =
+      case Redblackmap.peek (Lib.snd acc, (set, 0)) of
+        SOME name => (acc, ([], name))
+      | NONE =>
+        let
+          val element_ty = set_element_type set
+          val (tydict, (typedecls, element_sort)) =
+            translate_type regime (Lib.fst acc, element_ty)
+          val tmdict = Lib.snd acc
+          val name = "set" ^ Int.toString (Redblackmap.numItems tmdict)
+          val tmdict = Redblackmap.insert (tmdict, (set, 0), name)
+          val binder = "set_x" ^ Int.toString (Redblackmap.numItems tmdict)
+          val declaration = "(declare-const " ^ name ^ " (Array " ^
+            element_sort ^ " Bool))\n"
+          val definition = "(assert (forall ((" ^ binder ^ " " ^
+            element_sort ^ ")) (= (select " ^ name ^ " " ^ binder ^ ") " ^
+            body binder args ^ ")))\n"
+        in
+          ((tydict, tmdict), (typedecls @ [declaration, definition], name))
+        end
+    fun native_set_symbol rator rands =
+      same_const rator pred_setSyntax.in_tm orelse
+      is_native_set_head rator orelse
+      ((same_const rator intSyntax.int_injection orelse
+        same_const rator int_of_num_tm) andalso
+       (case rands of [arg] => pred_setSyntax.is_card arg | _ => false))
+    fun native_set_builtin (rator, rands) =
+      if same_const rator intSyntax.int_injection orelse
+         same_const rator int_of_num_tm then
+        (case rands of [card] =>
+           let
+             val set = pred_setSyntax.dest_card card
+             val (acc, (decls, name)) =
+               translate_term regime apply_operator (acc, (bounds, set))
+           in
+             case !current_set_backend of
+               CVC5NativeSet => (acc, (decls, sexpr "set.card" [name]))
+             | Z3Set => raise ERR "native_set_builtin"
+                 "set.card is unavailable for solver Z3"
+             | CVC5ArraySet => raise ERR "native_set_builtin"
+                 "set.card requires a finiteness-entailing cvc5 goal"
+           end
+         | _ => raise ERR "native_set_builtin" "wrong card arity")
+      else
+      let
+        val (acc, declnames) = Lib.foldl_map
+          (fn (a, t) => translate_term regime apply_operator (a, (bounds, t)))
+          (acc, rands)
+        val (declss, names) = Lib.split declnames
+        val decls = List.concat declss
+        fun binary z3 cvc5 fallback =
+          case names of [left, right] =>
+            (case !current_set_backend of
+               Z3Set => (acc, (decls, sexpr z3 [left, right]))
+             | CVC5NativeSet => (acc, (decls, sexpr cvc5 [left, right]))
+             | CVC5ArraySet =>
+                 let
+                   fun body x [l, r] = fallback x l r
+                     | body _ _ = raise ERR "native_set_builtin" "arity"
+                   val (acc, (defs, name)) =
+                     fallback_set_definition acc tm names body
+                 in (acc, (decls @ defs, name)) end)
+          | _ => raise ERR "native_set_builtin" "wrong binary set arity"
+        fun unary z3 cvc5 =
+          case names of [set] =>
+            (case !current_set_backend of
+               Z3Set => (acc, (decls, sexpr z3 [set]))
+             | CVC5NativeSet => (acc, (decls, sexpr cvc5 [set]))
+             | CVC5ArraySet =>
+                 let
+                   fun body x [s] = sexpr "not" [sexpr "select" [s, x]]
+                     | body _ _ = raise ERR "native_set_builtin" "arity"
+                   val (acc, (defs, name)) =
+                     fallback_set_definition acc tm names body
+                 in (acc, (decls @ defs, name)) end)
+          | _ => raise ERR "native_set_builtin" "wrong unary set arity"
+      in
+        if same_const rator pred_setSyntax.in_tm then
+          (case names of [element, set] =>
+             (acc, (decls,
+               case !current_set_backend of
+                 CVC5NativeSet => sexpr "set.member" [element, set]
+               | _ => sexpr "select" [set, element]))
+           | _ => raise ERR "native_set_builtin" "wrong membership arity")
+        else if same_const rator pred_setSyntax.insert_tm then
+          (case (rands, names) of
+             ([element, set], [element_name, set_name]) =>
+               let
+                 val singleton = pred_setSyntax.is_empty set
+                 val text =
+                   case !current_set_backend of
+                     Z3Set => sexpr "store" [set_name, element_name, "true"]
+                   | CVC5NativeSet =>
+                       if singleton then sexpr "set.singleton" [element_name]
+                       else sexpr "set.insert" [element_name, set_name]
+                   | CVC5ArraySet =>
+                       sexpr "store" [set_name, element_name, "true"]
+               in (acc, (decls, text)) end
+           | _ => raise ERR "native_set_builtin" "wrong insert arity")
+        else if same_const rator pred_setSyntax.delete_tm then
+          (case names of [set, element] =>
+             (case !current_set_backend of
+                CVC5NativeSet => (acc, (decls,
+                  sexpr "set.minus" [set, sexpr "set.singleton" [element]]))
+              | _ => (acc, (decls, sexpr "store" [set, element, "false"])))
+           | _ => raise ERR "native_set_builtin" "wrong delete arity")
+        else if same_const rator pred_setSyntax.union_tm then
+          binary "union" "set.union"
+            (fn x => fn left => fn right =>
+              sexpr "or" [sexpr "select" [left, x], sexpr "select" [right, x]])
+        else if same_const rator pred_setSyntax.inter_tm then
+          binary "intersection" "set.inter"
+            (fn x => fn left => fn right =>
+              sexpr "and" [sexpr "select" [left, x], sexpr "select" [right, x]])
+        else if same_const rator pred_setSyntax.diff_tm then
+          binary "setminus" "set.minus"
+            (fn x => fn left => fn right =>
+              let
+                val in_left = sexpr "select" [left, x]
+                val in_right = sexpr "select" [right, x]
+              in
+                sexpr "and" [in_left, sexpr "not" [in_right]]
+              end)
+        else if same_const rator pred_setSyntax.compl_tm then
+          unary "complement" "set.complement"
+        else if same_const rator pred_setSyntax.subset_tm then
+          (case names of [left, right] =>
+             (case !current_set_backend of
+                Z3Set => (acc, (decls, sexpr "subset" [left, right]))
+              | CVC5NativeSet => (acc, (decls, sexpr "set.subset" [left, right]))
+              | CVC5ArraySet =>
+                  let
+                    val element_ty = set_element_type (List.hd rands)
+                    val (tydict, (typedecls, element_sort)) =
+                      translate_type regime (Lib.fst acc, element_ty)
+                    val tmdict = Lib.snd acc
+                    val binder = "set_x" ^ Int.toString
+                      (Redblackmap.numItems tmdict)
+                  in
+                    ((tydict, tmdict), (decls @ typedecls,
+                      "(forall ((" ^ binder ^ " " ^ element_sort ^ ")) " ^
+                      "(=> (select " ^ left ^ " " ^ binder ^ ") (select " ^
+                      right ^ " " ^ binder ^ ")))"))
+                  end)
+           | _ => raise ERR "native_set_builtin" "wrong subset arity")
+        else if pred_setSyntax.is_empty tm then
+          let val (tydict, (constant_decls, text)) =
+            set_constant (Lib.fst acc) tm "false"
+          in ((tydict, Lib.snd acc), (constant_decls, text)) end
+        else if pred_setSyntax.is_univ tm then
+          let val (tydict, (constant_decls, text)) =
+            set_constant (Lib.fst acc) tm "true"
+          in ((tydict, Lib.snd acc), (constant_decls, text)) end
+        else
+          raise ERR "native_set_builtin" "unsupported native set term"
       end
     (* creates a mapping from bound variables to their SMT-LIB names; if a
        variable is already mapped, we return its existing SMT-LIB name *)
@@ -2644,7 +3004,11 @@ local
           raise ERR "translate_term" "not a binder"
       val (bounds, smtvars) = Lib.foldl_map create_bound_name (bounds, vars)
       fun variable_type (tydict, var) =
-        translate_type regime (tydict, Term.type_of var)
+        if !current_set_backend <> CVC5ArraySet andalso
+           is_marked_set_term var then
+          set_sort tydict var
+        else
+          translate_type regime (tydict, Term.type_of var)
       val (tydict, vardecltys) =
         Lib.foldl_map variable_type (tydict, vars)
       val (vardeclss, vartys) = Lib.split vardecltys
@@ -2733,7 +3097,8 @@ local
     (* translate the entire term (e.g., for numerals), using the dictionary of
        built-in symbols; however, only do this if 'tm' has base type *)
     (if tm_has_base_type then
-      builtin_symbol (tm, [])
+      if native_set_symbol tm [] then native_set_builtin (tm, [])
+      else builtin_symbol (tm, [])
     else
       raise ERR "translate_term" "not first-order")  (* handled below *)
     handle Feedback.HOL_ERR _ =>
@@ -2744,13 +3109,15 @@ local
     in
       (* In an HO regime a fully ranked built-in may itself return a map.
          Translate that ranked prefix before any remaining map applications. *)
-      (if (case regime of
-             FirstOrder => tm_has_base_type
-           | HigherOrder _ =>
-               Term.is_const rator andalso
-               List.length rands = declared_const_arity rator)
+      (if native_set_symbol rator rands orelse
+            (case regime of
+               FirstOrder => tm_has_base_type
+             | HigherOrder _ =>
+                 Term.is_const rator andalso
+                 List.length rands = declared_const_arity rator)
        then
-        builtin_symbol (rator, rands)
+        if native_set_symbol rator rands then native_set_builtin (rator, rands)
+        else builtin_symbol (rator, rands)
       else
         raise ERR "translate_term" "not first-order")  (* handled below *)
     handle Feedback.HOL_ERR _ =>
@@ -2917,7 +3284,12 @@ local
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 val (tydict, (rngdecls, rngty)) =
-                  translate_type regime (tydict, rngty)
+                  if !current_set_backend <> CVC5ArraySet andalso
+                     declaration_arity = 0 andalso is_marked_set_term rator
+                  then
+                    set_sort tydict rator
+                  else
+                    translate_type regime (tydict, rngty)
                 (* invent new name for 'rator' *)
                 val name = tm_prefix ^
                   Int.toString (Redblackmap.numItems tmdict)
@@ -3100,12 +3472,24 @@ local
      the occurrence arity in FirstOrder.  HigherOrder uses a constant's
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
-  fun goal_to_SmtLib_aux request apply_operator
-      (policy : logic_selection_policy)
+  fun goal_to_SmtLib_aux_inner request apply_operator
+      (policy : logic_selection_policy) target
       (goal as (original_ts, t)) : translation * string list =
   let
-    val (regime, regime_reason) = select_regime request goal
-    val ts = original_ts
+    val set_terms = List.foldl (fn (term, acc) =>
+      collect_native_set_terms term acc) [] (t :: original_ts)
+    val backend = backend_for_target target goal set_terms
+    val _ = current_set_backend := backend
+    val _ = current_set_terms := set_terms
+    (* FINITE hypotheses are the evidence selecting cvc5's finite Set model;
+       once selected they are semantic facts of that model and must not be
+       serialized as an unsupported HOL predicate. *)
+    val ts =
+      case backend of
+        CVC5NativeSet => List.filter (fn tm =>
+          not (Option.isSome (finite_set_hypothesis tm))) original_ts
+      | _ => original_ts
+    val (regime, regime_reason) = select_regime request (ts, t)
     val tydict = Redblackmap.mkDict Type.compare
     val tmdict = Redblackmap.mkDict
       (Lib.pair_compare (Term.compare, Int.compare))
@@ -3170,6 +3554,19 @@ local
     ] @ smtlibs @ [
       "(check-sat)\n"
     ])
+  end
+
+  fun goal_to_SmtLib_aux request apply_operator policy target goal =
+  let
+    val saved_backend = !current_set_backend
+    val saved_set_terms = !current_set_terms
+    fun work () =
+      goal_to_SmtLib_aux_inner request apply_operator policy target goal
+    fun restore () =
+      (current_set_backend := saved_backend;
+       current_set_terms := saved_set_terms)
+  in
+    Portable.finally restore work ()
   end
 
   fun num_binder_to_int_once_conv tm =
@@ -3688,18 +4085,19 @@ in
     request : regime_request,
     apply_operator : standard27_apply_operator,
     policy : logic_selection_policy,
-    get_proof : bool
+    get_proof : bool,
+    target : {solver : string, version : string option} option
   }
 
   fun goal_to_SmtLib_translation_gen
-      ({request, apply_operator, policy, get_proof} : smtlib_emit_options)
+      ({request, apply_operator, policy, get_proof, target} : smtlib_emit_options)
       goal =
     let
       val tail =
         if get_proof then ["(get-proof)\n", "(exit)\n"] else ["(exit)\n"]
     in
       Lib.apsnd (fn xs => xs @ tail)
-        (goal_to_SmtLib_aux request apply_operator policy goal)
+        (goal_to_SmtLib_aux request apply_operator policy target goal)
     end
 
   fun goal_to_SmtLib_gen opts goal =
@@ -3717,28 +4115,34 @@ in
       request = AutomaticRegime Standard27,
       apply_operator = ApplyUnderscore,
       policy = option_logic_policy NONE,
-      get_proof = false
+      get_proof = false,
+      target = NONE
     }
 
-    fun with_request request ({apply_operator, policy, get_proof, ...}
+    fun with_request request ({apply_operator, policy, get_proof, target, ...}
         : smtlib_emit_options) : smtlib_emit_options =
       {request = request, apply_operator = apply_operator, policy = policy,
-       get_proof = get_proof}
+       get_proof = get_proof, target = target}
 
-    fun with_apply_operator apply_operator ({request, policy, get_proof, ...}
+    fun with_apply_operator apply_operator ({request, policy, get_proof, target, ...}
         : smtlib_emit_options) : smtlib_emit_options =
       {request = request, apply_operator = apply_operator, policy = policy,
-       get_proof = get_proof}
+       get_proof = get_proof, target = target}
 
-    fun with_policy policy ({request, apply_operator, get_proof, ...}
+    fun with_policy policy ({request, apply_operator, get_proof, target, ...}
         : smtlib_emit_options) : smtlib_emit_options =
       {request = request, apply_operator = apply_operator, policy = policy,
-       get_proof = get_proof}
+       get_proof = get_proof, target = target}
 
-    fun with_get_proof get_proof ({request, apply_operator, policy, ...}
+    fun with_get_proof get_proof ({request, apply_operator, policy, target, ...}
         : smtlib_emit_options) : smtlib_emit_options =
       {request = request, apply_operator = apply_operator, policy = policy,
-       get_proof = get_proof}
+       get_proof = get_proof, target = target}
+
+    fun with_target target ({request, apply_operator, policy, get_proof, ...}
+        : smtlib_emit_options) : smtlib_emit_options =
+      {request = request, apply_operator = apply_operator, policy = policy,
+       get_proof = get_proof, target = target}
 
     fun emit_options overrides =
       List.foldl (fn (override, opts) => override opts) default_emit_options
@@ -3761,7 +4165,8 @@ in
         goal_to_SmtLib_translation_gen
           (emit_options [with_request (AutomaticRegime dialect),
                          with_apply_operator apply_operator,
-                         with_policy policy, with_get_proof get_proof]) goal
+                         with_policy policy, with_get_proof get_proof,
+                         with_target target]) goal
       end
 
     fun goal_to_SmtLib_translation_with_policy_and_dialect policy dialect =
@@ -3806,6 +4211,14 @@ in
         (emit_options [with_policy (option_logic_policy logic)])
 
   end  (* local *)
+
+  (* cvc5 alone supplies finite-set cardinality.  Keep this at the solver
+     boundary rather than in the printer so every Z3 entry point gets the
+     same structured availability diagnostic before serialization begins. *)
+  val _ = register_operator_availability {
+    hol_head = pred_setSyntax.card_tm, operator = "set.card", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV
   val NUM_BINDERS_TO_INT_CONV = NUM_BINDERS_TO_INT_CONV
@@ -3961,6 +4374,41 @@ in
     MAP_EVERY (fn _ => cleanup_one) assumptions g
   end
 
+  (* Expand just an atom whose set operand is outside the printer's native
+     grammar.  Applying SET_SIMP_TAC to the entire goal would also erase an
+     unrelated UNION/INTER atom, defeating native-by-default emission. *)
+  fun set_atom_needs_predicate_expansion tm =
+  let
+    val (rator, rands) = boolSyntax.strip_comb tm
+    fun unsupported set = is_set_type set andalso not (native_set_term set)
+  in
+    if same_const rator pred_setSyntax.in_tm then
+      (case rands of [_, set] => unsupported set | _ => false)
+    else if same_const rator pred_setSyntax.subset_tm then
+      (case rands of [left, right] => unsupported left orelse unsupported right
+       | _ => false)
+    else if same_const rator boolSyntax.equality then
+      (case rands of [left, right] =>
+         is_set_type left andalso is_set_type right andalso
+         (unsupported left orelse unsupported right)
+       | _ => false)
+    else
+      false
+  end
+
+  fun native_set_preprocess_conv tm =
+    if set_atom_needs_predicate_expansion tm then
+      simpLib.SIMP_CONV
+        (simpLib.mk_simpset [pred_setSimps.SET_SPEC_ss])
+        [pred_setTheory.SPECIFICATION, pred_setTheory.GSPEC_ETA,
+         pred_setTheory.EMPTY_DEF, pred_setTheory.UNIV_DEF,
+         pred_setTheory.UNION_DEF, pred_setTheory.INTER_DEF] tm
+    else
+      raise Conv.UNCHANGED
+
+  val NATIVE_SET_SIMP_TAC =
+    Tactic.CONV_TAC (Conv.TOP_DEPTH_CONV native_set_preprocess_conv)
+
   (* Eliminates some HOL terms that are not supported by the SMT-LIB
      translation. It also adds some useful theorems to the list of assumptions
      so that SMT solvers can reason about some symbols defined in HOL4 theories. *)
@@ -4009,7 +4457,10 @@ in
       boolTheory.FUN_EQ_THM, boolTheory.REFL_CLAUSE
     ] THEN
     Library.WORD_SIMP_TAC THEN
-    Library.SET_SIMP_TAC THEN
+    (* Oracle emission retains the stock surface where it is native, but
+       expands GSPEC and other unsupported forms atom-by-atom.  Checked
+       replay keeps the established predicate encoding until TASK_10/11. *)
+    (if simp_let then Library.SET_SIMP_TAC else NATIVE_SET_SIMP_TAC) THEN
     Tactic.RULE_ASSUM_TAC
       (Conv.CONV_RULE (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV)) THEN
     Tactic.CONV_TAC (Conv.DEPTH_CONV INT_DIVIDES_LITERAL_MOD_CONV) THEN
