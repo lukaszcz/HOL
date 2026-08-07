@@ -22,6 +22,11 @@ src/auto/aesop
 # both, and it pays for it by commenting that block out.
 src/auto/linarith/instances
 
+# User-level showcase theories for the layer's tactics.  Post-boss like
+# instances/ (they use bossLib and the int, real and rat instances), so
+# they stay below the pre-boss block.
+src/auto/examples
+
 !src/auto/rules/theory_tests
 !src/auto/linarith/theory_tests
 !src/auto/clasimp/theory_tests
