@@ -1209,6 +1209,15 @@ in
         ["(seq.update (Seq A) Int (Seq A) (Seq A))"]
         (K_zero_three (fn (s, i, t) =>
           holsmt_app "smt_seq_update" [s, i, t])),
+      cvc_term "seq.replace_all" no_attributes
+        ["(seq.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
+        (K_zero_three (fn (s, t, u) =>
+          holsmt_app "smt_seq_replace_all" [s, t, u])),
+      (* cvc5 accepts its String-spelled alias over arbitrary sequences. *)
+      cvc_term "str.replace_all" no_attributes
+        ["(str.replace_all (Seq A) (Seq A) (Seq A) (Seq A))"]
+        (K_zero_three (fn (s, t, u) =>
+          holsmt_app "smt_seq_replace_all" [s, t, u])),
       cvc_term "seq.rev" no_attributes ["(seq.rev (Seq A) (Seq A))"]
         (K_zero_one listSyntax.mk_reverse)
     ]

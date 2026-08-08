@@ -78,6 +78,9 @@ struct
     mk_rule RareRewrite ("bv-lshr-by-const-0", "bv_lshr_by_const_0"),
     mk_rule RareRewrite ("bv-ashr-by-const-0", "bv_ashr_by_const_0"),
     mk_rule RareRewrite ("eq-symm", "rewrite"),
+    (* Native (Seq A) rules observed in the frozen cvc5 CPC corpus. *)
+    mk_rule RareRewrite ("seq-eval-op", "seq_rewrite"),
+    mk_rule RareRewrite ("str-at-elim", "seq_at_elim"),
     mk_rule RareRewrite ("exists-elim", "exists_elim"),
     mk_rule RareRewrite ("absorb", "rewrite"),
     mk_rule RareRewrite ("arith-divisible-elim", "rewrite"),

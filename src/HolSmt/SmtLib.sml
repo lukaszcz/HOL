@@ -1284,9 +1284,8 @@ local
   fun contains_bag_card tm =
     Lib.can (HolKernel.find_term bagSyntax.is_card) tm
 
-  (* The shared Seq surface is represented directly by stock list terms.
-     These heads deliberately exclude MAP/FOLDL: TASK_20 owns their Z3-only
-     HO emission, so for now they retain the ordinary no-counterpart path. *)
+  (* The shared first-order Seq surface is represented directly by stock list
+     terms.  MAP and FOLDL below are the Z3-only higher-order extension. *)
   fun list_const name = Term.prim_mk_const {Thy = "list", Name = name}
   fun rich_list_const name =
     Term.prim_mk_const {Thy = "rich_list", Name = name}
@@ -1298,6 +1297,8 @@ local
   val seq_reverse_tm = list_const "REVERSE"
   val seq_prefix_tm = list_const "isPREFIX"
   val seq_lupdate_tm = list_const "LUPDATE"
+  val seq_map_tm = list_const "MAP"
+  val seq_foldl_tm = list_const "FOLDL"
   val seq_contains_tm = rich_list_const "IS_SUBLIST"
   val seq_suffix_tm = rich_list_const "IS_SUFFIX"
   val smt_seq_nth_tm = holsmt_const "smt_seq_nth"
@@ -1305,6 +1306,7 @@ local
   val smt_seq_at_tm = holsmt_const "smt_seq_at"
   val smt_seq_indexof_tm = holsmt_const "smt_seq_indexof"
   val smt_seq_replace_tm = holsmt_const "smt_seq_replace"
+  val smt_seq_replace_all_tm = holsmt_const "smt_seq_replace_all"
   val smt_seq_update_tm = holsmt_const "smt_seq_update"
 
   fun dest_seq_extract_shape tm =
@@ -1370,12 +1372,12 @@ local
         | NONE => false
       val direct_list_heads =
         ["APPEND", "LENGTH", "CONS", "NIL", "REVERSE", "isPREFIX",
-         "LUPDATE"]
+         "LUPDATE", "MAP", "FOLDL"]
       val totalized_list_heads = ["TAKE", "DROP", "EL"]
       val rich_list_heads = ["IS_SUBLIST", "IS_SUFFIX"]
       val holsmt_heads =
         ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
-         "smt_seq_replace", "smt_seq_update"]
+         "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
       fun supported tm =
         case Lib.total Term.dest_thy_const tm of
           SOME {Thy = "list", ...} =>
@@ -2105,7 +2107,7 @@ local
       val rich_sequence_names = ["IS_SUBLIST", "IS_SUFFIX"]
       val holsmt_sequence_names =
         ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
-         "smt_seq_replace", "smt_seq_update"]
+         "smt_seq_replace", "smt_seq_replace_all", "smt_seq_update"]
       val set_names =
         ["INSERT", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
          "EMPTY", "UNIV", "SING", "CARD"]
@@ -2798,10 +2800,11 @@ local
       Option.isSome (Lib.total dest_seq_at_shape tm) orelse
       List.exists (fn head => same_const rator head) [
         seq_append_tm, seq_length_tm, seq_cons_tm, seq_reverse_tm,
-        seq_prefix_tm, seq_lupdate_tm, seq_contains_tm, seq_suffix_tm,
+        seq_prefix_tm, seq_lupdate_tm, seq_map_tm, seq_foldl_tm,
+        seq_contains_tm, seq_suffix_tm,
         smt_seq_nth_tm,
         smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
-        smt_seq_replace_tm, smt_seq_update_tm])
+        smt_seq_replace_tm, smt_seq_replace_all_tm, smt_seq_update_tm])
     fun native_sequence_builtin (rator, rands) =
       let
         fun translate_args args =
@@ -2865,6 +2868,8 @@ local
                        listSyntax.mk_nil (Term.type_of element))]
                 | _ => raise ERR "native_sequence_builtin"
                     "wrong LUPDATE arity")
+             else if same_const rator seq_map_tm then emit "seq.map" rands
+             else if same_const rator seq_foldl_tm then emit "seq.foldl" rands
              else if same_const rator seq_contains_tm then
                emit "seq.contains" rands
              else if same_const rator smt_seq_nth_tm then emit "seq.nth" rands
@@ -2875,6 +2880,8 @@ local
                emit "seq.indexof" rands
              else if same_const rator smt_seq_replace_tm then
                emit "seq.replace" rands
+             else if same_const rator smt_seq_replace_all_tm then
+               emit "seq.replace_all" rands
              else if same_const rator smt_seq_update_tm then
                emit "seq.update" rands
              else raise ERR "native_sequence_builtin"
@@ -4030,8 +4037,15 @@ local
           SOME [record, new_value]
         end
         handle Feedback.HOL_ERR _ => NONE
+      fun is_seq_ho_combinator tm =
+        case Lib.total boolSyntax.strip_comb tm of
+          SOME (rator, _) =>
+            same_const rator seq_map_tm orelse same_const rator seq_foldl_tm
+        | NONE => false
       fun scan inherited tm =
-        if boolSyntax.is_forall tm then
+        if is_seq_ho_combinator tm then
+          SOME "automatic:seq-ho-combinator"
+        else if boolSyntax.is_forall tm then
           scan inherited (Lib.snd (boolSyntax.dest_forall tm))
         else if boolSyntax.is_exists tm then
           scan inherited (Lib.snd (boolSyntax.dest_exists tm))
@@ -4913,6 +4927,22 @@ in
   val _ = register_operator_availability {
     hol_head = seq_reverse_tm, operator = "seq.rev", solver = "cvc5",
     versions = ["1.3.4"]
+  }
+
+  (* Z3 accepts these higher-order Seq combinators at every supported anchor;
+     cvc5 accepts neither.  The printer deliberately uses only `seq.foldl`:
+     `seq.fold_left` is a version-gated parser alias, never an output name. *)
+  val z3_seq_ho_versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1",
+                            "4.15.3"]
+
+  val _ = register_operator_availability {
+    hol_head = seq_map_tm, operator = "seq.map", solver = "Z3",
+    versions = z3_seq_ho_versions
+  }
+
+  val _ = register_operator_availability {
+    hol_head = seq_foldl_tm, operator = "seq.foldl", solver = "Z3",
+    versions = z3_seq_ho_versions
   }
 
   val NUM_TO_INT_CONV = NUM_TO_INT_CONV

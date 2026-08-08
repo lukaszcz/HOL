@@ -345,6 +345,32 @@ local
     else
       SmtLib_Theories.sequence_ty element
 
+  (* The legacy Z3 proof grammar represents the sort annotation in
+     `(as seq.empty (Seq Int))` as a term-shaped index.  These markers are
+     consumed only by the proof-local `seq.empty` entry below; they preserve
+     the element type without admitting a term-level Seq sort. *)
+  val z3_int_sort_marker = intSyntax.zero_tm
+  val z3_char_sort_marker = z3_num_to_char numSyntax.zero_tm
+
+  fun z3_seq_sort_marker element =
+    listSyntax.mk_nil (Term.type_of element)
+
+  fun z3_seq_empty marker =
+    case Lib.total listSyntax.dest_list_type (Term.type_of marker) of
+      SOME element =>
+        if Type.compare (element, z3_char_ty) = EQUAL then
+          SmtLib_String_Literal.mk_string_term ""
+        else
+          listSyntax.mk_nil element
+    | NONE => raise ERR "<z3_string_dict.seq.empty>"
+        "expected a Seq sort marker"
+
+  val z3_empty_marker = listSyntax.mk_nil intSyntax.int_ty
+
+  fun z3_as_seq_empty (empty, marker) =
+    if Term.aconv empty z3_empty_marker then z3_seq_empty marker
+    else raise ERR "<z3_string_dict.as>" "not a seq.empty annotation"
+
   val z3_string_tydict = Library.dict_from_list [
     ("Char", SmtLib_Theories.K_zero_zero z3_char_ty),
     ("Seq", SmtLib_Theories.K_zero_one z3_sequence_ty)
@@ -379,8 +405,19 @@ local
         ("Char", fn _ => fn indices => fn args =>
           case (indices, args) of
             ([code], []) => z3_num_to_char (z3_natural code)
+          | ([], []) => z3_char_sort_marker
           | _ => raise ERR "<z3_string_dict.Char>"
-              "one code-point index and no arguments expected"),
+              "one code-point index or a sort marker expected"),
+        ("Int", SmtLib_Theories.K_zero_zero z3_int_sort_marker),
+        ("Seq", SmtLib_Theories.K_zero_one z3_seq_sort_marker),
+        ("seq.empty", fn _ => fn indices => fn args =>
+          case (indices, args) of
+            ([], []) => z3_empty_marker
+          | ([marker], []) => z3_seq_empty marker
+          | ([], [marker]) => z3_seq_empty marker
+          | _ => raise ERR "<z3_string_dict.seq.empty>"
+              "one Seq sort annotation and no arguments expected"),
+        ("as", SmtLib_Theories.K_zero_two z3_as_seq_empty),
         (* These aliases keep Z3's public (Seq Char) surface on the same
            smtstr carrier as String, rather than falling through to the
            generic list builders. *)
@@ -413,7 +450,7 @@ local
         ("seq.prefixof", SmtLib_Theories.K_zero_two
           (fn (s, t) => if is_z3_string s then
              smtstring_app "smtstr_prefixof" [s, t]
-           else listSyntax.mk_isprefix (t, s))),
+           else listSyntax.mk_isprefix (s, t))),
         ("seq.suffixof", SmtLib_Theories.K_zero_two
           (fn (s, t) => if is_z3_string s then
              smtstring_app "smtstr_suffixof" [s, t]

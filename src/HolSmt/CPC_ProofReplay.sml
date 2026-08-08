@@ -1048,6 +1048,22 @@ local
      else NONE)
     handle _ => NONE
 
+  (* The Seq RARE names have deliberately narrow, recorded schemas.  Keeping
+     them out of the generic RARE ladder means an unrecognised Seq rule stays
+     a named CPC obligation rather than becoming an accidental simplifier. *)
+  fun replay_seq_rewrite name args =
+    case args of
+      [target] => SmtSeqProve.seq_prove target
+    | _ => raise ERR name "expected one Seq rewrite proposition"
+
+  fun replay_seq_at_elim conclusion args =
+    case (conclusion, args) of
+      (SOME target, [_, _]) => SmtSeqProve.seq_prove target
+    | (NONE, [_, _]) =>
+        raise ERR "str-at-elim"
+          "omitted conclusion is an enumerated CPC Seq obligation"
+    | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
+
   fun replay_rare_rewrite name args =
     let
       val smt_ediv_total_tm = Term.prim_mk_const
@@ -2358,7 +2374,11 @@ local
           (#asserted_hyps state)) orelse
         List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
     in
-      if fp_context () then
+      (* A native Seq trust has no unchecked fallback.  Its failure is the
+         enumerated D2 obligation emitted by SmtSeqProve's diagnostic. *)
+      if SmtSeqProve.has_seq_type target then
+        profile "CPC(rung:trust/seq)" SmtSeqProve.seq_prove target
+      else if fp_context () then
         next (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
           unsupported_fp
       else
@@ -3502,15 +3522,21 @@ local
            "; conclusion=" ^ Library.term_to_string target ^
            "; attempted rungs=[rewrite, theory, contextual]")
     in
-      profile "CPC(rung:string/rewrite)"
-        SmtStringProve.string_rewrite_prove target
-      handle Feedback.HOL_ERR _ =>
-      profile "CPC(rung:string/theory)"
-        (SmtStringProve.string_prove arith_prove) target
-      handle Feedback.HOL_ERR _ =>
-      profile "CPC(rung:string/contextual)" contextual_prove ()
-      handle Feedback.HOL_ERR _ =>
-      profile "CPC(rung:string/unsupported)" fail ()
+      (* `str` is cvc5's macro name for both String and Seq theory steps.
+         Dispatch on HOL's carrier, rather than the macro spelling, so the
+         Phase-4 String route remains unchanged. *)
+      if SmtSeqProve.has_seq_type target then
+        profile "CPC(rung:string/seq)" SmtSeqProve.seq_prove target
+      else
+        profile "CPC(rung:string/rewrite)"
+          SmtStringProve.string_rewrite_prove target
+        handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:string/theory)"
+          (SmtStringProve.string_prove arith_prove) target
+        handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:string/contextual)" contextual_prove ()
+        handle Feedback.HOL_ERR _ =>
+        profile "CPC(rung:string/unsupported)" fail ()
     end
 
   fun unsupported_step ({id, rule, conclusion, ...} : step) =
@@ -3635,6 +3661,8 @@ local
            | "bv_ashr_by_const_0" => replay_bv_ashr_by_const_0 args
            | "bv_poly_norm" => replay_bv_poly_norm args
            | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
+           | "seq_rewrite" => replay_seq_rewrite (#name rule) args
+           | "seq_at_elim" => replay_seq_at_elim conclusion args
            | "rewrite" => replay_rare_rewrite (#name rule) args
            | "datatype" => replay_datatype args
            | "datatype_eq" => replay_datatype_eq args

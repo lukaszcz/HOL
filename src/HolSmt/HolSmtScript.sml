@@ -182,6 +182,23 @@ Definition smt_seq_replace_def:
   smt_seq_replace (s : 'a list) t u = smt_seq_replace_raw s t u
 End
 
+(* The all-occurrences variant consumes a matching source segment before
+   continuing.  The fuel is structural: a nonempty match drops at least one
+   element, while a mismatch consumes the head. *)
+Definition smt_seq_replace_all_aux_def:
+  (smt_seq_replace_all_aux 0 (s : 'a list) t u = s) /\
+  (smt_seq_replace_all_aux (SUC fuel) [] t u = []) /\
+  (smt_seq_replace_all_aux (SUC fuel) (h::s) t u =
+     if IS_PREFIX (h::s) t then
+       u ++ smt_seq_replace_all_aux fuel (DROP (LENGTH t) (h::s)) t u
+     else h::smt_seq_replace_all_aux fuel s t u)
+End
+
+Definition smt_seq_replace_all_def:
+  smt_seq_replace_all (s : 'a list) t u =
+    if t = [] then s else smt_seq_replace_all_aux (LENGTH s) s t u
+End
+
 (* cvc5's update replaces the segment beginning at i.  Like LUPDATE it is
    a no-op outside the source sequence; its replacement is clipped at the
    end of that source sequence. *)

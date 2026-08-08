@@ -6245,13 +6245,6 @@ let
   val reverse_error = unavailable
     ([], boolSyntax.mk_eq (listSyntax.mk_reverse xs, ys))
   val lupdate_error = unavailable lupdate_goal
-  val map_goal = ([], boolSyntax.mk_eq
-    (listSyntax.mk_map (``f:int -> int``, xs), ys))
-  val fold_goal = ([], boolSyntax.mk_eq
-    (listSyntax.mk_foldl (``fold:int -> int -> int``, intSyntax.zero_tm, xs),
-     intSyntax.zero_tm))
-  val map_text = z3 map_goal
-  val fold_text = z3 fold_goal
   val string_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
     ([], ``STRCAT (s:string) t = STRCAT t s``))
   val string_text = z3 string_goal
@@ -6289,13 +6282,82 @@ in
       "SMT-LIB operator 'seq.update' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",
     "LUPDATE availability diagnostic changed: " ^ lupdate_error);
-  assert (not (contains "seq.map" map_text) andalso
-      not (contains "seq.foldl" fold_text),
-    "MAP/FOLDL unexpectedly took TASK_20's sequence path:\n" ^
-    map_text ^ "\n" ^ fold_text);
   assert (contains "str.++" string_text andalso
       not (contains "(Seq Char)" string_text),
     "Phase-4 String emission lost precedence over Seq Char:\n" ^ string_text)
+end
+
+fun smtlib_seq_ho_combinators_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 version goal =
+    Z3.goal_to_SmtLib_translation_for_version (SOME version) goal
+  fun cvc goal = CVC.goal_to_SmtLib_translation goal
+  fun unavailable name goal =
+    (ignore (cvc goal); die ("FAIL: cvc5 accepted " ^ name))
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  fun has_regime expected translation =
+    List.exists
+      (fn SmtLib.RegimeSelection {regime, reason, ...} =>
+            regime = expected andalso reason = "automatic:seq-ho-combinator"
+        | _ => false)
+      (SmtLib.translation_records translation)
+  val xs = ``xs:int list``
+  val ys = ``ys:int list``
+  val map_goal = ([], boolSyntax.mk_eq
+    (listSyntax.mk_map (``\x:int. x + 1``, xs), ys))
+  val fold_goal = ([], boolSyntax.mk_eq
+    (listSyntax.mk_foldl (``\a:int x. a + x``, intSyntax.zero_tm, xs),
+     intSyntax.zero_tm))
+  val z3_regime = SmtLib.HigherOrder SmtLib.Z3LambdaArray
+  val standard_regime = SmtLib.HigherOrder SmtLib.Standard27
+  val map_result = z3 "4.15.3" map_goal
+  val fold_result = z3 "4.15.3" fold_goal
+  val map_translation = Lib.fst map_result
+  val fold_translation = Lib.fst fold_result
+  val map_text = text_of map_result
+  val fold_text = text_of fold_result
+  val standard_map = Lib.fst
+    (SmtLib.goal_to_SmtLib_translation_with_dialect
+      SmtLib.Standard27 NONE map_goal)
+  val map_cvc_error = unavailable "seq.map" map_goal
+  val fold_cvc_error = unavailable "seq.foldl" fold_goal
+  fun emitted_at_all_versions version =
+    let
+      val map_output = text_of (z3 version map_goal)
+      val fold_output = text_of (z3 version fold_goal)
+    in
+      contains "seq.map" map_output andalso contains "seq.foldl" fold_output
+    end
+in
+  assert (SmtLib.translation_regime map_translation = z3_regime andalso
+      SmtLib.translation_regime fold_translation = z3_regime andalso
+      has_regime z3_regime map_translation andalso
+      has_regime z3_regime fold_translation,
+    "Z3 HO Seq combinators did not select and record Z3LambdaArray");
+  assert (SmtLib.translation_logic standard_map = "HO_ALL" andalso
+      SmtLib.translation_regime standard_map = standard_regime andalso
+      has_regime standard_regime standard_map,
+    "HO Seq combinators did not select HO_ALL under Standard27");
+  assert (contains "(seq.map" map_text andalso contains "(lambda" map_text,
+    "MAP did not emit seq.map with Z3 lambda lowering:\n" ^ map_text);
+  assert (contains "(seq.foldl" fold_text andalso contains "(lambda" fold_text,
+    "FOLDL did not emit seq.foldl with Z3 lambda lowering:\n" ^ fold_text);
+  assert (not (contains "seq.fold_left" map_text) andalso
+      not (contains "seq.fold_left" fold_text),
+    "the version-gated seq.fold_left alias was emitted:\n" ^
+    map_text ^ "\n" ^ fold_text);
+  assert (List.all emitted_at_all_versions
+      ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"],
+    "Z3 HO Seq combinator emission was not uniform across supported versions");
+  assert (map_cvc_error =
+      "SMT-LIB operator 'seq.map' is unavailable for solver 'cvc5' at " ^
+      "version '" ^ CVC.version_string () ^ "'",
+    "seq.map cvc5 availability diagnostic changed: " ^ map_cvc_error);
+  assert (fold_cvc_error =
+      "SMT-LIB operator 'seq.foldl' is unavailable for solver 'cvc5' at " ^
+      "version '" ^ CVC.version_string () ^ "'",
+    "seq.foldl cvc5 availability diagnostic changed: " ^ fold_cvc_error)
 end
 
 fun smtlib_operator_availability_diagnostic_success () =
@@ -8780,6 +8842,66 @@ in
     "CPC boolean rewrite replay returned an unexpected final equality")
 end
 
+fun cpc_proof_replay_seq_rules_success () =
+let
+  fun replay name goal text =
+    let
+      val (translation, _) = CVC.goal_to_SmtLib_translation goal
+      val proof = CPC_ProofParser.parse_stream_with_version
+        (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+        (TextIO.openString text)
+      val thm = CPC_ProofReplay.replay_root_for_test proof
+    in
+      check_oracle_tags ("CPC Seq " ^ name) thm;
+      assert (SmtSeqProve.has_seq_type (Thm.concl thm),
+        "CPC " ^ name ^ " did not retain a native Seq proposition")
+    end
+  val update =
+    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
+    \(define @u () (seq.update @s 0 @t)) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+  val reverse =
+    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
+    \(define @u () (seq.rev (seq.++ @s @t))) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+  val replace_all =
+    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
+    \(define @u () (seq.replace_all (seq.++ @s @s) @s @t)) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+  val str_replace_all =
+    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
+    \(define @u () (str.replace_all (seq.++ @s @s) @s @t)) \
+    \(step @p1 :rule seq-eval-op :args ((= @u @u))))"
+  val at_elim =
+    "((define @s () (seq.unit 7)) \
+    \(step @p1 (= (seq.at @s 0) (seq.extract @s 0 1)) \
+    \:rule str-at-elim :args (@s 0)))"
+  val str_macro =
+    "((define @s () (seq.unit 1)) (define @u () (seq.rev @s)) \
+    \(step @p1 :rule str :args ((= @u @u))))"
+  val trust =
+    "((define @s () (seq.unit 1)) (define @t () (seq.unit 2)) \
+    \(define @u () (seq.update @s 0 @t)) \
+    \(step @p1 :rule trust :args ((= @u @u))))"
+in
+  replay "seq-eval-op update"
+    ([], ``smt_seq_update ([1]:int list) 0 [2] = [2]``) update;
+  replay "seq-eval-op reverse"
+    ([], ``REVERSE ([1;2]:int list) = [2;1]``) reverse;
+  replay "seq-eval-op replace_all"
+    ([], ``smt_seq_replace_all ([1;1]:int list) [1] [2] = [2;2]``)
+    replace_all;
+  replay "seq-eval-op str.replace_all"
+    ([], ``smt_seq_replace_all ([1;1]:int list) [1] [2] = [2;2]``)
+    str_replace_all;
+  replay "str-at-elim"
+    ([], ``smt_seq_at ([7]:int list) 0 = smt_seq_extract [7] 0 1``) at_elim;
+  replay "str macro native Seq" ([], ``REVERSE ([1]:int list) = [1]``)
+    str_macro;
+  replay "trust native Seq"
+    ([], ``smt_seq_update ([1]:int list) 0 [2] = [2]``) trust
+end
+
 fun cpc_proof_replay_fp_trust_success () =
 let
   val proof = parse_cpc_proof_string
@@ -10389,6 +10511,58 @@ fun seq_prove_core_rungs_success () =
      ``smt_seq_extract ([x]:'a list) 0 1 = [x]``;
    assert_seq_prover "seq nth rung" SmtSeqProve.access_prove
      ``smt_seq_nth ([x]:'a list) 0 = x``;
+   assert_seq_prover "seq prefix rung"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``isPREFIX ([x]:'a list) ([x] ++ ys)``;
+   assert_seq_prover "seq suffix rung"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``IS_SUFFIX ((ys ++ [x]):'a list) [x]``;
+   assert_seq_prover "seq contains rung"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``IS_SUBLIST (([x] ++ ys):'a list) [x]``;
+   assert_seq_prover "seq indexof rung" SmtSeqProve.indexof_replace_prove
+     ``smt_seq_indexof ([1;2]:int list) [2] 0 = 1``;
+   assert_seq_prover "seq replace rung" SmtSeqProve.indexof_replace_prove
+     ``smt_seq_replace ([x]:'a list) [x] [y] = [y]``;
+   assert_seq_prover "seq update rung" SmtSeqProve.update_reverse_prove
+     ``smt_seq_update ([x]:'a list) 0 [y] = [y]``;
+   assert_seq_prover "seq reverse rung" SmtSeqProve.update_reverse_prove
+     ``REVERSE ([x;y]:'a list) = [y;x]``;
+   assert_seq_prover "seq prefix false boundary"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``~isPREFIX ([x;y]:'a list) [x]``;
+   assert_seq_prover "seq suffix empty boundary"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``IS_SUFFIX ([x]:'a list) []``;
+   assert_seq_prover "seq contains empty boundary"
+     SmtSeqProve.prefix_suffix_contains_prove
+     ``IS_SUBLIST ([x]:'a list) []``;
+   assert_seq_prover "seq indexof no-match boundary"
+     SmtSeqProve.indexof_replace_prove
+     ``smt_seq_indexof ([1]:int list) [2] 0 = -1``;
+   assert_seq_prover "seq indexof negative boundary"
+     SmtSeqProve.indexof_replace_prove
+     ``smt_seq_indexof ([1]:int list) [1] (-1) = -1``;
+   assert_seq_prover "seq indexof empty boundary"
+     SmtSeqProve.indexof_replace_prove
+     ``smt_seq_indexof ([1;2]:int list) [] 2 = 2``;
+   assert_seq_prover "seq replace no-match boundary"
+     SmtSeqProve.indexof_replace_prove
+     ``smt_seq_replace ([1]:int list) [2] [3] = [1]``;
+   assert_seq_prover "seq replace empty boundary"
+     SmtSeqProve.indexof_replace_prove
+     ``smt_seq_replace ([x;y]:'a list) [] [z] = [z;x;y]``;
+   assert_seq_prover "seq update negative boundary"
+     SmtSeqProve.update_reverse_prove
+     ``smt_seq_update ([x]:'a list) (-1) [y] = [x]``;
+   assert_seq_prover "seq update out-of-range boundary"
+     SmtSeqProve.update_reverse_prove
+     ``smt_seq_update ([x]:'a list) 1 [y] = [x]``;
+   assert_seq_prover "seq update clipping boundary"
+     SmtSeqProve.update_reverse_prove
+     ``smt_seq_update ([x;y]:'a list) 1 [z;w] = [x;z]``;
+   assert_seq_prover "seq reverse empty boundary"
+     SmtSeqProve.update_reverse_prove ``REVERSE ([]:'a list) = []``;
    (* z3_seq_nth's 4.12--4.15 `seq.eq`/`seq.tail` witness. *)
    assert_seq_prover "seq nth decomposition rung" SmtSeqProve.seq_prove
      ``(&(LENGTH (xs:'a list)):int) = 0 \/
@@ -10445,6 +10619,28 @@ in
     "native Seq internal proof incorrectly used String constants")
 end
 
+fun z3_seq_empty_carrier_parser_success () =
+let
+  fun rewrite_conclusion text =
+    let
+      val proof = parse_z3_proof_string "4.15.3" text
+    in
+      case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+        SOME (Z3_Proof.REWRITE tm) => tm
+      | _ => die "FAIL: annotated seq.empty did not parse as a rewrite"
+    end
+  fun has_const thy name tm =
+    Lib.can (HolKernel.find_term (fn subterm =>
+      Term.is_const subterm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const subterm
+      in Thy = thy andalso Name = name end)) tm
+  val char_empty = rewrite_conclusion
+    "((proof (rewrite (= (seq.len (as seq.empty (Seq Char))) 0))))"
+in
+  assert (has_const "smtstring" "SmtStr" char_empty,
+    "(Seq Char) seq.empty left the String carrier")
+end
+
 fun z3_seq_captured_core_shapes_replay_success () =
 let
   val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
@@ -10461,6 +10657,42 @@ let
     ("nth",
      "((proof ((_ th-lemma seq) (= (seq.nth (seq.unit 1) 0) 1))))")
   ]
+  (* These are the constructor rewrites recorded in the TASK_05 Seq corpus:
+     each is parsed through the ordinary rewrite rule, rather than asserted as
+     a HOL fact, so the test pins its use of the native Seq rewrite ladder. *)
+  val rewrite_captures = [
+    ("unit-length rewrite",
+     "((proof (rewrite (= (seq.len (seq.unit 1)) 1))))"),
+    ("empty-length rewrite",
+     "((proof (rewrite (= (seq.len (as seq.empty (Seq Int))) 0))))"),
+    ("literal unit-chain rewrite",
+     "((proof (rewrite (= (seq.++ (seq.unit 1) (seq.unit 2)) " ^
+     "(seq.++ (seq.unit 1) (seq.unit 2))))))"),
+    ("concat literal rewrite",
+     "((proof (rewrite (= (seq.len (seq.++ (seq.unit 1) " ^
+     "(seq.unit 2))) 2))))"),
+    ("at rewrite",
+     "((proof (rewrite (= (seq.at (seq.unit 1) 0) (seq.unit 1)))))"),
+    ("nth rewrite",
+     "((proof (rewrite (= (seq.nth (seq.unit 1) 0) 1))))"),
+    ("prefix rewrite",
+     "((proof (rewrite (= (seq.prefixof (seq.unit 1) " ^
+     "(seq.++ (seq.unit 1) (seq.unit 2))) true))))"),
+    ("suffix rewrite",
+     "((proof (rewrite (= (seq.suffixof (seq.unit 2) " ^
+     "(seq.++ (seq.unit 1) (seq.unit 2))) true))))"),
+    ("contains rewrite",
+     "((proof (rewrite (= (seq.contains (seq.++ (seq.unit 1) " ^
+     "(seq.unit 2)) (seq.unit 2)) true))))"),
+    ("indexof rewrite",
+     "((proof (rewrite (= (seq.indexof (seq.unit 2) (seq.unit 2) 0) 0))))"),
+    ("indexof leading-unit rewrite",
+     "((proof (rewrite (= (seq.indexof (seq.++ (seq.unit 1) " ^
+     "(seq.unit 2)) (seq.unit 2) 0) 1))))"),
+    ("replace rewrite",
+     "((proof (rewrite (= (seq.replace (seq.unit 1) (seq.unit 1) " ^
+     "(seq.unit 2)) (seq.unit 2)))))")
+  ]
   fun check version (name, proof_text) =
     let
       val proof = parse_z3_proof_string version
@@ -10470,11 +10702,20 @@ let
       check_oracle_tags
         ("captured Seq " ^ name ^ " Z3 " ^ version) thm
     end
+    handle Feedback.HOL_ERR holerr =>
+      die ("FAIL: captured Seq " ^ name ^ " Z3 " ^ version ^ ": " ^
+        Feedback.message_of holerr)
+    | Conv.UNCHANGED =>
+      die ("FAIL: captured Seq " ^ name ^ " Z3 " ^ version ^
+        ": rewrite ladder made no progress")
 in
   Profile.reset_all ();
   List.app (fn version => List.app (check version) captures) versions;
+  List.app (fn version => List.app (check version) rewrite_captures) versions;
   assert (profile_call_count "th_lemma[seq](3)(seq_prove)" > 0,
-    "genuine Seq th-lemmas did not route to SmtSeqProve")
+    "genuine Seq th-lemmas did not route to SmtSeqProve");
+  assert (profile_call_count "rewrite(01)(seq)" > 0,
+    "native Seq constructor rewrites did not route to SmtSeqProve")
 end
 
 (* Kept behind an environment variable: this exercises the full frozen raw
@@ -10486,8 +10727,26 @@ fun z3_seq_raw_captures_replay_success () =
   | SOME root =>
       let
         val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
-        val stems = ["z3_seq_length-029bb997fc58",
-                     "z3_seq_nth-7ffab1e5349d"]
+        (* The focused raw captures are the only ones that emit genuine
+           th-lemma seq nodes; the recorded generated proofs simplify their
+           explicit contradiction before a sequence theory step is emitted.
+           Their concrete rewrite forms are pinned above. *)
+        val stems = [
+          "z3_seq_length-029bb997fc58",
+          "z3_seq_nth-7ffab1e5349d",
+          "theory_z3_extensions_seq_at_unsat_proof-cbf938b14680",
+          "theory_z3_extensions_seq_concat_unsat_proof-df5d71499bae",
+          "theory_z3_extensions_seq_contains_unsat_proof-927b66c88281",
+          "theory_z3_extensions_seq_empty_unsat_proof-d6348ce64aac",
+          "theory_z3_extensions_seq_extract_unsat_proof-1e742048df88",
+          "theory_z3_extensions_seq_indexof_unsat_proof-d3e692c38ab1",
+          "theory_z3_extensions_seq_len_unsat_proof-175d078360cf",
+          "theory_z3_extensions_seq_nth_unsat_proof-14d717f4219c",
+          "theory_z3_extensions_seq_prefixof_unsat_proof-3b3ab663f0ec",
+          "theory_z3_extensions_seq_replace_unsat_proof-320953c011ac",
+          "theory_z3_extensions_seq_suffixof_unsat_proof-7742485d5129",
+          "theory_z3_extensions_seq_unit_unsat_proof-175d078360cf"
+        ]
         fun read path =
           let val input = TextIO.openIn path
           in TextIO.inputAll input before TextIO.closeIn input end
@@ -10503,6 +10762,9 @@ fun z3_seq_raw_captures_replay_success () =
             check_oracle_tags
               ("raw Seq " ^ stem ^ " Z3 " ^ version) thm
           end
+          handle Feedback.HOL_ERR holerr =>
+            die ("FAIL: raw Seq " ^ stem ^ " Z3 " ^ version ^ ": " ^
+              Feedback.message_of holerr)
       in
         List.app (fn version => List.app (check version) stems) versions
       end
@@ -12521,6 +12783,8 @@ let
       smtlib_native_bag_translation_success),
     ("smtlib_native_sequence_translation_success",
       smtlib_native_sequence_translation_success),
+    ("smtlib_seq_ho_combinators_success",
+      smtlib_seq_ho_combinators_success),
     ("smtlib_operator_availability_diagnostic_success",
       smtlib_operator_availability_diagnostic_success),
     ("smtlib_dialect_dictionary_dispatch_success",
@@ -12610,6 +12874,8 @@ let
       cpc_proof_replay_and_elim_success),
     ("cpc_proof_replay_boolean_rewrites_success",
       cpc_proof_replay_boolean_rewrites_success),
+    ("cpc_proof_replay_seq_rules_success",
+      cpc_proof_replay_seq_rules_success),
     ("cpc_proof_replay_fp_trust_success",
       cpc_proof_replay_fp_trust_success),
     ("cpc_proof_replay_fp_context_obligation_diagnostic",
@@ -12742,6 +13008,8 @@ let
     ("seq_prove_unsupported_diagnostic", seq_prove_unsupported_diagnostic),
     ("z3_native_seq_internal_parser_success",
       z3_native_seq_internal_parser_success),
+    ("z3_seq_empty_carrier_parser_success",
+      z3_seq_empty_carrier_parser_success),
     ("z3_seq_captured_core_shapes_replay_success",
       z3_seq_captured_core_shapes_replay_success),
     ("z3_seq_raw_captures_replay_success",

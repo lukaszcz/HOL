@@ -56,15 +56,19 @@ struct
 
   val seq_ss = simpLib.++ (bossLib.srw_ss(), intSimps.INT_RWTS_ss)
 
-  fun simp_prove t =
+  fun simp_prove_with rewrites t =
     let
-      val normalized = simpLib.SIMP_CONV seq_ss list_rewrites t
+      val normalized = simpLib.SIMP_CONV seq_ss rewrites t
+        handle Conv.UNCHANGED =>
+          raise ERR "simp_prove_with" "no rewrite applies to this rung"
       val t' = boolSyntax.rhs (Thm.concl normalized)
       val thm = tautLib.TAUT_PROVE t'
         handle Feedback.HOL_ERR _ => intLib.ARITH_PROVE t'
     in
       Thm.EQ_MP (Thm.SYM normalized) thm
     end
+
+  fun simp_prove t = simp_prove_with list_rewrites t
 
   fun named thy names tm =
     Term.is_const tm andalso
@@ -122,14 +126,51 @@ struct
     else
       raise ERR "nth_decomposition_prove" "not a Seq nth decomposition"
 
-  fun is_deferred tm =
+  fun is_prefix_suffix_contains tm =
     named "rich_list" ["IS_SUBLIST", "IS_SUFFIX"] tm orelse
-    named "list" ["isPREFIX", "REVERSE", "LUPDATE"] tm orelse
-    named "HolSmt" ["smt_seq_indexof", "smt_seq_replace", "smt_seq_update"] tm
+    named "list" ["isPREFIX"] tm
+
+  fun is_indexof_replace tm =
+    named "HolSmt"
+      ["smt_seq_indexof", "smt_seq_replace", "smt_seq_replace_all"] tm
+
+  fun is_update_reverse tm =
+    named "HolSmt" ["smt_seq_update"] tm orelse
+    named "list" ["REVERSE", "LUPDATE"] tm
+
+  (* Keep recursive unfolding off the core ladder: these rungs run only after
+     recognising their operator, and use the constructor equations exposed by
+     the native list model.  This makes symbolic residue fail loudly instead
+     of accidentally expanding without a structural bound. *)
+  val prefix_suffix_contains_rewrites = list_rewrites @ [
+    listTheory.isPREFIX_THM,
+    rich_listTheory.IS_SUBLIST,
+    rich_listTheory.IS_SUFFIX,
+    rich_listTheory.IS_SUFFIX_APPEND
+  ]
+
+  val indexof_replace_rewrites = list_rewrites @ [
+    HolSmtTheory.smt_seq_indexof_def,
+    HolSmtTheory.smt_seq_indexof_aux_def,
+    HolSmtTheory.smt_seq_replace_def,
+    HolSmtTheory.smt_seq_replace_raw_def,
+    HolSmtTheory.smt_seq_replace_all_def,
+    HolSmtTheory.smt_seq_replace_all_aux_def
+  ]
+
+  val update_reverse_rewrites = list_rewrites @ [
+    HolSmtTheory.smt_seq_update_def,
+    listTheory.LUPDATE_def,
+    listTheory.REVERSE_DEF
+  ]
 
   fun shape_of t =
-    if mentions is_deferred t then
-      "deferred-sequence-operator"
+    if mentions is_prefix_suffix_contains t then
+      "prefix-suffix-contains"
+    else if mentions is_indexof_replace t then
+      "indexof-replace"
+    else if mentions is_update_reverse t then
+      "update-reverse"
     else if mentions is_append t orelse mentions is_length t then
       "concat-length"
     else if mentions is_access t then
@@ -142,9 +183,10 @@ struct
   fun unsupported t =
     raise ERR "seq_prove"
       ("unsupported th-lemma shape: theory=seq; shape=" ^ shape_of t ^
-       "; attempted rungs=[concat-length, unit-empty, extract-nth]; " ^
-       "checked replay is implemented only for the recorded core Seq " ^
-       "shapes; conclusion=" ^ Library.term_to_string t)
+       "; attempted rungs=[concat-length, unit-empty, extract-nth, " ^
+       "prefix-suffix-contains, indexof-replace, update-reverse]; " ^
+       "all rungs are bounded by the native list term structure; " ^
+       "conclusion=" ^ Library.term_to_string t)
 
   fun concat_length_prove t =
     if mentions is_append t orelse mentions is_length t then simp_prove t
@@ -158,6 +200,25 @@ struct
     if mentions is_access t then simp_prove t
     else raise ERR "access_prove" "not an extract/nth shape"
 
+  fun prefix_suffix_contains_prove t =
+    if mentions is_prefix_suffix_contains t then
+      simp_prove_with prefix_suffix_contains_rewrites t
+    else
+      raise ERR "prefix_suffix_contains_prove"
+        "not a prefix/suffix/contains shape"
+
+  fun indexof_replace_prove t =
+    if mentions is_indexof_replace t then
+      simp_prove_with indexof_replace_rewrites t
+    else
+      raise ERR "indexof_replace_prove" "not an indexof/replace shape"
+
+  fun update_reverse_prove t =
+    if mentions is_update_reverse t then
+      simp_prove_with update_reverse_rewrites t
+    else
+      raise ERR "update_reverse_prove" "not an update/reverse shape"
+
   fun seq_prove t =
     if not (has_seq_type t) then
       unsupported t
@@ -169,6 +230,12 @@ struct
       access_prove t
       handle Feedback.HOL_ERR _ =>
       nth_decomposition_prove t
+      handle Feedback.HOL_ERR _ =>
+      prefix_suffix_contains_prove t
+      handle Feedback.HOL_ERR _ =>
+      indexof_replace_prove t
+      handle Feedback.HOL_ERR _ =>
+      update_reverse_prove t
       handle Feedback.HOL_ERR _ =>
       unsupported t
 

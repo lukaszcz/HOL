@@ -1667,9 +1667,18 @@ local
             (state, thm)
           end)
     else
-      (* FP has had first refusal ahead of every generic semantic rung. *)
-      (state, profile "rewrite(01)(proforma)"
-        (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
+      (* FP has first refusal.  Native Seq then gets its bounded list ladder
+         before generic proformas: some Seq normalizations are valid only
+         after constructor unfolding, and the generic conversion machinery
+         must not turn their failure into an unrelated rewrite exception. *)
+      (let
+         val thm = profile "rewrite(01)(seq)" SmtSeqProve.seq_prove t
+       in
+         (state_cache_thm state thm, thm)
+       end
+       handle Feedback.HOL_ERR _ =>
+         (state, profile "rewrite(01.5)(proforma)"
+           (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t))
 
     handle Feedback.HOL_ERR _ =>
 
@@ -1682,16 +1691,6 @@ local
     let
       val thm = profile "rewrite(03)(string)"
         SmtStringProve.string_rewrite_prove t
-    in
-      (state_cache_thm state thm, thm)
-    end
-
-    handle Feedback.HOL_ERR _ =>
-
-    (* Native Seq certificate rewrites use the same bounded core ladder as
-       th-lemma seq.  String remains above on its dedicated carrier. *)
-    let
-      val thm = profile "rewrite(03.5)(seq)" SmtSeqProve.seq_prove t
     in
       (state_cache_thm state thm, thm)
     end
