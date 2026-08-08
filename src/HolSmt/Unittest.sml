@@ -4635,9 +4635,9 @@ in
     "(= (seq.replace xs ys zs) xs)"
     (boolSyntax.mk_eq (holsmt_app "smt_seq_replace" [xs, ys, zs], xs));
   assert_builder "shared seq.prefixof" z3_options "(seq.prefixof xs ys)"
-    (listSyntax.mk_isprefix (ys, xs));
+    (listSyntax.mk_isprefix (xs, ys));
   assert_builder "shared seq.suffixof" cvc5_options "(seq.suffixof xs ys)"
-    (rich_list_app "IS_SUFFIX" [ys, xs]);
+    (rich_list_app "IS_SUFFIX" [xs, ys]);
   assert_builder "cvc5 seq.update" cvc5_options
     "(= (seq.update xs x zs) ys)"
     (boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys));
@@ -5531,7 +5531,7 @@ in
   expect_logic "QF_AX" ``(P:'a -> bool) x``;
   expect_logic "QF_AX" ``(f:'a -> 'b) x = f x``;
   expect_logic "QF_DT" ``(x:ordering) = y``;
-  expect_logic "QF_UFDTLIA" ``CONS (x:int) xs = CONS y ys``;
+  expect_logic "ALL" ``CONS (x:int) xs = CONS y ys``;
   expect_logic "AUFLIA" ``!(x:'a). (P:'a -> bool) x``
 end
 
@@ -6168,6 +6168,134 @@ in
   assert (cvc_card_message =
       "bag.card requires a finiteness-entailing cvc5 goal",
     "non-finite cvc5 bag.card diagnostic changed: " ^ cvc_card_message)
+end
+
+fun smtlib_native_sequence_translation_success () =
+let
+  fun text_of result = String.concat (Lib.snd result)
+  fun z3 goal = text_of
+    (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3") goal)
+  fun cvc goal = text_of (CVC.goal_to_SmtLib_translation goal)
+  fun holsmt_app name args =
+    let
+      val const = Term.prim_mk_const {Thy = "HolSmt", Name = name}
+      fun apply (arg, rator) =
+        let val (domain, _) = Type.dom_rng (Term.type_of rator) in
+          Term.mk_comb (Term.inst (Type.match_type domain (Term.type_of arg))
+            rator, arg)
+        end
+    in
+      List.foldl apply const args
+    end
+  fun rich_list_app name args =
+    let
+      val const = Term.prim_mk_const {Thy = "rich_list", Name = name}
+      fun apply (arg, rator) =
+        let val (domain, _) = Type.dom_rng (Term.type_of rator) in
+          Term.mk_comb (Term.inst (Type.match_type domain (Term.type_of arg))
+            rator, arg)
+        end
+    in
+      List.foldl apply const args
+    end
+  fun unavailable goal =
+    (ignore (z3 goal); die "FAIL: Z3 accepted cvc5-only sequence operation")
+    handle Feedback.HOL_ERR error => Feedback.message_of error
+  val x = ``x:int``
+  val xs = ``xs:int list``
+  val ys = ``ys:int list``
+  val zs = ``zs:int list``
+  val empty = listSyntax.mk_nil intSyntax.int_ty
+  val extract = boolSyntax.mk_cond
+    (boolSyntax.list_mk_disj [
+       intSyntax.mk_less (x, intSyntax.zero_tm),
+       intSyntax.mk_leq (x, intSyntax.zero_tm),
+       numSyntax.mk_leq (listSyntax.mk_length xs, intSyntax.mk_Num x)],
+     empty, listSyntax.mk_take (intSyntax.mk_Num x,
+       listSyntax.mk_drop (intSyntax.mk_Num x, xs)))
+  val at = boolSyntax.mk_cond
+    (boolSyntax.mk_disj
+       (intSyntax.mk_less (x, intSyntax.zero_tm),
+        numSyntax.mk_leq (listSyntax.mk_length xs, intSyntax.mk_Num x)),
+     empty, listSyntax.mk_cons (listSyntax.mk_el (intSyntax.mk_Num x, xs),
+       empty))
+  val shared_goal = ([], boolSyntax.list_mk_conj [
+    boolSyntax.mk_eq (listSyntax.mk_append (xs, ys), zs),
+    boolSyntax.mk_eq (Term.mk_comb (intSyntax.int_injection,
+      listSyntax.mk_length xs), intSyntax.zero_tm),
+    boolSyntax.mk_eq (listSyntax.mk_cons (x, empty), ys),
+    boolSyntax.mk_eq (empty, empty), boolSyntax.mk_eq (extract, ys),
+    boolSyntax.mk_eq (at, ys),
+    boolSyntax.mk_eq (holsmt_app "smt_seq_nth" [xs, x], x),
+    rich_list_app "IS_SUBLIST" [xs, ys],
+    listSyntax.mk_isprefix (xs, ys), rich_list_app "IS_SUFFIX" [xs, ys],
+    boolSyntax.mk_eq (holsmt_app "smt_seq_indexof" [xs, ys, x],
+      intSyntax.zero_tm),
+    boolSyntax.mk_eq (holsmt_app "smt_seq_replace" [xs, ys, zs], xs)])
+  val shared_z3 = z3 shared_goal
+  val shared_cvc = cvc shared_goal
+  val cvc_only_goal = ([], boolSyntax.list_mk_conj [
+    boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys),
+    boolSyntax.mk_eq (listSyntax.mk_reverse xs, ys)])
+  val lupdate_goal = ([], ``LUPDATE (x:int) i xs = (ys:int list)``)
+  val cvc_only = cvc cvc_only_goal
+  val lupdate_cvc = cvc lupdate_goal
+  val update_error = unavailable
+    ([], boolSyntax.mk_eq (holsmt_app "smt_seq_update" [xs, x, zs], ys))
+  val reverse_error = unavailable
+    ([], boolSyntax.mk_eq (listSyntax.mk_reverse xs, ys))
+  val lupdate_error = unavailable lupdate_goal
+  val map_goal = ([], boolSyntax.mk_eq
+    (listSyntax.mk_map (``f:int -> int``, xs), ys))
+  val fold_goal = ([], boolSyntax.mk_eq
+    (listSyntax.mk_foldl (``fold:int -> int -> int``, intSyntax.zero_tm, xs),
+     intSyntax.zero_tm))
+  val map_text = z3 map_goal
+  val fold_text = z3 fold_goal
+  val string_goal = Lib.fst (SolverSpec.simplify (SmtLib.SIMP_TAC true)
+    ([], ``STRCAT (s:string) t = STRCAT t s``))
+  val string_text = z3 string_goal
+in
+  assert_goal_roundtrip "native sequence totalization" ([],
+    boolSyntax.list_mk_conj [boolSyntax.mk_eq (extract, ys),
+      boolSyntax.mk_eq (at, ys)]);
+  assert (List.all (fn name => contains name shared_z3 andalso
+      contains name shared_cvc) ["seq.++", "seq.len", "seq.unit",
+      "seq.extract", "seq.at", "seq.nth", "seq.contains", "seq.indexof",
+      "seq.replace", "seq.prefixof", "seq.suffixof"],
+    "shared native sequence surface was not emitted to both solvers:\n" ^
+    shared_z3 ^ "\n" ^ shared_cvc);
+  assert (contains "(seq.prefixof v0 v1)" shared_z3 andalso
+      contains "(seq.suffixof v0 v1)" shared_z3 andalso
+      contains "(seq.prefixof v0 v1)" shared_cvc andalso
+      contains "(seq.suffixof v0 v1)" shared_cvc,
+    "prefix/suffix argument order changed:\n" ^ shared_z3);
+  assert (contains "(as seq.empty (Seq Int))" shared_z3,
+    "native NIL did not emit a typed seq.empty:\n" ^ shared_z3);
+  assert (contains "seq.update" cvc_only andalso contains "seq.rev" cvc_only,
+    "cvc5-only sequence surface was not emitted:\n" ^ cvc_only);
+  assert (contains "seq.update" lupdate_cvc andalso
+      contains "seq.unit" lupdate_cvc,
+    "LUPDATE did not emit cvc5 seq.update:\n" ^ lupdate_cvc);
+  assert (update_error =
+      "SMT-LIB operator 'seq.update' is unavailable for solver 'Z3' at " ^
+      "version '4.15.3'",
+    "seq.update availability diagnostic changed: " ^ update_error);
+  assert (reverse_error =
+      "SMT-LIB operator 'seq.rev' is unavailable for solver 'Z3' at " ^
+      "version '4.15.3'",
+    "seq.rev availability diagnostic changed: " ^ reverse_error);
+  assert (lupdate_error =
+      "SMT-LIB operator 'seq.update' is unavailable for solver 'Z3' at " ^
+      "version '4.15.3'",
+    "LUPDATE availability diagnostic changed: " ^ lupdate_error);
+  assert (not (contains "seq.map" map_text) andalso
+      not (contains "seq.foldl" fold_text),
+    "MAP/FOLDL unexpectedly took TASK_20's sequence path:\n" ^
+    map_text ^ "\n" ^ fold_text);
+  assert (contains "str.++" string_text andalso
+      not (contains "(Seq Char)" string_text),
+    "Phase-4 String emission lost precedence over Seq Char:\n" ^ string_text)
 end
 
 fun smtlib_operator_availability_diagnostic_success () =
@@ -7567,10 +7695,10 @@ let
            (smtstring$str_inj t) (smtstring$str_inj s)``),
       ["(set-logic QF_S)\n", "(declare-fun v0 () String)\n",
        "(= (str.++ v0 v1) (str.++ v1 v0))"]),
-    ("list-constructor-native-dt", ([],
+    ("list-constructor-native-seq", ([],
        ``CONS (x:int) xs = CONS y ys``),
-      ["(set-logic QF_UFDTLIA)\n", "(declare-datatypes ((List_Int 0))",
-       "(ctor_List_Int_CONS v1 v2)"]),
+      ["(set-logic ALL)\n", "(Seq Int)",
+       "(seq.++ (seq.unit v0) v1)"]),
     ("function-application-arrays", ([],
        ``(f:'a -> 'b) x = g y``),
       ["(set-logic QF_AX)\n", "(declare-fun v0 () (Array t0 t1))",
@@ -12246,6 +12374,8 @@ let
       smtlib_native_set_translation_success),
     ("smtlib_native_bag_translation_success",
       smtlib_native_bag_translation_success),
+    ("smtlib_native_sequence_translation_success",
+      smtlib_native_sequence_translation_success),
     ("smtlib_operator_availability_diagnostic_success",
       smtlib_operator_availability_diagnostic_success),
     ("smtlib_dialect_dictionary_dispatch_success",

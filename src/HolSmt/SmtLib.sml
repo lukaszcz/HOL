@@ -881,8 +881,30 @@ local
 
   fun is_function_type ty = Lib.can Type.dom_rng ty
 
+  (* Lists are the native model of SMT sequences, except for HOL strings.
+     The latter must retain Phase 4's str_inj/smtstr route rather than being
+     silently reclassified as arbitrary (Seq Char) content. *)
+  fun is_native_sequence_type ty =
+    listSyntax.is_list_type ty andalso
+    Type.compare (ty, stringSyntax.string_ty) <> EQUAL
+
+  (* Checked Seq replay is introduced by TASK_18.  Until then, proof
+     requests retain the old datatype encoding while oracle emission uses the
+     native surface. *)
+  val current_native_sequence_emission = ref true
+
+  fun sequence_element_type tm =
+    if is_native_sequence_type (Term.type_of tm) then
+      listSyntax.dest_list_type (Term.type_of tm)
+    else
+      raise ERR "sequence_element_type" "not a native sequence term"
+
   fun smt_sort_of_type regime tydict ty =
-    if is_function_type ty then
+    if !current_native_sequence_emission andalso
+       is_native_sequence_type ty then
+      "(Seq " ^ smt_sort_of_type regime tydict
+        (listSyntax.dest_list_type ty) ^ ")"
+    else if is_function_type ty then
       (case regime of
          HigherOrder Standard27 =>
            let
@@ -1261,6 +1283,116 @@ local
 
   fun contains_bag_card tm =
     Lib.can (HolKernel.find_term bagSyntax.is_card) tm
+
+  (* The shared Seq surface is represented directly by stock list terms.
+     These heads deliberately exclude MAP/FOLDL: TASK_20 owns their Z3-only
+     HO emission, so for now they retain the ordinary no-counterpart path. *)
+  fun list_const name = Term.prim_mk_const {Thy = "list", Name = name}
+  fun rich_list_const name =
+    Term.prim_mk_const {Thy = "rich_list", Name = name}
+  fun holsmt_const name = Term.prim_mk_const {Thy = "HolSmt", Name = name}
+
+  val seq_append_tm = list_const "APPEND"
+  val seq_length_tm = list_const "LENGTH"
+  val seq_cons_tm = list_const "CONS"
+  val seq_reverse_tm = list_const "REVERSE"
+  val seq_prefix_tm = list_const "isPREFIX"
+  val seq_lupdate_tm = list_const "LUPDATE"
+  val seq_contains_tm = rich_list_const "IS_SUBLIST"
+  val seq_suffix_tm = rich_list_const "IS_SUFFIX"
+  val smt_seq_nth_tm = holsmt_const "smt_seq_nth"
+  val smt_seq_extract_tm = holsmt_const "smt_seq_extract"
+  val smt_seq_at_tm = holsmt_const "smt_seq_at"
+  val smt_seq_indexof_tm = holsmt_const "smt_seq_indexof"
+  val smt_seq_replace_tm = holsmt_const "smt_seq_replace"
+  val smt_seq_update_tm = holsmt_const "smt_seq_update"
+
+  fun dest_seq_extract_shape tm =
+    let
+      val (invalid, empty, body) = boolSyntax.dest_cond tm
+      val (count, drop) = listSyntax.dest_take body
+      val (start, sequence) = listSyntax.dest_drop drop
+      val index = intSyntax.dest_Num start
+      val size = intSyntax.dest_Num count
+      val expected_invalid = boolSyntax.list_mk_disj [
+        intSyntax.mk_less (index, intSyntax.zero_tm),
+        intSyntax.mk_leq (size, intSyntax.zero_tm),
+        numSyntax.mk_leq (listSyntax.mk_length sequence, start)]
+      val _ =
+        if listSyntax.is_nil empty andalso
+           Type.compare (listSyntax.dest_nil empty,
+             sequence_element_type sequence) = EQUAL andalso
+           Term.aconv invalid expected_invalid then ()
+        else raise ERR "dest_seq_extract_shape" "not a sequence extract"
+    in
+      (sequence, index, size)
+    end
+
+  fun dest_seq_at_shape tm =
+    let
+      val (invalid, empty, body) = boolSyntax.dest_cond tm
+      val (element, body_empty) = listSyntax.dest_cons body
+      val (index_num, sequence) = listSyntax.dest_el element
+      val index = intSyntax.dest_Num index_num
+      val expected_invalid = boolSyntax.mk_disj
+        (intSyntax.mk_less (index, intSyntax.zero_tm),
+         numSyntax.mk_leq (listSyntax.mk_length sequence, index_num))
+      val _ =
+        if listSyntax.is_nil empty andalso listSyntax.is_nil body_empty andalso
+           Type.compare (listSyntax.dest_nil empty,
+             sequence_element_type sequence) = EQUAL andalso
+           Term.aconv invalid expected_invalid then ()
+        else raise ERR "dest_seq_at_shape" "not a sequence at"
+    in
+      (sequence, index)
+    end
+
+  (* List types alone remain ordinary HOL datatypes: only a supported stock
+     list operation (or one of TASK_16's exact totalized-access shapes)
+     selects the Seq model.  This keeps unrelated recursive-list datatype
+     goals on their existing encoding while refusing partial TAKE/DROP/EL
+     terms that have no direct Seq counterpart. *)
+  fun native_sequence_goal (assumptions, conclusion) =
+    let
+      val terms = conclusion :: assumptions
+      val subterms = List.concat (List.map Library.subterms terms)
+      val totalized = List.filter (fn tm =>
+        Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
+        Option.isSome (Lib.total dest_seq_at_shape tm)) subterms
+      val totalized_subterms =
+        List.concat (List.map Library.subterms totalized)
+      fun is_totalized_part tm =
+        List.exists (fn part => Term.aconv tm part) totalized_subterms
+      fun named theory names tm =
+        case Lib.total Term.dest_thy_const tm of
+          SOME {Thy, Name, ...} =>
+            Thy = theory andalso List.exists (fn name => name = Name) names
+        | NONE => false
+      val direct_list_heads =
+        ["APPEND", "LENGTH", "CONS", "NIL", "REVERSE", "isPREFIX",
+         "LUPDATE"]
+      val totalized_list_heads = ["TAKE", "DROP", "EL"]
+      val rich_list_heads = ["IS_SUBLIST", "IS_SUFFIX"]
+      val holsmt_heads =
+        ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
+         "smt_seq_replace", "smt_seq_update"]
+      fun supported tm =
+        case Lib.total Term.dest_thy_const tm of
+          SOME {Thy = "list", ...} =>
+            named "list" direct_list_heads tm orelse
+            (named "list" totalized_list_heads tm andalso
+             is_totalized_part tm)
+        | SOME {Thy = "rich_list", ...} =>
+            named "rich_list" rich_list_heads tm
+        | _ => true
+      fun selects_seq tm =
+        named "list" direct_list_heads tm orelse
+        named "rich_list" rich_list_heads tm orelse
+        named "HolSmt" holsmt_heads tm orelse
+        List.exists (fn whole => Term.aconv tm whole) totalized
+    in
+      List.all supported subterms andalso List.exists selects_seq subterms
+    end
 
   val smt_rdiv_tm = Term.prim_mk_const {Thy="HolSmt", Name="smt_rdiv"}
   val int_of_num_tm = Term.prim_mk_const {Thy="integer", Name="int_of_num"}
@@ -1968,21 +2100,30 @@ local
             Thy = theory andalso List.exists (fn name => name = Name) names
         | NONE => false
       val sequence_names =
-        ["APPEND", "LENGTH", "TAKE", "DROP", "EL", "MAP", "FOLDL",
-         "REVERSE", "isPREFIX", "LUPDATE"]
+        ["APPEND", "LENGTH", "CONS", "NIL", "TAKE", "DROP", "EL",
+         "MAP", "FOLDL", "REVERSE", "isPREFIX", "LUPDATE"]
+      val rich_sequence_names = ["IS_SUBLIST", "IS_SUFFIX"]
+      val holsmt_sequence_names =
+        ["smt_seq_nth", "smt_seq_extract", "smt_seq_at", "smt_seq_indexof",
+         "smt_seq_replace", "smt_seq_update"]
       val set_names =
         ["INSERT", "UNION", "INTER", "DIFF", "COMPL", "SUBSET",
          "EMPTY", "UNIV", "SING", "CARD"]
       val bag_names =
         ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_MERGE", "BAG_INTER",
          "BAG_DIFF", "BAG_CARD", "EMPTY_BAG", "SUB_BAG"]
-      fun is_native_sequence_const tm = thy_const_named "list" sequence_names tm
+      fun is_native_sequence_const tm =
+        thy_const_named "list" sequence_names tm orelse
+        thy_const_named "rich_list" rich_sequence_names tm orelse
+        thy_const_named "HolSmt" holsmt_sequence_names tm
       fun is_native_set_const tm =
         thy_const_named "pred_set" set_names tm orelse
         thy_const_named "bool" ["IN"] tm
       fun is_native_bag_const tm = thy_const_named "bag" bag_names tm
-      val sequences = List.exists (fn tm => is_native_sequence_const
-        (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
+      val sequences = !current_native_sequence_emission andalso
+        (subterm_types is_native_sequence_type orelse
+         List.exists (fn tm => is_native_sequence_const
+           (Lib.fst (boolSyntax.strip_comb tm))) all_subterms)
       val sets = List.exists (fn tm => is_native_set_const
         (Lib.fst (boolSyntax.strip_comb tm))) all_subterms
       val bags = List.exists (fn tm => is_native_bag_const
@@ -2179,10 +2320,16 @@ local
                  else ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = sets orelse bags,
+          translate = sequences orelse sets orelse bags,
           replay = false,
           notes =
-            if sets andalso bags then
+            if sequences andalso sets andalso bags then
+              "Stock list, pred_set, and bag operations emit their native " ^
+              "dialects; non-finite cvc5 goals use quantified arrays."
+            else if sequences then
+              "Stock list operations emit the shared first-order seq.* " ^
+              "surface; seq.update and seq.rev are cvc5-only."
+            else if sets andalso bags then
               "Stock pred_set and bag operations emit their native dual " ^
               "dialects; non-finite cvc5 goals use quantified arrays."
             else if sets then
@@ -2192,12 +2339,11 @@ local
               "Stock bag operations emit Z3 Int arrays with (_ map ...) or " ^
               "finite cvc5 bag.* terms; non-finite cvc5 goals use arrays."
             else
-              "Z3 extension symbols are parser/typechecker entries only; " ^
-              "generic HOL lists and bags are not emitted as Seq/Set/Bag.",
+              "Z3 extension symbols are parser/typechecker entries only.",
           proof_obligation =
-            "Checked replay of the native set and bag surfaces is deferred " ^
-            "to TASK_10/11 and TASK_14/15; parser and oracle paths already " ^
-            "use faithful pred_set and bag terms."
+            "Checked replay of native Seq/Set/Bag surfaces is deferred to " ^
+            "TASK_18/19/21, TASK_10/11, and TASK_14/15; parser and oracle " ^
+            "paths already use faithful list, pred_set, and bag terms."
         }
       val regex_record =
         HOLTheoryEncoding {
@@ -2383,10 +2529,10 @@ local
       ({logic, regime, tydict, tmdict, ...} : translation) =
     let
       fun parsedicts_for_logic logic =
-        SmtLib_Logics.parsedicts_of_logic logic
+        SmtLib_Logics.parsedicts_of_any_solver_logic logic
         handle e as Feedback.HOL_ERR _ =>
           if String.isSubstring "DT" logic then
-            SmtLib_Logics.parsedicts_of_logic "ALL"
+            SmtLib_Logics.parsedicts_of_any_solver_logic "ALL"
           else
             raise e
       val ty_dict = Redblackmap.foldl (fn (ty, s, dict) =>
@@ -2447,7 +2593,15 @@ local
       (Redblackmap.insert (tydict, ty, name), ([decl], name))
     end
   fun translate_type regime (tydict, ty) =
-    if is_function_type ty then
+    if !current_native_sequence_emission andalso
+       is_native_sequence_type ty then
+      let
+        val (tydict, (decls, element_sort)) =
+          translate_type regime (tydict, listSyntax.dest_list_type ty)
+      in
+        (tydict, (decls, "(Seq " ^ element_sort ^ ")"))
+      end
+    else if is_function_type ty then
       (case regime of
          HigherOrder Standard27 =>
            let
@@ -2637,6 +2791,95 @@ local
         in
           ((tydict, tmdict), (typedecls @ [declaration, definition], name))
         end
+    fun native_sequence_symbol rator rands =
+      !current_native_sequence_emission andalso
+      (listSyntax.is_nil tm orelse
+      Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
+      Option.isSome (Lib.total dest_seq_at_shape tm) orelse
+      List.exists (fn head => same_const rator head) [
+        seq_append_tm, seq_length_tm, seq_cons_tm, seq_reverse_tm,
+        seq_prefix_tm, seq_lupdate_tm, seq_contains_tm, seq_suffix_tm,
+        smt_seq_nth_tm,
+        smt_seq_extract_tm, smt_seq_at_tm, smt_seq_indexof_tm,
+        smt_seq_replace_tm, smt_seq_update_tm])
+    fun native_sequence_builtin (rator, rands) =
+      let
+        fun translate_args args =
+          let
+            val (acc, declnames) = Lib.foldl_map
+              (fn (a, arg) =>
+                translate_term regime apply_operator (a, (bounds, arg)))
+              (acc, args)
+            val (declss, names) = Lib.split declnames
+          in
+            (acc, (List.concat declss, names))
+          end
+        fun emit name args =
+          let val (acc, (decls, names)) = translate_args args
+          in (acc, (decls, sexpr name names)) end
+        fun emit_extract (sequence, index, size) =
+          emit "seq.extract" [sequence, index, size]
+        fun emit_at (sequence, index) = emit "seq.at" [sequence, index]
+      in
+        case Lib.total dest_seq_extract_shape tm of
+          SOME shape => emit_extract shape
+        | NONE =>
+          (case Lib.total dest_seq_at_shape tm of
+             SOME shape => emit_at shape
+           | NONE =>
+             if listSyntax.is_nil tm then
+               let
+                 val (tydict, (decls, element_sort)) =
+                   translate_type regime
+                     (Lib.fst acc, sequence_element_type tm)
+               in
+                 ((tydict, Lib.snd acc), (decls,
+                   "(as seq.empty (Seq " ^ element_sort ^ "))"))
+               end
+             else if same_const rator seq_append_tm then emit "seq.++" rands
+             else if same_const rator seq_length_tm then emit "seq.len" rands
+             else if same_const rator seq_cons_tm then
+               (case rands of
+                  [element, tail] =>
+                    let val (acc, (decls, names)) = translate_args rands in
+                      case names of [element_name, tail_name] =>
+                        if listSyntax.is_nil tail then
+                          (acc, (decls, sexpr "seq.unit" [element_name]))
+                        else
+                          (acc, (decls, sexpr "seq.++"
+                            [sexpr "seq.unit" [element_name], tail_name]))
+                    | _ => raise ERR "native_sequence_builtin"
+                        "wrong cons arity"
+                    end
+                | _ => raise ERR "native_sequence_builtin" "wrong cons arity")
+             else if same_const rator seq_reverse_tm then emit "seq.rev" rands
+             else if same_const rator seq_prefix_tm then
+               emit "seq.prefixof" rands
+             else if same_const rator seq_suffix_tm then
+               emit "seq.suffixof" rands
+             else if same_const rator seq_lupdate_tm then
+               (case rands of [element, index, sequence] =>
+                  emit "seq.update"
+                    [sequence, Term.mk_comb (int_of_num_tm, index),
+                     listSyntax.mk_cons (element,
+                       listSyntax.mk_nil (Term.type_of element))]
+                | _ => raise ERR "native_sequence_builtin"
+                    "wrong LUPDATE arity")
+             else if same_const rator seq_contains_tm then
+               emit "seq.contains" rands
+             else if same_const rator smt_seq_nth_tm then emit "seq.nth" rands
+             else if same_const rator smt_seq_extract_tm then
+               emit "seq.extract" rands
+             else if same_const rator smt_seq_at_tm then emit "seq.at" rands
+             else if same_const rator smt_seq_indexof_tm then
+               emit "seq.indexof" rands
+             else if same_const rator smt_seq_replace_tm then
+               emit "seq.replace" rands
+             else if same_const rator smt_seq_update_tm then
+               emit "seq.update" rands
+             else raise ERR "native_sequence_builtin"
+               "unsupported native sequence term")
+      end
     fun native_set_symbol rator rands =
       same_const rator pred_setSyntax.in_tm orelse
       is_native_set_head rator orelse
@@ -3467,7 +3710,8 @@ local
     (* translate the entire term (e.g., for numerals), using the dictionary of
        built-in symbols; however, only do this if 'tm' has base type *)
     (if tm_has_base_type then
-      if native_set_symbol tm [] then native_set_builtin (tm, [])
+      if native_sequence_symbol tm [] then native_sequence_builtin (tm, [])
+      else if native_set_symbol tm [] then native_set_builtin (tm, [])
       else if native_bag_symbol tm [] then native_bag_builtin (tm, [])
       else builtin_symbol (tm, [])
     else
@@ -3480,7 +3724,8 @@ local
     in
       (* In an HO regime a fully ranked built-in may itself return a map.
          Translate that ranked prefix before any remaining map applications. *)
-      (if native_set_symbol rator rands orelse
+      (if native_sequence_symbol rator rands orelse
+            native_set_symbol rator rands orelse
             native_bag_symbol rator rands orelse
             (case regime of
                FirstOrder => tm_has_base_type
@@ -3488,7 +3733,10 @@ local
                  Term.is_const rator andalso
                  List.length rands = declared_const_arity rator)
        then
-        if native_set_symbol rator rands then native_set_builtin (rator, rands)
+        if native_sequence_symbol rator rands then
+          native_sequence_builtin (rator, rands)
+        else if native_set_symbol rator rands then
+          native_set_builtin (rator, rands)
         else if native_bag_symbol rator rands then
           native_bag_builtin (rator, rands)
         else builtin_symbol (rator, rands)
@@ -3851,9 +4099,10 @@ local
      declared rank, or zero for a function-valued variable, so partial and
      full applications share one symbol. *)
   fun goal_to_SmtLib_aux_inner request apply_operator
-      (policy : logic_selection_policy) target
+      (policy : logic_selection_policy) target emit_sequences
       (goal as (original_ts, t)) : translation * string list =
   let
+    val _ = current_native_sequence_emission := emit_sequences
     val set_terms = List.foldl (fn (term, acc) =>
       collect_native_set_terms term acc) [] (t :: original_ts)
     val bag_terms = List.foldl (fn (term, acc) =>
@@ -3949,17 +4198,21 @@ local
     ])
   end
 
-  fun goal_to_SmtLib_aux request apply_operator policy target goal =
+  fun goal_to_SmtLib_aux request apply_operator policy target
+      emit_sequences goal =
   let
+    val saved_sequence_emission = !current_native_sequence_emission
     val saved_backend = !current_set_backend
     val saved_set_terms = !current_set_terms
     val saved_bag_backend = !current_bag_backend
     val saved_bag_terms = !current_bag_terms
     val saved_bag_helpers = !current_bag_helpers
     fun work () =
-      goal_to_SmtLib_aux_inner request apply_operator policy target goal
+      goal_to_SmtLib_aux_inner request apply_operator policy target
+        (emit_sequences andalso native_sequence_goal goal) goal
     fun restore () =
-      (current_set_backend := saved_backend;
+      (current_native_sequence_emission := saved_sequence_emission;
+       current_set_backend := saved_backend;
        current_set_terms := saved_set_terms;
        current_bag_backend := saved_bag_backend;
        current_bag_terms := saved_bag_terms;
@@ -4515,7 +4768,8 @@ in
         if get_proof then ["(get-proof)\n", "(exit)\n"] else ["(exit)\n"]
     in
       Lib.apsnd (fn xs => xs @ tail)
-        (goal_to_SmtLib_aux request apply_operator policy target goal)
+        (goal_to_SmtLib_aux request apply_operator policy target
+           (not get_proof) goal)
     end
 
   fun goal_to_SmtLib_gen opts goal =
@@ -4640,6 +4894,24 @@ in
 
   val _ = register_operator_availability {
     hol_head = bagSyntax.BAG_CARD_tm, operator = "bag.card", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  (* These spellings are cvc5-only even though the rest of the first-order
+     Seq surface is shared.  Check them at the solver boundary, before any
+     serializer can accidentally emit a Z3-rejected operator. *)
+  val _ = register_operator_availability {
+    hol_head = smt_seq_update_tm, operator = "seq.update", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
+    hol_head = seq_lupdate_tm, operator = "seq.update", solver = "cvc5",
+    versions = ["1.3.4"]
+  }
+
+  val _ = register_operator_availability {
+    hol_head = seq_reverse_tm, operator = "seq.rev", solver = "cvc5",
     versions = ["1.3.4"]
   }
 
