@@ -4759,6 +4759,21 @@ let
       [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
         transfer_hypotheses
     | _ => die "cvc5 set test did not produce one check-sat query"
+  val cvc5_set_function_state = typecheck cvc5_options
+    ("(set-logic ALL)\n" ^
+     "(define-sort IntSet () (Set Int))\n" ^
+     "(declare-fun sf (Int) IntSet)\n" ^
+     "(assert true)\n(check-sat)\n")
+  val finite_function_hypotheses =
+    case #queries cvc5_set_function_state of
+      [SmtLib_Parser.QueryCheckSat {transfer_hypotheses, ...}] =>
+        transfer_hypotheses
+    | _ => die "cvc5 set-function test did not produce one check-sat query"
+  val finite_set_arg = Term.mk_var ("finite_set_arg0", intSyntax.int_ty)
+  val sf = Term.mk_var ("sf", Type.-->
+    (intSyntax.int_ty, int_set_ty))
+  val finite_function = boolSyntax.mk_forall (finite_set_arg,
+    pred_setSyntax.mk_finite (Term.mk_comb (sf, finite_set_arg)))
 in
   assert_builder "cvc5 set.member" cvc5_options "(set.member x s)"
     (pred_setSyntax.mk_in (x, s));
@@ -4843,6 +4858,10 @@ in
   assert (List.exists (Term.aconv (pred_setSyntax.mk_finite s))
       finite_hypotheses,
     "cvc5 Set declaration did not attach a FINITE hypothesis to its goal");
+  assert (List.exists (Term.aconv finite_function)
+      finite_function_hypotheses,
+    "cvc5 Set function or alias did not attach a quantified FINITE " ^
+    "hypothesis to its goal");
   reject z3_options "Z3 set.member"
     "(set-logic ALL)\n(declare-const s (Set Int))\n(assert (set.member 0 s))\n";
   reject cvc5_options "cvc5 union"

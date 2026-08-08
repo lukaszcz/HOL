@@ -3160,18 +3160,29 @@ local
     {logic = logic, frames = frames, queries = query :: queries,
      surface_flags = surface_flags}
 
-  fun add_typechecked_finite_set set_tm state =
-    update_current_typecheck_frame
-      (fn frame => {
-        tydict = typecheck_frame_tydict frame,
-        tmdict = typecheck_frame_tmdict frame,
-        sigdict = typecheck_frame_sigdict frame,
-        finite_sets = pred_setSyntax.mk_finite set_tm ::
-          typecheck_frame_finite_sets frame,
-        assertions = typecheck_frame_assertions frame,
-        named_assertions = typecheck_frame_named_assertions frame,
-        local_definitions = typecheck_frame_local_definitions frame
-      }) state
+  (* A cvc5 declaration returning a Set promises a finite result at every
+     argument tuple, not only when it happens to be a nullary declaration. *)
+  fun add_typechecked_finite_set set_tm domain state =
+    let
+      fun mk_vars _ [] = []
+        | mk_vars index (ty :: tys) =
+            Term.mk_var ("finite_set_arg" ^ Int.toString index, ty) ::
+            mk_vars (index + 1) tys
+      val vars = mk_vars 0 domain
+      val finite = boolSyntax.list_mk_forall
+        (vars, pred_setSyntax.mk_finite (Term.list_mk_comb (set_tm, vars)))
+    in
+      update_current_typecheck_frame
+        (fn frame => {
+          tydict = typecheck_frame_tydict frame,
+          tmdict = typecheck_frame_tmdict frame,
+          sigdict = typecheck_frame_sigdict frame,
+          finite_sets = finite :: typecheck_frame_finite_sets frame,
+          assertions = typecheck_frame_assertions frame,
+          named_assertions = typecheck_frame_named_assertions frame,
+          local_definitions = typecheck_frame_local_definitions frame
+        }) state
+    end
 
   fun finite_bag_term bag_tm =
     Term.mk_comb
@@ -5201,16 +5212,12 @@ local
           command_context solver surface_flags metadata_index command
         end
       fun finish state = SOME state
-      fun cvc5_set_sort sort =
-        case node_of sort of
-          SortApply (head, [_]) =>
-            #solver (context "set declaration") = SOME "cvc5" andalso
-            located_string_node head = "Set"
-        | _ => false
-      (* Sort aliases have already been expanded when this is called.  Unlike
-         the cvc5 Set transfer inherited from TASK_08, test the resulting HOL
-         type so a declared alias for [Bag A] cannot lose its finiteness
-         invariant. *)
+      (* Sort aliases have already been expanded when this is called.  Test
+         the resulting HOL types so a declared alias for [Set A] or [Bag A]
+         cannot lose its cvc5 finiteness invariant. *)
+      fun cvc5_set_type ty =
+        #solver (context "set declaration") = SOME "cvc5" andalso
+        pred_setSyntax.is_set_type ty
       fun cvc5_bag_type ty =
         #solver (context "bag declaration") = SOME "cvc5" andalso
         bagSyntax.is_bag_ty ty
@@ -5306,8 +5313,8 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
             val command_state =
-              if cvc5_set_sort sort then
-                add_typechecked_finite_set set_tm command_state
+              if cvc5_set_type range then
+                add_typechecked_finite_set set_tm [] command_state
               else if cvc5_bag_type range then
                 add_typechecked_finite_bag set_tm [] command_state
               else command_state
@@ -5337,8 +5344,8 @@ local
             val command_state = update_current_typecheck_dicts
               (tydict, tmdict, sigdict) command_state
             val command_state =
-              if List.null domain andalso cvc5_set_sort range then
-                add_typechecked_finite_set set_tm command_state
+              if cvc5_set_type range_ty then
+                add_typechecked_finite_set set_tm domain command_state
               else if cvc5_bag_type range_ty then
                 add_typechecked_finite_bag set_tm domain command_state
               else command_state
