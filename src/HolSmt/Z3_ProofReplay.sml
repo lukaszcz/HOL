@@ -1667,18 +1667,25 @@ local
             (state, thm)
           end)
     else
-      (* FP has first refusal.  Native Seq then gets its bounded list ladder
-         before generic proformas: some Seq normalizations are valid only
-         after constructor unfolding, and the generic conversion machinery
-         must not turn their failure into an unrelated rewrite exception. *)
+      (* FP has first refusal.  Z3's bag encoding then gets the count-array
+         ladder before generic proformas; its [(_ map +)] terms parse to
+         pointwise Int lambdas.  Native Seq follows with its bounded list
+         ladder. *)
       (let
-         val thm = profile "rewrite(01)(seq)" SmtSeqProve.seq_prove t
+         val thm = profile "rewrite(01)(bag)"
+           (SmtBagProve.bag_prove_with_arith arith_prove) t
        in
          (state_cache_thm state thm, thm)
        end
        handle Feedback.HOL_ERR _ =>
-         (state, profile "rewrite(01.5)(proforma)"
-           (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t))
+         (let
+            val thm = profile "rewrite(01)(seq)" SmtSeqProve.seq_prove t
+          in
+            (state_cache_thm state thm, thm)
+          end
+          handle Feedback.HOL_ERR _ =>
+            (state, profile "rewrite(01.5)(proforma)"
+              (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)))
 
     handle Feedback.HOL_ERR _ =>
 
@@ -1952,7 +1959,19 @@ local
     (state, Drule.LIST_MP thms thm)
   end
 
-  val z3_th_lemma_arith = th_lemma_wrapper "arith" (fn (state, t) =>
+  (* Bags have no Z3 proof-theory tag: their encoded count arrays arrive at
+     the arith or array registry entries below.  Retain a dedicated wrapper
+     nevertheless so the bag route has the same cache/proforma discipline and
+     profile identity as every other checked theory re-prover. *)
+  val z3_th_lemma_bag = th_lemma_wrapper "bag" (fn (state, t) =>
+    let
+      val thm = profile "th_lemma[bag](3)(bag_prove)"
+        (SmtBagProve.bag_prove_with_arith arith_prove) t
+    in
+      (state_cache_thm state thm, thm)
+    end)
+
+  val z3_th_lemma_arith_generic = th_lemma_wrapper "arith" (fn (state, t) =>
     let
       val thm = profile "th_lemma[arith](3)" arith_prove t
     in
@@ -1960,7 +1979,7 @@ local
       (state_cache_thm state thm, thm)
     end)
 
-  val z3_th_lemma_array = th_lemma_wrapper "array" (fn (state, t) =>
+  val z3_th_lemma_array_generic = th_lemma_wrapper "array" (fn (state, t) =>
     (let
        val thm = profile "th_lemma[array](3)(array_prove)"
          SmtArrayProve.array_prove t
@@ -1973,6 +1992,21 @@ local
         ("unsupported th-lemma shape: theory=array; checked replay is only " ^
          "implemented for function-update select/store/extensionality " ^
          "lemmas; conclusion=" ^ Library.term_to_string t)))
+
+  fun th_lemma_target (_, thms, t) =
+    boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+
+  fun z3_th_lemma_arith args =
+    if SmtBagProve.has_bag_encoding (th_lemma_target args) then
+      z3_th_lemma_bag args
+    else
+      z3_th_lemma_arith_generic args
+
+  fun z3_th_lemma_array args =
+    if SmtBagProve.has_bag_encoding (th_lemma_target args) then
+      z3_th_lemma_bag args
+    else
+      z3_th_lemma_array_generic args
 
   val bv_th_lemma_prove =
   let

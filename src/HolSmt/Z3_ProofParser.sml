@@ -769,6 +769,38 @@ local
       in
         wordsSyntax.mk_word_mod (t, zero)
       end)),
+    (* In [(_ map +) ...], Z3 treats the lifted function as an index rather
+       than as an applied term.  Give the one recorded bag operator a typed
+       zero-argument form so it can be consumed as that index. *)
+    ("+", SmtLib_Theories.zero_zero (fn token =>
+      if token = "+" then intSyntax.plus_tm
+      else raise ERR "<z3_builtin_dict.+>" "not an Int addition")),
+    (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
+       It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
+       the Int-array representation of bags.  Reconstructing the lambda is
+       checked by ordinary beta/update replay; accepting only its indexed
+       spelling keeps arbitrary proof-local indexed identifiers on the
+       existing fallback path. *)
+    ("_", fn token => fn indices => fn arrays =>
+      let
+        val _ = token = "map" orelse
+          raise ERR "<z3_builtin_dict._>" "not an array map"
+        val f =
+          case indices of
+            [f] => f
+          | _ => raise ERR "<z3_builtin_dict._>" "map needs one function"
+        val first =
+          case arrays of
+            first :: _ => first
+          | [] => raise ERR "<z3_builtin_dict._>" "map needs arrays"
+        val (domain, _) = Type.dom_rng (Term.type_of first)
+        val x = Term.variant
+          (List.concat (List.map Term.free_vars (f :: arrays)))
+          (Term.mk_var ("array_map_x", domain))
+        val selections = List.map (fn array => Term.mk_comb (array, x)) arrays
+      in
+        Term.mk_abs (x, Term.list_mk_comb (f, selections))
+      end),
     (* Z3 prints both legacy array_extArray[m:n] and indexed
        `(_ array-ext 0)` spellings across the pinned proof corpus. *)
     ("_", fn token => fn indices => fn args =>

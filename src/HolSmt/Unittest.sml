@@ -10483,6 +10483,120 @@ fun z3_set_captured_shapes_replay_success () =
     ("universe const-array", ``((x:'a) IN (UNIV:'a set)) = T``)
   ]
 
+(* Pins for Z3's bag boundary: [_ map +] parses as a pointwise Int-count
+   lambda, while native bags reduce through their count characterizations. *)
+fun assert_bag_prover name tm =
+  (let
+     val thm = SmtBagProve.bag_prove tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
+     check_oracle_tags name thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: " ^ name ^ " did not prove bag goal: " ^
+       Feedback.message_of holerr))
+
+fun bag_prove_ladder_rungs_success () =
+  (assert_bag_prover "bag union count"
+     ``BAG_UNION (b:'a -> num) c x = b x + c x``;
+   assert_bag_prover "bag difference count"
+     ``BAG_DIFF (b:'a -> num) c x = b x - c x``;
+   assert_bag_prover "bag merge count"
+     ``BAG_MERGE (b:'a -> num) c x =
+       if b x < c x then c x else b x``;
+   assert_bag_prover "bag intersection count"
+     ``BAG_INTER (b:'a -> num) c x =
+       if b x < c x then b x else c x``;
+   assert_bag_prover "bag map addition select"
+     ``(\i:int. (a:int -> int) i + (b:int -> int) i) 3 =
+       a 3 + b 3``;
+   assert_bag_prover "bag map addition store"
+     ``(\i:int. ((3:int =+ x) (a:int -> int)) i +
+        ((3:int =+ 3) (b:int -> int)) i) =
+       (3 =+ x + 3) (\i:int. a i + b i)``)
+
+fun z3_bag_captured_shapes_replay_success () =
+let
+  val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+  val prefix =
+    "((declare-fun ba () (Array Int Int)) \
+    \(declare-fun bb () (Array Int Int)) \
+    \(proof "
+  val conclusion =
+    "(= (select ((_ map +) ba bb) 7) \
+    \   (+ (select ba 7) (select bb 7)))"
+  val capture_safe_prefix =
+    "((declare-fun ba () (Array Int Int)) \
+    \(declare-fun bb () (Array Int Int)) \
+    \(declare-fun array_map_x () Int) \
+    \(proof "
+  val capture_safe_conclusion =
+    "(= (select ((_ map +) ba bb) array_map_x) \
+    \   (+ (select ba array_map_x) (select bb array_map_x)))"
+  val captures = [
+    ("rewrite", prefix ^ "(rewrite " ^ conclusion ^ ")))"),
+    ("array th-lemma", prefix ^ "((_ th-lemma array) " ^ conclusion ^ ")))"),
+    ("arith th-lemma", prefix ^ "((_ th-lemma arith) " ^ conclusion ^ ")))"),
+    ("capture-safe rewrite", capture_safe_prefix ^
+      "(rewrite " ^ capture_safe_conclusion ^ ")))" )
+  ]
+  fun check version (name, capture) =
+    let
+      val thm = Z3_ProofReplay.replay_root_for_test
+        (parse_z3_proof_string version capture)
+    in
+      check_oracle_tags ("captured bag " ^ name ^ " Z3 " ^ version) thm
+    end
+    handle Feedback.HOL_ERR holerr =>
+      die ("FAIL: captured bag " ^ name ^ " Z3 " ^ version ^ ": " ^
+        Feedback.message_of holerr)
+in
+  Profile.reset_all ();
+  List.app (fn version => List.app (check version) captures) versions;
+  assert (profile_call_count "rewrite(01)(bag)" > 0,
+    "Z3 bag map rewrite did not route to SmtBagProve");
+  assert (profile_call_count "th_lemma[bag](3)(bag_prove)" > 0,
+    "Z3 bag array/arith th-lemmas did not route to SmtBagProve")
+end
+
+(* Kept behind an environment variable: the frozen corpus is owned by the
+   validation checkout, but every recorded Z3 bag proof must replay checked. *)
+fun z3_bag_raw_captures_replay_success () =
+  case OS.Process.getEnv "HOLSMT_VALIDATION_DIR" of
+    NONE => ()
+  | SOME root =>
+      let
+        val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+        val stems = [
+          "z3_bag_map_add-1cb7a7003b9a",
+          "theory_z3_extensions_z3_bag_map_add_unsat_proof-38e65274537a"
+        ]
+        fun read path =
+          let val input = TextIO.openIn path
+          in TextIO.inputAll input before TextIO.closeIn input end
+        fun check version stem =
+          let
+            val path = root ^ "/tools/proof-corpus/seq_set_bag/z3-" ^
+              version ^ "/proofs/" ^ stem ^ ".proof"
+            val thm = Z3_ProofReplay.replay_root_for_test
+              (parse_z3_proof_string version
+                ("((declare-fun x () Int)\n\
+                  \(declare-fun a () (Array Int Int))\n\
+                  \(declare-fun b () (Array Int Int))\n\
+                  \(declare-fun ba () (Array Int Int))\n\
+                  \(declare-fun bb () (Array Int Int))" ^
+                 String.extract (read path, 1, NONE)))
+          in
+            check_oracle_tags ("raw bag " ^ stem ^ " Z3 " ^ version) thm
+          end
+          handle Feedback.HOL_ERR holerr =>
+            die ("FAIL: raw bag " ^ stem ^ " Z3 " ^ version ^ ": " ^
+              Feedback.message_of holerr)
+      in
+        List.app (fn version => List.app (check version) stems) versions
+      end
+
 (* These are post-parser forms of the core th-lemma-seq conclusions in the
    recorded z3_seq_length and z3_seq_nth captures. *)
 fun assert_seq_prover name prover tm =
@@ -13004,6 +13118,11 @@ let
       array_prove_set_ladder_rungs_success),
     ("z3_set_captured_shapes_replay_success",
       z3_set_captured_shapes_replay_success),
+    ("bag_prove_ladder_rungs_success", bag_prove_ladder_rungs_success),
+    ("z3_bag_captured_shapes_replay_success",
+      z3_bag_captured_shapes_replay_success),
+    ("z3_bag_raw_captures_replay_success",
+      z3_bag_raw_captures_replay_success),
     ("seq_prove_core_rungs_success", seq_prove_core_rungs_success),
     ("seq_prove_unsupported_diagnostic", seq_prove_unsupported_diagnostic),
     ("z3_native_seq_internal_parser_success",
