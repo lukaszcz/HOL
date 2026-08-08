@@ -423,14 +423,28 @@ local
              z3_string_app "seq_unit" [z3_char_to_num c]
            else listSyntax.mk_cons
              (c, listSyntax.mk_nil (Term.type_of c)))),
+        (* Z3 exposes these internal helpers in Seq proof certificates.  They
+           have String-specific meanings only on the smtstr carrier; for a
+           genuine Seq A certificate, reconstruct their native list forms.
+           The nth_i/tail uses are guarded by Z3's in-range branch, while
+           nth_u is deliberately the existing totalized Seq access. *)
         ("seq.nth_i", SmtLib_Theories.K_zero_two
-          (fn (s, i) => z3_num_to_char
-            (z3_string_app "seq_nth_i" [s, z3_natural i]))),
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, z3_natural i])
+           else listSyntax.mk_el (z3_natural i, s))),
+        ("seq.nth_u", SmtLib_Theories.K_zero_two
+          (fn (s, i) => if is_z3_string s then z3_num_to_char
+             (z3_string_app "seq_nth_i" [s, z3_natural i])
+           else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.tail", z3_indexed_binary "seq_tail"
-          (fn (s, i) => z3_string_app "seq_tail"
-            [s, z3_natural i])),
+          (fn (s, i) => if is_z3_string s then z3_string_app "seq_tail"
+             [s, z3_natural i]
+           else listSyntax.mk_drop
+             (numSyntax.mk_plus (z3_natural i,
+               numSyntax.mk_numeral Arbnum.one), s))),
         ("seq.eq", z3_indexed_binary "seq_eq"
-          (fn (s, t) => z3_string_app "seq_eq" [s, t])),
+          (fn (s, t) => if is_z3_string s then z3_string_app "seq_eq" [s, t]
+           else boolSyntax.mk_eq (s, t))),
         ("seq.stoi", z3_indexed_binary "seq_stoi"
           (fn (s, i) => z3_string_app "seq_stoi"
             [s, z3_natural i])),

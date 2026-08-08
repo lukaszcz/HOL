@@ -10361,6 +10361,152 @@ fun z3_set_captured_shapes_replay_success () =
     ("universe const-array", ``((x:'a) IN (UNIV:'a set)) = T``)
   ]
 
+(* These are post-parser forms of the core th-lemma-seq conclusions in the
+   recorded z3_seq_length and z3_seq_nth captures. *)
+fun assert_seq_prover name prover tm =
+  (let
+     val thm = prover tm
+   in
+     assert (Thm.concl thm ~~ tm,
+       name ^ " proved wrong conclusion: " ^ Library.thm_to_string thm);
+     check_oracle_tags name thm
+   end
+   handle Feedback.HOL_ERR holerr =>
+     die ("FAIL: " ^ name ^ " did not prove Seq goal: " ^
+       Feedback.message_of holerr))
+
+fun seq_prove_core_rungs_success () =
+  (assert_seq_prover "seq concat/length rung"
+     SmtSeqProve.concat_length_prove
+     ``(&(LENGTH ((xs:'a list) ++ ys)):int) =
+       &(LENGTH xs) + &(LENGTH ys)``;
+   assert_seq_prover "seq unit decomposition rung"
+     SmtSeqProve.unit_empty_prove
+     ``((x:'a) :: []) ++ ys = x :: ys``;
+   assert_seq_prover "seq empty decomposition rung"
+     SmtSeqProve.unit_empty_prove ``([]:'a list) ++ xs = xs``;
+   assert_seq_prover "seq extract rung" SmtSeqProve.access_prove
+     ``smt_seq_extract ([x]:'a list) 0 1 = [x]``;
+   assert_seq_prover "seq nth rung" SmtSeqProve.access_prove
+     ``smt_seq_nth ([x]:'a list) 0 = x``;
+   (* z3_seq_nth's 4.12--4.15 `seq.eq`/`seq.tail` witness. *)
+   assert_seq_prover "seq nth decomposition rung" SmtSeqProve.seq_prove
+     ``(&(LENGTH (xs:'a list)):int) = 0 \/
+       xs = [EL 0 xs] ++ DROP 1 xs``;
+   assert_seq_prover "seq nth witness consequence" SmtSeqProve.seq_prove
+     ``(&(LENGTH (xs:'a list)):int) = 0 \/
+       xs = [EL 0 xs] ++ DROP 1 xs ==>
+       [x] = xs ==> x = EL 0 xs``)
+
+fun seq_prove_unsupported_diagnostic () =
+  (ignore (SmtSeqProve.seq_prove ``(xs:'a list) = xs``);
+   die "FAIL: unsupported Seq th-lemma replayed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr
+    in
+      assert (String.isSubstring "unsupported th-lemma shape" msg,
+        "Seq diagnostic did not report unsupported shape: " ^ msg);
+      assert (String.isSubstring "theory=seq" msg,
+        "Seq diagnostic did not include theory: " ^ msg);
+      assert (String.isSubstring "shape=unrecognised" msg,
+        "Seq diagnostic did not name the unhandled shape: " ^ msg)
+    end
+
+fun z3_native_seq_internal_parser_success () =
+let
+  val proof = parse_z3_proof_string "4.15.3"
+    "((declare-fun s () (Seq Int))\n\
+    \(proof (asserted (and\n\
+    \  (= (seq.nth_i s 0) 1)\n\
+    \  (= (seq.nth_u s 0) 1)\n\
+    \  ((_ seq.eq seq.eq) s ((_ seq.tail seq.tail) s 0))))))"
+  val concl =
+    case Redblackmap.peek (Z3_Proof.proof_steps proof, 0) of
+      SOME (Z3_Proof.ASSERTED t) => t
+    | _ => die "FAIL: native Seq internal proof did not parse as asserted"
+  fun has_list name = Lib.can (HolKernel.find_term
+    (fn tm => Term.is_const tm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const tm
+      in Thy = "list" andalso Name = name end)) concl
+  fun has_holsmt name = Lib.can (HolKernel.find_term
+    (fn tm => Term.is_const tm andalso
+      let val {Thy, Name, ...} = Term.dest_thy_const tm
+      in Thy = "HolSmt" andalso Name = name end)) concl
+  fun has_string_internal tm =
+    Term.is_const tm andalso
+    let val {Thy, ...} = Term.dest_thy_const tm
+    in Thy = "smtstringz3" end
+in
+  assert (has_list "EL" andalso has_list "DROP",
+    "native seq.nth_i/tail did not reconstruct list access");
+  assert (has_holsmt "smt_seq_nth",
+    "native seq.nth_u did not reconstruct totalized Seq access");
+  assert (not (Lib.can (HolKernel.find_term has_string_internal) concl),
+    "native Seq internal proof incorrectly used String constants")
+end
+
+fun z3_seq_captured_core_shapes_replay_success () =
+let
+  val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+  val captures = [
+    ("concat-length",
+     "((proof ((_ th-lemma seq) (= " ^
+     "(seq.len (seq.++ (seq.unit 1) (seq.unit 2))) " ^
+     "(+ (seq.len (seq.unit 1)) (seq.len (seq.unit 2)))))))"),
+    ("unit-length",
+     "((proof ((_ th-lemma seq) (= (seq.len (seq.unit 1)) 1))))"),
+    ("extract",
+     "((proof ((_ th-lemma seq) (= (seq.extract (seq.unit 1) 0 1) " ^
+     "(seq.unit 1)))))"),
+    ("nth",
+     "((proof ((_ th-lemma seq) (= (seq.nth (seq.unit 1) 0) 1))))")
+  ]
+  fun check version (name, proof_text) =
+    let
+      val proof = parse_z3_proof_string version
+        ("((set-logic ALL)" ^ String.extract (proof_text, 1, NONE))
+      val thm = Z3_ProofReplay.replay_root_for_test proof
+    in
+      check_oracle_tags
+        ("captured Seq " ^ name ^ " Z3 " ^ version) thm
+    end
+in
+  Profile.reset_all ();
+  List.app (fn version => List.app (check version) captures) versions;
+  assert (profile_call_count "th_lemma[seq](3)(seq_prove)" > 0,
+    "genuine Seq th-lemmas did not route to SmtSeqProve")
+end
+
+(* Kept behind an environment variable: this exercises the full frozen raw
+   corpus locally without making the source selftest depend on the separately
+   versioned validation checkout. *)
+fun z3_seq_raw_captures_replay_success () =
+  case OS.Process.getEnv "HOLSMT_VALIDATION_DIR" of
+    NONE => ()
+  | SOME root =>
+      let
+        val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+        val stems = ["z3_seq_length-029bb997fc58",
+                     "z3_seq_nth-7ffab1e5349d"]
+        fun read path =
+          let val input = TextIO.openIn path
+          in TextIO.inputAll input before TextIO.closeIn input end
+        fun check version stem =
+          let
+            val path = root ^ "/tools/proof-corpus/seq_set_bag/z3-" ^
+              version ^ "/proofs/" ^ stem ^ ".proof"
+            val thm = Z3_ProofReplay.replay_root_for_test
+              (parse_z3_proof_string version
+                ("((declare-fun s () (Seq Int))" ^
+                 String.extract (read path, 1, NONE)))
+          in
+            check_oracle_tags
+              ("raw Seq " ^ stem ^ " Z3 " ^ version) thm
+          end
+      in
+        List.app (fn version => List.app (check version) stems) versions
+      end
+
 fun array_prove_unsupported_diagnostic () =
   (ignore (SmtArrayProve.array_prove ``F``);
    die "FAIL: unsupported array th-lemma replayed successfully")
@@ -10685,8 +10831,7 @@ fun string_prove_structured_failures () =
               smtstr_concat x (suffix_witness x (seq_unit c))``);
     expect_message "char th-lemma" "theory=char"
       (fn () => SmtStringProve.char_prove ``F``);
-    expect_message "non-string Seq th-lemma"
-      "theory:Z3_Extensions:seq-set-bag:checked-replay"
+    expect_message "non-string Seq th-lemma" "shape=non-string-sequence"
       (fn () =>
         SmtStringProve.string_prove intLib.ARITH_PROVE
           ``(xs : bool list) = xs``)
@@ -12593,6 +12738,14 @@ let
       array_prove_set_ladder_rungs_success),
     ("z3_set_captured_shapes_replay_success",
       z3_set_captured_shapes_replay_success),
+    ("seq_prove_core_rungs_success", seq_prove_core_rungs_success),
+    ("seq_prove_unsupported_diagnostic", seq_prove_unsupported_diagnostic),
+    ("z3_native_seq_internal_parser_success",
+      z3_native_seq_internal_parser_success),
+    ("z3_seq_captured_core_shapes_replay_success",
+      z3_seq_captured_core_shapes_replay_success),
+    ("z3_seq_raw_captures_replay_success",
+      z3_seq_raw_captures_replay_success),
     ("array_prove_unsupported_diagnostic",
       array_prove_unsupported_diagnostic),
     ("datatype_prove_ladder_rungs_success",

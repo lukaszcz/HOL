@@ -22,22 +22,15 @@ struct
        "conclusion=" ^
        Library.term_to_string t)
 
-  (* The sequence/set/bag gate classifies its input as out of scope; it is
-     not an ordinary rung failure.  A caller that retried a gated conclusion
-     through another string rung would replace this enumerated diagnostic
-     with the generic unsupported-shape message, so callers run
-     'check_seq_type' themselves before the rung ladder rather than trying to
-     recognize the gate in a failure. *)
-  val seq_set_bag_case_id = "theory:Z3_Extensions:seq-set-bag:checked-replay"
-
-  fun phase6_seq_gate t =
+  (* `check_seq_type` is a boundary guard for direct users of the String
+     prover.  Z3 th-lemma dispatch classifies genuine lists first and sends
+     them to SmtSeqProve; this guard therefore cannot hide a native Seq
+     failure behind a String-prover fallback. *)
+  fun nonstring_seq_error t =
     raise ERR "check_seq_type"
-      ("checked Z3_TAC replay for Z3 sequence/set/bag extensions is not " ^
-       "implemented; missing feature: " ^ seq_set_bag_case_id ^
-       "; failing case IDs: " ^
-       "theory:Z3_Extensions:seq, theory:Z3_Extensions:set, " ^
-       "theory:Z3_Extensions:bag, proof-rule:th-lemma-seq; conclusion=" ^
-       Library.term_to_string t)
+      ("unsupported th-lemma shape: theory=seq; " ^
+       "shape=non-string-sequence; dispatch genuine (Seq A) terms through " ^
+       "SmtSeqProve; conclusion=" ^ Library.term_to_string t)
 
   fun smtstring_consts thy names =
     List.map (fn name => Term.prim_mk_const {Thy = thy, Name = name}) names
@@ -69,7 +62,7 @@ struct
   (* Z3 uses the seq rule for both String and its polymorphic Seq extension.
      Phase 4 String has its own type.  Its constructor payload is an
      implementation detail, while every other HOL list belongs to the
-     still-gated Phase-6 sequence/set/bag extension. *)
+     native SmtSeqProve replayer. *)
   fun check_seq_type t =
     let
       fun is_smtstr_value tm =
@@ -92,7 +85,7 @@ struct
               in contains_sequence body end
               handle Feedback.HOL_ERR _ => false))
     in
-      if contains_sequence t then phase6_seq_gate t else ()
+      if contains_sequence t then nonstring_seq_error t else ()
     end
 
   fun proforma_prove t =

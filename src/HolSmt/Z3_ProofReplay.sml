@@ -1688,6 +1688,16 @@ local
 
     handle Feedback.HOL_ERR _ =>
 
+    (* Native Seq certificate rewrites use the same bounded core ladder as
+       th-lemma seq.  String remains above on its dedicated carrier. *)
+    let
+      val thm = profile "rewrite(03.5)(seq)" SmtSeqProve.seq_prove t
+    in
+      (state_cache_thm state thm, thm)
+    end
+
+    handle Feedback.HOL_ERR _ =>
+
     (* |- ALL_DISTINCT ... /\ T = ... *)
     (state, profile "rewrite(06)(all_distinct)" rewrite_all_distinct (l, r))
     handle Feedback.HOL_ERR _ =>
@@ -2157,9 +2167,27 @@ local
     (state_cache_thm state thm, Drule.LIST_MP thms thm)
   end
 
-  fun z3_th_lemma_seq metadata =
-    string_th_lemma_wrapper "seq" SmtStringProve.check_seq_type metadata
-      (SmtStringProve.string_prove arith_prove)
+  val z3_th_lemma_native_seq = th_lemma_wrapper "seq" (fn (state, t) =>
+    let
+      val thm = profile "th_lemma[seq](3)(seq_prove)" SmtSeqProve.seq_prove t
+    in
+      (state_cache_thm state thm, thm)
+    end)
+
+  (* Z3's `seq` tag covers both Phase-4 Strings and polymorphic sequences.
+     The latter are native HOL lists, while String remains on its dedicated
+     carrier.  Keep the existing string wrapper intact for the former and
+     select the native re-prover before any string-specific fallback. *)
+  fun z3_th_lemma_seq metadata (args as (state, thms, t)) =
+    let
+      val target = boolSyntax.list_mk_imp (List.map Thm.concl thms, t)
+    in
+      if SmtSeqProve.has_seq_type target then
+        z3_th_lemma_native_seq args
+      else
+        string_th_lemma_wrapper "seq" SmtStringProve.check_seq_type metadata
+          (SmtStringProve.string_prove arith_prove) args
+    end
 
   fun z3_th_lemma_char metadata =
     string_th_lemma_wrapper "char" (fn _ => ()) metadata
