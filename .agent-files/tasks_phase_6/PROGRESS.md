@@ -25,7 +25,7 @@
 - TASK_20 — done (verified against TASK_20 acceptance criteria)
 - TASK_21 — done (re-verified against TASK_21, CPC_ProofReplay.sml, and SmtSeqProve.sml; CPC gate 17/17, 0 resource-gated)
 - TASK_22 — done (verified: checked Seq/Set/Bag replay ungated; G1 green; conformance clean at the 4.11.2 anchor)
-- TASK_23 — done (ledger/coverage regenerated; gate inventory and external pins accounted)
+- TASK_23 — done (ledger/coverage regenerated; Phase-6 audit slice clean)
 - TASK_24 — unblocked
 
 ## 2. Next unblocked task
@@ -56,4 +56,4 @@
 - TASK_20 — re-verified against TASK_20 and source: Z3-only MAP/FOLDL emission selects and records the HO regime at all supported anchors, emits seq.map/seq.foldl only, rejects cvc5 structurally, and records checked-replay D2 dispositions without oracle tags.
 - TASK_21 — done (re-verified against TASK_21/current sources: fresh Holmake and cvc5 1.3.4 CPC gate pass 17/17, including seq.update/seq.rev; registered Seq routes, loud unknown-rule failure, and no oracle/resource gates).
 - TASK_22 — done (verified against TASK_22/current sources): retired placeholder-prefix gate is absent; replay metadata and checked Seq/Set/Bag smoke rows are present; recorded G1/conformance runs had zero unexpected regressions.
-- TASK_23 — done: regenerated the Phase-6 ledger/coverage artifacts, ran the scoped complete-conformance replay with zero unexpected results, and recorded the D2/solver-availability gate inventory and external-pin disposition in `reports/phase6_ledger_burndown.md`.
+- TASK_23 — done: regenerated ledger/coverage; validation audit commit `995d838` recognizes the shared and cvc5-only dictionaries, yielding zero Phase-6 audit findings.  Coverage audit reports 109 rows, 219 manifest entries, and zero missing obligations; `upto-parallel` build passed.

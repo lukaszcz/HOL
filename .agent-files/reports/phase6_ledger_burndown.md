@@ -2,68 +2,70 @@
 
 ## Before/after
 
-The regenerated `Z3_Extensions` slice contains 323 cases.  The prior
-complete manifest contained 549 implementation-red expected outcomes in this
-slice; the regenerated manifest contains **0**.  The final mode inventory is
-958 pass, 188 expected negative-input fail, and 14 documented unsupported
-outcomes.
+The widened `Z3_Extensions` bucket has 323 cases.  Its stored complete
+conformance result (`/tmp/phase6-final-extension/conformance.json`) has 837
+scheduled results, all **matched**: 635 pass, 188 expected negative-input
+failures, and 14 documented unsupported outcomes.  Thus it has zero
+unexpected results and zero implementation-red outcomes.
 
-The fresh filtered replay (`/tmp/phase6-final-extension/conformance.json`)
-ran all scheduled modes (`typecheck-only`, `z3-tac`, proof parse/replay, Z3
-oracle and cvc5 oracle) and reported **837 matched, 0 unexpected**.  This
-includes the expanded Seq/Set/Bag surface and real proof inputs.  The normal
-expected failures are malformed/type-error tests, not implementation gates.
+| theory | pass | expected fail | documented unsupported | total |
+| --- | ---: | ---: | ---: | ---: |
+| Seq | 275 | 118 | 14 | 407 |
+| Set | 231 | 42 | 0 | 273 |
+| Bag | 125 | 28 | 0 | 153 |
+| P6.4 finiteness boundaries | 4 | 0 | 0 | 4 |
+| **total** | **635** | **188** | **14** | **837** |
 
-| Mode | Result |
-| --- | --- |
-| typecheck-only | accepted supported surface; negative type tests fail |
-| z3-tac | matched including documented D2 outcomes |
-| proof-parse / proof-replay | matched including documented D2 outcomes |
-| Z3 / cvc5 oracle | matched; solver `unknown` is documented where applicable |
+The mode inventory is 202 `typecheck-only`, 149 `z3-tac`, 25
+`proof-parse`, 25 `proof-replay`, five `z3-oracle`, and two `cvc5-oracle`
+ledger entries.  `tools/conformance-corpus/v2/phase6_ledger_expectations.json`
+is the rerunnable expected-mode ledger used by generation.
 
-`tools/conformance-corpus/v2/phase6_ledger_expectations.json` is the
-rerunnable observed-mode ledger used by the corpus generator.  It removes an
-implementation obligation only after recording the mode result.
+The validation audit was regenerated against the current source with
+validation commit `995d838` (`HolSmt: audit Phase 6 dialect coverage`).  It
+now parses the shared and cvc5-specific dictionaries, uses the corpus slugs
+for the shared sequence operators, and does not demand Z3 proof modes for
+cvc5-only inputs.  The resulting Phase-6 dictionary/corpus slice has zero
+audit findings.  (The unfiltered audit still reports unrelated omissions in
+other SMT-LIB theories; they are outside this Phase-6 task.)
 
 ## Gate inventory
 
-The inventory contains only the two permitted classes.
+`phase6_ledger_expectations.json:gate_inventory` lists 14, and only 14, D2
+rows.  Each points back to this report.  They are the Seq fold proof inputs
+where Z3 returns sat/no proof and the two regexp-replace Seq families where
+Z3 returns `unknown`; each has its checked diagnostic in the manifest.
+There are no D12 rows.
 
-### D2 gates
-
-The 14 D2 rows are listed individually in
-`phase6_ledger_expectations.json:gate_inventory`, with this report as their
-documentation pointer.  They comprise Seq fold proof inputs for which Z3
-returns sat/has no proof, and the two regexp-replace Seq families for which
-Z3 returns `unknown`.  Each has the checked diagnostic substring in the
-manifest.  No D12 row is present.
-
-### Solver-availability gates
-
-The per-operator solver/version matrix remains the authoritative
-`solver_availability` field on every corpus row.  Its documentation pointer
-is `phase6_ledger_expectations.json:solver_availability_documentation`.
-Unscheduled dialect/version cells are solver-availability gates, not red
-implementation claims.  External pins are therefore represented by their
-matrix cells and their actual oracle results.
+Every corpus row has the solver/version matrix in its
+`solver_availability` field.  Its documentation pointer is
+`phase6_ledger_expectations.json:solver_availability_documentation`.
+Consequently, unavailable dialect/version cells (in particular cvc5-only
+native Set/Bag operations) are solver-availability dispositions rather than
+missing Z3 proof obligations.  The TASK_06 external pins remain represented
+by those cells and their recorded oracle outcomes.
 
 ## Coverage transitions
 
-The three `Sequences, sets, bags` coverage successors now record
-`implemented` for translation/solve/reconstruction, with source and corpus
-positive evidence for native Seq, predicate-set, and Bag handling.  The
-separate predicate-set representation row was not changed.  The `ALL` logic
-and advanced `th-lemma` rows now point at the native sequence checked-prover
-dispatch instead of the obsolete broad unsupported claim.
+Ran:
 
-The coverage data was regenerated (`tools/coverage/SMTLIB_COVERAGE.md`).
-The standalone complete coverage audit in this worktree stops while parsing
-`SmtLib_Logics.sml` because this validation checkout expects the removed
-`parsedicts_of_logic` expression; this is a validation/source checkout skew,
-not a Seq/Set/Bag obligation.  Corpus generation validation and the complete
-extension replay above both pass.
+```sh
+HOLSMT_ROOT=$PWD python3 "$HOLSMT_VALIDATION_DIR/tools/coverage/generate_smtlib_coverage.py" \
+  --coverage "$HOLSMT_VALIDATION_DIR/tools/coverage/smtlib_coverage.json" \
+  --manifest "$HOLSMT_VALIDATION_DIR/tools/coverage/coverage_manifest.json" \
+  --complete-manifest "$HOLSMT_VALIDATION_DIR/tools/conformance-corpus/v2/manifest.json" \
+  --report "$HOLSMT_VALIDATION_DIR/tools/coverage/SMTLIB_COVERAGE.md"
+HOLSMT_ROOT=$PWD python3 "$HOLSMT_VALIDATION_DIR/tools/coverage/audit_coverage_manifest.py" \
+  --manifest "$HOLSMT_VALIDATION_DIR/tools/coverage/coverage_manifest.json"
+```
+
+Generation succeeded and the audit reports 109 coverage rows, 219 manifest
+entries, and zero missing obligations.  The three `Sequences, sets, bags`
+coverage successors are `implemented` for translation, solve, and
+reconstruction; the distinct sets-as-predicates row is unchanged.  The
+`ALL` logic and advanced `th-lemma` rows retain the native checked sequence
+prover evidence rather than an unsupported claim.
 
 ## Build
 
-`bin/build -t --seq=tools/sequences/upto-parallel` completed successfully
-before the ledger regeneration.
+`bin/build -t --seq=tools/sequences/upto-parallel` completed successfully.
