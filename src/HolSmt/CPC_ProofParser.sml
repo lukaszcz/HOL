@@ -937,6 +937,16 @@ local
                     else raise ERR "parse_step"
                       "expected quantified left side for CPC quantifier rewrite"
                 in [boolSyntax.mk_eq (lhs, rhs)] end
+              (* CPC Set rules carry their set sort as an argument, e.g.
+                 [(Set Int)].  This is proof metadata, not a HOL term; retain
+                 it only as a variable of the parsed sort so rule-specific
+                 replay can ignore it without rejecting a recorded proof. *)
+              fun sort_marker tokens =
+                let val (tydict, _) = !dicts_ref in
+                  Term.mk_var ("@cpc.sort",
+                    SmtLib_Parser.parse_type
+                      (Library.undo_look_ahead tokens get_token) tydict)
+                end
               fun terms acc =
                 let val token = get_token () in
                   if token = ")" then List.rev acc
@@ -947,6 +957,15 @@ local
                            sequence of object terms (not a HOL list term).
                            Flatten them for handlers such as instantiate. *)
                         terms (List.revAppend (list_terms [], acc))
+                      else if head = "Set" then
+                        let
+                          val tm = sort_marker ["(", head]
+                            handle Feedback.HOL_ERR holerr =>
+                              raise ERR "parse_step"
+                                ("could not parse Set sort metadata for CPC " ^
+                                 "step " ^ id ^ " (rule " ^ rule_name ^ "): " ^
+                                 Feedback.message_of holerr)
+                        in terms (tm :: acc) end
                       else
                         let
                           val tm = parse_term dicts_ref

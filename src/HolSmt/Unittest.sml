@@ -8963,16 +8963,22 @@ let
     \(step @p4 (= (set.insert 7 s) (set.union (set.singleton 7) s)) \
     \ :rule sets-insert-elim :args \
     \ ((= (set.insert 7 s) (set.union (set.singleton 7) s)))) \
+    \(step @p5 :rule sets-is-empty-elim :args \
+    \ ((set.singleton 7) (Set Int))) \
     \(step @p6 (= (set.is_singleton (set.singleton 7)) \
     \             (= (set.singleton 7) \
     \                (set.singleton (set.choose (set.singleton 7))))) \
     \ :rule sets-is-singleton-elim :args ((set.singleton 7))) \
+    \(step @p7 :rule sets-member-emp :args \
+    \ (7 (set.minus (set.singleton 7) (set.singleton 7)) (Set Int))) \
     \(step @p8 (= (set.member 7 (set.singleton 7)) (= 7 7)) \
     \ :rule sets-member-singleton :args (7 7)) \
     \(step @p9 (= (set.member 7 (set.minus (set.singleton 7) s)) \
     \             (and (set.member 7 (set.singleton 7)) \
     \                  (not (set.member 7 s)))) \
     \ :rule sets-minus-member :args (7 (set.singleton 7) s)) \
+    \(step @p10 :rule sets-minus-self :args \
+    \ ((set.singleton 7) (Set Int))) \
     \(step @p11 (= (set.subset (set.singleton 7) s) \
     \              (= (set.union (set.singleton 7) s) s)) \
     \ :rule sets-subset-elim :args ((set.singleton 7) s)) \
@@ -8981,7 +8987,13 @@ let
     \ :rule sets-union-comm :args ((set.singleton 7) s)) \
     \(step @p13 (= (set.member 7 (set.union (set.singleton 7) s)) \
     \              (or (set.member 7 (set.singleton 7)) (set.member 7 s))) \
-    \ :rule sets-union-member :args (7 (set.singleton 7) s)))"
+    \ :rule sets-union-member :args (7 (set.singleton 7) s)) \
+    \(step @p14 (= (set.member 7 (set.singleton 7)) true) \
+    \ :rule trust :args ((= (set.member 7 (set.singleton 7)) true))) \
+    \(step @p15 (= (set.union (set.singleton 7) s) \
+    \              (set.union s (set.singleton 7))) \
+    \ :rule sets :args ((= (set.union (set.singleton 7) s) \
+    \                    (set.union s (set.singleton 7))))))"
   val thm = CPC_ProofReplay.replay_root_for_test proof
 in
   check_oracle_tags "CPC Set RARE unit test" thm;
