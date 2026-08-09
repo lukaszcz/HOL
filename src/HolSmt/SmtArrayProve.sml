@@ -92,6 +92,16 @@ struct
       Lib.can (HolKernel.find_term is_set_syntax) t
     end
 
+  (* A Z3 Set is an Array with Bool range, so a pointwise map lemma can
+     contain only free Set variables and applications, without any native
+     [pred_set] syntax.  Such a variable is enough for the array prover's
+     local admission; do not use it for CPC trust classification, where a
+     higher-order equality constant can otherwise look Set-shaped. *)
+  fun has_set_variable t =
+    Lib.can (HolKernel.find_term
+      (fn tm => Term.is_var tm andalso
+        pred_setSyntax.is_set_type (Term.type_of tm))) t
+
   (* A minimal, array-oriented simpset for the RW_TAC-based provers below.
      It deliberately avoids the general arithmetic decision procedures that
      srw_ss() pulls in (the source of nonlinear-arithmetic blowups), while
@@ -174,7 +184,7 @@ struct
   fun array_prove t =
     trivial_prove t
     handle Feedback.HOL_ERR _ =>
-    if is_array_goal t orelse has_set_term t then
+    if is_array_goal t orelse has_set_term t orelse has_set_variable t then
       Z3_ProformaThms.prove Z3_ProformaThms.array_thms t
       handle Feedback.HOL_ERR _ =>
       Z3_ProformaThms.prove Z3_ProformaThms.set_thms t
