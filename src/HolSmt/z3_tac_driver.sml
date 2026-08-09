@@ -297,13 +297,6 @@ in
     | NONE =>
       let
         val goal = z3_tac_goal queries assertions
-        (* Reconstruction failures are the only place a theory-family gate
-           may fire: checked Z3_TAC re-proves whatever it can (e.g. abstract
-           FloatingPoint equalities, bvsmulo via th-lemma-bv), and we die
-           Z3_TAC_UNSUPPORTED only when a genuine prover/replay failure lands
-           on input from an unsupported family.  Input-validation errors
-           (set-logic mismatch, malformed script) are handled before this
-           point, so they stay Z3_TAC_FAIL via the outer handler below. *)
         val result =
           (z3_tac_preflight_resource_gate assertions;
            z3_tac_checked_result goal)
@@ -313,16 +306,7 @@ in
                 ["logic=" ^ observed_logic,
                  "diagnostic=" ^ Feedback.message_of holerr]
             else
-              (case
-                 SmtLib_Logics.checked_replay_unsupported_diagnostic
-                   observed_logic (z3_tac_query_fragment_terms queries)
-               of
-                 SOME diagnostic =>
-                   z3_tac_die "Z3_TAC_UNSUPPORTED"
-                     ["logic=" ^ observed_logic,
-                      "diagnostic=" ^ diagnostic ^ ": " ^
-                        Feedback.message_of holerr]
-               | NONE => raise Feedback.HOL_ERR holerr)
+              raise Feedback.HOL_ERR holerr
         val common_fields =
           ["logic=" ^ observed_logic,
            "assertions=" ^ Int.toString (List.length (#assertions state)),

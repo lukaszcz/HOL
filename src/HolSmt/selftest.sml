@@ -248,6 +248,18 @@ in
 
     (* propositional logic *)
     (``T``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
+
+    (* Seq/Set/Bag checked-replay smoke tests.  `bool` has finite carrier,
+       so the cvc5 rows exercise its native finite Set/Bag guard.  The MAP
+       row is deliberately Z3-only: seq.map is unavailable in cvc5. *)
+    (``LENGTH (xs : int list) = LENGTH xs``, [thm_Z3p_v4, thm_CVCp]),
+    (``MAP (\x : int. x + 1) (xs : int list) =
+        MAP (\x. x + 1) xs``, [thm_Z3p_v4]),
+    (``(x : bool) IN (s UNION t) <=> x IN (t UNION s)``,
+      [thm_Z3p_v4, thm_CVCp]),
+    (``BAG_UNION (b : bool -> num) c = BAG_UNION b c``,
+      [thm_Z3p_v4, thm_CVCp]),
+
     (``F``, [sat_CVC, sat_YO, sat_Z3, sat_Z3p, sat_CVCp]),
     (``p = (p:bool)``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),
     (``p ==> p``, [thm_AUTO, thm_CVC, thm_YO, thm_Z3, thm_Z3p, thm_CVCp]),

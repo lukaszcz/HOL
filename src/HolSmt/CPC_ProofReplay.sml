@@ -2429,6 +2429,14 @@ local
         raise ERR "trust"
           ("unsupported CPC Set step: rule=trust; theory=set; " ^
            "conclusion=" ^ Library.term_to_string target)
+      fun replay_bag () =
+        SmtBagProve.bag_prove_with_arith arith_prove target
+      fun prove_scoped_bag () =
+        prove_scoped_arithmetic ()
+        handle Feedback.HOL_ERR _ =>
+          raise ERR "trust"
+            ("unsupported CPC Bag step: rule=trust; theory=bag; " ^
+             "conclusion=" ^ Library.term_to_string target)
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
@@ -2447,16 +2455,26 @@ local
         Option.isSome (HOLset.find SmtArrayProve.has_set_term
           (#asserted_hyps state)) orelse
         List.exists SmtArrayProve.has_set_term (#scope_hyps state)
+      fun bag_context () =
+        SmtBagProve.has_bag_encoding target orelse
+        Option.isSome (HOLset.find SmtBagProve.has_bag_encoding
+          (#asserted_hyps state)) orelse
+        List.exists SmtBagProve.has_bag_encoding (#scope_hyps state)
       fun fp_context () =
         SmtFpProve.has_fp_theory_term target orelse
         Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
           (#asserted_hyps state)) orelse
         List.exists SmtFpProve.has_fp_theory_term (#scope_hyps state)
     in
-      (* A native Seq trust has no unchecked fallback.  Its failure is the
-         enumerated D2 obligation emitted by SmtSeqProve's diagnostic. *)
+      (* Native Seq, Set, and Bag trusts have no unchecked fallback.  Bag's
+         second rung is the checked contextual simplifier used by its shared
+         D2 prover; failure records a theory-specific CPC obligation. *)
       if SmtSeqProve.has_seq_type target then
         profile "CPC(rung:trust/seq)" SmtSeqProve.seq_prove target
+      else if bag_context () then
+        next (fn () => profile "CPC(rung:trust/bag)" replay_bag ())
+          (fn () => profile "CPC(rung:trust/bag_context)"
+            prove_scoped_bag ())
       else if set_context () then
         next (fn () => profile "CPC(rung:trust/set)" replay_set ())
           unsupported_set

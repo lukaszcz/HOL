@@ -2324,8 +2324,8 @@ local
                  else ConservativeEmbedding,
           parse = true,
           typecheck = true,
-          translate = sequences orelse sets orelse bags,
-          replay = false,
+          translate = true,
+          replay = true,
           notes =
             if sequences andalso sets andalso bags then
               "Stock list, pred_set, and bag operations emit their native " ^
@@ -2345,9 +2345,10 @@ local
             else
               "Z3 extension symbols are parser/typechecker entries only.",
           proof_obligation =
-            "Checked replay of native Seq/Set/Bag surfaces is deferred to " ^
-            "TASK_18/19/21, TASK_10/11, and TASK_14/15; parser and oracle " ^
-            "paths already use faithful list, pred_set, and bag terms."
+            "Checked Z3 replay uses SmtSeqProve for native Seq terms, " ^
+            "SmtArrayProve for sets, and SmtBagProve over the array/arith " ^
+            "bag encoding; cvc5 CPC replay uses the corresponding checked " ^
+            "Seq/Set/Bag rules."
         }
       val regex_record =
         HOLTheoryEncoding {

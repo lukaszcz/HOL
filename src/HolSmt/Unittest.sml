@@ -3825,67 +3825,6 @@ fun smtlib_logic_fragment_diagnostics () =
        "(assert (= ((_ int_to_bv 1) 0) #b0))\n")
   end
 
-fun smtlib_checked_replay_gap_diagnostics () =
-  let
-    fun replay_gap logic text =
-      let
-        val state = parse_smtlib_state text
-      in
-        SmtLib_Logics.checked_replay_unsupported_diagnostic logic
-          (#assertions state)
-      end
-    fun expect_gap label logic text expected =
-      case replay_gap logic text of
-        SOME msg =>
-          assert (contains expected msg,
-            label ^ " diagnostic missed '" ^ expected ^ "': " ^ msg)
-      | NONE => die (label ^ " checked replay gap was not detected")
-    fun expect_no_gap label logic text =
-      case replay_gap logic text of
-        SOME msg =>
-          die (label ^ " reported a spurious checked replay gap: " ^ msg)
-      | NONE => ()
-  in
-    expect_no_gap "UnicodeStrings replay" "QF_SLIA"
-      ("(set-logic QF_SLIA)\n" ^
-       "(declare-const s String)\n" ^
-       "(assert (str.prefixof s (str.++ s s)))\n" ^
-       "(check-sat)\n");
-    expect_no_gap "RegLan replay" "QF_SLIA"
-      ("(set-logic QF_SLIA)\n" ^
-       "(declare-const s String)\n" ^
-       "(assert (str.in_re s (str.to_re s)))\n" ^
-       "(check-sat)\n");
-    (* Native list terms have no smtlib_* sequence placeholder for the
-       pre-flight recognizer to reject.  TASK_22 removes that obsolete gate;
-       until then this pin keeps parser/typecheck mode usable. *)
-    expect_no_gap "Z3 sequence typecheck" "ALL"
-      ("(set-logic ALL)\n" ^
-       "(declare-const xs (Seq Int))\n" ^
-       "(assert (= (seq.len xs) 0))\n" ^
-       "(check-sat)\n");
-    expect_no_gap "nonlinear arithmetic replay" "NIA"
-      ("(set-logic NIA)\n" ^
-       "(declare-const x Int)\n" ^
-       "(declare-const y Int)\n" ^
-       "(assert (= (* x y) 1))\n" ^
-       "(check-sat)\n");
-    expect_no_gap "ground literal product replay" "QF_NIA"
-      ("(set-logic QF_NIA)\n" ^
-       "(assert (= (* 2 3) 6))\n" ^
-       "(check-sat)\n");
-    expect_no_gap "linear coefficient product replay" "QF_NIA"
-      ("(set-logic QF_NIA)\n" ^
-       "(declare-const x Int)\n" ^
-       "(assert (= (* 2 x) 4))\n" ^
-       "(check-sat)\n");
-    expect_no_gap "integer equality replay" "QF_LIA"
-      ("(set-logic QF_LIA)\n" ^
-       "(declare-const x Int)\n" ^
-       "(assert (= x x))\n" ^
-       "(check-sat)\n")
-  end
-
 fun smtlib_floatingpoint_recognizer_gates_success () =
 let
   val state = parse_smtlib_state
@@ -3908,8 +3847,6 @@ let
   fun fragment logic terms =
     SmtLib_Logics.fragment_violation_diagnostic logic
       SmtLib_Logics.empty_surface_flags terms
-  fun replay_gap terms =
-    SmtLib_Logics.checked_replay_unsupported_diagnostic "QF_FP" terms
   fun expect_fp_fragment (label, term) =
     case fragment "QF_UF" [term] of
       SOME msg =>
@@ -3921,22 +3858,16 @@ in
   expect_fp_fragment ("native smt_rounding term", rounding_assertion);
   assert (fragment "QF_FP" assertions = NONE,
     "native smtfloat terms were rejected from QF_FP");
-  assert (replay_gap assertions = NONE,
-    "native smtfloat terms retained the retired FP replay family gate");
   List.app
     (fn term =>
-      (assert (fragment "QF_UF" [term] = NONE,
-         "user symbol with an FP-like name triggered the fragment recognizer");
-       assert (replay_gap [term] = NONE,
-         "user symbol with an FP-like name triggered the replay family gate")))
+      assert (fragment "QF_UF" [term] = NONE,
+        "user symbol with an FP-like name triggered the fragment recognizer"))
     user_prefix_terms;
   (case fragment "QF_FP" [fp_named_user_app] of
      SOME msg => assert (contains "uninterpreted function application" msg,
        "FP-like user function reported the wrong diagnostic: " ^ msg)
    | NONE =>
        die "FP-like user function bypassed QF_FP's uninterpreted-family gate");
-  assert (replay_gap [fp_named_user_app] = NONE,
-    "FP-like user function application triggered the FP replay family gate")
 end
 
 fun smtlib_typecheck_overloaded_and_indexed_success () =
@@ -5957,7 +5888,10 @@ let
   fun has_extension_record translation =
     List.exists
       (fn SmtLib.HOLTheoryEncoding {
-            smt_theory = "Z3 sequence/set/bag extensions", ...} => true
+            smt_theory = "Z3 sequence/set/bag extensions",
+            translate = true, replay = true, proof_obligation, ...} =>
+              contains "SmtSeqProve" proof_obligation andalso
+              contains "cvc5 CPC replay" proof_obligation
         | _ => false)
       (SmtLib.translation_records translation)
   fun assert_feature label select tm =
@@ -13034,8 +12968,6 @@ let
       smtlib_command_malformed_diagnostics),
     ("smtlib_logic_fragment_diagnostics",
       smtlib_logic_fragment_diagnostics),
-    ("smtlib_checked_replay_gap_diagnostics",
-      smtlib_checked_replay_gap_diagnostics),
     ("smtlib_floatingpoint_recognizer_gates_success",
       smtlib_floatingpoint_recognizer_gates_success),
     ("smtlib_typecheck_overloaded_and_indexed_success",

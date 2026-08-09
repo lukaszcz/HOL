@@ -606,11 +606,6 @@ in
       (type_contains (fn ty => Type.compare (ty, reglan_ty) = EQUAL)) tm
     orelse term_mentions_smtstring_theory tm
 
-  fun term_mentions_z3_sequence_set_bag tm =
-    symbol_name_is_prefix "smtlib_seq_" tm orelse
-    symbol_name_is_prefix "smtlib_set_" tm orelse
-    symbol_name_is_prefix "smtlib_bag_" tm
-
   fun type_is_smtfloat ty =
     let val {Thy, Tyop, ...} = Type.dest_thy_type ty
     in
@@ -796,25 +791,6 @@ in
     case is_arith_relation tm of
       SOME _ => not (term_has_word_subterm tm)
     | NONE => false
-
-  fun checked_replay_gap_message logic family missing_feature case_ids =
-    "checked Z3_TAC replay for " ^ family ^
-    " is not implemented for logic " ^ logic ^
-    "; missing feature: " ^ missing_feature ^
-    "; failing case IDs: " ^ String.concatWith ", " case_ids
-
-  fun checked_replay_unsupported_diagnostic logic assertions =
-    let
-      val all_subterms = List.concat (List.map subterms assertions)
-      fun some_subterm p = List.exists p all_subterms
-    in
-      if some_subterm term_mentions_z3_sequence_set_bag then
-        SOME (checked_replay_gap_message logic "Z3 sequence/set/bag extensions"
-          "theory:Z3_Extensions:seq-set-bag:checked-replay"
-          ["theory:Z3_Extensions:seq", "theory:Z3_Extensions:set",
-           "theory:Z3_Extensions:bag", "proof-rule:th-lemma-seq"])
-      else NONE
-    end
 
   fun fragment_violation_diagnostic logic
       (surface_flags : surface_flags) assertions =
