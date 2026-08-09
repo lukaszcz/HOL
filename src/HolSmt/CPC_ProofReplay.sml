@@ -1064,6 +1064,75 @@ local
           "omitted conclusion is an enumerated CPC Seq obligation"
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
+  (* Set rewrites are deliberately driven by the certificate conclusion.
+     Their names are closed explicitly in CPC_Proof's frozen inventory; this
+     makes a future sets-* rule a versioned, loud registry error rather than
+     a generic simplifier admission.  The actual proof is shared with the
+     ArrayEx/set ladder because D13 represents a Set as [a -> bool]. *)
+  fun replay_sets name conclusion args =
+    let
+      fun empty set = pred_setSyntax.mk_empty (pred_setSyntax.eltype set)
+      fun singleton element = pred_setSyntax.mk_insert
+        (element, pred_setSyntax.mk_empty (Term.type_of element))
+      fun prove target =
+        if SmtArrayProve.has_set_term target then
+          SmtArrayProve.array_prove target
+        else
+          raise ERR name
+            ("set rule conclusion has no native Set term: " ^
+             Library.term_to_string target)
+      fun omitted_target () =
+        case (name, args) of
+          ("sets-card-singleton", [element]) =>
+            boolSyntax.mk_eq
+              (Term.mk_comb (intSyntax.int_injection,
+                 pred_setSyntax.mk_card (singleton element)),
+               intSyntax.term_of_int (Arbint.fromInt 1))
+        | ("sets-choose-singleton", [element]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_choice (singleton element),
+              element)
+        | ("sets-eval-op", [target]) => target
+        | ("sets-insert-elim", [target]) => target
+        | ("sets-is-empty-elim", [set, _]) =>
+            let val is_empty = boolSyntax.mk_eq (set, empty set)
+            in boolSyntax.mk_eq (is_empty, is_empty) end
+        | ("sets-is-singleton-elim", [set]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_sing set,
+              boolSyntax.mk_eq (set,
+                singleton (pred_setSyntax.mk_choice set)))
+        | ("sets-member-emp", [element, set, _]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_in (element, set),
+              boolSyntax.F)
+        | ("sets-member-singleton", [element, singleton_element]) =>
+            boolSyntax.mk_eq
+              (pred_setSyntax.mk_in (element, singleton singleton_element),
+               boolSyntax.mk_eq (element, singleton_element))
+        | ("sets-minus-member", [element, left, right]) =>
+            boolSyntax.mk_eq
+              (pred_setSyntax.mk_in
+                 (element, pred_setSyntax.mk_diff (left, right)),
+               boolSyntax.mk_conj (pred_setSyntax.mk_in (element, left),
+                 boolSyntax.mk_neg (pred_setSyntax.mk_in (element, right))))
+        | ("sets-minus-self", [set, _]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_diff (set, set), empty set)
+        | ("sets-subset-elim", [left, right]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_subset (left, right),
+              boolSyntax.mk_eq (pred_setSyntax.mk_union (left, right), right))
+        | ("sets-union-comm", [left, right]) =>
+            boolSyntax.mk_eq (pred_setSyntax.mk_union (left, right),
+              pred_setSyntax.mk_union (right, left))
+        | ("sets-union-member", [element, left, right]) =>
+            boolSyntax.mk_eq
+              (pred_setSyntax.mk_in
+                 (element, pred_setSyntax.mk_union (left, right)),
+               boolSyntax.mk_disj (pred_setSyntax.mk_in (element, left),
+                 pred_setSyntax.mk_in (element, right)))
+        | _ => raise ERR name
+            "omitted conclusion has an unsupported recorded argument shape"
+    in
+      prove (case conclusion of SOME target => target | NONE => omitted_target ())
+    end
+
   fun replay_rare_rewrite name args =
     let
       val smt_ediv_total_tm = Term.prim_mk_const
@@ -2355,6 +2424,11 @@ local
             profile "CPC(rung:trust/rdiv_zero_irrelevant)"
               irrelevant_zero_rewrite ()
         end
+      fun replay_set () = SmtArrayProve.array_prove target
+      fun unsupported_set () =
+        raise ERR "trust"
+          ("unsupported CPC Set step: rule=trust; theory=set; " ^
+           "conclusion=" ^ Library.term_to_string target)
       fun replay_fp () =
         SmtFpProve.fp_prove_with_decompositions_and_arith
           arith_prove [] target
@@ -2368,6 +2442,11 @@ local
           if SmtResource.is_resource_gate holerr then
             raise Feedback.HOL_ERR holerr
           else continuation ()
+      fun set_context () =
+        SmtArrayProve.has_set_term target orelse
+        Option.isSome (HOLset.find SmtArrayProve.has_set_term
+          (#asserted_hyps state)) orelse
+        List.exists SmtArrayProve.has_set_term (#scope_hyps state)
       fun fp_context () =
         SmtFpProve.has_fp_theory_term target orelse
         Option.isSome (HOLset.find SmtFpProve.has_fp_theory_term
@@ -2378,6 +2457,9 @@ local
          enumerated D2 obligation emitted by SmtSeqProve's diagnostic. *)
       if SmtSeqProve.has_seq_type target then
         profile "CPC(rung:trust/seq)" SmtSeqProve.seq_prove target
+      else if set_context () then
+        next (fn () => profile "CPC(rung:trust/set)" replay_set ())
+          unsupported_set
       else if fp_context () then
         next (fn () => profile "CPC(rung:trust/fp)" replay_fp ())
           unsupported_fp
@@ -3663,6 +3745,8 @@ local
            | "bv_poly_norm_eq" => replay_bv_poly_norm_eq args
            | "seq_rewrite" => replay_seq_rewrite (#name rule) args
            | "seq_at_elim" => replay_seq_at_elim conclusion args
+           | "sets" => replay_sets (#name rule) conclusion args
+           | "sets_rewrite" => replay_sets (#name rule) conclusion args
            | "rewrite" => replay_rare_rewrite (#name rule) args
            | "datatype" => replay_datatype args
            | "datatype_eq" => replay_datatype_eq args

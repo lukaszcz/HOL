@@ -51,11 +51,21 @@ struct
     pred_setTheory.IN_INTER,
     pred_setTheory.IN_DIFF,
     pred_setTheory.IN_COMPL,
+    pred_setTheory.IN_SING,
+    pred_setTheory.IN_INSERT,
+    pred_setTheory.NOT_IN_EMPTY,
     pred_setTheory.SUBSET_DEF,
     pred_setTheory.EXTENSION,
     pred_setTheory.SPECIFICATION,
     pred_setTheory.EMPTY_applied,
-    pred_setTheory.UNIV_applied
+    pred_setTheory.UNIV_applied,
+    pred_setTheory.CHOICE_SING,
+    pred_setTheory.CARD_SING,
+    pred_setTheory.SING_DEF,
+    pred_setTheory.DIFF_EQ_EMPTY,
+    pred_setTheory.UNION_COMM,
+    pred_setTheory.INSERT_UNION,
+    pred_setTheory.IMAGE_INSERT
   ]
 
   fun set_simp_prove t =
@@ -71,8 +81,16 @@ struct
           bossLib.METIS_TAC []))) ()
 
   fun has_set_term t =
-    Lib.can (HolKernel.find_term
-      (fn tm => pred_setSyntax.is_set_type (Term.type_of tm))) t
+    let
+      fun is_set_constant tm =
+        Term.is_const tm andalso
+        let val {Thy, ...} = Term.dest_thy_const tm
+        in Thy = "pred_set" end
+      fun is_set_syntax tm =
+        pred_setSyntax.is_in tm orelse is_set_constant tm
+    in
+      Lib.can (HolKernel.find_term is_set_syntax) t
+    end
 
   (* A minimal, array-oriented simpset for the RW_TAC-based provers below.
      It deliberately avoids the general arithmetic decision procedures that

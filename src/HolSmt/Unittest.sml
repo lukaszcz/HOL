@@ -8939,6 +8939,59 @@ in
     ([], ``smt_seq_update ([1]:int list) 0 [2] = [2]``) trust
 end
 
+(* The Set names are an explicit frozen registry, not a prefix catch-all.
+   Exercise every recorded name through CPC's cvc5 dictionary and retain a
+   separate loud-failure pin for future spellings. *)
+fun cpc_proof_replay_set_rules_success () =
+let
+  val (translation, _) = CVC.goal_to_SmtLib_translation
+    ([``FINITE ({}:int -> bool)``], ``({}:int -> bool) = {}``)
+  fun parse text = CPC_ProofParser.parse_stream_with_version
+    (SmtLib.parser_dicts_for_translation translation) "1.3.4"
+    (TextIO.openString text)
+  val proof = parse
+    "((declare-const s (Set Int)) \
+    \(step @p1 (= (set.card (set.singleton 7)) 1) \
+    \ :rule sets-card-singleton :args (7)) \
+    \(step @p2 (= (set.choose (set.singleton 7)) 7) \
+    \ :rule sets-choose-singleton :args (7)) \
+    \(step @p3 (= (set.inter (set.singleton 7) (set.singleton 7)) \
+    \             (set.singleton 7)) \
+    \ :rule sets-eval-op :args \
+    \ ((= (set.inter (set.singleton 7) (set.singleton 7)) \
+    \     (set.singleton 7)))) \
+    \(step @p4 (= (set.insert 7 s) (set.union (set.singleton 7) s)) \
+    \ :rule sets-insert-elim :args \
+    \ ((= (set.insert 7 s) (set.union (set.singleton 7) s)))) \
+    \(step @p6 (= (set.is_singleton (set.singleton 7)) \
+    \             (= (set.singleton 7) \
+    \                (set.singleton (set.choose (set.singleton 7))))) \
+    \ :rule sets-is-singleton-elim :args ((set.singleton 7))) \
+    \(step @p8 (= (set.member 7 (set.singleton 7)) (= 7 7)) \
+    \ :rule sets-member-singleton :args (7 7)) \
+    \(step @p9 (= (set.member 7 (set.minus (set.singleton 7) s)) \
+    \             (and (set.member 7 (set.singleton 7)) \
+    \                  (not (set.member 7 s)))) \
+    \ :rule sets-minus-member :args (7 (set.singleton 7) s)) \
+    \(step @p11 (= (set.subset (set.singleton 7) s) \
+    \              (= (set.union (set.singleton 7) s) s)) \
+    \ :rule sets-subset-elim :args ((set.singleton 7) s)) \
+    \(step @p12 (= (set.union (set.singleton 7) s) \
+    \              (set.union s (set.singleton 7))) \
+    \ :rule sets-union-comm :args ((set.singleton 7) s)) \
+    \(step @p13 (= (set.member 7 (set.union (set.singleton 7) s)) \
+    \              (or (set.member 7 (set.singleton 7)) (set.member 7 s))) \
+    \ :rule sets-union-member :args (7 (set.singleton 7) s)))"
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+in
+  check_oracle_tags "CPC Set RARE unit test" thm;
+  assert (SmtArrayProve.has_set_term (Thm.concl thm),
+    "CPC Set RARE replay did not retain a native Set proposition");
+  expect_hol_error_contains "CPC unknown Set RARE rule" "sets-not-a-rule"
+    (fn () => ignore (parse
+      "((step @p1 true :rule sets-not-a-rule :args (true)))"))
+end
+
 (* The frozen cvc5 Bag slice emits [trust], rather than a [bags] macro or
    [bags-*] RARE rule.  This pin verifies its first checked rung is the shared
    Bag prover, not the generic arithmetic recovery path. *)
@@ -13128,6 +13181,8 @@ let
       cpc_proof_replay_boolean_rewrites_success),
     ("cpc_proof_replay_seq_rules_success",
       cpc_proof_replay_seq_rules_success),
+    ("cpc_proof_replay_set_rules_success",
+      cpc_proof_replay_set_rules_success),
     ("cpc_proof_replay_bag_trust_success",
       cpc_proof_replay_bag_trust_success),
     ("cpc_proof_replay_fp_trust_success",

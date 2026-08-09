@@ -61,6 +61,8 @@ struct
     mk_rule ProofRule ("reordering", "reordering"),
     mk_rule ProofRule ("arith", "arith"),
     mk_rule ProofRule ("array", "array"),
+    (* cvc5 has used both this macro and the narrow [sets-*] rewrites. *)
+    mk_rule ProofRule ("sets", "sets"),
     mk_rule ProofRule ("bool", "bool"),
     mk_rule ProofRule ("trust", "trust"),
     mk_rule ProofRule ("str", "string"),
@@ -81,6 +83,21 @@ struct
     (* Native (Seq A) rules observed in the frozen cvc5 CPC corpus. *)
     mk_rule RareRewrite ("seq-eval-op", "seq_rewrite"),
     mk_rule RareRewrite ("str-at-elim", "seq_at_elim"),
+    (* Complete frozen cvc5 1.3.4 Set RARE inventory.  Keep this explicit:
+       an unrecorded sets-* spelling must fail registry lookup loudly. *)
+    mk_rule RareRewrite ("sets-card-singleton", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-choose-singleton", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-eval-op", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-insert-elim", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-is-empty-elim", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-is-singleton-elim", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-member-emp", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-member-singleton", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-minus-member", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-minus-self", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-subset-elim", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-union-comm", "sets_rewrite"),
+    mk_rule RareRewrite ("sets-union-member", "sets_rewrite"),
     mk_rule RareRewrite ("exists-elim", "exists_elim"),
     mk_rule RareRewrite ("absorb", "rewrite"),
     mk_rule RareRewrite ("arith-divisible-elim", "rewrite"),
@@ -189,6 +206,7 @@ struct
     mk_rule ProofRule ("ite_elim2", "ite_elim2"),
     mk_rule ProofRule ("quant-unused-vars", "quant_unused_vars"),
     mk_rule ProofRule ("quant-miniscope-and", "quant_rewrite"),
+    mk_rule ProofRule ("quant-var-elim-eq", "quant_rewrite"),
     mk_rule ProofRule ("alpha_equiv", "alpha_equiv"),
     mk_rule ProofRule ("scope", "scope"),
     mk_rule ProofRule ("process_scope", "process_scope"),
