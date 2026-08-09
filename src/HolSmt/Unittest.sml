@@ -6052,6 +6052,8 @@ let
      boolSyntax.list_mk_conj native_surface_atoms)
   val cvc_finite_bool_text = cvc
     ([], ``(x:bool) IN (COMPL (UNIV:bool set))``)
+  val cvc_finite_word_text = cvc
+    ([], ``(x:word8) IN (COMPL (UNIV:word8 set))``)
   val cvc_card_text = cvc
     ([``FINITE (s:int set)``], boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s),
@@ -6090,8 +6092,14 @@ in
   assert (contains "set.member" cvc_finite_bool_text andalso
       contains "set.complement" cvc_finite_bool_text andalso
       contains "set.universe" cvc_finite_bool_text,
-    "finite-element cvc5 sets did not use set.complement/set.universe:\n" ^
+    "finite Bool cvc5 sets did not use set.complement/set.universe:\n" ^
     cvc_finite_bool_text);
+  assert (contains "(Set (_ BitVec 8))" cvc_finite_word_text andalso
+      contains "set.member" cvc_finite_word_text andalso
+      contains "set.complement" cvc_finite_word_text andalso
+      contains "set.universe" cvc_finite_word_text,
+    "finite word cvc5 sets did not use native set.*:\n" ^
+    cvc_finite_word_text);
   assert (contains "set.card" cvc_card_text,
     "finite cvc5 CARD did not emit set.card:\n" ^ cvc_card_text);
   assert (card_message =

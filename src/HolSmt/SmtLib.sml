@@ -1075,10 +1075,12 @@ local
   fun finite_set_hypothesis tm =
     SOME (pred_setSyntax.dest_finite tm) handle Feedback.HOL_ERR _ => NONE
 
-  (* Bool is the only finite element sort currently present in HOL's stock
-     outbound type dictionary.  Additional finite sorts can be added here
-     together with their cardinality transfer facts. *)
-  fun finite_element_type ty = Type.compare (ty, Type.bool) = EQUAL
+  (* Bool and fixed-width word types have finite SMT-LIB domains.  A
+     polymorphic word remains unsupported until its width is instantiated. *)
+  fun finite_element_type ty =
+    Type.compare (ty, Type.bool) = EQUAL orelse
+    (Lib.can wordsSyntax.dest_word_type ty andalso
+     Lib.can fcpSyntax.dest_numeric_type (wordsSyntax.dest_word_type ty))
 
   fun finite_set_term finite_terms tm =
     mem_aconv tm finite_terms orelse
