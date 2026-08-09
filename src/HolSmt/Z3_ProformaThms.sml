@@ -114,6 +114,23 @@ struct
     pred_setTheory.IN_COMPL,
     pred_setTheory.SUBSET_DEF,
     pred_setTheory.EXTENSION,
+    (* Z3's array-set subset rewrite is [a SUBSET b =
+       ((\x. a x /\ ~b x) = EMPTY)].  It is the recorded map-and/map-not
+       lowering, not a guessed alternative Set encoding. *)
+    Tactical.prove
+      (``((s:'a set) SUBSET t) =
+          ((\x. x IN s /\ x NOTIN t) = (EMPTY:'a set))``,
+       Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
+         [pred_setTheory.SUBSET_DEF, pred_setTheory.EXTENSION],
+         bossLib.METIS_TAC [])),
+    (* A store pushed through Z3's Boolean map-not. *)
+    Tactical.prove
+      (``(\x. ~((i =+ v) (s:'a set)) x) =
+          (i =+ ~v) (\x. ~s x)``,
+       Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss())
+         [boolTheory.FUN_EQ_THM, combinTheory.APPLY_UPDATE_THM],
+         Tactical.THEN (Tactical.REPEAT boolLib.COND_CASES_TAC,
+           bossLib.RW_TAC (bossLib.srw_ss()) []))),
     Tactical.prove
       (``(!x:'a. x IN s <=> x IN t) ==> (s = t)``,
        bossLib.RW_TAC (bossLib.srw_ss()) [pred_setTheory.EXTENSION]),

@@ -959,6 +959,11 @@ local
   fun z3_def_axiom (state, t) =
     (state, Z3_ProformaThms.prove Z3_ProformaThms.def_axiom_thms t)
     handle Feedback.HOL_ERR _ =>
+    (* Array-encoded Set literals appear in Z3's Tseitin clauses as a
+       select of the parsed EMPTY/UNIV predicate.  Normalize those recorded
+       const-array forms before the propositional def-axiom cases below. *)
+    (state, SmtArrayProve.set_simp_prove t)
+    handle Feedback.HOL_ERR _ =>
     (* or (or ... p ...) (not p) *)
     (* or (or ... (not p) ...) p *)
     (state, Library.gen_excluded_middle t)
@@ -1685,7 +1690,14 @@ local
           end
           handle Feedback.HOL_ERR _ =>
             (state, profile "rewrite(01.5)(proforma)"
-              (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)))
+              (Z3_ProformaThms.prove Z3_ProformaThms.rewrite_thms) t)
+            handle Feedback.HOL_ERR _ =>
+              let
+                val thm = profile "rewrite(01.75)(array-set)"
+                  SmtArrayProve.array_prove t
+              in
+                (state_cache_thm state thm, thm)
+              end))
 
     handle Feedback.HOL_ERR _ =>
 

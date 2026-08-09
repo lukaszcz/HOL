@@ -61,6 +61,15 @@ struct
   fun set_simp_prove t =
     simpLib.SIMP_PROVE boolSimps.bool_ss set_rewrites t
 
+  (* The recorded subset map/const rewrite has an extensional equality of
+     predicates below a Boolean equality.  Its quantified pointwise form
+     needs one small checked METIS close after the Set rewrites. *)
+  fun set_extensional_prove t =
+    with_metis_limit (fn () =>
+      Tactical.prove (t,
+        Tactical.THEN (bossLib.RW_TAC (bossLib.srw_ss()) set_rewrites,
+          bossLib.METIS_TAC []))) ()
+
   fun has_set_term t =
     Lib.can (HolKernel.find_term
       (fn tm => pred_setSyntax.is_set_type (Term.type_of tm))) t
@@ -96,13 +105,13 @@ struct
 
   fun extensionality_prove t =
     Tactical.prove (t,
-      bossLib.RW_TAC array_ss [
+      bossLib.RW_TAC array_ss (set_rewrites @ [
         boolTheory.FUN_EQ_THM,
         combinTheory.APPLY_UPDATE_THM,
         combinTheory.UPDATE_APPLY_IMP_ID,
         combinTheory.UPDATE_EQ,
         boolTheory.EQ_SYM_EQ
-      ])
+      ]))
 
   fun choice_extensionality_prove t =
     with_metis_limit (fn () =>
@@ -153,6 +162,8 @@ struct
       Z3_ProformaThms.prove Z3_ProformaThms.set_thms t
       handle Feedback.HOL_ERR _ =>
       set_simp_prove t
+      handle Feedback.HOL_ERR _ =>
+      set_extensional_prove t
       handle Feedback.HOL_ERR _ =>
       simp_prove_update t
       handle Feedback.HOL_ERR _ =>

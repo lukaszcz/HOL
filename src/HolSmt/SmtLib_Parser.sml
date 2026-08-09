@@ -1718,6 +1718,53 @@ local
     term
   end
 
+  (* Z3 proofs use the ArraysEx constant-array spelling
+       [((as const (Array I E)) e)].  Unlike a benchmark command, proof
+     parsing does not run through the located AST typechecker, so recognize
+     its qualified head directly and make the curried constant-array function
+     which the enclosing application supplies with [e]. *)
+  and parse_ascribed_term cfg get_token (tydict, tmdict) : Term.term =
+  let
+    val name = get_token ()
+  in
+    if name = "const" then
+      let
+        val array_ty = parse_type get_token tydict
+        val (domain, range) = Type.dom_rng array_ty
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "parse_ascribed_term"
+              "Z3 const expects an Array sort"
+        val payload = Term.mk_var ("array_const_value", range)
+        val index = Term.variant [payload]
+          (Term.mk_var ("array_const_index", domain))
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        Term.mk_abs (payload, Term.mk_abs (index, payload))
+      end
+    else if name = "union" then
+      let
+        val array_ty = parse_type get_token tydict
+        val (_, range) = Type.dom_rng array_ty
+          handle Feedback.HOL_ERR _ =>
+            raise ERR "parse_ascribed_term"
+              "Z3 union expects an Array sort"
+        val _ = if range = Type.bool then () else
+          raise ERR "parse_ascribed_term"
+            "Z3 union expects an Array with Bool range"
+        val left = Term.mk_var ("array_union_left", array_ty)
+        val right = Term.mk_var ("array_union_right", array_ty)
+        val _ = Library.expect_token ")" (get_token ())
+      in
+        Term.mk_abs (left, Term.mk_abs (right,
+          pred_setSyntax.mk_union (left, right)))
+      end
+    else
+      (* Preserve proof-dialect qualified identifiers already supplied by
+         the Z3 dictionary, notably [(as seq.empty (Seq A))]. *)
+      parse_compound_term cfg (Library.undo_look_ahead [name] get_token)
+        (tydict, tmdict) "as"
+  end
+
   and parse_term_operands cfg get_token (tydict, tmdict) acc : Term.term list =
   let
     val token = get_token ()
@@ -1749,6 +1796,32 @@ local
   in
     if token = "_" then
       parse_indexed_term cfg get_token (tydict, tmdict)
+    else if token = "as" then
+      let
+        val t = parse_ascribed_term cfg get_token (tydict, tmdict)
+        fun apply_const_array payload =
+          let
+            val (variable, body) = Term.dest_abs t
+            val (index, _) = Term.dest_abs body
+            val domain = Term.type_of index
+            val range = Term.type_of variable
+          in
+            if range = Type.bool andalso Term.aconv payload boolSyntax.F then
+              pred_setSyntax.mk_empty domain
+            else if range = Type.bool andalso
+                    Term.aconv payload boolSyntax.T then
+              pred_setSyntax.mk_univ domain
+            else Term.subst [{redex = variable, residue = payload}] body
+          end
+        fun apply_one (argument, function) =
+          case Lib.total Term.dest_abs function of
+            SOME (variable, body) =>
+              Term.subst [{redex = variable, residue = argument}] body
+          | NONE => Term.mk_comb (function, argument)
+      in
+        fn [payload] => apply_const_array payload
+          | args => List.foldl apply_one t args
+      end
     else
       let
         val t = if token = "let" then
@@ -4254,25 +4327,39 @@ local
         case #solver context of SOME "cvc5" => false | _ => true
       fun cvc5_or_neutral () =
         case #solver context of SOME "Z3" => false | _ => true
-      fun as_const_set sort payload =
+      fun as_const_array_or_set sort payload =
         let
           val expected = typecheck_sort context tydict sort
           val expected_surface = surface_sort_of_ast context tydict sort
           val payload = check payload
+          val (domain, range) = Type.dom_rng expected
+            handle Feedback.HOL_ERR _ =>
+              type_error "typecheck_term" context (loc_of term_ast)
+                NONE (SOME expected) "Z3 const result must have Array or Set sort"
           val _ =
-            if pred_setSyntax.is_set_type expected then ()
+            if range = Type.bool then ()
             else type_error "typecheck_term" context (loc_of term_ast)
-              NONE (SOME expected) "Z3 const result must have Set sort"
-          val set_tm =
-            if Term.aconv (checked_term payload) boolSyntax.F then
-              pred_setSyntax.mk_empty (pred_setSyntax.dest_set_type expected)
-            else if Term.aconv (checked_term payload) boolSyntax.T then
-              pred_setSyntax.mk_univ (pred_setSyntax.dest_set_type expected)
+              (SOME Type.bool) (SOME range)
+              "Z3 Bool-array const payload must have Bool range"
+          val _ =
+            if checked_sort payload = Type.bool then ()
             else type_error "typecheck_term" context (loc_of term_ast)
               (SOME Type.bool) (SOME (checked_sort payload))
-              "Z3 Set const payload must be true or false"
+              "Z3 Array/Set const payload must be Boolean"
+          val result =
+            if is_set_surface expected_surface then
+              if Term.aconv (checked_term payload) boolSyntax.F then
+                pred_setSyntax.mk_empty domain
+              else if Term.aconv (checked_term payload) boolSyntax.T then
+                pred_setSyntax.mk_univ domain
+              else type_error "typecheck_term" context (loc_of term_ast)
+                (SOME Type.bool) (SOME (checked_sort payload))
+                "Z3 Set const payload must be true or false"
+            else
+              Term.mk_abs (Term.mk_var ("array_const_x", domain),
+                checked_term payload)
         in
-          checked_term_with_surface_sort expected_surface set_tm
+          checked_term_with_surface_sort expected_surface result
         end
       fun as_cvc5_set_constant name sort =
         let
@@ -4369,7 +4456,8 @@ local
       | TermApply
           (Located {node = TermAscribed
              (Located {node = TermIdentifier "const", ...}, sort), ...}, [payload]) =>
-          if z3_or_neutral () then as_const_set sort payload
+          if z3_or_neutral () then
+            as_const_array_or_set sort payload
           else type_error "typecheck_term" context (loc_of term_ast) NONE NONE
             "Z3 const Set syntax is unavailable in the cvc5 dialect"
       | TermApply (head, args) =>

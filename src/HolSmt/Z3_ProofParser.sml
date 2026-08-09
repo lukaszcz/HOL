@@ -769,12 +769,22 @@ local
       in
         wordsSyntax.mk_word_mod (t, zero)
       end)),
-    (* In [(_ map +) ...], Z3 treats the lifted function as an index rather
-       than as an applied term.  Give the one recorded bag operator a typed
-       zero-argument form so it can be consumed as that index. *)
+    (* In [(_ map f) ...], Z3 treats the lifted function as an index rather
+       than as an applied term.  The recorded Set slice uses Boolean [and],
+       [or], and [not]; the Bag slice uses Int addition.  Preserve precisely
+       those observed typed operators for the checked pointwise lowering. *)
     ("+", SmtLib_Theories.zero_zero (fn token =>
       if token = "+" then intSyntax.plus_tm
       else raise ERR "<z3_builtin_dict.+>" "not an Int addition")),
+    ("and", SmtLib_Theories.zero_zero (fn token =>
+      if token = "and" then boolSyntax.conjunction
+      else raise ERR "<z3_builtin_dict.and>" "not a Boolean conjunction")),
+    ("or", SmtLib_Theories.zero_zero (fn token =>
+      if token = "or" then boolSyntax.disjunction
+      else raise ERR "<z3_builtin_dict.or>" "not a Boolean disjunction")),
+    ("not", SmtLib_Theories.zero_zero (fn token =>
+      if token = "not" then boolSyntax.negation
+      else raise ERR "<z3_builtin_dict.not>" "not a Boolean negation")),
     (* Z3's ArraysEx [(_ map f) a b] denotes the pointwise lift of [f].
        It is not part of SMT-LIB's ArraysEx dictionary, but Z3 emits it for
        the Int-array representation of bags.  Reconstructing the lambda is
@@ -797,7 +807,24 @@ local
         val x = Term.variant
           (List.concat (List.map Term.free_vars (f :: arrays)))
           (Term.mk_var ("array_map_x", domain))
-        val selections = List.map (fn array => Term.mk_comb (array, x)) arrays
+        (* A nested map is often immediately selected by its parent map.
+           Contract that beta redex while parsing, so the recorded Set
+           lowering [(_ map and) a ((_ map not) b)] reaches replay as the
+           pointwise [a x /\ ~b x] proposition rather than an opaque lambda
+           application. *)
+        fun has_update tm = Lib.can (HolKernel.find_term
+          combinSyntax.is_update_comb) tm
+        fun select array =
+          case Lib.total Term.dest_abs array of
+            SOME (variable, body) =>
+              (* Keep a map over a store as an explicit application.  Z3's
+                 following monotonicity step supplies exactly the equality
+                 between these functions; contracting just one side would
+                 obscure that checked congruence. *)
+              if has_update body then Term.mk_comb (array, x)
+              else Term.subst [{redex = variable, residue = x}] body
+          | NONE => Term.mk_comb (array, x)
+        val selections = List.map select arrays
       in
         Term.mk_abs (x, Term.list_mk_comb (f, selections))
       end),

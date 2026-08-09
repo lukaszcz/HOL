@@ -8166,6 +8166,16 @@ in
   CPC_ProofParser.parse_stream_with_version dicts "1.3.4" instream
 end
 
+fun parse_cvc_bag_proof_string contents =
+let
+  val (translation, _) = CVC.goal_to_SmtLib_translation
+    ([``FINITE_BAG (b:int -> num)``], ``BAG_IN (7:int) (b:int -> num)``)
+  val instream = TextIO.openString contents
+in
+  CPC_ProofParser.parse_stream_with_version
+    (SmtLib.parser_dicts_for_translation translation) "1.3.4" instream
+end
+
 fun cpc_proof_parser_define_and_optional_conclusion_success () =
 let
   val proof = parse_cpc_proof_string
@@ -8929,6 +8939,29 @@ in
     ([], ``smt_seq_update ([1]:int list) 0 [2] = [2]``) trust
 end
 
+(* The frozen cvc5 Bag slice emits [trust], rather than a [bags] macro or
+   [bags-*] RARE rule.  This pin verifies its first checked rung is the shared
+   Bag prover, not the generic arithmetic recovery path. *)
+fun cpc_proof_replay_bag_trust_success () =
+let
+  val proof = parse_cvc_bag_proof_string
+    "((step @p1 :rule trust :args \
+    \((= (bag.union_disjoint (bag 7 2) (bag 7 3)) (bag 7 5)))))"
+  val () = Profile.reset_all ()
+  val thm = CPC_ProofReplay.replay_root_for_test proof
+  val bag_rung_calls =
+    case List.find (fn (name, _) => name = "CPC(rung:trust/bag)")
+        (Profile.results ()) of
+      SOME (_, info) => #n info
+    | NONE => 0
+in
+  check_oracle_tags "CPC Bag trust unit test" thm;
+  assert (SmtBagProve.has_bag_encoding (Thm.concl thm),
+    "CPC Bag trust did not retain a native Bag proposition");
+  assert (bag_rung_calls > 0,
+    "CPC Bag trust did not route through SmtBagProve")
+end
+
 fun cpc_proof_replay_fp_trust_success () =
 let
   val proof = parse_cpc_proof_string
@@ -9140,6 +9173,20 @@ fun cpc_proof_parser_unknown_rule_diagnostic () =
         "CPC unknown-rule diagnostic omitted the rule name: " ^ msg);
       assert (String.isSubstring "1.3.4" msg,
         "CPC unknown-rule diagnostic omitted the cvc5 version: " ^ msg)
+    end
+
+fun cpc_proof_parser_unknown_bags_rule_diagnostic () =
+  (ignore (parse_cpc_proof_string
+    "((step @p1 false :rule bags-not-a-rule))");
+   die "FAIL: unknown CPC Bag proof rule parsed successfully")
+  handle Feedback.HOL_ERR holerr =>
+    let val msg = Feedback.message_of holerr in
+      assert (String.isSubstring "registry lookup failed" msg,
+        "CPC unknown Bag-rule diagnostic omitted registry failure: " ^ msg);
+      assert (String.isSubstring "bags-not-a-rule" msg,
+        "CPC unknown Bag-rule diagnostic omitted the rule name: " ^ msg);
+      assert (String.isSubstring "1.3.4" msg,
+        "CPC unknown Bag-rule diagnostic omitted the cvc5 version: " ^ msg)
     end
 
 fun cpc_live_checked_replay_success () =
@@ -10506,9 +10553,73 @@ fun z3_set_captured_shapes_replay_success () =
       ``(x:'a) IN (s INTER t) <=> x IN s /\ x IN t``),
     ("difference map/select", ``(x:'a) IN (s DIFF t) <=> x IN s /\ x NOTIN t``),
     ("complement map/select", ``(x:'a) IN COMPL s <=> x NOTIN s``),
+    ("subset map/const-array",
+      ``((s:'a set) SUBSET t) =
+        ((\x. x IN s /\ x NOTIN t) = (EMPTY:'a set))``),
     ("empty const-array", ``F = ((x:'a) IN (EMPTY:'a set))``),
     ("universe const-array", ``((x:'a) IN (UNIV:'a set)) = T``)
   ]
+
+(* The frozen Set corpus has one focused subset proof and ten generated Set
+   cases.  Unlike their synthetic post-parser pins above, this replays every
+   raw proof at every Z3 anchor with its original array-encoded declarations.
+   It is deliberately optional because the corpus belongs to the separately
+   versioned validation checkout. *)
+fun z3_set_raw_captures_replay_success () =
+  case OS.Process.getEnv "HOLSMT_VALIDATION_DIR" of
+    NONE => ()
+  | SOME root =>
+      let
+        val versions = ["4.11.2", "4.12.4", "4.13.0", "4.14.1", "4.15.3"]
+        val (translation, _) =
+          Z3.goal_to_SmtLib_with_get_proof_translation_for_version
+            (SOME "4.15.3")
+            ([], ``((s:int set) SUBSET t)``)
+        val dicts = SmtLib.parser_dicts_for_translation translation
+        val stems = [
+          "z3_set_subset-f888d3e04b02",
+          "theory_z3_extensions_set_unsat_proof-d7ee6f77d9eb",
+          "theory_z3_extensions_z3_set_union_unsat_proof-196a49f1fe8e",
+          "theory_z3_extensions_z3_set_intersection_unsat_proof-810cc2c6105b",
+          "theory_z3_extensions_z3_set_minus_unsat_proof-2dbd2bf06125",
+          "theory_z3_extensions_z3_set_complement_unsat_proof-fb444f2acbca",
+          "theory_z3_extensions_z3_set_empty_unsat_proof-bdf48d32d65b",
+          "theory_z3_extensions_z3_set_universe_unsat_proof-28801d7fe748",
+          "theory_z3_extensions_z3_set_select_unsat_proof-5c18d0b64aba",
+          "theory_z3_extensions_z3_set_store_unsat_proof-d1d3c27af3d2",
+          "theory_z3_extensions_z3_set_subset_unsat_proof-e59beeb1c9a9"
+        ]
+        fun read path =
+          let val input = TextIO.openIn path
+          in TextIO.inputAll input before TextIO.closeIn input end
+        fun declarations stem =
+          if String.isPrefix "z3_set_subset-" stem then
+            "((set-logic ALL)\n\
+            \(declare-fun a () (Array Int Bool))\n\
+            \(declare-fun b () (Array Int Bool))\n\
+            \(declare-fun x () Int)"
+          else
+            "((set-logic ALL)\n\
+            \(declare-fun x () (Array Int Bool))\n\
+            \(declare-fun y () (Array Int Bool))\n\
+            \(declare-fun zs () (Array Int Bool))\n\
+            \(declare-fun zt () (Array Int Bool))"
+        fun check version stem =
+          let
+            val path = root ^ "/tools/proof-corpus/seq_set_bag/z3-" ^
+              version ^ "/proofs/" ^ stem ^ ".proof"
+            val thm = Z3_ProofReplay.replay_root_for_test
+              (parse_z3_proof_string_with_dicts dicts version
+                (declarations stem ^ String.extract (read path, 1, NONE)))
+          in
+            check_oracle_tags ("raw Set " ^ stem ^ " Z3 " ^ version) thm
+          end
+          handle Feedback.HOL_ERR holerr =>
+            die ("FAIL: raw Set " ^ stem ^ " Z3 " ^ version ^ ": " ^
+              Feedback.message_of holerr)
+      in
+        List.app (fn version => List.app (check version) stems) versions
+      end
 
 (* Pins for Z3's bag boundary: [_ map +] parses as a pointwise Int-count
    lambda, while native bags reduce through their count characterizations. *)
@@ -13017,6 +13128,8 @@ let
       cpc_proof_replay_boolean_rewrites_success),
     ("cpc_proof_replay_seq_rules_success",
       cpc_proof_replay_seq_rules_success),
+    ("cpc_proof_replay_bag_trust_success",
+      cpc_proof_replay_bag_trust_success),
     ("cpc_proof_replay_fp_trust_success",
       cpc_proof_replay_fp_trust_success),
     ("cpc_proof_replay_fp_context_obligation_diagnostic",
@@ -13043,6 +13156,8 @@ let
       cpc_cache_omitted_conclusion_bypasses_success),
     ("cpc_proof_parser_unknown_rule_diagnostic",
       cpc_proof_parser_unknown_rule_diagnostic),
+    ("cpc_proof_parser_unknown_bags_rule_diagnostic",
+      cpc_proof_parser_unknown_bags_rule_diagnostic),
     ("cpc_live_checked_replay_success",
       cpc_live_checked_replay_success),
     ("cpc_live_checked_replay_equality_success",
@@ -13145,6 +13260,8 @@ let
       array_prove_set_ladder_rungs_success),
     ("z3_set_captured_shapes_replay_success",
       z3_set_captured_shapes_replay_success),
+    ("z3_set_raw_captures_replay_success",
+      z3_set_raw_captures_replay_success),
     ("bag_prove_ladder_rungs_success", bag_prove_ladder_rungs_success),
     ("z3_bag_captured_shapes_replay_success",
       z3_bag_captured_shapes_replay_success),
