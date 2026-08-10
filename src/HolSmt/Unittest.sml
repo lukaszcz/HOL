@@ -10763,8 +10763,8 @@ in
   List.app (fn version => List.app (check version) captures) versions;
   assert (profile_call_count "rewrite(01)(bag)" > 0,
     "Z3 bag map rewrite did not route to SmtBagProve");
-  assert (profile_call_count "th_lemma[bag](3)(bag_prove)" > 0,
-    "Z3 bag array/arith th-lemmas did not route to SmtBagProve")
+  assert (profile_call_count "th_lemma[array](3)(array_prove)" > 0,
+    "generic ArrayEx map th-lemmas did not route to SmtArrayProve")
 end
 
 (* Kept behind an environment variable: the frozen corpus is owned by the
