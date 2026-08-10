@@ -379,11 +379,18 @@ local
 
   fun with_cpc_literals (tydict, tmdict) =
     let
+      (* cvc5 writes [Bag Bool] in qualified bag literals.  A proof sort is
+         parsed through the term dictionary, so retain Bool only as a marker. *)
+      fun bool_sort_marker token indices args =
+        if token = "Bool" andalso List.null indices andalso List.null args then
+          boolSyntax.T
+        else raise ERR "bool_sort_marker" "expected the Bool sort marker"
       (* The source translation dictionary is deliberately as narrow as its
          declared logic.  CPC arithmetic lemmas may nevertheless contain
          rationals and their Real coercions, so add the mixed arithmetic
          overloads only while reading the proof. *)
-      val tmdict = Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict
+      val tmdict = Library.extend_dict (("Bool", bool_sort_marker),
+        Library.union_dict tmdict SmtLib_Theories.Reals_Ints.tmdict)
       fun cpc_quantifiers_skolemize_parsefn token indices args =
         case args of
           [quantified, index] =>
