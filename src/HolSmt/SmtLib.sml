@@ -114,12 +114,10 @@ fun check_goal_operator_availability {solver, version} (assumptions, conclusion)
        | SOME target_version =>
            let
              val resolved =
-               if solver = "Z3" then
-                 Library.resolve_solver_version {
-                   solver = solver, supported = versions,
-                   version = target_version
-                 }
-               else target_version
+               Library.resolve_solver_version {
+                 solver = solver, supported = versions,
+                 version = target_version
+               }
            in
              List.exists (fn registered => registered = resolved) versions
            end)
