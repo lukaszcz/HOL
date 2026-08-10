@@ -4725,6 +4725,11 @@ in
     (boolSyntax.mk_eq (pred_setSyntax.mk_insert (x, empty), s));
   assert_builder "cvc5 set.union" cvc5_options "(= (set.union s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_union (s, t), s));
+  assert_builder "cvc5 set.union result surface" cvc5_options
+    "(= (ite true (set.union s t) s) s)"
+    (boolSyntax.mk_eq
+      (boolSyntax.mk_cond (boolSyntax.T, pred_setSyntax.mk_union (s, t), s),
+       s));
   assert_builder "cvc5 set.inter" cvc5_options "(= (set.inter s t) s)"
     (boolSyntax.mk_eq (pred_setSyntax.mk_inter (s, t), s));
   assert_builder "cvc5 set.minus" cvc5_options "(= (set.minus s t) s)"
@@ -5048,6 +5053,10 @@ in
   assert_builder "cvc5 bag.union_disjoint"
     "(= (bag.union_disjoint b c) b)"
     (boolSyntax.mk_eq (bagSyntax.mk_union (b, c), b));
+  assert_builder "cvc5 bag.union result surface"
+    "(= (ite true (bag.union_disjoint b c) b) b)"
+    (boolSyntax.mk_eq
+      (boolSyntax.mk_cond (boolSyntax.T, bagSyntax.mk_union (b, c), b), b));
   assert_builder "cvc5 bag.union_max" "(= (bag.union_max b c) b)"
     (boolSyntax.mk_eq (bag_binary "BAG_MERGE" (b, c), b));
   assert_builder "cvc5 bag.inter_min" "(= (bag.inter_min b c) b)"
