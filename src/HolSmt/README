@@ -19,6 +19,8 @@ SmtLib_Logics.sml       SMT-LIB 2 logics.
 SmtLib_Parser.sml       Parsing of SMT-LIB 2 benchmarks.
 SmtLib_Theories.sml     SMT-LIB 2 theories.
 SmtLib.sml              Translation of HOL terms into SMT-LIB 2 format.
+SmtBagProve.{sig,sml}   Checked proofs for SMT-LIB Bag operations.
+SmtSeqProve.{sig,sml}   Checked proofs for SMT-LIB sequence operations.
 SmtResource.sml         Fixed checked-replay resource budget and diagnostics.
 SolverSpec.sml          Definition of SMT solvers.
 TRUSTED_CODE_BASE.md    Higher-order trusted-translation note.
