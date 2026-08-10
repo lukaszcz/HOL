@@ -13,7 +13,6 @@ sig
   type step = node * goalpos -> (step_record * node) seq.seq
 
   val kind_of : step_record -> step_kind
-  val target_of : step_record -> goalpos
   val consumed_of : step_record -> int option
   val created_of : step_record -> created
   val eigenvariables_of : step_record -> string list
@@ -37,6 +36,10 @@ sig
   val dup_step : clasetLib.claset -> step
   val step : clasetLib.claset -> step
   val slow_step : clasetLib.claset -> step
+
+  (* Every transition in a complete safe fixed point, in replay order. *)
+  val safe_saturation :
+    clasetLib.claset -> node -> (goalpos * step_record * node) list
 
   (* Wrapper-free application of one supplied rule through the ordinary
      child policy.  Each sequence result is one application alternative. *)

@@ -3,6 +3,9 @@ struct
 
 open HolKernel
 
+val Fld = FunctionalRecordUpdate.U
+val $$ = FunctionalRecordUpdate.$$
+
 type term = Term.term
 type cgoal = clasetGoal.cgoal
 type store = clasetMeta.store
@@ -37,6 +40,27 @@ type goal =
    safe_done : bool, unsafe_cursor : rule list,
    postponed : rapp_data list, forwarded : term list,
    state : node_state}
+
+fun upd_goal z =
+  let
+    fun from id cgoal store level prio deps copy_of parent cluster norm
+             safe_done unsafe_cursor postponed forwarded state =
+      {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
+       deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
+       norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
+       postponed = postponed, forwarded = forwarded, state = state}
+    fun from' state forwarded postponed unsafe_cursor safe_done norm cluster
+              parent copy_of deps prio level store cgoal id =
+      from id cgoal store level prio deps copy_of parent cluster norm
+        safe_done unsafe_cursor postponed forwarded state
+    fun to f
+          {id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
+           norm, safe_done, unsafe_cursor, postponed, forwarded, state} =
+      f id cgoal store level prio deps copy_of parent cluster norm safe_done
+        unsafe_cursor postponed forwarded state
+  in
+    FunctionalRecordUpdate.makeUpdate15 (from, from', to)
+  end z
 
 type rapp =
   {id : rid, parent : gid, rule : string, prob : int,
@@ -338,14 +362,8 @@ fun direct_children tree rid =
     (fn id => not (Option.isSome (#copy_of (goal tree id))))
     (rapp_goals tree rid)
 
-fun goal_with_state state
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, safe_done, unsafe_cursor, postponed, forwarded, ...} :
-       goal) : goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
+fun goal_with_state state (goal : goal) : goal =
+  upd_goal goal (Fld #state state) $$
 
 fun rapp_with_state state
       ({id, parent, rule, prob, records, store, created, assigned,
@@ -414,20 +432,26 @@ fun add_support_path [] required = SOME required
          | SOME (_, rid') =>
              if rid = rid' then add_support_path rest required else NONE)
 
-fun compatible_copy_supports tree goals =
+fun select_copy_supports tree goals initial_required =
   let
-    fun choose [] _ = false
+    fun choose [] _ = NONE
       | choose ((_, path) :: rest) (goals, required) =
           (case add_support_path path required of
-               SOME required' => support goals required'
+               SOME required' =>
+                 (case support goals required' of
+                      SOME result => SOME result
+                    | NONE => choose rest (goals, required))
              | NONE => choose rest (goals, required))
-    and support [] _ = true
+    and support [] required = SOME required
       | support (id :: rest) required =
           if independently_proved tree id then support rest required
           else choose (copy_supports tree id) (rest, required)
   in
-    support goals []
+    support goals initial_required
   end
+
+fun compatible_copy_supports tree goals =
+  Option.isSome (select_copy_supports tree goals [])
 
 (* The goals of a cluster are conjunctive, and copy-derived proofs must also
    admit one compatible selection of all applications on their support
@@ -663,15 +687,8 @@ fun components tree ids =
     partition ids []
   end
 
-fun goal_with_cluster cluster_id
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, norm,
-        safe_done, unsafe_cursor, postponed, forwarded, state, ...} :
-       goal) : goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent,
-   cluster = cluster_id, norm = norm, safe_done = safe_done,
-   unsafe_cursor = unsafe_cursor, postponed = postponed,
-   forwarded = forwarded, state = state}
+fun goal_with_cluster cluster_id (goal : goal) : goal =
+  upd_goal goal (Fld #cluster cluster_id) $$
 
 fun phase_probability aesopRule.RSafe = 100
   | phase_probability (aesopRule.RUnsafe percent) =
@@ -942,14 +959,8 @@ fun map_goal id update
        next_cid = next_cid, next_insertion = next_insertion}
   end
 
-fun replace_norm norm deps
-      ({id, cgoal, store, level, prio, copy_of, parent, cluster,
-        safe_done, unsafe_cursor, postponed, forwarded, state, ...} :
-       goal) : goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
+fun replace_norm norm deps (goal : goal) : goal =
+  upd_goal goal (Fld #norm norm) (Fld #deps deps) $$
 
 fun set_normalised id {records, cgoal, store} tree =
   refresh
@@ -969,12 +980,11 @@ fun set_norm_proved id {records, store} tree =
       tree)
 
 fun replace_search_state {safe_done, unsafe_cursor, postponed}
-      ({id, cgoal, store, level, prio, deps, copy_of, parent, cluster,
-        norm, forwarded, state, ...} : goal) : goal =
-  {id = id, cgoal = cgoal, store = store, level = level, prio = prio,
-   deps = deps, copy_of = copy_of, parent = parent, cluster = cluster,
-   norm = norm, safe_done = safe_done, unsafe_cursor = unsafe_cursor,
-   postponed = postponed, forwarded = forwarded, state = state}
+      (goal : goal) : goal =
+  upd_goal goal
+    (Fld #safe_done safe_done)
+    (Fld #unsafe_cursor unsafe_cursor)
+    (Fld #postponed postponed) $$
 
 (* The whole safe-phase transition costs one refresh.  Field updates never
    change a derived state by themselves, and the state equations have a

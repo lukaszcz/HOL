@@ -19,406 +19,136 @@ type decl =
 type canonical =
   {thm : thm, patvars : term HOLset.set, prems : term list, concl : term}
 
+datatype spine_exemption = ExemptNone | ExemptFirst | ExemptLast
+
+fun exemption_of (Intro | Norm) = ExemptNone
+  | exemption_of (Elim | Dest) = ExemptFirst
+  | exemption_of Forward = ExemptLast
+
+fun next_exemption ExemptFirst = ExemptNone
+  | next_exemption exemption = exemption
+
+fun premise_exempt ExemptFirst _ = true
+  | premise_exempt ExemptLast rest = not (is_imp_only rest)
+  | premise_exempt ExemptNone _ = false
+
 (* Keep explicit negations opaque: dest_imp also treats ~P as P ==> F. *)
 fun undisch th =
   MP th (ASSUME (fst (dest_imp_only (concl th))))
 
-fun curry_conj_premises th =
-  case total dest_imp_only (concl th) of
-      NONE => th
-    | SOME (prem, _) =>
-        if is_conj prem then
-          let
-            val (left, right) = dest_conj prem
-            val tail = snd (dest_imp_only (concl th))
-            val curry =
-              SYM (Drule.SPECL [left, right, tail] boolTheory.AND_IMP_INTRO)
-          in
-            curry_conj_premises (EQ_MP curry th)
-          end
-        else DISCH prem (curry_conj_premises (undisch th))
+(* Intro and Norm curry every premise, Elim and Dest preserve the first
+   (major) premise, and Forward preserves the last.  Keeping that choice as
+   data avoids a new copy of the traversal for every rule kind. *)
+fun curry_spine checkpoint exemption th =
+  (checkpoint ();
+   case total dest_imp_only (concl th) of
+       NONE => th
+     | SOME (prem, rest) =>
+         if premise_exempt exemption rest then
+           (case exemption of
+                ExemptLast => th
+              | _ =>
+                  DISCH prem
+                    (curry_spine checkpoint (next_exemption exemption)
+                       (undisch th)))
+         else if is_conj prem then
+           let
+             val (left, right) = dest_conj prem
+             val curry =
+               SYM (Drule.SPECL [left, right, rest]
+                      boolTheory.AND_IMP_INTRO)
+           in
+             curry_spine checkpoint exemption (EQ_MP curry th)
+           end
+         else
+           DISCH prem
+             (curry_spine checkpoint (next_exemption exemption)
+                (undisch th)))
 
-fun has_canonical_premises tm =
-  case total dest_imp_only tm of
-      NONE => true
-    | SOME (prem, rest) =>
-        not (is_conj prem) andalso has_canonical_premises rest
+fun has_canonical_premises checkpoint exemption tm =
+  (checkpoint ();
+   case total dest_imp_only tm of
+       NONE => true
+     | SOME (prem, rest) =>
+         (premise_exempt exemption rest orelse not (is_conj prem)) andalso
+         has_canonical_premises checkpoint (next_exemption exemption) rest)
 
-(* [curry_conj_premises] only rewrites a theorem whose implication spine has
-   a top-level conjunction premise, so a theorem without one is already
-   canonical.  ext_info re-derives from an already canonical theorem many
-   times; short-circuiting keeps those calls from redoing the kernel work. *)
-fun is_canonical th =
-  has_canonical_premises (snd (strip_forall (concl th)))
-
-(* The major premise of an elimination rule is deliberately left intact.
-   Only conjunctions in its remaining implication spine need kernel work. *)
-fun is_canonical_elim th =
-  case total dest_imp_only (snd (strip_forall (concl th))) of
-      NONE => true
-    | SOME (_, rest) => has_canonical_premises rest
+fun is_canonical checkpoint exemption th =
+  let
+    val _ = checkpoint ()
+    val (_, body) = strip_forall (concl th)
+  in
+    has_canonical_premises checkpoint exemption body
+  end
 
 (* A quantified variable may also occur free in a theorem hypothesis (the
    quantifier then shadows that free variable in the conclusion).  Such a
    theorem is valid, but specializing and later generalizing with the
    stripped binder itself would make GEN reject the free hypothesis. *)
-fun fresh_forall_vars th vars =
+fun fresh_forall_vars_with checkpoint th vars =
   let
-    fun freshen avoids [] = []
-      | freshen avoids (v :: vs) =
-          let val v' = variant avoids v
-          in v' :: freshen (v' :: avoids) vs end
+    val _ = checkpoint ()
+    val avoids = free_varsl (hyp th)
+    fun freshen _ [] = []
+      | freshen avoid (v :: vs) =
+          let
+            val _ = checkpoint ()
+            val v' = variant avoid v
+          in
+            v' :: freshen (v' :: avoid) vs
+          end
   in
-    freshen (free_varsl (hyp th)) vars
+    freshen avoids vars
   end
 
-fun canonical_rule th =
-  if is_canonical th then th
+fun canonical_rule_with checkpoint exemption th =
+  if is_canonical checkpoint exemption th then th
   else
     let
+      val _ = checkpoint ()
       val (vars, _) = strip_forall (concl th)
-      val vars' = fresh_forall_vars th vars
+      val vars' = fresh_forall_vars_with checkpoint th vars
+      val _ = checkpoint ()
       val body = Drule.SPECL vars' th
+      val body' = curry_spine checkpoint exemption body
+      val _ = checkpoint ()
     in
-      GENL vars' (curry_conj_premises body)
+      GENL vars' body'
     end
 
-(* Elimination rules keep their first premise as the major premise.  The
-   generic canonicalizer still curries conjunctions in introduction-rule
-   premises and in the side premises below the major premise. *)
-fun canonical_elim_rule th =
-  if is_canonical_elim th then th
-  else
-    let
-      val (vars, _) = strip_forall (concl th)
-      val vars' = fresh_forall_vars th vars
-      val body = Drule.SPECL vars' th
-    in
-      case total dest_imp_only (concl body) of
-          NONE => canonical_rule th
-        | SOME (major, _) =>
-            let
-              val tail = MP body (ASSUME major)
-              val tail' = curry_conj_premises tail
-            in
-              GENL vars' (DISCH major tail')
-            end
-    end
+fun canonical_rule_of_with checkpoint kind =
+  canonical_rule_with checkpoint (exemption_of kind)
 
-(* A forward rule keeps its LAST premise intact instead: that is the one
-   [rule_index_of] indexes it by.  Every earlier premise is curried, so a
-   conjunctive side premise still matches assumptions that the safe phase
-   has already split. *)
-fun has_canonical_init_premises tm =
-  case total dest_imp_only tm of
-      NONE => true
-    | SOME (prem, rest) =>
-        not (is_imp_only rest) orelse
-        (not (is_conj prem) andalso has_canonical_init_premises rest)
-
-fun is_canonical_forward th =
-  has_canonical_init_premises (snd (strip_forall (concl th)))
-
-fun curry_init_conj_premises th =
-  case total dest_imp_only (concl th) of
-      NONE => th
-    | SOME (prem, rest) =>
-        if not (is_imp_only rest) then th
-        else if is_conj prem then
-          let
-            val (left, right) = dest_conj prem
-            val curry =
-              SYM (Drule.SPECL [left, right, rest] boolTheory.AND_IMP_INTRO)
-          in
-            curry_init_conj_premises (EQ_MP curry th)
-          end
-        else DISCH prem (curry_init_conj_premises (undisch th))
-
-fun canonical_forward_rule th =
-  if is_canonical_forward th then th
-  else
-    let
-      val (vars, _) = strip_forall (concl th)
-      val vars' = fresh_forall_vars th vars
-      val body = Drule.SPECL vars' th
-    in
-      GENL vars' (curry_init_conj_premises body)
-    end
-
-fun canonical_rule_of (Intro | Norm) = canonical_rule
-  | canonical_rule_of (Elim | Dest) = canonical_elim_rule
-  | canonical_rule_of Forward = canonical_forward_rule
-
-fun form_of th' =
+fun form_of checkpoint th' =
   let
+    val _ = checkpoint ()
     val (vars, body) = strip_forall (concl th')
+    val _ = checkpoint ()
     val (prems, cncl) = strip_imp_only body
+    val _ = checkpoint ()
   in
     {thm = th', patvars = HOLset.fromList Term.compare vars,
      prems = prems, concl = cncl}
   end
 
-fun canonical_form th = form_of (canonical_rule th)
+fun canonical_form_of_measured checkpoint kind th =
+  form_of checkpoint (canonical_rule_of_with checkpoint kind th)
 
-(* One checkpoint-parameterized canonicalizer serves both paths. *)
-fun canonical_form_of_with checkpoint kind th =
-  let
-    fun member _ [] = false
-      | member variable (item :: items) =
-          (checkpoint ();
-           Term.aconv variable item orelse member variable items)
+fun no_checkpoint () = ()
 
-    (* Mirrors Term.free_vars/free_varsl, including their accumulator order,
-       while exposing the recursive term and list walks.  Theorems contain
-       ordinary kernel terms, so no delayed Clos node can occur here. *)
-    fun free_vars tm =
-      let
-        fun collect [] accumulated = accumulated
-          | collect ((item, bound) :: pending) accumulated =
-              (checkpoint ();
-               if is_var item then
-                 collect pending
-                   (if member item bound orelse member item accumulated then
-                      accumulated
-                    else item :: accumulated)
-               else if is_comb item then
-                 let val (rator, rand) = dest_comb item
-                 in
-                   collect
-                     ((rator, bound) :: (rand, bound) :: pending)
-                     accumulated
-                 end
-               else if is_abs item then
-                 let val (binder, body) = dest_abs item
-                 in
-                   collect ((body, binder :: bound) :: pending)
-                     accumulated
-                 end
-               else collect pending accumulated)
-      in
-        collect [(tm, [])] []
-      end
+fun fresh_forall_vars th vars =
+  fresh_forall_vars_with no_checkpoint th vars
 
-    fun union [] right = right
-      | union (item :: items) right =
-          (checkpoint ();
-           union items
-             (if member item right then right else item :: right))
+val canonical_rule = canonical_rule_of_with no_checkpoint Intro
 
-    fun free_varsl [] = []
-      | free_varsl (tm :: terms) =
-          let
-            val _ = checkpoint ()
-            val right = free_varsl terms
-          in
-            union (free_vars tm) right
-          end
+fun canonical_rule_of kind = canonical_rule_of_with no_checkpoint kind
 
-    fun specl [] theorem = theorem
-      | specl (variable :: variables) theorem =
-          (checkpoint ();
-           specl variables (SPEC variable theorem))
-
-    fun genl [] theorem = theorem
-      | genl (variable :: variables) theorem =
-          let
-            val body = genl variables theorem
-            val _ = checkpoint ()
-          in
-            GEN variable body
-          end
-
-    fun strip_foralls tm =
-      (checkpoint ();
-       case total dest_forall tm of
-           NONE => ([], tm)
-         | SOME (v, body) =>
-             let val (vs, core) = strip_foralls body
-             in (v :: vs, core) end)
-
-    fun strip_imps tm =
-      (checkpoint ();
-       case total dest_imp_only tm of
-           NONE => ([], tm)
-         | SOME (prem, rest) =>
-             let val (prems, cncl) = strip_imps rest
-             in (prem :: prems, cncl) end)
-
-    fun canonical_prems tm =
-      (checkpoint ();
-       case total dest_imp_only tm of
-           NONE => true
-         | SOME (prem, rest) =>
-             not (is_conj prem) andalso canonical_prems rest)
-
-    (* A forward rule's major premise is its last one, so a premise is
-       exempt from currying exactly when nothing follows it. *)
-    fun more_premises rest = (checkpoint (); is_imp_only rest)
-
-    fun canonical_init_prems tm =
-      (checkpoint ();
-       case total dest_imp_only tm of
-           NONE => true
-         | SOME (prem, rest) =>
-             not (more_premises rest) orelse
-             (not (is_conj prem) andalso canonical_init_prems rest))
-
-    fun already_canonical (Intro | Norm) theorem =
-          let val (_, body) = strip_foralls (concl theorem)
-          in canonical_prems body end
-      | already_canonical (Elim | Dest) theorem =
-          let val (_, body) = strip_foralls (concl theorem)
-          in
-            checkpoint ();
-            case total dest_imp_only body of
-                NONE => true
-              | SOME (_, rest) => canonical_prems rest
-          end
-      | already_canonical Forward theorem =
-          let val (_, body) = strip_foralls (concl theorem)
-          in canonical_init_prems body end
-
-    fun fresh_vars theorem vars =
-      let
-        val _ = checkpoint ()
-        val avoids = free_varsl (hyp theorem)
-        fun freshen _ [] = []
-          | freshen avoid (v :: vs) =
-              let
-                val _ = checkpoint ()
-                val v' = variant avoid v
-              in
-                v' :: freshen (v' :: avoid) vs
-              end
-      in
-        freshen avoids vars
-      end
-
-    fun curry theorem =
-      (checkpoint ();
-       case total dest_imp_only (concl theorem) of
-           NONE => theorem
-         | SOME (prem, _) =>
-             if is_conj prem then
-               let
-                 val _ = checkpoint ()
-                 val (left, right) = dest_conj prem
-                 val _ = checkpoint ()
-                 val tail = snd (dest_imp_only (concl theorem))
-                 val _ = checkpoint ()
-                 val curry_thm =
-                   SYM
-                     (Drule.SPECL [left, right, tail]
-                        boolTheory.AND_IMP_INTRO)
-                 val _ = checkpoint ()
-               in
-                 curry (EQ_MP curry_thm theorem)
-               end
-             else
-               let
-                 val _ = checkpoint ()
-                 val tail = MP theorem (ASSUME prem)
-                 val tail' = curry tail
-                 val _ = checkpoint ()
-               in
-                 DISCH prem tail'
-               end)
-
-    fun curry_init theorem =
-      (checkpoint ();
-       case total dest_imp_only (concl theorem) of
-           NONE => theorem
-         | SOME (prem, rest) =>
-             if not (more_premises rest) then theorem
-             else if is_conj prem then
-               let
-                 val _ = checkpoint ()
-                 val (left, right) = dest_conj prem
-                 val _ = checkpoint ()
-                 val curry_thm =
-                   SYM
-                     (Drule.SPECL [left, right, rest]
-                        boolTheory.AND_IMP_INTRO)
-                 val _ = checkpoint ()
-               in
-                 curry_init (EQ_MP curry_thm theorem)
-               end
-             else
-               let
-                 val _ = checkpoint ()
-                 val tail = MP theorem (ASSUME prem)
-                 val tail' = curry_init tail
-                 val _ = checkpoint ()
-               in
-                 DISCH prem tail'
-               end)
-
-    fun canonicalize rulekind theorem =
-      if already_canonical rulekind theorem then theorem
-      else
-        let
-          val (vars, _) = strip_foralls (concl theorem)
-          val vars' = fresh_vars theorem vars
-          val _ = checkpoint ()
-          val body = specl vars' theorem
-        in
-          case rulekind of
-              (Intro | Norm) =>
-                let
-                  val body' = curry body
-                  val _ = checkpoint ()
-                in
-                  genl vars' body'
-                end
-            | Elim => canonicalize_elim theorem vars' body
-            | Dest => canonicalize_elim theorem vars' body
-            | Forward =>
-                let
-                  val body' = curry_init body
-                  val _ = checkpoint ()
-                in
-                  genl vars' body'
-                end
-        end
-
-    and canonicalize_elim theorem vars body =
-      (checkpoint ();
-       case total dest_imp_only (concl body) of
-           NONE => canonicalize Intro theorem
-         | SOME (major, _) =>
-             let
-               val _ = checkpoint ()
-               val tail = MP body (ASSUME major)
-               val tail' = curry tail
-               val _ = checkpoint ()
-               val discharged = DISCH major tail'
-               val _ = checkpoint ()
-             in
-               genl vars discharged
-             end)
-
-    val theorem = canonicalize kind th
-    val (vars, body) = strip_foralls (concl theorem)
-    val (prems, cncl) = strip_imps body
-    fun add_vars [] set = set
-      | add_vars (v :: vs) set =
-          (checkpoint (); add_vars vs (HOLset.add (set, v)))
-  in
-    {thm = theorem,
-     patvars = add_vars vars (HOLset.empty Term.compare),
-     prems = prems,
-     concl = cncl}
-  end
+fun canonical_form th = form_of no_checkpoint (canonical_rule th)
 
 fun canonical_form_of kind th =
-  canonical_form_of_with (fn () => ()) kind th
+  canonical_form_of_measured no_checkpoint kind th
 
-fun canonical_form_of_measured checkpoint kind th =
-  canonical_form_of_with checkpoint kind th
-
-fun rule_premises th = #prems (canonical_form th)
 fun rule_premises_of kind th = #prems (canonical_form_of kind th)
-fun rule_conclusion th = #concl (canonical_form th)
 
 fun kind_name Intro = "introduction"
   | kind_name Elim = "elimination"
@@ -456,7 +186,7 @@ fun rule_spine_with canonicalize th =
   end
 
 val rule_spine = rule_spine_with canonical_rule
-val elim_rule_spine = rule_spine_with canonical_elim_rule
+val elim_rule_spine = rule_spine_with (canonical_rule_of Elim)
 
 fun apply_assumed th prems = Drule.LIST_MP (map ASSUME prems) th
 
@@ -806,8 +536,6 @@ fun get_decls (Decls {byconcl, ...}) th =
   case Termtab.lookup byconcl (canonical_key th) of
       NONE => []
     | SOME ds => ds
-
-fun has_decls decls th = not (List.null (get_decls decls th))
 
 fun decl_name_member (Decls {byname, ...}) name =
   Option.isSome (Symtab.lookup byname name)

@@ -152,7 +152,7 @@ val cong_reducer =
         in
           CONVNET (insertThms net thms)
         end
-      fun apply {solver,conv,context,stack,relation} tm =
+      fun apply {solver,conv,context,stack,relation,...} tm =
         let
             val net = ((raise context) handle CONVNET net => net)
             val thm = cong_rewrite net relation tm
@@ -166,28 +166,47 @@ val cong_reducer =
 
 
 fun reducer_addRwts (REDUCER {name,addcontext,apply,initial}) rwts =
-  REDUCER {name=name,addcontext=addcontext, apply=apply, initial=addcontext (initial,rwts)}
+  REDUCER
+    {name=name, addcontext=addcontext, apply=apply,
+     initial=addcontext (initial,rwts)}
+  | reducer_addRwts
+      (CONTEXT_REDUCER {name,addcontext,apply,initial}) rwts =
+    CONTEXT_REDUCER
+      {name=name, addcontext=addcontext, apply=apply,
+       initial=addcontext (initial,rwts)}
 
 
-fun eq_reducer_wrapper (eq_reducer as REDUCER data)= let
-  val name = #name data
-  val initial = #initial data
-  val addcontext = #addcontext data
-
-  fun apply {solver,conv,context,stack,relation as (_, refl)} tm = let
-    val eqthm = #apply data
-                       {solver=solver,conv=conv,
-                        context=context,stack=stack,
-                        relation=relation}
-                       tm
+fun lift_equality refl eqthm tm =
+  let
     val congThm = refl tm
     val congThm = CONV_RULE (RAND_CONV (REWR_CONV eqthm)) congThm
   in
     congThm
   end
-in
-  REDUCER {name=name,addcontext=addcontext, apply=apply, initial=initial}
-end;
+
+fun eq_reducer_wrapper (REDUCER {name,initial,addcontext,apply}) =
+  let
+    fun wrapped {solver,conv,context,stack,relation as (_,refl)} tm =
+      lift_equality refl
+        (apply {solver=solver, conv=conv, context=context, stack=stack,
+                relation=relation} tm) tm
+  in
+    REDUCER
+      {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
+  end
+  | eq_reducer_wrapper
+      (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
+    let
+      fun wrapped {solver,conv,context,stack,cond_depth,term_ord,
+                   relation as (_,refl)} tm =
+        lift_equality refl
+          (apply {solver=solver, conv=conv, context=context, stack=stack,
+                  cond_depth=cond_depth, term_ord=term_ord,
+                  relation=relation} tm) tm
+    in
+      CONTEXT_REDUCER
+        {name=name, addcontext=addcontext, apply=wrapped, initial=initial}
+    end;
 
 
 datatype congsetfrag = CSFRAG of

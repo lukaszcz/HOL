@@ -16,6 +16,11 @@ struct
   fun is_empty (Heap (_, heap)) = mlibHeap.is_empty heap
 
   (* Raises Empty on an empty heap. *)
+  fun delete_min (Heap (compare, heap)) =
+    let val (value, remaining) = mlibHeap.remove heap
+    in (value, Heap (compare, remaining)) end
+
+  (* Raises Empty on an empty heap. *)
   fun delete_all_min (Heap (compare, heap)) =
     let
       val (first, rest) = mlibHeap.remove heap

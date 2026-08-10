@@ -185,27 +185,20 @@ the original operation, `EQT_ELIM` after recursive traversal.
 this pipeline.  This is true even when the surrounding tactic is in safe
 mode.
 
-## Dynamically Scoped Engine Settings
+## Traversal Engine Settings
 
-`Cond_rewr.stack_limit` and `Cond_rewr.term_ord` remain global references for
-compatibility, but a simpset can override them with `set_cond_depth` and
-`set_term_ord`.  The corresponding fields in `Traverse.traverse_data` are
-options.
+A simpset can configure conditional-rewrite depth and term ordering with
+`set_cond_depth` and `set_term_ord`.  The corresponding fields in
+`Traverse.traverse_data` are options.  At traversal entry, an unconfigured
+depth resolves to the user-level default `Cond_rewr.stack_limit`, while an
+unconfigured order resolves to `Cond_rewr.ac_term_ord`.
 
-At entry to `TRAVERSE` or `ROOT_REWRITE`, the traversal always binds the
-scoped overrides `Cond_rewr.stack_limit_override` and
-`Cond_rewr.term_ord_override` — `NONE` included — around the complete
-traversal.  Restoration is exception-safe, and nested traversals restore
-the outer binding correctly.  Binding `NONE` rather than leaving the
-override alone is what stops a nested traversal from inheriting the
-enclosing simpset's setting: without it a `SIMP_CONV bool_ss` reached from
-inside `AESOP_TAC` ran at that tactic's `cond_depth` of 40 instead of the
-default 4.  A traversal that configures nothing therefore falls back to the
-user-level globals `Cond_rewr.stack_limit` and `Cond_rewr.term_ord`, which
-the engine never writes, so old code which sets them still works for
-simpsets without an override, while different simpsets can select
-independent settings.  `COND_REWR_CONV` reads whichever value is in force
-through `Cond_rewr.cur_stack_limit` and `Cond_rewr.cur_term_ord`.
+The resolved values travel explicitly in every reducer's `apply` record and
+are passed directly to `COND_REWR_CONV`.  There is no dynamically scoped
+engine state.  Consequently, a nested traversal resolves its own options and
+cannot inherit an enclosing simpset's settings.  Changing
+`Cond_rewr.stack_limit` still affects every unconfigured traversal, including
+one nested inside a traversal that has its own configured depth.
 
 The depth setting bounds nested conditional-rewrite attempts.  The term
 order controls the orientation guard for unbounded permutative rewrites;

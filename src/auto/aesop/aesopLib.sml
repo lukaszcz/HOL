@@ -120,27 +120,15 @@ fun changed tactic =
   NTactical.DETERM
     (NTactical.NCHANGED (NTactical.LIFT tactic))
 
-(* The marker vocabulary aesop adds on top of the classical one that
-   clasetLib.process_claset_tags already consumes. *)
-val aesop_markers
-      : ((thm -> thm option) * clasetRules.rulespec) list =
-  [(clasetLib.destNorm,
-    {kind = clasetRules.Norm, safe = false, prio = NONE}),
-   (clasetLib.destForward,
-    {kind = clasetRules.Forward, safe = false, prio = NONE}),
-   (clasetLib.destSForward,
-    {kind = clasetRules.Forward, safe = true, prio = NONE})]
-
 fun aesop_marker theorem =
-  let
-    fun dispatch [] = NONE
-      | dispatch ((dest, spec) :: rest) =
-          case dest theorem of
-              SOME rule => SOME (spec, rule)
-            | NONE => dispatch rest
-  in
-    dispatch aesop_markers
-  end
+  case clasetLib.marker_of theorem of
+      SOME {name="Norm",spec=SOME spec,
+            payload=clasetLib.Theorem rule} => SOME (spec,rule)
+    | SOME {name="Forward",spec=SOME spec,
+            payload=clasetLib.Theorem rule} => SOME (spec,rule)
+    | SOME {name="SForward",spec=SOME spec,
+            payload=clasetLib.Theorem rule} => SOME (spec,rule)
+    | _ => NONE
 
 fun process_aesop_markers theorems claset =
   let
@@ -164,45 +152,12 @@ fun process_aesop_markers theorems claset =
   end
 
 fun process_args body base_claset base_simpset =
-  markerLib.ABBRS_THEN
-    (fn theorems =>
-      let
-        val
-          {simp_rules, iff_rules, simp_controls,
-           rest = classical_arguments} =
-          clasetLib.classify_simp_args theorems
-        val simp_simpset =
-          simpLib.++
-            (base_simpset, simpLib.rewrites simp_rules)
-        val iff_declarations =
-          map
-            (fn (index, theorem) =>
-              clasimpLib.iff_declaration
-                ("__aesop_iff_arg_" ^ Int.toString index)
-                theorem)
-            (Lib.enumerate 0 iff_rules)
-        val iff_claset =
-          List.foldl
-            (fn ({rules, ...}, current) =>
-              clasimpLib.add_iff_rules rules current)
-            base_claset iff_declarations
-        val invocation_simpset =
-          if null iff_declarations then simp_simpset
-          else
-            simpLib.++
-              (simp_simpset,
-               simpLib.rewrites
-                 (List.rev (map #rewrite iff_declarations)))
-        val (classical_claset, aesop_arguments) =
-          clasetLib.process_claset_tags
-            classical_arguments iff_claset
-        val (invocation_claset, facts) =
-          process_aesop_markers aesop_arguments classical_claset
-      in
-        Tactical.THEN
-          (clasetLib.INSERT_FACTS_TAC facts,
-           body invocation_claset invocation_simpset simp_controls)
-      end)
+  clasetLib.with_invocation_args
+    {iff_prefix="__aesop_iff_arg_", extra_markers=process_aesop_markers}
+    (fn cs => fn SOME ss => body cs ss
+      | _ => raise ERR "process_args" "simpset was not installed")
+    base_claset
+    (SOME {base=base_simpset, extend=clasimpLib.extend_invocation})
 
 fun CS_AESOP_TAC config claset simpset =
   Tactical.VALID

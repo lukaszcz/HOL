@@ -120,6 +120,8 @@ fun create {goals, store, level} =
     (root_paths goals) (fresh_marks goals) (goal_frees goals)
 
 fun goals (Node {goals, ...}) = goals
+fun child_count parent child =
+  Int.max (0, length (goals child) - length (goals parent) + 1)
 fun store (Node {store, ...}) = store
 fun replay (Node {replay, ...}) = replay
 fun replay_length node = clasetReplay.length (replay node)
@@ -131,13 +133,6 @@ fun avoids (Node {avoids, ...}) = avoids
 
 fun fresh_eigen node bound =
   register_fresh bound (avoids node) (store node)
-
-val empty_binding_marks = []
-
-fun set_goals goals'
-  (Node {store, replay, level, avoids, ...}) =
-  make_node goals' store replay level (root_paths goals')
-    (fresh_marks goals') avoids
 
 fun set_store store'
   (Node {goals, replay, level, paths, marks, avoids, ...}) =

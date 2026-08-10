@@ -112,11 +112,9 @@ val norm_conv =
      reduce_conv = ratLib.RAT_BASIC_ARITH_CONV,
      refl_thms = [ratTheory.RAT_LES_REF, ratTheory.RAT_LEQ_REF]}
 
-fun nonneg tm =
-  case Lib.total ratSyntax.dest_rat_of_num tm of
-      SOME n =>
-        SOME (Thm.SPEC n linarithInstTheory.RAT_OF_NUM_NONNEG)
-    | NONE => NONE
+val nonneg =
+  linarithData.injected_nonneg ratSyntax.dest_rat_of_num
+    linarithInstTheory.RAT_OF_NUM_NONNEG
 
 val instance : linarithData.linarith_instance =
   {ty = ratSyntax.rat_ty,

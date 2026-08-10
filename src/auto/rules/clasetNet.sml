@@ -7,7 +7,8 @@
  * query's own variables act as wildcards and so may match any stored
  * subterm.  That reverse direction needs [skip_one_m] to step over a whole
  * stored subterm, which relies on the uniform one-node-per-application
- * labelling below (Cmb/Lam/Cnst/V).  Ho_Net folds the argument count into
+ * labelling below (Cmb/Lam/Cnst/Fvar/V).  Ho_Net folds the argument count
+ * into
  * its labels (Cnet of ... * int), so it cannot skip a subterm without
  * knowing that arity, and extending it lives on a path shared with every
  * simpset.  Keep [match] here consistent with Ho_Net's semantics.
@@ -20,43 +21,52 @@ open HolKernel KernelTypes
 
 type term = Term.term
 
-datatype label = V | Cmb | Lam | Cnst of string * string
+datatype label =
+    V
+  | Cmb
+  | Lam
+  | Cnst of KernelSig.kernelname
+  | Fvar of string
 
 datatype 'a net = NODE of 'a list * (label * 'a net) list
 
 val empty = NODE ([], [])
 
-(* Prefixing makes free-variable labels disjoint from constant labels. *)
+fun no_checkpoint () = ()
+
 fun const_label tm =
   let val {Name, Thy, ...} = dest_thy_const tm
-  in Cnst ("c:" ^ Name, Thy)
+  in Cnst {Name = Name, Thy = Thy}
   end
 
 fun fvar_label tm =
   let val (Name, _) = dest_var tm
-  in Cnst ("v:" ^ Name, "")
+  in Fvar Name
   end
 
-fun is_bound bvars tm = op_mem aconv tm bvars
+fun is_bound checkpoint bvars tm =
+  (checkpoint (); op_mem aconv tm bvars)
 
 fun stored_label patvars bvars tm =
   if is_var tm andalso
-     (HOLset.member (patvars, tm) orelse is_bound bvars tm) then V
+     (HOLset.member (patvars, tm) orelse
+      is_bound no_checkpoint bvars tm) then V
   else if is_var tm then fvar_label tm
   else if is_abs tm then Lam
   else if is_comb tm then Cmb
   else const_label tm
 
-fun query_label bvars tm =
-  if is_var tm andalso is_bound bvars tm then NONE
+fun query_label checkpoint bvars tm =
+  if is_var tm andalso is_bound checkpoint bvars tm then NONE
   else if is_var tm then SOME (fvar_label tm)
   else if is_abs tm then SOME Lam
   else if is_comb tm then SOME Cmb
   else SOME (const_label tm)
 
-fun edge label [] = NONE
-  | edge label ((label', net) :: rest) =
-      if label = label' then SOME net else edge label rest
+fun edge checkpoint label [] = NONE
+  | edge checkpoint label ((label', net) :: rest) =
+      (checkpoint ();
+       if label = label' then SOME net else edge checkpoint label rest)
 
 fun replace_edge label net [] = [(label, net)]
   | replace_edge label net ((entry as (label', _)) :: rest) =
@@ -86,7 +96,9 @@ fun insert ({pat, patvars}, value) net =
       | enter (label :: labels) (NODE (tips, edges)) =
           let
             val child =
-              case edge label edges of NONE => empty | SOME node => node
+              case edge no_checkpoint label edges of
+                  NONE => empty
+                | SOME node => node
             val child' = enter labels child
           in
             NODE (tips, replace_edge label child' edges)
@@ -95,14 +107,22 @@ fun insert ({pat, patvars}, value) net =
     enter (stored_labels patvars [] pat) net
   end
 
-fun follow normal_walk (tm, bvars) rest (NODE (_, edges)) =
+fun append checkpoint [] right = right
+  | append checkpoint (item :: items) right =
+      (checkpoint (); item :: append checkpoint items right)
+
+fun follow checkpoint normal_walk (tm, bvars) rest (NODE (_, edges)) =
   let
     val vbranch =
-      case edge V edges of NONE => [] | SOME node => normal_walk rest node
+      case edge checkpoint V edges of
+          NONE => []
+        | SOME node => normal_walk rest node
     fun exact label more =
-      case edge label edges of NONE => [] | SOME node => normal_walk more node
+      case edge checkpoint label edges of
+          NONE => []
+        | SOME node => normal_walk more node
     val exact_branch =
-      case query_label bvars tm of
+      case query_label checkpoint bvars tm of
           NONE => []
         | SOME Lam =>
             let val (bvar, body) = dest_abs tm
@@ -114,51 +134,36 @@ fun follow normal_walk (tm, bvars) rest (NODE (_, edges)) =
             end
         | SOME label => exact label rest
   in
-    exact_branch @ vbranch
+    append checkpoint exact_branch vbranch
   end
 
 fun match tm net =
   let
     fun walk [] (NODE (tips, _)) = tips
-      | walk (task :: rest) node = follow walk task rest node
+      | walk (task :: rest) node =
+          follow no_checkpoint walk task rest node
   in
     walk [(tm, [])] net
   end
 
 fun unify_with checkpoint {q, qvars} net =
   let
-    fun append [] right = right
-      | append (item :: items) right =
-          (checkpoint (); item :: append items right)
-
     fun concat_map _ [] = []
       | concat_map f (item :: items) =
           (checkpoint ();
-           append (f item) (concat_map f items))
+           append checkpoint (f item) (concat_map f items))
 
     fun bound _ [] = false
       | bound tm (item :: items) =
           (checkpoint ();
            aconv tm item orelse bound tm items)
 
-    fun edge_m _ [] = NONE
-      | edge_m label ((label', child) :: rest) =
-          (checkpoint ();
-           if label = label' then SOME child else edge_m label rest)
-
-    fun query_label_m bvars tm =
-      (checkpoint ();
-       if is_var tm andalso bound tm bvars then NONE
-       else if is_var tm then SOME (fvar_label tm)
-       else if is_abs tm then SOME Lam
-       else if is_comb tm then SOME Cmb
-       else SOME (const_label tm))
-
     fun skip_one_m (NODE (_, edges)) =
       let
         val _ = checkpoint ()
         fun skip_edge (V, child) = [child]
           | skip_edge (Cnst _, child) = [child]
+          | skip_edge (Fvar _, child) = [child]
           | skip_edge (Lam, child) = skip_one_m child
           | skip_edge (Cmb, child) =
               concat_map skip_one_m (skip_one_m child)
@@ -175,47 +180,13 @@ fun unify_with checkpoint {q, qvars} net =
                HOLset.member (qvars, tm) then
               concat_map (walk rest) (skip_one_m node)
             else
-              follow_m walk (tm, bvars) rest node
+              follow checkpoint walk (tm, bvars) rest node
           end
-
-    and follow_m normal_walk (tm, bvars) rest (NODE (_, edges)) =
-      let
-        val _ = checkpoint ()
-        val vbranch =
-          case edge_m V edges of
-              NONE => []
-            | SOME child => normal_walk rest child
-        fun exact label more =
-          case edge_m label edges of
-              NONE => []
-            | SOME child => normal_walk more child
-        val exact_branch =
-          case query_label_m bvars tm of
-              NONE => []
-            | SOME Lam =>
-                let
-                  val _ = checkpoint ()
-                  val (bvar, body) = dest_abs tm
-                in
-                  exact Lam ((body, bvar :: bvars) :: rest)
-                end
-            | SOME Cmb =>
-                let
-                  val _ = checkpoint ()
-                  val (rator, rand) = dest_comb tm
-                in
-                  exact Cmb
-                    ((rator, bvars) :: (rand, bvars) :: rest)
-                end
-            | SOME label => exact label rest
-      in
-        append exact_branch vbranch
-      end
   in
     walk [(q, [])] net
   end
 
-fun unify query net = unify_with (fn () => ()) query net
+fun unify query net = unify_with no_checkpoint query net
 fun unifyMeasured checkpoint query net =
   unify_with checkpoint query net
 

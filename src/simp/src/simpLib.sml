@@ -38,7 +38,21 @@ type convdata = {name  : string,
                  key   : (term list * term) option,
                  trace : int,
                  conv  : (term list -> term -> thm) -> term list -> conv};
-type tagged_convdata = {thypart : string option, cd : convdata}
+type reducer_ctxt =
+  {solver : term list -> term -> thm,
+   stack : term list,
+   cond_depth : int,
+   term_ord : term * term -> order}
+type contextual_convdata =
+  {name : string,
+   key : (term list * term) option,
+   trace : int,
+   conv : reducer_ctxt -> conv}
+type tagged_convdata = {thypart : string option, cd : contextual_convdata}
+
+fun lift_convdata {name,key,trace,conv} : contextual_convdata =
+  {name=name, key=key, trace=trace,
+   conv=fn {solver,stack,...} => conv solver stack}
 fun opttheory NONE s = s | opttheory (SOME thy) s = thy ^ "." ^ s
 
 type stdconvdata = { name: string,
@@ -55,9 +69,9 @@ fun appconv (c,UNBOUNDED) = c false (* do not eta expand! *)
     let
       val c = c true (* do not inline! *)
     in
-      (fn solver => fn stk => fn tm =>
+      (fn ctxt => fn tm =>
       if !r = 0 then failwith "exceeded rewrite bound"
-      else c solver stk tm before
+      else c ctxt tm before
       Portable.dec r)
     end
 
@@ -94,13 +108,16 @@ type relsimpdata = {refl: thm, trans:thm, weakenings:thm list,
 
 type conv_info =
   {name : string,
-   conval : (term list -> term -> thm) -> term list -> conv}
+   conval : reducer_ctxt -> conv}
 type net_conv_info = {thypart : string option, ci : conv_info}
 type net = net_conv_info Ho_Net.net
 type weakener_data =
   Travrules.preorder list * thm list * Traverse.reducer
 
-datatype ssfrag = SSFRAG_CON of {
+datatype looper_kind = OrdinaryLooper | SplitLooper of bool
+and looper_entry = LooperEntry of
+  {kind : looper_kind, name : string, apply : simpset -> tactic}
+and ssfrag = SSFRAG_CON of {
     name           : string option,
     convs          : tagged_convdata list,
     rewrs          : (thname option * thm) list,
@@ -109,7 +126,7 @@ datatype ssfrag = SSFRAG_CON of {
     dprocs         : Traverse.reducer list,
     congs          : thm list,
     relsimps       : relsimpdata list,
-    loopers        : (string * (simpset -> tactic)) list,
+    loopers        : looper_entry list,
     unsafe_solvers : Traverse.ssolver list,
     safe_solvers   : Traverse.ssolver list,
     congprocs      : {name : string, relation : term,
@@ -122,9 +139,9 @@ and history_item = ADDFRAG of ssfrag
                  | SET_MK_REWRS of
                      (controlled_thm -> controlled_thm list)
 and strategy_event =
-    ADD_LOOPER_EVENT of string * (simpset -> tactic)
-  | DEL_LOOPER_EVENT of string
-  | SET_LOOPER_EVENT of string * (simpset -> tactic)
+    ADD_LOOPER_EVENT of looper_entry
+  | DEL_LOOPER_EVENT of looper_kind * string
+  | SET_LOOPER_EVENT of looper_entry
   | ADD_UNSAFE_SOLVER_EVENT of Traverse.ssolver
   | ADD_SAFE_SOLVER_EVENT of Traverse.ssolver
   | SET_UNSAFE_SOLVERS_EVENT of Traverse.ssolver list
@@ -134,6 +151,7 @@ and strategy_event =
   | SET_COND_DEPTH_EVENT of int option
   | SET_TERM_ORD_EVENT of (term * term -> order) option
   | SET_EXCL_LOOPERS_EVENT of string Binaryset.set
+  | SET_STRATEGY_EVENT of strategy_data
 and simpset = SS of {
     mk_rewrs       : controlled_thm -> controlled_thm list,
     history        : history_item list,
@@ -147,7 +165,7 @@ and simpset = SS of {
 (* The traversal-strategy knobs are grouped so that the simpset updaters
    that leave them alone do not have to mention them one by one. *)
 withtype strategy_data =
-  {loopers        : (string * (simpset -> tactic)) list,
+  {loopers        : looper_entry list,
    unsafe_solvers : Traverse.ssolver list,
    safe_solvers   : Traverse.ssolver list,
    subgoaler      : Traverse.subgoaler option,
@@ -159,28 +177,45 @@ fun frag_name (SSFRAG_CON {name,...}) = name
 
 fun normCong cong_th = PURE_REWRITE_RULE [GSYM AND_IMP_INTRO] cong_th
 
+fun ordinary_looper (name,apply) =
+  LooperEntry {kind=OrdinaryLooper,name=name,apply=apply}
+
+fun updfrag z =
+  let
+    fun from name convs rewrs ac filter dprocs congs relsimps loopers
+             unsafe_solvers safe_solvers congprocs =
+      {name=name, convs=convs, rewrs=rewrs, ac=ac, filter=filter,
+       dprocs=dprocs, congs=congs, relsimps=relsimps, loopers=loopers,
+       unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers,
+       congprocs=congprocs}
+    fun from' congprocs safe_solvers unsafe_solvers loopers relsimps congs
+              dprocs filter ac rewrs convs name =
+      from name convs rewrs ac filter dprocs congs relsimps loopers
+        unsafe_solvers safe_solvers congprocs
+    fun to f {name,convs,rewrs,ac,filter,dprocs,congs,relsimps,loopers,
+              unsafe_solvers,safe_solvers,congprocs} =
+      f name convs rewrs ac filter dprocs congs relsimps loopers
+        unsafe_solvers safe_solvers congprocs
+  in
+    FunctionalRecordUpdate.makeUpdate12 (from,from',to)
+  end z
+
+val empty_frag_data =
+  {name=NONE, convs=[], rewrs=[], ac=[], filter=NONE, dprocs=[], congs=[],
+   relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+val empty_ssfrag = SSFRAG_CON empty_frag_data
+
 fun SSFRAG {name,convs,rewrs,ac,filter,dprocs,congs} =
   SSFRAG_CON
-    {name = name, rewrs = rewrs, ac = ac,
-     convs = map (fn c => {thypart=NONE, cd = c}) convs,
-     filter = filter, dprocs = dprocs, congs = map normCong congs,
-     relsimps = [], loopers = [], unsafe_solvers = [], safe_solvers = [],
-     congprocs = []}
+    (updfrag empty_frag_data
+       (Fld #name name)
+       (Fld #convs
+          (map (fn c => {thypart=NONE,cd=lift_convdata c}) convs))
+       (Fld #rewrs rewrs) (Fld #ac ac) (Fld #filter filter)
+       (Fld #dprocs dprocs) (Fld #congs (map normCong congs)) $$)
 
-val empty_ssfrag = SSFRAG{name = NONE, rewrs = [], convs = [], ac = [],
-                          filter = NONE, dprocs = [], congs = []}
 fun ssf_upd_rewrs f (SSFRAG_CON s) =
-    let
-      val {name,rewrs,convs,ac,filter,dprocs,congs,relsimps,loopers,
-           unsafe_solvers,safe_solvers,congprocs} = s
-    in
-      SSFRAG_CON
-        {name = name, rewrs = f rewrs, convs = convs, ac = ac,
-         filter = filter, dprocs = dprocs, congs = congs,
-         relsimps = relsimps, loopers = loopers,
-         unsafe_solvers = unsafe_solvers, safe_solvers = safe_solvers,
-         congprocs = congprocs}
-    end
+  SSFRAG_CON (updfrag s (Fld #rewrs (f (#rewrs s))) $$)
 
 (* ----------------------------------------------------------------------
     maintain a global database of (named) ssfrags
@@ -214,73 +249,43 @@ fun all_named_frags() = Symtab.keys (ssfragDB ())
 (*---------------------------------------------------------------------------*)
 
 fun name_ss s (SSFRAG_CON f) =
-  SSFRAG_CON
-    {name=SOME s, convs= #convs f, rewrs= #rewrs f, filter= #filter f,
-     ac= #ac f, dprocs= #dprocs f, congs= #congs f,
-     relsimps= #relsimps f, loopers= #loopers f,
-     unsafe_solvers= #unsafe_solvers f, safe_solvers= #safe_solvers f,
-     congprocs= #congprocs f};
-
-fun base_ssfrag {rewrs,convs,ac,dprocs,relsimps,loopers,unsafe_solvers,
-                 safe_solvers,congprocs} =
-  SSFRAG_CON
-    {name=NONE, rewrs=rewrs, convs=convs, ac=ac, filter=NONE,
-     dprocs=dprocs, congs=[], relsimps=relsimps, loopers=loopers,
-     unsafe_solvers=unsafe_solvers, safe_solvers=safe_solvers,
-     congprocs=congprocs}
+  SSFRAG_CON (updfrag f (Fld #name (SOME s)) $$)
 
 fun rewrites rewrs =
-  base_ssfrag
-    {rewrs=map (fn th => (NONE,th)) rewrs, convs=[], ac=[], dprocs=[],
-     relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[],
-     congprocs=[]}
+  SSFRAG_CON
+    (updfrag empty_frag_data
+       (Fld #rewrs (map (fn th => (NONE,th)) rewrs)) $$)
 
 fun rewrites_with_names rewrs =
-  base_ssfrag
-    {rewrs=map (apfst SOME) rewrs, convs=[], ac=[], dprocs=[],
-     relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[],
-     congprocs=[]}
+  SSFRAG_CON
+    (updfrag empty_frag_data (Fld #rewrs (map (apfst SOME) rewrs)) $$)
 
 fun dproc_ss dproc =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[dproc], relsimps=[], loopers=[],
-     unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #dprocs [dproc]) $$)
 
 fun ac_ss aclist =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=aclist, dprocs=[], relsimps=[], loopers=[],
-     unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #ac aclist) $$)
 
 fun conv_ss conv =
-  base_ssfrag
-    {rewrs=[], convs=[{thypart=NONE,cd=conv}], ac=[], dprocs=[],
-     relsimps=[], loopers=[], unsafe_solvers=[], safe_solvers=[],
-     congprocs=[]}
+  SSFRAG_CON
+    (updfrag empty_frag_data
+       (Fld #convs [{thypart=NONE,cd=lift_convdata conv}]) $$)
 
 fun relsimp_ss rsdata =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[], relsimps=[rsdata], loopers=[],
-     unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #relsimps [rsdata]) $$)
 
 fun looper_ss looper =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[], relsimps=[], loopers=[looper],
-     unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+  SSFRAG_CON
+    (updfrag empty_frag_data (Fld #loopers [ordinary_looper looper]) $$)
 
 fun solver_ss solver =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[], relsimps=[], loopers=[],
-     unsafe_solvers=[solver], safe_solvers=[], congprocs=[]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #unsafe_solvers [solver]) $$)
 
 fun safe_solver_ss solver =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[], relsimps=[], loopers=[],
-     unsafe_solvers=[], safe_solvers=[solver], congprocs=[]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #safe_solvers [solver]) $$)
 
 fun congproc_ss congproc =
-  base_ssfrag
-    {rewrs=[], convs=[], ac=[], dprocs=[], relsimps=[], loopers=[],
-     unsafe_solvers=[], safe_solvers=[], congprocs=[congproc]}
+  SSFRAG_CON (updfrag empty_frag_data (Fld #congprocs [congproc]) $$)
 
 fun D (SSFRAG_CON s) = s;
 fun frag_rewrites ssf = map #2 (#rewrs (D ssf))
@@ -412,24 +417,72 @@ fun name_match ({thypart,ci}:net_conv_info) (* thing in simpset's net *) pats =
       List.exists check1 pats
     end
 
+fun munge_simpset_name p =
+  case String.fields (equal #".") p of
+      [_] => (NONE,p)
+    | [s1,s2] =>
+        if CharVector.all Char.isDigit s2 then (NONE,p)
+        else if mem s1 (ancestry "-") then (SOME s1,s2)
+        else raise ERR ("-*", "bad theory name: " ^ s1)
+    | [s1,s2,s3] => (SOME s1,s2 ^ "." ^ s3)
+    | _ => raise ERR ("-*", "User key has too many dots")
+
 fun filter_net_by_names nms net =
     let
-      fun munge_pat p =
-          case String.fields (equal #".") p of
-              [_] => (NONE, p)
-            | [s1,s2] =>
-                if CharVector.all Char.isDigit s2 then (NONE, p)
-                else if mem s1 (ancestry "-") then (SOME s1, s2)
-                else raise ERR ("-*", "bad theory name: "^s1)
-            | [s1,s2,s3] => (SOME s1, s2 ^ "." ^ s3)
-            | _ => raise ERR ("-*", "User key has too many dots")
-      val munged_pats = map munge_pat nms
+      val munged_pats = map munge_simpset_name nms
     in
       Ho_Net.vfilter (fn nd => not (name_match nd munged_pats)) net
     end
 
-fun dphas_name_from nms (REDUCER {name = SOME n,...}) = Lib.mem n nms
-  | dphas_name_from _ _ = false
+fun net_has_name name net =
+  case Lib.total munge_simpset_name name of
+      NONE => false
+    | SOME pattern =>
+        Ho_Net.fold'
+          (fn entry => fn found =>
+            found orelse name_match entry [pattern]) net false
+
+fun simpset_has_rule name (SS s) = net_has_name name (#initial_net s)
+
+fun simpset_has_dproc name (SS s) =
+  List.exists
+    (fn reducer => #name (Traverse.dest_reducer reducer) = SOME name)
+    (#dprocs s)
+
+(* The historical rewrite exclusion operation also removes decision
+   procedures by name.  Treat the two stores as one target here so a rewrite
+   and a dproc sharing a name are excluded together, as [ss -* names] has
+   always specified. *)
+fun simpset_has_rule_target name ss =
+  simpset_has_rule name ss orelse simpset_has_dproc name ss
+
+(* A valid theorem name need not currently be installed in the simpset:
+   theory scripts use Excl defensively around a theorem they have just put
+   on the goal.  Accept an exact database binding as a rule target, while a
+   spelling that denotes neither a binding nor installed strategy remains a
+   diagnosed typo. *)
+fun theorem_name_exists original =
+  let
+    val wanted = String.fields (equal #".") original
+    fun matches ((thy,name),_) =
+      case wanted of
+          [wanted_name] => name = wanted_name
+        | [wanted_thy,wanted_name] =>
+            thy = wanted_thy andalso name = wanted_name
+        | _ => false
+    val query =
+      case List.rev wanted of
+          name :: _ => name
+        | [] => original
+  in
+    List.exists matches (DB.find_all query)
+  end
+  handle HOL_ERR _ => false
+
+fun dphas_name_from nms reducer =
+  case #name (Traverse.dest_reducer reducer) of
+      SOME name => Lib.mem name nms
+    | NONE => false
 fun filter_dprocs_by_names nms = List.filter (not o dphas_name_from nms)
 
 fun (ss as SS s) -* nms =
@@ -455,9 +508,9 @@ fun remove_simps nms ss = ss -* nms
       val trace_string2 = name^" ineffectual"
       val trace_string3 = name^" left term unchanged"
       val trace_string4 = name^" raised an unusual exception (ignored)"
-  in fn solver => fn stack => fn tm =>
+  in fn ctxt => fn tm =>
       let val _ = trace(trace_level+2,REDUCE(trace_string1,tm))
-          val thm = conv solver stack tm
+          val thm = conv ctxt tm
       in
         trace(trace_level,PRODUCE(tm,name,thm));
         thm
@@ -471,7 +524,8 @@ fun remove_simps nms ss = ss -* nms
 
  val any = mk_var("x",Type.alpha);
 
- fun net_add_conv {thypart,cd = data as {name,key,trace,conv}:convdata} =
+ fun net_add_conv
+       {thypart,cd = data as {name,key,trace,conv}:contextual_convdata} =
      enter (option_cases #1 [] key,
             option_cases #2 any key,
             {thypart = thypart, ci = {name = name, conval = USER_CONV data}})
@@ -559,9 +613,24 @@ fun fupdhistory f (SS s) =
 fun record_strategy event =
   fupdhistory (fn history => STRATEGY_EVENT event::history)
 
-fun update_looper ((name,tac),[]) = [(name,tac)]
-  | update_looper (looper as (name,_),(entry as (name',_))::rest) =
-      if name = name' then looper::rest
+fun same_looper_id
+      (LooperEntry {kind=OrdinaryLooper,name,...})
+      (OrdinaryLooper,name') = name = name'
+  | same_looper_id (LooperEntry {kind=SplitLooper asm,name,...})
+      (SplitLooper asm',name') = asm = asm' andalso name = name'
+  | same_looper_id _ _ = false
+
+fun looper_data (LooperEntry data) = data
+
+fun looper_display (LooperEntry {kind=OrdinaryLooper,name,...}) = name
+  | looper_display (LooperEntry {kind=SplitLooper asm,name,...}) =
+      (if asm then "split_asm " else "split ") ^ name
+
+fun update_looper (looper,[]) = [looper]
+  | update_looper (looper,entry::rest) =
+      if same_looper_id entry
+           (#kind (looper_data looper),#name (looper_data looper))
+      then looper::rest
       else entry::update_looper(looper,rest)
 
 fun add_solver (solver : Traverse.ssolver,
@@ -573,7 +642,9 @@ fun dedup_solvers solvers = List.foldl add_solver [] solvers
 
 fun strategy_of (SS s) = #strategy s
 fun has_looper name ss =
-  List.exists (fn (name',_) => name = name') (#loopers (strategy_of ss))
+  List.exists
+    (fn entry => same_looper_id entry (OrdinaryLooper,name))
+    (#loopers (strategy_of ss))
 fun has_solver name ss =
   let fun named {name=name',...} = name = name'
   in
@@ -590,8 +661,8 @@ fun apply_strategy_event event =
     (case event of
          ADD_LOOPER_EVENT looper =>
            upd_loopers (fn ls => update_looper(looper,ls))
-       | DEL_LOOPER_EVENT name =>
-           upd_loopers (List.filter (fn (name',_) => name <> name'))
+       | DEL_LOOPER_EVENT id =>
+           upd_loopers (List.filter (fn entry => not (same_looper_id entry id)))
        | SET_LOOPER_EVENT looper => upd_loopers (K [looper])
        | ADD_UNSAFE_SOLVER_EVENT solver =>
            upd_unsafe_solvers (fn ss => add_solver(solver,ss))
@@ -607,13 +678,16 @@ fun apply_strategy_event event =
        | SET_SUBGOALER_EVENT subgoaler => upd_subgoaler (K subgoaler)
        | SET_COND_DEPTH_EVENT cond_depth => upd_cond_depth (K cond_depth)
        | SET_TERM_ORD_EVENT term_ord => upd_term_ord (K term_ord)
-       | SET_EXCL_LOOPERS_EVENT excl => upd_excl_loopers (K excl))
+       | SET_EXCL_LOOPERS_EVENT excl => upd_excl_loopers (K excl)
+       | SET_STRATEGY_EVENT strategy => K strategy)
 
 fun strategy_op event ss =
   apply_strategy_event event ss |> record_strategy event
 
-fun add_looper looper = strategy_op (ADD_LOOPER_EVENT looper)
-fun set_looper looper = strategy_op (SET_LOOPER_EVENT looper)
+fun add_looper looper =
+  strategy_op (ADD_LOOPER_EVENT (ordinary_looper looper))
+fun set_looper looper =
+  strategy_op (SET_LOOPER_EVENT (ordinary_looper looper))
 fun add_unsafe_solver solver = strategy_op (ADD_UNSAFE_SOLVER_EVENT solver)
 fun add_safe_solver solver = strategy_op (ADD_SAFE_SOLVER_EVENT solver)
 fun set_unsafe_solvers solvers =
@@ -627,8 +701,14 @@ fun set_term_ord term_ord = strategy_op (SET_TERM_ORD_EVENT (SOME term_ord))
 
 (* Deleting an absent looper is a no-op; only the exported [del_looper]
    warns about it. *)
-fun del_looper_quiet name ss =
-  if has_looper name ss then strategy_op (DEL_LOOPER_EVENT name) ss else ss
+fun has_looper_id id ss =
+  List.exists (fn entry => same_looper_id entry id)
+    (#loopers (strategy_of ss))
+
+fun del_looper_id_quiet id ss =
+  if has_looper_id id ss then strategy_op (DEL_LOOPER_EVENT id) ss else ss
+
+fun del_looper_quiet name = del_looper_id_quiet (OrdinaryLooper,name)
 
 fun del_looper name ss =
   if has_looper name ss then del_looper_quiet name ss
@@ -637,118 +717,40 @@ fun del_looper name ss =
 fun remove_solver name ss =
   if has_solver name ss then strategy_op (REMOVE_SOLVER_EVENT name) ss else ss
 
-fun split_looper_name name th =
+fun split_looper_id name th =
+  (SplitLooper (splitLib.is_asm_split th),name)
+
+fun split_looper_display name th =
   (if splitLib.is_asm_split th then "split_asm " else "split ") ^ name
 
 fun add_split th =
-  add_looper
-    (split_looper_name (splitLib.split_thm_name th) th,
-     K (splitLib.SPLIT_TAC [th]))
+  let val name = splitLib.split_thm_name th
+      val (kind,_) = split_looper_id name th
+  in
+    strategy_op
+      (ADD_LOOPER_EVENT
+        (LooperEntry
+          {kind=kind, name=name,
+           apply=K (splitLib.SPLIT_TAC [th])}))
+  end
 
 fun del_split name ss =
   let
-    val names =
-      if String.isPrefix "split " name orelse
-         String.isPrefix "split_asm " name
-      then [name]
-      else ["split " ^ name, "split_asm " ^ name]
+    val ids =
+      if String.isPrefix "split " name then
+        [(SplitLooper false,String.extract (name,6,NONE))]
+      else if String.isPrefix "split_asm " name then
+        [(SplitLooper true,String.extract (name,10,NONE))]
+      else [(SplitLooper false,name),(SplitLooper true,name)]
   in
-    List.foldl (fn (candidate,result) => del_looper_quiet candidate result)
-               ss names
-  end
-
-fun const_key c =
-  let val {Thy,Name,...} = dest_thy_const c
-  in KernelSig.name_toString {Thy=Thy, Name=Name}
-  end
-
-(* Largest number of arguments each constant is applied to anywhere in
-   [tms].  Recording only maximal applications is enough: the arity test
-   below is [>=], so a partial application never decides it. *)
-fun applied_arities tms =
-  let
-    fun visit (tm, acc) =
-      if is_abs tm then visit (body tm, acc)
-      else
-        let
-          val (head, args) = strip_comb tm
-          val acc = List.foldl visit acc args
-          val n = length args
-        in
-          if is_const head then
-            let val key = const_key head
-            in
-              case Binarymap.peek (acc, key) of
-                  SOME m => if m >= n then acc
-                            else Binarymap.insert (acc, key, n)
-                | NONE => Binarymap.insert (acc, key, n)
-            end
-          else if is_abs head then visit (head, acc)
-          else acc
-        end
-  in
-    List.foldl visit (Binarymap.mkDict String.compare) tms
-  end
-
-(* The key and the arity of a case constant, and the type it decides. *)
-type case_entry = {key : string, arity : int, ty : hol_type}
-
-(* The splitter asks [case_types] the same question of the TypeBase on
-   every looper round of every subgoal, and answering it costs a
-   [dest_thy_const] and a [strip_fun] per registered datatype.  Only the
-   goal-dependent half of the answer has to be recomputed, so the table
-   is cached and checked against the entries it was derived from, in the
-   manner of the datatype split cache in splitLib: a check against the
-   entries themselves cannot go stale, whatever changed the TypeBase,
-   and its cost is one pointer comparison per datatype. *)
-val case_entry_cache =
-  Sref.new (NONE : (TypeBasePure.tyinfo list * case_entry list) option)
-
-fun case_entries () =
-  let
-    val elts = TypeBase.elts ()
-    fun case_entry tyinfo =
-      let val head = TypeBasePure.case_const_of tyinfo
-      in
-        SOME {key=const_key head,
-              arity=length (#1 (strip_fun (type_of head))),
-              ty=TypeBasePure.ty_of tyinfo}
-      end handle HOL_ERR _ => NONE
-    fun same ([], []) = true
-      | same (tyi1::rest1, tyi2::rest2) =
-          Portable.pointer_eq (tyi1, tyi2) andalso same (rest1, rest2)
-      | same _ = false
-    fun derive () =
-      let val entries = List.mapPartial case_entry elts
-      in
-        Sref.update case_entry_cache (K (SOME (elts, entries)));
-        entries
-      end
-  in
-    case Sref.value case_entry_cache of
-        SOME (cached, entries) => if same (cached, elts) then entries
-                                  else derive ()
-      | NONE => derive ()
-  end
-
-fun case_types goal_terms =
-  let
-    val arities = applied_arities goal_terms
-    fun occurs ({key,arity,...} : case_entry) =
-      case Binarymap.peek (arities, key) of
-          SOME n => n >= arity
-        | NONE => false
-    fun add (entry, result) =
-      if occurs entry then #ty entry :: result else result
-  in
-    List.foldl add [] (case_entries ())
+    List.foldl (fn (id,result) => del_looper_id_quiet id result) ss ids
   end
 
 fun splitter_looper ss (asms, goal) =
   let
     val excluded = #excl_loopers (strategy_of ss)
     fun enabled name = not (Binaryset.member (excluded, name))
-    fun enabled_named (name, th) = enabled (split_looper_name name th)
+    fun enabled_named (name, th) = enabled (split_looper_display name th)
     val persistent =
       splitLib.named_split_thms ()
       |> List.filter enabled_named
@@ -762,9 +764,9 @@ fun splitter_looper ss (asms, goal) =
         enabled ("split.case " ^ Tyop)
       end
     val datatype_rules =
-      case_types (goal :: asms)
-      |> List.filter type_enabled
-      |> map splitLib.type_split_rules
+      splitLib.goal_split_rule_groups (goal :: asms)
+      |> List.filter (type_enabled o #1)
+      |> map #2
       |> List.concat
   in
     splitLib.SPLIT_TAC (persistent @ datatype_rules) (asms, goal)
@@ -783,6 +785,146 @@ val cases_simp =
 val split_ss =
   named_merge_ss "split"
     [looper_ss ("splitter", splitter_looper), rewrites [cases_simp]]
+
+datatype exclusion_target =
+    ExcludeRule of string
+  | ExcludeLooper of looper_kind * string
+  | ExcludeSolver of string
+  | ExcludeSplits of string list
+  | ExcludeCase of string
+
+fun strip_namespace prefix name =
+  if String.isPrefix prefix name
+  then SOME (String.extract (name,size prefix,NONE))
+  else NONE
+
+fun ordinary_looper_exists name ss =
+  has_looper_id (OrdinaryLooper,name) ss
+
+fun split_displays ss =
+  let
+    val local_entries =
+      List.mapPartial
+        (fn entry as LooperEntry {kind=SplitLooper _,...} =>
+              SOME (looper_display entry)
+          | _ => NONE)
+        (#loopers (strategy_of ss))
+    val persistent =
+      map (fn (name,th) => split_looper_display name th)
+        (splitLib.named_split_thms ())
+  in
+    Lib.mk_set (local_entries @ persistent)
+  end
+
+fun case_displays () =
+  let
+    fun names tyinfo =
+      let
+        val (thy,tyop) = TypeBasePure.ty_name_of tyinfo
+        val full = KernelSig.name_toString {Thy=thy,Name=tyop}
+      in
+        ["split.case " ^ full,"split.case " ^ tyop]
+      end
+  in
+    Lib.mk_set (List.concat (map names (TypeBase.elts ())))
+  end
+
+fun only_target original [] =
+      raise ERR ("process_tags", "Excl did not match " ^ original)
+  | only_target _ [target] = target
+  | only_target original _ =
+      raise ERR
+        ("process_tags",
+         "Excl name " ^ original ^
+         " is ambiguous; qualify it with rule:, looper:, solver:, " ^
+         "split:, or case:")
+
+fun resolve_exclusion ss original =
+  case strip_namespace "rule:" original of
+      SOME name =>
+        if simpset_has_rule_target name ss orelse theorem_name_exists name
+        then ExcludeRule name
+        else only_target original []
+    | NONE =>
+      case strip_namespace "looper:" original of
+          SOME name =>
+            if ordinary_looper_exists name ss
+            then ExcludeLooper (OrdinaryLooper,name)
+            else only_target original []
+        | NONE =>
+          case strip_namespace "solver:" original of
+              SOME name =>
+                if has_solver name ss then ExcludeSolver name
+                else only_target original []
+            | NONE =>
+              case strip_namespace "split:" original of
+                  SOME name =>
+                    let
+                      val candidates = ["split " ^ name,"split_asm " ^ name]
+                      val installed = split_displays ss
+                      val matches =
+                        List.filter (fn n => Lib.mem n installed) candidates
+                    in
+                      if null matches then only_target original []
+                      else ExcludeSplits matches
+                    end
+                | NONE =>
+                  case strip_namespace "case:" original of
+                      SOME name =>
+                        let val display = "split.case " ^ name
+                        in
+                          if Lib.mem display (case_displays ())
+                          then ExcludeCase display
+                          else only_target original []
+                        end
+                    | NONE =>
+                      let
+                        val splits = split_displays ss
+                        val cases = case_displays ()
+                        val targets =
+                          (if simpset_has_rule_target original ss orelse
+                              theorem_name_exists original
+                           then [ExcludeRule original] else []) @
+                          (if ordinary_looper_exists original ss
+                           then [ExcludeLooper (OrdinaryLooper,original)]
+                           else []) @
+                          (if has_solver original ss
+                           then [ExcludeSolver original] else []) @
+                          (if Lib.mem original splits
+                           then [ExcludeSplits [original]] else []) @
+                          (if Lib.mem original cases
+                           then [ExcludeCase original] else [])
+                      in
+                        only_target original targets
+                      end
+
+fun exclude_split_display (display,ss) =
+  let
+    val ids =
+      List.mapPartial
+        (fn entry as LooperEntry {kind=SplitLooper _,name,...} =>
+              if looper_display entry = display
+              then SOME (#kind (looper_data entry),name) else NONE
+          | _ => NONE)
+        (#loopers (strategy_of ss))
+    val without_local =
+      List.foldl (fn (id,result) => del_looper_id_quiet id result) ss ids
+  in
+    map_strategy
+      (upd_excl_loopers (fn excluded => Binaryset.add (excluded,display)))
+      without_local
+  end
+
+fun apply_exclusion (name,ss) =
+  case resolve_exclusion ss name of
+      ExcludeRule rule => ss -* [rule]
+    | ExcludeLooper id => del_looper_id_quiet id ss
+    | ExcludeSolver solver => remove_solver solver ss
+    | ExcludeSplits displays => List.foldl exclude_split_display ss displays
+    | ExcludeCase display =>
+        map_strategy
+          (upd_excl_loopers
+             (fn excluded => Binaryset.add (excluded,display))) ss
 
 fun mk_tactic_solver (name,tac) =
   let
@@ -959,7 +1101,8 @@ fun mk_tactic_solver (name,tac) =
      mk_comb(Term.inst theta f, x)
    end
 
-   fun apply {solver,conv,context,stack,relation = (relation,_)} t = let
+   fun apply {solver,conv,context,stack,
+              relation = (relation,_),...} t = let
      val _ = can (match_term rel_t) relation orelse
              raise ERR ("mk_reducer.apply", "Wrong relation")
      val n = case context of redExn n => n
@@ -1170,16 +1313,11 @@ fun force_add (ss as SS sset) f =
 
 fun clear_rules (SS s) =
   let
-    val strategy = #strategy s
-    (* Rules are dropped; the strategy is kept, so the new history replays
-       exactly the surviving strategy.  Stored in reverse order. *)
+    val strategy = upd_loopers (K []) (#strategy s)
+    (* Rules and fragment loopers are dropped; every other strategy field is
+       retained as one value, so adding a field cannot make replay lose it. *)
     val history =
-      [STRATEGY_EVENT (SET_EXCL_LOOPERS_EVENT (#excl_loopers strategy)),
-       STRATEGY_EVENT (SET_TERM_ORD_EVENT (#term_ord strategy)),
-       STRATEGY_EVENT (SET_COND_DEPTH_EVENT (#cond_depth strategy)),
-       STRATEGY_EVENT (SET_SUBGOALER_EVENT (#subgoaler strategy)),
-       STRATEGY_EVENT (SET_SAFE_SOLVERS_EVENT (#safe_solvers strategy)),
-       STRATEGY_EVENT (SET_UNSAFE_SOLVERS_EVENT (#unsafe_solvers strategy)),
+      [STRATEGY_EVENT (SET_STRATEGY_EVENT strategy),
        SET_MK_REWRS (#mk_rewrs s)]
   in
     SS (updSS s
@@ -1187,7 +1325,7 @@ fun clear_rules (SS s) =
           (Fld #initial_net empty)
           (Fld #dprocs [])
           (Fld #travrules EQ_tr)
-          (Fld #strategy (upd_loopers (K []) strategy))
+          (Fld #strategy strategy)
           $$)
   end
 
@@ -1232,15 +1370,18 @@ fun clear_rules (SS s) =
      CONVNET
        (net_add_convs net (List.mapPartial mk_rewr_convdata new_rwts))
    end
-   fun apply {solver,conv,context,stack,relation} tm = let
+   fun apply {solver,conv,context,stack,cond_depth,term_ord,relation} tm = let
      val net = (raise context) handle CONVNET net => net
    in
-     tryfind (fn {ci = {conval,...},...} => conval solver stack tm)
+     tryfind
+       (fn {ci = {conval,...},...} =>
+           conval {solver=solver, stack=stack, cond_depth=cond_depth,
+                   term_ord=term_ord} tm)
              (lookup tm net)
    end
-   in REDUCER {name=SOME"rewriter_for_ss",
-               addcontext=addcontext, apply=apply,
-               initial=CONVNET prepared_net}
+   in CONTEXT_REDUCER
+        {name=SOME"rewriter_for_ss", addcontext=addcontext, apply=apply,
+         initial=CONVNET prepared_net}
    end;
 
  fun traversedata_for_ss_prepared
@@ -1360,11 +1501,10 @@ fun process_tags0 {report} ss thl =
             remove_ssfrags exclfrags ss handle Conv.UNCHANGED => ss
           val cong_ac =
             SSFRAG_CON
-              {name=SOME "Cong and/or AC", relsimps=[],
-               ac=map unAC ACs,
-               congs=map (normCong o unCong) Congs,
-               convs=[], rewrs=[], filter=NONE, dprocs=[], loopers=[],
-               unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+              (updfrag empty_frag_data
+                 (Fld #name (SOME "Cong and/or AC"))
+                 (Fld #ac (map unAC ACs))
+                 (Fld #congs (map (normCong o unCong) Congs)) $$)
           (* Cong/AC is named but never user-excludable; SF-derived frags
              go through force_add so they override any active exclusion. *)
           val withCongAc = base ++ cong_ac
@@ -1373,34 +1513,7 @@ fun process_tags0 {report} ss thl =
           val withSplits =
             List.foldl (fn (th,ss) => add_split_marker report th ss)
                        withFrags Splits
-          fun splitter_exclusion name =
-            String.isPrefix "split " name orelse
-            String.isPrefix "split_asm " name orelse
-            String.isPrefix "split.case " name
-          val ruleExcludes =
-            List.filter (not o splitter_exclusion) excludes
-          fun strategy_name name result =
-            has_looper name result orelse has_solver name result
-          fun exclude_rule (name,result) =
-            result -* [name]
-            handle exn as HOL_ERR _ =>
-              if strategy_name name result then result else raise exn
-          val withoutRules =
-            List.foldl exclude_rule withSplits ruleExcludes
-          val withoutLoopers =
-            List.foldl (fn (name,result) => del_looper_quiet name result)
-                       withoutRules excludes
-          val withoutSolvers =
-            List.foldl (fn (name,result) => remove_solver name result)
-                       withoutLoopers excludes
-          val splitExcludes = List.filter splitter_exclusion excludes
-          val invocation =
-            if null splitExcludes then withoutSolvers
-            else
-              map_strategy
-                (upd_excl_loopers
-                   (fn excl => Binaryset.addList (excl, splitExcludes)))
-                withoutSolvers
+          val invocation = List.foldl apply_exclusion withSplits excludes
         in
           (invocation, rst)
         end
@@ -1496,10 +1609,11 @@ fun final_solver_tac prepared mode ss reducer_context solver_context =
 fun looper_tac ss =
   let
     val s = strategy_of ss
-    fun enabled (name,_) =
-      not (Binaryset.member (#excl_loopers s,name))
-    fun apply (_,looper) g =
-      looper ss g
+    fun enabled entry =
+      not
+        (Binaryset.member (#excl_loopers s,looper_display entry))
+    fun apply (LooperEntry {apply,...}) g =
+      apply ss g
       handle Conv.UNCHANGED => NO_TAC g
   in
     FIRST (map apply (List.filter enabled (#loopers s)))
@@ -1719,11 +1833,11 @@ fun counted_psr cfg ss prepared solver_context g =
 
 fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
     let
+      val n = length asl
       val initial =
-        {last= ~1, structural=false, k=initial_k,
-         index=0, remaining=length asl}
+        {last= ~1, structural=false, k=initial_k, index=0}
       fun loop state goal =
-        if #remaining state = 0 then ([(goal,state)],hd)
+        if #index state = n then ([(goal,state)],hd)
         else
           let
             val step =
@@ -1742,8 +1856,7 @@ fun counted_pass cfg ss prepared solver_context initial_k (g as (asl,_)) =
                 val state' =
                   {last=if changed then #index state else #last state,
                    structural= #structural state orelse structural,
-                   k=k, index= #index state + 1,
-                   remaining= #remaining state - 1}
+                   k=k, index= #index state + 1}
               in
                 loop state'
               end
@@ -1841,7 +1954,7 @@ fun GEN_GLOBAL_SIMP_TAC mode
                    fun clear_change state =
                      if unchanged then
                        {last= ~1,structural=false,k= #k state,
-                        index= #index state,remaining= #remaining state}
+                        index= #index state}
                      else state
                    val pass' =
                      (map (fn (g,state) => (g,clear_change state)) annotated,
@@ -1928,10 +2041,12 @@ fun tyi_to_ssdata tyinfo =
       val (_, rewrs) = foldl reduce (1,[]) rws0
     in
       SSFRAG_CON
-        {name=SOME ("Datatype " ^ tyname),
-         convs=map (fn c => {thypart=SOME thy,cd=c}) convs,
-         rewrs=rewrs, filter=NONE, dprocs=[], ac=[], congs=[], relsimps=[],
-         loopers=[], unsafe_solvers=[], safe_solvers=[], congprocs=[]}
+        (updfrag empty_frag_data
+           (Fld #name (SOME ("Datatype " ^ tyname)))
+           (Fld #convs
+              (map
+                (fn c => {thypart=SOME thy,cd=lift_convdata c}) convs))
+           (Fld #rewrs rewrs) $$)
     end
 
 fun type_ssfrag ty =
@@ -1947,7 +2062,7 @@ fun type_ssfrag ty =
 val CONSISTENT   = Portable.CONSISTENT
 val INCONSISTENT = Portable.INCONSISTENT;
 
-fun dest_reducer (Traverse.REDUCER x) = x;
+val dest_reducer = Traverse.dest_reducer
 
 fun merge_names list =
   itlist (fn (SOME x) =>
@@ -1960,7 +2075,7 @@ fun merge_names list =
 
 fun dest_convdata tcd  =
     let
-      val {thypart,cd={name,key,...} : convdata} = tcd
+      val {thypart,cd={name,key,...} : contextual_convdata} = tcd
     in
       (thypart,name,Option.map #2 key)
     end
@@ -2051,7 +2166,7 @@ fun pp_simpset (ss as SS {initial_net,strategy,...}) =
         )
       )
     val others = Set.listItems (Set.addList (empty_strset, others0))
-    val looper_names = map #1 loopers
+    val looper_names = map looper_display loopers
     val unsafe_names = map #name unsafe_solvers
     val safe_names = map #name safe_solvers
     val base_sections =

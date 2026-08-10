@@ -1518,6 +1518,66 @@ val _ =
        #state (aesopTree.goal orphaned_copy_tree3 orphaned_copy_root) =
          aesopTree.Unknown)
 
+(* The first support for one obligation can conflict only when a later
+   obligation is considered.  Selection must then retry the earlier goal's
+   next support, rather than treating the locally valid first path as a
+   commitment. *)
+val support_store_m1 =
+  valOf (clasetMeta.bind (cluster_m1, boolSyntax.T) cluster_store2)
+val support_store_both =
+  valOf (clasetMeta.bind (cluster_m2, boolSyntax.T) support_store_m1)
+val support_tree0 = new_tree cluster_store2 fifo_goal []
+val (support_root, support_tree1) = pop_expected support_tree0
+val support_root_install =
+  install_tree_rapp support_tree1 support_root aesopRule.RSafe
+    "support_root" cluster_store2
+    [cluster_g2, cluster_g1, cluster_g3] []
+val [support_path, support_original1, support_original2] =
+  #goals support_root_install
+fun support_copy_of tree original ids =
+  valOf
+    (List.find
+      (fn id => #copy_of (aesopTree.goal tree id) = SOME original) ids)
+val support_first =
+  install_tree_rapp (#tree support_root_install) support_path
+    aesopRule.RSafe "support_first" support_store_m1 [] []
+val support_first_copy =
+  support_copy_of (#tree support_first) support_original1
+    (#goals support_first)
+val support_second =
+  install_tree_rapp (#tree support_first) support_path
+    aesopRule.RSafe "support_second" support_store_both [] []
+val support_second_copy1 =
+  support_copy_of (#tree support_second) support_original1
+    (#goals support_second)
+val support_second_copy2 =
+  support_copy_of (#tree support_second) support_original2
+    (#goals support_second)
+val support_tree2 =
+  close_tree_goal (#tree support_second) support_first_copy
+val support_tree3 = close_tree_goal support_tree2 support_second_copy1
+val support_tree4 = close_tree_goal support_tree3 support_second_copy2
+val support_selection =
+  aesopTree.select_copy_supports support_tree4
+    [support_original1,support_original2] []
+
+val _ =
+  check
+    ("aesop copy-support selection backtracks across obligations",
+     fn () =>
+       case support_selection of
+           NONE => false
+         | SOME required =>
+             List.exists
+               (fn (goal,rid) =>
+                 goal = support_path andalso rid = #rapp support_second)
+               required andalso
+             not
+               (List.exists
+                 (fn (goal,rid) =>
+                   goal = support_path andalso rid = #rapp support_first)
+                 required))
+
 val coupled_stuck_tree0 =
   new_tree cluster_store1 fifo_goal []
 val (coupled_stuck_root, coupled_stuck_tree1) =

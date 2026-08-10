@@ -360,42 +360,40 @@ fun remove_iff name =
     #update_global_value iff_data (apply_iff_to_global delta)
   end
 
+fun extend_invocation
+      {iff_prefix,simp_rules,iff_rules,claset,simpset} =
+  let
+    val simp_ss = simpLib.++ (simpset, simpLib.rewrites simp_rules)
+    val declarations =
+      map
+        (fn (index, rule) =>
+          iff_declaration (iff_prefix ^ Int.toString index) rule)
+        (Lib.enumerate 0 iff_rules)
+    val invocation_cs =
+      List.foldl
+        (fn ({rules,...}, cs) => add_iff_rules rules cs)
+        claset declarations
+    (* A single fragment rebuilds the rewrite net once.  Its head has the
+       highest precedence, so reverse the declarations to match successive
+       fragment insertion. *)
+    val invocation_ss =
+      if null declarations then simp_ss
+      else
+        simpLib.++
+          (simp_ss,
+           simpLib.rewrites (List.rev (map #rewrite declarations)))
+  in
+    (invocation_cs, invocation_ss)
+  end
+
+fun no_extra_markers theorems cs = (cs, theorems)
+
 fun process_clasimp_args body base_cs base_ss =
-  markerLib.ABBRS_THEN
-    (fn theorems =>
-      let
-        val {simp_rules, iff_rules, simp_controls, rest = classical_args} =
-          clasetLib.classify_simp_args theorems
-        val simp_ss = simpLib.++ (base_ss, simpLib.rewrites simp_rules)
-        val iff_declarations =
-          map
-            (fn (index, rule) =>
-              iff_declaration
-                ("__clasimp_iff_arg_" ^ Int.toString index) rule)
-            (Lib.enumerate 0 iff_rules)
-        val iff_cs =
-          List.foldl
-            (fn ({rules, ...}, cs) => add_iff_rules rules cs)
-            base_cs iff_declarations
-        (* One fragment for all the iff rewrites rather than one per
-           argument, so a tactic with Iff arguments rebuilds the rewrite net
-           once per goal.  The list is reversed because a fragment gives its
-           head the highest precedence, where successive fragments give it to
-           the one added last. *)
-        val invocation_ss =
-          if null iff_declarations then simp_ss
-          else
-            simpLib.++
-              (simp_ss,
-               simpLib.rewrites
-                 (List.rev (map #rewrite iff_declarations)))
-        val (invocation_cs, leftovers) =
-          clasetLib.process_claset_tags classical_args iff_cs
-      in
-        Tactical.THEN
-          (clasetLib.INSERT_FACTS_TAC leftovers,
-           body invocation_cs invocation_ss simp_controls)
-      end)
+  clasetLib.with_invocation_args
+    {iff_prefix="__clasimp_iff_arg_", extra_markers=no_extra_markers}
+    (fn cs => fn SOME ss => body cs ss
+      | _ => raise ERR "process_clasimp_args" "simpset was not installed")
+    base_cs (SOME {base=base_ss, extend=extend_invocation})
 
 fun must_close name =
   Tactical.check_delta
@@ -432,7 +430,9 @@ fun auto_with {blast, depth} cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-fun CS_AUTO_TAC bounds cs ss = auto_with bounds cs ss []
+fun CS_of body cs ss = body cs ss []
+
+fun CS_AUTO_TAC bounds = CS_of (auto_with bounds)
 
 fun force_with name cs ss simp_args =
   let
@@ -458,7 +458,7 @@ fun force_with name cs ss simp_args =
     must_close name script
   end
 
-fun CS_FORCE_TAC cs ss = force_with "CS_FORCE_TAC" cs ss []
+val CS_FORCE_TAC = CS_of (force_with "CS_FORCE_TAC")
 
 (* The classical search drivers already succeed only with a closed engine
    state.  must_close is the public contract guard in case that invariant
@@ -468,17 +468,17 @@ fun search_with_simp name engine cs ss simp_args =
     (NTactical.DETERM
        (engine (add_simp_wrapper ss simp_args cs)))
 
-fun CS_FASTFORCE_TAC cs ss =
-  search_with_simp "CS_FASTFORCE_TAC"
-    classicalLib.CS_FAST_TAC cs ss []
+val simp_search =
+  (classicalLib.CS_FAST_TAC, classicalLib.CS_SLOW_TAC,
+   classicalLib.CS_BEST_TAC)
+val (fast_search, slow_search, best_search) = simp_search
 
-fun CS_SLOWSIMP_TAC cs ss =
-  search_with_simp "CS_SLOWSIMP_TAC"
-    classicalLib.CS_SLOW_TAC cs ss []
-
-fun CS_BESTSIMP_TAC cs ss =
-  search_with_simp "CS_BESTSIMP_TAC"
-    classicalLib.CS_BEST_TAC cs ss []
+val CS_FASTFORCE_TAC =
+  CS_of (search_with_simp "CS_FASTFORCE_TAC" fast_search)
+val CS_SLOWSIMP_TAC =
+  CS_of (search_with_simp "CS_SLOWSIMP_TAC" slow_search)
+val CS_BESTSIMP_TAC =
+  CS_of (search_with_simp "CS_BESTSIMP_TAC" best_search)
 
 fun clarsimp_with cs ss simp_args =
   let
@@ -498,7 +498,7 @@ fun clarsimp_with cs ss simp_args =
     Tactical.CHANGED_TAC script
   end
 
-fun CS_CLARSIMP_TAC cs ss = clarsimp_with cs ss []
+val CS_CLARSIMP_TAC = CS_of clarsimp_with
 
 fun public body theorems goal =
   process_clasimp_args body
@@ -514,19 +514,13 @@ fun FORCE_TAC theorems =
   public (force_with "FORCE_TAC") theorems
 
 fun FASTFORCE_TAC theorems =
-  public
-    (search_with_simp "FASTFORCE_TAC"
-       classicalLib.CS_FAST_TAC) theorems
+  public (search_with_simp "FASTFORCE_TAC" fast_search) theorems
 
 fun SLOWSIMP_TAC theorems =
-  public
-    (search_with_simp "SLOWSIMP_TAC"
-       classicalLib.CS_SLOW_TAC) theorems
+  public (search_with_simp "SLOWSIMP_TAC" slow_search) theorems
 
 fun BESTSIMP_TAC theorems =
-  public
-    (search_with_simp "BESTSIMP_TAC"
-       classicalLib.CS_BEST_TAC) theorems
+  public (search_with_simp "BESTSIMP_TAC" best_search) theorems
 
 fun CLARSIMP_TAC theorems =
   public clarsimp_with theorems

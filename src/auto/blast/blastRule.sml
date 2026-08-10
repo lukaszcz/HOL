@@ -38,8 +38,10 @@ type entry =
 datatype head_tag =
     HAbs
   | HBound of int
-  | HConst of string
-  | HFree of string
+  | HConst of KernelSig.kernelname
+  | HFvar of string
+  | HGoal
+  | HFalse
   | HSkolem of string
   | HVar
 
@@ -48,17 +50,19 @@ type cache_key = bool * int * head_tag
 fun head_tag_rank HAbs = 0
   | head_tag_rank (HBound _) = 1
   | head_tag_rank (HConst _) = 2
-  | head_tag_rank (HFree _) = 3
-  | head_tag_rank (HSkolem _) = 4
-  | head_tag_rank HVar = 5
+  | head_tag_rank (HFvar _) = 3
+  | head_tag_rank HGoal = 4
+  | head_tag_rank HFalse = 5
+  | head_tag_rank (HSkolem _) = 6
+  | head_tag_rank HVar = 7
 
 fun head_tag_compare (left, right) =
   case Int.compare (head_tag_rank left, head_tag_rank right) of
       EQUAL =>
         (case (left, right) of
              (HBound i, HBound j) => Int.compare (i, j)
-           | (HConst a, HConst b) => String.compare (a, b)
-           | (HFree a, HFree b) => String.compare (a, b)
+           | (HConst a, HConst b) => KernelSig.name_compare (a, b)
+           | (HFvar a, HFvar b) => String.compare (a, b)
            | (HSkolem a, HSkolem b) => String.compare (a, b)
            | _ => EQUAL)
     | order => order
@@ -81,7 +85,9 @@ fun stable_head_tag formula =
   case head_of formula of
       Const (name, _) => HConst name
     | Skolem (name, _) => HSkolem name
-    | Free name => HFree name
+    | Fvar name => HFvar name
+    | Goal => HGoal
+    | False => HFalse
     | Var _ => HVar
     | Bound index => HBound index
     | Abs _ => HAbs
@@ -102,10 +108,8 @@ fun resolved_head_tag formula =
 fun cache_key safe vars formula =
   (safe, length vars, stable_head_tag formula)
 
-fun containsZeroMeasured checkpoint [] = false
-  | containsZeroMeasured checkpoint (i :: rest) =
-      (checkpoint ();
-       i = 0 orelse containsZeroMeasured checkpoint rest)
+fun containsZeroMeasured checkpoint =
+  existsMeasured checkpoint (fn i => i = 0)
 
 datatype cache = Cache of
   {entries : (cache_key, entry list) Redblackmap.dict ref,
@@ -132,51 +136,27 @@ fun freshName _ prefix =
 val blast_trace = ref 0
 val _ = Feedback.register_trace ("blast", blast_trace, 7)
 
-(* [const_name] is the identity stored in blast terms and decoded by
-   [query_skeleton_measured], so it is also the stable cache key. *)
 val generic_cache :
-  (string, hol_type * hol_type list) Redblackmap.dict ref =
-  ref (Redblackmap.mkDict String.compare)
+  (KernelSig.kernelname, hol_type * hol_type list) Redblackmap.dict ref =
+  ref (Redblackmap.mkDict KernelSig.name_compare)
 
-fun split_name encoded =
-  let
-    val (left, right) =
-      Substring.position "$" (Substring.full encoded)
-  in
-    if Substring.isEmpty right then NONE
-    else
-      SOME (Substring.string left,
-            Substring.string (Substring.slice (right, 1, NONE)))
-  end
-
-fun generic_info {Thy, Name} =
-  let
-    val encoded = const_name {Thy = Thy, Name = Name}
-  in
-    case Redblackmap.peek (!generic_cache, encoded) of
-        SOME info => info
-      | NONE =>
-          let
-            val generic = type_of (prim_mk_const {Thy = Thy, Name = Name})
-            val info = (generic, Type.type_vars generic)
-          in
-            generic_cache :=
-              Redblackmap.insert (!generic_cache, encoded, info);
-            info
-          end
-  end
+fun generic_info (name as {Thy, Name}) =
+  case Redblackmap.peek (!generic_cache, name) of
+      SOME info => info
+    | NONE =>
+        let
+          val generic = type_of (prim_mk_const {Thy = Thy, Name = Name})
+          val info = (generic, Type.type_vars generic)
+        in
+          generic_cache :=
+            Redblackmap.insert (!generic_cache, name, info);
+          info
+        end
 
 fun member_term_measured checkpoint tm =
-  let
-    fun member [] = false
-      | member (other :: rest) =
-          (checkpoint ();
-           Term.aconv tm other orelse member rest)
-  in
-    member
-  end
+  existsMeasured checkpoint (Term.aconv tm)
 
-fun translator_with checkpoint
+fun translatorMeasured checkpoint
       {rigid_types, goal_frees, rule_vars} =
   let
     val term_map : (hol_term, pterm) Redblackmap.dict ref =
@@ -184,17 +164,14 @@ fun translator_with checkpoint
     val type_map : (hol_type, pterm) Redblackmap.dict ref =
       ref (Redblackmap.mkDict Type.compare)
 
-    fun member _ [] = false
-      | member tm (other :: rest) =
-          (checkpoint ();
-           Term.aconv tm other orelse member tm rest)
+    fun member tm = existsMeasured checkpoint (Term.aconv tm)
 
     fun encode_type ty =
       let
         val _ = checkpoint ()
       in
         if Type.is_vartype ty then
-          if rigid_types then Free (Type.dest_vartype ty)
+          if rigid_types then Fvar (Type.dest_vartype ty)
           else
             (case Redblackmap.peek (!type_map, ty) of
                  SOME value => value
@@ -208,21 +185,18 @@ fun translator_with checkpoint
         else
           let
             val {Thy, Tyop, Args} = Type.dest_thy_type ty
-            val head = Const (const_name {Thy = Thy, Name = Tyop}, [])
-            fun encode [] = []
-              | encode (arg :: args) =
-                  (checkpoint (); encode_type arg :: encode args)
+            val head = Const ({Thy = Thy, Name = Tyop}, [])
           in
-            list_comb (head, encode Args)
+            list_comb (head, mapMeasured checkpoint encode_type Args)
           end
       end
 
     fun generic {Thy, Name} =
       let
-        val encoded = const_name {Thy = Thy, Name = Name}
+        val name = {Thy = Thy, Name = Name}
         val _ = checkpoint ()
       in
-        case Redblackmap.peek (!generic_cache, encoded) of
+        case Redblackmap.peek (!generic_cache, name) of
             SOME info => info
           | NONE =>
               let
@@ -233,7 +207,7 @@ fun translator_with checkpoint
                 val info = (generic, Type.type_vars generic)
               in
                 generic_cache :=
-                  Redblackmap.insert (!generic_cache, encoded, info);
+                  Redblackmap.insert (!generic_cache, name, info);
                 info
               end
       end
@@ -245,16 +219,9 @@ fun translator_with checkpoint
         val (generic_type, generic_vars) = generic {Thy = Thy, Name = Name}
         val _ = checkpoint ()
         val subst = Type.match_type generic_type Ty
-        fun encode [] = []
-          | encode (variable :: variables) =
-              let
-                val _ = checkpoint ()
-                val instantiated = Type.type_subst subst variable
-              in
-                encode_type instantiated :: encode variables
-              end
       in
-        encode generic_vars
+        mapMeasured checkpoint
+          (encode_type o Type.type_subst subst) generic_vars
       end
 
     fun fresh_variable tm make =
@@ -279,7 +246,7 @@ fun translator_with checkpoint
                fresh_variable tm
                  (fn () => Skolem (freshName () "*Free*", []))
              else
-               let val (name, _) = dest_var tm in Free name end)
+               let val (name, _) = dest_var tm in Fvar name end)
 
     fun from depth bounds tm =
       let
@@ -290,7 +257,7 @@ fun translator_with checkpoint
             val {Thy, Name, ...} = dest_thy_const tm
             val args = const_args tm
           in
-            Const (const_name {Thy = Thy, Name = Name}, args)
+            Const ({Thy = Thy, Name = Name}, args)
           end
         else if is_var tm then variable depth bounds tm
         else if is_abs tm then
@@ -325,37 +292,30 @@ fun translator_with checkpoint
       from 0 (Redblackmap.mkDict Term.compare) hol_term
   end
 
-fun translator fields = translator_with (fn () => ()) fields
-fun translatorMeasured checkpoint fields =
-  translator_with checkpoint fields
+fun translator fields = translatorMeasured (fn () => ()) fields
 
 fun fromGoalTerm tm =
   translator
     {rigid_types = true, goal_frees = true, rule_vars = []} tm
 
-fun initialBranchWith checkpoint (assumptions, conclusion) =
+fun initialBranchMeasured checkpoint (assumptions, conclusion) =
   let
     val from =
       translatorMeasured checkpoint
         {rigid_types = true, goal_frees = true, rule_vars = []}
-    fun translate [] = []
-      | translate (formula :: formulas) =
-          (checkpoint (); (from formula, true) :: translate formulas)
     val _ = checkpoint ()
     val conclusion' = from conclusion
   in
-    (mkGoal conclusion', true) :: translate assumptions
+    (mkGoal conclusion', true) ::
+      mapMeasured checkpoint (fn formula => (from formula, true)) assumptions
   end
 
-fun initialBranch goal = initialBranchWith (fn () => ()) goal
-
-fun initialBranchMeasured checkpoint goal =
-  initialBranchWith checkpoint goal
+fun initialBranch goal = initialBranchMeasured (fn () => ()) goal
 
 fun proto_imp term =
   case strip_comb term of
       (Const (name, _), [left, right]) =>
-        if name = const_name {Thy = "min", Name = "==>"}
+        if name = {Thy = "min", Name = "==>"}
         then SOME (left, right)
         else NONE
     | _ => NONE
@@ -363,7 +323,7 @@ fun proto_imp term =
 fun dest_forall_body term =
   case strip_comb term of
       (Const (name, _), [predicate]) =>
-        if name = const_name {Thy = "bool", Name = "!"}
+        if name = {Thy = "bool", Name = "!"}
         then SOME predicate
         else NONE
     | _ => NONE
@@ -408,7 +368,7 @@ fun is_false_var term =
   case term of
       Var v =>
         (case !v of
-             SOME (Const (name, _)) => name = false_name
+             SOME False => true
            | _ => false)
     | _ => false
 
@@ -426,10 +386,7 @@ fun canonical_dataMeasured checkpoint is_elim theorem =
     val from =
       translatorMeasured checkpoint
         {rigid_types = false, goal_frees = false, rule_vars = outer}
-    fun translate [] = []
-      | translate (premise :: premises) =
-          (checkpoint (); from premise :: translate premises)
-    val premises = translate (#prems form)
+    val premises = mapMeasured checkpoint from (#prems form)
     val _ = checkpoint ()
     val conclusion = from (#concl form)
   in
@@ -440,32 +397,23 @@ fun canonical_dataMeasured checkpoint is_elim theorem =
 fun countConversion (Cache {conversions, ...}) =
   conversions := !conversions + 1
 
-fun convertIntroWith checkpoint cache vars theorem =
+fun convertIntroMeasured checkpoint cache vars theorem =
   let
     val _ = countConversion cache
     val {premises, conclusion, ...} =
       canonical_dataMeasured checkpoint false theorem
-    fun convert [] = []
-      | convert (premise :: rest) =
-          let
-            val _ = checkpoint ()
-            val skolemized = skoPremMeasured checkpoint cache vars premise
-            val converted = convertPremMeasured checkpoint skolemized
-          in
-            converted :: convert rest
-          end
+    fun convert premise =
+      convertPremMeasured checkpoint
+        (skoPremMeasured checkpoint cache vars premise)
   in
     {origin = Stored {is_elim = false, theorem = theorem},
      pattern = mkGoal conclusion,
-     premises = convert premises,
-     hidden_assumptions = map (fn _ => NONE) premises}
+     premises = mapMeasured checkpoint convert premises,
+     hidden_assumptions = mapMeasured checkpoint (fn _ => NONE) premises}
   end
 
 fun convertIntro cache vars theorem =
-  convertIntroWith (fn () => ()) cache vars theorem
-
-fun convertIntroMeasured checkpoint cache vars theorem =
-  convertIntroWith checkpoint cache vars theorem
+  convertIntroMeasured (fn () => ()) cache vars theorem
 
 fun weak_warning theorem =
   if Feedback.current_trace "blast" >= 1 then
@@ -483,20 +431,24 @@ fun delete_concl_measured_from checkpoint _ [] =
       (formula :: formulas) =
       (checkpoint ();
        case formula of
-           Const (name, _) $ value =>
-             if (name = goal_name orelse
-                 name = const_name {Thy = "bool", Name = "~"}) andalso
-                is_false_var value
-             then
-               (formulas,
-                if name = goal_name then NONE else SOME assumption_index)
+           Goal $ value =>
+             if is_false_var value then (formulas, NONE)
              else
                let
-                 val next =
-                   if name = goal_name then assumption_index
-                   else assumption_index + 1
                  val (remaining, hidden) =
-                   delete_concl_measured_from checkpoint next formulas
+                   delete_concl_measured_from checkpoint
+                     assumption_index formulas
+               in
+                 (formula :: remaining, hidden)
+               end
+         | Const ({Thy = "bool", Name = "~"}, _) $ value =>
+             if is_false_var value then
+               (formulas, SOME assumption_index)
+             else
+               let
+                 val (remaining, hidden) =
+                   delete_concl_measured_from checkpoint
+                     (assumption_index + 1) formulas
                in
                  (formula :: remaining, hidden)
                end
@@ -512,7 +464,7 @@ fun delete_concl_measured_from checkpoint _ [] =
 fun delete_concl_measured checkpoint formulas =
   delete_concl_measured_from checkpoint 0 formulas
 
-fun convertElimWith checkpoint cache vars theorem =
+fun convertElimMeasured checkpoint cache vars theorem =
   let
     val _ = countConversion cache
     val data = canonical_dataMeasured checkpoint true theorem
@@ -534,24 +486,18 @@ fun convertElimWith checkpoint cache vars theorem =
       case premises of
           premise :: rest => (premise, rest)
         | [] => raise ElimBadConcl
-    val _ = false_var := SOME (Const (false_name, []))
-    fun convert [] = []
-      | convert (premise :: rest) =
-          let
-            val _ = checkpoint ()
-            val skolemized = skoPremMeasured checkpoint cache vars premise
-            val converted = convertPremMeasured checkpoint skolemized
-            val minor = delete_concl_measured checkpoint converted
-          in
-            minor :: convert rest
-          end
+    val _ = false_var := SOME False
+    fun convert premise =
+      delete_concl_measured checkpoint
+        (convertPremMeasured checkpoint
+           (skoPremMeasured checkpoint cache vars premise))
   in
-    let val converted = convert minors
+    let val converted = mapMeasured checkpoint convert minors
     in SOME
       {origin = Stored {is_elim = true, theorem = theorem},
        pattern = major,
-       premises = map #1 converted,
-       hidden_assumptions = map #2 converted}
+       premises = mapMeasured checkpoint #1 converted,
+       hidden_assumptions = mapMeasured checkpoint #2 converted}
     end
   end
   handle ElimBadPrem => (weak_warning theorem; NONE)
@@ -562,10 +508,7 @@ fun convertElimWith checkpoint cache vars theorem =
             NONE)
 
 fun convertElim cache vars theorem =
-  convertElimWith (fn () => ()) cache vars theorem
-
-fun convertElimMeasured checkpoint cache vars theorem =
-  convertElimWith checkpoint cache vars theorem
+  convertElimMeasured (fn () => ()) cache vars theorem
 
 fun bucket entries key =
   case Redblackmap.peek (entries, key) of
@@ -604,7 +547,7 @@ fun find_cached find entries safe vars formula =
     newest (first, second)
   end
 
-fun cachedWith checkpoint (Cache {entries, hits, ...})
+fun cachedMeasured checkpoint (Cache {entries, hits, ...})
       safe vars formula =
   let
     fun same ([], []) = true
@@ -612,14 +555,11 @@ fun cachedWith checkpoint (Cache {entries, hits, ...})
           (checkpoint ();
            left = right andalso same (lefts, rights))
       | same _ = false
-    fun find [] = NONE
-      | find (entry :: rest) =
-          (checkpoint ();
-           if #safe entry = safe andalso
-              same (#vars entry, vars) andalso
-              aconvMeasured checkpoint (#formula entry, formula)
-           then SOME entry
-           else find rest)
+    fun matches entry =
+      #safe entry = safe andalso
+      same (#vars entry, vars) andalso
+      aconvMeasured checkpoint (#formula entry, formula)
+    val find = findMeasured checkpoint matches
   in
     (* Red-black lookup itself is indivisible.  Poll once for every member
        of the selected head bucket (and the variable-head fallback), rather
@@ -630,9 +570,6 @@ fun cachedWith checkpoint (Cache {entries, hits, ...})
           (hits := !hits + 1;
            SOME (#rules entry))
   end
-
-fun cachedMeasured checkpoint cache safe vars formula =
-  cachedWith checkpoint cache safe vars formula
 
 fun remember (Cache {entries, next_stamp, ...}) safe vars formula rules =
   let
@@ -663,16 +600,14 @@ fun query_skeleton_measured checkpoint formula =
         collect (term, [])
       end
 
-    fun find_decoded _ [] = NONE
-      | find_decoded variable ((key, ty) :: rest) =
-          (checkpoint ();
-           if key = variable then SOME ty
-           else find_decoded variable rest)
+    fun find_decoded variable entries =
+      Option.map #2
+        (findMeasured checkpoint (fn (key, _) => key = variable) entries)
 
     fun decode term =
       (checkpoint ();
        case term of
-           Free name => Type.mk_vartype name
+           Fvar name => Type.mk_vartype name
          | Var variable =>
              (case !variable of
                   SOME value => decode value
@@ -688,42 +623,32 @@ fun query_skeleton_measured checkpoint formula =
          | _ =>
              let
                val (head, args) = strip term
-               fun decode_args [] = []
-                 | decode_args (arg :: rest) =
-                     (checkpoint (); decode arg :: decode_args rest)
              in
                case head of
-                   Const (encoded, []) =>
-                     (case split_name encoded of
-                          SOME (thy, tyop) =>
-                            Type.mk_thy_type
-                              {Thy = thy, Tyop = tyop,
-                               Args = decode_args args}
-                        | NONE => raise Fail "bad type encoding")
-                 | _ => raise Fail "bad type encoding"
+                   Const ({Thy, Name}, []) =>
+                     Type.mk_thy_type
+                       {Thy = Thy, Tyop = Name,
+                        Args = mapMeasured checkpoint decode args}
+                 | _ => Type.gen_tyvar ()
              end)
 
     fun constant (name, proto_args) =
       (checkpoint ();
-       case split_name name of
-           NONE => raise Fail "pseudo-constant in net query"
-         | SOME (Thy, Name) =>
-             let
-               val (generic, generic_vars) =
-                 generic_info {Thy = Thy, Name = Name}
+       let
+         val (generic, generic_vars) = generic_info name
                fun substitutions ([], []) = []
                  | substitutions (variable :: variables, arg :: args) =
                      (checkpoint ();
                       (variable |-> decode arg) ::
                         substitutions (variables, args))
-                 | substitutions _ = raise Fail "bad constant type arguments"
+                 | substitutions _ = []
                val subst = substitutions (generic_vars, proto_args)
                val _ = checkpoint ()
-             in
-               mk_thy_const
-                 {Thy = Thy, Name = Name,
-                  Ty = Type.type_subst subst generic}
-             end)
+         in
+           mk_thy_const
+             {Thy = #Thy name, Name = #Name name,
+              Ty = Type.type_subst subst generic}
+         end)
 
     fun build expected 0 _ = (checkpoint (); genvar expected)
       | build expected level term =
@@ -749,8 +674,7 @@ fun query_skeleton_measured checkpoint formula =
                     else genvar expected
                   end
               | _ => genvar expected)
-           handle HOL_ERR _ => genvar expected
-                | Fail _ => genvar expected)
+           handle HOL_ERR _ => genvar expected)
   in
     build bool depth body
   end
@@ -786,7 +710,7 @@ fun pseudoRulesMeasured checkpoint cache vars formula =
 
 fun isVarForm (Var _) = true
   | isVarForm (Const (name, _) $ Var _) =
-      name = const_name {Thy = "bool", Name = "~"}
+      name = {Thy = "bool", Name = "~"}
   | isVarForm _ = false
 
 fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
@@ -798,16 +722,15 @@ fun candidatesMeasured ({checkpoint, ...} : monitor) claset safe formula =
         clasetLib.unify_intro_candidates_measured checkpoint part query
       fun elims part =
         clasetLib.unify_elim_candidates_measured checkpoint part query
-      fun append [] right = right
-        | append (item :: items) right =
-            (checkpoint (); item :: append items right)
       val tagged =
         if safe then
           if isGoal formula then
-            append (intros (clasetLib.safe0_part claset))
+            appendMeasured checkpoint
+              (intros (clasetLib.safe0_part claset))
               (intros (clasetLib.safep_part claset))
           else
-            append (elims (clasetLib.safe0_part claset))
+            appendMeasured checkpoint
+              (elims (clasetLib.safe0_part claset))
               (elims (clasetLib.safep_part claset))
         else if isGoal formula then
           intros (clasetLib.unsafe_part claset)
@@ -826,29 +749,23 @@ fun copyRulesWith checkpoint
     val variable_copies = ref ([] : (var * var) list)
     val skolem_copies = ref ([] : (string * string) list)
 
-    fun string_member _ [] = false
-      | string_member value (other :: rest) =
-          (checkpoint ();
-           value = other orelse string_member value rest)
+    fun string_member value =
+      existsMeasured checkpoint (fn other => value = other)
 
-    fun variable_member _ [] = false
-      | variable_member value (other :: rest) =
-          (checkpoint ();
-           value = other orelse variable_member value rest)
+    fun variable_member value =
+      existsMeasured checkpoint (fn other => value = other)
 
     fun insert_string value values =
       if string_member value values then values else value :: values
 
-    fun find_variable _ [] = NONE
-      | find_variable variable ((source, copy) :: rest) =
-          (checkpoint ();
-           if source = variable then SOME copy
-           else find_variable variable rest)
+    fun find_variable variable entries =
+      Option.map #2
+        (findMeasured checkpoint
+           (fn (source, _) => source = variable) entries)
 
-    fun find_skolem _ [] = NONE
-      | find_skolem name ((source, copy) :: rest) =
-          (checkpoint ();
-           if source = name then SOME copy else find_skolem name rest)
+    fun find_skolem name entries =
+      Option.map #2
+        (findMeasured checkpoint (fn (source, _) => source = name) entries)
 
     fun add_skolems term names =
       let
@@ -868,17 +785,18 @@ fun copyRulesWith checkpoint
           | _ => names
       end
 
-    and fold_terms [] names = names
-      | fold_terms (item :: items) names =
-          (checkpoint (); fold_terms items (add_skolems item names))
+    and fold_terms items names =
+      List.foldl
+        (fn (item, result) =>
+           (checkpoint (); add_skolems item result)) names items
 
-    and fold_vars [] names = names
-      | fold_vars (variable :: variables) names =
-          (checkpoint ();
-           fold_vars variables
-             (case !variable of
-                  NONE => names
-                | SOME item => add_skolems item names))
+    and fold_vars variables names =
+      List.foldl
+        (fn (variable, result) =>
+           (checkpoint ();
+            case !variable of
+                NONE => result
+              | SOME item => add_skolems item result)) names variables
 
     val external_skolems =
       List.foldl
@@ -931,29 +849,23 @@ fun copyRulesWith checkpoint
            Const (name, args) => Const (name, copy_terms args)
          | Skolem (name, arguments) =>
              Skolem (copy_skolem name, copy_variables arguments)
-         | Free name => Free name
+         | Fvar name => Fvar name
+         | Goal => Goal
+         | False => False
          | Var variable => Var (copy_variable variable)
          | Bound index => Bound index
          | Abs (name, body) => Abs (name, copy_term body)
          | left $ right => copy_term left $ copy_term right)
 
-    and copy_terms [] = []
-      | copy_terms (term :: terms) =
-          (checkpoint (); copy_term term :: copy_terms terms)
+    and copy_terms terms = mapMeasured checkpoint copy_term terms
 
-    and copy_variables [] = []
-      | copy_variables (variable :: variables) =
-          (checkpoint ();
-           copy_variable variable :: copy_variables variables)
+    and copy_variables variables =
+      mapMeasured checkpoint copy_variable variables
 
-    fun copy_premise [] = []
-      | copy_premise (term :: terms) =
-          (checkpoint (); copy_term term :: copy_premise terms)
+    fun copy_premise terms = mapMeasured checkpoint copy_term terms
 
-    fun copy_premises [] = []
-      | copy_premises (premise :: premises) =
-          (checkpoint ();
-           copy_premise premise :: copy_premises premises)
+    fun copy_premises premises =
+      mapMeasured checkpoint copy_premise premises
 
     fun copy_rule
           ({origin, pattern, premises, hidden_assumptions} : tableau_rule) =
@@ -962,14 +874,11 @@ fun copyRulesWith checkpoint
         pattern = copy_term pattern,
         premises = copy_premises premises,
         hidden_assumptions = hidden_assumptions})
-    fun copy_rules [] = []
-      | copy_rules (rule :: rest) =
-          (checkpoint (); copy_rule rule :: copy_rules rest)
   in
-    copy_rules rules
+    mapMeasured checkpoint copy_rule rules
   end
 
-fun acquireWith (monitor as {candidate, conversion, checkpoint})
+fun acquireMeasured (monitor as {candidate, conversion, checkpoint})
       cache claset safe vars formula =
   case cachedMeasured checkpoint cache safe vars formula of
       SOME rules =>
@@ -977,10 +886,7 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint})
     | NONE =>
         let
           val tagged = candidatesMeasured monitor claset safe formula
-          fun enumerate [] = ()
-            | enumerate (_ :: rest) =
-                (checkpoint (); candidate (); enumerate rest)
-          val _ = enumerate tagged
+          val _ = appMeasured checkpoint (fn _ => candidate ()) tagged
           fun convert (_, (is_elim, theorem)) =
             let
               val _ = checkpoint ()
@@ -996,37 +902,17 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint})
             end
           fun weight_at_most_one ({weight, ...} : clasetRules.tag, _) =
             weight <= 1
-          fun partition [] = ([], [])
-            | partition (item :: rest) =
-                let
-                  val _ = checkpoint ()
-                  val (yes, no) = partition rest
-                in
-                  if weight_at_most_one item then (item :: yes, no)
-                  else (yes, item :: no)
-                end
-          fun map_partial _ [] = []
-            | map_partial f (item :: rest) =
-                let
-                  val _ = checkpoint ()
-                  val result = f item
-                in
-                  case result of
-                      NONE => map_partial f rest
-                    | SOME value => value :: map_partial f rest
-                end
-          fun append [] right = right
-            | append (item :: items) right =
-                (checkpoint (); item :: append items right)
-          val (early, late) = partition tagged
-          val early_rules = map_partial convert early
-          val late_rules = map_partial convert late
+          val (early, late) =
+            partitionMeasured checkpoint weight_at_most_one tagged
+          val early_rules = mapPartialMeasured checkpoint convert early
+          val late_rules = mapPartialMeasured checkpoint convert late
           val rules =
             if safe then
-              append early_rules
-                (append (pseudoRulesMeasured checkpoint cache vars formula)
+              appendMeasured checkpoint early_rules
+                (appendMeasured checkpoint
+                   (pseudoRulesMeasured checkpoint cache vars formula)
                    late_rules)
-            else append early_rules late_rules
+            else appendMeasured checkpoint early_rules late_rules
           val _ = checkpoint ()
           val templates =
             copyRulesWith checkpoint cache vars formula false rules
@@ -1036,13 +922,10 @@ fun acquireWith (monitor as {candidate, conversion, checkpoint})
         end
 
 fun acquire cache claset safe vars formula =
-  acquireWith
+  acquireMeasured
     {candidate = fn () => (), conversion = fn () => (),
      checkpoint = fn () => ()}
     cache claset safe vars formula
-
-fun acquireMeasured monitor cache claset safe vars formula =
-  acquireWith monitor cache claset safe vars formula
 
 fun safeRules cache claset vars formula =
   acquire cache claset true vars formula

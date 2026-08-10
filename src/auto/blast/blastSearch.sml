@@ -59,17 +59,8 @@ type proof =
    branches_closed : int,
    choices_pruned : int}
 
-type statistics =
-  {configured_depth : int,
-   maximum_resource_cost : int,
-   inferences_performed : int,
-   branches_created : int,
-   branches_closed : int,
-   choices_pruned : int,
-   rule_cache_hits : int,
-   rule_conversions : int,
-   emergency_cleanup_assignments : int,
-   remaining_trail_assignments : int,
+type phase_statistics =
+  {emergency_cleanup_assignments : int,
    cooperative_checkpoints : int,
    candidate_rules_enumerated : int,
    candidate_conversions_attempted : int,
@@ -81,6 +72,18 @@ type statistics =
    equality_substitution_successes : int,
    literal_close_attempts : int,
    literal_close_successes : int}
+
+type statistics =
+  {configured_depth : int,
+   maximum_resource_cost : int,
+   inferences_performed : int,
+   branches_created : int,
+   branches_closed : int,
+   choices_pruned : int,
+   rule_cache_hits : int,
+   rule_conversions : int,
+   remaining_trail_assignments : int,
+   phase : phase_statistics}
 
 datatype completion = Completed | Interrupted
 
@@ -183,8 +186,8 @@ fun projectBranches branches = map projectBranch branches
 
 datatype choice = Choice of int * int * exn
 
-val not_name = const_name {Thy = "bool", Name = "~"}
-val equality_name = const_name {Thy = "min", Name = "="}
+val not_name = {Thy = "bool", Name = "~"}
+val equality_name = {Thy = "min", Name = "="}
 
 fun first (left, _) = left
 
@@ -201,32 +204,22 @@ fun negOfTracked formula =
 
 fun negOfTrackedPair (formula, md) = (negOfTracked formula, md)
 
-(* Every search worker below comes as one [...With] body taking the
-   cooperative checkpoint, and any term primitive whose measured variant
-   polls, as parameters.  The plain entry point passes a checkpoint that
-   does nothing and the unpolled primitives; the measured one passes the
-   run's checkpoint and the polling primitives.  Keeping a single body
-   is what stops the two families from drifting apart. *)
-
-fun negOfTrackedGoalsWith checkpoint pairs =
-  let
-    fun negate_pairs [] = []
-      | negate_pairs (pair :: rest) =
-          (checkpoint (); negOfTrackedPair pair :: negate_pairs rest)
-    fun negate_levels [] = []
-      | negate_levels ((safe, unsafe) :: rest) =
-          (checkpoint ();
-           (negate_pairs safe, unsafe) :: negate_levels rest)
-  in
-    negate_levels pairs
-  end
-
-fun negOfTrackedGoals pairs = negOfTrackedGoalsWith (fn () => ()) pairs
+(* Every search worker below has one checkpoint-parameterized body.  The
+   plain entry point instantiates it with a no-op callback, while the
+   measured entry point passes the run's checkpoint. *)
 
 fun negOfTrackedGoalsMeasured checkpoint pairs =
-  negOfTrackedGoalsWith checkpoint pairs
+  let
+    val negate_pairs = mapMeasured checkpoint negOfTrackedPair
+    fun negate_level (safe, unsafe) = (negate_pairs safe, unsafe)
+  in
+    mapMeasured checkpoint negate_level pairs
+  end
 
-fun joinTrackedMdWith checkpoint md formulas =
+fun negOfTrackedGoals pairs =
+  negOfTrackedGoalsMeasured (fn () => ()) pairs
+
+fun joinTrackedMdMeasured checkpoint md formulas =
   let
     fun has term =
       (checkpoint ();
@@ -235,19 +228,13 @@ fun joinTrackedMdWith checkpoint md formulas =
          | Abs (_, body) => has body
          | left $ right => has left orelse has right
          | _ => false)
-    fun join [] = []
-      | join (formula :: rest) =
-          (checkpoint ();
-           (formula, has (trackedTerm formula) orelse md) :: join rest)
+    fun join formula = (formula, has (trackedTerm formula) orelse md)
   in
-    join formulas
+    mapMeasured checkpoint join formulas
   end
 
 fun joinTrackedMd md formulas =
-  joinTrackedMdWith (fn () => ()) md formulas
-
-fun joinTrackedMdMeasured checkpoint md formulas =
-  joinTrackedMdWith checkpoint md formulas
+  joinTrackedMdMeasured (fn () => ()) md formulas
 
 fun initBranch (formulas, lim) =
   {pairs = [(map (fn formula => (formula, true)) formulas, [])],
@@ -288,10 +275,6 @@ fun initSearchBranchMeasured checkpoint fresh arguments =
   initSearchBranchWith checkpoint (add_terms_vars_measured checkpoint)
     fresh arguments
 
-fun appendMeasured checkpoint [] right = right
-  | appendMeasured checkpoint (item :: items) right =
-      (checkpoint (); item :: appendMeasured checkpoint items right)
-
 fun lengthMeasured checkpoint values =
   let
     fun count [] n = n
@@ -301,26 +284,8 @@ fun lengthMeasured checkpoint values =
     count values 0
   end
 
-fun mapMeasured checkpoint transform values =
-  let
-    fun project [] = []
-      | project (item :: rest) =
-          (checkpoint (); transform item :: project rest)
-  in
-    project values
-  end
-
 fun mapFirstMeasured checkpoint values =
   mapMeasured checkpoint first values
-
-fun existsMeasured checkpoint holds values =
-  let
-    fun search [] = false
-      | search (item :: rest) =
-          (checkpoint (); holds item orelse search rest)
-  in
-    search values
-  end
 
 fun trackPremise fresh premise =
   let
@@ -349,7 +314,7 @@ fun addHiddenAssumption fresh hidden entries =
     | SOME index =>
         let
           val token = fresh ()
-          val term = negate (Const (false_name, []))
+          val term = negate False
           val entry = (token, term)
           fun insert 0 rest = entry :: rest
             | insert _ [] =
@@ -410,15 +375,19 @@ fun log4 n = if n < 4 then 0 else 1 + log4 (n div 4)
 
 fun instantiationPenalty n = 1 + log4 n
 
-fun recursivePremiseWith checkpoint pattern premise =
+fun recursivePremiseMeasured checkpoint pattern premise =
   let
     fun matches (Var _) _ = (checkpoint (); true)
+      | matches Goal (Const (name, _)) =
+          (checkpoint (); name = not_name)
+      | matches (Const (name, _)) Goal =
+          (checkpoint (); name = not_name)
       | matches (Const (a, ats)) (Const (b, bts)) =
           (checkpoint ();
-           (a = goal_name andalso b = not_name) orelse
-           (a = not_name andalso b = goal_name) orelse
-           (a = b andalso match_lists (ats, bts)))
-      | matches (Free a) (Free b) = (checkpoint (); a = b)
+           a = b andalso match_lists (ats, bts))
+      | matches (Fvar a) (Fvar b) = (checkpoint (); a = b)
+      | matches Goal Goal = (checkpoint (); true)
+      | matches False False = (checkpoint (); true)
       | matches (Bound i) (Bound j) = (checkpoint (); i = j)
       | matches (Abs (_, left)) (Abs (_, right)) =
           (checkpoint (); matches left right)
@@ -439,42 +408,28 @@ fun recursivePremiseWith checkpoint pattern premise =
   end
 
 fun recursivePremise pattern premise =
-  recursivePremiseWith (fn () => ()) pattern premise
-
-fun recursivePremiseMeasured checkpoint pattern premise =
-  recursivePremiseWith checkpoint pattern premise
+  recursivePremiseMeasured (fn () => ()) pattern premise
 
 fun requeueGamma (formula, md) remaining duplicate =
   if duplicate then remaining @ [(negOfGoal formula, md)]
   else remaining
 
-fun requeueTrackedGammaWith checkpoint (formula, md) remaining duplicate =
+fun requeueTrackedGammaMeasured checkpoint
+      (formula, md) remaining duplicate =
   if not duplicate then remaining
-  else
-    let
-      fun append [] = [(negOfTracked formula, md)]
-        | append (item :: items) =
-            (checkpoint (); item :: append items)
-    in
-      append remaining
-    end
+  else appendMeasured checkpoint remaining [(negOfTracked formula, md)]
 
 fun requeueTrackedGamma pair remaining duplicate =
-  requeueTrackedGammaWith (fn () => ()) pair remaining duplicate
-
-fun requeueTrackedGammaMeasured checkpoint pair remaining duplicate =
-  requeueTrackedGammaWith checkpoint pair remaining duplicate
+  requeueTrackedGammaMeasured (fn () => ()) pair remaining duplicate
 
 fun killsAllAlternatives limit prems =
   limit < 0 andalso not (null prems)
 
-fun mayUndoWith checkpoint {other_rules, updated, old_vars, new_vars} =
+fun mayUndoMeasured checkpoint {other_rules, updated, old_vars, new_vars} =
   other_rules orelse updated orelse
   sameVarsWith checkpoint (old_vars, new_vars)
 
-fun mayUndo arguments = mayUndoWith (fn () => ()) arguments
-
-fun mayUndoMeasured checkpoint arguments = mayUndoWith checkpoint arguments
+fun mayUndo arguments = mayUndoMeasured (fn () => ()) arguments
 
 (* The trail is newest first.  As in blast.ML:831--838, assignments in
    instantiations of next_vars count as clashes too. *)
@@ -598,37 +553,32 @@ fun addTrackedLitWith checkpoint equal (original, lits) =
       end
   in
     case original_term of
-        Const (name, args) $ formula =>
-          if name <> goal_name then ins original
-          else
-            let
-              fun bad lit =
-                case trackedTerm lit of
-                    Const (head, _) $ other =>
-                      head = goal_name orelse
-                      (head = not_name andalso equal (formula, other))
-                  | _ => false
-              fun exists [] = false
-                | exists (lit :: rest) =
-                    (checkpoint (); bad lit orelse exists rest)
-              fun change [] = []
-                | change (lit :: rest) =
-                    (checkpoint ();
-                     case trackedTerm lit of
-                         Const (head, _) $ other =>
-                           if head = goal_name orelse head = not_name then
-                             if equal (formula, other) then change rest
-                             else
-                               withTrackedTerm (negate other) lit ::
-                               change rest
-                           else lit :: change rest
-                       | _ => lit :: change rest)
-              val rest = if exists lits then change lits else lits
-            in
-              Tracked
-                {term = Const (goal_name, args) $ formula,
-                 token = trackedToken original} :: rest
-            end
+        Goal $ formula =>
+          let
+            fun bad lit =
+              case trackedTerm lit of
+                  Goal $ _ => true
+                | Const (head, _) $ other =>
+                    head = not_name andalso equal (formula, other)
+                | _ => false
+            fun change lit =
+              case trackedTerm lit of
+                  Goal $ other =>
+                    if equal (formula, other) then NONE
+                    else SOME (withTrackedTerm (negate other) lit)
+                | Const (head, _) $ other =>
+                    if head = not_name andalso equal (formula, other) then
+                      NONE
+                    else SOME lit
+                | _ => SOME lit
+            val rest =
+              if existsMeasured checkpoint bad lits then
+                mapPartialMeasured checkpoint change lits
+              else lits
+          in
+            Tracked
+              {term = Goal $ formula, token = trackedToken original} :: rest
+          end
       | _ => ins original
   end
 
@@ -658,47 +608,13 @@ fun substAtomicWith checkpoint (old, replacement) term =
 
 fun substAtomic pair term = substAtomicWith (fn () => ()) pair term
 
-(* Eta-contraction, the occurs check and the Skolem/Free orientation of
-   blast.ML:692--790, as one body.  loose and decrement are the local
-   equivalents of loose_bnos and incr_boundvars ~1; they exist so the
-   measured run can poll inside them. *)
+(* Eta-contraction, the occurs check and the Skolem/Fvar orientation of
+   blast.ML:692--790, as one body. *)
 fun destEqWith checkpoint equal term =
   let
-    fun member_zero [] = false
-      | member_zero (i :: rest) =
-          (checkpoint (); i = 0 orelse member_zero rest)
-    fun loose term =
-      let
-        fun insert value [] = [value]
-          | insert value (item :: items) =
-              (checkpoint ();
-               if value = item then item :: items
-               else item :: insert value items)
-        fun add (Bound i, level, values) =
-              (checkpoint ();
-               if i < level then values
-               else insert (i - level) values)
-          | add (Abs (_, body), level, values) =
-              (checkpoint (); add (body, level + 1, values))
-          | add (f $ x, level, values) =
-              (checkpoint ();
-               add (f, level, add (x, level, values)))
-          | add (_, _, values) = (checkpoint (); values)
-      in
-        add (term, 0, [])
-      end
-    fun decrement term =
-      let
-        fun dec level item =
-          (checkpoint ();
-           case item of
-               Bound i => if i >= level then Bound (i - 1) else item
-             | Abs (name, body) => Abs (name, dec (level + 1) body)
-             | f $ x => dec level f $ dec level x
-             | _ => item)
-      in
-        dec 0 term
-      end
+    val member_zero = existsMeasured checkpoint (fn i => i = 0)
+    val loose = loose_bnos_measured checkpoint
+    val decrement = incr_boundvars_measured checkpoint ~1
     fun contract original =
       (checkpoint ();
        case original of
@@ -745,8 +661,8 @@ fun destEqWith checkpoint equal term =
       case (left, right) of
           (Skolem _, _) => checked (left, right)
         | (_, Skolem _) => checked (right, left)
-        | (Free _, _) => checked (left, right)
-        | (_, Free _) => checked (right, left)
+        | (Fvar _, _) => checked (left, right)
+        | (_, Fvar _) => checked (right, left)
         | _ => raise DEST_EQ
   in
     checkpoint ();
@@ -902,12 +818,15 @@ fun foldPremVarsMeasured checkpoint prems vars =
 
 fun termString term =
   case term of
-      Const (name, []) => name
+      Const (name, []) => KernelSig.name_toString name
     | Const (name, args) =>
-        name ^ "{" ^ String.concatWith "," (map termString args) ^ "}"
+        KernelSig.name_toString name ^ "{" ^
+        String.concatWith "," (map termString args) ^ "}"
     | Skolem (name, variables) =>
         name ^ "[" ^ Int.toString (length variables) ^ "]"
-    | Free name => name
+    | Fvar name => name
+    | Goal => "*Goal*"
+    | False => "*False*"
     | Var variable =>
         (case !variable of
              SOME value => termString value
@@ -942,20 +861,6 @@ datatype instrumentation =
   | Stats
   | On of {debug : bool, stop : unit -> bool}
 
-type phase_statistics =
-  {emergency_cleanup_assignments : int,
-   cooperative_checkpoints : int,
-   candidate_rules_enumerated : int,
-   candidate_conversions_attempted : int,
-   safe_rule_attempts : int,
-   unsafe_rule_attempts : int,
-   rule_unification_attempts : int,
-   rule_unification_successes : int,
-   equality_substitution_attempts : int,
-   equality_substitution_successes : int,
-   literal_close_attempts : int,
-   literal_close_successes : int}
-
 val zero_phase_statistics : phase_statistics =
   {emergency_cleanup_assignments = 0,
    cooperative_checkpoints = 0,
@@ -970,13 +875,9 @@ val zero_phase_statistics : phase_statistics =
    literal_close_attempts = 0,
    literal_close_successes = 0}
 
-datatype search_input =
-    FormulaTerms of pterm list
-  | GoalTerms of goal
-
 datatype interruption_cleanup = Restore | AbandonOwned
 
-fun runTerms cleanup_policy instrumentation claset depth input cont =
+fun runGoal cleanup_policy instrumentation claset depth goal cont =
   let
     exception INTERRUPTED
     exception STOP_EXCEPTION of exn
@@ -988,7 +889,11 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
     val next_token = ref 0
     fun freshToken () =
       (next_token := !next_token + 1; !next_token)
-    (* The search workers come as two aligned tuples, one plain and one
+    val safeRuleOrigin = "safe rule"
+    val safeChildOrigin = "safe child"
+    val unsafeRuleOrigin = "unsafe rule"
+    val unsafeChildOrigin = "unsafe child"
+    (* The search workers come as two aligned records, one plain and one
        measured, selected once per run: [Off] and [Stats] take the plain
        one, [On] the measured one.  [prv] has a single body that closes
        over the selected components as ordinary free variables, so the
@@ -1016,46 +921,42 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
         val initialFormulas =
           fn goal => map first (blastRule.initialBranch goal)
       in
-        (fn _ => (),                    (* checkpointAt *)
-         fn mark => clearTo state mark, (* rollbackAt *)
-         noop,                          (* noteSafeRuleAttempt *)
-         noop,                          (* noteUnificationSuccess *)
-         noop,                          (* noteEqualityAttempt *)
-         noop,                          (* noteEqualitySuccess *)
-         noop,                          (* noteLiteralAttempt *)
-         noop,                          (* noteLiteralSuccess *)
-         "safe rule",                   (* safeRuleOrigin *)
-         "safe child",                  (* safeChildOrigin *)
-         fn _ => add_term_vars,         (* addVarsAt *)
-         fn _ => vars_in_vars,          (* varsInVarsAt *)
-         fn _ => foldPremVars,          (* foldPremVarsAt *)
-         fn _ => unifyPlain,            (* unifyAt *)
-         fn _ => tryClose,              (* tryCloseAt *)
-         fn _ => prunePlain,            (* pruneAt *)
-         fn _ => equalTrackedSubst,     (* equalSubstAt *)
-         fn _ => joinTrackedMd,         (* joinMdAt *)
-         fn _ => negOfTrackedGoals,     (* negGoalsAt *)
-         fn _ => negLits,               (* mapNegLitsAt *)
-         fn _ => existsGoal,            (* existsGoalAt *)
-         fn _ => List.length,           (* lengthPremsAt *)
-         fn _ => addTrackedLit,         (* addTrackedLitAt *)
-         fn _ => appendPlain,           (* appendUnsafeAt *)
-         blastRule.safeRules rule_cache claset,     (* safeRulesFor *)
-         blastRule.unsafeRules rule_cache claset,   (* unsafeRulesFor *)
-         noop,                          (* noteUnsafeRuleAttempt *)
-         "unsafe rule",                 (* unsafeRuleOrigin *)
-         "unsafe child",                (* unsafeChildOrigin *)
-         fn _ => pairUnflagged,         (* mapPairAt *)
-         fn _ => requeueTrackedGamma,   (* requeueGammaAt *)
-         fn _ => recursivePremise,      (* recursivePremiseAt *)
-         fn _ => mayUndo,               (* mayUndoAt *)
-         fn _ => norm,                  (* normAt *)
-         fn _ => List.length,           (* lengthBranchesAt *)
-         fn _ => List.length,           (* lengthRulesAt *)
-         appendPlain,                   (* mergeUnsafe *)
-         initialFormulas,               (* initialFormulasOf *)
-         initSearchBranch freshToken,   (* initialBranchOf *)
-         fn _ => ())                    (* cleanupRun *)
+        {checkpointAt=fn _ => (),
+         rollbackAt=fn mark => clearTo state mark,
+         noteSafeRuleAttempt=noop,
+         noteUnificationSuccess=noop,
+         noteEqualityAttempt=noop,
+         noteEqualitySuccess=noop,
+         noteLiteralAttempt=noop,
+         noteLiteralSuccess=noop,
+         addVarsAt=fn _ => add_term_vars,
+         varsInVarsAt=fn _ => vars_in_vars,
+         foldPremVarsAt=fn _ => foldPremVars,
+         unifyAt=fn _ => unifyPlain,
+         tryCloseAt=fn _ => tryClose,
+         pruneAt=fn _ => prunePlain,
+         equalSubstAt=fn _ => equalTrackedSubst,
+         joinMdAt=fn _ => joinTrackedMd,
+         negGoalsAt=fn _ => negOfTrackedGoals,
+         mapNegLitsAt=fn _ => negLits,
+         existsGoalAt=fn _ => existsGoal,
+         lengthPremsAt=fn _ => List.length,
+         addTrackedLitAt=fn _ => addTrackedLit,
+         appendUnsafeAt=fn _ => appendPlain,
+         safeRulesFor=blastRule.safeRules rule_cache claset,
+         unsafeRulesFor=blastRule.unsafeRules rule_cache claset,
+         noteUnsafeRuleAttempt=noop,
+         mapPairAt=fn _ => pairUnflagged,
+         requeueGammaAt=fn _ => requeueTrackedGamma,
+         recursivePremiseAt=fn _ => recursivePremise,
+         mayUndoAt=fn _ => mayUndo,
+         normAt=fn _ => norm,
+         lengthBranchesAt=fn _ => List.length,
+         lengthRulesAt=fn _ => List.length,
+         mergeUnsafe=appendPlain,
+         initialFormulasOf=initialFormulas,
+         initialBranchOf=initSearchBranch freshToken,
+         cleanupRun=fn _ => ()}
       end
 
     val (instrumentEntry, noteInference, noteRuleInference,
@@ -1189,97 +1090,85 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
               fun at mark () = checkpointRollback mark
 
               val measuredWorkers =
-                (checkpointRollback,             (* checkpointAt *)
-                 fn mark =>                      (* rollbackAt *)
+                {checkpointAt=checkpointRollback,
+                 rollbackAt=fn mark =>
                    clearToMeasuredWith cleanupException checkpoint state
                      mark,
-                 ruleAttempt safe_attempts,      (* noteSafeRuleAttempt *)
-                 unificationSuccess,             (* noteUnificationSuccess *)
-                 equalityAttempt,                (* noteEqualityAttempt *)
-                 equalitySuccess,                (* noteEqualitySuccess *)
-                 literalAttempt,                 (* noteLiteralAttempt *)
-                 literalSuccess,                 (* noteLiteralSuccess *)
-                 "measured safe rule",           (* safeRuleOrigin *)
-                 "measured safe child",          (* safeChildOrigin *)
-                 fn mark =>                      (* addVarsAt *)
+                 noteSafeRuleAttempt=ruleAttempt safe_attempts,
+                 noteUnificationSuccess=unificationSuccess,
+                 noteEqualityAttempt=equalityAttempt,
+                 noteEqualitySuccess=equalitySuccess,
+                 noteLiteralAttempt=literalAttempt,
+                 noteLiteralSuccess=literalSuccess,
+                 addVarsAt=fn mark =>
                    add_term_vars_measured (at mark),
-                 fn mark =>                      (* varsInVarsAt *)
+                 varsInVarsAt=fn mark =>
                    vars_in_vars_measured (at mark),
-                 fn mark =>                      (* foldPremVarsAt *)
+                 foldPremVarsAt=fn mark =>
                    foldPremVarsMeasured (at mark),
-                 fn mark =>                      (* unifyAt *)
+                 unifyAt=fn mark =>
                    unifyMeasuredWith cleanupException (at mark) state,
-                 fn mark =>                      (* tryCloseAt *)
+                 tryCloseAt=fn mark =>
                    tryTrackedCloseMeasured cleanupException (at mark) state,
-                 fn mark =>                      (* pruneAt *)
+                 pruneAt=fn mark =>
                    pruneMeasured (at mark) state pruned,
-                 fn mark =>                      (* equalSubstAt *)
+                 equalSubstAt=fn mark =>
                    equalTrackedSubstMeasured (at mark),
-                 fn mark =>                      (* joinMdAt *)
+                 joinMdAt=fn mark =>
                    joinTrackedMdMeasured (at mark),
-                 fn mark =>                      (* negGoalsAt *)
+                 negGoalsAt=fn mark =>
                    negOfTrackedGoalsMeasured (at mark),
-                 fn mark =>                      (* mapNegLitsAt *)
+                 mapNegLitsAt=fn mark =>
                    mapMeasured (at mark) negOfTracked,
-                 fn mark =>                      (* existsGoalAt *)
+                 existsGoalAt=fn mark =>
                    existsMeasured (at mark) isGoal,
-                 fn mark =>                      (* lengthPremsAt *)
+                 lengthPremsAt=fn mark =>
                    lengthMeasured (at mark),
-                 fn mark =>                      (* addTrackedLitAt *)
+                 addTrackedLitAt=fn mark =>
                    addTrackedLitMeasured (at mark),
-                 fn mark =>                      (* appendUnsafeAt *)
+                 appendUnsafeAt=fn mark =>
                    appendMeasured (at mark),
-                 blastRule.safeRulesMeasured     (* safeRulesFor *)
+                 safeRulesFor=blastRule.safeRulesMeasured
                    rule_monitor rule_cache claset,
-                 blastRule.unsafeRulesMeasured   (* unsafeRulesFor *)
+                 unsafeRulesFor=blastRule.unsafeRulesMeasured
                    rule_monitor rule_cache claset,
-                 ruleAttempt unsafe_attempts,    (* noteUnsafeRuleAttempt *)
-                 "measured unsafe rule",         (* unsafeRuleOrigin *)
-                 "measured unsafe child",        (* unsafeChildOrigin *)
-                 fn mark =>                      (* mapPairAt *)
+                 noteUnsafeRuleAttempt=ruleAttempt unsafe_attempts,
+                 mapPairAt=fn mark =>
                    mapMeasured (at mark) (fn item => (item, false)),
-                 fn mark =>                      (* requeueGammaAt *)
+                 requeueGammaAt=fn mark =>
                    requeueTrackedGammaMeasured (at mark),
-                 fn mark =>                      (* recursivePremiseAt *)
+                 recursivePremiseAt=fn mark =>
                    recursivePremiseMeasured (at mark),
-                 fn mark =>                      (* mayUndoAt *)
+                 mayUndoAt=fn mark =>
                    mayUndoMeasured (at mark),
-                 fn mark => normMeasured (at mark),  (* normAt *)
-                 fn mark =>                      (* lengthBranchesAt *)
+                 normAt=fn mark => normMeasured (at mark),
+                 lengthBranchesAt=fn mark =>
                    lengthMeasured (at mark),
-                 fn mark =>                      (* lengthRulesAt *)
+                 lengthRulesAt=fn mark =>
                    lengthMeasured (at mark),
-                 appendMeasured checkpoint,      (* mergeUnsafe *)
-                 fn goal =>                      (* initialFormulasOf *)
+                 mergeUnsafe=appendMeasured checkpoint,
+                 initialFormulasOf=fn goal =>
                    mapFirstMeasured checkpoint
                      (blastRule.initialBranchMeasured checkpoint goal),
-                 initSearchBranchMeasured        (* initialBranchOf *)
+                 initialBranchOf=initSearchBranchMeasured
                    checkpoint freshToken,
-                 fn exn =>                       (* cleanupRun *)
-                   cleanupException exn state 0)
+                 cleanupRun=fn exn => cleanupException exn state 0}
             in
               (entry, inference, ruleInference, result, measuredWorkers)
             end
 
-    val (checkpointAt, rollbackAt,
-         noteSafeRuleAttempt, noteUnificationSuccess,
-         noteEqualityAttempt, noteEqualitySuccess,
-         noteLiteralAttempt, noteLiteralSuccess,
-         safeRuleOrigin, safeChildOrigin,
-         addVarsAt, varsInVarsAt, foldPremVarsAt, unifyAt, tryCloseAt,
-         pruneAt, equalSubstAt, joinMdAt, negGoalsAt, mapNegLitsAt,
-         existsGoalAt, lengthPremsAt, addTrackedLitAt, appendUnsafeAt,
-         safeRulesFor, unsafeRulesFor, noteUnsafeRuleAttempt,
-         unsafeRuleOrigin, unsafeChildOrigin, mapPairAt, requeueGammaAt,
-         recursivePremiseAt, mayUndoAt, normAt, lengthBranchesAt,
-         lengthRulesAt, mergeUnsafe, initialFormulasOf, initialBranchOf,
-         cleanupRun) = searchWorkers
+    val {checkpointAt,rollbackAt,noteSafeRuleAttempt,
+         noteUnificationSuccess,noteEqualityAttempt,noteEqualitySuccess,
+         noteLiteralAttempt,noteLiteralSuccess,addVarsAt,varsInVarsAt,
+         foldPremVarsAt,unifyAt,tryCloseAt,pruneAt,equalSubstAt,joinMdAt,
+         negGoalsAt,mapNegLitsAt,existsGoalAt,lengthPremsAt,addTrackedLitAt,
+         appendUnsafeAt,safeRulesFor,unsafeRulesFor,noteUnsafeRuleAttempt,
+         mapPairAt,requeueGammaAt,recursivePremiseAt,mayUndoAt,normAt,
+         lengthBranchesAt,lengthRulesAt,mergeUnsafe,initialFormulasOf,
+         initialBranchOf,cleanupRun} = searchWorkers
 
     val prepared =
-      SOME
-        (case input of
-             FormulaTerms terms => terms
-           | GoalTerms goal => initialFormulasOf goal)
+      SOME (initialFormulasOf goal)
       handle INTERRUPTED => NONE
            | STOP_EXCEPTION exn => raise exn
 
@@ -1688,45 +1577,26 @@ fun runTerms cleanup_policy instrumentation claset depth input cont =
        choices_pruned = !pruned,
        rule_cache_hits = blastRule.hitCount rule_cache,
        rule_conversions = blastRule.conversionCount rule_cache,
-       emergency_cleanup_assignments =
-         #emergency_cleanup_assignments phase,
        remaining_trail_assignments = trailSize state,
-       cooperative_checkpoints = #cooperative_checkpoints phase,
-       candidate_rules_enumerated = #candidate_rules_enumerated phase,
-       candidate_conversions_attempted =
-         #candidate_conversions_attempted phase,
-       safe_rule_attempts = #safe_rule_attempts phase,
-       unsafe_rule_attempts = #unsafe_rule_attempts phase,
-       rule_unification_attempts = #rule_unification_attempts phase,
-       rule_unification_successes = #rule_unification_successes phase,
-       equality_substitution_attempts =
-         #equality_substitution_attempts phase,
-       equality_substitution_successes =
-         #equality_substitution_successes phase,
-       literal_close_attempts = #literal_close_attempts phase,
-       literal_close_successes = #literal_close_successes phase}
+       phase = phase}
   in
     {completion = completion, fullTrace = fullTrace, result = result,
      statistics = statistics}
   end
 
-fun searchTerms claset depth formulas cont =
-  #result
-    (runTerms Restore Off claset depth (FormulaTerms formulas) cont)
-
 fun searchGoalMeasured options claset depth goal cont =
-  runTerms AbandonOwned (On options) claset depth (GoalTerms goal) cont
+  runGoal AbandonOwned (On options) claset depth goal cont
 
 fun searchGoalWithStats claset depth goal cont =
   let
     val report =
-      runTerms Restore Stats claset depth (GoalTerms goal) cont
+      runGoal Restore Stats claset depth goal cont
   in
     {result = #result report, statistics = #statistics report}
   end
 
 fun searchGoal claset depth goal cont =
-  #result (runTerms Restore Off claset depth (GoalTerms goal) cont)
+  #result (runGoal Restore Off claset depth goal cont)
 
 fun tryGoal claset depth goal =
   searchGoal claset depth goal (fn proof => proof)

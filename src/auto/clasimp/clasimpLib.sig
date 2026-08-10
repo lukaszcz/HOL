@@ -34,6 +34,11 @@ sig
 
   val remove_iff : string -> unit
 
+  val extend_invocation :
+    {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
+     claset : clasetLib.claset, simpset : simpLib.simpset} ->
+    clasetLib.claset * simpLib.simpset
+
   (* Shared packaging for theorem-list clasimp tactics.  The body receives
      the temporary claset, temporary simpset, and generic simp controls. *)
   val process_clasimp_args :

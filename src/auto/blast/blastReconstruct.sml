@@ -46,7 +46,6 @@ fun apply_rule cs duplicate major rule node =
             if duplicate andalso is_elim then
               clasetRules.REV_DUP_ELIM_RULE theorem
             else theorem
-          val old_count = length (clasetGoal.goals node)
           val transitions =
             apply
               (clasetStep.blast_rule_step_at cs
@@ -55,8 +54,7 @@ fun apply_rule cs duplicate major rule node =
 
           fun finish next =
             let
-              val child_count =
-                length (clasetGoal.goals next) - old_count + 1
+              val child_count = clasetGoal.child_count node next
             in
               if duplicate andalso is_elim then
                 move_children child_count next

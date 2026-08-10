@@ -61,10 +61,9 @@ fun positive_literal divisor =
     handle HOL_ERR _ => NONE
   end
 
-fun dest_divmod tm =
-  case Lib.total numSyntax.dest_div tm of
-      SOME args => SOME args
-    | NONE => Lib.total numSyntax.dest_mod tm
+val dest_divmod =
+  linarithData.dest_divmod
+    {dest_div=numSyntax.dest_div,dest_mod=numSyntax.dest_mod}
 
 (* atom_facts sees every atom of every carrier; dest_divmod declines the
    ones outside the naturals. *)

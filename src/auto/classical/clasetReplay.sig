@@ -29,6 +29,9 @@ sig
   type script
   type grounded_script
 
+  (* Trace messages are lazy because rendering a search node is expensive. *)
+  val trace : int -> (unit -> string) -> unit
+
   datatype replay_failure =
     ReplayFailure of
       {goal : goal, step : step_kind option, message : string,
@@ -54,7 +57,6 @@ sig
   val empty : int -> script
   val append : script -> step_record -> script
   val length : script -> int
-  val open_goals : script -> int
   val to_string : script -> string
 
   (* Grounding is deterministic: type metavariables become bool before
@@ -76,7 +78,7 @@ sig
                {implication : int, antecedent : int} -> tactic
   val RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
-     parameters : string list, eigenvariables : string list list} -> tactic
+     parameters : term list, eigenvariables : string list list} -> tactic
   (* Apply the first [immediate] premises using the recorded assumptions,
      retain those assumptions, and add the residual theorem as a new head
      assumption. *)
@@ -84,7 +86,7 @@ sig
     {theorem : thm, immediate : int, assumptions : int list} -> tactic
   val BLAST_RULE_TAC :
     {theorem : thm, elim : bool, consumed : int option,
-     parameters : string list, eigenvariables : string list list,
+     parameters : term list, eigenvariables : string list list,
      prefixes : exact_prefix_descriptor list} -> tactic
   val exact_prefix_descriptor : term -> exact_prefix_descriptor
   val exact_prefix_bounds : exact_prefix_descriptor -> term -> term list
@@ -114,7 +116,7 @@ sig
   val rule_action :
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,
-       parameters : string list,
+       parameters : term list,
        eigenvariables : string list list}) -> replay_action
   val forward_rule_action :
     (clasetMeta.store ->
@@ -123,10 +125,9 @@ sig
   val blast_rule_action :
     (clasetMeta.store ->
       {theorem : thm, elim : bool, consumed : int option,
-       parameters : string list, eigenvariables : string list list,
+       parameters : term list, eigenvariables : string list list,
        prefixes : exact_prefix_descriptor list}) -> replay_action
   val hyp_subst_action : replay_action
-  val blast_hyp_subst_action : replay_action
   val blast_hyp_subst_action_at :
     {position : int, changed : bool list} -> replay_action
   val disch_action : replay_action

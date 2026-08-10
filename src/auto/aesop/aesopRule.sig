@@ -28,9 +28,6 @@ sig
   type ruleset =
     {norm : rule list, safe : safe_scaffold, unsafe : rule list}
 
-  val default_percent : int
-  val phase_of_spec : clasetRules.rulespec -> rphase
-
   val apply_rule :
     {name : string, phase : rphase, theorem : thm,
      mode : clasetUnify.mode} -> rule
@@ -90,9 +87,6 @@ sig
   val split_rule_pair :
     {name : string, theorem : thm} ->
     {conclusion : rule, assumption : rule}
-  val split_rules :
-    unit -> {conclusion : rule list, assumption : rule list}
-
   val simp_rule_with :
     {name : string, simpset : simpLib.simpset,
      controls : thm list} -> rule

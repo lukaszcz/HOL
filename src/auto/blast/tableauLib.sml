@@ -20,15 +20,14 @@ val add_blast_selims =
     [("blast_not_imp", clasetSeedTheory.NOT_IMP_CELIM_THM),
      ("blast_not_forall", clasetSeedTheory.NOT_FORALL_CELIM_THM)]
 
-fun invocation_claset theorems =
-  clasetLib.invocation_claset (clasetLib.the_claset ()) theorems
+fun no_extra_markers theorems cs = (cs, theorems)
 
-fun invoke tactic theorems goal =
-  let
-    val (cs, facts) = invocation_claset theorems
-  in
-    Tactical.THEN (clasetLib.INSERT_FACTS_TAC facts, tactic cs) goal
-  end
+fun invoke tactic =
+  clasetLib.with_invocation_args
+    {iff_prefix="", extra_markers=no_extra_markers}
+    (fn cs => fn _ => fn _ => tactic cs)
+    (clasetLib.the_claset ())
+    (NONE : unit clasetLib.invocation_simpset option)
 
 fun add_time elapsed accumulated =
   accumulated := Time.+ (!accumulated, elapsed)
@@ -194,13 +193,10 @@ fun next_through limit depth =
 
 (* Read global configuration when the tactic runs, like classicalLib's
    public tactics, rather than when its tactic value is constructed. *)
-fun blast_depth_tac depth theorems goal =
+fun BLAST_DEPTH_TAC depth theorems goal =
   invoke (fn cs => CS_BLAST_DEPTH_TAC cs depth) theorems goal
 
-fun BLAST_DEPTH_TAC depth =
-  markerLib.ABBRS_THEN (blast_depth_tac depth)
-
-fun blast_tac theorems goal =
+fun BLAST_TAC theorems goal =
   let
     val limit = !depth_limit
     val initial = if limit < 0 then NONE else SOME 0
@@ -210,15 +206,16 @@ fun blast_tac theorems goal =
       theorems goal
   end
 
-val BLAST_TAC = markerLib.ABBRS_THEN blast_tac
-
 fun tryIt depth theorems goal =
   let
-    val (cs, facts) = invocation_claset theorems
-    val (goals, _) = clasetLib.INSERT_FACTS_TAC facts goal
+    val answer = ref (NONE : try_result option)
+    fun inspect cs prepared_goal =
+      (answer := SOME
+         (blastSearch.debugGoal (add_blast_selims cs) depth prepared_goal);
+       Tactical.ALL_TAC prepared_goal)
+    val _ = invoke inspect theorems goal
   in
-    blastSearch.debugGoal (add_blast_selims cs) depth
-      (Lib.singleton_of_list goals)
+    valOf (!answer)
   end
 
 end

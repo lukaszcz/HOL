@@ -40,24 +40,15 @@ sig
   val mk_cond_rewrs  : controlled_thm -> controlled_thm list
   val IMP_EQ_CANON   : controlled_thm -> controlled_thm list
   val COND_REWR_CONV : string * thm -> bool ->
-                       (term list -> term -> thm) -> term list -> conv
+                       {solver : term list -> term -> thm,
+                        stack : term list,
+                        cond_depth : int,
+                        term_ord : term * term -> order} -> conv
   val QUANTIFY_CONDITIONS : controlled_thm -> controlled_thm list
 
-  (* The user-level defaults for the side-condition depth and the
-     permutative ordering.  They apply to every traversal whose simpset
-     does not configure the corresponding knob. *)
+  (* The user-level default for the side-condition depth.  It applies to
+     every traversal whose simpset does not configure the depth. *)
   val stack_limit : int ref
-  val term_ord    : (term * term -> order) ref
-
-  (* The simpset-scoped values, installed by Traverse for the extent of one
-     traversal.  A traversal always binds these, to NONE if its simpset
-     configures nothing, so that nested traversals cannot inherit the
-     settings of the traversal they run inside.  COND_REWR_CONV reads the
-     value in force through cur_stack_limit/cur_term_ord. *)
-  val stack_limit_override : int option ref
-  val term_ord_override    : (term * term -> order) option ref
-  val cur_stack_limit : unit -> int
-  val cur_term_ord    : term * term -> order
 
   val used_rewrites : thm list ref
   val track_rewrites : bool ref

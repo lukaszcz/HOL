@@ -55,66 +55,14 @@ fun unregistered_hint conclusion =
         "; registered: " ^ registered_carriers () ^ ")"
 
 val search_failed = "linear arithmetic found no proof"
-
-val not_applicable = "not applicable"
-
-(* Cache.RCACHE's, spelled here because a caller of the cached
-   procedure meets it in place of that procedure's own refusal. *)
-val no_false_context = "No (more) possibly false contexts"
+exception Declined of string
 
 (* The hint travels with the search rather than being recomputed at the
    failure site: CCONTR_TAC has replaced the conclusion by F long before
    the search gives up. *)
 fun no_proof function hint = raise ERR function (search_failed ^ hint)
 
-(* The failures an entry point below may report as an honest refusal,
-   and the only ones: the search's own report of a certificate it did
-   not find, this structure's no_proof under whichever name raised it,
-   the cached procedure's refusal of a term it has no row for, and the
-   two refusals Cache.RCACHE raises on its own account -- a term its
-   relevance check declines, and a contradiction search with no context
-   left to try -- which a caller of the cached procedure meets where it
-   would otherwise meet that procedure's own.
-
-   Everything else a call into the replay machinery can raise -- a
-   registered rule MATCH_MP cannot use, a replay that leaves a subgoal
-   open, a kernel error -- says that an instance is malformed, and is
-   the one diagnostic that says so.  Reporting that as "found no proof"
-   answers a provable goal with an untruth and discards the message
-   that would have located the fault. *)
-fun declined error =
-  case Feedback.origins_of error of
-      [] => false
-    | {origin_structure, origin_function, ...} :: _ =>
-        let
-          val message = Feedback.message_of error
-        in
-          case (origin_structure, origin_function) of
-              ("linarithReplay", "fwd_prove") => message = search_failed
-            | ("linarithLib", _) =>
-                String.isPrefix search_failed message orelse
-                message = not_applicable
-            | ("Cache", "RCACHE") =>
-                message = not_applicable orelse
-                message = no_false_context
-            | _ => false
-        end
-
-val classical_markers =
-  [(clasetLib.destSIntro, "SIntro"),
-   (clasetLib.destIntro, "Intro"),
-   (clasetLib.destSElim, "SElim"),
-   (clasetLib.destElim, "Elim"),
-   (clasetLib.destSDest, "SDest"),
-   (clasetLib.destDest, "Dest"),
-   (clasetLib.destNorm, "Norm"),
-   (clasetLib.destForward, "Forward"),
-   (clasetLib.destSForward, "SForward")]
-
-fun first_marker theorem markers =
-  Lib.get_first
-    (fn (dest, name) => Option.map (fn _ => name) (dest theorem))
-    markers
+fun decline hint = raise Declined hint
 
 fun reject function name =
   raise ERR function (name ^ " marker is not accepted by " ^ function)
@@ -131,12 +79,9 @@ fun plain_argument function theorem =
     else
       case rest of
           [plain] =>
-            (case first_marker plain classical_markers of
-                 SOME name => reject function name
-               | NONE =>
-                   (case clasetLib.destDel plain of
-                        SOME _ => reject function "Del"
-                      | NONE => plain))
+            (case clasetLib.marker_of plain of
+                 SOME {name,...} => reject function name
+               | NONE => plain)
         | _ =>
             raise ERR function "internal argument-classification error"
   end
@@ -708,16 +653,30 @@ fun forward_prove premises conclusion =
       linarithReplay.generalize (premise_terms @ [conclusion])
     val (generalized_premises, generalized_conclusion) =
       Lib.front_last generalized
-    val theorem =
-      restore
-        (linarithReplay.fwd_prove linarithData.default_config
-           (map Thm.ASSUME generalized_premises)
-           generalized_conclusion)
+    val generalized_theorems = map Thm.ASSUME generalized_premises
+    val generalized_theorem =
+      case
+        linarithReplay.refute linarithData.default_config
+          generalized_premises generalized_conclusion
+      of
+          NONE => decline ""
+        | SOME tactic =>
+            let
+              val (goals,validation) =
+                tactic (generalized_premises,generalized_conclusion)
+              val _ =
+                if null goals then ()
+                else raise ERR "forward_prove" "replay left a subgoal open"
+            in
+              Lib.rev_itlist PROVE_HYP generalized_theorems
+                (validation [])
+            end
+    val theorem = restore generalized_theorem
   in
     Lib.rev_itlist PROVE_HYP premise_theorems theorem
   end
 
-fun LINARITH_PROVE tm =
+fun linarith_prove tm =
   let
     val (variables, body) = boolSyntax.strip_forall tm
     val (premises, conclusion) = boolSyntax.strip_imp_only body
@@ -727,12 +686,7 @@ fun LINARITH_PROVE tm =
        somewhere in the replay machinery, and reporting that as a
        refusal makes a provable goal look unprovable to the one person
        who could fix it. *)
-    val theorem =
-      forward_prove premises conclusion
-      handle HOL_ERR error =>
-        if declined error then
-          no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
-        else raise HOL_ERR error
+    val theorem = forward_prove premises conclusion
     val implication = Lib.itlist Thm.DISCH premises theorem
     val result = GENL variables implication
   in
@@ -742,6 +696,16 @@ fun LINARITH_PROVE tm =
         "internal error: reconstructed theorem has the wrong conclusion"
   end
 
+fun LINARITH_PROVE tm =
+  linarith_prove tm
+  handle Declined _ =>
+    let
+      val (_,body) = boolSyntax.strip_forall tm
+      val (_,conclusion) = boolSyntax.strip_imp_only body
+    in
+      no_proof "LINARITH_PROVE" (unregistered_hint conclusion)
+    end
+
 (* NONE is "asked and refused", which is the only failure a rung of the
    ladders below is entitled to treat as an answer: a rung that fails
    because an instance is malformed has not answered the question, and
@@ -749,8 +713,7 @@ fun LINARITH_PROVE tm =
    and report the whole term undecided under this structure's name. *)
 fun attempt prove tm =
   SOME (prove tm)
-  handle HOL_ERR error =>
-    if declined error then NONE else raise HOL_ERR error
+  handle Declined _ => NONE
 
 (* The ladder a conversion has to climb: a decision procedure must
    answer T or F, so a term it cannot prove is offered negated before
@@ -763,7 +726,7 @@ fun decide function prove tm =
              SOME theorem => EQF_INTRO theorem
            | NONE => no_proof function (unregistered_hint tm))
 
-fun LINARITH_CONV tm = decide "LINARITH_CONV" LINARITH_PROVE tm
+fun LINARITH_CONV tm = decide "LINARITH_CONV" linarith_prove tm
 
 (* forward_prove atomises its premise terms itself, so the context
    theorems only have to be discharged against the result. *)
@@ -810,12 +773,11 @@ fun cache_check tm =
    guard admits, so "not applicable" is a message CACHED_LINARITH's
    ladder consumes rather than one a caller is shown. *)
 fun cached_procedure theorems tm =
-  if not (cache_check tm) then
-    raise ERR "CACHED_LINARITH" not_applicable
+  if not (cache_check tm) then decline ""
   else
     case attempt (context_forward theorems) tm of
         SOME theorem => EQT_INTRO theorem
-      | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm)
+      | NONE => decline (unregistered_hint tm)
 
 (* RCACHE calls its procedure through Lib.total, because its ordinary
    clients use every exception as a negative cache answer.  Linarith's
@@ -837,9 +799,7 @@ fun remember_cached_error error =
 
 fun cache_visible_procedure theorems tm =
   cached_procedure theorems tm
-  handle error as HOL_ERR details =>
-    if declined details then raise error
-    else (remember_cached_error error; raise error)
+  handle error as Declined _ => raise error
        | error => (remember_cached_error error; raise error)
 
 (* The atoms in order of first occurrence, the bound variables aside.
@@ -910,11 +870,11 @@ fun cached_prove context tm =
     val slot = ref (NONE : exn option)
     val outer_slots = !cached_error_slots
     fun leave () = cached_error_slots := outer_slots
-    fun raise_recorded fallback =
+    fun raise_recorded _ =
       (case !slot of
            SOME error =>
              (clear_linarith_caches (); raise error)
-         | NONE => raise fallback)
+         | NONE => decline "")
     val _ = discard_stale_results ()
     val _ = cached_error_slots := slot :: outer_slots
     val result =
@@ -991,7 +951,7 @@ val arith_envelope =
    it first is what keeps the reducer from carrying the [arith] context
    around every boolean subterm the arithmetic has no row for. *)
 fun cached_with_arith context tm =
-  if not (cache_check tm) then cached_prove context tm
+  if not (cache_check tm) then decline ""
   else
     let
       val (facts, assumed) =
@@ -1008,7 +968,7 @@ fun cached_with_arith context tm =
    ~F is a term cache_check declines, so the rung is refused before any
    search is spent on it.  The failure reported is the first rung's, so
    that the hint names the term the caller asked about. *)
-fun CACHED_LINARITH context tm =
+fun cached_linarith context tm =
   case attempt (cached_with_arith context) tm of
       SOME equation => equation
     | NONE =>
@@ -1016,6 +976,11 @@ fun CACHED_LINARITH context tm =
                 (boolSyntax.mk_neg tm) of
              SOME equation => EQF_INTRO (EQT_ELIM equation)
            | NONE => no_proof "CACHED_LINARITH" (unregistered_hint tm))
+
+fun CACHED_LINARITH context tm =
+  cached_linarith context tm
+  handle Declined _ =>
+    no_proof "CACHED_LINARITH" (unregistered_hint tm)
 
 val LINARITH_REDUCER =
   let
@@ -1131,11 +1096,12 @@ fun refutable_context theorems =
 val linarith_solver : Traverse.ssolver =
   {name = "lin_arith",
    solve = fn {context_thms, ...} => fn tm =>
-     if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
-     else if refutable_context context_thms then
-       CONTR tm
-         (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
-     else raise ERR "lin_arith" "no arithmetic in the context"}
+     (if cache_check tm then EQT_ELIM (cached_with_arith context_thms tm)
+      else if refutable_context context_thms then
+        CONTR tm
+          (EQT_ELIM (cached_with_arith context_thms boolSyntax.F))
+      else raise ERR "lin_arith" "no arithmetic in the context")
+     handle Declined _ => raise ERR "lin_arith" search_failed}
 
 (* num is registered here, not at the foot of linarithNum the way the
    int, real and rat instances register themselves.  Those live in

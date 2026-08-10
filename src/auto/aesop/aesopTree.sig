@@ -46,9 +46,7 @@ sig
 
   type tree
 
-  val empty_dependencies : unit -> dependencies
   val dependencies_of : store -> cgoal -> dependencies
-  val dependencies_overlap : dependencies -> dependencies -> bool
   val dependencies_empty : dependencies -> bool
   val assigned_between : store -> store -> dependencies
 
@@ -72,8 +70,6 @@ sig
   val rapp_count : tree -> int
 
   val child_rapps : tree -> gid -> rid list
-  (* Creation order: action-emitted goals first, then copied obligations. *)
-  val rapp_goals : tree -> rid -> gid list
   val active_cgoal : goal -> cgoal
   val active_store : goal -> store
   val is_normalised : goal -> bool
@@ -81,9 +77,10 @@ sig
      obligations, which replay discharges through their originals. *)
   val direct_children : tree -> rid -> gid list
 
-  (* Proved copies together with the exact proved application path that
-     connects them to their original obligation. *)
-  val copy_supports : tree -> gid -> (gid * (gid * rid) list) list
+  (* Select one mutually compatible proved-copy path per obligation.
+     Candidate choice backtracks when a later obligation conflicts. *)
+  val select_copy_supports :
+    tree -> gid list -> (gid * rid) list -> (gid * rid) list option
 
   (* The goal's engine node.  Normalisation rewrites a goal in place and
      uses [goal_node]; a rule application descends, so it uses
@@ -94,13 +91,6 @@ sig
      different one. *)
   val changed : clasetGoal.node -> clasetGoal.node -> bool
   val cgoal_under : store -> cgoal -> cgoal
-
-  (* The single-goal replay record reproducing one rendered-tactic
-     alternative, given the parent goal the tactic ran on.  NONE when the
-     result cannot be lifted back onto the engine node. *)
-  val rendered_record :
-    clasetGoal.node -> Abbrev.goal -> NTactical.nresult ->
-    (step_record * clasetGoal.node) option
 
   (* Every alternative one rule offers on a node, as the replay records and
      the node each of them produces.  Normalisation and search read the same

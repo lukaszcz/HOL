@@ -46,10 +46,9 @@ fun nonzero_literal divisor =
             (boolSyntax.mk_eq (divisor, intSyntax.zero_tm)))))
     handle HOL_ERR _ => NONE
 
-fun dest_divmod tm =
-  case Lib.total intSyntax.dest_div tm of
-      SOME args => SOME args
-    | NONE => Lib.total intSyntax.dest_mod tm
+val dest_divmod =
+  linarithData.dest_divmod
+    {dest_div=intSyntax.dest_div,dest_mod=intSyntax.dest_mod}
 
 (* INT_DIVISION exposes directly the quotient/remainder facts represented
    existentially by INT_DIV_P and INT_MOD_P, without adding split cases. *)
@@ -68,10 +67,8 @@ fun division_facts dividend divisor nonzero =
       (simpLib.SIMP_RULE boolSimps.bool_ss [sign] division)
   end
 
-fun nonneg tm =
-  case Lib.total intSyntax.dest_injected tm of
-      SOME n => SOME (Thm.SPEC n integerTheory.INT_POS)
-    | NONE => NONE
+val nonneg =
+  linarithData.injected_nonneg intSyntax.dest_injected integerTheory.INT_POS
 
 (* atom_facts sees every atom of every carrier.  The Num arm deliberately
    fires on natural-number atoms; the divmod arm declines everything

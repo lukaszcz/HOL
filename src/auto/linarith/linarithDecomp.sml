@@ -114,80 +114,77 @@ fun restore_factor_type original atom =
 (* Products are normalized to right-associated form while their literal
    factors are accumulated in the Arbrat multiplier. *)
 fun demult (tm, multiplier) =
-  case dest_mult tm of
-      SOME (left, right) =>
-        (case dest_mult left of
-             SOME (left1, left2) =>
-               let
-                 val (operator, _, _) = binary_parts tm
-               in
-                 case try_product operator left2 right of
-                     NONE => (SOME tm, multiplier)
-                   | SOME nested =>
-                       (case try_product operator left1 nested of
-                            NONE => (SOME tm, multiplier)
-                          | SOME rotated =>
-                              demult (rotated, multiplier))
-               end
-           | NONE =>
-               let
-                 val (operator, _, _) = binary_parts tm
-                 val (left_atom, multiplier') =
-                   demult (left, multiplier)
-               in
-                 case left_atom of
-                     SOME left' =>
-                       let
-                         val (right_atom, multiplier'') =
-                           demult (right, multiplier')
-                       in
-                         case right_atom of
-                             SOME right' =>
-                               (case
-                                  (restore_factor_type left left',
-                                   restore_factor_type right right')
-                                of
-                                    (SOME left'', SOME right'') =>
-                                      (case
-                                         try_product operator left'' right''
-                                       of
-                                           SOME product =>
-                                             (SOME product, multiplier'')
-                                         | NONE => (SOME tm, multiplier))
-                                  | _ => (SOME tm, multiplier))
-                           | NONE => (SOME left', multiplier'')
-                       end
-                   | NONE => demult (right, multiplier')
-               end)
-    | NONE =>
-        (case dest_div tm of
-             SOME (numerator, denominator) =>
-               (case demult (denominator, rat_one) of
-                    (NONE, divisor) =>
-                      if divisor = rat_zero then (SOME tm, multiplier)
-                      else
-                        let
-                          val (atom, numerator_multiplier) =
-                            demult (numerator, multiplier)
-                        in
-                          (atom,
-                           Arbrat.*
-                             (numerator_multiplier,
-                              Arbrat.inv divisor))
-                        end
-                  | (SOME _, _) => (SOME tm, multiplier))
-           | NONE =>
-               (case dest_neg tm of
-                    SOME arg =>
-                      demult (arg, Arbrat.negate multiplier)
+  let
+    fun give_up () = (SOME tm,multiplier)
+    fun rotate operator left1 left2 right =
+      Option.mapPartial (try_product operator left1)
+        (try_product operator left2 right)
+    fun rebuild operator left right left' right' =
+      case
+        (restore_factor_type left left',restore_factor_type right right')
+      of
+          (SOME restored_left,SOME restored_right) =>
+            try_product operator restored_left restored_right
+        | _ => NONE
+  in
+    case dest_mult tm of
+        SOME (left,right) =>
+          let val (operator,_,_) = binary_parts tm
+          in
+            case dest_mult left of
+                SOME (left1,left2) =>
+                  (case rotate operator left1 left2 right of
+                       SOME rotated => demult (rotated,multiplier)
+                     | NONE => give_up ())
+              | NONE =>
+                  let val (left_atom,multiplier') = demult (left,multiplier)
+                  in
+                    case left_atom of
+                        NONE => demult (right,multiplier')
+                      | SOME left' =>
+                          let
+                            val (right_atom,multiplier'') =
+                              demult (right,multiplier')
+                          in
+                            case right_atom of
+                                NONE => (SOME left',multiplier'')
+                              | SOME right' =>
+                                  (case rebuild operator left right
+                                          left' right' of
+                                       SOME product =>
+                                         (SOME product,multiplier'')
+                                     | NONE => give_up ())
+                          end
+                  end
+          end
+      | NONE =>
+          case dest_div tm of
+              SOME (numerator,denominator) =>
+                (case demult (denominator,rat_one) of
+                     (NONE,divisor) =>
+                       if divisor = rat_zero then give_up ()
+                       else
+                         let
+                           val (atom,numerator_multiplier) =
+                             demult (numerator,multiplier)
+                         in
+                           (atom,
+                            Arbrat.*
+                              (numerator_multiplier,Arbrat.inv divisor))
+                         end
+                   | (SOME _,_) => give_up ())
+            | NONE =>
+                case dest_neg tm of
+                    SOME arg => demult (arg,Arbrat.negate multiplier)
                   | NONE =>
-                      (case dest_lit tm of
-                           SOME literal =>
-                             (NONE, Arbrat.* (multiplier, literal))
-                         | NONE =>
-                             (case injection_arg tm of
-                                  SOME arg => demult (arg, multiplier)
-                                | NONE => (SOME tm, multiplier)))))
+                      case dest_lit tm of
+                          SOME literal =>
+                            (NONE,Arbrat.* (multiplier,literal))
+                        | NONE =>
+                            case injection_arg tm of
+                                SOME arg => demult (arg,multiplier)
+                              | NONE => give_up ()
+  end
 
 fun add_atom atom coefficient (atoms, constant) =
   let

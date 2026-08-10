@@ -3229,6 +3229,34 @@ fun same_rule_alternatives goal left right =
 
 val _ =
   test
+    ("rigid replay parameters compare both variable name and type",
+     fn () =>
+       let
+         val rule_variable =
+           Term.mk_var ("typed_rigid_parameter", bool_ty)
+         val unrelated =
+           Term.mk_var ("typed_rigid_parameter", Type.ind)
+         val target = Term.mk_var ("typed_rigid_target", bool_ty)
+         val theorem = SPEC rule_variable boolTheory.FALSITY
+         fun apply parameters =
+           clasetReplay.RULE_TAC
+             {theorem = theorem, elim = false, consumed = NONE,
+              parameters = parameters, eigenvariables = [[]]}
+             ([], target)
+         val accepted =
+           case total apply [rule_variable] of
+               SOME ([([], child)], _) => Term.aconv child boolSyntax.F
+             | _ => false
+         val rejected =
+           (ignore (apply [unrelated]); false)
+           handle HOL_ERR _ => true
+                | _ => false
+       in
+         accepted andalso rejected
+       end)
+
+val _ =
+  test
     ("rule_step uses standard children while blast keeps prefixes intact",
      fn () =>
        let
@@ -4208,7 +4236,7 @@ val _ =
      fn () =>
        let
          val x = Term.mk_var ("static_eigen_x", Type.ind)
-         val y = Term.mk_var ("static_eigen_y", bool_ty)
+         val y = Term.mk_var ("static_eigen_x", bool_ty)
          val sibling_x = Term.variant [x] x
          val p =
            Term.mk_var ("static_eigen_P", Type.ind --> bool_ty)

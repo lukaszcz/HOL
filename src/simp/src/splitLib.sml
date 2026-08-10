@@ -218,6 +218,66 @@ fun type_split_of ty = #split (type_splits_of ty)
 fun type_asm_split_of ty = #asm_split (type_splits_of ty)
 fun type_split_rules ty = #rules (type_splits_of ty)
 
+fun const_key c =
+  let val {Thy,Name,...} = dest_thy_const c
+  in KernelSig.name_toString {Thy=Thy,Name=Name}
+  end
+
+fun applied_arities tms =
+  let
+    fun visit (tm,acc) =
+      if is_abs tm then visit (body tm,acc)
+      else
+        let
+          val (head,args) = strip_comb tm
+          val acc = List.foldl visit acc args
+          val n = length args
+        in
+          if is_const head then
+            let val key = const_key head
+            in
+              case Binarymap.peek (acc,key) of
+                  SOME old =>
+                    if old >= n then acc else Binarymap.insert (acc,key,n)
+                | NONE => Binarymap.insert (acc,key,n)
+            end
+          else if is_abs head then visit (head,acc)
+          else acc
+        end
+  in
+    List.foldl visit (Binarymap.mkDict String.compare) tms
+  end
+
+(* This deliberately does not use [TypeBase.is_case].  That predicate
+   delegates to Pmatch's stricter and substantially more expensive case
+   recognition.  Splitting only needs a saturated application of the
+   registered case constant, which the maximum-arity table identifies in
+   one walk over the goal and assumptions.  The derived rules themselves
+   use [type_split_cache], so this is the sole datatype-split cache. *)
+fun goal_split_rule_groups terms =
+  let
+    val arities = applied_arities terms
+    fun add (tyinfo,result) =
+      let
+        val head = TypeBasePure.case_const_of tyinfo
+        val key = const_key head
+        val arity = length (#1 (strip_fun (type_of head)))
+      in
+        case Binarymap.peek (arities,key) of
+            SOME n =>
+              if n >= arity then
+                (TypeBasePure.ty_of tyinfo,
+                 type_split_rules (TypeBasePure.ty_of tyinfo)) :: result
+              else result
+          | NONE => result
+      end handle HOL_ERR _ => result
+  in
+    List.foldl add [] (TypeBase.elts ())
+  end
+
+fun goal_split_rules terms =
+  List.concat (map #2 (goal_split_rule_groups terms))
+
 (* Two types are alpha-variants exactly when each is an instance of the
    other. *)
 fun same_type_shape (ty1, ty2) =

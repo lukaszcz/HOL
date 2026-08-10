@@ -27,6 +27,14 @@ fun distinct_by compare key items =
     List.rev kept
   end
 
+fun dest_divmod {dest_div,dest_mod} tm =
+  case Lib.total dest_div tm of
+      SOME args => SOME args
+    | NONE => Lib.total dest_mod tm
+
+fun injected_nonneg dest theorem tm =
+  Option.map (fn numeral => Thm.SPEC numeral theorem) (Lib.total dest tm)
+
 type linarith_instance = {
   ty : hol_type,
   discrete : {lessD : thm list} option,

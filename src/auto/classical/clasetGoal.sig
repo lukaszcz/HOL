@@ -20,6 +20,8 @@ sig
   val create : {goals : cgoal list, store : store, level : int} -> node
 
   val goals : node -> cgoal list
+  (* Number of children which replaced the selected parent goal. *)
+  val child_count : node -> node -> int
   val store : node -> store
   val replay : node -> replay_script
   val replay_length : node -> int
@@ -31,11 +33,9 @@ sig
      replacement preserves it. *)
   val goal_paths : node -> int list list
   val binding_marks : node -> binding_marks
-  val set_goals : cgoal list -> node -> node
   val set_store : store -> node -> node
   val set_level : int -> node -> node
   val set_binding_marks : binding_marks -> node -> node
-  val empty_binding_marks : binding_marks
 
   (* Select and register an eigenvariable fresh for the node's complete
      history, including parameters belonging to already closed siblings. *)
@@ -70,7 +70,6 @@ sig
   (* Isabelle's size_of_term: atoms and abstractions count one;
      applications themselves count nothing. *)
   val term_size : term -> int
-  val cgoal_size : store -> cgoal -> int
   val size : node -> int
 
   (* Equality and ordering ignore replay/search bookkeeping.  Parameters are

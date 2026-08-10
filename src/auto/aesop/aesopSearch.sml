@@ -419,11 +419,6 @@ fun choose_unsafe (goal : aesopTree.goal) =
           SOME
             (Stored stored, rule :: unsafe, postponed)
 
-fun drain sequence =
-  case seq.cases sequence of
-      NONE => []
-    | SOME (value, rest) => value :: drain rest
-
 fun unsafe_applications goal rule =
   let
     val node = aesopTree.child_node goal
@@ -440,7 +435,7 @@ fun unsafe_applications goal rule =
         end
   in
     List.mapPartial prepare
-      (drain (aesopTree.rule_results rule node))
+      (seqUtil.list_of (aesopTree.rule_results rule node))
   end
   handle HOL_ERR _ => []
        | Match => []
@@ -717,28 +712,11 @@ fun winning_forest tree =
     val empty_requirements : requirements =
       Redblackmap.mkDict Int.compare
 
-    fun add_path [] required = SOME required
-      | add_path ((goal, rid) :: rest) required =
-          (case Redblackmap.peek (required, goal) of
-               NONE =>
-                 add_path rest (Redblackmap.insert (required, goal, rid))
-             | SOME rid' =>
-                 if rid = rid' then add_path rest required else NONE)
-
-    fun choose_supports _ [] required = SOME required
-      | choose_supports supports_of (id :: rest) required =
-          let
-            fun choose [] = NONE
-              | choose ((_, path) :: candidates) =
-                  (case add_path path required of
-                       SOME required' =>
-                         (case choose_supports supports_of rest required' of
-                              SOME result => SOME result
-                            | NONE => choose candidates)
-                     | NONE => choose candidates)
-          in
-            choose (supports_of id)
-          end
+    fun requirements_of items =
+      List.foldl
+        (fn ((goal,rid), required) =>
+          Redblackmap.insert (required,goal,rid))
+        empty_requirements items
 
     (* One obligation can be discharged more than once in the same tree:
        a goal may carry its own proof and also have a proved copy of it
@@ -824,11 +802,10 @@ fun winning_forest tree =
                             all_members
                         val required' =
                           case
-                            choose_supports
-                              (aesopTree.copy_supports tree)
-                              copy_members required
+                            aesopTree.select_copy_supports tree copy_members
+                              (Redblackmap.listItems required)
                           of
-                              SOME result => result
+                              SOME result => requirements_of result
                             | NONE =>
                                 raise ERR "extract"
                                   ("proved cluster " ^ Int.toString cid ^

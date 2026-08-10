@@ -614,11 +614,14 @@ in
   val solver_rewr =
     Cond_rewr.COND_REWR_CONV ("solver_rwt",solver_rwt) false
   val solver_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "solver test reducer",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,...} => solver_rewr solver stack}
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
+         solver_rewr
+           {solver=solver, stack=stack, cond_depth=cond_depth,
+            term_ord=term_ord}}
   val pure_data = traversedata_for_ss pureSimps.pure_ss
   val solver_data =
     {rewriters=[solver_reducer], dprocs=[],
@@ -636,11 +639,14 @@ in
   val context_rewr =
     Cond_rewr.COND_REWR_CONV ("context_rwt",context_rwt) false
   val context_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "context test reducer",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,...} => context_rewr solver stack}
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
+         context_rewr
+           {solver=solver, stack=stack, cond_depth=cond_depth,
+            term_ord=term_ord}}
   val bool_data = traversedata_for_ss bool_ss
   fun context_solver {context_thms,...} tm =
     case List.find (fn th => aconv tm (concl th)) context_thms of
@@ -704,17 +710,21 @@ in
          (repeated_recurse_f repeated_recurse_x) (q /\ T)``,
      ``(h : 'b -> bool -> 'c) repeated_recurse_y (q /\ T)``)
 
+  val exception_controls_seen = ref false
+  fun passthrough_apply {solver,stack,cond_depth,term_ord,...} tm =
+    if cond_depth = 31 andalso
+       term_ord (boolSyntax.T, boolSyntax.F) = GREATER
+    then
+      (exception_controls_seen := true; solver stack tm)
+    else
+      raise Fail "traversal controls missing before solver exception"
   val passthrough_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "solver exception test reducer",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,...} => solver stack}
-  fun raising_solver _ _ =
-    if Cond_rewr.cur_stack_limit () = 31 andalso
-       Cond_rewr.cur_term_ord (boolSyntax.T, boolSyntax.F) = GREATER
-    then raise Fail "non-HOL solver exception"
-    else raise Fail "dynamic flags not installed before solver exception"
+       apply=passthrough_apply}
+  fun raising_solver _ _ = raise Fail "non-HOL solver exception"
   val exception_data =
     {rewriters=[passthrough_reducer], dprocs=[],
      relation= #relation bool_data, travrules= #travrules bool_data,
@@ -730,13 +740,11 @@ in
      checkexn=fn Fail "non-HOL solver exception" => true | _ => false}
     ``solver_exception_p``
 
-  val _ = tprint "TRAVERSE restores dynamic flags after an exception"
+  val _ = tprint "TRAVERSE passes controls before a solver exception"
   val _ =
-    if !Cond_rewr.stack_limit = 4 andalso
-       (!Cond_rewr.term_ord) (``nested_x:'a``, ``nested_y:'a``) =
-       Cond_rewr.ac_term_ord (``nested_x:'a``, ``nested_y:'a``)
+    if !exception_controls_seen andalso !Cond_rewr.stack_limit = 4
     then OK()
-    else die "dynamic flags were not restored after an exception"
+    else die "configured traversal controls were not passed to the reducer"
 
   fun configure_data (data : Traverse.traverse_data)
                      subgoaler solvers cond_depth term_ord =
@@ -828,9 +836,6 @@ in
      once_order_conv, ``once_u:'a = once_v``, ``once_v:'a = once_u``)
 
   val order_probe = (``nested_order_x:'a``, ``nested_order_y:'a``)
-  fun has_dynamic_flags depth expected =
-    Cond_rewr.cur_stack_limit () = depth andalso
-    Cond_rewr.cur_term_ord order_probe = expected
 
   (* A traversal whose simpset configures neither knob must run at the
      documented defaults even when a traversal that did configure them is
@@ -839,31 +844,28 @@ in
      than SIMP_TAC bool_ss [] does on its own. *)
   val leak_depth_result = ref (NONE : thm option)
   val leak_order_result = ref (NONE : thm option)
-  val leak_flags_result = ref (~1, EQUAL)
+  val leak_controls_result = ref (~1, EQUAL)
   val leak_order_lhs = ``nested_y:'a = nested_x``
   val leak_outer_lhs = ``(leak_f : 'a -> 'b) leak_x``
   val leak_outer_rhs = ``leak_y:'b``
   val leak_outer_rwt = ASSUME (mk_eq (leak_outer_lhs,leak_outer_rhs))
 
-  (* The flags have to be read from inside a nested traversal, not from
-     the outer reducer: there the outer simpset's own settings are in
-     force, and reporting those would say nothing about inheritance. *)
+  (* The controls have to be observed by a reducer in the nested traversal,
+     rather than by the outer reducer. *)
   val leak_probe_lhs = ``leak_probe_x:'a``
-  fun leak_flags_apply _ tm =
-    (leak_flags_result :=
-       (Cond_rewr.cur_stack_limit (),
-        Cond_rewr.cur_term_ord order_probe);
+  fun leak_controls_apply {cond_depth,term_ord,...} tm =
+    (leak_controls_result := (cond_depth,term_ord order_probe);
      NO_CONV tm)
-  val leak_flags_reducer =
-    Traverse.REDUCER
-      {name=SOME "nested dynamic flag probe", initial=EMPTY_CONTEXT,
-       addcontext=fn (ctxt,_) => ctxt, apply=leak_flags_apply}
-  val leak_flags_data =
-    {rewriters=[leak_flags_reducer], dprocs=[],
+  val leak_controls_reducer =
+    Traverse.CONTEXT_REDUCER
+      {name=SOME "nested traversal control probe", initial=EMPTY_CONTEXT,
+       addcontext=fn (ctxt,_) => ctxt, apply=leak_controls_apply}
+  val leak_controls_data =
+    {rewriters=[leak_controls_reducer], dprocs=[],
      relation= #relation pure_data, travrules= #travrules pure_data,
      limit=NONE, subgoaler=NONE, solvers=[],
      cond_depth=NONE, term_ord=NONE}
-  val leak_flags_conv = Traverse.TRAVERSE leak_flags_data []
+  val leak_controls_conv = Traverse.TRAVERSE leak_controls_data []
 
   fun leak_outer_apply _ tm =
     if not (aconv tm leak_outer_lhs) then NO_CONV tm
@@ -872,10 +874,10 @@ in
          SOME (unchanged_on_hol_err depth_default_conv depth10_lhs);
        leak_order_result :=
          SOME (unchanged_on_hol_err default_order_conv leak_order_lhs);
-       unchanged_on_hol_err leak_flags_conv leak_probe_lhs;
+       unchanged_on_hol_err leak_controls_conv leak_probe_lhs;
        leak_outer_rwt)
   val leak_outer_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "cond_depth/term_ord leak probe", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=leak_outer_apply}
   val leak_outer_data =
@@ -905,10 +907,11 @@ in
           if aconv (rhs (concl th)) ``nested_x:'a = nested_y`` then OK()
           else die "nested traversal inherited the outer term order"
 
-  val _ = tprint "nested traversal reports the default dynamic flags"
+  val _ = tprint "nested traversal receives its own default controls"
   val _ =
-    if !leak_flags_result = (4, Cond_rewr.ac_term_ord order_probe) then OK()
-    else die "nested traversal saw the outer traversal's flags"
+    if !leak_controls_result = (4, Cond_rewr.ac_term_ord order_probe)
+    then OK()
+    else die "nested traversal received the outer traversal's controls"
 
   (* The user-level globals are what an unconfigured traversal falls back
      to, so raising Cond_rewr.stack_limit still reaches a traversal nested
@@ -935,26 +938,28 @@ in
     ASSUME
       (mk_imp (concl nested_inner_condition,
                mk_eq (nested_inner_lhs,nested_inner_rhs)))
-  fun nested_inner_apply {solver,stack,...} tm =
-    if aconv tm nested_inner_lhs then
-      MP nested_inner_rwt (solver stack (concl nested_inner_condition))
-    else NO_CONV tm
+  val nested_inner_controls_seen = ref false
+  fun nested_inner_apply
+        {solver,stack,cond_depth,term_ord,...} tm =
+    if not (aconv tm nested_inner_lhs) then NO_CONV tm
+    else if cond_depth <> 23 orelse
+            term_ord order_probe <> Cond_rewr.ac_term_ord order_probe
+    then raise Fail "inner traversal controls missing"
+    else
+      (nested_inner_controls_seen := true;
+       MP nested_inner_rwt (solver stack (concl nested_inner_condition)))
   val nested_inner_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "nested inner rewrite", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=nested_inner_apply}
   val inner_simp_tm = boolSyntax.T
   fun nested_inner_solver _ tm =
     if not (aconv tm (concl nested_inner_condition)) then
       raise Fail "inner solver received an unexpected condition"
-    else if not (has_dynamic_flags 23 LESS) then
-      raise Fail "inner TRAVERSE flags not installed"
     else let
       val simp_th = QCONV (SIMP_CONV bool_ss []) inner_simp_tm
       val _ = aconv (rhs (concl simp_th)) boolSyntax.T orelse
               raise Fail "inner solver's SIMP_CONV failed"
-      val _ = has_dynamic_flags 23 LESS orelse
-              raise Fail "SIMP_CONV disturbed inner TRAVERSE flags"
     in
       nested_inner_condition
     end
@@ -970,23 +975,25 @@ in
   val nested_outer_rhs = ``nested_outer_y:bool``
   val nested_outer_rwt =
     ASSUME (mk_eq (nested_outer_lhs,nested_outer_rhs))
-  fun nested_outer_apply _ tm =
+  val nested_outer_controls_seen = ref false
+  fun nested_outer_apply {cond_depth,term_ord,...} tm =
     if not (aconv tm nested_outer_lhs) then NO_CONV tm
     else let
-      val _ = has_dynamic_flags 17 GREATER orelse
-              raise Fail "outer TRAVERSE flags not installed"
+      val _ =
+        if cond_depth = 17 andalso term_ord order_probe =
+           reverse_order order_probe
+        then nested_outer_controls_seen := true
+        else raise Fail "outer traversal controls missing"
       val nested_th =
         nested_inner_conv nested_inner_lhs
         handle HOL_ERR _ => raise Fail "inner TRAVERSE raised HOL_ERR"
       val _ = aconv (rhs (concl nested_th)) nested_inner_rhs orelse
               raise Fail "inner TRAVERSE failed"
-      val _ = has_dynamic_flags 17 GREATER orelse
-              raise Fail "inner TRAVERSE flags were not restored"
     in
       nested_outer_rwt
     end
   val nested_outer_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "nested outer rewrite", initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt, apply=nested_outer_apply}
   val nested_outer_data =
@@ -997,16 +1004,15 @@ in
   val nested_outer_conv = Traverse.TRAVERSE nested_outer_data []
 
   val _ = convtest
-    ("TRAVERSE reentrancy restores flags around solver SIMP_CONV",
+    ("nested TRAVERSE calls keep independent traversal controls",
      nested_outer_conv, nested_outer_lhs, nested_outer_rhs)
 
-  val _ = tprint "nested TRAVERSE restores the global dynamic flags"
+  val _ = tprint "both nested reducers received their own controls"
   val _ =
-    if !Cond_rewr.stack_limit = 4 andalso
-       (!Cond_rewr.term_ord) (boolSyntax.T, boolSyntax.F) =
-       Cond_rewr.ac_term_ord (boolSyntax.T, boolSyntax.F)
+    if !nested_inner_controls_seen andalso !nested_outer_controls_seen andalso
+       !Cond_rewr.stack_limit = 4
     then OK()
-    else die "nested TRAVERSE did not restore its dynamic flags"
+    else die "nested TRAVERSE calls mixed their traversal controls"
 
   val conglib_rwt =
     ASSUME ``(conglib_f : 'a -> 'b) conglib_x = conglib_y``
@@ -1029,27 +1035,30 @@ in
   val conglib_solver_cs = congLib.mk_congset []
   val conglib_subgoaler_calls = ref 0
   val conglib_solver_calls = ref 0
+  val conglib_controls_seen = ref false
   fun conglib_subgoaler _ tm =
     (conglib_subgoaler_calls := !conglib_subgoaler_calls + 1; REFL tm)
   fun conglib_solver _ tm =
     let
       val _ = conglib_solver_calls := !conglib_solver_calls + 1
-      val flags_ok =
-        Cond_rewr.cur_stack_limit () = 29 andalso
-        Cond_rewr.cur_term_ord (``conglib_order_x:'a``,
-                                ``conglib_order_y:'a``) = GREATER
     in
-      if aconv tm (concl conglib_condition) andalso flags_ok then
+      if aconv tm (concl conglib_condition) then
         conglib_condition
       else raise prover_error "congLib traversal controls missing"
     end
-  fun conglib_solver_apply {solver,stack,...} tm =
-    if aconv tm conglib_solver_lhs then
-      MP conglib_solver_rwt
-         (solver stack (concl conglib_condition))
-    else NO_CONV tm
+  fun conglib_solver_apply
+        {solver,stack,cond_depth,term_ord,...} tm =
+    if not (aconv tm conglib_solver_lhs) then NO_CONV tm
+    else if cond_depth <> 29 orelse
+            term_ord (``conglib_order_x:'a``,
+                      ``conglib_order_y:'a``) <> GREATER
+    then raise prover_error "congLib traversal controls missing"
+    else
+      (conglib_controls_seen := true;
+       MP conglib_solver_rwt
+          (solver stack (concl conglib_condition)))
   val conglib_solver_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "congLib traversal controls",
        initial=EMPTY_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
@@ -1068,7 +1077,9 @@ in
      conglib_solver_lhs,conglib_solver_rhs)
   val _ = tprint "congLib used the configured subgoaler and solver"
   val _ =
-    if !conglib_subgoaler_calls = 1 andalso !conglib_solver_calls = 1 then
+    if !conglib_subgoaler_calls = 1 andalso !conglib_solver_calls = 1 andalso
+       !conglib_controls_seen
+    then
       OK()
     else die "congLib dropped a configured traversal control"
 end
@@ -1311,10 +1322,13 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
   val tactic_rewr =
     Cond_rewr.COND_REWR_CONV ("surface tactic rewrite",tactic_rwt) false
   val tactic_reducer =
-    Traverse.REDUCER
+    Traverse.CONTEXT_REDUCER
       {name=SOME "surface tactic reducer", initial=SURFACE_SOLVER_CONTEXT,
        addcontext=fn (ctxt,_) => ctxt,
-       apply=fn {solver,stack,...} => tactic_rewr solver stack}
+       apply=fn {solver,stack,cond_depth,term_ord,...} =>
+         tactic_rewr
+           {solver=solver, stack=stack, cond_depth=cond_depth,
+            term_ord=term_ord}}
   val tactic_solver_ss =
     pureSimps.pure_ss ++ dproc_ss tactic_reducer
     |> add_unsafe_solver tactic_solver
@@ -1337,6 +1351,14 @@ fun pp ss = PP.pp_to_string 200 simpLib.pp_simpset ss
      SIMP_CONV tactic_solver_ss [],
      ``(surface_solver_f : bool -> 'b) surface_solver_x``,
      ``surface_solver_y:'b``)
+
+  val _ = shouldfail
+    {testfn=SIMP_CONV tactic_solver_ss
+       [Excl "surface tactic reducer"],
+     printresult=thm_to_string,
+     printarg=term_to_string,
+     checkexn=fn UNCHANGED => true | _ => false}
+    ``(surface_solver_f : bool -> 'b) surface_solver_x``
 
   val depth_c1 = ``surface_depth_p1 = surface_depth_q1``
   val depth_c2 = ``surface_depth_p2 = surface_depth_q2``
@@ -1610,6 +1632,59 @@ local
               entry_goal)
     then OK()
     else die "Excl did not remove the named looper"
+
+  val split_named_user_ss =
+    add_looper ("split user",fn _ => CONJ_TAC) empty_ss
+  val _ = tprint "a user looper named split is resolved as a user looper"
+  val _ =
+    if tactic_result [entry_goal]
+         (run (SIMP_TAC split_named_user_ss [Excl "split user"])
+              entry_goal)
+    then OK()
+    else die "the split namespace swallowed an ordinary looper"
+
+  val shared_rwt =
+    ASSUME ``(shared_rule_left:'a) = shared_rule_right``
+  val shared_ss =
+    empty_ss
+    |> (fn ss =>
+          ss ++ rewrites_with_names
+            [({Thy="",Name="shared_identity"},shared_rwt)])
+    |> add_looper ("shared_identity",fn _ => CONJ_TAC)
+  val _ = convtest
+    ("qualified looper exclusion leaves a same-named rewrite",
+     SIMP_CONV shared_ss [Excl "looper:shared_identity"],
+     ``shared_rule_left:'a``, ``shared_rule_right:'a``)
+  val _ = tprint "qualified rule exclusion leaves a same-named looper"
+  val _ =
+    if tactic_result entry_subgoals
+         (run (SIMP_TAC shared_ss [Excl "rule:shared_identity"])
+              entry_goal)
+    then OK()
+    else die "qualified rule exclusion removed the looper"
+  val _ = shouldfail
+    {testfn=fn () =>
+       VALID (SIMP_TAC shared_ss [Excl "shared_identity"]) entry_goal,
+     printresult=K "unexpected success", printarg=K "ambiguous Excl",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "ambiguous" (Feedback.message_of error)
+       | _ => false} ()
+
+  val _ = shouldfail
+    {testfn=SIMP_CONV empty_ss [Excl "bool.CONJ_COMM"],
+     printresult=thm_to_string,
+     printarg=term_to_string,
+     checkexn=fn UNCHANGED => true | _ => false}
+    ``selftest_catalogue_p:bool``
+  val _ = shouldfail
+    {testfn=fn () =>
+       SIMP_CONV empty_ss [Excl "definitely_not_a_theorem"]
+         ``selftest_catalogue_p:bool``,
+     printresult=thm_to_string,
+     printarg=K "unknown theorem exclusion",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "did not match" (Feedback.message_of error)
+       | _ => false} ()
 
   val bounded_calls = ref 0
   fun bounded_conjunction_looper _ g =
@@ -2015,6 +2090,17 @@ val _ = let
           if aconv result (#2 split_goal) then OK()
           else die "split.case exclusion left the TypeBase split active"
       | _ => die "TypeBase split exclusion produced the wrong subgoals"
+
+  val _ = shouldfail
+    {testfn=fn () =>
+       VALID
+         (SIMP_TAC (bool_ss ++ split_ss)
+           [Excl "split.case definitely_not_a_type"]) split_goal,
+     printresult=K "unexpected success",
+     printarg=K "nonexistent split.case exclusion",
+     checkexn=fn HOL_ERR error =>
+       String.isSubstring "did not match" (Feedback.message_of error)
+       | _ => false} ()
 
   val limited_split_ss = limit 1 (bool_ss ++ split_ss)
   val limited_goal =

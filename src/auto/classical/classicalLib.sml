@@ -41,53 +41,25 @@ fun replace_validation old_count pos child_count step_validation
       old_validation (prefix @ (parent :: suffix))
     end
 
-fun apply_first step pos ({node, validation} : run_state) =
-  case seq.cases (step (node, pos)) of
-      NONE => NONE
-    | SOME ((record, next), _) =>
-        let
-          val old_count = length (clasetGoal.goals node)
-          val new_count = length (clasetGoal.goals next)
-          val child_count = new_count - old_count + 1
-          val validation' =
-            replace_validation old_count pos child_count
-              (clasetStep.validation_of record) validation
-        in
-          SOME {node = next, validation = validation'}
-        end
+fun accept_safe_transition
+      ((pos, record, next), {node, validation} : run_state) =
+  let
+    val old_count = length (clasetGoal.goals node)
+    val child_count = clasetGoal.child_count node next
+    val validation' =
+      replace_validation old_count pos child_count
+        (clasetStep.validation_of record) validation
+  in
+    {node=next, validation=validation'}
+  end
 
 fun safe_saturate cs goal =
   let
-    val step = clasetStep.safe_step cs
     val initial =
       {node = clasetGoal.from_goal goal,
        validation = initial_validation}
-
-    fun repeat_at pos state =
-      if pos > length (clasetGoal.goals (#node state)) then state
-      else
-        case apply_first step pos state of
-            NONE => state
-          | SOME next => repeat_at pos next
-
-    fun safe_steps pos state =
-      case apply_first step pos state of
-          NONE => NONE
-        | SOME next => SOME (repeat_at pos next)
-
-    fun first_goal pos state =
-      if pos > length (clasetGoal.goals (#node state)) then NONE
-      else
-        case safe_steps pos state of
-            NONE => first_goal (pos + 1) state
-          | result => result
-
-    fun saturate state =
-      case first_goal 1 state of
-          NONE => state
-        | SOME next => saturate next
-
-    val final = saturate initial
+    val transitions = clasetStep.safe_saturation cs (#node initial)
+    val final = List.foldl accept_safe_transition initial transitions
     val goals = rendered_goals (#node final)
   in
     if goal_lists_equal (goals, [goal]) then seq.empty
@@ -104,13 +76,13 @@ fun step_ntactic step cs goal =
       (step cs (node, 1))
   end
 
-fun safe_step_tac cs = step_ntactic clasetStep.safe_step cs
-fun clarify_step_tac cs = step_ntactic clasetStep.clarify_step cs
-fun safe_tac cs = safe_saturate cs
+fun CS_SAFE_STEP_TAC cs = step_ntactic clasetStep.safe_step cs
+fun CS_CLARIFY_STEP_TAC cs = step_ntactic clasetStep.clarify_step cs
+fun CS_SAFE_TAC cs = safe_saturate cs
 
-fun clarify_tac cs =
+fun CS_CLARIFY_TAC cs =
   NTactical.NCHANGED
-    (NTactical.NREPEAT (clarify_step_tac cs))
+    (NTactical.NREPEAT (CS_CLARIFY_STEP_TAC cs))
 
 fun replay_node original node =
   let
@@ -122,12 +94,10 @@ fun replay_node original node =
   end
   handle HOL_ERR error =>
     let
-      val _ =
-        if Feedback.current_trace "classical" >= 1 then
-          Feedback.HOL_MESG
-            ("Classical reasoner: kernel replay failed for an engine " ^
-             "solution; backtracking: " ^ Feedback.message_of error)
-        else ()
+      val _ = clasetReplay.trace 1
+        (fn () =>
+          "kernel replay failed for an engine solution; backtracking: " ^
+          Feedback.message_of error)
     in
       seq.empty
     end
@@ -139,9 +109,9 @@ fun replay_step step cs goal =
       (fn (_, node) => replay_node goal node)
   end
 
-fun step_tac cs = replay_step clasetStep.step cs
-fun slow_step_tac cs = replay_step clasetStep.slow_step cs
-fun inst_step_tac cs = replay_step clasetStep.inst_step cs
+fun CS_STEP_TAC cs = replay_step clasetStep.step cs
+fun CS_SLOW_STEP_TAC cs = replay_step clasetStep.slow_step cs
+fun CS_INST_STEP_TAC cs = replay_step clasetStep.inst_step cs
 
 fun project_steps steps =
   seq.map (fn (_, node) => node) steps
@@ -167,23 +137,9 @@ fun expand_first step cs node =
    depth search.  Keeping the resulting goals visible to DEPTH_SOLVE also
    lets its D25 commitment test run between safely generated siblings. *)
 fun safe_saturate_node cs initial =
-  let
-    fun first_goal pos node =
-      if pos > length (clasetGoal.goals node) then NONE
-      else
-        case seq.cases
-          (expand_at clasetStep.safe_step cs pos node)
-        of
-            NONE => first_goal (pos + 1) node
-          | SOME (next, _) => SOME next
-
-    fun saturate node =
-      case first_goal 1 node of
-          NONE => node
-        | SOME next => saturate next
-  in
-    saturate initial
-  end
+  case List.rev (clasetStep.safe_saturation cs initial) of
+      [] => initial
+    | (_, _, final) :: _ => final
 
 fun solved node = List.null (clasetGoal.goals node)
 
@@ -204,17 +160,17 @@ fun best_driver step cs =
 fun astar_driver step cs =
   clasetSearch.ASTAR solved (expand_at step cs 1)
 
-fun fast_tac cs = solve (depth_driver clasetStep.step cs)
-fun slow_tac cs = solve (depth_driver clasetStep.slow_step cs)
-fun best_tac cs = solve (best_driver clasetStep.step cs)
-fun slow_best_tac cs = solve (best_driver clasetStep.slow_step cs)
+fun CS_FAST_TAC cs = solve (depth_driver clasetStep.step cs)
+fun CS_SLOW_TAC cs = solve (depth_driver clasetStep.slow_step cs)
+fun CS_BEST_TAC cs = solve (best_driver clasetStep.step cs)
+fun CS_SLOW_BEST_TAC cs = solve (best_driver clasetStep.slow_step cs)
 
-fun first_best_tac cs =
+fun CS_FIRST_BEST_TAC cs =
   solve (clasetSearch.BEST_FIRST solved
     (expand_first clasetStep.step cs))
 
-fun astar_tac cs = solve (astar_driver clasetStep.step cs)
-fun slow_astar_tac cs = solve (astar_driver clasetStep.slow_step cs)
+fun CS_ASTAR_TAC cs = solve (astar_driver clasetStep.step cs)
+fun CS_SLOW_ASTAR_TAC cs = solve (astar_driver clasetStep.slow_step cs)
 
 fun bounded_depth {dup} cs bound initial =
   let
@@ -230,44 +186,24 @@ fun bounded_depth {dup} cs bound initial =
     search saturated
   end
 
-fun depth_solve_tac config bound cs =
+fun CS_DEPTH_SOLVE_TAC config bound cs =
   solve (bounded_depth config cs bound)
 
-fun deepen_tac cs {start} =
+fun CS_DEEPEN_TAC cs {start} =
   solve
     (clasetSearch.DEEPEN (2, 10)
       (bounded_depth {dup = true} cs) start)
 
-val CS_SAFE_TAC = safe_tac
-val CS_CLARIFY_TAC = clarify_tac
-val CS_SAFE_STEP_TAC = safe_step_tac
-val CS_CLARIFY_STEP_TAC = clarify_step_tac
-val CS_STEP_TAC = step_tac
-val CS_SLOW_STEP_TAC = slow_step_tac
-val CS_INST_STEP_TAC = inst_step_tac
-val CS_FAST_TAC = fast_tac
-val CS_SLOW_TAC = slow_tac
-val CS_BEST_TAC = best_tac
-val CS_SLOW_BEST_TAC = slow_best_tac
-val CS_FIRST_BEST_TAC = first_best_tac
-val CS_ASTAR_TAC = astar_tac
-val CS_SLOW_ASTAR_TAC = slow_astar_tac
-val CS_DEPTH_SOLVE_TAC = depth_solve_tac
-val CS_DEEPEN_TAC = deepen_tac
+fun no_extra_markers theorems cs = (cs, theorems)
 
-fun invocation_claset theorems =
-  clasetLib.invocation_claset (clasetLib.the_claset ()) theorems
+fun invocation body theorems =
+  clasetLib.with_invocation_args
+    {iff_prefix="", extra_markers=no_extra_markers}
+    (fn cs => fn _ => fn _ => body cs)
+    (clasetLib.the_claset ())
+    (NONE : unit clasetLib.invocation_simpset option) theorems
 
-fun with_facts build theorems goal =
-  let
-    val (cs, facts) = invocation_claset theorems
-    val insert = NTactical.LIFT (clasetLib.INSERT_FACTS_TAC facts)
-  in
-    NTactical.DETERM (build insert cs) goal
-  end
-
-fun public_raw tactic =
-  with_facts (fn insert => fn cs => NTactical.NTHEN (insert, tactic cs))
+fun public tactic = invocation (NTactical.DETERM o tactic)
 
 (* The saturating tactics report a no-op as failure, and inserting a fact is
    not a no-op, so their progress test spans the whole invocation: an engine
@@ -275,31 +211,26 @@ fun public_raw tactic =
    discarding them.  With nothing to insert this is exactly the engine's own
    test.  The step tactics keep theirs, since one that could "succeed" by
    inserting alone would make NREPEAT insert for ever. *)
-fun progress_raw tactic =
-  with_facts
-    (fn insert => fn cs =>
-      NTactical.NCHANGED
-        (NTactical.NTHEN (insert, NTactical.NTRY (tactic cs))))
+fun progress tactic theorems =
+  Tactical.CHANGED_TAC
+    (invocation (NTactical.DETERM o NTactical.NTRY o tactic) theorems)
 
-fun public tactic = markerLib.ABBRS_THEN (public_raw tactic)
-fun progress tactic = markerLib.ABBRS_THEN (progress_raw tactic)
+fun SAFE_TAC theorems = progress CS_SAFE_TAC theorems
+fun CLARIFY_TAC theorems = progress CS_CLARIFY_TAC theorems
+fun SAFE_STEP_TAC theorems = public CS_SAFE_STEP_TAC theorems
+fun CLARIFY_STEP_TAC theorems = public CS_CLARIFY_STEP_TAC theorems
+fun STEP_TAC theorems = public CS_STEP_TAC theorems
+fun SLOW_STEP_TAC theorems = public CS_SLOW_STEP_TAC theorems
+fun INST_STEP_TAC theorems = public CS_INST_STEP_TAC theorems
 
-fun SAFE_TAC theorems = progress safe_tac theorems
-fun CLARIFY_TAC theorems = progress clarify_tac theorems
-fun SAFE_STEP_TAC theorems = public safe_step_tac theorems
-fun CLARIFY_STEP_TAC theorems = public clarify_step_tac theorems
-fun STEP_TAC theorems = public step_tac theorems
-fun SLOW_STEP_TAC theorems = public slow_step_tac theorems
-fun INST_STEP_TAC theorems = public inst_step_tac theorems
-
-fun FAST_TAC theorems = public fast_tac theorems
-fun SLOW_TAC theorems = public slow_tac theorems
-fun BEST_TAC theorems = public best_tac theorems
-fun SLOW_BEST_TAC theorems = public slow_best_tac theorems
-fun FIRST_BEST_TAC theorems = public first_best_tac theorems
-fun ASTAR_TAC theorems = public astar_tac theorems
-fun SLOW_ASTAR_TAC theorems = public slow_astar_tac theorems
+fun FAST_TAC theorems = public CS_FAST_TAC theorems
+fun SLOW_TAC theorems = public CS_SLOW_TAC theorems
+fun BEST_TAC theorems = public CS_BEST_TAC theorems
+fun SLOW_BEST_TAC theorems = public CS_SLOW_BEST_TAC theorems
+fun FIRST_BEST_TAC theorems = public CS_FIRST_BEST_TAC theorems
+fun ASTAR_TAC theorems = public CS_ASTAR_TAC theorems
+fun SLOW_ASTAR_TAC theorems = public CS_SLOW_ASTAR_TAC theorems
 fun DEEPEN_TAC theorems =
-  public (fn cs => deepen_tac cs {start = 4}) theorems
+  public (fn cs => CS_DEEPEN_TAC cs {start = 4}) theorems
 
 end

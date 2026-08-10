@@ -8,9 +8,9 @@ sig
                'a net -> 'a net
   val match : term -> 'a net -> 'a list
   val unify : {q : term, qvars : term HOLset.set} -> 'a net -> 'a list
-  (* Measured lookup is a separate entry point so ordinary claset queries
-     do not pay for a callback.  The callback may raise to interrupt the
-     traversal; the net is persistent, so every checkpoint is safe. *)
+  (* The callback may raise to interrupt a measured traversal; the net is
+     persistent, so every checkpoint is safe.  Ordinary queries instantiate
+     the same traversal with a no-op callback. *)
   val unifyMeasured :
     (unit -> unit) ->
     {q : term, qvars : term HOLset.set} -> 'a net -> 'a list

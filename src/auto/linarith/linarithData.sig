@@ -19,6 +19,11 @@ sig
      and a scan would cost a quadratic number of comparisons. *)
   val distinct_by : ('b * 'b -> order) -> ('a -> 'b) -> 'a list -> 'a list
 
+  val dest_divmod :
+    {dest_div : term -> term * term,
+     dest_mod : term -> term * term} -> term -> (term * term) option
+  val injected_nonneg : (term -> term) -> thm -> term -> thm option
+
   (* One carrier's implementation of everything the generic engine
      needs, keyed in the registry by its ty.
 

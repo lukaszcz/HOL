@@ -34,6 +34,12 @@ sig
   val type_asm_split_of : hol_type -> thm
   val type_split_rules : hol_type -> thm list
 
+  (* Datatype split rules whose case constants occur as saturated
+     applications in the supplied terms.  The grouped form lets a caller
+     apply per-type policy without repeating the goal walk. *)
+  val goal_split_rule_groups : term list -> (hol_type * thm list) list
+  val goal_split_rules : term list -> thm list
+
   (* The persistent [split] theorem set. *)
   val split_thms : unit -> thm list
   val named_split_thms : unit -> (string * thm) list

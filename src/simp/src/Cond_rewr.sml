@@ -12,15 +12,6 @@ fun ERR x      = STRUCT_ERR "Cond_rewr" x;
    it affects every simpset that does not configure the depth itself. *)
 val stack_limit = ref 4;
 
-(* The simpset-scoped depth that Traverse installs for the extent of one
-   traversal.  It is deliberately not the same reference as the default
-   above: a nested traversal whose simpset configures no depth must fall
-   back to the user-level default rather than inherit the depth of the
-   traversal it happens to be running inside. *)
-val stack_limit_override = ref (NONE : int option);
-fun cur_stack_limit () =
-    case !stack_limit_override of NONE => !stack_limit | SOME n => n
-
 val track_rewrites = ref false;
 val used_rewrites  = ref [] : thm list ref;
 
@@ -101,13 +92,6 @@ end
 val empty_dict = Termtab.empty
 val ac_term_ord = ac_term_ord0 0 (empty_dict, empty_dict)
 
-(* User-level default and simpset-scoped override for the permutative
-   ordering; the split is the one described at [stack_limit] above. *)
-val term_ord = ref ac_term_ord
-val term_ord_override = ref (NONE : (term * term -> order) option)
-fun cur_term_ord tmp =
-    case !term_ord_override of NONE => (!term_ord) tmp | SOME ord => ord tmp
-
 (* bad old implementation, has a loop between
 
   (x + y) + 1  >  x + (y + 1)  >  x + (1 + y)  >  1 + (x + y)  >  (x + y) + 1
@@ -162,13 +146,13 @@ fun ac_term_ord(tm1,tm2) =
                        handle HOL_ERR _ => ERR("COND_REWR_CONV",
                          "bad theorem argument (not a conditional equation)")
       in
-      fn solver => fn stack => fn tm =>
+      fn {solver,stack,cond_depth,term_ord} => fn tm =>
        (let val conditional_eqn = instth tm
             val (conditions,eqn) = strip_imp (concl conditional_eqn)
             val _ = if exists (C (op_mem aconv) stack) conditions
                         then (trace(1, TEXT "looping - cut");
                               failwith "looping!") else ()
-            val _ = if length stack + length conditions > cur_stack_limit ()
+            val _ = if length stack + length conditions > cond_depth
                     then (trace(1, TEXT "looping - stack limit reached");
                           failwith "stack limit") else ()
             val (l,r) = dest_eq eqn
@@ -178,7 +162,7 @@ fun ac_term_ord(tm1,tm2) =
                  failwith "looping rewrite")
               else ()
 
-            val _ = if isperm andalso cur_term_ord (l, r) <> GREATER andalso
+            val _ = if isperm andalso term_ord (l, r) <> GREATER andalso
                        not bounded
                     then
                       (trace(4, IGNORE("possibly looping",conditional_eqn));

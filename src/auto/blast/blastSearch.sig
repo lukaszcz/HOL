@@ -38,17 +38,8 @@ sig
      branches_closed : int,
      choices_pruned : int}
 
-  type statistics =
-    {configured_depth : int,
-     maximum_resource_cost : int,
-     inferences_performed : int,
-     branches_created : int,
-     branches_closed : int,
-     choices_pruned : int,
-     rule_cache_hits : int,
-     rule_conversions : int,
-     emergency_cleanup_assignments : int,
-     remaining_trail_assignments : int,
+  type phase_statistics =
+    {emergency_cleanup_assignments : int,
      cooperative_checkpoints : int,
      candidate_rules_enumerated : int,
      candidate_conversions_attempted : int,
@@ -60,6 +51,18 @@ sig
      equality_substitution_successes : int,
      literal_close_attempts : int,
      literal_close_successes : int}
+
+  type statistics =
+    {configured_depth : int,
+     maximum_resource_cost : int,
+     inferences_performed : int,
+     branches_created : int,
+     branches_closed : int,
+     choices_pruned : int,
+     rule_cache_hits : int,
+     rule_conversions : int,
+     remaining_trail_assignments : int,
+     phase : phase_statistics}
 
   datatype completion = Completed | Interrupted
 
@@ -82,13 +85,11 @@ sig
   (* Initial formulae all receive md = true, as in blast.ML:1180-1184. *)
   val initBranch : pterm list * int -> branch
 
-  val searchTerms :
-    claset -> int -> pterm list -> (proof -> 'a) -> 'a option
   val searchGoal :
     claset -> int -> goal -> (proof -> 'a) -> 'a option
   (* This and the measured/debug entry points enable internal
-     instrumentation.  The legacy searchTerms, searchGoal, tryGoal and
-     deepenGoal entry points do not poll a stop predicate or maintain the
+     instrumentation.  The legacy searchGoal, tryGoal and deepenGoal entry
+     points do not poll a stop predicate or maintain the
      inference/resource counters below.
 
      Statistics cover the complete fixed-depth run, including work before

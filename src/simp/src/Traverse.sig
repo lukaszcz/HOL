@@ -74,6 +74,18 @@ sig
                  stack:term list,
                  relation : (term * (term -> thm))} -> conv
        }
+       | CONTEXT_REDUCER of {
+         name : string option,
+         initial: context,
+         addcontext : context * thm list -> context,
+         apply: {solver:term list -> term -> thm,
+                 conv: term list -> term -> thm,
+                 context: context,
+                 stack:term list,
+                 cond_depth:int,
+                 term_ord:term * term -> order,
+                 relation : (term * (term -> thm))} -> conv
+       }
 
   val dest_reducer : reducer ->
         {name : string option,

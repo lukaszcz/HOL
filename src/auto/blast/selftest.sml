@@ -15,6 +15,8 @@ val op THEN = Tactical.THEN
 
 infix 9 $
 
+fun test_name Name = {Thy = "blast_selftest", Name = Name}
+
 fun test (name, check) =
   (tprint name;
    if check () then OK () else die "failed")
@@ -28,10 +30,9 @@ val _ =
   test
     ("reserved and real constant heads cannot collide",
      fn () =>
-       goal_name = "*Goal*" andalso false_name = "*False*" andalso
-       const_name {Thy = "bool", Name = "~"} = "bool$~" andalso
-       isGoal (mkGoal (Free "p")) andalso
-       not (isGoal (Const (const_name {Thy = "x", Name = "Goal"}, []))))
+       isGoal (mkGoal (Fvar "p")) andalso
+       not (isGoal (Const ({Thy = "x", Name = "Goal"}, []))) andalso
+       not (isGoal Goal))
 
 val _ =
   test
@@ -41,9 +42,9 @@ val _ =
          val state = newState ()
          val x = ref NONE
          val y = ref NONE
-         val direct = not (unify state ([], Var x, Free "f" $ Var x))
+         val direct = not (unify state ([], Var x, Fvar "f" $ Var x))
          val linked = unify state ([], Var x, Var y)
-         val indirect = not (unify state ([], Var y, Free "g" $ Var x))
+         val indirect = not (unify state ([], Var y, Fvar "g" $ Var x))
        in
          direct andalso linked andalso indirect andalso
          trailSize state = 1 andalso unassigned y
@@ -90,15 +91,16 @@ val _ =
          val state = newState ()
          val type_var = ref NONE
          val left =
-           Abs ("x", Const ("c", [Var type_var]) $ Bound 0)
+           Abs ("x", Const (test_name "c", [Var type_var]) $ Bound 0)
          val right =
-           Abs ("y", Const ("c", [Free "ty"]) $ Bound 0)
+           Abs ("y", Const (test_name "c", [Fvar "ty"]) $ Bound 0)
        in
          unify state ([], left, right) andalso
          not (unify state
-           ([], Const ("c", [Free "a"]), Const ("c", []))) andalso
+           ([], Const (test_name "c", [Fvar "a"]),
+            Const (test_name "c", []))) andalso
          not (unify state
-           ([], Const ("c", []), Const ("d", [])))
+           ([], Const (test_name "c", []), Const (test_name "d", [])))
        end)
 
 val _ =
@@ -108,8 +110,11 @@ val _ =
        let
          val state = newState ()
          val v = ref NONE
-         val left = (Const ("f", []) $ Var v) $ Const ("a", [])
-         val right = (Const ("f", []) $ Free "x") $ Const ("b", [])
+         val left =
+           (Const (test_name "f", []) $ Var v) $ Const (test_name "a", [])
+         val right =
+           (Const (test_name "f", []) $ Fvar "x") $
+           Const (test_name "b", [])
        in
          not (unify state ([], left, right)) andalso
          unassigned v andalso trailSize state = 0
@@ -123,13 +128,13 @@ val _ =
          val state = newState ()
          val x = ref NONE
          val y = ref NONE
-         val first = unify state ([], Var x, Free "a")
+         val first = unify state ([], Var x, Fvar "a")
          val mark = trailSize state
-         val second = unify state ([], Var y, Free "b")
+         val second = unify state ([], Var y, Fvar "b")
          val _ = clearTo state mark
          val x_ok =
            case !x of
-               SOME (Free "a") => true
+               SOME (Fvar "a") => true
              | _ => false
        in
          first andalso second andalso x_ok andalso unassigned y andalso
@@ -145,8 +150,8 @@ val _ =
          val x = ref NONE
          val y = ref NONE
          val polls = ref 0
-         val _ = unify state ([], Var x, Free "a")
-         val _ = unify state ([], Var y, Free "b")
+         val _ = unify state ([], Var x, Fvar "a")
+         val _ = unify state ([], Var y, Fvar "b")
          val _ =
            clearToMeasured (fn () => polls := !polls + 1) state 0
        in
@@ -166,9 +171,9 @@ val _ =
          val y = ref NONE
          val z = ref NONE
          val polls = ref 0
-         val _ = unify state ([], Var x, Free "a")
-         val _ = unify state ([], Var y, Free "b")
-         val _ = unify state ([], Var z, Free "c")
+         val _ = unify state ([], Var x, Fvar "a")
+         val _ = unify state ([], Var y, Fvar "b")
+         val _ = unify state ([], Var z, Fvar "c")
          fun checkpoint () =
            (polls := !polls + 1;
             if !polls = 2 then raise CleanupStop sentinel else ())
@@ -188,13 +193,14 @@ val _ =
        let
          val state = newState ()
          val v = ref NONE
-         val _ = unify state ([], Var v, Free "z")
+         val _ = unify state ([], Var v, Fvar "z")
          val beta = Abs ("x", Bound 0) $ Var v
-         val typed = Const ("c", [Abs ("x", Bound 0) $ Free "a"])
-         val under_abs = Abs ("x", Abs ("y", Bound 0) $ Free "a")
+         val typed =
+           Const (test_name "c", [Abs ("x", Bound 0) $ Fvar "a"])
+         val under_abs = Abs ("x", Abs ("y", Bound 0) $ Fvar "a")
        in
-         aconv (norm beta, Free "z") andalso
-         aconv (norm typed, Const ("c", [Free "a"])) andalso
+         aconv (norm beta, Fvar "z") andalso
+         aconv (norm typed, Const (test_name "c", [Fvar "a"])) andalso
          aconv (norm under_abs, under_abs)
        end)
 
@@ -218,12 +224,12 @@ val _ =
     ("wkNorm performs head beta and eta contraction",
      fn () =>
        let
-         val beta = (Abs ("x", Bound 0) $ Free "a") $ Free "b"
-         val eta = Abs ("x", Free "f" $ Bound 0)
+         val beta = (Abs ("x", Bound 0) $ Fvar "a") $ Fvar "b"
+         val eta = Abs ("x", Fvar "f" $ Bound 0)
          val no_eta = Abs ("x", Bound 0 $ Bound 0)
        in
-         aconv (wkNorm beta, Free "a" $ Free "b") andalso
-         aconv (wkNorm eta, Free "f") andalso
+         aconv (wkNorm beta, Fvar "a" $ Fvar "b") andalso
+         aconv (wkNorm eta, Fvar "f") andalso
          aconv (wkNorm no_eta, no_eta)
        end)
 
@@ -234,7 +240,7 @@ val _ =
        let
          val body = Abs ("y", Bound 1)
        in
-         aconv (subst_bound (Free "a", body), Abs ("y", Free "a"))
+         aconv (subst_bound (Fvar "a", body), Abs ("y", Fvar "a"))
          andalso
          aconv (subst_bound (Bound 0, body), Abs ("y", Bound 1))
          andalso loose_bnos (Abs ("x", Bound 1)) = [0]
@@ -252,8 +258,9 @@ val _ =
          val body =
            Abs
              ("hot_x",
-              Const ("hot_f", []) $ Bound 0 $ Var first $ Var assigned)
-         val argument = Const ("hot_a", [])
+              Const (test_name "hot_f", []) $
+                Bound 0 $ Var first $ Var assigned)
+         val argument = Const (test_name "hot_a", [])
          fun same_vars (left, right) =
            ListPair.allEq (fn (x, y) => x = y) (left, right)
        in
@@ -308,13 +315,17 @@ val _ =
          val rule_var = ref NONE
          val branch = ref NONE
          val left =
-           Const ("f", [Var rule_var, Var branch, Const ("a", [])])
+           Const
+             (test_name "f",
+              [Var rule_var, Var branch, Const (test_name "a", [])])
          val right =
-           Const ("f", [Free "l", Free "b", Const ("c", [])])
+           Const
+             (test_name "f",
+              [Fvar "l", Fvar "b", Const (test_name "c", [])])
          val failed = not (unify state ([rule_var], left, right))
          val local_ok =
            case !rule_var of
-               SOME (Free "l") => true
+               SOME (Fvar "l") => true
              | _ => false
        in
          failed andalso local_ok andalso unassigned branch andalso
@@ -358,12 +369,11 @@ val _ =
            head_args (blastRule.fromGoalTerm (mk_eq (f, f)))
          val fun_type =
            list_comb
-             (Const (const_name {Thy = "min", Name = "fun"}, []),
-              [Free "'a",
-               Const (const_name {Thy = "min", Name = "bool"}, [])])
+             (Const ({Thy = "min", Name = "fun"}, []),
+              [Fvar "'a", Const ({Thy = "min", Name = "bool"}, [])])
        in
          case (bool_args, fun_args) of
-             ([Const ("min$bool", [])], [encoded]) =>
+             ([Const ({Thy = "min", Name = "bool"}, [])], [encoded]) =>
                aconv (encoded, fun_type)
            | _ => false
        end)
@@ -381,11 +391,14 @@ val _ =
              (mk_eq (bool_x, bool_x), mk_eq (alpha_x, alpha_x))
        in
          case blastRule.fromGoalTerm proposition of
-             (Const ("bool$/\\", []) $
-                ((Const ("min$=", [Const ("min$bool", [])]) $
+             (Const ({Thy = "bool", Name = "/\\"}, []) $
+                ((Const
+                    ({Thy = "min", Name = "="},
+                     [Const ({Thy = "min", Name = "bool"}, [])]) $
                     Skolem (bool_left, [])) $
                    Skolem (bool_right, []))) $
-               ((Const ("min$=", [Free "'metadata_a"]) $
+               ((Const
+                   ({Thy = "min", Name = "="}, [Fvar "'metadata_a"]) $
                    Skolem (alpha_left, [])) $
                   Skolem (alpha_right, [])) =>
                bool_left = bool_right andalso
@@ -396,10 +409,12 @@ val _ =
 
 fun polymorphic_pair term =
   case term of
-      (Const ("bool$/\\", []) $
-         ((Const ("min$=", [Var left_type]) $ Var left_first) $
+      (Const ({Thy = "bool", Name = "/\\"}, []) $
+         ((Const ({Thy = "min", Name = "="}, [Var left_type]) $
+             Var left_first) $
             Var left_second)) $
-        ((Const ("min$=", [Var right_type]) $ Var right_first) $
+        ((Const ({Thy = "min", Name = "="}, [Var right_type]) $
+             Var right_first) $
            Var right_second) =>
           SOME
             (left_type, left_first, left_second,
@@ -408,7 +423,8 @@ fun polymorphic_pair term =
 
 fun polymorphic_equality term =
   case term of
-      (Const ("min$=", [Var equality_type]) $ Var first) $ Var second =>
+      (Const ({Thy = "min", Name = "="}, [Var equality_type]) $
+         Var first) $ Var second =>
         SOME (equality_type, first, second)
     | _ => NONE
 
@@ -481,9 +497,10 @@ val _ =
        in
          aconv (first, renamed) andalso
          case first of
-             Const ("bool$!", _) $
-               Abs (_, Const ("bool$!", _) $
-                 Abs (_, (Const ("min$=", _) $ Bound 0) $ Bound 1)) =>
+             Const ({Thy = "bool", Name = "!"}, _) $
+               Abs (_, Const ({Thy = "bool", Name = "!"}, _) $
+                 Abs (_, (Const ({Thy = "min", Name = "="}, _) $
+                   Bound 0) $ Bound 1)) =>
                true
            | _ => false
        end)
@@ -496,7 +513,8 @@ val _ =
          val x = mk_var ("metadata_fresh_x", bool)
          fun names () =
            case blastRule.fromGoalTerm (mk_eq (x, x)) of
-               (Const ("min$=", _) $ Skolem (left, [])) $
+               (Const ({Thy = "min", Name = "="}, _) $
+                  Skolem (left, [])) $
                  Skolem (right, []) => SOME (left, right)
              | _ => NONE
        in
@@ -541,7 +559,7 @@ val _ =
          val r = mk_var ("r", bool)
        in
          case blastRule.initialBranch ([p, q], r) of
-             [(Const ("*Goal*", []) $ Skolem (rname, []), true),
+             [(Goal $ Skolem (rname, []), true),
               (Skolem (pname, []), true),
               (Skolem (qname, []), true)] =>
                pname <> qname andalso pname <> rname andalso
@@ -569,9 +587,11 @@ val _ =
          #hidden_assumptions conjunction = [NONE, NONE] andalso
          #hidden_assumptions disjunction = [NONE] andalso
          #hidden_assumptions exists = [NONE] andalso
-         is_head "bool$/\\" (rand (#pattern conjunction)) andalso
-         is_head "bool$\\/" (rand (#pattern disjunction)) andalso
-         is_head "bool$?" (rand (#pattern exists))
+         is_head {Thy = "bool", Name = "/\\"}
+           (rand (#pattern conjunction)) andalso
+         is_head {Thy = "bool", Name = "\\/"}
+           (rand (#pattern disjunction)) andalso
+         is_head {Thy = "bool", Name = "?"} (rand (#pattern exists))
        end)
 
 val _ =
@@ -611,10 +631,13 @@ val _ =
                #hidden_assumptions exists' = [NONE] andalso
                #hidden_assumptions iff' = [NONE, NONE] andalso
                #hidden_assumptions hidden' = [SOME 1] andalso
-               is_head "bool$/\\" (#pattern conjunction') andalso
-               is_head "bool$\\/" (#pattern disjunction') andalso
-               is_head "bool$?" (#pattern exists') andalso
-               is_head "min$=" (#pattern iff') andalso
+               is_head {Thy = "bool", Name = "/\\"}
+                 (#pattern conjunction') andalso
+               is_head {Thy = "bool", Name = "\\/"}
+                 (#pattern disjunction') andalso
+               is_head {Thy = "bool", Name = "?"}
+                 (#pattern exists') andalso
+               is_head {Thy = "min", Name = "="} (#pattern iff') andalso
                (case #premises exists' of
                     [[formula]] => has_skolem formula
                   | _ => false) andalso
@@ -660,11 +683,11 @@ val _ =
                #hidden_assumptions imp_rule = [NONE] andalso
                #hidden_assumptions all_rule = [NONE] andalso
                (case #premises imp_rule of
-                    [[Const ("*Goal*", []) $ Skolem (qname, []),
+                    [[Goal $ Skolem (qname, []),
                       Skolem (pname, [])]] => pname <> qname
                   | _ => false) andalso
                (case #premises all_rule of
-                    [[Const ("*Goal*", []) $ (_ $ Skolem (_, []))]] => true
+                    [[Goal $ (_ $ Skolem (_, []))]] => true
                   | _ => false)
            | _ => false
        end)
@@ -706,7 +729,7 @@ val _ =
        let
          val cache = blastRule.newCache ()
          val variable = Var (ref NONE)
-         val negated = Const ("bool$~", []) $ variable
+         val negated = Const ({Thy = "bool", Name = "~"}, []) $ variable
          val claset = clasetLib.the_claset ()
        in
          null (blastRule.safeRules cache claset [] variable) andalso
@@ -928,14 +951,14 @@ val _ =
          val head_var = ref NONE
          val alpha_left = Abs ("left", Bound 0)
          val alpha_right = Abs ("right", Bound 0)
-         val plain = Const ("cache-plain", [])
+         val plain = Const (test_name "cache-plain", [])
          val variable = Var head_var
          val formulas =
            [alpha_left, alpha_right, plain,
-            Const ("cache-f", []) $ Var first_var,
-            Const ("cache-f", []) $ Var second_var,
+            Const (test_name "cache-f", []) $ Var first_var,
+            Const (test_name "cache-f", []) $ Var second_var,
             Skolem ("cache-skolem", [first_var]),
-            Free "cache-free", Bound 3, variable]
+            Fvar "cache-free", Bound 3, variable]
          val variable_lists =
            [[], [first_var], [second_var],
             [first_var, second_var], [second_var, first_var]]
@@ -1012,8 +1035,8 @@ val _ =
          val second_cs =
            clasetLib.add_sintros
              [("cache_order_second", reversed)] clasetLib.empty_cs
-         val head = Const ("bool$/\\", [])
-         val truth = Const ("bool$T", [])
+         val head = Const ({Thy = "bool", Name = "/\\"}, [])
+         val truth = Const ({Thy = "bool", Name = "T"}, [])
          val first_formula = mkGoal ((head $ Var left) $ truth)
          val second_formula = mkGoal ((head $ Var right) $ truth)
          val first =
@@ -1039,8 +1062,8 @@ val _ =
     ("variable-head fallback preserves mutation and newest order",
      fn () =>
        let
-         val head = Const ("bool$/\\", [])
-         val truth = Const ("bool$T", [])
+         val head = Const ({Thy = "bool", Name = "/\\"}, [])
+         val truth = Const ({Thy = "bool", Name = "T"}, [])
          val concrete = mkGoal ((head $ truth) $ truth)
          val cs =
            clasetLib.add_sintros
@@ -1217,19 +1240,19 @@ fun zero_measured_work depth (statistics : blastSearch.statistics) =
   #choices_pruned statistics = 0 andalso
   #rule_cache_hits statistics = 0 andalso
   #rule_conversions statistics = 0 andalso
-  #emergency_cleanup_assignments statistics = 0 andalso
+  #emergency_cleanup_assignments (#phase statistics) = 0 andalso
   #remaining_trail_assignments statistics = 0 andalso
-  #cooperative_checkpoints statistics > 0 andalso
-  #candidate_rules_enumerated statistics = 0 andalso
-  #candidate_conversions_attempted statistics = 0 andalso
-  #safe_rule_attempts statistics = 0 andalso
-  #unsafe_rule_attempts statistics = 0 andalso
-  #rule_unification_attempts statistics = 0 andalso
-  #rule_unification_successes statistics = 0 andalso
-  #equality_substitution_attempts statistics = 0 andalso
-  #equality_substitution_successes statistics = 0 andalso
-  #literal_close_attempts statistics = 0 andalso
-  #literal_close_successes statistics = 0
+  #cooperative_checkpoints (#phase statistics) > 0 andalso
+  #candidate_rules_enumerated (#phase statistics) = 0 andalso
+  #candidate_conversions_attempted (#phase statistics) = 0 andalso
+  #safe_rule_attempts (#phase statistics) = 0 andalso
+  #unsafe_rule_attempts (#phase statistics) = 0 andalso
+  #rule_unification_attempts (#phase statistics) = 0 andalso
+  #rule_unification_successes (#phase statistics) = 0 andalso
+  #equality_substitution_attempts (#phase statistics) = 0 andalso
+  #equality_substitution_successes (#phase statistics) = 0 andalso
+  #literal_close_attempts (#phase statistics) = 0 andalso
+  #literal_close_successes (#phase statistics) = 0
 
 val _ =
   test
@@ -1251,7 +1274,8 @@ val _ =
                     (reconstructions := !reconstructions + 1; proof))
            in
              !polls > 0 andalso
-             #cooperative_checkpoints (#statistics report) = !polls andalso
+             #cooperative_checkpoints
+               (#phase (#statistics report)) = !polls andalso
              !reconstructions = 0 andalso
              #completion report = blastSearch.Interrupted andalso
              not (Option.isSome (#result report)) andalso
@@ -1291,17 +1315,17 @@ val _ =
              #choices_pruned statistics = 0 andalso
              #rule_cache_hits statistics = 0 andalso
              #rule_conversions statistics = 1 andalso
-             #cooperative_checkpoints statistics > 0 andalso
-             #candidate_rules_enumerated statistics = 1 andalso
-             #candidate_conversions_attempted statistics = 1 andalso
-             #safe_rule_attempts statistics = 1 andalso
-             #unsafe_rule_attempts statistics = 0 andalso
-             #rule_unification_attempts statistics = 1 andalso
-             #rule_unification_successes statistics = 1 andalso
-             #equality_substitution_attempts statistics = 1 andalso
-             #equality_substitution_successes statistics = 0 andalso
-             #literal_close_attempts statistics = 0 andalso
-             #literal_close_successes statistics = 0
+             #cooperative_checkpoints (#phase statistics) > 0 andalso
+             #candidate_rules_enumerated (#phase statistics) = 1 andalso
+             #candidate_conversions_attempted (#phase statistics) = 1 andalso
+             #safe_rule_attempts (#phase statistics) = 1 andalso
+             #unsafe_rule_attempts (#phase statistics) = 0 andalso
+             #rule_unification_attempts (#phase statistics) = 1 andalso
+             #rule_unification_successes (#phase statistics) = 1 andalso
+             #equality_substitution_attempts (#phase statistics) = 1 andalso
+             #equality_substitution_successes (#phase statistics) = 0 andalso
+             #literal_close_attempts (#phase statistics) = 0 andalso
+             #literal_close_successes (#phase statistics) = 0
            end
 
          fun goal_run debug =
@@ -1351,9 +1375,9 @@ val _ =
          #inferences_performed partial <= #inferences_performed final andalso
          #branches_created partial <= #branches_created final andalso
          #branches_closed partial <= #branches_closed final andalso
-         #cooperative_checkpoints partial = !polls andalso
-         #candidate_conversions_attempted partial <=
-           #candidate_rules_enumerated partial andalso
+         #cooperative_checkpoints (#phase partial) = !polls andalso
+         #candidate_conversions_attempted (#phase partial) <=
+           #candidate_rules_enumerated (#phase partial) andalso
          length (#fullTrace completed) > 1
        end)
 
@@ -1381,17 +1405,17 @@ val _ =
        end)
 
 fun zero_phase_statistics (statistics : blastSearch.statistics) =
-  #cooperative_checkpoints statistics = 0 andalso
-  #candidate_rules_enumerated statistics = 0 andalso
-  #candidate_conversions_attempted statistics = 0 andalso
-  #safe_rule_attempts statistics = 0 andalso
-  #unsafe_rule_attempts statistics = 0 andalso
-  #rule_unification_attempts statistics = 0 andalso
-  #rule_unification_successes statistics = 0 andalso
-  #equality_substitution_attempts statistics = 0 andalso
-  #equality_substitution_successes statistics = 0 andalso
-  #literal_close_attempts statistics = 0 andalso
-  #literal_close_successes statistics = 0
+  #cooperative_checkpoints (#phase statistics) = 0 andalso
+  #candidate_rules_enumerated (#phase statistics) = 0 andalso
+  #candidate_conversions_attempted (#phase statistics) = 0 andalso
+  #safe_rule_attempts (#phase statistics) = 0 andalso
+  #unsafe_rule_attempts (#phase statistics) = 0 andalso
+  #rule_unification_attempts (#phase statistics) = 0 andalso
+  #rule_unification_successes (#phase statistics) = 0 andalso
+  #equality_substitution_attempts (#phase statistics) = 0 andalso
+  #equality_substitution_successes (#phase statistics) = 0 andalso
+  #literal_close_attempts (#phase statistics) = 0 andalso
+  #literal_close_successes (#phase statistics) = 0
 
 val _ =
   test
@@ -1484,28 +1508,37 @@ fun same_old_statistics
 
 fun same_phase_statistics
       (left : blastSearch.statistics, right : blastSearch.statistics) =
-  #cooperative_checkpoints left = #cooperative_checkpoints right andalso
-  #candidate_rules_enumerated left =
-    #candidate_rules_enumerated right andalso
-  #candidate_conversions_attempted left =
-    #candidate_conversions_attempted right andalso
-  #safe_rule_attempts left = #safe_rule_attempts right andalso
-  #unsafe_rule_attempts left = #unsafe_rule_attempts right andalso
-  #rule_unification_attempts left =
-    #rule_unification_attempts right andalso
-  #rule_unification_successes left =
-    #rule_unification_successes right andalso
-  #equality_substitution_attempts left =
-    #equality_substitution_attempts right andalso
-  #equality_substitution_successes left =
-    #equality_substitution_successes right andalso
-  #literal_close_attempts left = #literal_close_attempts right andalso
-  #literal_close_successes left = #literal_close_successes right
+  let
+    val left_phase = #phase left
+    val right_phase = #phase right
+  in
+    #cooperative_checkpoints left_phase =
+      #cooperative_checkpoints right_phase andalso
+    #candidate_rules_enumerated left_phase =
+      #candidate_rules_enumerated right_phase andalso
+    #candidate_conversions_attempted left_phase =
+      #candidate_conversions_attempted right_phase andalso
+    #safe_rule_attempts left_phase = #safe_rule_attempts right_phase andalso
+    #unsafe_rule_attempts left_phase =
+      #unsafe_rule_attempts right_phase andalso
+    #rule_unification_attempts left_phase =
+      #rule_unification_attempts right_phase andalso
+    #rule_unification_successes left_phase =
+      #rule_unification_successes right_phase andalso
+    #equality_substitution_attempts left_phase =
+      #equality_substitution_attempts right_phase andalso
+    #equality_substitution_successes left_phase =
+      #equality_substitution_successes right_phase andalso
+    #literal_close_attempts left_phase =
+      #literal_close_attempts right_phase andalso
+    #literal_close_successes left_phase =
+      #literal_close_successes right_phase
+  end
 
 fun same_cleanup_statistics
       (left : blastSearch.statistics, right : blastSearch.statistics) =
-  #emergency_cleanup_assignments left =
-    #emergency_cleanup_assignments right andalso
+  #emergency_cleanup_assignments (#phase left) =
+    #emergency_cleanup_assignments (#phase right) andalso
   #remaining_trail_assignments left =
     #remaining_trail_assignments right
 
@@ -1561,7 +1594,9 @@ fun new_alpha_comparator () : alpha_comparator =
       | term (Skolem (left, left_deps), Skolem (right, right_deps)) =
           bijection (op =) skolems (left, right) andalso
           same_list variable (left_deps, right_deps)
-      | term (Free left, Free right) = left = right
+      | term (Fvar left, Fvar right) = left = right
+      | term (Goal, Goal) = true
+      | term (False, False) = true
       | term (Var left, Var right) = variable (left, right)
       | term (Bound left, Bound right) = left = right
       | term (Abs (_, left), Abs (_, right)) = term (left, right)
@@ -1658,8 +1693,10 @@ val _ =
              same_proof_options (#result stats, #result measured) andalso
              same_old_statistics
                (#statistics stats, #statistics measured) andalso
-             #emergency_cleanup_assignments (#statistics stats) = 0 andalso
-             #emergency_cleanup_assignments (#statistics measured) = 0
+             #emergency_cleanup_assignments
+               (#phase (#statistics stats)) = 0 andalso
+             #emergency_cleanup_assignments
+               (#phase (#statistics measured)) = 0
            end
        in
          run clasetLib.empty_cs 0 ([p], p) false andalso
@@ -1724,7 +1761,8 @@ val _ =
                  #completion repeated = blastSearch.Completed andalso
                  not (Option.isSome (#result repeated)) andalso
                  #inferences_performed measured_stats > 0 andalso
-                 #candidate_rules_enumerated measured_stats > 0 andalso
+                 #candidate_rules_enumerated
+                   (#phase measured_stats) > 0 andalso
                  not (null (#fullTrace measured)) andalso
                  same_proof_options (#result stats, #result measured) andalso
                  same_proof_options
@@ -1795,15 +1833,15 @@ val _ =
          val shared_right = ref NONE
          val broken_right = ref NONE
          val sharing_left =
-           [rule (Const ("sharing", []) $ Var shared_left)
+           [rule (Const (test_name "sharing", []) $ Var shared_left)
               [[Var shared_left]]]
          val sharing_right =
-           [rule (Const ("sharing", []) $ Var shared_right)
+           [rule (Const (test_name "sharing", []) $ Var shared_right)
               [[Var broken_right]]]
          val typed_left =
-           [rule (Const ("typed", [Free "'a", Free "'b"])) []]
+           [rule (Const (test_name "typed", [Fvar "'a", Fvar "'b"])) []]
          val typed_swapped =
-           [rule (Const ("typed", [Free "'b", Free "'a"])) []]
+           [rule (Const (test_name "typed", [Fvar "'b", Fvar "'a"])) []]
          val dependency_left = ref NONE
          val dependency_right = ref NONE
          val dependency_other = ref NONE
@@ -1823,11 +1861,11 @@ val _ =
            [rule (Skolem ("right_skolem", [dependency_right])) []]
          val hidden_left : blastRule.tableau_rule list =
            [{origin = blastRule.ImpIntro,
-             pattern = Const ("hidden", []), premises = [[]],
+             pattern = Const (test_name "hidden", []), premises = [[]],
              hidden_assumptions = [NONE]}]
          val hidden_right : blastRule.tableau_rule list =
            [{origin = blastRule.ImpIntro,
-             pattern = Const ("hidden", []), premises = [[]],
+             pattern = Const (test_name "hidden", []), premises = [[]],
              hidden_assumptions = [SOME 0]}]
        in
          same_rule_lists_alpha (dependencies, renamed_dependencies) andalso
@@ -2081,29 +2119,29 @@ val _ =
                          (existential,
                           mk_comb (predicate, existential))))
        in
-         #cooperative_checkpoints literal > 0 andalso
-         #candidate_rules_enumerated literal = 0 andalso
-         #candidate_conversions_attempted literal = 0 andalso
-         #safe_rule_attempts literal = 0 andalso
-         #unsafe_rule_attempts literal = 0 andalso
-         #rule_unification_attempts literal = 0 andalso
-         #rule_unification_successes literal = 0 andalso
-         #equality_substitution_attempts literal = 1 andalso
-         #equality_substitution_successes literal = 0 andalso
-         #literal_close_attempts literal = 1 andalso
-         #literal_close_successes literal = 1 andalso
-         #cooperative_checkpoints equality > 0 andalso
-         #equality_substitution_attempts equality = 3 andalso
-         #equality_substitution_successes equality = 1 andalso
-         #literal_close_attempts equality = 3 andalso
-         #literal_close_successes equality = 1 andalso
-         #cooperative_checkpoints unsafe > 0 andalso
-         #candidate_rules_enumerated unsafe = 4 andalso
-         #candidate_conversions_attempted unsafe = 4 andalso
-         #safe_rule_attempts unsafe = 0 andalso
-         #unsafe_rule_attempts unsafe = 1 andalso
-         #rule_unification_attempts unsafe = 1 andalso
-         #rule_unification_successes unsafe = 1
+         #cooperative_checkpoints (#phase literal) > 0 andalso
+         #candidate_rules_enumerated (#phase literal) = 0 andalso
+         #candidate_conversions_attempted (#phase literal) = 0 andalso
+         #safe_rule_attempts (#phase literal) = 0 andalso
+         #unsafe_rule_attempts (#phase literal) = 0 andalso
+         #rule_unification_attempts (#phase literal) = 0 andalso
+         #rule_unification_successes (#phase literal) = 0 andalso
+         #equality_substitution_attempts (#phase literal) = 1 andalso
+         #equality_substitution_successes (#phase literal) = 0 andalso
+         #literal_close_attempts (#phase literal) = 1 andalso
+         #literal_close_successes (#phase literal) = 1 andalso
+         #cooperative_checkpoints (#phase equality) > 0 andalso
+         #equality_substitution_attempts (#phase equality) = 3 andalso
+         #equality_substitution_successes (#phase equality) = 1 andalso
+         #literal_close_attempts (#phase equality) = 3 andalso
+         #literal_close_successes (#phase equality) = 1 andalso
+         #cooperative_checkpoints (#phase unsafe) > 0 andalso
+         #candidate_rules_enumerated (#phase unsafe) = 4 andalso
+         #candidate_conversions_attempted (#phase unsafe) = 4 andalso
+         #safe_rule_attempts (#phase unsafe) = 0 andalso
+         #unsafe_rule_attempts (#phase unsafe) = 1 andalso
+         #rule_unification_attempts (#phase unsafe) = 1 andalso
+         #rule_unification_successes (#phase unsafe) = 1
        end)
 
 val _ =
@@ -2132,8 +2170,8 @@ val _ =
            end
 
          fun attempts safe statistics =
-           if safe then #safe_rule_attempts statistics
-           else #unsafe_rule_attempts statistics
+           if safe then #safe_rule_attempts (#phase statistics)
+           else #unsafe_rule_attempts (#phase statistics)
 
          fun boundary safe cs depth goal =
            let
@@ -2159,10 +2197,12 @@ val _ =
                      #completion prior = blastSearch.Interrupted andalso
                      #completion after = blastSearch.Interrupted andalso
                      attempts safe prior_stats = 0 andalso
-                     #rule_unification_attempts prior_stats = 0 andalso
+                     #rule_unification_attempts
+                       (#phase prior_stats) = 0 andalso
                      attempts safe after_stats = 1 andalso
-                     #rule_unification_attempts after_stats = 1 andalso
-                     #rule_unification_successes after_stats = 0
+                     #rule_unification_attempts
+                       (#phase after_stats) = 1 andalso
+                     #rule_unification_successes (#phase after_stats) = 0
                    end
            end
        in
@@ -2266,7 +2306,8 @@ val _ =
            (completed_statistics, interrupted_statistics) andalso
          #remaining_trail_assignments interrupted_statistics =
            trail_length andalso
-         #emergency_cleanup_assignments interrupted_statistics = 0 andalso
+         #emergency_cleanup_assignments
+           (#phase interrupted_statistics) = 0 andalso
          List.all same_run repeats
        end)
 
@@ -2319,7 +2360,7 @@ val _ =
          same_phase_statistics
            (completed_statistics, interrupted_statistics) andalso
          #remaining_trail_assignments interrupted_statistics = 1 andalso
-         #emergency_cleanup_assignments interrupted_statistics = 0
+         #emergency_cleanup_assignments (#phase interrupted_statistics) = 0
        end)
 
 val _ =
@@ -2422,13 +2463,13 @@ val _ =
              clasetLib.empty_cs 0 ([p, p], p) reject
          val statistics = #statistics report
          val coherent =
-           !polls = #cooperative_checkpoints statistics andalso
+           !polls = #cooperative_checkpoints (#phase statistics) andalso
            !attempts = 1 andalso
            #inferences_performed statistics >= 1 andalso
            #branches_closed statistics >= 1 andalso
-           #literal_close_attempts statistics >=
-             #literal_close_successes statistics andalso
-           #literal_close_successes statistics >= 1
+           #literal_close_attempts (#phase statistics) >=
+             #literal_close_successes (#phase statistics) andalso
+           #literal_close_successes (#phase statistics) >= 1
        in
          coherent andalso
          #completion report = blastSearch.Interrupted andalso
@@ -2494,8 +2535,8 @@ val _ =
     ("initial blast formulae all receive the duplication flag",
      fn () =>
        let
-         val p = Free "p"
-         val q = Free "q"
+         val p = Fvar "p"
+         val q = Fvar "q"
          val branch = blastSearch.initBranch ([p, q], 3)
        in
          #lim branch = 3 andalso
@@ -2917,9 +2958,9 @@ val _ =
     ("gamma retention is requeued at the back of its level",
      fn () =>
        let
-         val h = Free "H"
-         val first = (Free "A", false)
-         val second = (Free "B", true)
+         val h = Fvar "H"
+         val first = (Fvar "A", false)
+         val second = (Fvar "B", true)
        in
          blastSearch.requeueGamma (h, true) [first, second] true =
            [first, second, (h, true)] andalso
@@ -2959,12 +3000,12 @@ val _ =
     ("recursive premises share a level and nonrecursive ones do not",
      fn () =>
        let
-         val pattern = Const ("R", []) $ Var (ref NONE)
+         val pattern = Const (test_name "R", []) $ Var (ref NONE)
        in
          blastSearch.recursivePremise pattern
-           [Const ("R", []) $ Free "a"] andalso
+           [Const (test_name "R", []) $ Fvar "a"] andalso
          not (blastSearch.recursivePremise pattern
-           [Const ("S", []) $ Free "a"])
+           [Const (test_name "S", []) $ Fvar "a"])
        end)
 
 val _ =
@@ -3012,9 +3053,9 @@ val _ =
          undo false true newer andalso
          undo false false old andalso
          not (undo false false newer) andalso
-         blastSearch.killsAllAlternatives ~1 [[Free "child"]] andalso
+         blastSearch.killsAllAlternatives ~1 [[Fvar "child"]] andalso
          not (blastSearch.killsAllAlternatives ~1 []) andalso
-         not (blastSearch.killsAllAlternatives 0 [[Free "child"]])
+         not (blastSearch.killsAllAlternatives 0 [[Fvar "child"]])
        end)
 
 val _ =
@@ -4525,7 +4566,8 @@ val _ =
                    (size,
                     fn index =>
                       Const
-                        ("cache-benchmark-" ^ Int.toString index, []))
+                        (test_name
+                           ("cache-benchmark-" ^ Int.toString index), []))
                val cache = blastRule.newCache ()
                val _ =
                  List.app

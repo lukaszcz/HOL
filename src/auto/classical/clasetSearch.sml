@@ -5,9 +5,9 @@
   an explicit stack of lazy child sequences and duplicate-solution
   suppression.  BEST_FIRST follows lines 180--199, including eager child
   enumeration and deletion of all equal minima.  ASTAR follows lines
-  226--249: its sorted frontier inserts new equal-cost entries first and
-  suppresses only the first equal-cost duplicate.  DEEPEN follows lines
-  147--154 and restarts the bounded search until its first successful bound.
+  226--249, using the same heap frontier but removing one minimum at a time.
+  DEEPEN follows lines 147--154 and restarts the bounded search until its
+  first successful bound.
 
   DEPTH_SOLVE additionally implements dynamic, lossless commitment.  A node
   carries the bindings made while solving its first open goal.  When that
@@ -43,13 +43,7 @@ val last_pruning_count = ref 0
 fun node_count () = !last_node_count
 fun pruning_count () = !last_pruning_count
 
-(* The message is a thunk: at the default trace level neither the goal
-   rendering nor the string concatenation is evaluated, and expansion
-   tracing runs once per node over the whole search. *)
-fun trace level message =
-  if level <= Feedback.current_trace "classical" then
-    Feedback.HOL_MESG ("Classical reasoner: " ^ message ())
-  else ()
+val trace = clasetReplay.trace
 
 fun show_node node =
   Parse.term_to_string (clasetGoal.canonical_rendering node)
@@ -130,9 +124,7 @@ fun note_transition parent child =
   let
     val difference =
       binding_diff (clasetGoal.store parent) (clasetGoal.store child)
-    val old_count = length (clasetGoal.goals parent)
-    val new_count = length (clasetGoal.goals child)
-    val child_count = Int.max (0, new_count - old_count + 1)
+    val child_count = clasetGoal.child_count parent child
     val inherited = clasetGoal.binding_marks child
     val marks =
       if child_count = 1 then
@@ -310,11 +302,6 @@ fun DEPTH_SOLVE expand initial =
            [{source = NONE, states = seq.result initial}]))
   end
 
-fun list_of sequence =
-  case seq.cases sequence of
-      NONE => []
-    | SOME (value, rest) => value :: list_of rest
-
 val split_satisfied = Lib.partition
 
 val check_period = 100
@@ -340,7 +327,8 @@ fun add_nodes values heap =
   List.foldr (fn (node, current) => searchHeap.add node current)
     heap values
 
-fun BEST_FIRST satisfied expand initial =
+fun frontier_search {driver, compare, remove_minimum}
+      satisfied expand initial =
   let
     fun classify (news, heap, count) =
       let val (solutions, pending) = split_satisfied satisfied news
@@ -353,18 +341,17 @@ fun BEST_FIRST satisfied expand initial =
     and next (heap, count) =
       if searchHeap.is_empty heap then
         (last_node_count := count;
-         trace 1 (fn () => "best-first search exhausted");
+         trace 1 (fn () => driver ^ " search exhausted");
          seq.empty)
       else
         let
-          val (minima, remaining) = searchHeap.delete_all_min heap
-          val current = hd minima
+          val (current, remaining) = remove_minimum heap
         in
-          if not (allow_expansion "best-first" count current) then
+          if not (allow_expansion driver count current) then
             seq.empty
           else
             classify
-              (list_of
+              (seqUtil.list_of
                  (seq.map (note_transition current) (expand current)),
                remaining, count + 1)
         end
@@ -373,57 +360,32 @@ fun BEST_FIRST satisfied expand initial =
       (last_node_count := 0;
        classify
          ([clasetGoal.set_level 0 initial],
-          searchHeap.empty clasetGoal.compare, 0))
+          searchHeap.empty compare, 0))
   in
     seq.delay start
   end
 
-type astar_entry = int * node
+fun best_minimum heap =
+  let val (minima, remaining) = searchHeap.delete_all_min heap
+  in (hd minima, remaining) end
 
-fun astar_insert (entry as (cost, node)) [] = [entry]
-  | astar_insert (entry as (cost, node))
-      ((first as (old_cost, old_node)) :: rest) =
-      if old_cost < cost then first :: astar_insert entry rest
-      else if old_cost = cost andalso clasetGoal.equal (node, old_node)
-      then first :: rest
-      else entry :: first :: rest
+fun BEST_FIRST satisfied expand initial =
+  frontier_search
+    {driver = "best-first", compare = clasetGoal.compare,
+     remove_minimum = best_minimum}
+    satisfied expand initial
 
 fun astar_cost node =
   clasetGoal.size node + 5 * clasetGoal.level node
 
-fun astar_add values frontier =
-  List.foldr
-    (fn (node, current) =>
-      astar_insert (astar_cost node, node) current)
-    frontier values
+fun astar_compare (left, right) =
+  Int.compare (astar_cost left, astar_cost right)
 
 fun ASTAR satisfied expand initial =
-  let
-    fun classify (news, frontier, count) =
-      let val (solutions, pending) = split_satisfied satisfied news
-      in
-        if List.null solutions then next (astar_add pending frontier, count)
-        else seq.fromList solutions
-      end
-
-    and next ([], count) =
-          (last_node_count := count;
-           trace 1 (fn () => "A* search exhausted");
-           seq.empty)
-      | next ((_, current) :: rest, count) =
-          if not (allow_expansion "A*" count current) then seq.empty
-          else
-            classify
-              (list_of
-                 (seq.map (note_transition current) (expand current)),
-               rest, count + 1)
-
-    fun start () =
-      (last_node_count := 0;
-       classify ([clasetGoal.set_level 0 initial], [], 0))
-  in
-    seq.delay start
-  end
+  frontier_search
+    {driver = "A*", compare = astar_compare,
+     remove_minimum = searchHeap.delete_min}
+    satisfied expand initial
 
 fun DEEPEN (increment, limit) bounded start initial =
   let

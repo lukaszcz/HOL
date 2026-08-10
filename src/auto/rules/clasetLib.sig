@@ -42,7 +42,6 @@ sig
   val add_selims : (string * thm) list -> claset -> claset
   val add_elims : (string * thm) list -> claset -> claset
   val add_sdests : (string * thm) list -> claset -> claset
-  val add_dests : (string * thm) list -> claset -> claset
   val remove_rule : string -> claset -> claset
   val merge_cs : claset * claset -> claset
 
@@ -138,6 +137,11 @@ sig
   val destSForward : thm -> thm option
   val destDel : thm -> string option
 
+  datatype marker_payload = Theorem of thm | DeleteName of string
+  type marker_info =
+    {name : string, spec : rulespec option, payload : marker_payload}
+  val marker_of : thm -> marker_info option
+
   val process_claset_tags : thm list -> claset -> claset * thm list
 
   (* A name of the form "<prefix><n>", with n at least [from], that no
@@ -157,6 +161,22 @@ sig
      invocation.  Engines insert the facts with INSERT_FACTS_TAC, lifting it
      into their own tactic representation where necessary. *)
   val invocation_claset : claset -> thm list -> claset * thm list
+
+  type 'a invocation_simpset =
+    {base : 'a,
+     extend :
+       {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
+        claset : claset, simpset : 'a} -> claset * 'a}
+
+  (* Classify and install every theorem-list argument for one invocation,
+     then insert the remaining facts before running [body].  The optional
+     simpset half is supplied only by front ends which understand Simp/Iff
+     markers; [extra_markers] handles an engine-specific vocabulary. *)
+  val with_invocation_args :
+    {iff_prefix : string,
+     extra_markers : thm list -> claset -> claset * thm list} ->
+    (claset -> 'a option -> thm list -> tactic) ->
+    claset -> 'a invocation_simpset option -> thm list -> tactic
 
   (* Inserts the facts so that they appear in the assumption list in the
      order given.  They occupy the most-recent end, ahead of the goal's own

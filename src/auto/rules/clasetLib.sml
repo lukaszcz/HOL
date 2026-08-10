@@ -281,7 +281,6 @@ val add_intros = add_rules intro_spec
 val add_selims = add_rules selim_spec
 val add_elims = add_rules elim_spec
 val add_sdests = add_rules sdest_spec
-val add_dests = add_rules dest_spec
 
 fun remove_rule name cs =
   let
@@ -430,43 +429,15 @@ fun match_intro_candidates (inet, _) tm =
 fun match_elim_candidates (_, enet) tm =
   candidate_order (clasetNet.match tm enet)
 
-fun free_var_set_with checkpoint tm =
-  let
-    val empty = HOLset.empty Term.compare
-    fun collect ([], variables) = variables
-      | collect ((item, bound) :: rest, variables) =
-          (checkpoint ();
-           if is_var item then
-             collect
-               (rest,
-                if HOLset.member (bound, item) then variables
-                else HOLset.add (variables, item))
-           else if is_comb item then
-             let val (operator, operand) = dest_comb item
-             in
-               collect
-                 ((operator, bound) :: (operand, bound) :: rest, variables)
-             end
-           else if is_abs item then
-             let val (binder, body) = dest_abs item
-             in
-               collect
-                 ((body, HOLset.add (bound, binder)) :: rest, variables)
-             end
-           else collect (rest, variables))
-  in
-    collect ([(tm, empty)], empty)
-  end
-
 fun unify_intro_candidates_with checkpoint (inet, _) tm =
-  let val qvars = free_var_set_with checkpoint tm
+  let val qvars = Term.FVL [tm] Term.empty_tmset
   in
     candidate_order_measured checkpoint
       (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} inet)
   end
 
 fun unify_elim_candidates_with checkpoint (_, enet) tm =
-  let val qvars = free_var_set_with checkpoint tm
+  let val qvars = Term.FVL [tm] Term.empty_tmset
   in
     candidate_order_measured checkpoint
       (clasetNet.unifyMeasured checkpoint {q = tm, qvars = qvars} enet)
@@ -532,18 +503,17 @@ type tyinfo_rule =
 type owned_tyinfo_rule =
   {provider : string, tyname : string * string, decl : decl}
 
-(* The false state defers persistent updates until the first demand. *)
+(* An unforced state defers updates until the first demand. *)
 datatype pending =
-    ApplyDelta of cdelta
-  | ApplyBatch of cdelta list
-  | Modify of (claset -> claset)
+    Modify of (claset -> claset)
   | CatchUpTypeBase of tyinfo_contribution list
   | UpdateTypeInfo of
       {contributions : tyinfo_contribution list,
        tyi : TypeBasePure.tyinfo}
-type cstate = claset * owned_tyinfo_rule list * bool * pending list
+datatype readiness = Ready | Pending of pending list
+type cstate = claset * owned_tyinfo_rule list * readiness
 
-val state0 : cstate = (empty_cs, [], false, [])
+val state0 : cstate = (empty_cs, [], Pending [])
 
 fun decl_is_live cs (wanted : decl) =
   List.exists
@@ -592,9 +562,9 @@ fun apply_cdelta (ADD args) cs = apply_add_delta "apply_cdelta" args cs
 
 (* Values reconstructed for an ancestry always contain their complete set of
    persistent declarations, so they need no delayed replay. *)
-fun apply_delta delta (cs, owned, _, _) =
+fun apply_delta delta (cs, owned, _) =
   let val cs' = apply_cdelta delta cs
-  in (cs', live_owned cs' owned, true, []) end
+  in (cs', live_owned cs' owned, Ready) end
 
 (* Add all declarations before rebuilding the nets.  Theory loading uses this
    once for a delta batch, rather than extending a net for each declaration. *)
@@ -775,18 +745,6 @@ fun replay_pending typebase_rules [] (cs, owned, caught_up) =
                replay_pending typebase_rules updates
                  (cs', owned', true)
              end
-         | ApplyDelta delta =>
-             let val cs' = apply_cdelta delta cs
-             in
-               replay_pending typebase_rules updates
-                 (cs', live_owned cs' owned, false)
-             end
-         | ApplyBatch deltas =>
-             let val cs' = batch_apply deltas cs
-             in
-               replay_pending typebase_rules updates
-                 (cs', live_owned cs' owned, false)
-             end
          | Modify f =>
              let val cs' = f cs
              in
@@ -802,9 +760,8 @@ fun replay_pending typebase_rules [] (cs, owned, caught_up) =
                  (cs', owned', true)
              end)
 
-fun init_state (state as (cs, owned, initialised, pending)) =
-  if initialised then state
-  else
+fun init_state (state as (_, _, Ready)) = state
+  | init_state (cs, owned, Pending pending) =
     let
       val typebase_rules =
         collect_typebase_rules (!tyinfo_contributions)
@@ -812,20 +769,21 @@ fun init_state (state as (cs, owned, initialised, pending)) =
         replay_pending typebase_rules (List.rev pending)
           (cs, owned, false)
     in
-      (cs', owned', true, [])
+      (cs', owned', Ready)
     end
 
-fun apply_to_global delta (cs, owned, initialised, pending) =
-  if initialised then apply_delta delta (cs, owned, initialised, pending)
-  else (cs, owned, false, ApplyDelta delta :: pending)
+fun apply_to_global delta (state as (_, _, Ready)) =
+      apply_delta delta state
+  | apply_to_global delta (cs, owned, Pending pending) =
+      (cs, owned, Pending (Modify (apply_cdelta delta) :: pending))
 
 (* Loading invokes this once for all a theory's deltas.  In particular, an
    unforced global state retains the complete batch for one lazy replay. *)
-fun batch_finaliser _ deltas (cs, owned, initialised, pending) =
-  if initialised then
-    let val cs' = batch_apply deltas cs
-    in (cs', live_owned cs' owned, true, []) end
-  else (cs, owned, false, ApplyBatch deltas :: pending)
+fun batch_finaliser _ deltas (cs, owned, Ready) =
+      let val cs' = batch_apply deltas cs
+      in (cs', live_owned cs' owned, Ready) end
+  | batch_finaliser _ deltas (cs, owned, Pending pending) =
+      (cs, owned, Pending (Modify (batch_apply deltas) :: pending))
 
 val adresult : (cdelta, cstate) AncestryData.fullresult =
   AncestryData.fullmake {
@@ -840,11 +798,11 @@ val adresult : (cdelta, cstate) AncestryData.fullresult =
 
 fun update_claset f =
   #update_global_value adresult
-    (fn (cs, owned, initialised, pending) =>
-       if initialised then
-         let val cs' = f cs
-         in (cs', live_owned cs' owned, true, []) end
-       else (cs, owned, false, Modify f :: pending))
+    (fn (cs, owned, Ready) =>
+          let val cs' = f cs
+          in (cs', live_owned cs' owned, Ready) end
+      | (cs, owned, Pending pending) =>
+          (cs, owned, Pending (Modify f :: pending)))
 
 fun the_claset () =
   (#update_global_value adresult init_state;
@@ -858,11 +816,12 @@ fun temp_delrule name =
 val augment_claset = update_claset
 
 fun request_typebase_catchup contributions
-      (cs, owned, initialised, pending) =
-  if initialised then
-    let val (cs', owned') = reconcile_typebase contributions (cs, owned)
-    in (cs', owned', true, []) end
-  else (cs, owned, false, CatchUpTypeBase contributions :: pending)
+      (cs, owned, Ready) =
+      let val (cs', owned') = reconcile_typebase contributions (cs, owned)
+      in (cs', owned', Ready) end
+  | request_typebase_catchup contributions
+      (cs, owned, Pending pending) =
+      (cs, owned, Pending (CatchUpTypeBase contributions :: pending))
 
 fun register_tyinfo_contribution (entry as (key, _)) =
   let
@@ -874,18 +833,19 @@ fun register_tyinfo_contribution (entry as (key, _)) =
 
 fun typebase_update tyi =
   let
-    fun update (cs, owned, initialised, pending) =
-      if initialised then
-        let
-          val (cs', owned') =
-            reconcile_tyinfo (!tyinfo_contributions) tyi (cs, owned)
-        in
-          (cs', owned', true, [])
-        end
-      else
-        (cs, owned, false,
-         UpdateTypeInfo
-           {contributions = !tyinfo_contributions, tyi = tyi} :: pending)
+    fun update (cs, owned, Ready) =
+          let
+            val (cs', owned') =
+              reconcile_tyinfo (!tyinfo_contributions) tyi (cs, owned)
+          in
+            (cs', owned', Ready)
+          end
+      | update (cs, owned, Pending pending) =
+          (cs, owned,
+           Pending
+             (UpdateTypeInfo
+                {contributions = !tyinfo_contributions, tyi = tyi} ::
+              pending))
   in
     #update_global_value adresult update;
     tyi
@@ -1052,7 +1012,7 @@ fun claset_of_theory thy =
 fun merge_clasets thys =
   Option.map (catch_up_typebase o #1) (#merge adresult thys)
 fun with_claset cs =
-  AncestryData.with_temp_value adresult (cs, [], true, [])
+  AncestryData.with_temp_value adresult (cs, [], Ready)
 
 fun priority_error attrname =
   raise mk_HOL_ERR "clasetLib" "attribute"
@@ -1202,6 +1162,39 @@ val destSForward =
 val Del = markerLib.genmktagged clasetMarkerTheory.Del_def
 val destDel = markerLib.gendest_tagged Del_t
 
+datatype marker_payload = Theorem of thm | DeleteName of string
+type marker_info =
+  {name : string, spec : rulespec option, payload : marker_payload}
+
+type marker_registration =
+  {name : string, spec : rulespec option,
+   dest : thm -> marker_payload option}
+
+fun theorem_marker name spec dest : marker_registration =
+  {name=name, spec=spec, dest=Option.map Theorem o dest}
+
+val marker_registry =
+  [theorem_marker "SIntro" (SOME sintro_spec) destSIntro,
+   theorem_marker "Intro" (SOME intro_spec) destIntro,
+   theorem_marker "SElim" (SOME selim_spec) destSElim,
+   theorem_marker "Elim" (SOME elim_spec) destElim,
+   theorem_marker "SDest" (SOME sdest_spec) destSDest,
+   theorem_marker "Dest" (SOME dest_spec) destDest,
+   theorem_marker "Simp" NONE destSimp,
+   theorem_marker "Iff" NONE destIff,
+   theorem_marker "Norm" (SOME norm_spec) destNorm,
+   theorem_marker "Forward" (SOME forward_spec) destForward,
+   theorem_marker "SForward" (SOME sforward_spec) destSForward,
+   {name="Del", spec=NONE, dest=Option.map DeleteName o destDel}]
+
+fun marker_of theorem =
+  Lib.get_first
+    (fn {name,spec,dest} =>
+      Option.map
+        (fn payload => {name=name, spec=spec, payload=payload})
+        (dest theorem))
+    marker_registry
+
 val marker_prefix = "__claset_marker_"
 
 (* The first "<prefix><n>" with n at least [from] that no declaration
@@ -1222,16 +1215,10 @@ fun fresh_rule_name {prefix, from} (CS {decls, ...}) =
 fun marker_name cs =
   fresh_rule_name {prefix = marker_prefix, from = 0} cs
 
-val theorem_markers =
-  [(destSIntro, sintro_spec), (destIntro, intro_spec),
-   (destSElim, selim_spec), (destElim, elim_spec),
-   (destSDest, sdest_spec), (destDest, dest_spec)]
-
-fun dest_rule_marker [] th = NONE
-  | dest_rule_marker ((dest, spec) :: markers) th =
-      case dest th of
-          NONE => dest_rule_marker markers th
-        | SOME rule => SOME (spec, rule)
+fun classical_rule ({kind=clasetRules.Intro,...} : rulespec) = true
+  | classical_rule {kind=clasetRules.Elim,...} = true
+  | classical_rule {kind=clasetRules.Dest,...} = true
+  | classical_rule _ = false
 
 fun process_claset_tags thms cs =
   let
@@ -1239,12 +1226,15 @@ fun process_claset_tags thms cs =
 
     fun process (cs, rest) [] = (cs, List.rev rest)
       | process (cs, rest) (th :: ths) =
-          case dest_rule_marker theorem_markers th of
-              SOME (spec, rule) => process (add spec rule cs, rest) ths
-            | NONE =>
-                (case destDel th of
-                     SOME name => process (remove_rule name cs, rest) ths
-                   | NONE => process (cs, th :: rest) ths)
+          case marker_of th of
+              SOME {spec=SOME spec,payload=Theorem rule,...} =>
+                if classical_rule spec then
+                  process (add spec rule cs, rest) ths
+                else
+                  process (cs, th :: rest) ths
+            | SOME {payload=DeleteName name,...} =>
+                process (remove_rule name cs, rest) ths
+            | _ => process (cs, th :: rest) ths
   in
     process (cs, []) thms
   end
@@ -1258,15 +1248,13 @@ type simp_arg_split =
 datatype simp_arg_bucket = SimpRule | IffRule | SimpControl | Plain
 
 fun simp_arg_bucket theorem =
-  case destSimp theorem of
-      SOME rule => (SimpRule, rule)
-    | NONE =>
-        (case destIff theorem of
-             SOME rule => (IffRule, rule)
-           | NONE =>
-               if markerLib.is_generic_simp_marker theorem
-               then (SimpControl, theorem)
-               else (Plain, theorem))
+  case marker_of theorem of
+      SOME {name="Simp",payload=Theorem rule,...} => (SimpRule,rule)
+    | SOME {name="Iff",payload=Theorem rule,...} => (IffRule,rule)
+    | _ =>
+        if markerLib.is_generic_simp_marker theorem
+        then (SimpControl, theorem)
+        else (Plain, theorem)
 
 (* Each bucket keeps the arguments in the order they were given. *)
 fun classify_simp_args theorems =
@@ -1286,20 +1274,12 @@ fun classify_simp_args theorems =
 (* Markers naming a rule class only the aesop front end installs (see its
    own marker pass).  They survive process_claset_tags and mean nothing to
    a plain classical tactic, so they are reported rather than assumed. *)
-val aesop_markers =
-  [(destNorm, "Norm"), (destForward, "Forward"),
-   (destSForward, "SForward")]
-
 fun aesop_marker_name theorem =
-  let
-    fun search [] = NONE
-      | search ((dest, name) :: markers) =
-          case dest theorem of
-              SOME _ => SOME name
-            | NONE => search markers
-  in
-    search aesop_markers
-  end
+  case marker_of theorem of
+      SOME {name="Norm",...} => SOME "Norm"
+    | SOME {name="Forward",...} => SOME "Forward"
+    | SOME {name="SForward",...} => SOME "SForward"
+    | _ => NONE
 
 (* Checked wherever arguments become assumptions, not only where the
    classical engines collect them: assuming a marker would leave a
@@ -1345,5 +1325,42 @@ fun invocation_claset base theorems =
   in
     (tagged, invocation_facts leftovers)
   end
+
+type 'a invocation_simpset =
+  {base : 'a,
+   extend :
+     {iff_prefix : string, simp_rules : thm list, iff_rules : thm list,
+      claset : claset, simpset : 'a} -> claset * 'a}
+
+fun with_invocation_args {iff_prefix,extra_markers} body base_cs simpset =
+  markerLib.ABBRS_THEN
+    (fn theorems => fn goal =>
+      (let
+        val (classical_cs, invocation_ss, simp_controls, leftovers) =
+          case simpset of
+              NONE =>
+                let val (cs, facts) = invocation_claset base_cs theorems
+                in (cs, NONE, [], facts)
+                end
+            | SOME {base,extend} =>
+                let
+                  val {simp_rules,iff_rules,simp_controls,rest} =
+                    classify_simp_args theorems
+                  val (extended_cs, extended_ss) =
+                    extend
+                      {iff_prefix=iff_prefix, simp_rules=simp_rules,
+                       iff_rules=iff_rules, claset=base_cs, simpset=base}
+                  val (cs, facts) =
+                    process_claset_tags rest extended_cs
+                in
+                  (cs, SOME extended_ss, simp_controls, facts)
+                end
+        val (invocation_cs, facts) =
+          extra_markers leftovers classical_cs
+      in
+        Tactical.THEN
+          (INSERT_FACTS_TAC facts,
+           body invocation_cs invocation_ss simp_controls) goal
+      end))
 
 end

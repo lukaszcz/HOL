@@ -35,10 +35,8 @@ val norm_conv =
      reduce_conv = RealField.REAL_RAT_REDUCE_CONV,
      refl_thms = [realTheory.REAL_LT_REFL, realTheory.REAL_LE_REFL]}
 
-fun nonneg tm =
-  case Lib.total realSyntax.dest_injected tm of
-      SOME n => SOME (Thm.SPEC n realTheory.REAL_POS)
-    | NONE => NONE
+val nonneg =
+  linarithData.injected_nonneg realSyntax.dest_injected realTheory.REAL_POS
 
 val instance : linarithData.linarith_instance =
   {ty = realSyntax.real_ty,

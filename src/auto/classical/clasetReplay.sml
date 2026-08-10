@@ -3,6 +3,11 @@ struct
 
 open Abbrev HolKernel boolSyntax
 
+fun trace level message =
+  if level <= Feedback.current_trace "classical" then
+    Feedback.HOL_MESG ("Classical reasoner: " ^ message ())
+  else ()
+
 datatype rule_variant = Plain | Swapped | Duplicate | MakeElim
 
 datatype step_kind =
@@ -341,7 +346,7 @@ fun rule_tac_with function_name make_children
       Term.match_term initial_conclusion normalized_target
     fun allowed_parameter {redex, residue} =
       is_var redex andalso is_var residue andalso
-      List.exists (fn name => name = fst (dest_var redex)) parameters
+      List.exists (Term.aconv redex) parameters
     val _ =
       if List.all allowed_parameter term_substitution then ()
       else
@@ -779,7 +784,6 @@ fun forward_rule_action make store =
   FORWARD_RULE_TAC (make store)
 fun blast_rule_action make store = BLAST_RULE_TAC (make store)
 val hyp_subst_action = fn _ => HYP_SUBST_TAC
-val blast_hyp_subst_action = fn _ => BLAST_HYP_SUBST_TAC
 fun blast_hyp_subst_action_at fields _ =
   BLAST_HYP_SUBST_TAC_AT fields
 val disch_action = fn _ => Tactic.DISCH_TAC
@@ -866,7 +870,6 @@ fun empty count =
       {roots = List.tabulate (count, fn _ => NONE), length = 0,
        open_paths = List.tabulate (count, fn index => [index])}
 
-fun open_goals (Script {open_paths, ...}) = List.length open_paths
 
 fun replace_nth values index replacement =
   List.take (values, index) @ replacement :: List.drop (values, index + 1)
@@ -1111,11 +1114,8 @@ fun REPLAY_TAC grounded goal =
           val diagnostic =
             "Replay failed at " ^ step_text ^ " on " ^
             goal_string bad_goal ^ ": " ^ message
-          val _ =
-            if Feedback.current_trace "classical" >= 1 then
-              Feedback.HOL_MESG
-                (diagnostic ^ "\nReplay script:\n" ^ script)
-            else ()
+          val _ = trace 1
+            (fn () => diagnostic ^ "\nReplay script:\n" ^ script)
         in
           raise mk_HOL_ERR "clasetReplay" "REPLAY_TAC" diagnostic
         end

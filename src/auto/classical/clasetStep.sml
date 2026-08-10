@@ -3,6 +3,9 @@ struct
 
 open Abbrev HolKernel boolSyntax
 
+val Fld = FunctionalRecordUpdate.U
+val $$ = FunctionalRecordUpdate.$$
+
 type node = clasetGoal.node
 type goalpos = int
 
@@ -16,16 +19,12 @@ type step_record = clasetReplay.step_record
 type step = node * goalpos -> (step_record * node) seq.seq
 
 val kind_of = clasetReplay.kind_of
-val target_of = clasetReplay.target_of
 val consumed_of = clasetReplay.consumed_of
 val created_of = clasetReplay.created_of
 val eigenvariables_of = clasetReplay.eigenvariables_of
 val validation_of = clasetReplay.validation_of
 
-fun trace level message =
-  if level <= Feedback.current_trace "classical" then
-    Feedback.HOL_MESG ("Classical reasoner: " ^ message)
-  else ()
+val trace = clasetReplay.trace
 
 fun normalize_term store tm = clasetMeta.norm store tm
 
@@ -117,6 +116,30 @@ datatype direct =
      action : clasetReplay.replay_action,
      closed : direct option list,
      store : clasetMeta.store}
+
+fun upd_direct z =
+  let
+    fun from kind consumed created eigenvariables result children action
+             closed store =
+      {kind = kind, consumed = consumed, created = created,
+       eigenvariables = eigenvariables, result = result,
+       children = children, action = action, closed = closed,
+       store = store}
+    fun from' store closed action children result eigenvariables created
+              consumed kind =
+      from kind consumed created eigenvariables result children action
+        closed store
+    fun to f
+          {kind, consumed, created, eigenvariables, result, children,
+           action, closed, store} =
+      f kind consumed created eigenvariables result children action closed
+        store
+  in
+    FunctionalRecordUpdate.makeUpdate9 (from, from', to)
+  end z
+
+fun direct_with_action action (Direct fields) =
+  Direct (upd_direct fields (Fld #action action) $$)
 
 fun direct_result (Direct {result, ...}) = result
 fun direct_store (Direct {store, ...}) = store
@@ -649,7 +672,7 @@ fun try_rule policy mode cs duplicated node pos
       else (NONE, [], #premises fresh, store1)
     val residual_terms = remaining @ hyp (#core fresh)
     fun note_skip () =
-      trace 1 "skipping safe rule with unfixed premise variables"
+      trace 1 (fn () => "skipping safe rule with unfixed premise variables")
     val (final_store, normalized_rule) =
       settle_rule mode (#core fresh) (#metas fresh) asl note_skip
         residual_terms store2
@@ -699,12 +722,13 @@ fun try_rule policy mode cs duplicated node pos
               normalized_premises target
         | SOME data =>
             exact_rule_validation normalized_rule supplied_thms data target
-    val old_params =
-      map (fst o dest_var) (#params (clasetGoal.goal_at node pos))
+    val old_params = #params (clasetGoal.goal_at node pos)
     fun child_eigens ({params, ...} : clasetGoal.cgoal) =
-      List.filter
-        (fn name => not (List.exists (fn old => old = name) old_params))
-        (map (fst o dest_var) params)
+      map (fst o dest_var)
+        (List.filter
+          (fn parameter =>
+            not (List.exists (Term.aconv parameter) old_params))
+          params)
     val new_eigens = map child_eigens children
     val created = #metas fresh
     val (original, variant) = rule_origin cs duplicated theorem
@@ -1119,19 +1143,11 @@ fun swapped_builtin_results (node, pos) =
                 (clasetReplay.SWAPPED_BUILTIN_TAC store asm_pos)
               of
                   NONE => NONE
-                | SOME
-                    (Direct
-                      {kind, consumed, created, eigenvariables, result,
-                       children, closed, store, ...}) =>
+                | SOME direct =>
                     SOME
-                      (Direct
-                        {kind = kind, consumed = consumed,
-                         created = created,
-                         eigenvariables = eigenvariables,
-                         result = result, children = children,
-                         action =
-                           clasetReplay.swapped_builtin_action asm_pos,
-                         closed = closed, store = store})
+                      (direct_with_action
+                        (clasetReplay.swapped_builtin_action asm_pos)
+                        direct)
             else NONE
           end
       in
@@ -1432,59 +1448,50 @@ fun close_plain goal =
 fun close_one_child direct =
   let
     val Direct
-      {kind, consumed, created, eigenvariables,
-       result = (goals, validation), children, action, closed, store} = direct
+      (fields as
+       {result = (goals, validation), children, closed, ...}) = direct
+
+    fun close_side index =
+      let
+        val other = 1 - index
+      in
+        case close_plain (List.nth (goals, index)) of
+            SOME
+              (close_direct as
+               Direct {result = ([], close_validation), ...}) =>
+              let
+                fun combined [remaining_thm] =
+                      validation
+                        (if index = 0 then
+                           [close_validation [], remaining_thm]
+                         else [remaining_thm, close_validation []])
+                  | combined _ =
+                      raise mk_HOL_ERR "clasetStep" "close_one_child"
+                        "close validation arity"
+                val remaining = List.nth (goals, other)
+                val child =
+                  Option.map (fn values => [List.nth (values, other)])
+                    children
+                val closed' =
+                  if index = 0 then
+                    [SOME close_direct, List.nth (closed, other)]
+                  else [List.nth (closed, other), SOME close_direct]
+              in
+                SOME
+                  (Direct
+                    (upd_direct fields
+                      (Fld #result ([remaining], combined))
+                      (Fld #children child)
+                      (Fld #closed closed') $$))
+              end
+          | _ => NONE
+      end
   in
     case goals of
-        [left, right] =>
-          (case close_plain left of
-               SOME
-                 (close_direct as
-                   Direct {result = ([], close_validation), ...}) =>
-                 let
-                   fun combined [right_thm] =
-                         validation [close_validation [], right_thm]
-                     | combined _ =
-                         raise mk_HOL_ERR "clasetStep" "close_one_child"
-                           "left-close validation arity"
-                 in
-                   SOME
-                     (Direct
-                       {kind = kind, consumed = consumed, created = created,
-                        eigenvariables = eigenvariables,
-                        result = ([right], combined),
-                        children = Option.map tl children,
-                        action = action,
-                        closed = [SOME close_direct, List.nth (closed, 1)],
-                        store = store})
-                 end
-             | _ =>
-                 (case close_plain right of
-                      SOME
-                        (close_direct as
-                          Direct {result = ([], close_validation), ...}) =>
-                        let
-                          fun combined [left_thm] =
-                                validation [left_thm, close_validation []]
-                            | combined _ =
-                                raise mk_HOL_ERR "clasetStep"
-                                  "close_one_child"
-                                  "right-close validation arity"
-                        in
-                          SOME
-                            (Direct
-                              {kind = kind, consumed = consumed,
-                               created = created,
-                               eigenvariables = eigenvariables,
-                               result = ([left], combined),
-                               children =
-                                 Option.map (fn values => [hd values])
-                                   children,
-                               action = action,
-                               closed = [hd closed, SOME close_direct],
-                               store = store})
-                        end
-                    | _ => NONE))
+        [_, _] =>
+          (case close_side 0 of
+               SOME result => SOME result
+             | NONE => close_side 1)
       | _ => NONE
   end
 
@@ -1632,6 +1639,29 @@ fun contradiction_direct caller {w, major, positive, candidate, created}
        closed = [], store = store}
   end
 
+(* Allocate the shared formula/result metavariables and settle the negative
+   assumption once.  The positioned and enumerating entry points differ only
+   in how they choose a positive assumption after this setup. *)
+fun prepare_contradiction_major
+      {w, params, store = initial_store} major =
+  let
+    val (positive, store1) =
+      clasetMeta.new_meta {allow = params, ty = Type.bool} initial_store
+    val (result, fresh_store) =
+      clasetMeta.new_meta {allow = params, ty = Type.bool} store1
+    val created = {terms = [positive, result], types = []}
+    val config = {mode = clasetUnify.Unify, rule_metas = created}
+  in
+    case clasetUnify.unify fresh_store config (result, w) of
+        NONE => NONE
+      | SOME result_store =>
+          Option.map
+            (fn store =>
+              {positive = positive, created = created, store = store})
+            (clasetUnify.unify result_store config
+              (mk_neg positive, major))
+  end
+
 fun unifying_contradiction_in
       ({asl, w, params, store = initial_store} :
         unifying_contradiction_context)
@@ -1644,38 +1674,26 @@ fun unifying_contradiction_in
     let
         val major = nth1 asl negative_pos
         val candidate = nth1 asl positive_pos
-        val (positive, store1) =
-          clasetMeta.new_meta {allow = params, ty = Type.bool}
-            initial_store
-        val (result, fresh_store) =
-          clasetMeta.new_meta {allow = params, ty = Type.bool} store1
-        val created = {terms = [positive, result], types = []}
-        val config =
-          {mode = clasetUnify.Unify, rule_metas = created}
       in
-        case clasetUnify.unify fresh_store config (result, w) of
+        case prepare_contradiction_major
+          {w = w, params = params, store = initial_store} major of
             NONE => NONE
-          | SOME result_store =>
-              (case clasetUnify.unify result_store config
-                 (mk_neg positive, major)
-               of
-                   NONE => NONE
-                 | SOME major_store =>
-                     let
-                       val selected_store =
-                         if closing_equal major_store positive candidate then
-                           SOME major_store
-                         else
-                           clasetUnify.unify major_store unify_config
-                             (positive, candidate)
-                     in
-                       Option.map
-                         (contradiction_direct "unifying_contradiction_at"
-                            {w = w, major = major, positive = positive,
-                             candidate = candidate, created = created}
-                            (negative_pos, positive_pos))
-                         selected_store
-                     end)
+          | SOME {positive, created, store = major_store} =>
+              let
+                val selected_store =
+                  if closing_equal major_store positive candidate then
+                    SOME major_store
+                  else
+                    clasetUnify.unify major_store unify_config
+                      (positive, candidate)
+              in
+                Option.map
+                  (contradiction_direct "unifying_contradiction_at"
+                     {w = w, major = major, positive = positive,
+                      candidate = candidate, created = created}
+                     (negative_pos, positive_pos))
+                  selected_store
+              end
     end
 
 fun unifying_contradiction_results_at positions (node, pos) =
@@ -1695,24 +1713,10 @@ fun unifying_contradiction_results (node, pos) =
         val positioned = position_map (fn value => value) asl
 
         fun major_alternatives (major_pos, major) =
-          let
-            val (positive, store1) =
-              clasetMeta.new_meta {allow = params, ty = Type.bool}
-                initial_store
-            val (result, fresh_store) =
-              clasetMeta.new_meta {allow = params, ty = Type.bool} store1
-            val created = {terms = [positive, result], types = []}
-            val config =
-              {mode = clasetUnify.Unify, rule_metas = created}
-          in
-            case clasetUnify.unify fresh_store config (result, w) of
+          case prepare_contradiction_major
+            {w = w, params = params, store = initial_store} major of
                 NONE => []
-              | SOME result_store =>
-                  case clasetUnify.unify result_store config
-                    (mk_neg positive, major)
-                  of
-                      NONE => []
-                    | SOME major_store =>
+              | SOME {positive, created, store = major_store} =>
                   let
                     val remaining =
                       List.filter (fn (other_pos, _) =>
@@ -1744,7 +1748,6 @@ fun unifying_contradiction_results (node, pos) =
                   in
                     map make stores
                   end
-          end
       in
         List.concat (map major_alternatives positioned)
       end)
@@ -1985,39 +1988,55 @@ fun first_result sequence =
       NONE => NONE
     | SOME (result, _) => SOME result
 
-fun safe_steps_at cs node pos =
+fun safe_steps_at_full cs node pos =
   let
     val initial_count = length (clasetGoal.goals node)
 
-    fun repeat last current =
+    fun repeat transitions current =
       if length (clasetGoal.goals current) < initial_count then
-        (last, current)
+        (List.rev transitions, current)
       else
         case first_result (safe_step cs (current, pos)) of
-            NONE => (last, current)
-          | SOME (record, next) => repeat record next
+            NONE => (List.rev transitions, current)
+          | SOME (record, next) =>
+              repeat ((pos, record, next) :: transitions) next
   in
     case first_result (safe_step cs (node, pos)) of
         NONE => NONE
-      | SOME (record, next) => SOME (repeat record next)
+      | SOME (record, next) =>
+          SOME (repeat [(pos, record, next)] next)
   end
 
-fun safe_saturate_all cs node =
+fun safe_steps_at cs node pos =
+  Option.map
+    (fn (transitions, next) =>
+        let val (_, record, _) = List.last transitions
+        in (record, next)
+        end)
+    (safe_steps_at_full cs node pos)
+
+fun safe_saturation cs node =
   let
     fun first_goal pos current =
       if pos > length (clasetGoal.goals current) then NONE
       else
-        case safe_steps_at cs current pos of
+        case safe_steps_at_full cs current pos of
             NONE => first_goal (pos + 1) current
           | result => result
 
-    fun saturate last current =
+    fun saturate transitions current =
       case first_goal 1 current of
-          NONE => Option.map (fn record => (record, current)) last
-        | SOME (record, next) => saturate (SOME record) next
+          NONE => List.rev transitions
+        | SOME (more, next) =>
+            saturate (List.revAppend (more, transitions)) next
   in
-    saturate NONE node
+    saturate [] node
   end
+
+fun safe_saturate_all cs node =
+  case List.rev (safe_saturation cs node) of
+      [] => NONE
+    | (_, record, next) :: _ => SOME (record, next)
 
 fun unsafe_rung fast cs input =
   if fast then first_nonempty [inst_cascade cs, unsafe_cascade cs] input
@@ -2035,10 +2054,6 @@ fun slow_step cs = general_step false cs
 
 fun depth_step cs part bound (node, pos) =
   let
-    fun child_count old_node new_node =
-      length (clasetGoal.goals new_node) -
-      length (clasetGoal.goals old_node) + 1
-
     fun solve_many _ 0 result = seq.result result
       | solve_many m count (record, current) =
           seq.bind (solve_one m (current, pos))
@@ -2047,7 +2062,7 @@ fun depth_step cs part bound (node, pos) =
     and solve_one m (current, target) =
       case safe_steps_at cs current target of
           SOME (result as (_, safe_node)) =>
-            solve_many m (child_count current safe_node) result
+            solve_many m (clasetGoal.child_count current safe_node) result
         | NONE =>
             let
               val closers = inst0_step cs (current, target)
@@ -2059,7 +2074,7 @@ fun depth_step cs part bound (node, pos) =
                       (depth_cascade part) cs (current, target))
                     (fn result as (_, next) =>
                       solve_many (m - 1)
-                        (child_count current next) result)
+                        (clasetGoal.child_count current next) result)
             in
               seq.append closers branching
             end

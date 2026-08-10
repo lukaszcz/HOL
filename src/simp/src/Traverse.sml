@@ -40,13 +40,43 @@ datatype reducer =
               apply: {solver:term list -> term -> thm,
                       conv: term list -> term -> thm,
                       context: context,
-                      stack: term list, relation : term * (term -> thm)} -> conv
+                      stack: term list,
+                      relation : term * (term -> thm)} -> conv}
+  | CONTEXT_REDUCER of
+             {name : string option,
+              initial: context,
+              addcontext : context * Thm.thm list -> context,
+              apply: {solver:term list -> term -> thm,
+                      conv: term list -> term -> thm,
+                      context: context,
+                      stack: term list,
+                      cond_depth: int,
+                      term_ord: term * term -> order,
+                      relation : term * (term -> thm)} -> conv
               };
 fun dest_reducer (REDUCER x) = x
+  | dest_reducer
+      (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                cond_depth= !Cond_rewr.stack_limit,
+                term_ord=Cond_rewr.ac_term_ord, relation=relation}}
+
+fun reducer_data (REDUCER {name,initial,addcontext,apply}) =
+      {name=name, initial=initial, addcontext=addcontext,
+       apply=fn {solver,conv,context,stack,cond_depth,term_ord,relation} =>
+         apply {solver=solver, conv=conv, context=context, stack=stack,
+                relation=relation}}
+  | reducer_data (CONTEXT_REDUCER x) = x
 
 fun addctxt ths (REDUCER {name,initial,addcontext,apply}) =
     REDUCER{name = name, initial = addcontext(initial,ths), apply = apply,
             addcontext = addcontext}
+  | addctxt ths (CONTEXT_REDUCER {name,initial,addcontext,apply}) =
+    CONTEXT_REDUCER
+      {name=name, initial=addcontext (initial,ths), apply=apply,
+       addcontext=addcontext}
 
 type simp_prover_ctxt =
   {stack : term list, context_thms : thm list, recurse : term -> thm}
@@ -73,8 +103,8 @@ fun initial_context {rewriters:reducer list,
                      travrules=TRAVRULES tsdata,
                      relation, limit, subgoaler, solvers,
                      cond_depth, term_ord} =
-  TSTATE{contexts1=map (#initial o dest_reducer) rewriters,
-         contexts2=map (#initial o dest_reducer) dprocs,
+  TSTATE{contexts1=map (#initial o reducer_data) rewriters,
+         contexts2=map (#initial o reducer_data) dprocs,
          context_thms=[],
          freevars=[],
          relation_info = find_relation relation (#relations tsdata),
@@ -86,8 +116,8 @@ fun initial_context {rewriters:reducer list,
  * ---------------------------------------------------------------------*)
 
 fun add_context rewriters dprocs = let
-  val rewrite_collectors' = map (#addcontext o dest_reducer) rewriters
-  val dproc_collectors' = map (#addcontext o dest_reducer) dprocs
+  val rewrite_collectors' = map (#addcontext o reducer_data) rewriters
+  val dproc_collectors' = map (#addcontext o reducer_data) dprocs
   fun doit (context, thms) = let
     val TSTATE {contexts1,contexts2,context_thms,freevars,
                 relation_info,relation} = context
@@ -244,12 +274,14 @@ type traverse_data = {limit : int option,
 
 fun TRAVERSE_IN_CONTEXT root_only
       ({limit,rewriters,dprocs,travrules,relation=rel,subgoaler,solvers,
-        ...} : traverse_data) stack ctxt tm = let
+        cond_depth,term_ord} : traverse_data) stack ctxt tm = let
   open Uref
   val TRAVRULES {relations,congprocs,weakenprocs,...} = travrules
   val add_context' = add_context rewriters dprocs
   val get_relation' = get_relation travrules
   val lim_r = Uref.new limit
+  val cond_depth = Option.getOpt (cond_depth, !Cond_rewr.stack_limit)
+  val term_ord = Option.getOpt (term_ord, Cond_rewr.ac_term_ord)
   fun check r = case !r of NONE => ()
     | SOME n => if n <= 0 then
                                (trace(2,TEXT "Limit exhausted");
@@ -329,13 +361,19 @@ fun TRAVERSE_IN_CONTEXT root_only
         trav_with_rel' equality stack context tm
         handle e as HOL_ERR _ => (lim_r := old ; raise e)
       end
-      fun apply_reducer (REDUCER rdata) context tm =
+      fun apply_reducer reducer context tm =
+        let val rdata = reducer_data reducer
+        in
           (#apply rdata) {solver=ctxt_solver,
                           conv=ctxt_conv,
                           context=context,
-                          stack=stack, relation=(relname, mkrefl)}
+                          stack=stack,
+                          cond_depth=cond_depth,
+                          term_ord=term_ord,
+                          relation=(relname, mkrefl)}
                          tm before
           dec lim_r
+        end
       fun high_priority tm =
           (check lim_r;
            FIRST_CONV (mapfilter2 apply_reducer rewriters contexts1) tm)
@@ -379,22 +417,12 @@ end
  * TRAVERSE
  *
  * ---------------------------------------------------------------------*)
-(* The simpset-scoped rewriting knobs are installed as overrides for the
-   extent of the traversal, and are installed even when this simpset
-   configures neither: binding them to NONE is what makes a nested
-   traversal fall back to the user-level default (Cond_rewr.stack_limit,
-   Cond_rewr.term_ord) rather than silently inherit the settings of the
-   traversal it was launched from. *)
-fun with_dynamic_flags (cond_depth,term_ord) f x =
-  Lib.with_flag (Cond_rewr.stack_limit_override,cond_depth)
-    (Lib.with_flag (Cond_rewr.term_ord_override,term_ord) f) x
-
 (* Reducer contexts contain mutable rewrite controls, so rebuild the context
    for every application of a reusable conversion. *)
 fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
       {reducer_context,solver_context} tm =
    let
-     val {dprocs,rewriters,cond_depth,term_ord,...} = data
+     val {dprocs,rewriters,...} = data
      val context' =
        add_solver_context
          (add_context rewriters dprocs
@@ -403,7 +431,7 @@ fun GEN_TRAVERSE_WITH_CONTEXT root_only (data : traverse_data)
      fun traverse tm =
        TRAVERSE_IN_CONTEXT root_only data [] context' tm
    in
-     with_dynamic_flags (cond_depth,term_ord) traverse tm
+     traverse tm
    end;
 
 fun GEN_TRAVERSE root_only data thms =

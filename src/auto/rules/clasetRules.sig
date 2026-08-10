@@ -34,9 +34,7 @@ sig
     (unit -> unit) -> rulekind -> thm -> canonical
   val rule_index : rulekind -> thm -> term
   val rule_index_of : rulekind -> canonical -> term
-  val rule_premises : thm -> term list
   val rule_premises_of : rulekind -> thm -> term list
-  val rule_conclusion : thm -> term
   val is_elim : rulekind -> bool
 
   val MAKE_ELIM_RULE : thm -> thm
@@ -58,7 +56,6 @@ sig
   val extend_decl : decl -> decls -> decl option * decls
   val extend_derived_decl : decl -> decls -> decl option * decls
   val remove_decl : string -> decls -> decl list * decls
-  val has_decls : decls -> thm -> bool
   val decl_name_member : decls -> string -> bool
   val get_decls : decls -> thm -> decl list
   val dest_decls : decls -> decl list

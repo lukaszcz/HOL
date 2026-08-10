@@ -2,9 +2,11 @@ structure blastTerm :> blastTerm =
 struct
 
   datatype term =
-      Const of string * term list
+      Const of KernelSig.kernelname * term list
     | Skolem of string * term option ref list
-    | Free of string
+    | Fvar of string
+    | Goal
+    | False
     | Var of term option ref
     | Bound of int
     | Abs of string * term
@@ -14,18 +16,54 @@ struct
 
   type var = term option ref
 
+  fun mapMeasured checkpoint f [] = []
+    | mapMeasured checkpoint f (item :: items) =
+        (checkpoint (); f item :: mapMeasured checkpoint f items)
+
+  fun appMeasured checkpoint f [] = ()
+    | appMeasured checkpoint f (item :: items) =
+        (checkpoint (); f item; appMeasured checkpoint f items)
+
+  fun existsMeasured checkpoint pred [] = false
+    | existsMeasured checkpoint pred (item :: items) =
+        (checkpoint ();
+         pred item orelse existsMeasured checkpoint pred items)
+
+  fun findMeasured checkpoint pred [] = NONE
+    | findMeasured checkpoint pred (item :: items) =
+        (checkpoint ();
+         if pred item then SOME item else findMeasured checkpoint pred items)
+
+  fun appendMeasured checkpoint [] right = right
+    | appendMeasured checkpoint (item :: items) right =
+        (checkpoint (); item :: appendMeasured checkpoint items right)
+
+  fun partitionMeasured checkpoint pred [] = ([], [])
+    | partitionMeasured checkpoint pred (item :: items) =
+        let
+          val _ = checkpoint ()
+          val (yes, no) = partitionMeasured checkpoint pred items
+        in
+          if pred item then (item :: yes, no) else (yes, item :: no)
+        end
+
+  fun mapPartialMeasured checkpoint f [] = []
+    | mapPartialMeasured checkpoint f (item :: items) =
+        let
+          val _ = checkpoint ()
+          val result = f item
+          val rest = mapPartialMeasured checkpoint f items
+        in
+          case result of NONE => rest | SOME value => value :: rest
+        end
+
   datatype state = State of
     {trail : var list ref,
      ntrail : int ref}
 
-  val goal_name = "*Goal*"
-  val false_name = "*False*"
+  fun mkGoal p = Goal $ p
 
-  fun const_name {Thy, Name} = Thy ^ "$" ^ Name
-
-  fun mkGoal p = Const (goal_name, []) $ p
-
-  fun isGoal (Const (name, _) $ _) = name = goal_name
+  fun isGoal (Goal $ _) = true
     | isGoal _ = false
 
   fun newState () = State {trail = ref [], ntrail = ref 0}
@@ -60,7 +98,9 @@ struct
   fun aconv (Const (a, ts), Const (b, us)) =
         a = b andalso aconvs (ts, us)
     | aconv (Skolem (a, _), Skolem (b, _)) = a = b
-    | aconv (Free a, Free b) = a = b
+    | aconv (Fvar a, Fvar b) = a = b
+    | aconv (Goal, Goal) = true
+    | aconv (False, False) = true
     | aconv (Var v, u) =
         (case !v of
              SOME t => aconv (t, u)
@@ -93,7 +133,9 @@ struct
              (Const (a, ts), Const (b, us)) =>
                a = b andalso equals (ts, us)
            | (Skolem (a, _), Skolem (b, _)) => a = b
-           | (Free a, Free b) => a = b
+           | (Fvar a, Fvar b) => a = b
+           | (Goal, Goal) => true
+           | (False, False) => true
            | (Var v, u) =>
                (case !v of
                     SOME t => equal (t, u)
@@ -117,13 +159,6 @@ struct
     in
       equal
     end
-
-  fun mem_term (_, []) = false
-    | mem_term (term, other :: terms) =
-        aconv (term, other) orelse mem_term (term, terms)
-
-  fun ins_term (term, terms) =
-    if mem_term (term, terms) then terms else term :: terms
 
   fun mem_var (_, []) = false
     | mem_var (v, w :: ws) = v = w orelse mem_var (v, ws)
@@ -387,8 +422,52 @@ struct
     case head_of term of
         Const _ => term
       | Skolem _ => term
-      | Free _ => term
+      | Fvar _ => term
+      | Goal => term
+      | False => term
       | _ => wkNormAux term
+
+  fun wkNormMeasured checkpoint term =
+    let
+      val increment = incr_boundvars_measured checkpoint
+      val substitute = subst_bound_measured checkpoint
+
+      fun head item =
+        (checkpoint ();
+         case item of f $ _ => head f | _ => item)
+
+      fun weak_aux item =
+        (checkpoint ();
+         case item of
+             Var v =>
+               (case !v of SOME body => weak body | NONE => item)
+           | f $ x =>
+               (case weak_aux f of
+                    Abs (_, body) => weak (substitute (x, body))
+                  | nf => nf $ x)
+           | Abs (name, body) =>
+               (case weak_aux body of
+                    nb as (f $ x) =>
+                      if existsMeasured checkpoint (fn i => i = 0)
+                           (loose_bnos_measured checkpoint f) orelse
+                         not (aconvMeasured checkpoint (weak x, Bound 0))
+                      then Abs (name, nb)
+                      else weak (increment ~1 f)
+                  | nb => Abs (name, nb))
+           | _ => item)
+
+      and weak item =
+        (checkpoint ();
+         case head item of
+             Const _ => item
+           | Skolem _ => item
+           | Fvar _ => item
+           | Goal => item
+           | False => item
+           | _ => weak_aux item)
+    in
+      weak term
+    end
 
   fun varOccur v =
     let
@@ -527,66 +606,7 @@ struct
       val State {ntrail, trail} = state
       val mark = !ntrail
 
-      val increment = incr_boundvars_measured checkpoint
-      val substitute = subst_bound_measured checkpoint
-
-      fun loose tm =
-        let
-          fun add (Bound i, level, values) =
-                (checkpoint ();
-                 if i < level then values
-                 else insert (i - level) values)
-            | add (Abs (_, body), level, values) =
-                (checkpoint (); add (body, level + 1, values))
-            | add (f $ x, level, values) =
-                (checkpoint ();
-                 add (f, level, add (x, level, values)))
-            | add (_, _, values) = (checkpoint (); values)
-          and insert value [] = [value]
-            | insert value (item :: items) =
-                (checkpoint ();
-                 if value = item then item :: items
-                 else item :: insert value items)
-        in
-          add (tm, 0, [])
-        end
-
-      fun contains_zero [] = false
-        | contains_zero (i :: rest) =
-            (checkpoint (); i = 0 orelse contains_zero rest)
-
-      fun head item =
-        (checkpoint ();
-         case item of f $ _ => head f | _ => item)
-
-      fun weak_aux item =
-        (checkpoint ();
-         case item of
-             Var v =>
-               (case !v of SOME body => weak body | NONE => item)
-           | f $ x =>
-               (case weak_aux f of
-                    Abs (_, body) => weak (substitute (x, body))
-                  | nf => nf $ x)
-           | Abs (name, body) =>
-               (case weak_aux body of
-                    nb as (f $ x) =>
-                      if contains_zero (loose f) orelse
-                         not
-                           (aconvMeasured checkpoint
-                              (weak x, Bound 0))
-                      then Abs (name, nb)
-                      else weak (increment ~1 f)
-                  | nb => Abs (name, nb))
-           | _ => item)
-
-      and weak item =
-        (checkpoint ();
-         case head item of
-             Const _ => item
-           | Skolem _ => item
-           | Free _ => item
-           | _ => weak_aux item)
+      val weak = wkNormMeasured checkpoint
 
       fun member_var _ [] = false
         | member_var v (w :: ws) =
@@ -665,11 +685,5 @@ struct
                 (clearToMeasuredWith cleanup checkpoint state mark; false)
             | exn => (cleanup exn state mark; raise exn))
     end
-
-  fun unifyMeasured checkpoint state arguments =
-    unifyMeasuredWith
-      (fn _ => fn cleanup_state => fn cleanup_mark =>
-         clearTo cleanup_state cleanup_mark)
-      checkpoint state arguments
 
 end
