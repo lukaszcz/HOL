@@ -2892,6 +2892,12 @@ local
     fun native_sequence_symbol rator rands =
       !current_native_sequence_emission andalso
       (listSyntax.is_nil tm orelse
+      ((same_const rator intSyntax.int_injection orelse
+        same_const rator int_of_num_tm) andalso
+       (case rands of
+          [arg] => same_const (Lib.fst (boolSyntax.strip_comb arg))
+            seq_length_tm
+        | _ => false)) orelse
       Option.isSome (Lib.total dest_seq_extract_shape tm) orelse
       Option.isSome (Lib.total dest_seq_at_shape tm) orelse
       List.exists (fn head => same_const rator head) [
@@ -2920,7 +2926,17 @@ local
           emit "seq.extract" [sequence, index, size]
         fun emit_at (sequence, index) = emit "seq.at" [sequence, index]
       in
-        case Lib.total dest_seq_extract_shape tm of
+        if same_const rator intSyntax.int_injection orelse
+           same_const rator int_of_num_tm then
+          (case rands of
+             [length] =>
+               let val (head, args) = boolSyntax.strip_comb length in
+                 if same_const head seq_length_tm then emit "seq.len" args
+                 else raise ERR "native_sequence_builtin" "wrong length"
+               end
+           | _ => raise ERR "native_sequence_builtin" "wrong coercion")
+        else
+          (case Lib.total dest_seq_extract_shape tm of
           SOME shape => emit_extract shape
         | NONE =>
           (case Lib.total dest_seq_at_shape tm of
