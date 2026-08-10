@@ -161,6 +161,16 @@ struct
      recognising their operator, and use the constructor equations exposed by
      the native list model.  This makes symbolic residue fail loudly instead
      of accidentally expanding without a structural bound. *)
+  (* Keep the append witness explicit.  Unfolding IS_SUBLIST_APPEND first
+     leaves an existential that neither simplification nor tautology chooses. *)
+  val contains_append_left_thm = Tactical.prove
+    (``IS_SUBLIST ((xs : 'a list) ++ ys) xs``,
+     Tactical.THEN
+       (bossLib.RW_TAC (bossLib.srw_ss()) [rich_listTheory.IS_SUBLIST_APPEND],
+        Tactical.THEN (Tactic.EXISTS_TAC ``[] : 'a list``,
+          Tactical.THEN (Tactic.EXISTS_TAC ``ys : 'a list``,
+            bossLib.RW_TAC (bossLib.srw_ss()) [listTheory.APPEND]))))
+
   val prefix_suffix_contains_rewrites = list_rewrites @ [
     listTheory.isPREFIX_THM,
     rich_listTheory.IS_SUBLIST,
@@ -224,7 +234,10 @@ struct
 
   fun prefix_suffix_contains_prove t =
     if mentions is_prefix_suffix_contains t then
-      simp_prove_with prefix_suffix_contains_rewrites t
+      with_metis_limit (fn () => metisLib.METIS_PROVE
+        [contains_append_left_thm] t) ()
+      handle Feedback.HOL_ERR _ =>
+        simp_prove_with prefix_suffix_contains_rewrites t
     else
       raise ERR "prefix_suffix_contains_prove"
         "not a prefix/suffix/contains shape"
