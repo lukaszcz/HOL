@@ -1243,9 +1243,6 @@ in
         (K_zero_two listSyntax.mk_map),
       z3_term "seq.foldl" no_attributes
         ["(seq.foldl (-> B A B) B (Seq A) B)"]
-        (K_zero_three listSyntax.mk_foldl),
-      z3_term "seq.fold_left" no_attributes
-        ["(seq.fold_left (-> B A B) B (Seq A) B)"]
         (K_zero_three listSyntax.mk_foldl)
     ]
 
