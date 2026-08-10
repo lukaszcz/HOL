@@ -87,8 +87,6 @@ struct
     (* Complete frozen cvc5 1.3.4 Set RARE inventory.  Keep this explicit:
        an unrecorded sets-* spelling must fail registry lookup loudly. *)
     mk_rule RareRewrite ("sets-card-singleton", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-card-union", "sets_rewrite"),
-    mk_rule RareRewrite ("sets-card-minus", "sets_rewrite"),
     mk_rule RareRewrite ("sets-choose-singleton", "sets_rewrite"),
     mk_rule RareRewrite ("sets-eval-op", "sets_rewrite"),
     mk_rule RareRewrite ("sets-insert-elim", "sets_rewrite"),

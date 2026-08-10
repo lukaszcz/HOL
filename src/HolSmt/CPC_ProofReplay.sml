@@ -1118,17 +1118,6 @@ local
           ("sets-card-singleton", [element]) =>
             boolSyntax.mk_eq (card (singleton element),
               intSyntax.term_of_int (Arbint.fromInt 1))
-        | ("sets-card-union", [left, right]) =>
-            boolSyntax.mk_eq
-              (card (pred_setSyntax.mk_union (left, right)),
-               intSyntax.mk_minus
-                 (intSyntax.mk_plus (card left, card right),
-                  card (pred_setSyntax.mk_inter (left, right))))
-        | ("sets-card-minus", [left, right]) =>
-            boolSyntax.mk_eq
-              (card (pred_setSyntax.mk_diff (left, right)),
-               intSyntax.mk_minus (card left,
-                 card (pred_setSyntax.mk_inter (left, right))))
         | ("sets-choose-singleton", [element]) =>
             boolSyntax.mk_eq (pred_setSyntax.mk_choice (singleton element),
               element)
