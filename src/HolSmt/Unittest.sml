@@ -4995,8 +4995,8 @@ let
   val some = boolSyntax.mk_exists (some_x, boolSyntax.mk_conj
     (some_in, Term.mk_comb (p, some_x)))
   val partition_predicate = Term.mk_comb (relation, partition_x)
-  val partition_group = bagSyntax.mk_insert
-    (partition_x, bag_filter (partition_predicate, b))
+  val partition_group =
+    bag_filter (partition_predicate, b)
   val partition_set = pred_setSyntax.mk_image
     (Term.mk_abs (partition_x, partition_group), set_of_bag b)
   val partition = bag_of_set partition_set
