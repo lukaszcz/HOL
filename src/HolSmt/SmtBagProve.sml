@@ -38,7 +38,7 @@ struct
     handle Feedback.HOL_ERR _ => false
 
   fun has_bag_encoding t =
-    mentions is_bag_constant t orelse mentions is_int_count_lambda t
+    mentions is_bag_constant t
 
   val bag_rewrites = [
     bagTheory.BAG_UNION,

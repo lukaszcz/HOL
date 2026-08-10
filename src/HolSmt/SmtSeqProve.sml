@@ -18,15 +18,28 @@ struct
   fun list_element_type tm =
     Lib.total listSyntax.dest_list_type (Term.type_of tm)
 
-  (* String remains on SmtStringProve's carrier.  This recognises only the
-     other list instances produced for genuine (Seq A) terms. *)
+  (* String remains on SmtStringProve's carrier.  A list type alone is not
+     Seq provenance: ArrayEx lowering can contain list-typed implementation
+     artefacts.  Require a sequence operation as well. *)
   fun has_seq_type t =
     let
+      fun sequence_head tm =
+        Term.is_const tm andalso
+        let val {Thy, Name, ...} = Term.dest_thy_const tm in
+          (Thy = "list" andalso List.exists (Lib.equal Name)
+            ["APPEND", "LENGTH", "CONS", "NIL", "TAKE", "DROP", "EL",
+             "MAP", "FOLDL", "REVERSE", "isPREFIX", "LUPDATE"])
+          orelse (Thy = "rich_list" andalso
+            List.exists (Lib.equal Name) ["IS_SUBLIST", "IS_SUFFIX"])
+          orelse (Thy = "HolSmt" andalso
+            List.exists (Lib.equal Name)
+              ["smt_seq_nth", "smt_seq_extract", "smt_seq_at",
+               "smt_seq_indexof", "smt_seq_replace", "smt_seq_replace_all",
+               "smt_seq_update"])
+        end
       fun visit tm =
-        if is_smtstr_value tm then
-          false
-        else if Option.isSome (list_element_type tm) then
-          true
+        if is_smtstr_value tm then false
+        else if sequence_head tm then true
         else
           (let val (rator, rand) = Term.dest_comb tm
            in visit rator orelse visit rand end
