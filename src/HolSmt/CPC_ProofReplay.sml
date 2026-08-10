@@ -1056,26 +1056,42 @@ local
       [target] => SmtSeqProve.seq_prove target
     | _ => raise ERR name "expected one Seq rewrite proposition"
 
+  fun is_smtstr_type ty =
+    Type.compare (ty, Type.mk_thy_type
+      {Thy = "smtstring", Tyop = "smtstr", Args = []}) = EQUAL
+
+  fun replay_string_at_elim sequence index =
+    Thm.SPECL [sequence, index] smtstringTheory.smtstr_at_def
+
   fun replay_seq_at_elim conclusion args =
     case (conclusion, args) of
-      (SOME target, [_, _]) => SmtSeqProve.seq_prove target
+      (SOME target, [sequence, index]) =>
+        if is_smtstr_type (Term.type_of sequence) then
+          let val thm = replay_string_at_elim sequence index in
+            if Term.aconv target (Thm.concl thm) then thm
+            else raise ERR "str-at-elim" "String conclusion does not match"
+          end
+        else SmtSeqProve.seq_prove target
     | (NONE, [sequence, index]) =>
-        let
-          val sequence_ty = Term.type_of sequence
-          val at = Term.mk_thy_const {Thy = "HolSmt", Name = "smt_seq_at",
-            Ty = Type.--> (sequence_ty,
-              Type.--> (intSyntax.int_ty, sequence_ty))}
-          val extract = Term.mk_thy_const {
-            Thy = "HolSmt", Name = "smt_seq_extract",
-            Ty = Type.--> (sequence_ty, Type.--> (intSyntax.int_ty,
-              Type.--> (intSyntax.int_ty, sequence_ty)))}
-          val target = boolSyntax.mk_eq
-            (Term.list_mk_comb (at, [sequence, index]),
-             Term.list_mk_comb (extract,
-               [sequence, index, intSyntax.one_tm]))
-        in
-          SmtSeqProve.seq_prove target
-        end
+        if is_smtstr_type (Term.type_of sequence) then
+          replay_string_at_elim sequence index
+        else
+          let
+            val sequence_ty = Term.type_of sequence
+            val at = Term.mk_thy_const {Thy = "HolSmt", Name = "smt_seq_at",
+              Ty = Type.--> (sequence_ty,
+                Type.--> (intSyntax.int_ty, sequence_ty))}
+            val extract = Term.mk_thy_const {
+              Thy = "HolSmt", Name = "smt_seq_extract",
+              Ty = Type.--> (sequence_ty, Type.--> (intSyntax.int_ty,
+                Type.--> (intSyntax.int_ty, sequence_ty)))}
+            val target = boolSyntax.mk_eq
+              (Term.list_mk_comb (at, [sequence, index]),
+               Term.list_mk_comb (extract,
+                 [sequence, index, intSyntax.one_tm]))
+          in
+            SmtSeqProve.seq_prove target
+          end
     | _ => raise ERR "str-at-elim" "expected sequence and index arguments"
 
   (* Set rewrites are deliberately driven by the certificate conclusion.
