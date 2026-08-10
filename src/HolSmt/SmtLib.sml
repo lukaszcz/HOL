@@ -1124,6 +1124,7 @@ local
   let
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
   in
+    not (List.null set_terms) andalso
     List.all (fn set => native_set_term set andalso
       finite_set_term finite_terms set) set_terms
   end
@@ -1282,6 +1283,7 @@ local
   fun cvc5_native_bags goal bag_terms =
   let val finite_terms = List.mapPartial finite_bag_hypothesis (Lib.fst goal)
   in
+    not (List.null bag_terms) andalso
     List.all (fn bag => native_bag_term bag andalso
       finite_bag_term finite_terms bag) bag_terms
   end
