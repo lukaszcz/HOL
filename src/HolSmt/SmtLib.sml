@@ -1125,6 +1125,8 @@ local
     val finite_terms = List.mapPartial finite_set_hypothesis (Lib.fst goal)
   in
     not (List.null set_terms) andalso
+    not (List.exists (fn set =>
+      pred_setSyntax.is_set_type (set_element_type set)) set_terms) andalso
     List.all (fn set => native_set_term set andalso
       finite_set_term finite_terms set) set_terms
   end
