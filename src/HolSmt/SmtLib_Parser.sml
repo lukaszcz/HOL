@@ -5328,11 +5328,11 @@ local
       fun add_finite_definition name command_state =
         let
           val (_, _, sigdict) = current_typecheck_dicts command_state
-          val signature =
+          val sig_entry =
             case peek_signatures (sigdict, name) of
-              SOME (signature :: _) => signature
+              SOME (entry :: _) => entry
             | _ => raise ERR "add_finite_definition" "missing definition"
-          val {tm, domain, range_surface, ...} = signature
+          val {tm, domain, range_surface, ...} = sig_entry
         in
           if cvc5_set_surface range_surface then
             add_typechecked_finite_set tm domain command_state
