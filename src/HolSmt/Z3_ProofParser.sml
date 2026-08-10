@@ -469,11 +469,11 @@ local
            nth_u is deliberately the existing totalized Seq access. *)
         ("seq.nth_i", SmtLib_Theories.K_zero_two
           (fn (s, i) => if is_z3_string s then z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, z3_natural i])
-           else listSyntax.mk_el (z3_natural i, s))),
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
+           else listSyntax.mk_el (intSyntax.mk_Num i, s))),
         ("seq.nth_u", SmtLib_Theories.K_zero_two
           (fn (s, i) => if is_z3_string s then z3_num_to_char
-             (z3_string_app "seq_nth_i" [s, z3_natural i])
+             (z3_string_app "seq_nth_i" [s, intSyntax.mk_Num i])
            else holsmt_app "smt_seq_nth" [s, i])),
         ("seq.tail", z3_indexed_binary "seq_tail"
           (fn (s, i) => if is_z3_string s then z3_string_app "seq_tail"
