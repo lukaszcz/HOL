@@ -6048,6 +6048,10 @@ let
     ([``FINITE (s:int set)``], boolSyntax.mk_eq
       (Term.mk_comb (intSyntax.int_injection, pred_setSyntax.mk_card s),
        intSyntax.zero_tm))
+  val cvc_set_argument_text = cvc
+    ([``FINITE (s:int set)``],
+     Term.mk_comb (Term.mk_var ("set_predicate",
+       Type.--> (Term.type_of s, Type.bool)), s))
   val card_message =
     (ignore (Z3.goal_to_SmtLib_translation_for_version (SOME "4.15.3")
        ([], ``CARD (s:int set) = 0``));
@@ -6102,6 +6106,10 @@ in
     cvc_finite_word_text);
   assert (contains "set.card" cvc_card_text,
     "finite cvc5 CARD did not emit set.card:\n" ^ cvc_card_text);
+  assert (contains "((Set Int)) Bool" cvc_set_argument_text andalso
+      not (contains "((Array Int Bool)) Bool" cvc_set_argument_text),
+    "native cvc5 Set function arguments lost their collection sort:\n" ^
+    cvc_set_argument_text);
   assert (card_message =
       "SMT-LIB operator 'set.card' is unavailable for solver 'Z3' at " ^
       "version '4.15.3'",
@@ -6161,6 +6169,10 @@ let
         intSyntax.zero_tm)));
      die "FAIL: cvc5 accepted non-finite BAG_CARD")
     handle Feedback.HOL_ERR error => Feedback.message_of error
+  val cvc_bag_argument_text = cvc
+    ([``FINITE_BAG (b:int -> num)``],
+     Term.mk_comb (Term.mk_var ("bag_predicate",
+       Type.--> (Term.type_of b, Type.bool)), b))
 in
   assert (contains "(Array Int Int)" z3_text andalso
       contains "((_ map (+ (Int Int) Int))" z3_text,
@@ -6207,7 +6219,11 @@ in
     "bag.card availability diagnostic changed: " ^ card_message);
   assert (cvc_card_message =
       "bag.card requires a finiteness-entailing cvc5 goal",
-    "non-finite cvc5 bag.card diagnostic changed: " ^ cvc_card_message)
+    "non-finite cvc5 bag.card diagnostic changed: " ^ cvc_card_message);
+  assert (contains "((Bag Int)) Bool" cvc_bag_argument_text andalso
+      not (contains "((Array Int Int)) Bool" cvc_bag_argument_text),
+    "native cvc5 Bag function arguments lost their collection sort:\n" ^
+    cvc_bag_argument_text)
 end
 
 fun smtlib_native_sequence_translation_success () =

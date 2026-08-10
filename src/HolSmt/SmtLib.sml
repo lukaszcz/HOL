@@ -3882,6 +3882,15 @@ local
             SOME count_function => count_function
           | NONE => function
         val _ = Type.dom_rng (Term.type_of function)
+        val native_set_argument =
+          !current_set_backend = CVC5NativeSet andalso
+          is_marked_set_term argument
+        val native_bag_argument =
+          !current_bag_backend = CVC5NativeBag andalso
+          is_marked_bag_term argument
+        val native_collection_argument =
+          Term.is_var function andalso
+          (native_set_argument orelse native_bag_argument)
         val semantically_ranked_partial =
           Term.is_const rator andalso
           let val rank = declared_const_arity rator
@@ -3918,26 +3927,50 @@ local
               else
                 ()
         val (acc, (functiondecls, functionname)) =
-          translate_term regime apply_operator (acc, (bounds, function))
-          handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
+          if native_collection_argument then
+            (case Redblackmap.peek (tmdict, (function, 1)) of
+               SOME name => (acc, ([], name))
+             | NONE =>
+                 let
+                   val (_, range) = Type.dom_rng (Term.type_of function)
+                   val (tydict, (domdecls, domain_sort)) =
+                     if native_set_argument then set_sort tydict argument
+                     else selected_bag_sort tydict argument
+                   val (tydict, (rngdecls, range_sort)) =
+                     translate_type regime (tydict, range)
+                   val name = tm_prefix ^
+                     Int.toString (Redblackmap.numItems tmdict)
+                   val tmdict = Redblackmap.insert
+                     (tmdict, (function, 1), name)
+                   val declaration = term_declaration_text regime name
+                     [domain_sort] range_sort
+                 in
+                   ((tydict, tmdict),
+                    (domdecls @ rngdecls @ [declaration], name))
+                 end)
+          else
+            translate_term regime apply_operator (acc, (bounds, function))
+            handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
         val (acc, (argumentdecls, argumentname)) =
           translate_term regime apply_operator (acc, (bounds, argument))
           handle e as Feedback.HOL_ERR _ => raise NestedTranslation e
       in
         (acc, (functiondecls @ argumentdecls,
-          case !current_set_backend of
-            CVC5NativeSet =>
-              if is_marked_set_term function then
-                sexpr "set.member" [argumentname, functionname]
-              else if !current_bag_backend = CVC5NativeBag andalso
-                      is_marked_bag_term function then
-                sexpr "bag.count" [argumentname, functionname]
-              else explicit_apply functionname argumentname
-          | _ =>
-              if !current_bag_backend = CVC5NativeBag andalso
-                 is_marked_bag_term function then
-                sexpr "bag.count" [argumentname, functionname]
-              else explicit_apply functionname argumentname))
+          if native_collection_argument then sexpr functionname [argumentname]
+          else
+            case !current_set_backend of
+              CVC5NativeSet =>
+                if is_marked_set_term function then
+                  sexpr "set.member" [argumentname, functionname]
+                else if !current_bag_backend = CVC5NativeBag andalso
+                        is_marked_bag_term function then
+                  sexpr "bag.count" [argumentname, functionname]
+                else explicit_apply functionname argumentname
+            | _ =>
+                if !current_bag_backend = CVC5NativeBag andalso
+                   is_marked_bag_term function then
+                  sexpr "bag.count" [argumentname, functionname]
+                else explicit_apply functionname argumentname))
       end
     handle Feedback.HOL_ERR _ =>
 
@@ -3989,11 +4022,32 @@ local
                    partial and full applications from splitting one symbol. *)
                 val (domtys, rngty) = doms_rng [] declaration_arity
                   (Term.type_of rator)
+                (* A native collection argument determines the corresponding
+                   declaration position.  Translating its HOL function type
+                   alone would otherwise erase the selected Set/Bag sort. *)
+                fun translate_domain (tydict, (index, ty)) =
+                  let
+                    val argument =
+                      if index < List.length rands then
+                        SOME (List.nth (rands, index))
+                      else NONE
+                  in
+                    case argument of
+                      SOME arg =>
+                        if !current_set_backend <> CVC5ArraySet andalso
+                           is_marked_set_term arg then
+                          set_sort tydict arg
+                        else if !current_bag_backend = CVC5NativeBag andalso
+                                is_marked_bag_term arg then
+                          selected_bag_sort tydict arg
+                        else
+                          translate_type regime (tydict, ty)
+                    | NONE => translate_type regime (tydict, ty)
+                  end
                 val (tydict, domdecltys) =
-                  Lib.foldl_map
-                    (fn (tydict, ty) =>
-                      translate_type regime (tydict, ty))
-                    (tydict, domtys)
+                  Lib.foldl_map translate_domain (tydict,
+                    ListPair.zip (List.tabulate (List.length domtys, Lib.I),
+                      domtys))
                 val (domdeclss, domtys) = Lib.split domdecltys
                 val domdecls = List.concat domdeclss
                 val (tydict, (rngdecls, rngty)) =
