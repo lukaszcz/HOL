@@ -17,7 +17,9 @@ struct
   fun is_bag_constant tm =
     named "bag"
       ["BAG_IN", "BAG_INSERT", "BAG_UNION", "BAG_DIFF", "BAG_MERGE",
-       "BAG_INTER", "SUB_BAG", "EMPTY_BAG"] tm
+       "BAG_INTER", "SUB_BAG", "EMPTY_BAG", "BAG_CARD", "BAG_FILTER",
+       "BAG_CHOICE", "BAG_IMAGE", "BAG_EVERY", "SET_OF_BAG",
+       "BAG_OF_SET"] tm
 
   (* The proof parser turns Z3's [(_ map +) a b] into
      [\x. a x + b x].  Do not classify arbitrary Int-valued lambdas as bags:
